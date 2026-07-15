@@ -143,10 +143,10 @@ Resolution is performed against the immutable source inventory and semantic conf
 `lumin-resolve` selects a typed profile for every importer with this precedence:
 
 1. An explicit invocation-wide `--resolution-profile <bundler|node|node16|nodenext>` override.
-2. The importer's nearest supported `tsconfig` with an explicit `compilerOptions.moduleResolution`: `bundler` -> `bundler`, `node`/`node10` -> `node`, `node16` -> `node16`, and `nodenext` -> `nodenext`.
+2. The explicit `compilerOptions.moduleResolution` in the importer's nearest controlling `tsconfig`: `bundler` -> `bundler`, `node`/`node10` -> `node`, `node16` -> `node16`, and `nodenext` -> `nodenext`; unsupported values follow the incomplete rule below.
 3. The named first-slice product default, `bundler`, when no explicit supported value exists.
 
-An explicit unsupported value such as `classic`, an unknown value, or an unreadable controlling config makes resolution incomplete for affected importers; it never falls through to the product default. Without an invocation override, mixed workspaces retain importer-local profiles from their nearest configs. The override deliberately applies to every importer in the invocation. Vue script edges remain a dialect-owned `bundler` lane and record that reason separately.
+Without an invocation override, an explicit unsupported value such as `classic` or an unknown value makes resolution incomplete for affected importers; it never falls through to the product default. The invocation override supersedes only `moduleResolution` profile selection. An unreadable controlling config remains incomplete even under an override because aliases, package ownership, or other semantic inputs may be unknown. Without an override, mixed workspaces retain importer-local profiles from their nearest configs. The override deliberately applies to every importer in the invocation. Vue script edges remain a dialect-owned `bundler` lane and record that reason separately.
 
 Audit and pre-write accept the typed override; post-write reuses the profile facts stored in its baseline and cannot replace them. Every selected profile records mode, source (`invocation`, config path, or `product-default`), and reason. Those values and consulted configs participate in `AnalysisInputId`; `resolution-profile-selection.v1`, its mappings, and the default participate in `AnalysisContractId`.
 
@@ -235,6 +235,7 @@ A successful run publishes:
 
 ```text
 .lumin/latest.json
+.lumin/lifecycle.store
 .lumin/attempts/<attempt-id>/attempt.json
 .lumin/runs/<run-id>/run.json
 .lumin/runs/<run-id>/evidence.store
@@ -364,7 +365,7 @@ The implementation creates repository fixtures with hand-authored expected truth
 | `gate-prewrite-observation` | Provisional admission, editor quiescence, exact baseline capture, and final store promotion bind `Allow` to one returned `GateBaselineObservationId`; interrupted admission leaves no active gate lease. |
 | `gate-final-observation` | Source/config drift during post-write cannot produce `Allow` or release the active lease. |
 | `gate-lifecycle-effects` | Every pre/post decision follows the fixed effect precedence and lifecycle transition table. |
-| `gate-operation-idempotency` | Same operation ID/request retries return one gate or close revision; conflicting reuse is malformed; injected post-commit delivery failure is recovered through `gate operation show`. |
+| `gate-operation-idempotency` | Same operation ID/request joins live work, retries an interrupted pre-commit execution, or returns one committed gate/close revision; conflicting reuse is malformed; a new close after a failed revision needs a new operation ID; injected post-commit delivery failure is recovered through `gate operation show`. |
 | `gate-reopen-after-process-exit` | Open and close a gate, terminate the process, then use a new process to show the exact gate revision and page its findings/evidence. |
 | `unplanned-edit` | Unplanned changed, new, removed, and renamed paths cannot receive an allow decision. |
 | `mixed-vue-gate` | JS and Vue changes share one user gate and keep owner-specific facts. |
@@ -373,7 +374,7 @@ The implementation creates repository fixtures with hand-authored expected truth
 | `bounded-nested-query` | Run and gate-revision pages expose immutable scope, totals, truncation, and stable top-level and nested continuation. |
 | `request-path-escape` | Caller-declared root escape exits `2` without operation record, gate ID, or lease; later admitted alias drift and final containment violation follow their distinct stale/block contracts. |
 | `corrupt-store` | Corrupt canonical storage hard-stops without fallback or empty evidence. |
-| `crash-publication` | Every publication crash point has the single ARCH-002 outcome; a renamed orphan without terminal success remains interrupted and is never adopted as success. |
+| `crash-publication` | Attempt allocation, running-envelope, latest-pointer, run-rename, terminal-attempt, and pointer-replacement crash points each have the single ARCH-002 outcome; a renamed orphan without terminal success remains interrupted and is never adopted as success. |
 | `retention-latest-protection` | Prune plans exclude both latest-pointer targets and their linked attempt/run closure, and stale confirmation cannot create a dangling pointer. |
 
 The corpus must include repositories synthesized from or minimized around real failure shapes, including Vue core-style package layouts and a Next.js route-group layout. A copied fixture records origin, license, source revision, and modifications in a local `PROVENANCE.md`; synthetic structure is preferred when copied code is unnecessary. Store-state fixtures are generated in a test temp root and do not require committing ignored `.lumin` output.
@@ -490,7 +491,7 @@ These omissions must be visible through `lumin capabilities` and relevant overvi
 | 10 | `gate_round_trip_requires_ids_and_reopens` | `mixed-vue-gate`, `gate-reopen-after-process-exit` | `lumin-xtask corpus foundation` | Operation/gate IDs complete the round trip, then a new process queries the exact completed revision and paged evidence. |
 | 11 | `gate_conflicts_and_transitions_are_serializable` | parallel/config/path identity/intervening-transition rows | `lumin-xtask corpus foundation` | Read/read admits; direct conflicts reject; disjoint terminal chains reconcile; active or unexplained changes cannot authorize. |
 | 12 | `all_pages_are_reachable` | `bounded-nested-query` | `lumin-xtask corpus foundation` | Run and gate-revision cursor traversal returns exactly `total` top-level and nested items without following a newer scope. |
-| 13 | `default_publication_is_bounded` | output-layout fixture | `lumin-xtask corpus foundation` | Only attempt/run envelopes, canonical store, and latest pointer are published. |
+| 13 | `default_publication_is_bounded` | output-layout fixture | `lumin-xtask corpus foundation` | Only the repository lifecycle store, attempt/run envelopes, canonical evidence store, and latest pointer are published. |
 | 14 | `failure_and_freshness_are_visible` | required-failure, parse, snapshot, request-path-escape, and corrupt-store rows | `lumin-xtask corpus foundation` | `overview` or the gate response exposes incomplete/stale/failed/malformed states and never zero. |
 | 15 | `repository_policy_suite` | workspace and source policy | fmt, Clippy, workspace test, architecture-check | Every required quality command exits successfully. |
 | 16 | `release_performance_matrix` | named benchmark corpora | `lumin-xtask benchmark foundation` | Blocking time/memory targets are met and the `/mnt/<drive>` diagnostic is reported. |

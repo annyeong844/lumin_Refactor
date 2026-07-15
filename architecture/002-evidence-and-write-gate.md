@@ -29,7 +29,7 @@ The internal workspace layout is:
 ```text
 .lumin/
   latest.json
-  gates.store
+  lifecycle.store
   attempts/
     <attempt-id>/
       attempt.json
@@ -45,7 +45,7 @@ Users and agents do not edit these files directly.
 
 ### 2.1 `attempt.json`
 
-At audit start, the store allocates an attempt ID/sequence, records a logical process lease, and advances `latestAttempt` to `Running` without holding a store lock for the scan. A terminal audit publishes one immutable attempt envelope containing repository/build/request identity, timestamps, success or failure class, concise diagnostics, and optional completed run ID. A hard-stop or unstable snapshot therefore remains addressable even when no run exists.
+Audit start is ordered and crash-recoverable. One repository-catalog transaction allocates the attempt ID/sequence and durable process-liveness lease. Lumin then writes and flushes a `Running` `attempt.json`, advances `latestAttempt` with the sequence-checked replacement protocol, and begins scanning only after both publications are durable. A sequence allocated before its envelope may become a legal gap; it is never reused. A terminal audit atomically replaces the running envelope once with an immutable terminal envelope containing repository/build/request identity, timestamps, success or failure class, concise diagnostics, and optional completed run ID. A hard-stop or unstable snapshot therefore remains addressable even when no run exists.
 
 ### 2.2 `run.json`
 
@@ -90,17 +90,19 @@ Every crash point has one outcome:
 
 | Crash point | Canonical recovery |
 | --- | --- |
-| before attempt sequence allocation | no attempt exists |
-| after `Running` attempt/process-lease publication and before run-directory rename | publish `Interrupted`; no run exists |
+| before attempt catalog allocation | no attempt exists |
+| after catalog allocation and before durable `Running` envelope | release the dead process lease, preserve a legal sequence gap, and publish no invented attempt |
+| after durable `Running` envelope and before `latestAttempt` replacement | publish `Interrupted` and advance the non-regressing attempt pointer |
+| after `latestAttempt=Running` publication and before run-directory rename | publish `Interrupted`; no run exists |
 | after valid run-directory rename and before terminal attempt publication | preserve the directory as an unpointed orphan, publish `Interrupted`, and never adopt that orphan as a successful run |
 | after terminal attempt publication and before latest-pointer replacement | the terminal attempt and linked run are authoritative; recovery advances only non-regressing pointers |
 | during latest temporary write or atomic replacement | accept only the complete old or complete new pointer document; partial JSON is noncanonical |
 
 The durable process lease identifies the process/operation that may finish a `Running` attempt. Recovery authority begins only after platform liveness checks prove that lease released. An orphan without a terminal success attempt is inspectable recovery evidence and retention input, not a completed run or an automatic success candidate.
 
-### 2.4 `gates.store`
+### 2.4 `lifecycle.store`
 
-The repository-wide gate store contains operation-id records, provisional admission reservations, declared intents, logical path leases, baseline fingerprints and facts, advisory findings, immutable worktree transitions, close-out deltas, and lifecycle history for every gate in that repository.
+The repository-wide `lifecycle.store` contains audit attempt sequence/process-lease catalog metadata plus operation-id records, provisional admission reservations, declared intents, logical path leases, baseline fingerprints and facts, advisory findings, immutable worktree transitions, close-out deltas, and lifecycle history for every gate in that repository. Attempt evidence remains in `attempt.json`; the catalog metadata exists only for allocation and recovery.
 
 One transactional store is required so overlap detection and lease creation commit atomically across concurrent Lumin processes. Completed gate records become immutable by application contract. Active gates are not temporary transport records and are never silently removed while open.
 
@@ -120,7 +122,7 @@ Architecture v1 does not select a persistence engine by familiarity. `lumin-stor
 
 The architecture review benchmarks at least one pure-Rust embedded candidate, initially `redb`, against bundled SQLite. The comparison records clean and incremental build time, release binary size, transitive and unsafe surface, cold and warm store latency, peak memory, store size, multi-process contention behavior, and crash recovery.
 
-`redb`'s first probe is two independent writer processes contending for the same gate store. If open/lock/retry behavior cannot preserve atomic lease admission without a daemon or a second truth owner, the candidate is rejected before performance comparison.
+`redb`'s first probe is two independent writer processes contending for the same lifecycle store. If open/lock/retry behavior cannot preserve atomic lease admission without a daemon or a second truth owner, the candidate is rejected before performance comparison.
 
 Correctness probes inject process death at every row of the crash table and every retention pointer step. They cover unadoptable orphan runs, dangling pointers, corrupt hashes, stale-writer sequence regression, interrupted gate migration, and unsupported durable-flush behavior on each required platform. Probe evidence preserves source and fixture hashes, toolchain/target, exact commands, expected invariants, crash point, and raw result under `reviews/probes/<probe-id>/`; build output is removed, but reproducibility evidence is not.
 
@@ -258,18 +260,18 @@ For a large path set:
 <NUL-delimited paths> | lumin pre-write --operation-id op_... --paths0-from -
 ```
 
-The caller creates and retains a repository-scoped `OperationId` before invoking a mutating gate command. Repeating the same operation ID with the same canonical request digest returns its existing committed result. Reusing it with different input is malformed and cannot mutate state.
+The caller creates and retains a repository-scoped `OperationId` before invoking a mutating gate command. Reusing it with different canonical input is malformed and cannot mutate state. With the same request digest, a retry returns a committed result immediately, joins a still-live execution without starting another mutation, or re-acquires and re-executes an operation proven interrupted before any gate/lifecycle mutation. No arbitrary timeout converts a live execution into an interrupted one.
 
 A caller-declared path outside the canonical root is malformed request input: exit `2`, no operation record, no gate ID, and no lease. Valid pre-write then uses one protected handoff:
 
 1. The controller quiesces its participating editors for the declared domain and semantic inputs.
-2. One gate-store transaction binds the operation ID/request digest, checks the current catalog, and creates a short-lived provisional reservation for the normalized leased-write and semantic-read sets. This reservation blocks conflicting compliant opens but is not an `Active` gate lease and does not authorize edits.
+2. One lifecycle-store transaction binds the operation ID/request digest, checks the current catalog, and creates a short-lived provisional reservation for the normalized leased-write and semantic-read sets. This reservation blocks conflicting compliant opens but is not an `Active` gate lease and does not authorize edits.
 3. Inventory captures the exact declared/leased observation domain, semantic reads, source set, configuration, content identities, and catalog revision as a candidate `GateBaselineObservationId`.
 4. Owners analyze only those bytes, then inventory rediscovers and rehashes the same sets. Drift yields `Stale`; an unobservable required input yields `Incomplete`.
-5. One final gate-store transaction rechecks the operation digest, reservation, catalog revision, and conflicts; maps typed signals through the canonical effect policy; allocates the gate ID; and atomically commits either `Active` plus its durable path lease or `Rejected` without a lease. The provisional reservation is removed in the same transaction.
+5. One final lifecycle-store transaction rechecks the operation digest, reservation, catalog revision, and conflicts; maps typed signals through the canonical effect policy; allocates the gate ID; and atomically commits either `Active` plus its durable path lease or `Rejected` without a lease. The provisional reservation is removed in the same transaction.
 6. The controller may resume editors after delivery succeeds or, if delivery fails, after it recovers the committed operation result. The returned decision names the exact `GateBaselineObservationId` accepted in step 5.
 
-If the process dies while a provisional reservation exists, process-lease recovery marks the operation interrupted and removes the reservation; it never promotes an unreturned operation to an active gate. A hard-stop before the final transaction produces no gate decision. A delivery failure after commit does not undo or invalidate the durable result; the caller recovers it by operation ID.
+If the process dies while a provisional reservation exists, process-lease recovery marks that execution attempt interrupted and removes the reservation; it never promotes an unreturned operation to an active gate. The same operation ID may then execute again because no lifecycle mutation committed. A hard-stop before the final transaction produces no gate decision. A delivery failure after commit does not undo or invalidate the durable result; the caller recovers it by operation ID.
 
 The agent does not create an intent JSON file.
 
@@ -338,7 +340,7 @@ After edits:
 lumin post-write <gate-id> --operation-id op_...
 ```
 
-Post-write reloads the exact active transaction. The agent does not resend intent, baseline, paths, or an advisory filename. The operation ID is bound to the gate ID and opening revision; retry returns the same committed close-attempt revision.
+Post-write reloads the exact active transaction. The agent does not resend intent, baseline, paths, or an advisory filename. On operation admission, the operation ID/request digest binds to the gate ID and then-current active revision. Retry returns that operation's same committed close-attempt revision. After a nonauthorizing close increments the gate revision, a later close attempt requires a new operation ID bound to the new current revision; two operation IDs cannot mutate the same gate revision concurrently.
 
 Close-out verifies:
 
@@ -471,7 +473,7 @@ Gate lifecycle is a separate closed state machine:
 | active post-write `Deny`, `Incomplete`, or `Stale` | remains `Active` | retained; immutable close-attempt revision appended |
 | explicit abandon | `Active` -> `Abandoned` | released with reason |
 
-`Rejected`, `Closed`, and `Abandoned` are terminal. Only `Active` gates accept post-write. An operation-scoped provisional reservation is not a gate lifecycle state and cannot authorize edits. Final baseline validation, signal mapping/reduction, gate allocation, lifecycle transition, durable lease mutation, and provisional-reservation removal commit in one final gate-store transaction; a rejected pre-write cannot block another agent afterward.
+`Rejected`, `Closed`, and `Abandoned` are terminal. Only `Active` gates accept post-write. An operation-scoped provisional reservation is not a gate lifecycle state and cannot authorize edits. Final baseline validation, signal mapping/reduction, gate allocation, lifecycle transition, durable lease mutation, and provisional-reservation removal commit in one final lifecycle-store transaction; a rejected pre-write cannot block another agent afterward.
 
 ## 10. Gate Performance Model
 
@@ -520,7 +522,7 @@ The first prune form creates an immutable, paged plan containing exact run/gate 
 - A durable finding referenced by a review or CI result is addressable by run and finding ID.
 - No user workflow requires manual deletion of generated intent transport.
 
-Attempt sequences are allocated atomically at start. Concurrent completion cannot move either pointer backward: `latestAttempt` identifies the highest started sequence and its success/failure status, while `latestCompleted` identifies the highest sequence that published a complete run. `overview` shows a newer failed attempt before presenting an older completed run.
+Attempt sequences are allocated atomically in the catalog; a sequence becomes a started attempt only when its `Running` envelope is durable. Concurrent completion cannot move either pointer backward: `latestAttempt` identifies the highest started sequence and its success/failure status, while `latestCompleted` identifies the highest sequence that published a complete run. `overview` shows a newer failed attempt before presenting an older completed run.
 
 If a process disappears before terminal publication, later store recovery follows the exact crash table in Section 2.3. In particular, a renamed run directory without a terminal success attempt remains an unpointed orphan beside an `Interrupted` attempt and is never adopted as success. Process leases are operation-liveness records, not scan locks, durable gate path leases, or result-transport locks.
 
@@ -542,7 +544,7 @@ Completed run directories are never migrated in place. Compatible old run schema
 
 ## 13. Acceptance Criteria
 
-1. A complete default audit creates only the small attempt/run envelopes, latest pointer, and canonical evidence store.
+1. A complete default audit creates only the repository lifecycle store, small attempt/run envelopes, latest pointer, and canonical evidence store.
 2. An agent can answer a focused finding question without opening either file directly.
 3. Every bounded response supports explicit continuation.
 4. Projection limits cannot change canonical counts.

@@ -160,7 +160,7 @@ Framework crates choose the semantic kind of an edge; the resolver determines it
 
 `lumin-resolve` also lowers inventory-owned package metadata into model-owned `PackageSurfaceDeclaration` facts. The graph consumes those declarations but never interprets `package.json` fields itself.
 
-`lumin-resolve` owns resolution-profile selection. A typed invocation override wins; otherwise each importer uses its nearest supported `tsconfig` declaration; otherwise the named product default is `bundler`. The resolver records the selected profile, source, and reason as model facts. Configuration choices participate in `AnalysisInputId`, while the mapping/default policy version participates in `AnalysisContractId`.
+`lumin-resolve` owns resolution-profile selection. A typed invocation override wins and supersedes only profile selection. Without that override, the explicit value in an importer's nearest controlling `tsconfig` selects the profile when supported; an explicit unsupported value is incomplete rather than skipped; and an importer with no explicit value uses the named product default, `bundler`. Unreadable controlling configuration remains incomplete even under an override because non-profile resolver inputs may be unknown. The resolver records the selected profile, source, and reason as model facts. Configuration choices participate in `AnalysisInputId`, while the mapping/default policy version participates in `AnalysisContractId`.
 
 ### 4.6 `lumin-graph`
 
@@ -238,7 +238,7 @@ Type ownership and value authority are distinct:
 | `GateEffect`, `GateDecision`, and lifecycle state | `lumin-evidence` | `lumin-evidence::gate_policy` owns the closed signal-to-effect table and policy version; the engine only invokes that mapping and applies the canonical reducer/transition tables. |
 | `EvidenceQuery` and `PageAnchor` | `lumin-evidence` | The engine query service validates filters and derives deterministic continuation anchors; `lumin-protocol` encodes and decodes opaque cursors. |
 | External protocol version and DTO schema | `lumin-protocol` | `lumin-protocol`. |
-| Run envelope, evidence-store, gate-store, and cache schema versions | `lumin-store` | `lumin-store`. |
+| Run envelope, evidence-store, lifecycle-store, and cache schema versions | `lumin-store` | `lumin-store`. |
 | Extractor, resolver, graph, and rule semantic versions | project-owned model values | The owning capability crate. |
 
 No crate duplicates a value because it owns a representation. Store and protocol receive model or evidence values through their allowed dependency direction.
