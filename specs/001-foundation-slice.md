@@ -140,6 +140,16 @@ Svelte, Astro, and other SFC dialects remain explicitly unavailable in this slic
 
 Resolution is performed against the immutable source inventory and semantic configuration snapshot. The first slice models the declared subset below rather than claiming complete TypeScript resolver parity. Resolution first derives host runtime candidates for the selected mode, then applies TypeScript source substitution to each candidate before advancing to the next host candidate.
 
+`lumin-resolve` selects a typed profile for every importer with this precedence:
+
+1. An explicit invocation-wide `--resolution-profile <bundler|node|node16|nodenext>` override.
+2. The importer's nearest supported `tsconfig` with an explicit `compilerOptions.moduleResolution`: `bundler` -> `bundler`, `node`/`node10` -> `node`, `node16` -> `node16`, and `nodenext` -> `nodenext`.
+3. The named first-slice product default, `bundler`, when no explicit supported value exists.
+
+An explicit unsupported value such as `classic`, an unknown value, or an unreadable controlling config makes resolution incomplete for affected importers; it never falls through to the product default. Without an invocation override, mixed workspaces retain importer-local profiles from their nearest configs. The override deliberately applies to every importer in the invocation. Vue script edges remain a dialect-owned `bundler` lane and record that reason separately.
+
+Audit and pre-write accept the typed override; post-write reuses the profile facts stored in its baseline and cannot replace them. Every selected profile records mode, source (`invocation`, config path, or `product-default`), and reason. Those values and consulted configs participate in `AnalysisInputId`; `resolution-profile-selection.v1`, its mappings, and the default participate in `AnalysisContractId`.
+
 | Specifier or host candidate | Ordered first-slice probes |
 | --- | --- |
 | Explicit TypeScript or SFC source path | Exact path only for `.ts`, `.tsx`, `.mts`, `.cts`, `.vue`, `.svelte`, or `.astro`. Vue targets are analyzable; Svelte and Astro targets resolve as SFC sources with unavailable analysis evidence. Explicit declaration paths are exact and type-space only. JavaScript runtime extensions use the substitution rows below even when written explicitly. |
@@ -235,7 +245,7 @@ No legacy analysis JSON is emitted by default.
 The slice implements:
 
 ```text
-lumin audit
+lumin audit [--resolution-profile <bundler|node|node16|nodenext>]
 lumin overview
 lumin findings --run <run-id> --area dead-code [--cursor <cursor>]
 lumin explain --run <run-id> <finding-id> [--evidence-cursor <cursor>] [--relations-cursor <cursor>]
@@ -252,42 +262,47 @@ All collection queries are bounded, deterministic, and cursor-resumable. Require
 The slice implements:
 
 ```text
-lumin pre-write [typed intent flags]
-lumin post-write <gate-id>
+lumin pre-write --operation-id <operation-id> [typed intent flags]
+lumin post-write <gate-id> --operation-id <operation-id>
 lumin gate show <gate-id> [--revision <revision>]
 lumin gate findings <gate-id> --revision <revision> [--cursor <cursor>]
 lumin gate explain <gate-id> --revision <revision> <finding-id> [--evidence-cursor <cursor>] [--relations-cursor <cursor>]
 lumin gate list --active [--cursor <cursor>]
+lumin gate operation show <operation-id>
 lumin gate abandon <gate-id> --reason <text>
 ```
 
 Required behavior:
 
 - no request JSON file;
+- caller-retained operation IDs make pre-write and post-write retries idempotent;
 - one durable gate ID returned by pre-write;
-- baseline built from exact worktree bytes;
+- baseline built from exact worktree bytes and returned as `GateBaselineObservationId`;
 - language and nearest dependency owner inferred from planned paths;
 - mixed JS/TS/SFC paths handled inside one gate, with unsupported dialects remaining explicit;
 - write/write and write/semantic-read conflicts rejected;
-- nonconflicting gates allowed concurrently;
+- nonconflicting gates may analyze concurrently and reconcile close in immutable transition order;
 - post-write detects unplanned changed, new, removed, and renamed paths;
 - post-write checks dead-code, resolution, dependency-owner, and opacity deltas owned by this slice;
 - shape and type-escape lanes remain visibly unavailable;
 - post-write requires the explicit gate ID and checks actual writes against other active gates;
 - post-write does not launch a full audit unless explicitly requested;
-- all locks released before result transport;
+- storage/scan/operation-liveness locks released before result transport while an active gate's durable path lease remains;
 - completed gate remains queryable.
 
-First-slice owners assign these gate effects:
+First-slice owners emit typed signals; `lumin-evidence::gate_policy` assigns these effects:
 
-| Evidence or invariant | Effect |
-| --- | --- |
-| root escape, lease conflict, unplanned/cross-gate write, newly unresolved internal edge, missing declared dependency ownership, or a new dead export with zero exact/broad fan-in, complete potential-consumer coverage, no public protection, and no generated/vendor mute | `Block` |
-| required owner unavailable/failed, newly opaque evidence intersecting the planned affected set, or an unobservable required delta input | `Incomplete` |
-| baseline/config/source drift before decision commit | `Stale` |
-| unchanged pre-existing finding or grounded low-confidence/advisory candidate | `Warn` |
+| Signal | Signal/fact owner | Effect |
+| --- | --- | --- |
+| final planned-path containment violation, lease conflict, unexplained transition, unplanned write, or terminal cross-gate conflict | engine gate service from typed inventory/store outcomes | `Block` |
+| newly unresolved internal edge | `lumin-resolve` | `Block` |
+| missing declared dependency ownership | `lumin-inventory` | `Block` |
+| new dead export with zero exact/broad fan-in, complete potential-consumer coverage, no public protection, and no generated/vendor mute | `lumin-dead` | `Block` |
+| required owner unavailable/failed, newly opaque evidence intersecting the planned affected set, unobservable required delta input, or changed path awaiting another active gate's terminal transition | owning capability or engine gate service | `Incomplete` |
+| baseline/config/source drift, changed admitted alias escaping root, or intervening transition touching semantic reads | owning observation fact plus engine gate service | `Stale` |
+| unchanged pre-existing finding or grounded low-confidence/advisory candidate | owning capability | `Warn` |
 
-Every mapping belongs to the relevant capability or gate-invariant policy version. The engine applies the ARCH-002 precedence table without changing these meanings. Pre-write rejection creates no lease; failed post-write remains active and records the attempted revision.
+Caller-declared root escape is not a signal: it is malformed input, exits `2`, and creates no operation, gate ID, record, or lease. Signal types stay dependency-light in `lumin-model`; the closed mapping and `gate-policy.v1` stay in `lumin-evidence`; the engine only invokes the mapping and ARCH-002 reducer. Pre-write rejection creates no durable gate lease; failed post-write remains active and records the attempted revision.
 
 A Rust path in this slice produces an explicit unsupported-language gate finding and cannot be silently routed to the JS owner.
 
@@ -326,6 +341,7 @@ The implementation creates repository fixtures with hand-authored expected truth
 | `module-format-conditions` | Node16/NodeNext importer format selects import/require conditions from extension, nearest package type, and edge syntax. |
 | `public-condition-union` | Import, require, bundler, and type public lanes protect only the identities selected for each supported lane. |
 | `package-fields-no-exports` | Bundler `module`, Node/bundler `main`, and type fields follow their declared resolution and public-protection roles. |
+| `resolution-profile-selection` | Invocation override wins; otherwise mixed importers use nearest supported tsconfig profiles; no-config importers use the recorded `bundler` product default; explicit unsupported values remain incomplete. |
 | `reachable-dead-sibling` | A live file can still contain a zero-fan-in dead export candidate. |
 | `public-reexport-sibling` | One public re-export is protected; three unexported dead siblings remain candidates. |
 | `vue-entry` | `main.js -> App.vue` resolves and the graph completes. |
@@ -342,17 +358,23 @@ The implementation creates repository fixtures with hand-authored expected truth
 | `parse-failure-propagation` | Recoverable and unrecoverable parse limitations constrain only the scopes defined in Section 5.2. |
 | `nearest-manifest` | Dependency checks use the owner manifest nearest each planned path. |
 | `parallel-gates` | Read/read overlap coexists; write/write and write/read conflict atomically. |
+| `intervening-gate-transitions` | Disjoint A/B gates may analyze together; A reconciles B only after B publishes an exact terminal identity chain, stays incomplete while B's changed path is active, becomes stale when B touches A's semantic reads, and denies unexplained third-party changes. |
 | `gate-path-identity` | New paths, aliases, directory descendants, symlinks/junctions, case policy, and rename endpoints follow ARCH-002. |
 | `gate-config-drift` | A changed semantic input makes the gate stale; an actual cross-gate write is denied. |
+| `gate-prewrite-observation` | Provisional admission, editor quiescence, exact baseline capture, and final store promotion bind `Allow` to one returned `GateBaselineObservationId`; interrupted admission leaves no active gate lease. |
 | `gate-final-observation` | Source/config drift during post-write cannot produce `Allow` or release the active lease. |
 | `gate-lifecycle-effects` | Every pre/post decision follows the fixed effect precedence and lifecycle transition table. |
+| `gate-operation-idempotency` | Same operation ID/request retries return one gate or close revision; conflicting reuse is malformed; injected post-commit delivery failure is recovered through `gate operation show`. |
+| `gate-reopen-after-process-exit` | Open and close a gate, terminate the process, then use a new process to show the exact gate revision and page its findings/evidence. |
 | `unplanned-edit` | Unplanned changed, new, removed, and renamed paths cannot receive an allow decision. |
 | `mixed-vue-gate` | JS and Vue changes share one user gate and keep owner-specific facts. |
 | `required-capability-failure` | Overview warns that dead analysis is unavailable and never renders zero. |
 | `snapshot-and-latest` | Mid-scan drift blocks completion; failed or interrupted attempts remain visible beside the last completed run. |
 | `bounded-nested-query` | Run and gate-revision pages expose immutable scope, totals, truncation, and stable top-level and nested continuation. |
-| `path-escape-and-corrupt-store` | Root escape and corrupt canonical storage hard-stop without fallback or empty evidence. |
-| `crash-publication` | Every publication crash point preserves or recovers staging, orphan, attempt, run, and latest-pointer state exactly as ARCH-002 specifies. |
+| `request-path-escape` | Caller-declared root escape exits `2` without operation record, gate ID, or lease; later admitted alias drift and final containment violation follow their distinct stale/block contracts. |
+| `corrupt-store` | Corrupt canonical storage hard-stops without fallback or empty evidence. |
+| `crash-publication` | Every publication crash point has the single ARCH-002 outcome; a renamed orphan without terminal success remains interrupted and is never adopted as success. |
+| `retention-latest-protection` | Prune plans exclude both latest-pointer targets and their linked attempt/run closure, and stale confirmation cannot create a dangling pointer. |
 
 The corpus must include repositories synthesized from or minimized around real failure shapes, including Vue core-style package layouts and a Next.js route-group layout. A copied fixture records origin, license, source revision, and modifications in a local `PROVENANCE.md`; synthetic structure is preferred when copied code is unnecessary. Store-state fixtures are generated in a test temp root and do not require committing ignored `.lumin` output.
 
@@ -378,9 +400,9 @@ The slice ships:
 - integrity metadata tied to build identity;
 - one Codex skill;
 - one Claude Code skill;
-- behavioral package probes for both binaries.
+- behavioral package probes for both binaries and both skill adapters.
 
-Skills contain the concise audit/query/write-gate workflow. They do not package Rust source fallback, Node analysis dependencies, or duplicated command contracts.
+Skills contain the concise audit/query/write-gate workflow, generate and retain operation IDs before mutating commands, and recover committed delivery failures through the public operation query. Both adapters invoke the same public binary commands and DTOs. They do not package Rust source fallback, Node analysis dependencies, duplicated semantic tables, or duplicated command contracts.
 
 Runtime execution with Cargo unavailable is part of package acceptance.
 
@@ -441,14 +463,16 @@ These omissions must be visible through `lumin capabilities` and relevant overvi
 6. Randomized worker completion tests preserve output identity.
 7. No analyzed source payload is read or parsed more than once for extraction in a cold run; the separate final hash-only freshness pass is measured and does not reparse.
 8. No runtime path executes Node or Cargo.
-9. Windows and Linux packages pass the same behavioral fixture probes.
-10. A user can perform pre-write and post-write using path-scoped typed flags, stable machine output, and one explicit gate ID.
-11. Gates with nonconflicting read/write sets close independently; write/write and write/read conflicts fail before edits are authorized.
+9. Windows/Linux packages and Codex/Claude Code adapters pass one public binary behavior contract without embedded semantic fallbacks.
+10. A user can perform pre-write and post-write using path-scoped typed flags, stable machine output, caller-retained operation IDs, and one explicit gate ID; the completed gate reopens in a new process.
+11. Gates with nonconflicting read/write sets may analyze concurrently; close reconciles immutable terminal transitions in order, while write/write and write/read conflicts fail before edits are authorized.
 12. Query output is bounded and exhaustive results are reachable through cursors.
 13. The default run emits no legacy artifact warehouse.
 14. Required failures, snapshot freshness, and unsupported capabilities are prominent and queryable.
 15. Strict workspace formatting, lint, unit, integration, corpus, dependency-edge, and package checks pass.
 16. The public binary meets the approved Phase 1 performance and memory targets on every blocking environment and reports the `/mnt/<drive>` diagnostic separately.
+17. Operation-ID retry and post-commit delivery recovery never duplicate a gate or close revision.
+18. Publication recovery and retention preserve one crash outcome per point and cannot leave a latest pointer dangling.
 
 ## 15. Acceptance Traceability
 
@@ -462,14 +486,16 @@ These omissions must be visible through `lumin capabilities` and relevant overvi
 | 6 | `scheduler_completion_order_is_irrelevant` | randomized stage-result fixture | `cargo test -p lumin-engine` | Repeated randomized completion yields one semantic dump. |
 | 7 | `source_payload_is_extracted_once` | read-counter plus Vue external script | `lumin-xtask corpus foundation` | Read/parse counters distinguish extraction from final hash validation. |
 | 8 | `runtime_has_no_source_fallback` | package runtime probe | `lumin-xtask package-check <target>` | Execution succeeds with Node and Cargo unavailable. |
-| 9 | `packages_share_behavior_contract` | package fixture set | both package-check targets | Windows/Linux query values match. |
-| 10 | `gate_round_trip_requires_id` | `mixed-vue-gate` | `lumin-xtask corpus foundation` | JSON decisions and explicit gate ID complete the round trip. |
-| 11 | `gate_conflicts_are_serializable` | parallel/config/path identity rows | `lumin-xtask corpus foundation` | Read/read admits; write/write and write/read reject or become stale as specified. |
+| 9 | `packages_and_skills_share_behavior_contract` | package fixture set plus packaged Codex/Claude adapters | both target package checks plus `lumin-xtask package-check skills` | Windows/Linux query values match; both adapters invoke the same public commands/DTOs with no embedded semantic table or source fallback. |
+| 10 | `gate_round_trip_requires_ids_and_reopens` | `mixed-vue-gate`, `gate-reopen-after-process-exit` | `lumin-xtask corpus foundation` | Operation/gate IDs complete the round trip, then a new process queries the exact completed revision and paged evidence. |
+| 11 | `gate_conflicts_and_transitions_are_serializable` | parallel/config/path identity/intervening-transition rows | `lumin-xtask corpus foundation` | Read/read admits; direct conflicts reject; disjoint terminal chains reconcile; active or unexplained changes cannot authorize. |
 | 12 | `all_pages_are_reachable` | `bounded-nested-query` | `lumin-xtask corpus foundation` | Run and gate-revision cursor traversal returns exactly `total` top-level and nested items without following a newer scope. |
 | 13 | `default_publication_is_bounded` | output-layout fixture | `lumin-xtask corpus foundation` | Only attempt/run envelopes, canonical store, and latest pointer are published. |
-| 14 | `failure_and_freshness_are_visible` | failure, parse, snapshot, corrupt-store rows | `lumin-xtask corpus foundation` | `overview` exposes incomplete/stale/failed states and never zero. |
+| 14 | `failure_and_freshness_are_visible` | required-failure, parse, snapshot, request-path-escape, and corrupt-store rows | `lumin-xtask corpus foundation` | `overview` or the gate response exposes incomplete/stale/failed/malformed states and never zero. |
 | 15 | `repository_policy_suite` | workspace and source policy | fmt, Clippy, workspace test, architecture-check | Every required quality command exits successfully. |
 | 16 | `release_performance_matrix` | named benchmark corpora | `lumin-xtask benchmark foundation` | Blocking time/memory targets are met and the `/mnt/<drive>` diagnostic is reported. |
+| 17 | `gate_mutations_are_idempotent` | `gate-operation-idempotency` | `lumin-xtask corpus foundation` | Retry returns one committed gate/revision and operation query recovers an injected delivery failure. |
+| 18 | `publication_and_prune_preserve_pointer_truth` | crash and retention rows | `lumin-xtask corpus foundation --store-crash` | Every crash point has one outcome and prune never removes a protected latest linkage. |
 
 ## 16. Product AC Coverage
 
@@ -480,16 +506,17 @@ These omissions must be visible through `lumin capabilities` and relevant overvi
 | 3 worker determinism | in scope | Slice AC 5-6. |
 | 4 required failure visible | in scope | Slice AC 14 and failure corpus. |
 | 5 no intent JSON workflow | in scope | Slice AC 10 and gate round trip. |
-| 6 completed gate queryable | in scope | Slice AC 10 plus gate lifecycle/revision corpus. |
+| 6 completed gate queryable | in scope | Slice AC 10 plus restart/reopen corpus. |
 | 7 resumable truncation | in scope | Slice AC 12 and nested cursor corpus. |
 | 8 framework miss isolation | in scope | Slice AC 2. |
 | 9 identity-scoped public export | in scope | Slice AC 3-4. |
 | 10 projections are noncanonical | in scope | Slice AC 13 and projection checks. |
-| 11 one skill/binary contract | in scope | Slice AC 9 and both packaged skill probes. |
+| 11 one skill/binary contract | in scope | Slice AC 9 and explicit `package-check skills` proof. |
 | 12 corpus/platform/performance evidence | completion-gated | Slice AC 1, 9, and 16; remains unclaimed until all pass. |
 | 13 latest failure visible | in scope | Slice AC 14 and `snapshot-and-latest`. |
 | 14 explicit post-write gate ID | in scope | Slice AC 10. |
-| 15 semantic baseline conflict | in scope | Slice AC 11 and final-observation corpus. |
+| 15 semantic baseline conflict | in scope | Slice AC 11 and baseline/final-observation plus intervening-transition corpus. |
+| 16 idempotent gate mutation | in scope | Slice AC 17 and operation-delivery recovery corpus. |
 
 ## 17. Verification Commands
 
@@ -502,9 +529,11 @@ cargo test --workspace
 cargo run -p lumin-xtask -- architecture-check
 cargo run -p lumin-xtask -- corpus foundation
 cargo run -p lumin-xtask -- corpus foundation --determinism
+cargo run -p lumin-xtask -- corpus foundation --store-crash
 cargo run -p lumin-xtask -- benchmark foundation
 cargo run -p lumin-xtask -- package-check windows-x64
 cargo run -p lumin-xtask -- package-check linux-x64
+cargo run -p lumin-xtask -- package-check skills
 ```
 
 The exact command wrappers may be finalized with the workspace, but CI and local development must invoke the same underlying checks.

@@ -4,7 +4,7 @@ Document role: product source of truth
 
 Status: draft
 
-Revision: 2026-07-15
+Revision: 2026-07-16
 
 Scope: final Lumin v2 product, independent of implementation phase
 
@@ -90,9 +90,13 @@ Pre-write opens a durable transaction and returns one gate ID. Post-write requir
 
 Concurrent transactions may proceed only when their exclusive write leases do not overlap and no transaction writes another active gate's semantic inputs. Mixed-language work is one user transaction with internally owned language lanes.
 
+In one shared worktree, Lumin authorizes observable repository state transitions, not unverifiable operating-system process authorship. A gate may analyze concurrently, but close-out reconciles every intervening terminal gate transition in store order. An unexplained change or a still-active intervening write cannot be approved as this gate's delta.
+
 Every gate result has one decision: `Allow`, `AllowWithWarnings`, `Deny`, `Incomplete`, or `Stale`. Only the first two authorize the requested lifecycle step. Machine-readable output and process exit behavior are stable product contracts.
 
 A nonauthorizing pre-write creates a queryable rejected record but no active lease. A nonauthorizing post-write appends an attempted revision and leaves the existing gate active. Authorization is bound to the exact final worktree/config observation returned with the decision.
+
+Every mutating gate command carries a caller-retained operation ID. Retrying the same operation ID and request returns the same committed gate/revision instead of duplicating state; reusing it for different input is malformed. A result-delivery failure does not erase an already committed decision, which remains recoverable by operation ID.
 
 ## 3. Non-Goals
 
@@ -114,7 +118,7 @@ Lumin v2 does not:
 3. `jobs=1` and `jobs=N` produce identical canonical evidence for the same snapshot.
 4. A required capability failure is visible in the overview and cannot be interpreted as a clean result.
 5. Agents can complete audit, finding inspection, pre-write, and post-write without creating JSON files.
-6. A completed gate can be inspected later by gate ID.
+6. A completed gate can be inspected by gate ID after the creating process exits and a new process opens the repository store.
 7. Query truncation is explicit, resumable, and pinned to one immutable scope or gate revision.
 8. Framework-specific misses cannot abort unrelated language or repository analysis.
 9. A public re-export protects only the exported identity, not every sibling export in the same file.
@@ -123,7 +127,8 @@ Lumin v2 does not:
 12. Every accepted slice includes real corpus fixtures, platform verification, and measured performance evidence.
 13. The latest failed attempt cannot be hidden behind an older completed run.
 14. Post-write cannot infer or auto-select a gate ID.
-15. A write that invalidates another active gate's semantic baseline or the final close observation is rejected or makes that gate visibly stale before approval.
+15. A write that invalidates another gate's semantic baseline, cannot be reconciled to an immutable intervening gate transition, or changes the final close observation is rejected, incomplete, or visibly stale before approval.
+16. Retrying a committed pre-write or post-write operation by operation ID returns the same durable result and never creates a duplicate gate or close revision.
 
 ## 5. Verification Contract
 

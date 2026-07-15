@@ -91,7 +91,8 @@ Owns the dependency-light domain vocabulary:
 - source snapshots and fingerprints;
 - language-neutral module and symbol facts;
 - typed resolution outcomes;
-- build, analysis-contract, analysis-input, repository, attempt, run, gate, gate-observation, and embedded-source identity value types;
+- build, analysis-contract, analysis-input, repository, attempt, run, gate, operation, gate-baseline-observation, gate-close-observation, and embedded-source identity value types;
+- dependency-light gate signals and their originating owner/rule identities;
 - completeness and opacity states.
 
 It must not depend on parsers, filesystems, persistence engines, CLI frameworks, or artifact formats. It is not a miscellaneous helper crate.
@@ -103,6 +104,7 @@ Owns canonical run evidence:
 - run, capability, finding, diagnostic, metric, and limitation records;
 - confidence and grounding states;
 - gate effects, decisions, lifecycle state, and lifecycle evidence;
+- the closed, versioned gate-signal-to-effect policy;
 - stable evidence relationships;
 - gate findings shared by audit and write-gate workflows.
 
@@ -157,6 +159,8 @@ enum ResolutionOutcome {
 Framework crates choose the semantic kind of an edge; the resolver determines its target outcome. The resolver never throws merely because a legitimate target is absent.
 
 `lumin-resolve` also lowers inventory-owned package metadata into model-owned `PackageSurfaceDeclaration` facts. The graph consumes those declarations but never interprets `package.json` fields itself.
+
+`lumin-resolve` owns resolution-profile selection. A typed invocation override wins; otherwise each importer uses its nearest supported `tsconfig` declaration; otherwise the named product default is `bundler`. The resolver records the selected profile, source, and reason as model facts. Configuration choices participate in `AnalysisInputId`, while the mapping/default policy version participates in `AnalysisContractId`.
 
 ### 4.6 `lumin-graph`
 
@@ -227,14 +231,29 @@ Type ownership and value authority are distinct:
 | `AnalysisInputId` | `lumin-model` | `lumin-engine` derives it from repository identity, profile parameters, scan policy, source-set identity, and consulted repository configuration identities. |
 | `RepositoryId` | `lumin-model` | `lumin-inventory` derives it from the canonical root and repository identity inputs. |
 | `AttemptId`, `RunId`, `GateId` | `lumin-model` | `lumin-store` allocates and persists them. |
-| `GateObservationId` | `lumin-model` | `lumin-engine` derives it from one gate attempt's exact actual-write and semantic-read path sets and content identities. |
-| `GateEffect`, `GateDecision`, and lifecycle state | `lumin-evidence` | Capability and gate-invariant owners assign versioned effects; the engine gate service applies only the canonical reduction and transition tables. |
+| `OperationId` | `lumin-model` | The caller creates it before a mutating gate command; `lumin-store` binds it to one repository-scoped request digest and committed result. |
+| `GateBaselineObservationId` | `lumin-model` | `lumin-engine` derives it from the exact declared/leased observation domain, semantic reads, content identities, and gate-catalog revision accepted at open. |
+| `GateCloseObservationId` | `lumin-model` | `lumin-engine` derives it from the exact actual-write and semantic-read sets, content identities, and transition/catalog revision accepted at close. |
+| `GateSignal` | `lumin-model` | Capability owners emit signals from their facts; the engine gate service emits only named transaction-invariant signals from typed store/inventory outcomes. |
+| `GateEffect`, `GateDecision`, and lifecycle state | `lumin-evidence` | `lumin-evidence::gate_policy` owns the closed signal-to-effect table and policy version; the engine only invokes that mapping and applies the canonical reducer/transition tables. |
 | `EvidenceQuery` and `PageAnchor` | `lumin-evidence` | The engine query service validates filters and derives deterministic continuation anchors; `lumin-protocol` encodes and decodes opaque cursors. |
 | External protocol version and DTO schema | `lumin-protocol` | `lumin-protocol`. |
 | Run envelope, evidence-store, gate-store, and cache schema versions | `lumin-store` | `lumin-store`. |
 | Extractor, resolver, graph, and rule semantic versions | project-owned model values | The owning capability crate. |
 
 No crate duplicates a value because it owns a representation. Store and protocol receive model or evidence values through their allowed dependency direction.
+
+The physical gate-policy authority is fixed:
+
+| Signal family | Fact/signal value owner | Effect-policy owner | Permitted edge |
+| --- | --- | --- | --- |
+| parse, SFC, and opacity | owning language crate | `lumin-evidence::gate_policy` | language -> model; evidence -> model |
+| resolution | `lumin-resolve` | `lumin-evidence::gate_policy` | resolve -> model; evidence -> model |
+| package/dependency ownership and observation drift | `lumin-inventory` | `lumin-evidence::gate_policy` | inventory -> model; evidence -> model |
+| graph/dead evidence | owning graph or analysis crate | `lumin-evidence::gate_policy` | graph -> model or analysis -> model/evidence |
+| lease, containment, unplanned-transition, and lifecycle invariants | engine gate service from typed store/inventory outcomes | `lumin-evidence::gate_policy` | engine -> model/evidence/store |
+
+Capability crates never construct `GateEffect`, and `lumin-engine` never chooses an effect. Adding a signal or changing its effect requires the fact owner contract, the closed gate-policy table/version, and the architecture edge check to change together.
 
 ## 5. Compile-Time Dependency DAG
 

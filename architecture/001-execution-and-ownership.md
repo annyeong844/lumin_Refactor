@@ -204,7 +204,7 @@ No task may swallow a panic, channel closure, parse failure, or persistence erro
 - Each analyzed worktree payload is read once for extraction per cold run; a separate final hash-only freshness pass is permitted.
 - Every parser consumes the same bytes used to compute that snapshot's content identity.
 - Downstream stages consume facts, not source files.
-- Result transport occurs after analysis locks and leases are released.
+- Result transport occurs after storage transaction locks, scan locks, and operation-liveness leases are released. An `Active` gate's durable logical path lease is repository state, not a held runtime lock, and remains until close or abandon.
 - Canonical persistence uses one writer and the ARCH-002 crash-consistent publication protocol.
 - WSL `/mnt/<drive>` performance is measured separately from WSL ext4 and native Windows; Rayon is not presented as a cure for cross-filesystem latency.
 
