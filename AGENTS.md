@@ -1,6 +1,6 @@
 # Lumin v2 Repository Rules
 
-[AGENTS.ko.md](AGENTS.ko.md) is the canonical repository-agent contract. This file is its English translation; if they differ, follow the Korean source.
+[`문서(한글)/AGENTS.ko.md`](문서(한글)/AGENTS.ko.md) is the canonical repository-agent contract. This file is its English translation; if they differ, follow the Korean source.
 
 ## Product Identity
 

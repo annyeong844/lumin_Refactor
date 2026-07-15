@@ -1,76 +1,22 @@
 # Lumin Spec-Driven Development
 
-Document role: permanent development method
-
-Status: active
-
-Revision: 2026-07-15
+[`문서(한글)/SDD.ko.md`](문서(한글)/SDD.ko.md) is the canonical METHOD-000. This file is its English translation; when they differ, the Korean source wins.
 
 ## Definition
 
-Lumin uses spec-anchored development: define the final contract and architecture before code, then implement narrow production-grade vertical slices without temporary architecture.
-
-## Major Principles
-
-1. **Route before reading.** Start at `WORKBOARD.md` and load only the owner documents for the current change.
-2. **Separate what from how.** Product specs own behavior, constraints, non-goals, and acceptance. Architecture owns language, boundaries, dependency direction, execution, storage, and delivery.
-3. **Design broadly, implement narrowly.** Freeze the destination architecture as a whole; implement one complete user path at a time.
-4. **One fact, one owner.** Counts, statuses, rules, schemas, and policies have one canonical owner. Every other form is a projection.
-5. **Make boundaries physical.** Cargo edges, visibility, project-owned types, lints, and architecture checks enforce dependency direction.
-6. **Derive truth from specs.** Expected test results come from accepted behavior and hand-authored corpus truth, not from the current implementation or legacy output.
-7. **Preserve uncertainty.** Incomplete, unsupported, stale, opaque, and truncated are product states; none may become empty success.
-8. **Refactor from evidence.** Remove observed duplication, leaks, oversized owners, and ceremony. Do not invent abstractions for hypothetical reuse.
+Lumin uses Spec-Driven Development (SDD). Define the final contract and destination architecture before writing code, then implement narrow production-grade vertical slices inside those boundaries.
 
 ## Workflow
 
-### 1. Route and Specify
+1. **Route and define the problem:** Start at [WORKBOARD.md](WORKBOARD.md) and read only the owners for the current change. State the user, problem, scope, non-goals, and observable completion criteria; replace words such as `fast` or `safe` with measurable conditions.
+2. **Design and freeze:** Product specifications own what and why; architecture owns how. Define boundaries, data ownership, failure states, concurrency, persistence, platform delivery, and verification, then freeze only a revision that has passed its required reviews.
+3. **Implement a vertical slice:** Complete one user behavior with the final boundaries and types. Search for an existing owner before adding a helper, type, rule, or dependency; do not create crates without active behavior or fallback owners.
+4. **Verify and close:** Derive expectations from the specification and test the core path, realistic edge cases, and hard stops. Remove duplication, ceremony, and dependency leaks only within the active slice, recheck acceptance, and update only the owner documents that changed.
 
-- Read the Workboard and the active owners only.
-- State the user, problem, boundary, non-goals, and observable completion criteria.
-- Replace words such as fast or safe with measurable behavior.
+## Minimal Specification
 
-### 2. Design, Review, and Freeze
-
-- Define the destination crate DAG, forbidden edges, data ownership, failure states, concurrency, persistence, platform delivery, and verification.
-- Require one design review and one independent adversarial review for architecture changes.
-- Resolve findings or record explicit accepted risks before freezing the revision.
-
-### 3. Implement One Vertical Slice
-
-- Use final boundaries, types, scheduler, storage, packaging, and failure semantics.
-- Search before creating helpers, types, rules, or dependencies.
-- Add only crates containing real behavior required by the active slice.
-- Keep unsupported scope explicit rather than adding a fallback owner.
-
-### 4. Verify, Refactor, and Close
-
-- Run focused behavior tests, realistic edge and hard-stop cases, architecture checks, corpus/determinism checks, and required package execution.
-- Refactor only the active slice: remove duplication and ceremony, close dependency leaks, and narrow public APIs.
-- Recheck every acceptance criterion, update the owning spec and Workboard, then commit the coherent result.
-
-## Do Not
-
-- Do not build an MVP on temporary architecture.
-- Do not create horizontal scaffolding, empty future crates, placeholder modules, or a second engine.
-- Do not copy legacy module boundaries before proving their new owner.
-- Do not pass domain facts through JSON or duplicate truth in projections.
-- Do not weaken tests, delete cases, add arbitrary caps/timeouts, swallow failures, or mark checks skipped to make code pass.
-- Do not create generic `utils`, one-use traits, invariant-free wrappers, or owner/contract/policy stacks.
-- Do not claim clean or absent without checked evidence, scope, and limitations.
-- Do not load every specification into model context.
-
-## Minimal Spec Shape
-
-Every substantial spec needs only:
-
-1. one-line definition;
-2. current contract;
-3. non-goals;
-4. acceptance criteria;
-5. verification commands.
-
-Small changes may use only definition, contract, and acceptance. Add a document only when it owns a distinct durable fact.
+A substantial change needs only a one-line definition, current contract, non-goals, acceptance criteria, and verification commands. A small change may use only the definition, current contract, and acceptance. Create a separate document only when it owns a distinct durable fact; do not copy another document's contract.
 
 ## AI Judgment
 
-AI reviewers make the repository's contextual judgments. A valid judgment cites checked source or evidence, states uncertainty, separates observed symptom from inferred cause, and records architecture-changing decisions in the owning spec. Confidence without checked evidence is not approval.
+A judgment states its checked source or evidence, scope, and uncertainty, and separates observed symptoms from inferred causes. Record architecture-changing decisions in the owner document; never approve an unchecked clean or absence claim.

@@ -18,7 +18,7 @@ The architecture review packet is:
 
 The current freeze ledger is [`REVIEW-002`](reviews/architecture-v1-independent-verification-2026-07-15.md); [`REVIEW-001`](reviews/architecture-v1-adversarial-2026-07-15.md) preserves the first review history.
 
-[`SDD.md`](SDD.md) defines the permanent development method. [`AGENTS.ko.md`](AGENTS.ko.md) is the canonical Korean repository-agent contract, and [`AGENTS.md`](AGENTS.md) is its English translation.
+[`문서(한글)/SDD.ko.md`](문서(한글)/SDD.ko.md) is the canonical Korean development method, and [`SDD.md`](SDD.md) is its English translation. [`문서(한글)/AGENTS.ko.md`](문서(한글)/AGENTS.ko.md) is the canonical Korean repository-agent contract, and [`AGENTS.md`](AGENTS.md) is its English translation.
 
 ## Current Decision
 
