@@ -16,7 +16,7 @@ When documents disagree, use this order:
 2. `architecture/000-system-blueprint.md`
 3. The owning focused architecture document
 4. The active vertical-slice specification
-5. `AGENTS.md`
+5. `AGENTS.ko.md` (canonical; `AGENTS.md` is the English translation)
 
 An implementation is not allowed to redefine a higher-level contract implicitly.
 
@@ -50,7 +50,7 @@ An implementation is not allowed to redefine a higher-level contract implicitly.
 - Store, queries, SARIF, pre-write, post-write, or parallel agents: read ARCH-002.
 - Any Phase 1 implementation or test: read SLICE-001.
 - Architecture freeze or review resolution: read REVIEW-002, then follow any explicit predecessor link it cites.
-- Repository working rules and close-out discipline: read `AGENTS.md`.
+- Repository working rules and close-out discipline: read `AGENTS.ko.md` (canonical) or `AGENTS.md` (English translation).
 
 ## Phase Ledger
 
