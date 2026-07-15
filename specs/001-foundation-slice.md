@@ -55,14 +55,50 @@ The Rust, clone, structure, and discipline analysis crates are not created in th
 | Input class | Normative first-slice behavior |
 | --- | --- |
 | Source extensions | Include `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.mts`, `.cts`, `.d.ts`, `.d.mts`, `.d.cts`, and `.vue` under the canonical root. |
-| Ignore policy | Apply explicit excludes and repository ignore files. Always exclude `.git`, `.lumin`, and dependency-owned `node_modules`; do not prune an authored directory merely because its basename is `target`, `build`, or `coverage`. |
-| Generated/vendor | Classify separately. In-scope uses may contribute liveness, but generated or vendored definitions are not default dead-removal candidates. |
-| Tests | Inventory and classify test-like files. Full audit counts their fan-in separately; production liveness does not treat test-only consumers as production consumers. |
+| Ignore policy | Apply the precedence below. Always exclude `.git`, `.lumin`, and dependency-owned `node_modules`; do not prune an authored directory merely because its basename is `target`, `build`, or `coverage`. |
+| Generated/vendor | Apply versioned role rules below. In-scope uses may contribute liveness, but generated or vendored definitions are not default dead-removal candidates. |
+| Tests | Apply versioned test-role rules below. Full audit counts their fan-in separately; production liveness does not treat test-only consumers as production consumers. |
 | Declarations | Parse declaration files for type-space facts only. A declaration cannot satisfy a runtime value edge or become a value dead-removal candidate. |
 | Symlink/junction | Do not recursively traverse directory links by default. An explicitly included root-contained target is deduplicated by physical file identity; an outside-root target is rejected and reported. |
 | Semantic inputs | Snapshot applicable ignore files, package manifests, lockfiles, tsconfig files, workspace metadata, and explicit entry configuration even when they are not source files. |
 
-The scan profile and every exclusion are persisted. An omitted or unobservable path is a scope limitation, not evidence that the path contains no consumers.
+`lumin-inventory` owns `ScanPolicy`, its semantic version, and every `SourceClassification`. The first slice accepts one optional strict root `lumin.json` plus typed invocation overrides; it does not consult machine-global Git excludes or infer hidden configuration. `lumin.json`, applicable `.gitignore` files, and invocation policy all participate in `AnalysisInputId` and the gate semantic-read set.
+
+The root configuration shape is closed in this slice:
+
+```json
+{
+  "schemaVersion": "lumin-config.v1",
+  "scan": {
+    "include": ["src/**"],
+    "exclude": ["src/legacy/**"],
+    "roles": [{"pattern": "test/**", "role": "test"}]
+  }
+}
+```
+
+Unknown fields, unknown roles, conflicting role declarations, or a second config file are configuration failures. Patterns are canonical-root-relative, slash-normalized Git-wildmatch patterns. Repeated CLI `--include <pattern>`, `--exclude <pattern>`, and `--role-at <pattern> <role>` values form the invocation tier; they do not mutate `lumin.json`.
+
+Scan admission uses this order:
+
+1. Reject root escapes and hard exclusions: `.git`, `.lumin`, and dependency-owned `node_modules`.
+2. Apply invocation excludes, then root `lumin.json` excludes. Exclusion wins over every inclusion.
+3. If invocation includes exist, use them as the inclusion domain; otherwise use configured includes; otherwise use the canonical root.
+4. An explicit inclusion may reinclude a repository-ignored path that is not excluded above. All other paths apply root-to-leaf `.gitignore` files with Git ordering and negation semantics; the last matching rule wins.
+5. Persist every admitted, excluded, ignored, out-of-domain, or unobservable result with `scan-policy.v1`, the matching rule, configuration source, and precedence tier.
+
+Source roles are independent recorded facts, not one lossy enum. Invocation role overrides take precedence over `lumin.json`, which takes precedence over these compiled `source-classification.v1` defaults:
+
+- `TestLike`: a path segment exactly equal to `test`, `tests`, `__tests__`, or `__mocks__`, or a source basename ending in `.test` or `.spec` before its source extension;
+- `Generated`: an exact leading-comment `@generated` marker within the first 2 KiB, or an explicit generated role; generic directory names such as `build`, `dist`, `out`, or `target` do not imply this role;
+- `Vendored`: explicit role only; no authored path is muted merely because it resembles a vendor directory;
+- `Declaration`: `.d.ts`, `.d.mts`, or `.d.cts`.
+
+The typed role vocabulary is exact: `test` adds `TestLike`; `production` clears it; `generated` adds `Generated`; `vendor` adds `Vendored`; and `authored` clears `Generated` and `Vendored`. Contradictory declarations for the same axis at one precedence tier are malformed configuration. Each classification stores role, rule version, reason, and configuration source. The scan profile and every exclusion are persisted. An omitted or unobservable path is a scope limitation, not evidence that the path contains no consumers.
+
+Package/config ownership is also deterministic. A source belongs to the nearest ancestor `package.json` inside the canonical root. Supported workspace declarations are `package.json#workspaces` (array or `packages` object member) and `pnpm-workspace.yaml#packages`; at the same directory, pnpm workspace patterns are authoritative when present, otherwise package-manifest patterns apply. The workspace owner is the nearest ancestor declaration whose root-contained patterns include that package. A dependency lockfile is the nearest ancestor `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, or `bun.lockb` between the package and workspace root. If multiple supported lockfile kinds coexist at that nearest directory, ownership is incomplete rather than selected by preference. No lockfile means no lockfile write is inferred. Every consulted manifest, workspace declaration, and lockfile identity is a semantic input.
+
+The compiled scan/classification and ownership rule versions participate in `AnalysisContractId`; selected patterns, overrides, classifications, reasons, and configuration identities participate in `AnalysisInputId`.
 
 ### 3.2 JavaScript and TypeScript
 
@@ -120,16 +156,17 @@ Specifier and configuration policy is:
 | Class | Contract |
 | --- | --- |
 | Resolution mode | Support `bundler`, legacy `node`, `node16`, and `nodenext`. Bundler/legacy-node and CJS lanes permit extensionless and directory fallback; Node16/NodeNext ESM lanes require an explicit relative extension and skip the extensionless and directory rows. Unsupported modes make resolution incomplete rather than selecting a fallback mode. |
+| Importer format | In Node16/NodeNext, `.mts`/`.mjs` are ESM and `.cts`/`.cjs` are CJS. `.ts`/`.tsx`/`.js`/`.jsx` and matching declarations use the nearest package `"type": "module"`, otherwise CJS. Static import/export selects `import` for ESM and `require` for CJS; `require()` always selects `require`, and dynamic `import()` selects `import`. Vue script edges use the bundler lane. |
 | Relative | Resolve inside the canonical root with the probe order above. Route-group characters such as `(doc)` are ordinary path bytes. |
 | Tsconfig | Use the importer's nearest config, root-contained relative/workspace-package `extends`, child override semantics, and the `baseUrl` of the config that declares each mapping. Cycles are incomplete configuration evidence. External-package extends and project-reference redirection are unsupported in this slice. |
 | `paths` | Exact key before wildcard; wildcard keys permit one `*` and use longest literal prefix then declaration order. Probe mapped targets before `baseUrl` and package resolution. |
-| Workspace package | Resolve `exports` exact key before one-star patterns. Within a condition object, the first supported matching branch in declaration order wins; the active set includes `types` for type space, `import` or `require` for the edge mode, `node`, and `default`. Unsupported condition shapes remain visible. |
+| Workspace package | Resolve `exports` exact key before one-star patterns. Within a condition object, the first supported matching branch in declaration order wins; the active set includes `types` for type space, `import` or `require` for the edge mode, `node`, and `default`. Edge resolution selects one lane; external public-surface protection follows the supported-lane union in Section 5.1. Unsupported condition shapes remain visible. |
 | Package fields without `exports` | Type space probes `types`, then `typings`, then a declaration companion for the selected value target. Value space uses `module` then `main` in bundler mode and `main` in Node modes, followed by permitted directory fallback. A type field never proves runtime value liveness. |
 | Bare external | Classify as `External` after workspace ownership lookup; never probe a similarly named relative file. |
 | Absolute, URL, package `imports`, or unsupported alias | Return typed `Unsupported` or `Unresolved` evidence with the limitation scope below; never skip the record. |
 | Generated virtual | Resolve only through an observed generated mapping; otherwise retain a typed virtual limitation. |
 
-Every source use receives one `ResolutionOutcome`. A skipped record without a typed reason is a contract failure. Resolver policy version and every consulted configuration identity participate in cache and analysis-contract identity.
+Every source use receives one `ResolutionOutcome`. A skipped record without a typed reason is a contract failure. The resolver policy version participates in `AnalysisContractId`; consulted configuration identities participate in exact cache keys and `AnalysisInputId`.
 
 ## 5. Graph and Dead-Export Contract
 
@@ -153,9 +190,10 @@ The default query reports candidates, confidence, protection reasons, and limita
 
 | Fact | Contract |
 | --- | --- |
-| Entry root | Explicit CLI entries, package `exports` targets, then edge-appropriate `module`/`main` targets establish module reachability. No heuristic `src/index` entry is invented. |
-| Public value surface | `exports` is authoritative when present; otherwise `module` then `main`. A directly exposed target protects its exported identities. A barrel protects only identities it actually re-exports, not every export in their source files. |
-| Public type surface | Type conditions in `exports`, then `types`, protect type identities only. |
+| Entry root | Explicit CLI entries and the targets selected for the active resolution profile establish module reachability. No heuristic `src/index` entry is invented. |
+| Public value surface | When `exports` exists, evaluate it independently for every supported external value lane (`node-import`, `node-require`, and `bundler-import`) and union the selected targets. Without `exports`, union `module` for bundler consumers and `main` for Node plus bundler fallback. A target protects only identities it actually exposes; a barrel never protects unexported siblings. |
+| Public type surface | Evaluate type-enabled import and require lanes in declaration order, then `types`/`typings` when `exports` is absent, and union type identities only. A value target or type branch cannot protect the other namespace. |
+| Public-surface opacity | An unsupported condition shape or unresolved selected public branch makes the affected package surface incomplete; it cannot silently protect the whole file or permit a dead-identity absence claim. |
 | Private package | `private: true` disables external-public protection from package fields; explicit entries still affect reachability and real workspace consumers still contribute fan-in. |
 | Test consumer | Contributes test fan-in and protects `dead-in-test`, but leaves a production-zero identity eligible for `dead-in-production` review. |
 | Side-effect/broad consumer | Preserves module liveness or marks target identities broad/unknown without incrementing exact identity fan-in. |
@@ -196,12 +234,12 @@ The slice implements:
 ```text
 lumin audit
 lumin overview
-lumin findings --area dead-code
-lumin explain <finding-id>
-lumin related <finding-id>
-lumin files <path>
+lumin findings --run <run-id> --area dead-code [--cursor <cursor>]
+lumin explain --run <run-id> <finding-id> [--evidence-cursor <cursor>] [--relations-cursor <cursor>]
+lumin related --run <run-id> <finding-id> [--cursor <cursor>]
+lumin files --run <run-id> <path> [--cursor <cursor>]
 lumin capabilities
-lumin export sarif
+lumin export sarif --run <run-id>
 ```
 
 All collection queries are bounded, deterministic, and cursor-resumable. Required capability failure appears in `overview` before ordinary findings.
@@ -213,10 +251,10 @@ The slice implements:
 ```text
 lumin pre-write [typed intent flags]
 lumin post-write <gate-id>
-lumin gate show <gate-id>
-lumin gate findings <gate-id>
-lumin gate explain <gate-id> <finding-id>
-lumin gate list --active
+lumin gate show <gate-id> [--revision <revision>]
+lumin gate findings <gate-id> --revision <revision> [--cursor <cursor>]
+lumin gate explain <gate-id> --revision <revision> <finding-id> [--evidence-cursor <cursor>] [--relations-cursor <cursor>]
+lumin gate list --active [--cursor <cursor>]
 lumin gate abandon <gate-id> --reason <text>
 ```
 
@@ -236,6 +274,17 @@ Required behavior:
 - post-write does not launch a full audit unless explicitly requested;
 - all locks released before result transport;
 - completed gate remains queryable.
+
+First-slice owners assign these gate effects:
+
+| Evidence or invariant | Effect |
+| --- | --- |
+| root escape, lease conflict, unplanned/cross-gate write, newly unresolved internal edge, missing declared dependency ownership, or a new dead export with zero exact/broad fan-in, complete potential-consumer coverage, no public protection, and no generated/vendor mute | `Block` |
+| required owner unavailable/failed, newly opaque evidence intersecting the planned affected set, or an unobservable required delta input | `Incomplete` |
+| baseline/config/source drift before decision commit | `Stale` |
+| unchanged pre-existing finding or grounded low-confidence/advisory candidate | `Warn` |
+
+Every mapping belongs to the relevant capability or gate-invariant policy version. The engine applies the ARCH-002 precedence table without changing these meanings. Pre-write rejection creates no lease; failed post-write remains active and records the attempted revision.
 
 A Rust path in this slice produces an explicit unsupported-language gate finding and cannot be silently routed to the JS owner.
 
@@ -265,10 +314,15 @@ The implementation creates repository fixtures with hand-authored expected truth
 | Corpus case | Required truth |
 | --- | --- |
 | `plain-esm` | Exact named/default/type-only fan-in and side-effect reachability remain distinct. |
+| `ignore-precedence` | Hard excludes, explicit include/exclude, nested `.gitignore`, and unobserved machine-global rules follow Section 3.1 exactly. |
+| `source-role-classification` | Test, production override, generated marker, authored override, vendor, and declaration roles persist version/reason/source without generic-directory muting. |
 | `extension-probe-precedence` | Explicit TypeScript/Vue paths are exact; JavaScript runtime-output substitution precedes the runtime file; extensionless, declaration, and directory behavior follows Section 4. |
 | `declaration-type-space` | Declaration facts satisfy type space only and cannot make a value export live. |
 | `tsconfig-aliases` | Exact, wildcard, `baseUrl`, and supported `extends` precedence matches Section 4; unsupported config remains visible. |
 | `workspace-package-exports` | Exact/pattern exports and edge-specific conditions resolve deterministically and define identity-scoped public surfaces. |
+| `module-format-conditions` | Node16/NodeNext importer format selects import/require conditions from extension, nearest package type, and edge syntax. |
+| `public-condition-union` | Import, require, bundler, and type public lanes protect only the identities selected for each supported lane. |
+| `package-fields-no-exports` | Bundler `module`, Node/bundler `main`, and type fields follow their declared resolution and public-protection roles. |
 | `reachable-dead-sibling` | A live file can still contain a zero-fan-in dead export candidate. |
 | `public-reexport-sibling` | One public re-export is protected; three unexported dead siblings remain candidates. |
 | `vue-entry` | `main.js -> App.vue` resolves and the graph completes. |
@@ -286,12 +340,15 @@ The implementation creates repository fixtures with hand-authored expected truth
 | `parallel-gates` | Read/read overlap coexists; write/write and write/read conflict atomically. |
 | `gate-path-identity` | New paths, aliases, directory descendants, symlinks/junctions, case policy, and rename endpoints follow ARCH-002. |
 | `gate-config-drift` | A changed semantic input makes the gate stale; an actual cross-gate write is denied. |
+| `gate-final-observation` | Source/config drift during post-write cannot produce `Allow` or release the active lease. |
+| `gate-lifecycle-effects` | Every pre/post decision follows the fixed effect precedence and lifecycle transition table. |
 | `unplanned-edit` | Unplanned changed, new, removed, and renamed paths cannot receive an allow decision. |
 | `mixed-vue-gate` | JS and Vue changes share one user gate and keep owner-specific facts. |
 | `required-capability-failure` | Overview warns that dead analysis is unavailable and never renders zero. |
 | `snapshot-and-latest` | Mid-scan drift blocks completion; failed or interrupted attempts remain visible beside the last completed run. |
-| `bounded-nested-query` | Top-level and nested evidence pages expose totals, truncation, and stable continuation. |
+| `bounded-nested-query` | Run and gate-revision pages expose immutable scope, totals, truncation, and stable top-level and nested continuation. |
 | `path-escape-and-corrupt-store` | Root escape and corrupt canonical storage hard-stop without fallback or empty evidence. |
+| `crash-publication` | Every publication crash point preserves or recovers staging, orphan, attempt, run, and latest-pointer state exactly as ARCH-002 specifies. |
 
 The corpus must include repositories synthesized from or minimized around real failure shapes, including Vue core-style package layouts and a Next.js route-group layout. A copied fixture records origin, license, source revision, and modifications in a local `PROVENANCE.md`; synthetic structure is preferred when copied code is unnecessary. Store-state fixtures are generated in a test temp root and do not require committing ignored `.lumin` output.
 
@@ -327,7 +384,7 @@ Runtime execution with Cargo unavailable is part of package acceptance.
 
 Performance approval has two non-circular phases.
 
-**Phase 0 feasibility:** before this document becomes active, disposable harnesses measure store locking/backend behavior, OXC parser memory and stack needs, and Windows/Linux static packaging feasibility. They cannot expose product APIs or become a production scaffold. Commands, hardware, inputs, and results are retained in the architecture review record; disposable code is removed after the decision.
+**Phase 0 feasibility:** before this document becomes active, non-production harnesses measure store locking/backend behavior, OXC parser memory and stack needs, and Windows/Linux static packaging feasibility. They cannot expose product APIs or become a production scaffold. Reproducible probe source, lock/toolchain identity, fixture hashes, commands, expected invariants, and raw results remain under `reviews/probes/<probe-id>/` outside the production workspace; disposable binaries and build output are removed.
 
 Architecture review then approves target budgets for:
 
@@ -344,12 +401,13 @@ Targets use named hardware/corpora, legacy baselines, and Phase 0 probes. They a
 
 **Phase 1 acceptance:** the completed public `lumin` binary is measured against every target below. A missed target is a slice failure or an explicitly reviewed contract revision; CI cannot invent or relax a number after seeing the result.
 
-Required benchmark environments are:
+Blocking benchmark environments are:
 
 - native Windows on NTFS;
 - WSL on ext4;
-- WSL against `/mnt/<drive>` as a separately labeled diagnostic environment;
 - Linux CI or a declared release-compatible Linux host.
+
+WSL against `/mnt/<drive>` is a separately labeled report-only diagnostic because host filesystem, antivirus, and mount policy are not release-controlled. It must run and report the same metrics, but it does not participate in AC 16's pass/fail budget. A regression there remains visible and may trigger a later product-contract amendment.
 
 Every benchmark reports source file count, total bytes, cache state, worker count, filesystem class, stage timings, and peak memory.
 
@@ -386,7 +444,7 @@ These omissions must be visible through `lumin capabilities` and relevant overvi
 13. The default run emits no legacy artifact warehouse.
 14. Required failures, snapshot freshness, and unsupported capabilities are prominent and queryable.
 15. Strict workspace formatting, lint, unit, integration, corpus, dependency-edge, and package checks pass.
-16. The public binary meets the approved Phase 1 performance and memory targets on every required environment.
+16. The public binary meets the approved Phase 1 performance and memory targets on every blocking environment and reports the `/mnt/<drive>` diagnostic separately.
 
 ## 15. Acceptance Traceability
 
@@ -403,13 +461,33 @@ These omissions must be visible through `lumin capabilities` and relevant overvi
 | 9 | `packages_share_behavior_contract` | package fixture set | both package-check targets | Windows/Linux query values match. |
 | 10 | `gate_round_trip_requires_id` | `mixed-vue-gate` | `lumin-xtask corpus foundation` | JSON decisions and explicit gate ID complete the round trip. |
 | 11 | `gate_conflicts_are_serializable` | parallel/config/path identity rows | `lumin-xtask corpus foundation` | Read/read admits; write/write and write/read reject or become stale as specified. |
-| 12 | `all_pages_are_reachable` | `bounded-nested-query` | `lumin-xtask corpus foundation` | Cursor traversal returns exactly `total` top-level and nested items. |
+| 12 | `all_pages_are_reachable` | `bounded-nested-query` | `lumin-xtask corpus foundation` | Run and gate-revision cursor traversal returns exactly `total` top-level and nested items without following a newer scope. |
 | 13 | `default_publication_is_bounded` | output-layout fixture | `lumin-xtask corpus foundation` | Only attempt/run envelopes, canonical store, and latest pointer are published. |
 | 14 | `failure_and_freshness_are_visible` | failure, parse, snapshot, corrupt-store rows | `lumin-xtask corpus foundation` | `overview` exposes incomplete/stale/failed states and never zero. |
 | 15 | `repository_policy_suite` | workspace and source policy | fmt, Clippy, workspace test, architecture-check | Every required quality command exits successfully. |
-| 16 | `release_performance_matrix` | named benchmark corpora | `lumin-xtask benchmark foundation` | Each approved time/memory target is reported and met. |
+| 16 | `release_performance_matrix` | named benchmark corpora | `lumin-xtask benchmark foundation` | Blocking time/memory targets are met and the `/mnt/<drive>` diagnostic is reported. |
 
-## 16. Verification Commands
+## 16. Product AC Coverage
+
+| Product AC | Slice status | Slice proof |
+| --- | --- | --- |
+| 1 one native process | in scope | Slice AC 8 and architecture-check runtime-launch policy. |
+| 2 prebuilt Windows/Linux | in scope | Slice AC 8-9 and package probes. |
+| 3 worker determinism | in scope | Slice AC 5-6. |
+| 4 required failure visible | in scope | Slice AC 14 and failure corpus. |
+| 5 no intent JSON workflow | in scope | Slice AC 10 and gate round trip. |
+| 6 completed gate queryable | in scope | Slice AC 10 plus gate lifecycle/revision corpus. |
+| 7 resumable truncation | in scope | Slice AC 12 and nested cursor corpus. |
+| 8 framework miss isolation | in scope | Slice AC 2. |
+| 9 identity-scoped public export | in scope | Slice AC 3-4. |
+| 10 projections are noncanonical | in scope | Slice AC 13 and projection checks. |
+| 11 one skill/binary contract | in scope | Slice AC 9 and both packaged skill probes. |
+| 12 corpus/platform/performance evidence | completion-gated | Slice AC 1, 9, and 16; remains unclaimed until all pass. |
+| 13 latest failure visible | in scope | Slice AC 14 and `snapshot-and-latest`. |
+| 14 explicit post-write gate ID | in scope | Slice AC 10. |
+| 15 semantic baseline conflict | in scope | Slice AC 11 and final-observation corpus. |
+
+## 17. Verification Commands
 
 The implementation must provide stable repository commands equivalent to:
 

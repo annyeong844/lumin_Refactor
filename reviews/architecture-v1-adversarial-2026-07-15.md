@@ -2,9 +2,11 @@
 
 Document role: durable architecture review and resolution record
 
-Status: findings addressed; independent verification pending
+Status: superseded by REVIEW-002 after independent verification
 
 Reviewed revision: `637218f89d9f963590af9788e6d90259aa145e4b`
+
+First amended and independently verified revision: `75ca5eda7457341d7e51d9cf2f63fb7d40198bd6`
 
 Freeze decision: blocked
 
@@ -12,7 +14,7 @@ Freeze decision: blocked
 
 An independent adversarial review packet supplied by the user examined every Phase 0 document and repository control file. It reviewed documents only; no implementation, corpus execution, package probe, or store benchmark existed.
 
-This record stores decisions and owner links instead of copying the full review into the permanent context path.
+This record stores the first review decisions and owner links instead of copying the full review into the permanent context path. Independent verification reopened F-03, F-07, and F-11 and found four new blockers; `REVIEW-002` owns their current status.
 
 ## Blocker Resolution Ledger
 
@@ -47,12 +49,6 @@ This record stores decisions and owner links instead of copying the full review 
 | Review durability | This record is linked by the Workboard. |
 | README/AGENTS repetition | README status is explicitly a Workboard projection; AGENTS remains a compact routed summary. |
 
-## Remaining Freeze Gates
+## Supersession
 
-1. Run and record the ARCH-002 store correctness/measurement comparison.
-2. Run Phase 0 OXC memory/stack and Windows/Linux packaging feasibility probes.
-3. Approve numeric Phase 1 target budgets from named evidence.
-4. Obtain one independent design review of the amended architecture.
-5. Obtain adversarial verification that this revision actually closes the findings above.
-
-No finding is an accepted risk yet. Architecture v1 remains draft and implementation remains blocked.
+See [REVIEW-002](architecture-v1-independent-verification-2026-07-15.md) for the exact verification hashes, reopened/new findings, resolution candidate, and current freeze gates. No finding was accepted as risk under this review.

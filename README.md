@@ -16,7 +16,7 @@ The architecture review packet is:
 4. [`architecture/002-evidence-and-write-gate.md`](architecture/002-evidence-and-write-gate.md)
 5. [`specs/001-foundation-slice.md`](specs/001-foundation-slice.md)
 
-The current review resolution ledger is [`REVIEW-001`](reviews/architecture-v1-adversarial-2026-07-15.md).
+The current freeze ledger is [`REVIEW-002`](reviews/architecture-v1-independent-verification-2026-07-15.md); [`REVIEW-001`](reviews/architecture-v1-adversarial-2026-07-15.md) preserves the first review history.
 
 [`SDD.md`](SDD.md) defines the permanent development method. [`AGENTS.md`](AGENTS.md) turns that method into repository working rules.
 

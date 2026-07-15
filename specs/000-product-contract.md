@@ -82,7 +82,7 @@ The same repository snapshot, configuration, and Lumin version must produce the 
 
 ### 2.7 AI Consumption
 
-The default interaction is evidence pull, not artifact push. An agent starts from a small overview, requests filtered findings, and drills into selected finding IDs. Every bounded response reports the total, returned count, truncation state, and continuation cursor.
+The default interaction is evidence pull, not artifact push. An agent starts from a small overview, retains its concrete run ID, requests findings pinned to that run, and drills into selected finding IDs. Every bounded response reports scope, total, returned count, truncation state, and continuation cursor.
 
 ### 2.8 Write Gate
 
@@ -91,6 +91,8 @@ Pre-write opens a durable transaction and returns one gate ID. Post-write requir
 Concurrent transactions may proceed only when their exclusive write leases do not overlap and no transaction writes another active gate's semantic inputs. Mixed-language work is one user transaction with internally owned language lanes.
 
 Every gate result has one decision: `Allow`, `AllowWithWarnings`, `Deny`, `Incomplete`, or `Stale`. Only the first two authorize the requested lifecycle step. Machine-readable output and process exit behavior are stable product contracts.
+
+A nonauthorizing pre-write creates a queryable rejected record but no active lease. A nonauthorizing post-write appends an attempted revision and leaves the existing gate active. Authorization is bound to the exact final worktree/config observation returned with the decision.
 
 ## 3. Non-Goals
 
@@ -113,7 +115,7 @@ Lumin v2 does not:
 4. A required capability failure is visible in the overview and cannot be interpreted as a clean result.
 5. Agents can complete audit, finding inspection, pre-write, and post-write without creating JSON files.
 6. A completed gate can be inspected later by gate ID.
-7. Query truncation is explicit and resumable.
+7. Query truncation is explicit, resumable, and pinned to one immutable scope or gate revision.
 8. Framework-specific misses cannot abort unrelated language or repository analysis.
 9. A public re-export protects only the exported identity, not every sibling export in the same file.
 10. Legacy JSON and SARIF are optional projections from canonical evidence, not independent truth owners.
@@ -121,7 +123,7 @@ Lumin v2 does not:
 12. Every accepted slice includes real corpus fixtures, platform verification, and measured performance evidence.
 13. The latest failed attempt cannot be hidden behind an older completed run.
 14. Post-write cannot infer or auto-select a gate ID.
-15. A write that invalidates another active gate's semantic baseline is rejected or makes that gate visibly stale before approval.
+15. A write that invalidates another active gate's semantic baseline or the final close observation is rejected or makes that gate visibly stale before approval.
 
 ## 5. Verification Contract
 

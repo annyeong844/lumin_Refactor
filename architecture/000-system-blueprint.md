@@ -91,7 +91,7 @@ Owns the dependency-light domain vocabulary:
 - source snapshots and fingerprints;
 - language-neutral module and symbol facts;
 - typed resolution outcomes;
-- build, analysis-contract, repository, attempt, run, gate, and embedded-source identity value types;
+- build, analysis-contract, analysis-input, repository, attempt, run, gate, gate-observation, and embedded-source identity value types;
 - completeness and opacity states.
 
 It must not depend on parsers, filesystems, persistence engines, CLI frameworks, or artifact formats. It is not a miscellaneous helper crate.
@@ -102,7 +102,7 @@ Owns canonical run evidence:
 
 - run, capability, finding, diagnostic, metric, and limitation records;
 - confidence and grounding states;
-- gate decisions and lifecycle evidence;
+- gate effects, decisions, lifecycle state, and lifecycle evidence;
 - stable evidence relationships;
 - gate findings shared by audit and write-gate workflows.
 
@@ -219,10 +219,12 @@ Type ownership and value authority are distinct:
 | Fact | Type owner | Value authority |
 | --- | --- | --- |
 | `BuildIdentity` | `lumin-model` | `lumin-cli` constructs it once from compile-time release metadata and passes it inward. |
-| `AnalysisContractId` | `lumin-model` | `lumin-engine` derives it from ordered capability semantic versions. |
+| `AnalysisContractId` | `lumin-model` | `lumin-engine` derives it only from the ordered software semantic versions of the profile, extractors, resolver, graph, and selected rules. |
+| `AnalysisInputId` | `lumin-model` | `lumin-engine` derives it from repository identity, profile parameters, scan policy, source-set identity, and consulted repository configuration identities. |
 | `RepositoryId` | `lumin-model` | `lumin-inventory` derives it from the canonical root and repository identity inputs. |
 | `AttemptId`, `RunId`, `GateId` | `lumin-model` | `lumin-store` allocates and persists them. |
-| `GateDecision` and lifecycle state | `lumin-evidence` | The engine gate application service derives them from canonical evidence. |
+| `GateObservationId` | `lumin-model` | `lumin-engine` derives it from one gate attempt's exact actual-write and semantic-read path sets and content identities. |
+| `GateEffect`, `GateDecision`, and lifecycle state | `lumin-evidence` | Capability and gate-invariant owners assign versioned effects; the engine gate service applies only the canonical reduction and transition tables. |
 | `EvidenceQuery` and `PageAnchor` | `lumin-evidence` | The engine query service validates filters and derives deterministic continuation anchors; `lumin-protocol` encodes and decodes opaque cursors. |
 | External protocol version and DTO schema | `lumin-protocol` | `lumin-protocol`. |
 | Run envelope, evidence-store, gate-store, and cache schema versions | `lumin-store` | `lumin-store`. |
@@ -318,6 +320,7 @@ lumin capabilities
 lumin pre-write
 lumin post-write <gate-id>
 lumin gate
+lumin runs
 lumin export
 lumin help-agent
 ```
@@ -362,7 +365,7 @@ No implementation file should normally exceed 500 lines excluding tests. A file 
 8. Packaging contains no copied source fallback.
 9. A vertical slice can be added without creating an empty future crate.
 10. Independent reviewers can identify where each product fact is created, transformed, persisted, and queried.
-11. Identity values and schema versions follow the authority table without reverse dependencies.
+11. Identity values and schema versions follow the authority table without reverse dependencies; software compatibility and repository input freshness use different IDs.
 12. Development verification runs through `lumin-xtask` without entering the production dependency DAG.
 
 ## 12. Review Questions

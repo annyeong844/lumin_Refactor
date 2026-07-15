@@ -204,7 +204,7 @@ No task may swallow a panic, channel closure, parse failure, or persistence erro
 - Every parser consumes the same bytes used to compute that snapshot's content identity.
 - Downstream stages consume facts, not source files.
 - Result transport occurs after analysis locks and leases are released.
-- Canonical persistence uses one writer and an atomic publish step.
+- Canonical persistence uses one writer and the ARCH-002 crash-consistent publication protocol.
 - WSL `/mnt/<drive>` performance is measured separately from WSL ext4 and native Windows; Rayon is not presented as a cure for cross-filesystem latency.
 
 ### 9.1 Snapshot and Freshness Contract
@@ -223,6 +223,13 @@ Any query that presents a current-worktree absence claim performs the required f
 ## 10. Incremental Identity
 
 Incremental reuse is an optimization over exact inputs, never a source of truth.
+
+`AnalysisContractId` and `AnalysisInputId` are deliberately different:
+
+- `AnalysisContractId` contains only ordered software semantic component versions and answers whether two evidence sets share one analysis meaning;
+- `AnalysisInputId` contains repository identity, profile parameters, scan policy, source-set identity, and consulted semantic configuration identities and answers whether the same software contract observed the same repository inputs.
+
+A configuration or source change creates a new `AnalysisInputId`, cache miss, or stale baseline under the same compatible `AnalysisContractId`. It never masquerades as binary semantic incompatibility. A software policy-version change creates a new `AnalysisContractId` even when repository bytes are unchanged.
 
 Per-file fact identity includes:
 
@@ -282,3 +289,4 @@ Metrics describe execution but do not redefine semantic findings.
 11. The stage node set is fixed before inventory executes; language presence changes only input batches.
 12. Vue template/script binding is finalized by `lumin-sfc`, and an external script payload is not read or parsed twice for one mode.
 13. Snapshot drift during a scan prevents completed-run publication, and later query drift is visible.
+14. Repository input changes alter `AnalysisInputId` without altering `AnalysisContractId`; software semantic-version changes alter the contract ID.
