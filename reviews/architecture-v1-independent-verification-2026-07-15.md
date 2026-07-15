@@ -13,7 +13,7 @@ Freeze decision: blocked
 | Original reviewed revision | `637218f89d9f963590af9788e6d90259aa145e4b` |
 | First amended revision | `75ca5eda7457341d7e51d9cf2f63fb7d40198bd6` |
 | Independent verification revision | `75ca5eda7457341d7e51d9cf2f63fb7d40198bd6` |
-| Resolution candidate revision | assigned by the resolution commit; independent verification still required |
+| Resolution candidate revision | `9e2af5fa3c6119be256b512a4be7188dd2a6932b`; independent verification still required |
 | Uploaded verification-set manifest SHA-256 | `af9f166b28f753c347d52ccd06b0c522054a2d02fe6fb359249978c83fe298a3` |
 | Independent report SHA-256 | `8580e750819b6d0552c1515069d281d0d613587eecf0a3eae1ca154fc4553f26` |
 | Verifier | external independent reviewer, report supplied by the user; not the architecture-authoring Codex session |
