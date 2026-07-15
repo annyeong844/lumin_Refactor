@@ -1,0 +1,129 @@
+# PRODUCT-000: Lumin v2 Product Contract
+
+Document role: product source of truth
+
+Status: draft
+
+Revision: 2026-07-15
+
+Scope: final Lumin v2 product, independent of implementation phase
+
+## 0. One-Line Definition
+
+Lumin gives AI coding agents grounded repository evidence, a safe transactional write gate, and explicit uncertainty without requiring users or agents to read an artifact warehouse.
+
+## 1. Problem
+
+The legacy product grew bottom-up across Node producers, Rust helpers, runtime bridges, generated source mirrors, and platform binaries. A single semantic change can cross all of those owners. Large JSON artifacts duplicate counts and statuses, normal resolution misses can abort unrelated analysis, and runtime fallback can hide incompatible or stale helpers.
+
+Lumin v2 exists to preserve the product identity while replacing that ownership model.
+
+## 2. Product Contract
+
+### 2.1 Identity
+
+Lumin remains:
+
+- a Codex skill;
+- a Claude Code skill;
+- a native repository-audit CLI;
+- a pre-write/post-write safety gate;
+- an evidence source for AI judgment, not a substitute for judgment.
+
+The skills are product surfaces. They must not contain a second implementation of analysis semantics.
+
+### 2.2 Core Workflows
+
+Lumin must support four workflows:
+
+1. Audit a repository and persist a versioned run.
+2. Query bounded evidence relevant to a user question.
+3. Open a pre-write transaction for planned changes.
+4. Validate and close that exact transaction after changes.
+
+Users and agents must not have to construct, retain, or delete request JSON files for these workflows.
+
+### 2.3 Evidence Honesty
+
+Every absence claim must identify:
+
+- the run and scan scope;
+- the capability that owns the claim;
+- whether that capability completed;
+- relevant opaque or unsupported surfaces;
+- whether the returned result was truncated.
+
+Missing, stale, degraded, or failed evidence must never be rendered as zero findings.
+
+### 2.4 Failure Semantics
+
+Expected repository facts are data, not process failures. Examples include unresolved imports, external packages, non-source assets, generated virtual modules, unsupported framework syntax, and parse failures isolated to individual files.
+
+Lumin hard-stops only when continuing would make the run contract dishonest, including:
+
+- malformed or unsupported request schemas;
+- a declared repository path escaping its root;
+- corrupt canonical evidence storage;
+- an impossible internal invariant;
+- a required capability failing without an artifact-visible incomplete result.
+
+Fallback must never silently change evidence ownership or semantics.
+
+### 2.5 Distribution
+
+Supported users must run Lumin without installing Cargo, Node analysis dependencies, or native parser bindings.
+
+The product ships verified prebuilt binaries for its declared platform matrix. A missing or incompatible required binary is a visible hard failure, not a request to compile during an audit.
+
+### 2.6 Determinism
+
+The same repository snapshot, configuration, and Lumin version must produce the same canonical findings and evidence identities regardless of worker count or task completion order.
+
+### 2.7 AI Consumption
+
+The default interaction is evidence pull, not artifact push. An agent starts from a small overview, requests filtered findings, and drills into selected finding IDs. Every bounded response reports the total, returned count, truncation state, and continuation cursor.
+
+### 2.8 Write Gate
+
+Pre-write opens a durable transaction and returns one gate ID. Post-write consumes that ID and compares against the same baseline. The agent must not resend the intent or locate invocation-specific files.
+
+Concurrent transactions may proceed only when their declared write sets do not overlap. Mixed-language work is one user transaction with internally owned language lanes.
+
+## 3. Non-Goals
+
+Lumin v2 does not:
+
+- ask an embedded language model to interpret arbitrary natural-language change requests;
+- make unsupported evidence look complete;
+- preserve legacy internal file layouts as architecture;
+- run two production analysis engines and choose between them at runtime;
+- create one crate per type, policy, or single-use helper;
+- require agents to read every raw finding or generated projection;
+- claim that Rust or parallelism alone fixes semantic false positives;
+- make every analysis parallel when a deterministic single-owner reduction is clearer.
+
+## 4. Product Acceptance Criteria
+
+1. The default audit path is one native process and contains no Node analysis stage.
+2. Windows and Linux users can execute supported releases without Cargo.
+3. `jobs=1` and `jobs=N` produce identical canonical evidence for the same snapshot.
+4. A required capability failure is visible in the overview and cannot be interpreted as a clean result.
+5. Agents can complete audit, finding inspection, pre-write, and post-write without creating JSON files.
+6. A completed gate can be inspected later by gate ID.
+7. Query truncation is explicit and resumable.
+8. Framework-specific misses cannot abort unrelated language or repository analysis.
+9. A public re-export protects only the exported identity, not every sibling export in the same file.
+10. Legacy JSON and SARIF are optional projections from canonical evidence, not independent truth owners.
+11. Codex and Claude Code skills invoke the same native product contract.
+12. Every accepted slice includes real corpus fixtures, platform verification, and measured performance evidence.
+
+## 5. Verification Contract
+
+Each active vertical-slice specification must map every acceptance criterion it claims to:
+
+- a behavior test;
+- a corpus case when repository semantics are involved;
+- a verification command;
+- an artifact or query result that proves completion.
+
+Architecture review may mark a criterion not yet implemented, but runtime output may not mark it complete until those proofs exist.

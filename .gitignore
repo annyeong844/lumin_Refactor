@@ -1,0 +1,8 @@
+.lumin/
+target/
+**/target/
+*.tmp
+*.log
+.env
+.DS_Store
+Thumbs.db
