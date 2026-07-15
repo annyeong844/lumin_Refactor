@@ -51,6 +51,7 @@ Every absence claim must identify:
 - the capability that owns the claim;
 - whether that capability completed;
 - relevant opaque or unsupported surfaces;
+- whether the evidence was validated against the current worktree;
 - whether the returned result was truncated.
 
 Missing, stale, degraded, or failed evidence must never be rendered as zero findings.
@@ -77,7 +78,7 @@ The product ships verified prebuilt binaries for its declared platform matrix. A
 
 ### 2.6 Determinism
 
-The same repository snapshot, configuration, and Lumin version must produce the same canonical findings and evidence identities regardless of worker count or task completion order.
+The same repository snapshot, configuration, and Lumin version must produce the same canonical semantic findings and evidence identities regardless of worker count or task completion order. Runtime metrics, publication metadata, and physical store layout are not semantic evidence.
 
 ### 2.7 AI Consumption
 
@@ -85,9 +86,11 @@ The default interaction is evidence pull, not artifact push. An agent starts fro
 
 ### 2.8 Write Gate
 
-Pre-write opens a durable transaction and returns one gate ID. Post-write consumes that ID and compares against the same baseline. The agent must not resend the intent or locate invocation-specific files.
+Pre-write opens a durable transaction and returns one gate ID. Post-write requires that ID and compares against the same baseline. The agent must not resend the intent or locate invocation-specific files.
 
-Concurrent transactions may proceed only when their declared write sets do not overlap. Mixed-language work is one user transaction with internally owned language lanes.
+Concurrent transactions may proceed only when their exclusive write leases do not overlap and no transaction writes another active gate's semantic inputs. Mixed-language work is one user transaction with internally owned language lanes.
+
+Every gate result has one decision: `Allow`, `AllowWithWarnings`, `Deny`, `Incomplete`, or `Stale`. Only the first two authorize the requested lifecycle step. Machine-readable output and process exit behavior are stable product contracts.
 
 ## 3. Non-Goals
 
@@ -116,6 +119,9 @@ Lumin v2 does not:
 10. Legacy JSON and SARIF are optional projections from canonical evidence, not independent truth owners.
 11. Codex and Claude Code skills invoke the same native product contract.
 12. Every accepted slice includes real corpus fixtures, platform verification, and measured performance evidence.
+13. The latest failed attempt cannot be hidden behind an older completed run.
+14. Post-write cannot infer or auto-select a gate ID.
+15. A write that invalidates another active gate's semantic baseline is rejected or makes that gate visibly stale before approval.
 
 ## 5. Verification Contract
 

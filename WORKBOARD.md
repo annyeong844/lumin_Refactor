@@ -30,14 +30,15 @@ An implementation is not allowed to redefine a higher-level contract implicitly.
 | ARCH-001 | draft | `architecture/001-execution-and-ownership.md` | Owns the Kahn/Rayon execution model, determinism, and memory ownership. |
 | ARCH-002 | draft | `architecture/002-evidence-and-write-gate.md` | Owns the evidence store, bounded query protocol, and pre/post transaction. |
 | SLICE-001 | draft | `specs/001-foundation-slice.md` | Defines the first production-grade JS/TS/SFC vertical slice. |
+| REVIEW-001 | verifying | `reviews/architecture-v1-adversarial-2026-07-15.md` | Records the first adversarial findings, decisions, and remaining freeze gates. |
 
 ## Active Work
 
-1. Review and challenge ARCH-000 through ARCH-002.
-2. Decide the `lumin-store` backend through the ARCH-002 correctness and measurement gate.
-3. Review SLICE-001 against the product contract and known failure corpus.
-4. Freeze Architecture v1 only after one design review and one independent adversarial review.
-5. Start implementation only after the review findings are resolved or recorded as accepted risks.
+1. Verify the REVIEW-001 resolutions against the amended architecture.
+2. Run the store, OXC memory/stack, and package feasibility probes.
+3. Select the store backend and approve named Phase 1 performance targets from measured evidence.
+4. Complete one independent design review and adversarial verification of the amended revision.
+5. Freeze Architecture v1 only after every remaining gate is recorded as passed or explicitly accepted risk.
 
 ## Routing Rules
 
@@ -47,6 +48,7 @@ An implementation is not allowed to redefine a higher-level contract implicitly.
 - Rayon, task ordering, cancellation, locks, memory, or determinism: read ARCH-001.
 - Store, queries, SARIF, pre-write, post-write, or parallel agents: read ARCH-002.
 - Any Phase 1 implementation or test: read SLICE-001.
+- Architecture freeze or review resolution: read REVIEW-001.
 - Repository working rules and close-out discipline: read `AGENTS.md`.
 
 ## Phase Ledger

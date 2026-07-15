@@ -67,12 +67,15 @@ crates/
     engine/                lumin-engine
     protocol/              lumin-protocol
     cli/                   lumin-cli
+tools/
+  xtask/                   lumin-xtask (development only)
 skills/
   codex/
   claude-code/
 specs/
 architecture/
 corpus/
+reviews/
 ```
 
 This tree describes the final destination. Crates are created only when an accepted vertical slice contains real behavior for them.
@@ -88,6 +91,7 @@ Owns the dependency-light domain vocabulary:
 - source snapshots and fingerprints;
 - language-neutral module and symbol facts;
 - typed resolution outcomes;
+- build, analysis-contract, repository, attempt, run, gate, and embedded-source identity value types;
 - completeness and opacity states.
 
 It must not depend on parsers, filesystems, persistence engines, CLI frameworks, or artifact formats. It is not a miscellaneous helper crate.
@@ -98,6 +102,7 @@ Owns canonical run evidence:
 
 - run, capability, finding, diagnostic, metric, and limitation records;
 - confidence and grounding states;
+- gate decisions and lifecycle evidence;
 - stable evidence relationships;
 - gate findings shared by audit and write-gate workflows.
 
@@ -110,7 +115,8 @@ Owns repository observation:
 - root validation and scan scope;
 - ignore and exclusion policy application;
 - workspace and nearest-manifest ownership;
-- one-read source snapshots and content identities;
+- semantic configuration snapshots;
+- extraction payload snapshots, final freshness identities, and source-set fingerprints;
 - generated, test-like, vendored, and out-of-scope classification.
 
 It emits project-owned model types. No downstream crate reads arbitrary source files behind its back.
@@ -122,6 +128,8 @@ It emits project-owned model types. No downstream crate reads arbitrary source f
 `lumin-sfc` owns Vue, Svelte, Astro, and related container decomposition. It emits embedded source units, component/resource references, and opaque framework evidence. It does not call the JS parser directly; the engine routes emitted embedded units to `lumin-js`.
 
 `lumin-rust` owns Rust syntax and optional compiler-oracle integration. Rust parser and compiler ecosystem types never leave the crate.
+
+Any future compiler oracle is an explicit opt-in external capability with visible toolchain requirements and unavailable semantics. It is not a hidden default dependency or runtime fallback.
 
 Every language crate lowers into `lumin-model` facts. A parse failure is a file outcome, not permission to invent an empty successful file.
 
@@ -143,6 +151,8 @@ enum ResolutionOutcome {
 `UnresolvedReason` and `UnsupportedReason` are dependency-light model values. Evidence owners may cite them later, but the model does not depend on the evidence crate.
 
 Framework crates choose the semantic kind of an edge; the resolver determines its target outcome. The resolver never throws merely because a legitimate target is absent.
+
+`lumin-resolve` also lowers inventory-owned package metadata into model-owned `PackageSurfaceDeclaration` facts. The graph consumes those declarations but never interprets `package.json` fields itself.
 
 ### 4.6 `lumin-graph`
 
@@ -172,7 +182,7 @@ No analysis crate writes artifacts or mutates the canonical graph. Analysis-spec
 
 ### 4.8 `lumin-store`
 
-Owns immutable run persistence and write-gate transactions. The selected persistence engine, schema, and migrations are private. It is the only crate permitted to call the backend API or commit canonical run storage.
+Owns immutable run persistence, exact-input cache persistence, and write-gate transactions. The selected persistence engine, physical cache schema, migrations, and locking primitives are private. Capability owners define semantic cache keys; only `lumin-store` calls the backend API or commits storage.
 
 ### 4.9 `lumin-engine`
 
@@ -201,6 +211,24 @@ It converts between domain values and wire values. Protocol types do not flow ba
 ### 4.11 `lumin-cli`
 
 Owns argument parsing, process exit policy, stdout/stderr discipline, and invocation of engine services. It contains no analysis semantics and does not select a fallback implementation.
+
+### 4.12 Identity and Version Authority
+
+Type ownership and value authority are distinct:
+
+| Fact | Type owner | Value authority |
+| --- | --- | --- |
+| `BuildIdentity` | `lumin-model` | `lumin-cli` constructs it once from compile-time release metadata and passes it inward. |
+| `AnalysisContractId` | `lumin-model` | `lumin-engine` derives it from ordered capability semantic versions. |
+| `RepositoryId` | `lumin-model` | `lumin-inventory` derives it from the canonical root and repository identity inputs. |
+| `AttemptId`, `RunId`, `GateId` | `lumin-model` | `lumin-store` allocates and persists them. |
+| `GateDecision` and lifecycle state | `lumin-evidence` | The engine gate application service derives them from canonical evidence. |
+| `EvidenceQuery` and `PageAnchor` | `lumin-evidence` | The engine query service validates filters and derives deterministic continuation anchors; `lumin-protocol` encodes and decodes opaque cursors. |
+| External protocol version and DTO schema | `lumin-protocol` | `lumin-protocol`. |
+| Run envelope, evidence-store, gate-store, and cache schema versions | `lumin-store` | `lumin-store`. |
+| Extractor, resolver, graph, and rule semantic versions | project-owned model values | The owning capability crate. |
+
+No crate duplicates a value because it owns a representation. Store and protocol receive model or evidence values through their allowed dependency direction.
 
 ## 5. Compile-Time Dependency DAG
 
@@ -231,10 +259,16 @@ The diagram is conceptual; the enforceable edge list is:
 - each analysis crate -> `lumin-model`, `lumin-evidence`, and only the graph products it actually consumes.
 - `lumin-store` -> `lumin-model`, `lumin-evidence`.
 - `lumin-protocol` -> `lumin-model`, `lumin-evidence`.
-- `lumin-engine` -> all capability crates it orchestrates and `lumin-store`.
-- `lumin-cli` -> `lumin-engine`, `lumin-protocol`.
+- `lumin-engine` -> `lumin-model`, `lumin-evidence`, all capability crates it orchestrates, and `lumin-store`.
+- `lumin-cli` -> `lumin-engine`, `lumin-protocol`, `lumin-model`.
 
 CI reads `cargo metadata` and rejects workspace dependency edges not listed in the canonical edge policy.
+
+### 5.1 Development-Tool DAG
+
+`tools/xtask` is one development-only crate with `architecture-check`, `corpus`, and `package-check` subcommands. It may inspect `cargo metadata`, repository policy files, fixtures, and public binary behavior. Production crates never depend on it, it is not linked into `lumin`, and it does not import private analysis internals to manufacture expected results.
+
+The architecture check combines `cargo metadata`, scoped Clippy disallowed-method/type policy, owner-path source checks, and compile/public-API boundary fixtures. It rejects global Rayon entry points, runtime Node/Cargo launch sites, source-file reads outside `lumin-inventory`, backend API use outside `lumin-store`, OXC imports outside `lumin-js`, and configured third-party types in public project APIs. Corpus and package checks execute the public binary.
 
 ## 6. Forbidden Dependencies
 
@@ -250,7 +284,8 @@ The following are architecture violations:
 - a `common`, `shared`, or `utils` crate without a named domain responsibility;
 - source copies generated into skill packages;
 - runtime feature probes duplicated across wrappers and binaries;
-- skills importing engine internals.
+- skills importing engine internals;
+- production crates depending on `lumin-xtask` or corpus fixtures.
 
 ## 7. End-to-End Data Flow
 
@@ -270,20 +305,24 @@ Each arrow crosses through project-owned types. Large ASTs and mutable parser st
 
 ## 8. Product Surfaces
 
-The one `lumin` binary exposes stable application commands:
+The one `lumin` binary exposes this canonical command set:
 
 ```text
 lumin audit
 lumin overview
 lumin findings
 lumin explain
+lumin related
+lumin files
+lumin capabilities
 lumin pre-write
-lumin post-write
+lumin post-write <gate-id>
 lumin gate
 lumin export
+lumin help-agent
 ```
 
-Codex and Claude Code skills teach this small command surface. They do not embed schemas, classification logic, platform binary selection policy, or lists of internal capabilities.
+`lumin-protocol` owns command DTOs and machine formats; `lumin-cli` owns parsing and exit mapping. Other documents may narrow a slice's available subset but cannot add commands. Codex and Claude Code skills teach this small surface without embedding schemas, classification logic, platform binary selection policy, or internal capability lists.
 
 ## 9. Build and Distribution
 
@@ -292,7 +331,7 @@ Codex and Claude Code skills teach this small command surface. They do not embed
 - Platform helpers are release products built in CI from the canonical workspace.
 - Skills package binaries and integrity metadata, not copied Rust source trees.
 - Runtime compilation is not a supported recovery path.
-- A binary reports one protocol version and one build identity owned by `lumin-protocol`.
+- A binary reports the protocol version owned by `lumin-protocol` and the `BuildIdentity` value supplied at process construction.
 - Package validation executes behavioral contract probes against every shipped binary.
 
 Additional platforms require an explicit product-contract amendment and corpus execution.
@@ -323,6 +362,8 @@ No implementation file should normally exceed 500 lines excluding tests. A file 
 8. Packaging contains no copied source fallback.
 9. A vertical slice can be added without creating an empty future crate.
 10. Independent reviewers can identify where each product fact is created, transformed, persisted, and queried.
+11. Identity values and schema versions follow the authority table without reverse dependencies.
+12. Development verification runs through `lumin-xtask` without entering the production dependency DAG.
 
 ## 12. Review Questions
 

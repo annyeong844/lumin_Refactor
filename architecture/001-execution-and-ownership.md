@@ -23,20 +23,19 @@ The final concurrency model therefore exists in the first accepted vertical slic
 The engine constructs the complete stage graph for the selected profile before executing work.
 
 ```text
-validate-root
-  -> inventory
-      -> extract-js/ts files -----------+
-      -> decompose-sfc files -> extract embedded js/ts
-      -> extract-rust files ------------+
-                                          -> resolve source uses
-                                              -> build symbol graph
-                                                  -> dead analysis --------+
-                                                  -> structure analysis ---+-> persist run
-                                                  -> clone analysis -------+
-                                                  -> discipline analysis --+
+validate-root -> inventory
+inventory -> extract-js-ts
+inventory -> decompose-sfc -> extract-inline-js-ts
+inventory -> extract-rust
+extract-js-ts + decompose-sfc + extract-inline-js-ts -> finalize-sfc-facts
+extract-js-ts + finalize-sfc-facts + extract-rust -> resolve-source-uses
+resolve-source-uses -> build-symbol-graph
+build-symbol-graph -> selected-analysis-stages -> persist-run
 ```
 
-The concrete graph varies by profile and observed languages, but every node declares:
+The stage node set is fixed before execution from the selected profile and compiled capability set. Inventory results never add or remove nodes; they supply deterministic input batches. A selected language stage receives an empty batch when no matching sources exist. A capability not compiled into the binary is represented as unavailable during profile construction rather than discovered by mutating the running DAG.
+
+Every node declares:
 
 - a stable task key;
 - prerequisite task keys;
@@ -49,6 +48,19 @@ The concrete graph varies by profile and observed languages, but every node decl
 Task nodes are enum-backed product operations, not dynamically named strings and not one trait implementation per tiny step.
 
 The Kahn graph contains capability and reduction stages, not one node for every source file. High-cardinality file work runs as deterministic data-parallel batches inside its owning stage. Batching controls memory and scheduling only; it cannot omit semantic work or truncate findings.
+
+### 2.1 SFC Finalization Stage
+
+`decompose-sfc` emits model-owned SFC structure, template uses, and embedded-source descriptors. `extract-inline-js-ts` lowers inline units through `lumin-js`, while `extract-js-ts` supplies facts for external source references. `finalize-sfc-facts`, implemented by `lumin-sfc` and routed by the engine, receives model-owned JS facts and performs Vue-specific binding between template component uses and script imports. Neither `lumin-engine` nor `lumin-graph` implements Vue policy.
+
+The model represents:
+
+- `EmbeddedSourceUnitId`, parent `SourceId`, parent byte-span mapping, parse mode, and content identity;
+- inline embedded bytes owned only until extraction completes;
+- `ExternalEmbeddedSourceRef(SourceId)` for `<script src>` rather than a copied source unit;
+- logical SFC attachment identity separately from the physical source span owner.
+
+An external script is read and parsed once for a given parse mode. Its JS facts and source-use edges remain owned by the physical `SourceId`; finalization emits an `SfcScriptAttachment` that links the parent SFC to those facts without cloning them under a second module identity. Inline facts remain owned by their `EmbeddedSourceUnitId`. A `lang` attribute that conflicts with the external file's supported parse mode is explicit unsupported evidence in the first slice, not permission to parse the same source under an implicit second mode.
 
 ## 3. Kahn Scheduler Contract
 
@@ -96,7 +108,7 @@ Capability crates may use Rayon parallel iterators only while installed in the e
 
 ### 5.1 Source Workers
 
-Inventory enumerates normalized `SourceEntry` values without retaining the entire corpus bytes. A file worker reads one entry, creates a `SourceSnapshot` from the exact worktree bytes, computes its identity, checks exact-input reuse, and either drops hit bytes or parses miss bytes within that worker pipeline.
+Inventory enumerates normalized `SourceEntry` values without retaining the entire corpus bytes. An engine-owned file-worker adapter asks `lumin-inventory` to read one entry and create a `SourceSnapshot` from the exact worktree bytes, then queries `lumin-store` through a backend-neutral cache reader. It drops hit bytes or calls the owning language extractor for miss bytes. Language capability crates never read arbitrary files or open the cache or persistence backend themselves.
 
 For parser-backed languages, each worker owns:
 
@@ -108,6 +120,8 @@ For parser-backed languages, each worker owns:
 
 AST and allocator-backed references never cross the worker boundary. Workers lower all retained information into project-owned values before returning.
 
+Cache misses return fact records and cache-write candidates as owned outputs. One deterministic cache writer commits compatible entries after reduction; cache writes never mutate canonical run evidence.
+
 ### 5.2 Shared Inputs
 
 Large immutable byte buffers may use `Arc<[u8]>` when multiple real consumers require the same bytes. `Arc` cloning is allowed only for intentional immutable sharing. Shared mutable parser, graph, or evidence state is forbidden.
@@ -118,8 +132,8 @@ Workers return owned result enums such as:
 
 ```text
 Complete(FileFacts)
-Incomplete(FileFacts, diagnostics)
-Unsupported(OpaqueFact)
+Incomplete(FileFacts, diagnostics, LimitationScope)
+Unsupported(OpaqueFact, LimitationScope)
 Failed(FileFailure)
 ```
 
@@ -140,6 +154,10 @@ Every fan-in point has a single reducer that:
 Stable ordering keys include normalized repository path, source span, symbol identity, use kind, and finding rule. Wall-clock completion order is never an ordering key.
 
 Maps that affect persisted output use deterministic ordering or are sorted before persistence. Generated timestamps are metadata and do not participate in cache or semantic identities.
+
+Determinism compares a canonical semantic dump, not physical store bytes. The dump includes sorted source identities, facts, findings, capability states, limitations, diagnostics, semantic policy versions, and stable IDs. It excludes run IDs, timestamps, worker policy, timings, cache and RSS metrics, publication pointers, physical page layout, store size, and store hash. Runtime metrics remain canonical run records in a non-semantic partition.
+
+Cross-run finding IDs derive from rule ID and version plus repository-relative semantic source, symbol, and evidence identity. Run-local ordinals are not finding IDs. A hash collision is an internal hard-stop unless the owning ID format provides deterministic collision disambiguation.
 
 ## 7. Stage Parallelism
 
@@ -173,6 +191,8 @@ Failures are classified by their owner:
 - `unsupported`: the run continues with opaque evidence;
 - `hard-stop`: the scheduler stops dispatching dependent work and refuses to publish a completed run.
 
+Every incomplete or opaque result carries a model-owned limitation scope: `File`, `Module`, `ExplicitTargets`, `Package`, or `Workspace`. Analysis owners must intersect that scope with candidate evidence before making an absence claim. A vertical slice defines the normative scope for each supported failure and opacity class; reducers cannot invent or widen it silently.
+
 Already running workers may finish and release resources, but their outputs are not promoted into a completed run after a hard-stop. Cancellation is cooperative and artifact-visible; elapsed wall-time caps are not a correctness mechanism.
 
 No task may swallow a panic, channel closure, parse failure, or persistence error and replace it with default data.
@@ -180,12 +200,25 @@ No task may swallow a panic, channel closure, parse failure, or persistence erro
 ## 9. Filesystem and I/O Rules
 
 - Inventory enumerates the source set once without retaining all source bytes.
-- Each analyzed worktree file is read once per cold run by its worker pipeline.
+- Each analyzed worktree payload is read once for extraction per cold run; a separate final hash-only freshness pass is permitted.
 - Every parser consumes the same bytes used to compute that snapshot's content identity.
 - Downstream stages consume facts, not source files.
 - Result transport occurs after analysis locks and leases are released.
 - Canonical persistence uses one writer and an atomic publish step.
 - WSL `/mnt/<drive>` performance is measured separately from WSL ext4 and native Windows; Rayon is not presented as a cure for cross-filesystem latency.
+
+### 9.1 Snapshot and Freshness Contract
+
+`SnapshotStatus` is a model-owned value evaluated against an explicit observation:
+
+- `Current`: the complete source set, semantic configuration set, and exact content identities were compared and match;
+- `Drifted`: a compared path set or content identity differs;
+- `Unverifiable`: the required comparison was not or could not be completed;
+- `UnstableDuringScan`: the source or semantic configuration snapshot changed between capture and publication validation.
+
+Before publishing a completed run, inventory repeats source/config set discovery and an exact hash-only identity pass. `UnstableDuringScan` publishes an attempt failure but no completed run. Lumin does not retry under an arbitrary wall-time or attempt cap.
+
+Any query that presents a current-worktree absence claim performs the required freshness comparison. A historical query may skip that work only by reporting `Unverifiable` for current-worktree freshness. Stored source fingerprints still describe exactly which bytes the historical evidence analyzed.
 
 ## 10. Incremental Identity
 
@@ -236,7 +269,7 @@ Metrics describe execution but do not redefine semantic findings.
 
 ## 13. Acceptance Criteria
 
-1. `jobs=1` and each supported parallel worker count produce byte-identical canonical evidence, excluding explicitly non-semantic runtime metadata.
+1. `jobs=1` and each supported parallel worker count produce byte-identical canonical semantic dumps.
 2. Randomized task completion order does not change IDs, counts, ordering, or classifications.
 3. A scheduler cycle fails before capability execution.
 4. Parser AST types cannot be named from downstream crates.
@@ -246,3 +279,6 @@ Metrics describe execution but do not redefine semantic findings.
 8. A missing SFC target produces typed unresolved evidence while unrelated files complete.
 9. A hard-stop cannot publish a run marked complete.
 10. Cold and warm corpus benchmarks report stage timings and peak memory on native Windows, WSL ext4, and the declared Linux CI platform.
+11. The stage node set is fixed before inventory executes; language presence changes only input batches.
+12. Vue template/script binding is finalized by `lumin-sfc`, and an external script payload is not read or parsed twice for one mode.
+13. Snapshot drift during a scan prevents completed-run publication, and later query drift is visible.

@@ -2,7 +2,7 @@
 
 Lumin v2 is an architecture-first rewrite of the Lumin repository-audit and write-gate product. It remains a native CLI and Codex/Claude Code skill, but replaces the legacy multi-producer artifact pipeline with one deterministic Rust engine, queryable canonical evidence, and durable pre-write/post-write transactions.
 
-Status: Phase 0 architecture draft. No implementation scaffold has been accepted.
+Status: Phase 0 architecture draft. This line is a projection of `WORKBOARD.md`; no implementation scaffold has been accepted.
 
 ## Read the Blueprint
 
@@ -15,6 +15,8 @@ The architecture review packet is:
 3. [`architecture/001-execution-and-ownership.md`](architecture/001-execution-and-ownership.md)
 4. [`architecture/002-evidence-and-write-gate.md`](architecture/002-evidence-and-write-gate.md)
 5. [`specs/001-foundation-slice.md`](specs/001-foundation-slice.md)
+
+The current review resolution ledger is [`REVIEW-001`](reviews/architecture-v1-adversarial-2026-07-15.md).
 
 [`SDD.md`](SDD.md) defines the permanent development method. [`AGENTS.md`](AGENTS.md) turns that method into repository working rules.
 

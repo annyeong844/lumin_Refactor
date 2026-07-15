@@ -14,7 +14,7 @@ Read `WORKBOARD.md` first. Follow its routing table and load only the owner docu
 
 5. **Keep evidence canonical and queryable.** Canonical findings live in the store; summaries, SARIF, and compatibility files are projections. Missing, stale, unsupported, opaque, failed, and truncated evidence remain explicit states. Bounded queries report total, returned, truncation, and continuation.
 
-6. **Treat pre/post as one durable transaction.** Pre-write returns a gate ID; post-write closes that ID. Agents do not create intent JSON or clean transport files. Overlapping write sets fail closed, disjoint gates may proceed, and no scan or store lock survives result transport.
+6. **Treat pre/post as one durable transaction.** Pre-write returns a gate ID; post-write requires that ID. Agents do not create intent JSON or clean transport files. Write/write and write/semantic-read conflicts fail closed, and no scan or store lock survives result transport.
 
 7. **Isolate costly dependencies.** OXC belongs only to `lumin-js`; the selected persistence engine belongs only to `lumin-store`. A new dependency needs measured product value, boundary ownership, and reviewed build, binary-size, unsafe, and transitive costs. Runtime Cargo, Node analysis dependencies, and source fallbacks are forbidden.
 
