@@ -122,7 +122,7 @@ A successful run publishes:
 
 ```text
 .lumin/runs/<run-id>/run.json
-.lumin/runs/<run-id>/evidence.sqlite
+.lumin/runs/<run-id>/evidence.store
 ```
 
 No legacy analysis JSON is emitted by default.
@@ -288,7 +288,7 @@ These omissions must be visible through `lumin capabilities` and relevant overvi
 2. The Vue and Next.js regression corpora complete the symbol graph without a process abort.
 3. The 20-module public-re-export corpus reports all 60 dead siblings and protects all 20 public identities.
 4. A reachable file's unused export remains a candidate.
-5. `jobs=1` and repeated default-job runs produce identical semantic database dumps and finding IDs.
+5. `jobs=1` and repeated default-job runs produce identical semantic store dumps and finding IDs.
 6. Randomized worker completion tests preserve output identity.
 7. No analyzed source file is read or parsed more than once in a cold run.
 8. No runtime path executes Node or Cargo.

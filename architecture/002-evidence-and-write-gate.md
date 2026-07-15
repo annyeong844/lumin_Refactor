@@ -29,11 +29,11 @@ The internal workspace layout is:
 ```text
 .lumin/
   latest.json
-  gates.sqlite
+  gates.store
   runs/
     <run-id>/
       run.json
-      evidence.sqlite
+      evidence.store
   cache/
     ... disposable exact-input cache ...
 ```
@@ -46,14 +46,14 @@ Users and agents do not edit these files directly.
 
 - run ID, repository identity, Lumin build identity, and envelope schema version;
 - publication state;
-- the evidence database schema, identity, size, and hash;
-- enough failure detail to explain why no valid evidence database was published.
+- the evidence store format, schema, identity, size, and hash;
+- enough failure detail to explain why no valid evidence store was published.
 
-Scan scope, capability states, findings, counts, blind zones, metrics, and suggested queries are read from `evidence.sqlite`. The envelope is publication metadata, not a second evidence summary.
+Scan scope, capability states, findings, counts, blind zones, metrics, and suggested queries are read from `evidence.store`. The envelope is publication metadata, not a second evidence summary.
 
-### 2.2 `evidence.sqlite`
+### 2.2 `evidence.store`
 
-The immutable run database stores normalized:
+The immutable run store contains normalized:
 
 - capabilities;
 - source identities and spans;
@@ -64,19 +64,35 @@ The immutable run database stores normalized:
 - metrics;
 - projection metadata.
 
-Only `lumin-store` knows the schema or executes SQL. No public product contract requires direct SQL access.
+Only `lumin-store` knows the physical schema or backend API. No public product contract exposes SQL, tables, or backend-specific keys.
 
-The engine builds a run in a private temporary location, validates it, closes the writer, and atomically publishes the completed run directory. A failed run may publish a separate failure envelope, but it cannot publish an evidence database marked complete.
+The engine builds a run in a private temporary location, validates it, closes the writer, and atomically publishes the completed run directory. A failed run may publish a separate failure envelope, but it cannot publish an evidence store marked complete.
 
-### 2.3 `gates.sqlite`
+### 2.3 `gates.store`
 
-The repository-wide gate database contains declared intents, logical path leases, baseline fingerprints and facts, advisory findings, close-out deltas, and lifecycle history for every gate in that repository.
+The repository-wide gate store contains declared intents, logical path leases, baseline fingerprints and facts, advisory findings, close-out deltas, and lifecycle history for every gate in that repository.
 
-One database is required so overlap detection and lease creation occur in the same SQLite transaction. Completed gate rows become immutable by application contract. Active gates are not temporary transport records and are never silently removed while open.
+One transactional store is required so overlap detection and lease creation commit atomically across concurrent Lumin processes. Completed gate records become immutable by application contract. Active gates are not temporary transport records and are never silently removed while open.
 
 ### 2.4 Cache
 
 Cache content is disposable and noncanonical. Deleting it may affect performance but cannot change the meaning of a completed run or gate. Cache corruption becomes a visible miss.
+
+### 2.5 Storage Backend Decision Gate
+
+Architecture v1 does not select a persistence engine by familiarity. `lumin-store` first defines a backend-neutral contract for:
+
+- immutable run publication and read-only reopening;
+- indexed bounded queries with stable cursors;
+- one atomic cross-process gate lease transaction;
+- crash recovery, migrations, and corruption-visible failure;
+- Windows NTFS, Linux ext4, and Linux musl release operation.
+
+The architecture review benchmarks at least one pure-Rust embedded candidate, initially `redb`, against bundled SQLite. The comparison records clean and incremental build time, release binary size, transitive and unsafe surface, cold and warm store latency, peak memory, store size, multi-process contention behavior, and crash recovery.
+
+`redb`'s first probe is two independent writer processes contending for the same gate store. If open/lock/retry behavior cannot preserve atomic lease admission without a daemon or a second truth owner, the candidate is rejected before performance comparison.
+
+The first failing correctness requirement rejects a candidate before performance ranking. Architecture v1 records one accepted backend and rationale; production does not ship dual backends or a runtime fallback.
 
 ## 3. Canonical Evidence Model
 
@@ -265,7 +281,7 @@ Close-out verifies:
 - capability regressions and newly opaque evidence;
 - generated-artifact effects within declared scope.
 
-The close-out result and logical lease release commit in one database transaction. Result transport occurs after storage locks are released.
+The close-out result and logical lease release commit in one store transaction. Result transport occurs after storage locks are released.
 
 ## 8. Concurrent Agents and Path Leases
 
@@ -276,7 +292,7 @@ On `pre-write`:
 1. Normalize the declared write set.
 2. Compare it with every active gate in the same repository.
 3. Reject an overlapping write set with the conflicting gate IDs and paths.
-4. Atomically persist non-overlapping leases and the new baseline in `gates.sqlite`.
+4. Atomically persist non-overlapping leases and the new baseline in `gates.store`.
 
 Directory declarations expand to their observed source paths at open time and retain a directory-level lease for new-file detection.
 
@@ -336,15 +352,15 @@ A caller may explicitly request a broader audit, but the write gate does not sil
 
 - Repository roots and planned paths are canonicalized before storage.
 - A path escaping the declared root is rejected.
-- Database writes use parameterized operations.
+- Store writes use validated typed operations; raw backend queries do not cross `lumin-store`.
 - Store locks live under the repository-owned `.lumin` directory, not a shared global temp path.
-- Published run envelopes contain database hashes.
+- Published run envelopes contain evidence-store hashes.
 - A gate cannot close under a different repository identity.
 - Incompatible lifecycle schemas fail closed with a concise recovery instruction.
 
 ## 13. Acceptance Criteria
 
-1. A complete default audit creates only the small run envelope and canonical evidence database.
+1. A complete default audit creates only the small run envelope and canonical evidence store.
 2. An agent can answer a focused finding question without opening either file directly.
 3. Every bounded response supports explicit continuation.
 4. Projection limits cannot change canonical counts.
@@ -358,3 +374,4 @@ A caller may explicitly request a broader audit, but the write gate does not sil
 12. Dependency checks use the nearest owner manifest for the planned paths.
 13. Completed gate evidence remains queryable after process exit.
 14. No storage or scan lock is held while stdout or a result projection is transported.
+15. Architecture v1 selects exactly one store backend only after the correctness probes and measured comparison pass.

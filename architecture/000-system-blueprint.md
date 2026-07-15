@@ -31,7 +31,7 @@ The entire destination architecture is designed before implementation. Implement
 1. One production engine owns analysis semantics.
 2. Crate boundaries enforce dependency direction at compile time.
 3. Each fact has one canonical owner.
-4. Parser, database, CLI, and framework library types do not cross their owner crate.
+4. Parser, persistence, CLI, and framework library types do not cross their owner crate.
 5. Expected repository uncertainty is represented by typed outcomes.
 6. Parallel workers produce owned values; reducers own shared state.
 7. Skills are thin product adapters, not alternate engines.
@@ -90,7 +90,7 @@ Owns the dependency-light domain vocabulary:
 - typed resolution outcomes;
 - completeness and opacity states.
 
-It must not depend on parsers, filesystems, SQLite, CLI frameworks, or artifact formats. It is not a miscellaneous helper crate.
+It must not depend on parsers, filesystems, persistence engines, CLI frameworks, or artifact formats. It is not a miscellaneous helper crate.
 
 ### 4.2 `lumin-evidence`
 
@@ -172,7 +172,7 @@ No analysis crate writes artifacts or mutates the canonical graph. Analysis-spec
 
 ### 4.8 `lumin-store`
 
-Owns immutable run persistence and write-gate transactions. SQLite and migration details are private. It is the only crate permitted to execute SQL or commit canonical run storage.
+Owns immutable run persistence and write-gate transactions. The selected persistence engine, schema, and migrations are private. It is the only crate permitted to call the backend API or commit canonical run storage.
 
 ### 4.9 `lumin-engine`
 
@@ -185,7 +185,7 @@ Owns orchestration:
 - audit and write-gate application services;
 - persistence coordination.
 
-It contains no parser implementation, analysis policy, SQL, Markdown rendering, or framework convention logic.
+It contains no parser implementation, analysis policy, persistence backend calls, Markdown rendering, or framework convention logic.
 
 ### 4.10 `lumin-protocol`
 
@@ -245,7 +245,7 @@ The following are architecture violations:
 - graph crates accessing the filesystem or parser types;
 - language crates depending on each other;
 - SFC code embedded in the generic resolver or graph;
-- SQL outside `lumin-store`;
+- persistence backend APIs or types outside `lumin-store`;
 - `serde_json::Value` as cross-crate domain transport;
 - a `common`, `shared`, or `utils` crate without a named domain responsibility;
 - source copies generated into skill packages;
@@ -315,7 +315,7 @@ No implementation file should normally exceed 500 lines excluding tests. A file 
 
 1. Every final capability has exactly one owner crate.
 2. The dependency graph is acyclic and machine-checked against the canonical edge policy.
-3. No parser or database type crosses its owner boundary.
+3. No parser or persistence-engine type crosses its owner boundary.
 4. No stage exchanges analysis data through JSON.
 5. SFC resolution misses are representable without exceptions or graph abortion.
 6. Exact public API protection is symbol-scoped.
@@ -331,7 +331,7 @@ Architecture reviewers must challenge:
 - whether `lumin-model` or `lumin-engine` can become a new mega-crate;
 - whether an analysis policy has leaked into orchestration;
 - whether SFC ownership is sufficiently isolated without duplicating JS parsing;
-- whether SQLite persistence can remain behind one API;
+- whether the selected persistence engine satisfies the ARCH-002 decision gate without leaking through `lumin-store`;
 - whether the dependency edge policy is enforceable rather than aspirational;
 - whether any compatibility requirement would force a second production truth owner;
 - whether the first vertical slice proves the architecture instead of bypassing it.

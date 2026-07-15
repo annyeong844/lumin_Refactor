@@ -34,9 +34,10 @@ An implementation is not allowed to redefine a higher-level contract implicitly.
 ## Active Work
 
 1. Review and challenge ARCH-000 through ARCH-002.
-2. Review SLICE-001 against the product contract and known failure corpus.
-3. Freeze Architecture v1 only after two independent adversarial reviews.
-4. Start implementation only after the review findings are resolved or recorded as accepted risks.
+2. Decide the `lumin-store` backend through the ARCH-002 correctness and measurement gate.
+3. Review SLICE-001 against the product contract and known failure corpus.
+4. Freeze Architecture v1 only after one design review and one independent adversarial review.
+5. Start implementation only after the review findings are resolved or recorded as accepted risks.
 
 ## Routing Rules
 
@@ -44,7 +45,7 @@ An implementation is not allowed to redefine a higher-level contract implicitly.
 - Product identity, user-visible guarantees, supported environments: read PRODUCT-000.
 - Adding, removing, or changing a crate dependency: read ARCH-000.
 - Rayon, task ordering, cancellation, locks, memory, or determinism: read ARCH-001.
-- Artifacts, SQLite, queries, SARIF, pre-write, post-write, or parallel agents: read ARCH-002.
+- Store, queries, SARIF, pre-write, post-write, or parallel agents: read ARCH-002.
 - Any Phase 1 implementation or test: read SLICE-001.
 - Repository working rules and close-out discipline: read `AGENTS.md`.
 
@@ -52,7 +53,7 @@ An implementation is not allowed to redefine a higher-level contract implicitly.
 
 | Phase | State | Exit condition |
 | --- | --- | --- |
-| Phase 0: architecture | active | Architecture v1 passes independent design and adversarial review. |
+| Phase 0: architecture | active | Architecture v1 passes independent design and adversarial review, including the measured store decision. |
 | Phase 1: foundation slice | blocked by Phase 0 | SLICE-001 passes its complete acceptance corpus on Windows and Linux prebuilt binaries. |
 | Phase 2: capability growth | not started | New capabilities enter through the frozen DAG without creating a second engine. |
 | Phase 3: legacy retirement | not started | Required compatibility exports and corpus parity are complete; Node analysis paths are removed. |
