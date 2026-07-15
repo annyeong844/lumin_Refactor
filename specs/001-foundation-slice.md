@@ -1,16 +1,16 @@
-# SLICE-001: Native JS/TS/Vue Evidence and Write Gate
+# SLICE-001: Native JS/TS/SFC Foundation, Vue Evidence, and Write Gate
 
 Document role: first implementation specification
 
 Status: draft, blocked by Architecture v1 review
 
-Revision: 2026-07-15
+Revision: 2026-07-16
 
 Parents: PRODUCT-000, ARCH-000, ARCH-001, ARCH-002
 
 ## 0. One-Line Definition
 
-The first slice ships a production-grade native path from Codex/Claude invocation through parallel JS/TS/Vue analysis, export-level dead evidence, bounded queries, and a durable pre/post transaction on Windows and Linux prebuilt binaries.
+The first slice ships a production-grade native path from Codex/Claude invocation through parallel JS/TS analysis and the dialect-extensible SFC pipeline, with Vue as the first production dialect, export-level dead evidence, bounded queries, and a durable pre/post transaction on Windows and Linux prebuilt binaries.
 
 ## 1. Why This Slice Is First
 
@@ -35,7 +35,7 @@ SLICE-001 creates only crates that contain real slice behavior:
 - `lumin-evidence`;
 - `lumin-inventory`;
 - `lumin-js`;
-- `lumin-sfc` with complete Vue ownership for the declared corpus;
+- `lumin-sfc` with the permanent dialect-extensible SFC boundary and complete Vue ownership for the declared corpus;
 - `lumin-resolve`;
 - `lumin-graph`;
 - `lumin-dead`;
@@ -54,7 +54,7 @@ The Rust, clone, structure, and discipline analysis crates are not created in th
 
 | Input class | Normative first-slice behavior |
 | --- | --- |
-| Source extensions | Include `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.mts`, `.cts`, `.d.ts`, `.d.mts`, `.d.cts`, and `.vue` under the canonical root. |
+| Source extensions | Include `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.mts`, `.cts`, `.d.ts`, `.d.mts`, `.d.cts`, `.vue`, `.svelte`, and `.astro` under the canonical root. Vue is analyzable; Svelte and Astro are admitted SFC sources with explicit unavailable capability in this slice. |
 | Ignore policy | Apply the precedence below. Always exclude `.git`, `.lumin`, and dependency-owned `node_modules`; do not prune an authored directory merely because its basename is `target`, `build`, or `coverage`. |
 | Generated/vendor | Apply versioned role rules below. In-scope uses may contribute liveness, but generated or vendored definitions are not default dead-removal candidates. |
 | Tests | Apply versioned test-role rules below. Full audit counts their fan-in separately; production liveness does not treat test-only consumers as production consumers. |
@@ -116,9 +116,11 @@ The slice must preserve evidence for:
 
 Unsupported syntax is recorded by its owning file or capability and cannot become an empty successful file. Its downstream absence impact follows the explicit limitation scopes in Section 5.2.
 
-### 3.3 Vue SFC
+### 3.3 SFC Foundation and First Vue Dialect
 
-For Vue files, `lumin-sfc` owns:
+This slice opens the permanent SFC pipeline rather than a Vue-only branch. Common project-owned facts carry explicit dialect identity, per-dialect capability status, and shared embedded-source, component/resource, opacity, and finalization outcomes. `lumin-sfc` owns dialect dispatch and policy; the engine, resolver, and graph consume only the common project-owned boundary. Vue completeness cannot collapse Svelte or Astro unavailable states into aggregate SFC completeness. This is a closed internal extension seam, not a public plugin API or one trait/crate per dialect.
+
+Vue is the first production-supported dialect. For Vue files, `lumin-sfc` owns:
 
 - SFC block decomposition;
 - inline and `src` script units;
@@ -132,7 +134,7 @@ After JS extraction, the ARCH-001 `finalize-sfc-facts` stage returns model-owned
 
 An import such as `import App from "./App.vue"` resolves to the Vue source module when present. A missing `.vue` target becomes unresolved evidence. Neither case is routed through an exception labeled `non-source-asset-specifier`.
 
-Svelte, Astro, and other SFC dialects remain explicitly unavailable in this slice. The generic graph cannot claim they were analyzed.
+Svelte, Astro, and other SFC dialects remain explicitly unavailable in this slice. Recognized dialects enter through the same inventory and SFC stages, produce dialect-scoped unavailable evidence, and cannot be presented as analyzed by the generic graph. Supporting a new dialect adds behavior and corpus truth inside `lumin-sfc`; it does not add an engine branch, another scheduler, or a fallback analyzer.
 
 ## 4. Resolution Contract
 
@@ -140,7 +142,7 @@ Resolution is performed against the immutable source inventory and semantic conf
 
 | Specifier or host candidate | Ordered first-slice probes |
 | --- | --- |
-| Explicit TypeScript or Vue source path | Exact path only for `.ts`, `.tsx`, `.mts`, `.cts`, or `.vue`. Explicit declaration paths are exact and type-space only. JavaScript runtime extensions use the substitution rows below even when written explicitly. |
+| Explicit TypeScript or SFC source path | Exact path only for `.ts`, `.tsx`, `.mts`, `.cts`, `.vue`, `.svelte`, or `.astro`. Vue targets are analyzable; Svelte and Astro targets resolve as SFC sources with unavailable analysis evidence. Explicit declaration paths are exact and type-space only. JavaScript runtime extensions use the substitution rows below even when written explicitly. |
 | Runtime `.js` candidate | Value space: `.ts`, `.tsx`, `.js`, `.jsx`. Type space inserts `.d.ts` after `.tsx`. |
 | Runtime `.jsx` candidate | Value space: `.tsx`, `.jsx`. Type space inserts `.d.ts` after `.tsx`. |
 | Runtime `.mjs` candidate | Value space: `.mts`, `.mjs`. Type space inserts `.d.mts` after `.mts`. |
@@ -211,6 +213,7 @@ An exact absence candidate is emitted only when no potential-consumer limitation
 | Unsupported `import.meta.glob` | `ExplicitTargets` for a literal static base; otherwise the importer's `Package`. |
 | Computed CommonJS property on a resolved module | `Module` for that target and broad use across its value exports. |
 | Opaque Vue template | Imported component candidates and observed global registrations as `ExplicitTargets`; `Package` when that set cannot be bounded. |
+| Unsupported SFC dialect | `Workspace`; its unparsed script or template could hide consumers anywhere in the supported scan scope. |
 | Unresolved internal relative/configured alias | Resolver probe candidates as `ExplicitTargets`; `Workspace` when configuration opacity prevents a bounded domain. |
 | Unknown generated virtual module | Observed generated-map targets as `ExplicitTargets`; otherwise the importer's `Package`. |
 
@@ -264,7 +267,7 @@ Required behavior:
 - one durable gate ID returned by pre-write;
 - baseline built from exact worktree bytes;
 - language and nearest dependency owner inferred from planned paths;
-- mixed JS/TS/Vue paths handled inside one gate;
+- mixed JS/TS/SFC paths handled inside one gate, with unsupported dialects remaining explicit;
 - write/write and write/semantic-read conflicts rejected;
 - nonconflicting gates allowed concurrently;
 - post-write detects unplanned changed, new, removed, and renamed paths;
@@ -330,6 +333,7 @@ The implementation creates repository fixtures with hand-authored expected truth
 | `vue-external-script` | External script bytes are parsed once and attached without copied facts; conflicting mode is unsupported. |
 | `vue-missing-target` | Missing `.vue` import becomes unresolved evidence without aborting other files. |
 | `vue-non-source-asset` | Style/resource references do not resolve to declaration sidecars or source edges. |
+| `sfc-dialect-boundary` | `.vue`, `.svelte`, and `.astro` enter one SFC stage contract; Vue completes, while Svelte/Astro return explicit dialect-scoped unavailable evidence and workspace liveness limitation without graph abortion or framework policy outside `lumin-sfc`. |
 | `next-route-group` | Paths such as `(doc)/layout.tsx` are accepted and resolved normally. |
 | `dynamic-literal-member` | Literal dynamic member use preserves member precision. |
 | `dynamic-nonliteral` | Nonliteral dynamic import creates opacity, not empty evidence. |
@@ -416,7 +420,7 @@ Every benchmark reports source file count, total bytes, cache state, worker coun
 SLICE-001 does not implement:
 
 - Rust repository analysis;
-- Svelte or Astro completeness;
+- production-complete Svelte or Astro dialect behavior;
 - function, block, or shape clones;
 - full topology and discipline review;
 - natural-language intent parsing;
@@ -430,7 +434,7 @@ These omissions must be visible through `lumin capabilities` and relevant overvi
 ## 14. Acceptance Criteria
 
 1. Every corpus row passes through the public `lumin` binary.
-2. The Vue and Next.js regression corpora complete the symbol graph without a process abort.
+2. The SFC boundary admits Vue, Svelte, and Astro through one stage contract: Vue and Next.js regressions complete without process abort, while unsupported dialects produce explicit per-dialect unavailable limitations and never inherit Vue completeness.
 3. The 20-module public-re-export corpus reports all 60 dead siblings and protects all 20 public identities.
 4. A reachable file's unused export remains a candidate.
 5. `jobs=1` and repeated default-job runs produce identical canonical semantic dumps and finding IDs; runtime metrics and physical store bytes are excluded.
@@ -451,7 +455,7 @@ These omissions must be visible through `lumin capabilities` and relevant overvi
 | AC | Behavior test | Corpus/fixture | Command | Expected proof |
 | --- | --- | --- | --- | --- |
 | 1 | `foundation_corpus_contract` | all Section 9 rows | `lumin-xtask corpus foundation` | Every expected query value matches authored truth. |
-| 2 | `framework_failures_are_scoped` | Vue and route-group rows | `lumin-xtask corpus foundation` | `overview` reports graph complete or scoped limitation, never process abort. |
+| 2 | `framework_failures_are_scoped` | SFC dialect, Vue, and route-group rows | `lumin-xtask corpus foundation` | `overview` reports per-dialect Vue completion or scoped unavailable dialect evidence, never aggregate SFC completeness, process abort, or framework policy outside `lumin-sfc`. |
 | 3 | `public_surface_is_identity_scoped` | 20-module re-export matrix | `lumin-xtask corpus foundation` | 60 candidates and 20 protected identities. |
 | 4 | `reachable_module_keeps_dead_exports` | `reachable-dead-sibling` | `lumin-xtask corpus foundation` | The unused sibling remains a candidate. |
 | 5 | `semantic_dump_is_worker_invariant` | full foundation corpus | `lumin-xtask corpus foundation --determinism` | Canonical semantic dump and finding IDs match. |

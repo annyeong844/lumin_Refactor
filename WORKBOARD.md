@@ -17,16 +17,13 @@ Lumin is a native repository-audit engine and Codex/Claude Code skill that gives
 | ARCH-000 | draft | `architecture/000-system-blueprint.md` | Owns the final system shape, crate boundaries, and dependency direction. |
 | ARCH-001 | draft | `architecture/001-execution-and-ownership.md` | Owns the Kahn/Rayon execution model, determinism, and memory ownership. |
 | ARCH-002 | draft | `architecture/002-evidence-and-write-gate.md` | Owns the evidence store, bounded query protocol, and pre/post transaction. |
-| SLICE-001 | draft | `specs/001-foundation-slice.md` | Defines the first production-grade JS/TS/SFC vertical slice. |
+| SLICE-001 | draft | `specs/001-foundation-slice.md` | Defines the JS/TS/SFC foundation, with Vue as the first production dialect. |
 | REVIEW-001 | superseded | `reviews/architecture-v1-adversarial-2026-07-15.md` | Records the first adversarial findings and first amendment decisions. |
 | REVIEW-002 | verifying | `reviews/architecture-v1-independent-verification-2026-07-15.md` | Owns the exact independent verification, current resolutions, and remaining freeze gates. |
 
 ## Active Work
 
-1. Independently re-verify the exact REVIEW-002 resolution candidate.
-2. Run the store, OXC memory/stack, and package feasibility probes recorded by REVIEW-002.
-3. Select the store backend and approve named Phase 1 performance targets from measured evidence.
-4. Complete the separate independent design review.
+Resolve and independently verify every remaining Architecture v1 freeze gate owned by REVIEW-002.
 
 ## Routing Rules
 

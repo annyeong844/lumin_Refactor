@@ -22,6 +22,6 @@ The current freeze ledger is [`REVIEW-002`](reviews/architecture-v1-independent-
 
 ## Current Decision
 
-The destination architecture is designed as a whole. Implementation will then proceed through a narrow production-grade slice covering native JS/TS/Vue extraction, resolution, export-level dead evidence, bounded queries, write-gate transactions, and prebuilt Windows/Linux delivery.
+The destination architecture is designed as a whole. Implementation will then proceed through a narrow production-grade slice covering native JS/TS analysis, a dialect-extensible SFC pipeline with Vue as the first production dialect, resolution, export-level dead evidence, bounded queries, write-gate transactions, and prebuilt Windows/Linux delivery.
 
 Legacy Lumin remains a compatibility and defect corpus. Its internal boundaries are not migration targets.

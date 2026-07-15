@@ -4,7 +4,7 @@ Document role: concurrency and runtime architecture owner
 
 Status: draft
 
-Revision: 2026-07-15
+Revision: 2026-07-16
 
 Parent: ARCH-000
 
@@ -51,10 +51,11 @@ The Kahn graph contains capability and reduction stages, not one node for every 
 
 ### 2.1 SFC Finalization Stage
 
-`decompose-sfc` emits model-owned SFC structure, template uses, and embedded-source descriptors. `extract-inline-js-ts` lowers inline units through `lumin-js`, while `extract-js-ts` supplies facts for external source references. `finalize-sfc-facts`, implemented by `lumin-sfc` and routed by the engine, receives model-owned JS facts and performs Vue-specific binding between template component uses and script imports. Neither `lumin-engine` nor `lumin-graph` implements Vue policy.
+The stage topology is dialect-neutral. `decompose-sfc` emits model-owned SFC structure, template uses, embedded-source descriptors, and explicit dialect identity. `extract-inline-js-ts` lowers inline units through `lumin-js`, while `extract-js-ts` supplies facts for external source references. `finalize-sfc-facts`, implemented by `lumin-sfc` and routed by the engine, receives model-owned JS facts and dispatches dialect-specific binding inside the owner crate. The first slice executes the Vue binding path; recognized but unsupported dialects return explicit unavailable evidence from the same SFC stages. Neither `lumin-engine` nor `lumin-graph` implements framework policy.
 
 The model represents:
 
+- explicit SFC dialect identity and capability status;
 - `EmbeddedSourceUnitId`, parent `SourceId`, parent byte-span mapping, parse mode, and content identity;
 - inline embedded bytes owned only until extraction completes;
 - `ExternalEmbeddedSourceRef(SourceId)` for `<script src>` rather than a copied source unit;
@@ -287,6 +288,6 @@ Metrics describe execution but do not redefine semantic findings.
 9. A hard-stop cannot publish a run marked complete.
 10. Cold and warm corpus benchmarks report stage timings and peak memory on native Windows, WSL ext4, and the declared Linux CI platform.
 11. The stage node set is fixed before inventory executes; language presence changes only input batches.
-12. Vue template/script binding is finalized by `lumin-sfc`, and an external script payload is not read or parsed twice for one mode.
+12. SFC finalization remains owned by `lumin-sfc`; first-slice Vue binding completes there, unsupported dialects remain visible, and an external script payload is not read or parsed twice for one mode.
 13. Snapshot drift during a scan prevents completed-run publication, and later query drift is visible.
 14. Repository input changes alter `AnalysisInputId` without altering `AnalysisContractId`; software semantic-version changes alter the contract ID.

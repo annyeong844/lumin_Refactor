@@ -12,7 +12,7 @@ Start at [WORKBOARD.md](WORKBOARD.md) and read only the owner documents routed f
 
 ## Rules
 
-1. **SSOT and uncertainty:** Follow product contract -> system blueprint -> focused architecture owner -> active slice -> this file. If a contract or owner is unclear, stop before editing and find the owner through the Workboard. When available, use the external `lumin_lab` as supporting evidence, but never let its output replace the contract.
+1. **SSOT and uncertainty:** Follow product contract -> system blueprint -> focused architecture owner -> active slice -> this file. If a contract or owner is unclear, stop before editing and find the owner through the Workboard. Use the external legacy Lumin repository and corpus only as supporting evidence, never as the contract owner.
 2. **Fail closed:** Never turn missing, stale, unsupported, opaque, failed, or truncated evidence into clean or zero findings. Silent fallbacks are forbidden.
 3. **Freeze before implementation:** Freeze architecture changes through one design review and one independent adversarial review. Do not implement before that point, and do not create MVP architecture, horizontal scaffolding, empty future crates, placeholder owners, or a second engine.
 4. **Physical ownership:** Enforce boundaries with Cargo dependencies, visibility, project-owned types, and architecture checks. Keep third-party types inside owner crates and pass domain facts through typed in-process models, never stage-to-stage JSON.

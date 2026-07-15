@@ -4,7 +4,7 @@ Document role: final architecture blueprint and review packet
 
 Status: draft
 
-Revision: 2026-07-15
+Revision: 2026-07-16
 
 Parent: PRODUCT-000
 
@@ -126,6 +126,10 @@ It emits project-owned model types. No downstream crate reads arbitrary source f
 `lumin-js` owns OXC-based JS/TS parsing and lowering. OXC allocator, AST, spans, and syntax types never leave the crate.
 
 `lumin-sfc` owns Vue, Svelte, Astro, and related container decomposition. It emits embedded source units, component/resource references, and opaque framework evidence. It does not call the JS parser directly; the engine routes emitted embedded units to `lumin-js`.
+
+The SFC boundary is dialect-extensible rather than Vue-shaped. Common project-owned facts carry explicit dialect identity, per-dialect capability status, and decomposition/finalization outcomes, while dialect-specific parsing and binding policy stays private to `lumin-sfc`. A complete Vue capability cannot turn unavailable Svelte or Astro evidence into aggregate SFC completeness. This extension seam is not a public plugin trait and does not require one crate per dialect.
+
+The first slice implements Vue as the first production dialect. Adding Svelte, Astro, or another dialect adds owner-local behavior and corpus truth without adding engine stages or framework policy to `lumin-engine`, `lumin-resolve`, or `lumin-graph`. Any required common-model expansion is an explicit owner-contract revision, never an implicit fallback.
 
 `lumin-rust` owns Rust syntax and optional compiler-oracle integration. Rust parser and compiler ecosystem types never leave the crate.
 
@@ -367,6 +371,7 @@ No implementation file should normally exceed 500 lines excluding tests. A file 
 10. Independent reviewers can identify where each product fact is created, transformed, persisted, and queried.
 11. Identity values and schema versions follow the authority table without reverse dependencies; software compatibility and repository input freshness use different IDs.
 12. Development verification runs through `lumin-xtask` without entering the production dependency DAG.
+13. A new SFC dialect enters through the existing `lumin-sfc` stages without leaking framework policy into the engine, resolver, graph, or a second pipeline.
 
 ## 12. Review Questions
 
@@ -374,7 +379,7 @@ Architecture reviewers must challenge:
 
 - whether `lumin-model` or `lumin-engine` can become a new mega-crate;
 - whether an analysis policy has leaked into orchestration;
-- whether SFC ownership is sufficiently isolated without duplicating JS parsing;
+- whether SFC ownership is sufficiently isolated and dialect-extensible without duplicating JS parsing or leaking framework policy;
 - whether the selected persistence engine satisfies the ARCH-002 decision gate without leaking through `lumin-store`;
 - whether the dependency edge policy is enforceable rather than aspirational;
 - whether any compatibility requirement would force a second production truth owner;

@@ -43,6 +43,7 @@ The report verified the exact first amended revision above. This record does not
 | WSL `/mnt` benchmark | SLICE-001 makes it mandatory report-only diagnostic, excluded from blocking AC 16 budgets. |
 | Probe reproducibility | ARCH-002/SLICE-001 retain exact source, fixture, toolchain, commands, invariants, and raw results under `reviews/probes`. |
 | Retention command | ARCH-000 adds `lumin runs`; ARCH-002 owns paged immutable prune plans and plan-ID confirmation for run/gate retention. |
+| SFC dialect extensibility | ARCH-000/001 and SLICE-001 define one dialect-aware SFC pipeline: Vue is the first production dialect, recognized unsupported dialects stay visible, and framework policy cannot leak into engine, resolver, or graph owners. |
 
 ## Remaining Freeze Gates
 
