@@ -181,9 +181,9 @@ Cache state is non-semantic. Cold misses and warm hits over the same exact obser
 
 ### 5.2 Shared Inputs
 
-Large immutable byte buffers may use `Arc<[u8]>` when multiple real consumers require the same bytes. `Arc` cloning is allowed only for intentional immutable sharing. One validated `PayloadSnapshotId` may back several `LogicalSourceId` tasks, and a compatible path-independent parse product may be reused, but every task receives its own logical path, source kind, package/config ownership, scan role, and resolver context. Physical identity cannot deduplicate a logical task or choose a representative path. Shared mutable parser, graph, or evidence state is forbidden.
+Large immutable byte buffers may use `Arc<[u8]>` when multiple real consumers require the same bytes. `Arc` cloning is allowed only for intentional immutable sharing. One validated `PayloadSnapshotId` may back several `LogicalSourceId` tasks, and a compatible path-independent parse product may be reused, but every task receives its own logical path, source kind, package/config ownership, scan role, and resolver context. Physical identity cannot deduplicate a logical task or choose a representative path. A gate write to one physical alias schedules every member of its ARCH-002 `PhysicalAliasWriteClosure` as a separate logical task; payload reuse cannot suppress any package/config/role-specific reanalysis. Shared mutable parser, graph, or evidence state is forbidden.
 
-Configuration follows the same single-consumption boundary. `lumin-inventory` lowers each exact tsconfig/package payload once into an immutable model-owned ordered `ConfigDocument`; scan, ownership, and resolver owners share that project value rather than reparsing bytes or exchanging a third-party JSON tree.
+Configuration follows the same single-consumption boundary. `lumin-inventory` lowers each exact tsconfig/package/pnpm-workspace payload once into an immutable model-owned ordered `ConfigDocument`; inventory applies its own checked-in ownership registry, while resolver consumes the same project value plus model-owned inventory facts under its separate resolver registry. Neither owner reparses bytes, imports the other's crate, or exchanges a third-party JSON/YAML tree.
 
 ### 5.3 Worker Outputs
 
@@ -252,7 +252,7 @@ No task may swallow a panic, channel closure, parse failure, or persistence erro
 ## 9. Filesystem and I/O Rules
 
 - Inventory enumerates the source set once without retaining all source bytes.
-- Inventory lowers every enumerated native path into the lossless ARCH-002 `RepoPath` representation before identity, ordering, cache, or query use; display text is never an identity key.
+- Inventory lowers every enumerated native path through the exact checked-in `repo-path-semantics.v1` codec before identity, ordering, cache, or query use; display text is never an identity key.
 - Each analyzed worktree payload is read once for extraction per cold run; a separate final hash-only freshness pass is permitted.
 - Every parser consumes the same bytes used to compute that snapshot's content identity.
 - Downstream stages consume facts, not source files.
@@ -354,7 +354,7 @@ Metrics describe execution but do not redefine semantic findings.
 4. Parser AST types cannot be named from downstream crates.
 5. No global Rayon pool is used.
 6. No worker mutates canonical graph or store state.
-7. The exact bytes used for a cache identity are the bytes parsed; payload/parse reuse cannot merge distinct logical source contexts.
+7. The exact bytes used for a cache identity are the bytes parsed; payload/parse reuse cannot merge distinct logical source contexts, and every member of a gate's physical-alias write closure receives its own logical task.
 8. A missing SFC target produces typed unresolved evidence while unrelated files complete.
 9. A hard-stop cannot publish a run marked complete.
 10. Cold and warm corpus benchmarks report stage timings and peak memory on native Windows, WSL ext4, and the declared Linux CI platform.

@@ -3,20 +3,27 @@
   "canonicalEncoding": "UTF-8 without BOM, LF, exact file bytes",
   "typeScriptBaseline": {
     "package": "typescript@6.0.0-beta",
+    "sourceRepository": "https://github.com/microsoft/TypeScript",
     "npmTarball": "https://registry.npmjs.org/typescript/-/typescript-6.0.0-beta.tgz",
     "npmIntegrity": "sha512-CldZdztDpQRLM1HC6WDQjQkQN5Ub5zRau737a1diGh3lPmb9oRsaWHk1y5iqK0o7+1bNJ0oXfEGRkAogFZBL+Q==",
     "tarballSha256": "ee496514d0fd52243efad620e6d2162d26811549a641bc124ea975322a85ea15",
     "typescriptJsSha256": "34aa78cac5065b7628a6124c8d82fe539c4b4efe67d638ab374d716615d72e74",
+    "sourceTagCommit": "5ccf24e9c4f7a66cbce23bdd0476fabb39945b9b",
+    "moduleResolverSource": "src/compiler/moduleNameResolver.ts",
+    "moduleResolverSourceSha256": "b2c971b6674b3312e43cd198ee250dba86a55fea8b06b28388737e4db7b32c7f",
     "compilerOptionExtraction": "unique optionDeclarations names where isCommandLineOnly is not true, sorted by UTF-8 byte order; each digest line is name, TAB, normalized shape, LF",
     "compilerOptionCount": 122,
     "compilerOptionKeyShapeSha256": "f2fb5da0cf33ea694a8bf4ccae909a1526e7978693c15ac1a6b10b3cdfbc9d9a"
   },
   "nodePackageBaseline": {
     "id": "node-package-resolution-v24.14.1-lumin-v1",
+    "sourceRepository": "https://github.com/nodejs/node",
     "nodeTag": "v24.14.1",
     "nodeCommit": "d89bb1b482fa09245c4f2cbb3b5b6a70bea6deaf",
     "packagesDocument": "doc/api/packages.md",
     "packagesDocumentSha256": "6f2c932d0f80a13fbd8bff8525b45b616f791fe35b82f9b2b281aa8104ef3ab9",
+    "resolverSource": "lib/internal/modules/esm/resolve.js",
+    "resolverSourceSha256": "91aab51b1276d7051fee3f9fcb71c2d2808ec78fd4a45f296950c154b62a537f",
     "supportedConditionKeys": [
       "types",
       "import",
@@ -24,7 +31,7 @@
       "node",
       "default"
     ],
-    "conditionOrder": "source declaration order; first active supported condition wins",
+    "conditionOrder": "condition membership is set-like; source declaration order is priority and the first default-or-active key wins",
     "unknownCondition": "UnsupportedResolutionAffecting"
   },
   "classificationDefinitions": {
@@ -239,30 +246,86 @@
       "node16": "node16",
       "nodenext": "nodenext"
     },
-    "unsupportedModulePair": "TsconfigSemanticsUnsupported"
+    "unsupportedModulePair": "TsconfigSemanticsUnsupported",
+    "packageFeatureByResolutionProfile": {
+      "node": {
+        "exports": "disabled",
+        "imports": "disabled",
+        "valueConditions": [],
+        "typeConditions": [],
+        "fallback": "legacy main and declaration-entry rules"
+      },
+      "bundler": {
+        "exports": "enabled",
+        "imports": "unsupported-by-first-slice",
+        "valueConditions": ["import"],
+        "typeConditions": ["types", "import"],
+        "excludedConditions": ["node", "require"],
+        "fallback": "bundler package-entry rules"
+      },
+      "node16-import": {
+        "exports": "enabled",
+        "imports": "unsupported-by-first-slice",
+        "valueConditions": ["node", "import"],
+        "typeConditions": ["node", "types", "import"]
+      },
+      "node16-require": {
+        "exports": "enabled",
+        "imports": "unsupported-by-first-slice",
+        "valueConditions": ["node", "require"],
+        "typeConditions": ["node", "types", "require"]
+      },
+      "nodenext-import": {
+        "exports": "enabled",
+        "imports": "unsupported-by-first-slice",
+        "valueConditions": ["node", "import"],
+        "typeConditions": ["node", "types", "import"]
+      },
+      "nodenext-require": {
+        "exports": "enabled",
+        "imports": "unsupported-by-first-slice",
+        "valueConditions": ["node", "require"],
+        "typeConditions": ["node", "types", "require"]
+      }
+    },
+    "conditionSelection": {
+      "default": "default is always eligible but is not inserted into the active-condition set",
+      "order": "iterate object keys in source declaration order and select the first key equal to default or present in the active set",
+      "customConditions": "unsupported by the first slice; no invocation or config value may extend the active set",
+      "luminLaneRule": "value and type lanes are explicit Lumin evidence lanes; type adds types to the same import/require and profile-specific node membership",
+      "goldenVectors": [
+        {"id": "bundler-node-default", "profileLane": "bundler-value", "keysInSourceOrder": ["node", "default"], "selected": "default"},
+        {"id": "bundler-types-import", "profileLane": "bundler-type", "keysInSourceOrder": ["node", "types", "import", "default"], "selected": "types"},
+        {"id": "node16-node-default", "profileLane": "node16-import-value", "keysInSourceOrder": ["node", "default"], "selected": "node"},
+        {"id": "node10-exports-disabled", "profileLane": "node-value", "keysInSourceOrder": ["require", "default"], "selected": null}
+      ]
+    }
   },
   "packageJson": {
+    "delegatedInventoryArtifact": "specs/inventory-config-semantics.v1.json",
+    "dispatchOrder": "resolver-owned exact field, delegated inventory-owned exact field, then unknownTopLevel; delegated fields never take the neutral fallback",
     "unknownTopLevel": {"classification": "KnownResolutionNeutral", "reason": "tooling-metadata-only"},
-    "registeredFieldShapeMismatch": {"classification": "UnsupportedResolutionAffecting", "limitation": "PublicSurfaceUnsupported"},
     "fields": [
-      {"path": "browser", "shape": "string|object|false", "classification": "UnsupportedResolutionAffecting", "limitation": "PublicSurfaceUnsupported"},
-      {"path": "dependencies", "shape": "object<string,string>", "classification": "SupportedAndModeled", "rule": "dependency-ownership"},
-      {"path": "devDependencies", "shape": "object<string,string>", "classification": "SupportedAndModeled", "rule": "dependency-ownership"},
-      {"path": "exports", "shape": "exports-v1", "classification": "SupportedAndModeled", "rule": "exports-v1"},
+      {"path": "browser", "shape": "string|object|false", "classification": "UnsupportedResolutionAffecting", "limitation": "PublicSurfaceUnsupported", "shapeMismatchLimitation": "PublicSurfaceUnsupported"},
+      {"path": "exports", "shape": "exports-v1", "classification": "SupportedAndModeled", "rule": "exports-v1", "shapeMismatchLimitation": "PublicSurfaceUnsupported"},
       {"path": "imports", "shape": "any", "classification": "UnsupportedResolutionAffecting", "limitation": "PackageImportsUnsupported"},
-      {"path": "main", "shape": "string", "classification": "SupportedAndModeled", "rule": "main-field"},
-      {"path": "module", "shape": "string", "classification": "SupportedAndModeled", "rule": "module-field"},
-      {"path": "name", "shape": "string", "classification": "SupportedAndModeled", "rule": "package-identity"},
-      {"path": "optionalDependencies", "shape": "object<string,string>", "classification": "SupportedAndModeled", "rule": "dependency-ownership"},
-      {"path": "peerDependencies", "shape": "object<string,string>", "classification": "SupportedAndModeled", "rule": "dependency-ownership"},
-      {"path": "private", "shape": "boolean", "classification": "SupportedAndModeled", "rule": "private-package"},
-      {"path": "react-native", "shape": "string|object", "classification": "UnsupportedResolutionAffecting", "limitation": "PublicSurfaceUnsupported"},
-      {"path": "sideEffects", "shape": "boolean|array<string>", "classification": "UnsupportedResolutionAffecting", "limitation": "PublicSurfaceUnsupported"},
-      {"path": "type", "shape": "enum(module,commonjs)", "classification": "SupportedAndModeled", "rule": "node-package-type"},
-      {"path": "types", "shape": "string", "classification": "SupportedAndModeled", "rule": "types-field"},
-      {"path": "typesVersions", "shape": "object", "classification": "UnsupportedResolutionAffecting", "limitation": "PublicSurfaceUnsupported"},
-      {"path": "typings", "shape": "string", "classification": "SupportedAndModeled", "rule": "typings-field"},
-      {"path": "workspaces", "shape": "array<string>|object{packages:array<string>}", "classification": "SupportedAndModeled", "rule": "workspace-ownership"}
+      {"path": "main", "shape": "string", "classification": "SupportedAndModeled", "rule": "main-field", "shapeMismatchLimitation": "PublicSurfaceUnsupported"},
+      {"path": "module", "shape": "string", "classification": "SupportedAndModeled", "rule": "module-field", "shapeMismatchLimitation": "PublicSurfaceUnsupported"},
+      {"path": "react-native", "shape": "string|object", "classification": "UnsupportedResolutionAffecting", "limitation": "PublicSurfaceUnsupported", "shapeMismatchLimitation": "PublicSurfaceUnsupported"},
+      {"path": "sideEffects", "shape": "boolean|array<string>", "classification": "UnsupportedResolutionAffecting", "limitation": "PublicSurfaceUnsupported", "shapeMismatchLimitation": "PublicSurfaceUnsupported"},
+      {"path": "type", "shape": "enum(module,commonjs)", "classification": "SupportedAndModeled", "rule": "node-package-type", "shapeMismatchLimitation": "ImporterFormatUnsupported"},
+      {"path": "types", "shape": "string", "classification": "SupportedAndModeled", "rule": "types-field", "shapeMismatchLimitation": "PublicSurfaceUnsupported"},
+      {"path": "typesVersions", "shape": "object", "classification": "UnsupportedResolutionAffecting", "limitation": "PublicSurfaceUnsupported", "shapeMismatchLimitation": "PublicSurfaceUnsupported"},
+      {"path": "typings", "shape": "string", "classification": "SupportedAndModeled", "rule": "typings-field", "shapeMismatchLimitation": "PublicSurfaceUnsupported"}
+    ],
+    "inventoryOwnedFields": [
+      "dependencies",
+      "devDependencies",
+      "name",
+      "optionalDependencies",
+      "peerDependencies",
+      "private",
+      "workspaces"
     ],
     "exportsGrammar": {
       "root": "string | null | condition-object | subpath-object",
@@ -270,7 +333,26 @@
       "subpathValue": "string | null | condition-object",
       "conditionObject": "source-ordered object whose keys are only supportedConditionKeys and whose values are string or null",
       "targetString": "must begin ./ and remain package-root-contained after substitution",
-      "forbidden": "arrays, nested condition objects, mixed subpath/condition keys, multiple stars, unknown conditions, non-string targets, and package-root escape",
+      "patternComparator": {
+        "source": "Node patternKeyCompare at nodePackageBaseline.resolverSource",
+        "selectionPhases": "perform direct exact-key lookup first; only if absent, compare matching one-star keys",
+        "sortKeys": [
+          {"value": "UTF-16 code-unit length through and including the first star", "order": "descending"},
+          {"value": "pattern versus exact when prefix length ties", "order": "pattern first, matching pinned patternKeyCompare; exact lookup has already run"},
+          {"value": "total UTF-16 code-unit key length", "order": "descending"},
+          {"value": "source declaration index", "order": "ascending when comparator returns zero"}
+        ],
+        "matching": "candidate begins with the prefix before star, ends with the suffix after star, has length at least the pattern-key length, and the key contains exactly one star",
+        "goldenVectors": [
+          {"candidate": "./features/internal/x", "keysInSourceOrder": ["./features/*", "./features/internal/*"], "selected": "./features/internal/*"},
+          {"candidate": "./features/x.js", "keysInSourceOrder": ["./features/*", "./features/*.js"], "selected": "./features/*.js"},
+          {"candidate": "./exact", "keysInSourceOrder": ["./*", "./exact"], "selected": "./exact"}
+        ]
+      },
+      "invalidSegmentSource": "(^|\\\\|/)((\\.|%2e)(\\.|%2e)?|(n|%6e|%4e)(o|%6f|%4f)(d|%64|%44)(e|%65|%45)(_|%5f)(m|%6d|%4d)(o|%6f|%4f)(d|%64|%44)(u|%75|%55)(l|%6c|%4c)(e|%65|%45)(s|%73|%53))?(\\\\|/|$), case-insensitive",
+      "deprecatedInvalidSegmentSource": "(^|\\\\|/)((\\.|%2e)(\\.|%2e)?|(n|%6e|%4e)(o|%6f|%4f)(d|%64|%44)(e|%65|%45)(_|%5f)(m|%6d|%4d)(o|%6f|%4f)(d|%64|%44)(u|%75|%55)(l|%6c|%4c)(e|%65|%45)(s|%73|%53))(\\\\|/|$), case-insensitive",
+      "segmentPolicy": "dot, dot-dot, node_modules, and empty target/substitution segments matched by the pinned rules are PublicSurfaceUnsupported; treating Node's deprecation-only empty-segment case as unsupported is an explicit stricter Lumin v1 rule",
+      "forbidden": "arrays, nested condition objects, mixed subpath/condition keys, multiple stars, unknown conditions, non-string targets, empty/dot/dot-dot/node_modules target or substituted segments including percent-encoded/case variants, and package-root escape",
       "forbiddenResult": "PublicSurfaceUnsupported"
     }
   },
@@ -278,6 +360,6 @@
     "artifactPath": "specs/resolver-config-semantics.v1.json",
     "artifactIdentity": "SHA-256 of exact checked-in file bytes, supplied by the candidate manifest and compiled into AnalysisContractId",
     "runtimeForm": "lumin-resolve project-owned generated table compiled from this artifact; no runtime source-file fallback",
-    "requiredCheck": "architecture-check compares artifact byte hash, baseline key-set digest, exhaustive disjoint classification, shapes, reason/limitation references, and compiled-table digest"
+    "requiredCheck": "architecture-check compares artifact byte hash, TypeScript/Node source hashes, baseline key-set digest, owner-disjoint fields, profile feature/condition sets, field-specific mismatch limitations, exports comparator/segment rules, exhaustive classifications, and compiled-table digest"
   }
 }

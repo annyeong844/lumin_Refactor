@@ -1,0 +1,237 @@
+{
+  "schemaVersion": "repo-path-semantics.v1",
+  "canonicalEncoding": "UTF-8 without BOM, LF, exact file bytes",
+  "integerEncoding": "unsigned big-endian",
+  "repoPath": {
+    "magicAscii": "LUMRPATH",
+    "magicHex": "4c554d5250415448",
+    "versionU16": 1,
+    "framing": "magic[8] || version_u16 || component_count_u32 || component[component_count]; no terminator and no trailing bytes",
+    "emptyPath": "component_count zero is the canonical repository-relative empty path",
+    "component": {
+      "framing": "kind_u8 || payload_length_u32 || payload[payload_length]",
+      "kinds": [
+        {
+          "name": "PortableUtf8",
+          "tagHex": "01",
+          "payload": "shortest well-formed Unicode-scalar UTF-8",
+          "canonicalUse": "required when the native component is representable by a portable scalar string"
+        },
+        {
+          "name": "UnixBytes",
+          "tagHex": "02",
+          "payload": "exact Unix native component bytes",
+          "canonicalUse": "required only when PortableUtf8 cannot represent the component or when a Unix-valid backslash byte makes it non-portable"
+        },
+        {
+          "name": "WindowsWtf16",
+          "tagHex": "03",
+          "payload": "exact unsigned UTF-16 code units, each encoded u16 big-endian",
+          "canonicalUse": "required only when at least one unpaired surrogate prevents PortableUtf8 representation"
+        }
+      ],
+      "commonRejections": [
+        "empty component",
+        "dot component",
+        "dot-dot component",
+        "embedded NUL",
+        "embedded forward slash",
+        "embedded backslash in PortableUtf8 or WindowsWtf16"
+      ],
+      "decoderCanonicality": [
+        "reject an unknown kind tag",
+        "reject a payload length beyond the remaining bytes",
+        "reject trailing bytes",
+        "reject malformed, overlong, surrogate-containing, or non-shortest PortableUtf8",
+        "reject UnixBytes when the same native component has a canonical PortableUtf8 encoding",
+        "reject odd-length WindowsWtf16 payloads",
+        "reject WindowsWtf16 when all code units form Unicode scalars and therefore have a canonical PortableUtf8 encoding",
+        "reject separators, NUL, dot, and dot-dot before identity creation"
+      ]
+    },
+    "ordering": "unsigned lexicographic order over the complete canonical repo-path.v1 byte string"
+  },
+  "repositoryRoot": {
+    "magicAscii": "LUMRROOT",
+    "magicHex": "4c554d52524f4f54",
+    "versionU16": 1,
+    "framing": "magic[8] || version_u16 || platform_u8 || address_kind_u8 || address_prefix || component_count_u32 || components || physical_identity",
+    "platformTags": {
+      "Unix": "01",
+      "Windows": "02"
+    },
+    "addressKinds": [
+      {
+        "name": "UnixAbsolute",
+        "tagHex": "01",
+        "platform": "Unix",
+        "prefix": "empty"
+      },
+      {
+        "name": "WindowsDrive",
+        "tagHex": "02",
+        "platform": "Windows",
+        "prefix": "one uppercase ASCII byte A through Z"
+      },
+      {
+        "name": "WindowsUNC",
+        "tagHex": "03",
+        "platform": "Windows",
+        "prefix": "two canonical component records for server and share"
+      },
+      {
+        "name": "WindowsVolumeGuid",
+        "tagHex": "04",
+        "platform": "Windows",
+        "prefix": "16 GUID bytes in RFC 4122/network textual order"
+      }
+    ],
+    "physicalIdentity": [
+      {
+        "platform": "Unix",
+        "tagHex": "01",
+        "payload": "st_dev_u64 || st_ino_u64"
+      },
+      {
+        "platform": "Windows",
+        "tagHex": "02",
+        "payload": "volume_serial_u64 || FILE_ID_128[16]"
+      }
+    ],
+    "windowsPrefixRules": [
+      "extended drive and UNC prefixes lower to WindowsDrive or WindowsUNC",
+      "a volume GUID path lowers to WindowsVolumeGuid",
+      "device namespace roots such as \\\\.\\, \\\\?\\GLOBALROOT, and native \\Device\\ roots are rejected"
+    ],
+    "decoderCanonicality": [
+      "reject a platform/address-kind mismatch",
+      "reject a platform/physical-identity mismatch",
+      "reject a lowercase drive byte",
+      "reject noncanonical root components",
+      "reject trailing bytes"
+    ]
+  },
+  "wireAndNativeIO": {
+    "repoPathDto": {
+      "encoding": "repo-path.v1",
+      "canonicalBase64": "RFC 4648 standard alphabet with required padding and no whitespace; decode then canonical re-encode must equal the input",
+      "display": "protocol-owned escaped nonauthoritative text",
+      "utf8": "optional slash-joined Unicode-scalar string only when every component is PortableUtf8; it must re-encode to canonicalBase64"
+    },
+    "paths0Unix": "NUL-delimited slash-separated exact native bytes; NUL is never legal inside one path",
+    "paths0Windows": "NUL-delimited slash-separated canonical WTF-8; paired surrogates encode as one scalar UTF-8 sequence, unpaired surrogates encode as three-byte WTF-8, and CESU-8 for a valid pair is rejected",
+    "matchBytes": "slash-separated PortableUtf8 payload, UnixBytes payload, or canonical Windows WTF-8 payload; no Unicode normalization"
+  },
+  "ioGoldenVectors": [
+    {
+      "id": "paths0-portable-src-a-ts",
+      "platform": "Unix-or-Windows",
+      "repoVector": "repo-portable-src-a-ts",
+      "matchBytesHex": "7372632f612e7473",
+      "nulRecordHex": "7372632f612e747300"
+    },
+    {
+      "id": "paths0-unix-non-utf8",
+      "platform": "Unix",
+      "repoVector": "repo-unix-non-utf8",
+      "matchBytesHex": "66806f",
+      "nulRecordHex": "66806f00"
+    },
+    {
+      "id": "paths0-windows-unpaired-surrogate",
+      "platform": "Windows",
+      "repoVector": "repo-windows-unpaired-surrogate",
+      "matchBytesHex": "eda08061",
+      "nulRecordHex": "eda0806100"
+    },
+    {
+      "id": "paths0-windows-scalar-emoji",
+      "platform": "Windows",
+      "repoVector": "repo-windows-scalar-emoji",
+      "matchBytesHex": "f09f9880",
+      "nulRecordHex": "f09f988000"
+    }
+  ],
+  "goldenVectors": [
+    {
+      "id": "repo-empty",
+      "meaning": "empty repository-relative path",
+      "hex": "4c554d5250415448000100000000",
+      "base64": "TFVNUlBBVEgAAQAAAAA="
+    },
+    {
+      "id": "repo-portable-src-a-ts",
+      "meaning": "PortableUtf8 components src and a.ts",
+      "hex": "4c554d525041544800010000000201000000037372630100000004612e7473",
+      "base64": "TFVNUlBBVEgAAQAAAAIBAAAAA3NyYwEAAAAEYS50cw=="
+    },
+    {
+      "id": "repo-unix-non-utf8",
+      "meaning": "one UnixBytes component 66 80 6f",
+      "hex": "4c554d5250415448000100000001020000000366806f",
+      "base64": "TFVNUlBBVEgAAQAAAAECAAAAA2aAbw=="
+    },
+    {
+      "id": "repo-unix-backslash",
+      "meaning": "one UnixBytes component a\\b",
+      "hex": "4c554d52504154480001000000010200000003615c62",
+      "base64": "TFVNUlBBVEgAAQAAAAECAAAAA2FcYg=="
+    },
+    {
+      "id": "repo-windows-unpaired-surrogate",
+      "meaning": "one WindowsWtf16 component with code units D800 0061",
+      "hex": "4c554d52504154480001000000010300000004d8000061",
+      "base64": "TFVNUlBBVEgAAQAAAAEDAAAABNgAAGE="
+    },
+    {
+      "id": "repo-windows-scalar-emoji",
+      "meaning": "one PortableUtf8 component U+1F600",
+      "hex": "4c554d52504154480001000000010100000004f09f9880",
+      "base64": "TFVNUlBBVEgAAQAAAAEBAAAABPCfmIA="
+    },
+    {
+      "id": "root-unix-repo",
+      "meaning": "Unix /repo with st_dev 1 and st_ino 2",
+      "hex": "4c554d52524f4f54000101010000000101000000047265706f0100000000000000010000000000000002",
+      "base64": "TFVNUlJPT1QAAQEBAAAAAQEAAAAEcmVwbwEAAAAAAAAAAQAAAAAAAAAC"
+    },
+    {
+      "id": "root-windows-drive",
+      "meaning": "Windows C:/repo with volume serial 1 and FILE_ID_128 00..0f",
+      "hex": "4c554d52524f4f5400010202430000000101000000047265706f020000000000000001000102030405060708090a0b0c0d0e0f",
+      "base64": "TFVNUlJPT1QAAQICQwAAAAEBAAAABHJlcG8CAAAAAAAAAAEAAQIDBAUGBwgJCgsMDQ4P"
+    },
+    {
+      "id": "root-windows-unc",
+      "meaning": "Windows //server/share/repo with volume serial 1 and FILE_ID_128 00..0f",
+      "hex": "4c554d52524f4f54000102030100000006736572766572010000000573686172650000000101000000047265706f020000000000000001000102030405060708090a0b0c0d0e0f",
+      "base64": "TFVNUlJPT1QAAQIDAQAAAAZzZXJ2ZXIBAAAABXNoYXJlAAAAAQEAAAAEcmVwbwIAAAAAAAAAAQABAgMEBQYHCAkKCwwNDg8="
+    },
+    {
+      "id": "root-windows-volume-guid",
+      "meaning": "Windows volume 00112233-4455-6677-8899-aabbccddeeff /repo with volume serial 1 and FILE_ID_128 00..0f",
+      "hex": "4c554d52524f4f540001020400112233445566778899aabbccddeeff0000000101000000047265706f020000000000000001000102030405060708090a0b0c0d0e0f",
+      "base64": "TFVNUlJPT1QAAQIEABEiM0RVZneImaq7zN3u/wAAAAEBAAAABHJlcG8CAAAAAAAAAAEAAQIDBAUGBwgJCgsMDQ4P"
+    }
+  ],
+  "rejectionVectors": [
+    "PortableUtf8 dot or dot-dot",
+    "PortableUtf8 containing slash, backslash, or NUL",
+    "UnixBytes containing slash or NUL",
+    "UnixBytes that is canonically PortableUtf8",
+    "WindowsWtf16 with an odd payload length",
+    "WindowsWtf16 containing only valid scalar sequences",
+    "noncanonical or unpadded canonicalBase64",
+    "valid value followed by trailing bytes",
+    "Windows device namespace root"
+  ],
+  "compiledContract": {
+    "artifactPath": "specs/repo-path-semantics.v1.json",
+    "typeOwner": "lumin-model",
+    "valueAuthority": "lumin-inventory",
+    "wireOwner": "lumin-protocol",
+    "artifactIdentity": "SHA-256 of exact checked-in file bytes, supplied by the candidate manifest and compiled into AnalysisContractId",
+    "runtimeForm": "one lumin-model project-owned pure codec generated from this artifact; lumin-inventory supplies native atoms and lumin-protocol supplies wire/display adapters by calling that codec, with no runtime artifact read or duplicate encoder",
+    "requiredCheck": "architecture-check compares artifact bytes, the single generated model-codec digest, all golden/rejection vectors, canonical decoder behavior, and owner-specific native/wire adapter boundaries"
+  }
+}

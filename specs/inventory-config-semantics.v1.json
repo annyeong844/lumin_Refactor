@@ -1,0 +1,168 @@
+{
+  "schemaVersion": "inventory-config-semantics.v1",
+  "canonicalEncoding": "UTF-8 without BOM, LF, exact file bytes",
+  "owner": "lumin-inventory",
+  "packageBaseline": {
+    "sourceRepository": "https://github.com/nodejs/node",
+    "nodeTag": "v24.14.1",
+    "nodeCommit": "d89bb1b482fa09245c4f2cbb3b5b6a70bea6deaf",
+    "packagesDocument": "doc/api/packages.md",
+    "packagesDocumentSha256": "6f2c932d0f80a13fbd8bff8525b45b616f791fe35b82f9b2b281aa8104ef3ab9"
+  },
+  "pnpmWorkspaceBaseline": {
+    "repository": "https://github.com/pnpm/pnpm.io",
+    "commit": "8a01423859b423bba444cb241bf91aa7d9d499f2",
+    "document": "docs/pnpm-workspace_yaml.md",
+    "documentSha256": "54b8e99b8b1f284064f5b65277ac6793919f80cf39c21ff9f5ac59ba240d324f"
+  },
+  "classificationDefinitions": {
+    "SupportedAndModeled": "Inventory consumes the validated shape and emits the named model-owned package/workspace fact.",
+    "KnownInventoryNeutral": "The validated field is retained in input identity but cannot change first-slice package identity, privacy, dependency ownership, workspace membership, or inferred manifest/lockfile write ownership under the named reason.",
+    "UnsupportedInventoryAffecting": "Presence or shape mismatch emits the named typed limitation before package/workspace ownership is used."
+  },
+  "neutralReasons": {
+    "unconsumed-package-metadata": "The first slice does not use this package field for package identity, privacy, dependency ownership, workspace membership, or inferred writes."
+  },
+  "projectConfigValue": {
+    "typeOwner": "lumin-model::ConfigDocument",
+    "valueAuthority": "lumin-inventory",
+    "objectOrder": "source declaration order",
+    "duplicateKeys": "malformed configuration hard-stop",
+    "packageSyntax": "strict JSON lowered to project-owned values and source spans",
+    "pnpmWorkspaceSyntax": "UTF-8 YAML mapping limited to plain keys, strings, arrays, and mappings; duplicate keys, aliases, anchors, merge keys, custom tags, multi-document streams, and non-string package patterns are malformed configuration hard-stops",
+    "boundaryRule": "No serde_json::Value, YAML parser node, or unparsed second read crosses the crate boundary."
+  },
+  "packageJson": {
+    "delegatedResolverArtifact": "specs/resolver-config-semantics.v1.json",
+    "dispatchOrder": "inventory-owned exact field, delegated resolver-owned exact field, then unknownTopLevel; delegated fields never take the neutral fallback",
+    "unknownTopLevel": {
+      "classification": "KnownInventoryNeutral",
+      "reason": "unconsumed-package-metadata"
+    },
+    "fields": [
+      {
+        "path": "dependencies",
+        "shape": "object<string,string>",
+        "classification": "SupportedAndModeled",
+        "rule": "dependency-ownership",
+        "shapeMismatchLimitation": "DependencyOwnerAmbiguous"
+      },
+      {
+        "path": "devDependencies",
+        "shape": "object<string,string>",
+        "classification": "SupportedAndModeled",
+        "rule": "dependency-ownership",
+        "shapeMismatchLimitation": "DependencyOwnerAmbiguous"
+      },
+      {
+        "path": "name",
+        "shape": "string",
+        "classification": "SupportedAndModeled",
+        "rule": "package-identity",
+        "shapeMismatchLimitation": "PackageIdentityUnsupported"
+      },
+      {
+        "path": "optionalDependencies",
+        "shape": "object<string,string>",
+        "classification": "SupportedAndModeled",
+        "rule": "dependency-ownership",
+        "shapeMismatchLimitation": "DependencyOwnerAmbiguous"
+      },
+      {
+        "path": "peerDependencies",
+        "shape": "object<string,string>",
+        "classification": "SupportedAndModeled",
+        "rule": "dependency-ownership",
+        "shapeMismatchLimitation": "DependencyOwnerAmbiguous"
+      },
+      {
+        "path": "private",
+        "shape": "boolean",
+        "classification": "SupportedAndModeled",
+        "rule": "private-package",
+        "shapeMismatchLimitation": "PackagePrivacyUnsupported"
+      },
+      {
+        "path": "workspaces",
+        "shape": "array<string>|object{packages:array<string>}",
+        "classification": "SupportedAndModeled",
+        "rule": "package-workspace-membership-v1",
+        "shapeMismatchLimitation": "WorkspaceOwnershipUnsupported"
+      }
+    ],
+    "resolverOwnedFields": [
+      "browser",
+      "exports",
+      "imports",
+      "main",
+      "module",
+      "react-native",
+      "sideEffects",
+      "type",
+      "types",
+      "typesVersions",
+      "typings"
+    ]
+  },
+  "pnpmWorkspaceYaml": {
+    "unknownTopLevel": {
+      "classification": "UnsupportedInventoryAffecting",
+      "limitation": "WorkspaceOwnershipUnsupported"
+    },
+    "fields": [
+      {
+        "path": "packages",
+        "shape": "array<string>",
+        "classification": "SupportedAndModeled",
+        "rule": "pnpm-workspace-membership-v1",
+        "shapeMismatchLimitation": "WorkspaceOwnershipUnsupported"
+      },
+      {
+        "path": "catalog",
+        "shape": "object",
+        "classification": "UnsupportedInventoryAffecting",
+        "limitation": "PnpmDependencySemanticsUnsupported"
+      },
+      {
+        "path": "catalogs",
+        "shape": "object",
+        "classification": "UnsupportedInventoryAffecting",
+        "limitation": "PnpmDependencySemanticsUnsupported"
+      },
+      {
+        "path": "packageConfigs",
+        "shape": "object",
+        "classification": "UnsupportedInventoryAffecting",
+        "limitation": "PnpmDependencySemanticsUnsupported"
+      }
+    ],
+    "membershipRule": {
+      "rootPackage": "the directory containing pnpm-workspace.yaml is always a workspace package",
+      "missingPackages": "the workspace contains only the root package",
+      "patternVersion": "workspace-glob.v1",
+      "patterns": {
+        "domain": "UTF-8 root-relative slash-separated directory paths containing package.json; filesystem comparison follows the observed parent behavior without Unicode normalization",
+        "grammar": "literal components, star within one component, and double-star as one complete component; pnpm permits one leading ! exclusion marker",
+        "unsupported": "question mark, character class, brace, extglob, escape syntax, empty component, dot, dot-dot, absolute/root prefix, embedded backslash, or root escape",
+        "packageWorkspaces": "all patterns are positive and their matches form a union",
+        "pnpmWorkspaces": "positive patterns form a union and every leading-! pattern subtracts from that union independent of declaration position",
+        "result": "deduplicate exact canonical RepoPath bytes and sort by repo-path.v1 ordering"
+      },
+      "sameDirectoryPrecedence": "a valid pnpm-workspace.yaml is authoritative for membership at its directory; package.json#workspaces remains a semantic input but does not add members",
+      "malformedOrUnsupported": "never fall back to package.json#workspaces"
+    }
+  },
+  "ownerBoundary": {
+    "generatedRuntimeForm": "lumin-inventory project-owned immutable table generated from this artifact",
+    "emittedFacts": [
+      "PackageIdentity",
+      "PackagePrivacy",
+      "DependencyOwnership",
+      "WorkspaceMembership",
+      "NearestManifestOwnership"
+    ],
+    "resolverInput": "lumin-engine passes only model-owned inventory facts and the inventory-parsed ConfigDocument to lumin-resolve; there is no inventory-to-resolve Cargo edge and no duplicated workspace policy",
+    "artifactIdentity": "SHA-256 of exact checked-in file bytes, supplied by the candidate manifest and compiled into AnalysisContractId",
+    "requiredCheck": "architecture-check compares artifact bytes, pinned baseline hashes, disjoint field ownership with the resolver artifact, every shape-to-limitation family, generated inventory table digest, and the absence of an inventory-to-resolve Cargo edge"
+  }
+}
