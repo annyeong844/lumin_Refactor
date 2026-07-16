@@ -91,10 +91,13 @@ Owns the dependency-light domain vocabulary:
 - source snapshots and fingerprints;
 - language-neutral module and symbol facts;
 - typed resolution outcomes;
-- exact consulted-semantic-input sets returned by capability owners;
+- path-level semantic-input demands, exact consulted-semantic-input sets, and owner step/outcome values;
+- owner diagnostic, opaque-fact, and file-failure payload values lowered before capability return;
 - closed limitation reasons and their model-owned scopes;
 - build, analysis-contract, analysis-input, repository, attempt, run, gate, operation, gate-baseline-observation, gate-close-observation, and embedded-source identity value types;
 - dependency-light gate signals and their originating owner/rule identities;
+- the typed gate-projection context routed to capability owners after cold/cache validation;
+- dependency-light confidence and grounding rank values used by owner facts and deltas;
 - completeness and opacity states.
 
 It must not depend on parsers, filesystems, persistence engines, CLI frameworks, or artifact formats. It is not a miscellaneous helper crate.
@@ -104,7 +107,7 @@ It must not depend on parsers, filesystems, persistence engines, CLI frameworks,
 Owns canonical run evidence:
 
 - run, capability, finding, diagnostic, metric, and limitation records;
-- confidence and grounding states;
+- canonical records and ordering semantics for model-owned confidence and grounding ranks;
 - gate effects, decisions, lifecycle state, and lifecycle evidence;
 - the closed, versioned gate-signal-to-effect policy;
 - stable evidence relationships;
@@ -236,17 +239,22 @@ Type ownership and value authority are distinct:
 | `AttemptId`, `RunId`, `GateId` | `lumin-model` | `lumin-store` allocates and persists them. |
 | `OperationId` | `lumin-model` | The caller creates it before a mutating gate or retention lifecycle command; `lumin-store` binds it to one repository-scoped request digest and committed result. |
 | `RetentionPlanId`, its canonical content identity, and `PinId` | `lumin-model` | `lumin-store` derives/allocates them in the transaction that commits the immutable prepared plan or independent run reference; each is scoped to one `RepositoryId`. |
-| `ConsultedSemanticInputs` | `lumin-model` | Every capability owner returns the exact source/config identities it consulted; `lumin-engine` computes a monotonic union and may seal an observation only after that union reaches a fixed point. |
-| `CachedCapabilityOutput<T>` | `lumin-model` | The capability owner creates and versions the complete replay envelope; `lumin-store` persists it and returns it only for engine validation against exact current inputs. |
+| `SemanticInputDemandSet`, `ConsultedSemanticInputs`, and `OwnerStep<T,C>` | `lumin-model` | A capability owner emits path-level demands without consuming their bytes and may carry one capability-owned, fully owned continuation `C`; `lumin-engine` reserves demands, `lumin-inventory` captures exact snapshots, and only a finished owner step reports the exact supplied identities it consumed. |
+| `OwnerDiagnostic`, `OpaqueFact`, and `FileFailure` | `lumin-model` | Capability owners lower parser/resolver-specific state into these dependency-light values; `lumin-evidence` creates canonical diagnostic/evidence records from them without changing their meaning. |
+| `OwnerOutcome<T>`, `CachedOwnerStep<T>`, and `CachedCapabilityOutput<T>` | `lumin-model` | The capability owner creates each exact-supplied-input demand step and the complete finished state/payload/diagnostic/limitation/gate-neutral envelope; `lumin-store` persists them and the engine replays one prerequisite-keyed step at a time. |
 | `GateBaselineObservationId` | `lumin-model` | `lumin-engine` derives it from the exact declared/leased observation domain, semantic reads, content identities, and gate-catalog revision accepted at open. |
 | `GateCloseObservationId` | `lumin-model` | `lumin-engine` derives it from the exact actual-write and semantic-read sets, content identities, and transition/catalog revision accepted at close. |
 | `ObservationBinding` | `lumin-model` | `lumin-engine` emits `Sealed` only from a complete baseline/close observation and emits typed `Unsealed` for nonauthorizing closure failures without inventing an ID. |
-| `GateDeltaClassification` | `lumin-model` | For post-write, the owning capability compares normalized baseline/current facts and emits introduced, unchanged, expanded, resolved, or baseline-unavailable classification before any adverse lifecycle signal is mapped. Pre-write may emit only the named advisory signal for a complete existing fact or a required-evidence signal for missing authorization evidence. |
-| `GateSignal` | `lumin-model` | Capability owners emit signals from their facts; the engine gate service emits only named transaction-invariant signals from typed store/inventory outcomes. |
+| `WorktreeTransition`, `TransitionCapsule`, and `ActiveGateTransitionRef` | `lumin-evidence` | `lumin-engine` derives the capsule from sealed terminal observations; `lumin-store` sequences it and atomically creates/releases references for active gates that may need the reconciliation proof. |
+| `ConfidenceRank` and `GroundingRank` | `lumin-model` | The owning capability assigns them under its versioned semantic contract; `lumin-evidence` persists them and owns their canonical record/query projection without redefining the rank. |
+| `DeltaKey`, `DeltaDimensionChange`, and `GateDeltaClassification` | `lumin-model` | For post-write, the owning capability compares normalized baseline/current facts under the total relation defined by the active slice before any adverse lifecycle signal is mapped. Pre-write may emit only the named advisory signal for a complete existing fact or a required-evidence signal for missing authorization evidence. |
+| `GateSignal` | `lumin-model` | Capability owners emit signals from facts/deltas; the engine gate service emits named transaction-invariant signals from typed store/inventory outcomes, while its capability registry emits only named compiled-profile availability facts/signals. |
+| `GateProjectionContext` | `lumin-model` | `lumin-engine` derives it from normalized intent/affected scope and the exact opening/current gate identities; capability owners consume it only after validating their owner outcome, and it never participates in a repository-input-only cache payload. |
 | `GateEffect`, `GateDecision`, and lifecycle state | `lumin-evidence` | `lumin-evidence::gate_policy` owns the closed signal-to-effect table and policy version; the engine only invokes that mapping and applies the canonical reducer/transition tables. |
 | `EvidenceQuery`, `CollectionOrderingId`, and `PageAnchor` | `lumin-evidence` | The engine query service validates filters, selects the owner-defined collection ordering version, and derives deterministic continuation anchors; `lumin-protocol` encodes and decodes opaque cursors. |
 | External protocol version and DTO schema | `lumin-protocol` | `lumin-protocol`. |
 | Run envelope, evidence-store, lifecycle-store, and cache schema versions | `lumin-store` | `lumin-store`. |
+| `StoreGeneration` and `MigrationIntent` | `lumin-store` project API | `lumin-store` allocates the next generation under the exclusive repository migration lock; every transaction is fenced to the generation of the backend handle it opened. |
 | Extractor, resolver, graph, and rule semantic versions | project-owned model values | The owning capability crate. |
 
 No crate duplicates a value because it owns a representation. Store and protocol receive model or evidence values through their allowed dependency direction.
@@ -259,6 +267,7 @@ The physical gate-policy authority is fixed:
 | resolution | `lumin-resolve` | `lumin-evidence::gate_policy` | resolve -> model; evidence -> model |
 | package/dependency ownership and observation drift | `lumin-inventory` | `lumin-evidence::gate_policy` | inventory -> model; evidence -> model |
 | graph/dead evidence | owning graph or analysis crate | `lumin-evidence::gate_policy` | graph -> model or analysis -> model/evidence |
+| compiled capability availability/profile | `lumin-engine` capability registry | `lumin-evidence::gate_policy` | engine -> model/evidence; registry emits availability only and owns no substitute analysis |
 | lease, containment, unplanned-transition, and lifecycle invariants | engine gate service from typed store/inventory outcomes | `lumin-evidence::gate_policy` | engine -> model/evidence/store |
 
 Capability crates never construct `GateEffect`, and `lumin-engine` never chooses an effect. Adding a signal or changing its effect requires the fact owner contract, the closed gate-policy table/version, and the architecture edge check to change together.
@@ -301,7 +310,7 @@ CI reads `cargo metadata` and rejects workspace dependency edges not listed in t
 
 `tools/xtask` is one development-only crate with `architecture-check`, `corpus`, and `package-check` subcommands. It may inspect `cargo metadata`, repository policy files, fixtures, and public binary behavior. Production crates never depend on it, it is not linked into `lumin`, and it does not import private analysis internals to manufacture expected results.
 
-The architecture check combines `cargo metadata`, scoped Clippy disallowed-method/type policy, owner-path source checks, exhaustive owner matches, and compile/public-API boundary fixtures. It rejects global Rayon entry points, runtime Node/Cargo launch sites, source-file reads outside `lumin-inventory`, backend API use outside `lumin-store`, OXC imports outside `lumin-js`, configured third-party types in public project APIs, cache envelopes without consulted-input replay, limitation variants without static scope/absence/relevance ownership, and post-write adverse lifecycle effects that bypass typed delta classification. Corpus and package checks execute the public binary.
+The architecture check combines `cargo metadata`, scoped Clippy disallowed-method/type policy, owner-path source checks, exhaustive owner matches, and compile/public-API boundary fixtures. It rejects global Rayon entry points, runtime Node/Cargo launch sites, source-file reads outside `lumin-inventory`, backend API use or backend handles outside `lumin-store`, backend handles that escape one repository-lock transaction, OXC imports outside `lumin-js`, configured third-party types in public project APIs or owner continuations, continuations containing borrowed parser/allocator state or open handles, owners that consume unsupplied/unreserved semantic inputs, gate projections that access I/O or emit late demands, cache envelopes missing owner outcome or diagnostic state, unavailable-capability signals outside the engine registry, limitation variants without static scope/absence/relevance ownership, semantic fact fields absent from their owner's key/dimension/metadata registry, non-total post-write delta mappings, and adverse lifecycle effects that bypass typed delta classification. Corpus and package checks execute the public binary.
 
 ## 6. Forbidden Dependencies
 
@@ -401,6 +410,8 @@ No implementation file should normally exceed 500 lines excluding tests. A file 
 12. Development verification runs through `lumin-xtask` without entering the production dependency DAG.
 13. A new SFC dialect enters through the existing `lumin-sfc` stages without leaking framework policy into the engine, resolver, graph, or a second pipeline.
 14. Cache replay, observation binding, gate delta classification, retention plans, pins, and collection ordering use the authority table without duplicate policy in engine, store, protocol, or CLI.
+15. Every semantic input is demanded before reservation/capture/consumption, every unavailable capability signal has the named registry owner, and every post-write fact relation has one exhaustive delta classification.
+16. Active-gate transition references and generation-fenced transaction handles prevent retention or lifecycle-store migration from invalidating a live transaction's proof.
 
 ## 12. Review Questions
 

@@ -90,11 +90,11 @@ Pre-write opens a durable transaction and returns one gate ID. Post-write requir
 
 Concurrent transactions may proceed only when their exclusive write leases do not overlap and no transaction writes another active gate's semantic inputs. Mixed-language work is one user transaction with internally owned language lanes.
 
-An authorizing baseline or close observation includes every exact semantic input actually consulted by its capability owners. If analysis discovers another input, Lumin extends and rechecks the read reservation and reruns affected analysis until the set is closed; it cannot authorize from a partial read set.
+An authorizing baseline or close observation includes every exact semantic input actually consumed by its capability owners. Discovery is two-phase: an owner first returns a path-level demand without reading that input, Lumin conflict-checks and reserves it, inventory captures its exact identity/bytes, and only then may the owner consume it and report an exact consulted identity. Cache validation follows the same reservation-before-consumption order. Lumin reruns affected analysis until no demand remains and cannot authorize from a partial read set.
 
-Cache reuse cannot change this safety contract. A warm execution replays the owner-authored facts, signals, limitations, and consulted semantic inputs together and validates every identity before reuse; otherwise it performs grounded work again or reports incomplete evidence. Cold and warm execution of the same exact inputs cannot protect different semantic-read sets.
+Cache reuse cannot change this safety contract. Cached demand metadata is keyed only by exact prerequisites and semantic owner-task/profile parameters already supplied and cannot reveal a downstream demand derived from uncaptured bytes. A warm execution replays the owner-authored outcome state, facts or opaque/failure payload, diagnostics, limitations, gate-neutral signals, and consulted semantic inputs together after every demanded identity is reserved and captured; otherwise it performs grounded work again or reports incomplete evidence. Request-specific gate signals are recomputed by the owning capability from the validated outcome and current typed `GateProjectionContext`. Cold and warm execution of the same exact inputs must produce the same capability state and canonical semantic dump, not merely the same decision.
 
-In one shared worktree, Lumin authorizes observable repository state transitions, not unverifiable operating-system process authorship. A gate may analyze concurrently, but close-out reconciles every intervening terminal gate transition in store order. An unexplained change or a still-active intervening write cannot be approved as this gate's delta.
+In one shared worktree, Lumin authorizes observable repository state transitions, not unverifiable operating-system process authorship. A gate may analyze concurrently, but close-out reconciles every intervening terminal gate transition in store order. An unexplained change or a still-active intervening write cannot be approved as this gate's delta. Retention cannot remove an exact transition capsule while any active gate may still need it for reconciliation.
 
 Every gate result has one decision: `Allow`, `AllowWithWarnings`, `Deny`, `Incomplete`, or `Stale`. Only the first two authorize the requested lifecycle step. Machine-readable output and process exit behavior are stable product contracts.
 
@@ -102,7 +102,7 @@ A nonauthorizing pre-write creates a queryable rejected record but no active lea
 
 Every user-facing command that mutates gate or retention lifecycle state carries a caller-retained operation ID. This includes gate open/close/abandon and durable retention plan, pin, unpin, and confirmation mutations. Retrying the same operation ID and request returns the same committed result instead of duplicating state; reusing it for different input is malformed. A result-delivery failure does not erase an already committed result, which remains recoverable by operation ID.
 
-Retention is a public, crash-consistent lifecycle operation. It cannot expose a record as deleted before its canonical indexes and payload ownership agree, cannot remove a protected latest/pinned/reference closure, and has one recoverable outcome at every deletion boundary. A known record in `Pruning` or `Pruned` state remains distinguishable from a never-existing ID through public queries, and independent pins cannot remove one another's protection.
+Retention is a public, crash-consistent lifecycle operation. It cannot expose a record as deleted before its canonical indexes and payload ownership agree, cannot remove a protected latest/pinned/active-transition reference closure, and has one recoverable outcome at every deletion boundary. A known record in `Pruning` or `Pruned` state remains distinguishable from a never-existing ID through public queries, and independent pins cannot remove one another's protection. Lifecycle-store migration admits mutations in exactly one generation: backend handles are transaction-scoped, replacement is generation-fenced, and every migration crash boundary has one recovery rule.
 
 ## 3. Non-Goals
 
@@ -125,7 +125,7 @@ Lumin v2 does not:
 4. A required capability failure is visible in the overview and cannot be interpreted as a clean result.
 5. Agents can complete audit, finding inspection, pre-write, and post-write without creating JSON files.
 6. A completed gate can be inspected by gate ID after the creating process exits and a new process opens the repository store.
-7. Query truncation is explicit, resumable, and pinned to one immutable scope or gate revision.
+7. Query truncation is explicit, resumable, and pinned to one immutable scope or gate revision; every collection, including current-binary and run-scoped capabilities, exposes its continuation surface.
 8. Framework-specific misses cannot abort unrelated language or repository analysis.
 9. A public re-export protects only the exported identity, not every sibling export in the same file.
 10. Legacy JSON and SARIF are optional projections from canonical evidence, not independent truth owners.
@@ -133,10 +133,10 @@ Lumin v2 does not:
 12. Every accepted slice includes real corpus fixtures, platform verification, and measured performance evidence.
 13. The latest failed attempt cannot be hidden behind an older completed run.
 14. Post-write cannot infer or auto-select a gate ID.
-15. A write that invalidates another gate's semantic baseline, cannot be reconciled to an immutable intervening gate transition, or changes the final close observation is rejected, incomplete, or visibly stale before approval; lifecycle policy distinguishes introduced, expanded, unchanged, resolved, and unavailable-baseline facts before assigning an effect.
+15. A write that invalidates another gate's semantic baseline, cannot be reconciled to an immutable intervening gate transition, or changes the final close observation is rejected, incomplete, or visibly stale before approval; lifecycle policy uses a total owner-defined relation over identity, targets, affected domain, confidence, grounding, and evidence before assigning an effect.
 16. Retrying any committed gate or retention lifecycle mutation by operation ID returns the same durable result and never creates a duplicate revision, plan, pin change, or deletion.
-17. An authorizing gate result is derived only after cold or warm capability outputs report the same complete semantic inputs, those inputs reach a fixed point, and the sealed read set passes final conflict and freshness validation; a nonauthorizing unsealed result names no fabricated observation ID.
-18. Public retention commands and lookups preserve one crash-recoverable, queryable state at every deletion boundary and cannot break latest, independent pin, operation, attempt, run, or gate referential integrity.
+17. An authorizing gate result is derived only after every newly demanded input is conflict-checked and reserved before capture/consumption, cold and warm paths produce the same complete owner outcome and semantic inputs, no demand remains, and the sealed read set passes final conflict and freshness validation; a nonauthorizing unsealed result names no fabricated observation ID.
+18. Public retention commands and lookups preserve one crash-recoverable, queryable state at every deletion boundary and cannot break latest, independent pin, active-gate transition, operation, attempt, run, gate, or lifecycle-generation referential integrity.
 
 ## 5. Verification Contract
 

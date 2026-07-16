@@ -29,7 +29,9 @@ The internal workspace layout is:
 ```text
 .lumin/
   latest.json
+  lifecycle.lock
   lifecycle.store
+  lifecycle-migration.json  # present only while a migration intent is live
   attempts/
     <attempt-id>/
       attempt.json
@@ -85,7 +87,7 @@ Run publication is a crash-consistent multi-object commit protocol, not one fict
 2. Close the store, validate its schema and semantic identity, record size/hash in `run.json`, durably flush required files, then durably flush the staging directory using the platform-supported equivalent.
 3. Atomically rename the validated staging directory to its immutable run directory and durably flush the `runs` parent.
 4. Publish the terminal `attempt.json` by same-directory temporary write, durable flush, atomic replacement, and parent flush.
-5. Under the latest-pointer store lock, compare attempt sequences, write and flush a complete replacement `latest.json`, atomically replace it, and flush `.lumin`. A stale process cannot move either pointer backward.
+5. Under the shared side of stable `lifecycle.lock`, open the current generation, compare attempt sequences, write and flush a complete replacement `latest.json`, atomically replace it, close the store handle, and flush `.lumin` before releasing the lock. A migration or stale process therefore cannot split the pointer check from the generation it observed or move either pointer backward.
 
 A failed terminal attempt cannot link an evidence store as its completed run. A crash may leave a validated run directory before terminal linkage; recovery treats it only as the orphan case below. Recovery validates target existence, run envelope, store hash/schema, attempt linkage, and sequence before trusting a pointer. A dangling or corrupt pointer is rejected and reported; Lumin does not silently reinterpret an older run as latest. Staging and pointer-temp remnants are noncanonical and may be removed only after validation.
 
@@ -105,13 +107,15 @@ The durable process lease identifies the process/operation that may finish a `Ru
 
 ### 2.4 `lifecycle.store`
 
-The repository-wide `lifecycle.store` contains audit attempt sequence/process-lease catalog metadata plus operation-id records, provisional admission and semantic-read-extension reservations, declared intents, logical path leases, baseline fingerprints and facts, advisory findings, immutable worktree transitions, close-out deltas, retention plans/tombstones, and lifecycle history for every gate in that repository. Attempt evidence remains in `attempt.json`; the catalog metadata exists only for allocation and recovery.
+The repository-wide `lifecycle.store` contains its `StoreGeneration`, audit attempt sequence/process-lease catalog metadata, operation-id records, provisional admission and semantic-read-extension reservations, declared intents, logical path leases, baseline fingerprints and facts, advisory findings, immutable worktree transitions/capsules/active-gate references, close-out deltas, retention plans/tombstones, and lifecycle history for every gate in that repository. Attempt evidence remains in `attempt.json`; the catalog metadata exists only for allocation and recovery.
 
 One transactional store is required so overlap detection and lease creation commit atomically across concurrent Lumin processes. Completed gate records become immutable by application contract. Active gates are not temporary transport records and are never silently removed while open.
 
 ### 2.5 Cache
 
 Cache content is disposable and noncanonical. Deleting it may affect performance but cannot change the meaning of a completed run or gate. Cache corruption becomes a visible miss.
+
+A cache lookup may replay one owner-authored `CachedOwnerStep` keyed by the exact snapshots and semantic owner-task/profile parameters already supplied in that iteration. `NeedsInputs` metadata may depend only on those keyed prerequisites, is not a semantic hit, and cannot reveal a downstream demand derived from uncaptured bytes. During gate analysis every demanded path is conflict-checked and reserved before inventory captures it; only then may the next cold/cached step run. An accepted finished envelope replays the exact owner outcome/capability state, facts or opaque/failure payload, diagnostics, limitations, gate-neutral signals, and consulted inputs. Request-specific signals and lifecycle deltas are recomputed by the owning capability from that validated outcome and current model-owned `GateProjectionContext`.
 
 ### 2.6 Storage Backend Decision Gate
 
@@ -127,7 +131,7 @@ The architecture review benchmarks at least one pure-Rust embedded candidate, in
 
 `redb`'s first probe is two independent writer processes contending for the same lifecycle store. If open/lock/retry behavior cannot preserve atomic lease admission without a daemon or a second truth owner, the candidate is rejected before performance comparison.
 
-Correctness probes inject process death at every row of the publication and retention crash tables. They cover unadoptable orphan runs, dangling pointers, corrupt hashes, stale-writer sequence regression, interrupted gate migration, retention tombstone/trash recovery, and unsupported durable-flush behavior on each required platform. Probe evidence preserves source and fixture hashes, toolchain/target, exact commands, expected invariants, crash point, and raw result under `reviews/probes/<probe-id>/`; build output is removed, but reproducibility evidence is not.
+Correctness probes inject process death at every row of the publication, retention, and lifecycle-migration crash tables. They cover unadoptable orphan runs, dangling pointers, corrupt hashes, stale-writer sequence regression, old-generation late writers, retention tombstone/trash recovery, and unsupported durable-flush behavior on each required platform. Probe evidence preserves source and fixture hashes, toolchain/target, exact commands, expected invariants, crash point, and raw result under `reviews/probes/<probe-id>/`; build output is removed, but reproducibility evidence is not.
 
 The first failing correctness requirement rejects a candidate before performance ranking. Architecture v1 records one accepted backend and rationale; production does not ship dual backends or a runtime fallback.
 
@@ -170,7 +174,7 @@ lumin findings --run <run-id> [filters] [--cursor <cursor>]
 lumin explain --run <run-id> <finding-id> [--evidence-cursor <cursor>] [--relations-cursor <cursor>]
 lumin related --run <run-id> <finding-id> [--cursor <cursor>]
 lumin files --run <run-id> <repo-path> [--cursor <cursor>]
-lumin capabilities [--run <run-id>]
+lumin capabilities [--run <run-id>] [--cursor <cursor>]
 ```
 
 These commands are the query subset of the canonical ARCH-000 command table. Skills use `--format json`; human-readable output is a projection of the same DTO. Machine output writes one versioned JSON value to stdout and diagnostics to stderr.
@@ -219,7 +223,7 @@ The closed `retention-plan-items.v1` record-kind rank is `attempt=0`, `run=1`, `
 
 Every ordering key is total: its final stable ID uniquely identifies one canonical row after owner deduplication. Textual keys use their canonical model encoding and ascending byte order unless a direction is stated. Adding or changing a collection ordering changes its ordering ID and protocol contract.
 
-Severity and confidence sort by explicit `lumin-evidence` rank values, not localized or display labels. Those ranks are part of `findings.v1`; changing them requires a new ordering ID.
+Severity sorts by its explicit `lumin-evidence` rank and confidence by the model-owned `ConfidenceRank`, never localized or display labels. Their selected ordering is part of `findings.v1`; changing it requires a new ordering ID.
 
 Run collections use `{"kind":"run","id":"run_..."}` scope. Gate collections use `{"kind":"gate-attempt","gateId":"gate_...","revision":7}` scope. Repository catalogs use `{"kind":"repository","id":"repo_...","revision":42}`; a mutation makes an unresumable old view `Stale` rather than silently continuing against new rows. Current-binary capability collections use `{"kind":"binary","buildId":"..."}`, while run capabilities use run scope. An immutable prepared retention plan uses `{"kind":"retention-plan","planId":"plan_...","contentIdentity":"..."}`; unrelated repository mutations do not invalidate its pages, while confirmation separately revalidates current catalog state. Every gate advisory or close attempt increments the revision and persists an immutable revision record. A cursor for an older active-gate revision remains valid only against that revision; it cannot silently advance to newer gate evidence. Invalid, cross-scope, or tampered cursors fail as malformed requests rather than restarting at page one.
 
@@ -305,12 +309,12 @@ The caller creates and retains a repository-scoped `OperationId` before invoking
 
 A caller-declared path outside the canonical root is malformed request input: exit `2`, no operation record, no gate ID, and no lease. Valid pre-write then uses one protected handoff:
 
-1. The controller quiesces its participating editors for the declared domain and known semantic inputs.
+1. The controller quiesces its participating editors for the declared domain and already known semantic inputs.
 2. One lifecycle-store transaction binds the operation ID/request digest, checks the current catalog, and creates a short-lived provisional reservation for the normalized leased-write and candidate semantic-read sets. This reservation blocks conflicting compliant opens but is not an `Active` gate lease and does not authorize edits.
 3. Inventory captures the exact declared/leased observation domain, candidate semantic reads, source set, configuration, content identities, and catalog revision.
-4. Owners analyze only those bytes and return complete cold or validated-cache `CachedCapabilityOutput` values, including `ConsultedSemanticInputs`, facts, signals, and limitations. The engine unions every reported input with the candidate set.
-5. If one complete iteration adds no input, closure has reached its fixed point. If the set grows, one lifecycle-store transaction checks every added read against active/provisional writes. A conflict, unbounded input, or unobservable required input stops the closure branch with typed `Incomplete` evidence and records the attempted domain, last complete read set when one exists, and conflicting or unbounded inputs; none is omitted to force convergence. When all additions are admissible, the same transaction extends the reservation, inventory captures their exact identities, and every affected owner reruns. Steps 4-5 repeat.
-6. A successful closure seals the semantic-read set and derives `ObservationBinding::Sealed(Baseline(GateBaselineObservationId))`. Inventory then rediscovers and rehashes the complete sealed path/identity sets; drift yields a sealed `Stale` result. A failed closure derives `ObservationBinding::Unsealed` from the typed failure data and creates no baseline observation ID or fabricated partial hash.
+4. Owners analyze only supplied snapshots and return ARCH-001 `OwnerStep` values. `NeedsInputs` contains path-level demands only: neither the owner nor a cache validator has read or accepted those demanded bytes. `Finished` contains the complete outcome, gate-neutral signals, and exact supplied identities actually consumed.
+5. For every new demand, one lifecycle-store transaction normalizes and checks the path against active/provisional writes and extends the reservation before any capture or consumption. A conflict, unbounded demand, or unobservable required input stops the closure branch with typed `Incomplete` evidence and records the attempted domain, last complete read set when one exists, and the conflicting or unbounded demands. When all additions are admissible, inventory captures their exact identities/bytes; only then may the next prerequisite-keyed cached step run or an affected cold owner resume from its owned continuation. If that cached next step misses, the owner starts once with all snapshots supplied so far. No path already consumed in this execution is reread or reparsed. Steps 4-5 repeat until every owner is `Finished` and no demand remains.
+6. A successful closure transactionally removes any reserved input that no finished owner consumed, seals the exact finished semantic-read set, and derives `ObservationBinding::Sealed(Baseline(GateBaselineObservationId))`. Inventory then rediscovers and rehashes the complete sealed path/identity sets; drift yields a sealed `Stale` result. A failed closure derives `ObservationBinding::Unsealed` from the typed failure data and creates no baseline observation ID or fabricated partial hash.
 7. One final lifecycle-store transaction rechecks the operation digest, reservation, catalog and transition revisions, and every applicable conflict; a sealed branch also rechecks the sealed reads. It maps typed signals through the canonical effect policy, allocates the gate ID, and atomically commits either `Active` plus its durable path lease and sealed read set or queryable `Rejected` without a lease. Only `Allow` or `AllowWithWarnings` with a sealed binding may become `Active`. The provisional reservation is removed in the same transaction.
 8. The controller may resume editors after delivery succeeds or, if delivery fails, after it recovers the committed operation result. The returned decision carries the exact `ObservationBinding` accepted in step 7.
 
@@ -424,12 +428,12 @@ Close uses one exact observation protocol:
 1. The controller quiesces its participating editors, then captures the current source/config path sets, exact identities, source snapshots, opening semantic reads, and transition-catalog revision.
 2. Reconcile every post-baseline terminal transition under Section 8.1. A transition touching a protected opening semantic read outside this gate's leased and actual write sets yields `Stale`; a changed path covered only by another active gate yields `Incomplete`; an identity mismatch or unexplained path yields `Deny`.
 3. Remove only exactly chained, disjoint terminal transitions from the raw baseline/current diff. The remainder is the preliminary actual-write set.
-4. Analyze the captured bytes and derived affected facts. Every owner returns `ConsultedSemanticInputs`; the engine unions them with the opening reads to form the candidate close read set.
-5. If one complete iteration adds no input, closure has reached its fixed point. If the set grows, one lifecycle-store transaction checks each added read against active/provisional writes. A still-active writer, unbounded input, or unobservable required input stops the closure branch with typed `Incomplete` evidence and an unsealed attempted-domain record. When all additions are admissible, the transaction establishes an operation-scoped semantic-read-extension reservation, inventory captures the added exact identities, refreshes the transition catalog and preliminary delta, and reruns every affected owner. Terminal transitions completed before the refreshed capture are analyzed at their exact current identities; a later transition changes the catalog and fails final validation. Steps 4-5 repeat.
-6. A successful closure seals the close semantic-read set, recomputes the exact actual-write set, derives the current close `AnalysisInputId`, and creates `ObservationBinding::Sealed(Close(GateCloseObservationId A))` from those sets, their content identities, and the accepted transition/catalog revision. A failed closure creates `ObservationBinding::Unsealed` with no A and retains the prior protected read set.
+4. Analyze only the supplied snapshots and derived affected facts. Each owner returns an ARCH-001 `OwnerStep`: `NeedsInputs` names unconsumed path-level demands, while `Finished` names only exact supplied identities actually consumed.
+5. Before inventory reads or hashes any newly demanded input, one lifecycle-store transaction checks it against active/provisional writes and establishes an operation-scoped semantic-read-extension reservation. A still-active writer, unbounded demand, or unobservable required input stops the closure branch with typed `Incomplete` evidence and an unsealed attempted-domain record. When every demand is admissible, inventory captures the added exact identities/bytes; only then may the next prerequisite-keyed cached step run or an affected cold owner resume from its owned continuation. If that cached step misses, the owner starts once with all snapshots supplied so far. The transition catalog and preliminary delta refresh with that capture, and no payload already consumed in this execution is reread or reparsed. Terminal transitions completed before it are analyzed at their exact current identities; a later transition changes the catalog and fails final validation. Steps 4-5 repeat until every owner is `Finished` and no demand remains.
+6. A successful closure transactionally removes any unused extension reservation, seals the exact finished close-read set, recomputes the exact actual-write set, derives the current close `AnalysisInputId`, and creates `ObservationBinding::Sealed(Close(GateCloseObservationId A))` from those sets, their content identities, and the accepted transition/catalog revision. A failed closure creates `ObservationBinding::Unsealed` with no A and retains the prior protected read set.
 7. Only a sealed branch rediscovers the complete path sets and rehashes their exact inputs. Any difference from A yields a sealed `Stale` result.
 8. In the close transaction, recheck the operation digest, gate revision/lifecycle, transition-catalog revision, every other active gate or reservation, and reconciliation chain; a sealed branch also rechecks its exact read set and A, while an unsealed branch rechecks its attempted-domain conflict identities without pretending they form a complete observation.
-9. Persist the immutable operation result, `ObservationBinding`, and close-attempt revision. A sealed revision records its current `AnalysisInputId`; an unsealed revision records none. A nonauthorizing attempt with a conflict-free sealed read set updates the active gate's protected semantic reads for its new revision; an unsealed attempt leaves the prior protected set. Only `Allow` or `AllowWithWarnings` with a sealed binding appends the terminal worktree transition, closes the gate, and releases its durable logical path lease atomically. Every operation-scoped extension reservation is removed in this transaction.
+9. Persist the immutable operation result, `ObservationBinding`, and close-attempt revision. A sealed revision records its current `AnalysisInputId`; an unsealed revision records none. A conflict-free sealed `Deny` or `Incomplete` whose snapshot is still `Current` may replace the active revision's protected read set; an unsealed result or any sealed `Stale` historical observation leaves the prior protection unchanged. Every retry still computes lifecycle delta against the immutable opening semantic baseline, never the prior failed close. Only `Allow` or `AllowWithWarnings` with a sealed binding appends the terminal worktree transition, closes the gate, and releases its durable logical path lease atomically. Every operation-scoped extension reservation is removed in this transaction.
 
 The controller may resume participating editors after delivery succeeds or, if delivery fails, after it recovers the committed operation result. An authorizing result is bound to the sealed returned `GateCloseObservationId`; a nonauthorizing result returns its sealed or typed unsealed binding. Neither is a claim that an unlocked worktree can never change after the final observation. A later edit requires a new gate transaction.
 
@@ -437,7 +441,7 @@ If the close process dies before its final transaction, liveness recovery remove
 
 Actual delta derives from the baseline and current inventory identity maps. A rename is canonical only when one baseline path and one current path share the same unique persistent filesystem identity; otherwise even identical content is reported conservatively as remove plus add. VCS status may accelerate candidate discovery but is never the truth owner. Both rename endpoints require leases in either representation.
 
-Only `Allow` and `AllowWithWarnings` commit the terminal close result, worktree transition, and logical lease release in one store transaction. `Deny`, `Incomplete`, and `Stale` append an immutable close-attempt revision and keep the gate active until a later successful close or explicit abandon; a conflict-free sealed close read set becomes that active revision's protected semantic-read set. Result transport occurs after storage transaction locks, scan locks, and operation-liveness leases are released. The durable logical path lease and protected semantic reads of an `Active` gate remain repository state until a later validated revision, close, or abandon.
+Only `Allow` and `AllowWithWarnings` commit the terminal close result, worktree transition, and logical lease release in one store transaction. `Deny`, `Incomplete`, and `Stale` append an immutable close-attempt revision and keep the gate active until a later successful close or explicit abandon; only a conflict-free sealed current `Deny`/`Incomplete` read set may replace that active revision's protection. A sealed stale snapshot is preserved as historical evidence but never becomes current protection. Result transport occurs after storage transaction locks, scan locks, and operation-liveness leases are released. The durable logical path lease and protected semantic reads of an `Active` gate remain repository state until a later validated revision, close, or abandon.
 
 ## 8. Concurrent Agents and Path Leases
 
@@ -478,7 +482,9 @@ Abandon validates the operation digest and exact active gate revision, then comm
 
 Lumin does not claim which OS process or editor wrote a byte. It proves whether the observed worktree state is covered by an authorizing gate transition.
 
-Every authorizing close appends one immutable, monotonically sequenced `WorktreeTransition` containing the gate/revision, baseline and close observation IDs, leased writes, sealed close semantic reads, and exact before/after identities. Every opening baseline records the current transition sequence.
+Every authorizing close appends one immutable, monotonically sequenced `WorktreeTransition`. Its immutable `TransitionCapsule` is the transition's sole reconciliation payload, not a second truth owner, and contains the gate/revision, baseline and close observation IDs, leased writes, sealed close semantic reads, and exact before/after identities needed for later reconciliation. Every opening baseline records the current transition sequence.
+
+In the same terminal-close transaction, `lumin-store` creates an `ActiveGateTransitionRef` from every other active gate whose opening sequence precedes the new transition to that capsule. The reference does not claim that the transition is compatible; it keeps the exact proof available until that active gate can classify it. Closing or abandoning an active gate atomically releases all references it owns, while a successful close also creates references from the remaining eligible active gates to its new capsule. A referenced capsule is retention-ineligible even when its originating gate is terminal. A later gate opened after the transition needs no reference because its sealed baseline already observes the resulting bytes.
 
 At close, changes after that sequence are partitioned as follows:
 
@@ -489,7 +495,7 @@ At close, changes after that sequence are partitioned as follows:
 - a changed path or candidate semantic read covered by another still-`Active` gate has no terminal identity to reconcile and makes close `Incomplete` with an attribution-pending finding;
 - a missing transition, broken identity chain, or other unexplained changed path is an unplanned-transition signal and makes close `Deny`.
 
-The store serializes terminal transitions and close revisions. Thus disjoint gates may analyze concurrently, but a close that observes another in-flight edit waits through an `Incomplete` retry until that edit becomes a terminal transition. If a different process produced bytes later authorized by another gate, Lumin reports only that the final state transition was authorized; it never fabricates process provenance.
+The store serializes terminal transitions, active-gate transition references, and close revisions. Thus disjoint gates may analyze concurrently, but a close that observes another in-flight edit waits through an `Incomplete` retry until that edit becomes a terminal transition. If a different process produced bytes later authorized by another gate, Lumin reports only that the final state transition was authorized; it never fabricates process provenance.
 
 ## 9. Gate Queries
 
@@ -529,7 +535,40 @@ Ordinary audit findings are data and do not make a successful audit process fail
 
 ### 9.2 Gate Effects and Lifecycle
 
-Gate policy never infers severity from display text. For lifecycle comparison, capability owners first emit model-owned `GateDeltaClassification` from normalized baseline/current facts: introduced, unchanged, expanded, resolved, or baseline unavailable. Static limitation registries own scope and absence impact, not lifecycle effect. Complete introduced/expanded adverse facts, unchanged advisory facts, and unavailable required comparison then become distinct typed `GateSignal` values; resolved facts emit no adverse signal. Pre-write may emit advisory signals from complete existing facts or incompleteness when required evidence is unavailable, but it does not invent a post-write delta. The engine emits only named transaction-invariant signals from typed inventory/store outcomes. The closed, versioned `lumin-evidence::gate_policy` table maps signals to effects:
+Gate policy never infers severity from display text. For lifecycle comparison, each capability owner canonicalizes baseline and current facts by a model-owned `DeltaKey` that excludes mutable comparison dimensions, then applies one total relation:
+
+```text
+GateDeltaClassification =
+  Introduced
+  | Unchanged
+  | Regressed { changes: NonEmpty<DeltaDimensionChange> }
+  | Improved { changes: NonEmpty<DeltaDimensionChange> }
+  | ChangedIncomparable {
+      regressions,
+      improvements,
+      incomparable_changes
+    }
+  | Resolved
+  | BaselineUnavailable
+
+DeltaDimensionChange =
+  TargetAdded(identity)
+  | TargetRemoved(identity)
+  | AffectedIdentityAdded(identity)
+  | AffectedIdentityRemoved(identity)
+  | ConfidenceRaised(from, to)
+  | ConfidenceLowered(from, to)
+  | GroundingRaised(from, to)
+  | GroundingLowered(from, to)
+  | EvidenceIdentityChanged(from, to)
+  | OwnerPayloadRegressed(field_id, from, to)
+  | OwnerPayloadImproved(field_id, from, to)
+  | OwnerPayloadChanged(field_id, from, to)
+```
+
+Absent-to-present is `Introduced`, present-to-absent is `Resolved`, and exact semantic equality is `Unchanged`. For target and affected-domain sets, additions are regressions and removals are improvements; limitation scopes first derive their exact affected-domain set rather than relying on enum-name order. Every slice defines explicit confidence and grounding ranks, where a rank loss is regression and a gain is improvement. Changed evidence identity and any owner payload field without a declared direction are incomparable. Only regressive dimensions produce `Regressed`, only improving dimensions produce `Improved`, and any mixture or incomparable dimension produces `ChangedIncomparable`. Thus overlapping sets such as `{a,b} -> {b,c}`, narrowed-but-present limitations, confidence loss, owner-payload replacement, and evidence replacement all have exactly one classification. Every persisted owner fact field is declared as part of `DeltaKey`, one closed comparison dimension, or non-semantic metadata; the architecture check rejects an unregistered semantic field. Duplicate rows for one `DeltaKey` are canonicalized before comparison, and adding an owner dimension requires an exhaustive relation and signal mapping.
+
+Static limitation registries own scope and absence impact, not lifecycle effect. Owners turn the total classification and its dimension changes into distinct typed `GateSignal` values under the active slice: adverse introduced/regressed/mixed changes, unchanged advisory facts, improvements/resolutions, and unavailable required comparison cannot share an implicit path. Pre-write may emit advisory signals from complete existing facts or incompleteness when required evidence is unavailable, but it does not invent a post-write delta. The engine gate service emits only named transaction-invariant signals from typed inventory/store outcomes; the engine capability registry separately emits only compiled-profile availability facts/signals and never substitutes analysis. The closed, versioned `lumin-evidence::gate_policy` table maps signals to effects:
 
 | `GateEffect` | Meaning |
 | --- | --- |
@@ -574,7 +613,7 @@ Post-write:
 3. computes deltas only for available capability owners and preserves unavailable lanes;
 4. persists and returns the close-out decision.
 
-A caller may explicitly request a broader audit, but the write gate does not silently launch one. Cold and warm timings are reported separately. Warm reuse replays and validates the full ARCH-001 `CachedCapabilityOutput`; it cannot omit consulted reads, signals, or limitations, and cold/warm execution over one exact observation must reach the same gate binding and decision.
+A caller may explicitly request a broader audit, but the write gate does not silently launch one. Cold and warm timings are reported separately. Warm reuse validates and replays the full ARCH-001 owner outcome/capability state, diagnostics, payload, limitations, gate-neutral signals, and consulted reads. The owning capability then recomputes request-specific signals from the current `GateProjectionContext`. Cold/warm execution over one exact observation must reach the same binding, decision, and canonical semantic dump.
 
 When no compatible current index exists, pre-write rebuilds repository inventory plus only the planned/affected capability facts required by available owners. Any repository-wide absence lane that cannot be grounded by that focused rebuild is `Unverifiable` or `Incomplete`; it is never inferred from a missing cache and never triggers a hidden full audit.
 
@@ -593,9 +632,9 @@ lumin runs prune confirm <plan-id> --operation-id <operation-id>
 
 Pin allocates and returns one repository-scoped `PinId`. Unpin accepts that exact pin ID, not merely the run ID. Each independent review/CI consumer therefore owns one reference, and a run becomes unpinned only after its last live pin is explicitly removed. Pin and unpin validate the exact run/reference plus operation digest and commit the change with the operation result in one lifecycle-store transaction. Delivery failure is recovered through `lumin operation show`; it never leaves an ambiguous second pin mutation or lets one consumer remove another's protection.
 
-Plan creation allocates a model-owned `RetentionPlanId` and persists one immutable `Prepared` plan in the same transaction; the ID is scoped to the repository and collision-checked by `lumin-store`. It deletes nothing. A run plan contains the exact attempt, completed-run, orphan-payload, every independent pin/reference, byte count, exclusions, repository catalog revision, and content identity; a gate plan contains the exact terminal gate, revision, finding/evidence, and operation-record closure. The content identity derives from the canonically ordered logical plan payload under the lifecycle schema, never backend row/page order. The plan plus its creation/confirmation operation records are not members of their own deletable closure; they become the minimal retained tombstone. `plan show` pages the immutable retention-plan scope and never creates a replacement plan from repeated filters. Unrelated repository mutations do not invalidate paging; confirmation separately revalidates the current catalog. Gate retention uses the `lumin gate prune` commands above; no second cleanup owner exists.
+Plan creation allocates a model-owned `RetentionPlanId` and persists one immutable `Prepared` plan in the same transaction; the ID is scoped to the repository and collision-checked by `lumin-store`. It deletes nothing. A run plan contains the exact attempt, completed-run, orphan-payload, every independent pin/reference, byte count, exclusions, repository catalog revision, and content identity. A gate plan contains the exact terminal gate, revisions, findings/evidence, operation records, terminal `WorktreeTransition`/`TransitionCapsule`, and any `ActiveGateTransitionRef` that excludes that closure from deletion. The content identity derives from the canonically ordered logical plan payload under the lifecycle schema, never backend row/page order. The plan plus its creation/confirmation operation records are not members of their own deletable closure; they become the minimal retained tombstone. `plan show` pages the immutable retention-plan scope and never creates a replacement plan from repeated filters. Unrelated repository mutations do not invalidate paging; confirmation separately revalidates the current catalog. Gate retention uses the `lumin gate prune` commands above; no second cleanup owner exists.
 
-Confirmation accepts only the exact plan ID plus a new operation ID. Before deletion begins, one lifecycle-store transaction revalidates pin/lifecycle/catalog/latest state and every record identity. A changed input leaves the plan `Prepared` and returns `Stale`. Pinned or active records are never eligible. The current `latestAttempt` target and `latestCompleted` target are never eligible, and each retains its linked attempt/run closure. The plan reports every exclusion reason.
+Confirmation accepts only the exact plan ID plus a new operation ID. Before deletion begins, one lifecycle-store transaction revalidates pin/lifecycle/catalog/latest/transition-reference state and every record identity. A changed input leaves the plan `Prepared` and returns `Stale`. Pinned or active records are never eligible. A terminal gate and its transition capsule are also ineligible while any `ActiveGateTransitionRef` points to that capsule; retention cannot turn a later active close from reconcilable into missing-transition `Deny`. The current `latestAttempt` target and `latestCompleted` target are never eligible, and each retains its linked attempt/run closure. The plan reports every exclusion reason.
 
 Deletion is a crash-consistent state machine:
 
@@ -633,6 +672,7 @@ Successful plan creation, resumable `Pruning`, and logical `Pruned` results exit
 - `latest.json` contains separate `latestAttempt` (attempt ID/sequence/status) and `latestCompleted` (run ID/originating sequence) pointers, not copied evidence.
 - Active gates survive process exit.
 - Operation records remain linked to their gate/revision or retention plan/result for idempotent retry and delivery recovery for at least as long as that referential closure.
+- Terminal transition capsules and their full reconciliation payload remain linked and prune-ineligible until every active-gate transition reference is released by close or abandon.
 - Cache has an independent cleanup policy.
 - Retention commands report exactly which immutable run, attempt, orphan, gate, evidence, and operation records will be removed.
 - A durable finding referenced by a review or CI result is addressable by run and finding ID.
@@ -644,7 +684,30 @@ Attempt sequences are allocated atomically in the catalog; a sequence becomes a 
 
 If a process disappears before terminal publication, later store recovery follows the exact crash table in Section 2.3. In particular, a renamed run directory without a terminal success attempt remains an unpointed orphan beside an `Interrupted` attempt and is never adopted as success. Process leases are operation-liveness records, not scan locks, durable gate path leases, or result-transport locks.
 
-Completed run directories are never migrated in place. Compatible old run schemas are read through versioned adapters or a disposable derived index. Whole `lifecycle.store` migration uses an exclusive repository store lock, copy-on-write replacement, and rollback-safe validation while preserving attempt/catalog sequences, operation IDs/results, worktree transitions, retention plans/tombstones, pins/references, gate IDs/revisions, and history. Unsupported schemas are reported as incompatible, not corrupt or empty.
+Completed run directories are never migrated in place. Compatible old run schemas are read through versioned adapters or a disposable derived index. Unsupported schemas are reported as incompatible, not corrupt or empty.
+
+Whole `lifecycle.store` migration is a generation-fenced copy-on-write protocol. The stable `.lumin/lifecycle.lock` is outside the replaceable backend. Every ordinary store transaction acquires its shared side, opens the current backend only after acquiring it, validates the backend `StoreGeneration`, closes the backend handle before releasing the lock, and retains at most a generation token across analysis. No backend handle crosses a transaction boundary. Migration acquires the exclusive side, so replacement begins only after every old-generation handle has closed.
+
+Migration follows one sequence:
+
+1. Under the exclusive lock, durably publish `lifecycle-migration.json` with `MigrationIntent { from_generation: N, to_generation: N+1, source_schema, target_schema }` and flush `.lumin`. A live intent blocks every mutation except migration recovery; existing durable operations, reservations, active gates, and process leases remain records to migrate rather than being expired.
+2. Build generation `N+1` at a private same-filesystem path from one logical snapshot of `N`. Preserve and validate attempt/catalog sequences, operation IDs/results, reservations, worktree transitions/capsules/references, retention plans/tombstones, pins, gate IDs/revisions, and history.
+3. Compare the complete canonical logical dump and referential closure, then close every source/replacement backend handle and durably flush the replacement and its parent. Failed validation leaves `N` authoritative and the intent recoverable; it cannot publish a partial replacement.
+4. Atomically replace `lifecycle.store`, durably flush `.lumin`, reopen the canonical path, and require a valid `N+1` header and logical identity.
+5. Durably remove the migration intent, flush `.lumin`, and clean temporary payloads idempotently.
+
+A process that analyzed while holding generation token `N` must reacquire the shared lock and reopen the canonical store before its next transaction. If it observes `N+1`, it must revalidate its operation, gate revision, catalog/transition revision, and freshness against the new handle before continuing; it may reopen/retry under the same operation ID or return a typed generation-change failure, but it cannot commit through the stale token. A read transaction already holding the shared lock finishes and closes before migration can acquire exclusivity; new reads wait for live migration/recovery and never continue through an old handle during replacement. Logical query scopes and cursors survive migration only when their schema, scope identity, ordering version, and referenced logical records are unchanged; no cursor contains a physical backend generation.
+
+Every migration crash point has one recovery rule:
+
+| Crash point | Canonical recovery |
+| --- | --- |
+| before durable `MigrationIntent` | generation `N` remains authoritative; no migration exists |
+| after durable intent and before a validated replacement | `N` remains authoritative; recovery discards or resumes the private copy under the same intent |
+| after validated replacement and before atomic replace | `N` remains authoritative; recovery revalidates and resumes replacement |
+| during replace before the parent flush | exactly one valid generation may occupy canonical `lifecycle.store`: `N` resumes the intent and `N+1` completes it; a missing/invalid canonical store or generation disagreement with the intent is an integrity hard-stop |
+| after durable parent flush and before intent removal | `N+1` is authoritative; recovery revalidates it and removes the intent |
+| after intent removal and during temporary cleanup | `N+1` is authoritative; cleanup alone resumes idempotently |
 
 ## 12. Security and Integrity
 
@@ -664,9 +727,9 @@ Completed run directories are never migrated in place. Compatible old run schema
 
 ## 13. Acceptance Criteria
 
-1. A complete default audit creates only the repository lifecycle store, small attempt/run envelopes, latest pointer, and canonical evidence store.
+1. A complete default audit creates only the repository lifecycle lock/store, small attempt/run envelopes, latest pointer, and canonical evidence store; the migration intent exists only while migration is live.
 2. An agent can answer a focused finding question without opening either file directly.
-3. Every bounded response supports explicit continuation.
+3. Every bounded response, including binary- and run-scoped capabilities, supports explicit continuation.
 4. Projection limits cannot change canonical counts.
 5. A failed required capability is prominent in `overview`.
 6. Pre-write and post-write require no intent JSON or temporary transport file.
@@ -684,22 +747,22 @@ Completed run directories are never migrated in place. Compatible old run schema
 18. Existing aliases, directory descendants, new paths, and both sides of a rename obey the path identity contract.
 19. Gate decisions, machine output, and process exit codes follow the stable decision table.
 20. Nested evidence and relation lists cannot bypass bounded query envelopes.
-21. Store migration cannot rewrite completed logical evidence in place or erase active gate history.
+21. Lifecycle-store migration cannot rewrite completed logical evidence in place, erase active gate history, or let an old-generation handle commit after replacement.
 22. Every run query is pinned to one immutable run, and every nested page can be requested explicitly without following latest.
 23. `AnalysisContractId` compatibility cannot be invalidated merely by a different `AnalysisInputId`.
 24. Pre-write rejection owns no lease; failed post-write remains active with an immutable attempted revision.
 25. Post-write drift during analysis cannot authorize or release a gate.
 26. Every publication crash point recovers according to Section 2.3 without a dangling pointer becoming clean evidence.
 27. Retrying any mutating gate or retention lifecycle command with the same operation ID/request returns the same committed result; conflicting reuse is malformed.
-28. Shared-worktree changes are approved only when this gate or an exact immutable intervening transition explains every observed identity change.
+28. Shared-worktree changes are approved only when this gate or an exact immutable intervening transition explains every observed identity change, and referenced transition capsules remain available while an active gate may need them.
 29. Retention cannot delete either latest-pointer target or break its attempt/run linkage.
-30. Open and close observations are derived only after owner-reported semantic inputs reach a fixed point; every added read is reserved, captured, and conflict-checked before authorization.
+30. Open and close observations are derived only after owner-reported semantic inputs reach a fixed point; every added read is demanded, conflict-checked, and reserved before inventory captures it or an owner/cache validator consumes it.
 31. Gate abandon, run pin/unpin, prune-plan creation, and prune confirmation recover committed results by operation ID after delivery failure.
 32. Every retention deletion crash point recovers to exactly one `Prepared`, `Pruning`, or `Pruned` truth and never exposes missing payload as clean deletion.
-33. Validated warm cache replay preserves the same owner-reported semantic inputs, signals, effects, and observation binding as cold execution.
+33. Validated warm cache replay preserves the same owner outcome/capability state, diagnostics, payload, limitations, semantic inputs, gate-neutral signals, request-specific effects, observation binding, and semantic dump as cold execution.
 34. A nonauthorizing closure failure persists typed `Unsealed` evidence and never invents a baseline or close observation ID.
 35. Every public collection has one versioned canonical ordering, and an immutable retention-plan cursor survives unrelated repository mutations without crossing plan identity.
 36. Known `Pruning` and `Pruned` records remain publicly distinguishable from never-existing IDs through plan, operation, and direct-record lookup.
 37. Post-write reuses the exact caller-supplied opening scan/entry/profile override tier, rejects replacement parameters, and recomputes config-derived effective values only from validated self-writable inputs.
-38. Lifecycle effects consume owner-produced introduced/unchanged/expanded/resolved/baseline-unavailable deltas rather than static limitation rows.
-39. Independent `PinId` references protect one another, minimal tombstones remain auditable, and lifecycle-store migration preserves the complete logical catalog.
+38. Lifecycle effects consume one exhaustive owner-produced total delta relation over identity, targets, affected domain, confidence, grounding, and evidence rather than static limitation rows.
+39. Independent `PinId` and active-gate transition references protect one another, minimal tombstones remain auditable, and generation-fenced lifecycle-store migration preserves the complete logical catalog.

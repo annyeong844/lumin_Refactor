@@ -121,24 +121,63 @@ For parser-backed languages, each worker owns:
 
 AST and allocator-backed references never cross the worker boundary. Workers lower all retained information into project-owned values before returning.
 
-Every reusable result is one model-owned envelope:
+Every owner invocation is one model-owned step:
 
 ```text
+OwnerStep<T, C> =
+  NeedsInputs {
+    demands: SemanticInputDemandSet,
+    continuation: C
+  }
+  | Finished {
+      outcome: OwnerOutcome<T>,
+      gate_neutral_signals,
+      consulted_semantic_inputs: ConsultedSemanticInputs
+    }
+
+OwnerOutcome<T> =
+  Complete { facts: T, diagnostics: Vec<OwnerDiagnostic> }
+  | Incomplete { facts: T, diagnostics: Vec<OwnerDiagnostic>, limitations }
+  | Unsupported { opaque_payload: OpaqueFact, diagnostics: Vec<OwnerDiagnostic>, limitations }
+  | Failed { failure: FileFailure, diagnostics: Vec<OwnerDiagnostic>, limitations }
+```
+
+An owner receives only inventory-supplied snapshots. A `SemanticInputDemand` is either `ExactPath { path, reason, source_span }` or typed `Unbounded { reason, LimitationScope, explicit_targets }`; neither carries a claimed content identity. `NeedsInputs` may emit those demands from supplied snapshots, but the owner has not read the demanded bytes. Its associated type `C` is a capability-owned, fully owned project continuation with no AST/allocator borrow, third-party public type, cache/store handle, or canonical evidence meaning. The engine routes it back only after reservation and capture, allowing cold execution to continue without rereading or reparsing an already consumed payload. A cached demand step has no continuation; if its next step misses, the cold owner starts once with all snapshots supplied so far.
+
+During gate analysis the engine normalizes and conflict-checks each exact-path demand, extends the read reservation, and asks inventory to capture its exact snapshot before routing it back to the owner. An unbounded required demand cannot be reserved and closes the branch with typed incomplete/unsealed evidence. `Finished` may name only supplied identities the owner actually consumed. The `OwnerOutcome` variant is the canonical capability state; diagnostics and opaque or failed payloads are semantic evidence rather than display-only side data.
+
+Reusable work mirrors that step protocol:
+
+```text
+CachedOwnerStep<T> =
+  NeedsInputs {
+    owner_contract_version,
+    supplied_input_key,
+    demands: SemanticInputDemandSet
+  }
+  | Finished {
+      output: CachedCapabilityOutput<T>
+    }
+
 CachedCapabilityOutput<T> {
   owner_contract_version,
-  exact_input_key,
-  facts,
-  signals,
-  limitations,
-  consulted_semantic_inputs
+  supplied_input_key,
+  semantic_input_key,
+  outcome: OwnerOutcome<T>,
+  gate_neutral_signals,
+  consulted_semantic_inputs: ConsultedSemanticInputs
 }
 ```
 
-The capability owner creates all semantic fields and owns the version. A cache hit replays the whole envelope as that owner's output; the engine never reconstructs consulted inputs from facts, diagnostics, store rows, or display text. Before accepting a hit, inventory and the engine validate the owner contract version, primary exact-input key, and every consulted source/config identity against the current observation. Any mismatch is a full miss and reruns the owner. An identity that cannot be observed produces typed incomplete evidence rather than a partial hit. Cache misses return the same envelope plus a cache-write candidate as owned output. One deterministic cache writer commits compatible entries after reduction; cache writes never mutate canonical run evidence.
+The capability owner creates all semantic fields and owns the version. A cache lookup is keyed by the owner contract version, exact snapshots supplied for the current iteration, and every semantic profile/parse-mode/task parameter that can change that step; `GateProjectionContext` is deliberately excluded. A cached `NeedsInputs` may reveal only demands derived from prerequisites covered by that `supplied_input_key`; it cannot expose a later demand whose prerequisite input has not yet been reserved, captured, and keyed. The demand step is not a semantic hit: the engine reserves every new gate read and inventory captures it before the next cold or cached owner step. This prevents stale recursive config metadata or a different resolver/profile mode from over-reserving an input the current step does not demand.
 
-Reusable signals in the envelope are valid only for its exact key. Post-write `GateDeltaClassification` is recomputed by the fact owner from validated baseline/current envelopes; it is cacheable only when both observation identities and the delta-policy version participate in the exact key. A warm hit therefore cannot replay an introduced/expanded classification against a different baseline.
+The owner cannot validate or consume an unreserved input through the cache path. For `CachedOwnerStep::Finished`, `supplied_input_key` binds the exact snapshots and semantic task parameters routed into that step, while `semantic_input_key` derives only from those parameters plus exact identities reported as consumed. Inventory and the engine validate both keys and every consulted source/config identity. Any step-key mismatch is a full miss for that step and reruns the owner through `OwnerStep` with the already supplied snapshots; an identity that cannot be observed produces typed incomplete evidence rather than a partial hit. An unused supplied input may cause a conservative cache miss but cannot enter the sealed semantic identity or read set.
 
-Cache state is non-semantic. Cold misses and warm hits over the same exact observation must return identical facts, signals, limitations, consulted-input closure, gate effects, and observation identity.
+An accepted `CachedOwnerStep::Finished` replays the whole `CachedCapabilityOutput` as that owner's finished output. The engine never reconstructs outcome state, diagnostics, limitations, signals, or consulted inputs from store rows or display text. Only deterministic owner outcomes are cacheable; transient I/O, panic, persistence, and process hard-stops are not encoded as reusable owner failures. Cache misses return equivalent owner steps plus cache-write candidates as owned output. One deterministic cache writer commits compatible entries after reduction; cache writes never mutate canonical run evidence.
+
+Only gate-neutral signals may be cached. After cold execution or validated replay, the owning capability projects request-specific signals from the finished outcome and current model-owned `GateProjectionContext`; the engine only routes that call. This projection is pure over supplied model values: it cannot read inventory/cache/store state or emit a new input demand. Any fact needed by the projection must be obtained through `OwnerStep` before the outcome is finished. Post-write delta classification is always recomputed from the immutable opening semantic baseline and the current validated outcome, never from a prior failed close revision. It is reusable only when both observation identities and the delta-policy version participate in the exact key. A warm hit therefore cannot replay a request-specific or prior-baseline classification.
+
+Cache state is non-semantic. Cold misses and warm hits over the same exact observation must return identical owner outcome and capability state, diagnostics, facts or opaque/failure payload, limitations, consulted-input closure, gate-neutral signals, request-specific effects, observation binding, and canonical semantic dump.
 
 ### 5.2 Shared Inputs
 
@@ -146,16 +185,7 @@ Large immutable byte buffers may use `Arc<[u8]>` when multiple real consumers re
 
 ### 5.3 Worker Outputs
 
-Workers return owned result enums such as:
-
-```text
-Complete(FileFacts)
-Incomplete(FileFacts, diagnostics, LimitationScope)
-Unsupported(OpaqueFact, LimitationScope)
-Failed(FileFailure)
-```
-
-`OpaqueFact` is a model value that an evidence owner may later cite. An empty fact set is not a substitute for a failed or unsupported file.
+Workers return the owned `OwnerStep<FileFacts, CapabilityContinuation>` contract above. `OpaqueFact` and `FileFailure` are model values that an evidence owner may later cite. An empty fact set is not a substitute for an incomplete, failed, or unsupported outcome.
 
 ## 6. Deterministic Reduction
 
@@ -173,7 +203,7 @@ Stable ordering keys include normalized repository path, source span, symbol ide
 
 Maps that affect persisted output use deterministic ordering or are sorted before persistence. Generated timestamps are metadata and do not participate in cache or semantic identities.
 
-Determinism compares a canonical semantic dump, not physical store bytes. The dump includes sorted source identities, facts, findings, capability states, limitations, diagnostics, semantic policy versions, and stable IDs. It excludes run IDs, timestamps, worker policy, timings, cache and RSS metrics, publication pointers, physical page layout, store size, and store hash. Runtime metrics remain canonical run records in a non-semantic partition.
+Determinism compares a canonical semantic dump, not physical store bytes. The dump includes sorted source identities, owner outcomes/capability states, facts or opaque/failure payloads, findings, limitations, diagnostics, semantic policy versions, and stable IDs. It excludes run IDs, timestamps, worker policy, timings, cache and RSS metrics, publication pointers, physical page layout, store size, and store hash. Runtime metrics remain canonical run records in a non-semantic partition.
 
 Cross-run finding IDs derive from rule ID and version plus repository-relative semantic source, symbol, and evidence identity. Run-local ordinals are not finding IDs. A hash collision is an internal hard-stop unless the owning ID format provides deterministic collision disambiguation.
 
@@ -242,17 +272,19 @@ Any query that presents a current-worktree absence claim performs the required f
 
 ### 9.2 Semantic-Read Closure
 
-Every capability owner that reads a source or configuration identity returns model-owned `ConsultedSemanticInputs` with its facts and signals. A validated cache replay is treated as that same complete owner return. The engine does not infer this set from display diagnostics, and an owner cannot read an unreported path behind the inventory boundary.
+Every capability owner consumes only inventory-supplied source/configuration snapshots and returns model-owned exact consulted inputs in `OwnerStep::Finished`. A validated cache replay is treated as that same complete owner return. The engine does not infer this set from diagnostics, and an owner cannot read a demanded or unreported path behind the inventory boundary.
 
 Gate analysis closes semantic inputs by monotonic fixed point:
 
-1. start from the declared and owner-inferred candidate read set;
-2. capture exact identities and run the affected owners;
-3. union every returned `ConsultedSemanticInputs` value;
-4. when the union grows, reserve the new reads against active writers, capture their exact identities, and rerun every owner whose result can change;
-5. seal the set only when a complete iteration adds no input.
+1. start from the declared and statically owner-inferred candidate read set, reserve it for the gate, and capture exact snapshots through inventory;
+2. run affected owners with only those supplied snapshots;
+3. when an owner returns `NeedsInputs`, normalize its path-level demands without reading the demanded bytes;
+4. in one lifecycle-store transaction, conflict-check and reserve every added read against active writers and provisional reservations;
+5. only after reservation succeeds, capture the added exact snapshots through inventory and resume each cold owner from its owned continuation; after a cached demand whose next step misses, start that owner once with all snapshots supplied so far;
+6. when every affected owner returns `Finished`, union only the exact supplied identities each owner reports as consumed;
+7. repeat if a new demand appears, and seal only when one complete iteration returns no demand and the finished consulted set equals the reserved candidate set after owner-declared unused inputs are removed transactionally.
 
-The admitted source/config inventory is finite, so closure uses set growth rather than an arbitrary iteration or wall-time cap. A dynamic or opaque input that cannot be bounded becomes a typed scoped limitation and prevents an authorizing gate decision; it is never omitted to force convergence. Baseline and close observation IDs are derived only after closure and include the sealed set. Final freshness and catalog validation still run after sealing.
+The admitted source/config inventory is finite, so closure uses demand-set growth rather than an arbitrary iteration or wall-time cap. A dynamic or opaque input that cannot be bounded becomes a typed scoped limitation and prevents an authorizing gate decision; it is never omitted to force convergence. Demand metadata carries no evidence claim, and a reservation carries no claim that an owner consumed the input. Baseline and close observation IDs are derived only after closure and include the exact finished consulted set. Final freshness and catalog validation still run after sealing.
 
 ## 10. Incremental Identity
 
@@ -322,8 +354,11 @@ Metrics describe execution but do not redefine semantic findings.
 8. A missing SFC target produces typed unresolved evidence while unrelated files complete.
 9. A hard-stop cannot publish a run marked complete.
 10. Cold and warm corpus benchmarks report stage timings and peak memory on native Windows, WSL ext4, and the declared Linux CI platform.
-11. A cache hit validates and replays the complete owner envelope, and cold/warm execution over the same exact observation produces identical consulted reads, effects, and observation binding.
+11. A cache hit validates and replays the complete owner outcome, diagnostics, limitations, payload, gate-neutral signals, and consulted inputs; cold/warm execution over the same exact observation produces the same capability state, request-specific effects, observation binding, and canonical semantic dump.
 12. The stage node set is fixed before inventory executes; language presence changes only input batches.
 13. SFC finalization remains owned by `lumin-sfc`; first-slice Vue binding completes there, unsupported dialects remain visible, and an external script payload is not read or parsed twice for one mode.
 14. Snapshot drift during a scan prevents completed-run publication, and later query drift is visible.
 15. Repository input changes alter `AnalysisInputId` without altering `AnalysisContractId`; software semantic-version changes alter the contract ID.
+16. A newly discovered semantic input is demanded, conflict-checked, and reserved before inventory captures it or an owner/cache validator consumes it.
+17. Request-specific gate signals and post-write deltas are recomputed by the owning capability from the current `GateProjectionContext` and immutable opening baseline; they are never replayed from a repository-input-only cache or a prior failed close.
+18. Semantic-input closure never rereads or reparses a payload already consumed in the same cold execution; owner continuations contain no parser/allocator references, third-party public types, or open handles.

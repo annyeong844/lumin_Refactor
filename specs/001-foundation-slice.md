@@ -259,7 +259,7 @@ An exact absence candidate is emitted only when no potential-consumer limitation
 
 URL imports and grounded non-source assets are complete external/non-source outcomes, not limitations. Caller root escape is malformed input, and store corruption is a hard-stop; neither is forced into this table. Private owner enums convert to these model reasons through exhaustive matches, and `lumin-xtask architecture-check` fails if a reason lacks a scope/absence/relevance mapping. Reducers may narrow a scope only with additional grounded targets and may never silently drop it.
 
-This registry owns static fact meaning, limitation scope, and absence impact; it never assigns `GateEffect` directly. A missing fact required to decide the operation may emit `RequiredEvidenceIncomplete` because no sound comparison exists. A complete adverse or opacity fact first enters the lifecycle delta policy in Section 7, which alone decides whether it was introduced, unchanged, expanded, resolved, or cannot be compared to a complete baseline.
+This registry owns static fact meaning, limitation scope, and absence impact; it never assigns `GateEffect` directly. A missing fact required to decide the operation may emit `RequiredEvidenceIncomplete` because no sound comparison exists. A complete adverse or opacity fact first enters the total lifecycle delta policy in Section 7, which alone compares it with the immutable opening baseline and classifies every payload relation before any adverse effect is chosen.
 
 ## 6. Canonical Evidence and Query Contract
 
@@ -267,6 +267,7 @@ A successful run publishes:
 
 ```text
 .lumin/latest.json
+.lumin/lifecycle.lock
 .lumin/lifecycle.store
 .lumin/attempts/<attempt-id>/attempt.json
 .lumin/runs/<run-id>/run.json
@@ -284,7 +285,7 @@ lumin findings --run <run-id> --area dead-code [--cursor <cursor>]
 lumin explain --run <run-id> <finding-id> [--evidence-cursor <cursor>] [--relations-cursor <cursor>]
 lumin related --run <run-id> <finding-id> [--cursor <cursor>]
 lumin files --run <run-id> <path> [--cursor <cursor>]
-lumin capabilities
+lumin capabilities [--run <run-id>] [--cursor <cursor>]
 lumin export sarif --run <run-id>
 ```
 
@@ -319,7 +320,7 @@ Required behavior:
 - no request JSON file;
 - caller-retained operation IDs make every gate and retention lifecycle mutation idempotent and recoverable through `lumin operation show`;
 - one durable gate ID returned by pre-write;
-- baseline and close observations built only after owner-reported semantic inputs reach a fixed point, with every added read reserved and conflict-checked;
+- baseline and close observations built only after owner-reported semantic inputs reach a fixed point, with every added path demanded without reading, conflict-checked, and reserved before inventory capture or owner/cache consumption;
 - language and nearest dependency owner inferred from planned paths;
 - mixed JS/TS/SFC paths handled inside one gate, with unsupported dialects remaining explicit;
 - write/write and write/semantic-read conflicts rejected;
@@ -332,30 +333,51 @@ Required behavior:
 - post-write accepts no replacement scan/entry/profile override tier, reuses the caller-supplied opening overrides from the operation digest, and recomputes config-derived effective values only from validated self-writable inputs;
 - storage/scan/operation-liveness locks released before result transport while an active gate's durable path lease remains;
 - completed gate remains queryable;
-- public retention commands execute the ARCH-002 `Prepared -> Pruning -> Pruned` protocol and never bypass the lifecycle store through `lumin-xtask` internals.
-- each run pin returns an independent `PinId`; unpin accepts that ID and cannot remove another consumer's protection.
+- public retention commands execute the ARCH-002 `Prepared -> Pruning -> Pruned` protocol and never bypass the lifecycle store through `lumin-xtask` internals;
+- each run pin returns an independent `PinId`; unpin accepts that ID and cannot remove another consumer's protection;
+- every terminal transition capsule referenced by an active gate remains prune-ineligible until that gate closes or is abandoned;
+- lifecycle-store migration uses transaction-scoped handles and generation fencing, so an old-generation process cannot commit after replacement.
 
-For post-write, each fact owner compares normalized baseline/current facts and emits model-owned `GateDeltaClassification` before any adverse gate signal exists:
+For post-write, each fact owner compares the immutable opening semantic baseline with the current validated facts. A failed close revision never becomes the next comparison baseline. Each owner first canonicalizes duplicate rows by its model-owned `DeltaKey`:
+
+| Fact family | First-slice `DeltaKey` |
+| --- | --- |
+| unresolved internal edge | importer `SourceId`, edge kind, normalized specifier |
+| dependency ownership | consumer `SourceId`, dependency name; owner-manifest identity is comparison payload |
+| dead export | stable symbol semantic identity and rule version |
+| opacity/limitation | source semantic identity, reason variant, stable construct identity |
+
+Targets, affected domain, confidence, grounding, and grounding-evidence identity are payload dimensions, not key fields. The owner then emits exactly one model-owned total classification:
 
 ```text
-Introduced | Unchanged | Expanded | Resolved | BaselineUnavailable
+Introduced
+| Unchanged
+| Regressed { changes }
+| Improved { changes }
+| ChangedIncomparable { regressions, improvements, incomparable_changes }
+| Resolved
+| BaselineUnavailable
 ```
 
-Identity, target set, limitation scope, and confidence/grounding fields participate in comparison. A broader unresolved target set or opacity scope is `Expanded`, not `Unchanged`. `Resolved` persists improvement evidence but emits no adverse signal. `BaselineUnavailable` cannot be guessed from current state and emits required-evidence incompleteness. Pre-write has no fabricated post-write delta: complete existing adverse facts are advisory, while evidence required to authorize the planned operation must still be complete.
+Absent-to-present is `Introduced`, present-to-absent is `Resolved`, and exact payload equality is `Unchanged`. Target and concrete affected-domain additions are regressions; removals are improvements. A `LimitationScope` is first expanded to the exact set of affected `SourceId`/package/target identities, so `Workspace -> Package` is an improvement only when the current package set is a strict subset of the prior domain. First-slice confidence ranks `Low < Medium < High`, and grounding ranks `Opaque < Partial < Grounded`; rank loss is regression and rank gain is improvement. A changed evidence identity or owner payload without a declared order is incomparable; every first-slice semantic field is registered as key, one ARCH-002 dimension, or non-semantic metadata. Any other changed semantic payload defaults to directionless `OwnerPayloadChanged` and therefore cannot be ignored or called unchanged. Only regressions produce `Regressed`, only improvements produce `Improved`, and any mixture or incomparable dimension produces `ChangedIncomparable`. `Resolved`/`Improved` persist evidence but emit no adverse signal. `BaselineUnavailable` cannot be guessed from current state and emits required-evidence incompleteness.
+
+Pre-write has no fabricated post-write delta: complete existing adverse facts are advisory, while evidence required to authorize the planned operation must still be complete. The engine capability registry is the sole fact/signal owner for compiled-profile availability and may emit `RequiredOwnerUnavailable`; it never runs substitute analysis or claims an absent capability's facts.
 
 After that classification, first-slice owners emit typed signals and `lumin-evidence::gate_policy` assigns these effects:
 
 | Signal | Signal/fact owner | Effect |
 | --- | --- | --- |
 | final planned-path containment violation, lease conflict, unexplained transition, unplanned write, or terminal cross-gate conflict | engine gate service from typed inventory/store outcomes | `Block` |
-| `UnresolvedInternalIntroduced` or `UnresolvedInternalExpanded` | `lumin-resolve` from introduced/expanded delta | `Block` |
-| `DependencyOwnershipMissingIntroduced` or expanded ownership violation | `lumin-inventory` from introduced/expanded delta | `Block` |
-| `DeadExportIntroduced` or expanded dead identity with zero exact/broad fan-in, complete potential-consumer coverage, no public protection, and no generated/vendor mute | `lumin-dead` from introduced/expanded delta | `Block` |
-| required owner unavailable/failed, introduced/expanded opacity intersecting the planned affected set, baseline comparison unavailable, unobservable required delta input, semantic-read closure conflict, or changed path awaiting another active gate's terminal transition | owning capability or engine gate service | `Incomplete` |
+| introduced unresolved/dependency/dead adverse fact, or a complete grounded target/domain addition for one of those families | owning resolver, inventory, or dead-analysis capability from `Introduced`, `Regressed`, or the regressive dimensions of `ChangedIncomparable` | `Block` |
+| `RequiredOwnerUnavailable` | `lumin-engine` capability registry from the compiled profile; no fallback owner | `Incomplete` |
+| introduced opacity or opacity-domain addition intersecting the planned affected set | owning capability from `Introduced`, `Regressed`, or regressive dimensions of `ChangedIncomparable` | `Incomplete` |
+| confidence/grounding loss, directionless evidence or owner-payload replacement, baseline comparison unavailable, required owner failure, unobservable required delta input, semantic-input demand conflict, or changed path awaiting another active gate's terminal transition | owning capability, capability registry, or engine gate service according to the ARCH-000 authority table | `Incomplete` |
 | external or unexplained drift of a protected semantic read outside this gate's leased-plus-actual write set, changed admitted alias escaping root, an intervening transition touching such a protected opening read, or a transition after close-read sealing | owning observation fact plus engine gate service | `Stale` |
-| `PreExistingUnchanged` complete adverse fact or grounded low-confidence/advisory candidate | owning capability from unchanged delta or pre-write static fact | `Warn` |
+| `PreExistingUnchanged` complete adverse fact or grounded advisory candidate | owning capability from `Unchanged` delta or pre-write static fact | `Warn` |
 
-Caller-declared root escape is not a signal: it is malformed input, exits `2`, and creates no operation, gate ID, record, or lease. Static limitation rows never bypass delta classification to assign an effect. Signal and delta types stay dependency-light in `lumin-model`; owners compute deltas, the closed mapping and `gate-policy.v1` stay in `lumin-evidence`, and the engine only invokes the mapping and ARCH-002 reducer. Pre-write rejection creates no durable gate lease; failed post-write remains active and records the attempted revision.
+One classification may contain several dimension changes and therefore emit several typed signals; the ARCH-002 reducer fixes their precedence. For example `{a,b} -> {b,c}` is `ChangedIncomparable` and its grounded added target `c` emits the blocking target-addition signal, while the removed target is persisted as improvement. A confidence or grounding loss emits incompleteness even when no target is added. Static limitation rows never bypass delta classification to assign an effect, and every classification/dimension pair has an exhaustive owner mapping checked by architecture-check.
+
+Caller-declared root escape is not a signal: it is malformed input, exits `2`, and creates no operation, gate ID, record, or lease. Signal and delta types stay dependency-light in `lumin-model`; owners compute deltas, the closed mapping and `gate-policy.v1` stay in `lumin-evidence`, and the engine only invokes the mapping and ARCH-002 reducer. Pre-write rejection creates no durable gate lease; failed post-write remains active and records the attempted revision.
 
 A Rust path in this slice produces an explicit unsupported-language gate finding and cannot be silently routed to the JS owner.
 
@@ -373,7 +395,9 @@ The slice uses the final ARCH-001 runtime:
 - one store writer;
 - no global pool, nested pool, or shared mutable graph;
 - no JSON between stages;
-- exact-byte cache identity;
+- two-step owner input discovery: `NeedsInputs` is reserved before inventory capture, cold owners resume from fully owned continuations, and only `Finished` reports exact consumed identities;
+- prerequisite-keyed `CachedOwnerStep` replay followed by exact-byte finished identity and complete owner outcome/capability state, diagnostics, facts or opaque/failure payload, limitations, gate-neutral signals, and consulted inputs;
+- request-specific gate signals recomputed by the owning capability from the validated cold/warm outcome and current model-owned `GateProjectionContext`;
 - `jobs=1` as the reference execution of the same engine.
 
 There is no sequential compatibility engine.
@@ -382,7 +406,7 @@ There is no sequential compatibility engine.
 
 The implementation creates repository fixtures with hand-authored expected truth, not expectations copied from the legacy output.
 
-Every corpus row, including retention fault injection, drives the public `lumin` command DTOs in a child process. `lumin-xtask` may prepare fixtures and select a named test-build crash point, but it cannot import private store APIs or mutate lifecycle rows to manufacture the expected state.
+Every corpus row, including retention and migration fault injection, drives the public `lumin` command DTOs in a child process. `lumin-xtask` may prepare fixtures and select a named test-build crash point, but it cannot import private store APIs or mutate lifecycle rows to manufacture the expected state. An old-schema migration fixture is the exact hashed output of a named prior test-schema public binary and is copied into a temp repository unchanged; its producer revision, schema/generation, command, and logical dump are preserved with the fixture.
 
 | Corpus case | Required truth |
 | --- | --- |
@@ -422,12 +446,15 @@ Every corpus row, including retention fault injection, drives the public `lumin`
 | `gate-config-drift` | An external or unexplained change to a protected semantic input outside this gate's leased-plus-actual write set makes the gate stale; an actual cross-gate write is denied. |
 | `gate-self-semantic-write` | A planned manifest, lockfile, tsconfig, or root Lumin config path present in both this gate's leased and actual write sets is recaptured and reanalyzed into the close `AnalysisInputId` and delta; config-derived effective values are recomputed under the unchanged caller override tier, while an unplanned or external config change remains stale. |
 | `gate-prewrite-observation` | Provisional admission, editor quiescence, exact baseline capture, and final store promotion bind `Allow` to one returned `GateBaselineObservationId`; interrupted admission leaves no active gate lease. |
-| `gate-semantic-read-closure` | A adds an import/config read of a path leased by active B; owner-reported input expansion extends the reservation and keeps A incomplete until B is terminal, then recaptures exact current bytes and seals one fixed-point observation. |
-| `gate-semantic-read-closure-warm-cache` | A cold miss and warm hit replay the same complete owner envelope; consulted config reads still conflict with an active writer and cold/warm observation bindings match. |
+| `gate-semantic-read-closure` | A discovers an import/config demand for a path leased by active B; cold owner execution returns `NeedsInputs` without reading it, reservation conflict keeps A incomplete, and only after B is terminal may inventory capture the exact bytes and resume the owned continuation without reparsing the primary payload. |
+| `gate-semantic-read-closure-warm-cache` | Each cached demand step is keyed only by already supplied exact prerequisites and cannot validate or consume its demand before reservation; when an intermediate config changes its nested demand, warm execution does not over-reserve the stale old leaf and still matches the cold outcome, reads, effects, binding, and semantic dump. |
+| `cache-gate-context-projection` | The same validated cached limitation intersects one gate intent but not another; the owning capability recomputes request-specific signals and no repository-input-only cache replays the first gate's effect. |
+| `capability-availability-authority` | Shape, clone, discipline, and Rust lanes have no compiled owner or fallback; the engine capability registry alone emits their availability fact/`RequiredOwnerUnavailable`, while Svelte/Astro dialect status remains owned by the existing `lumin-sfc` boundary and evidence policy alone maps effects. |
 | `gate-unsealed-observation` | Pre-write and post-write closure conflicts/unbounded inputs persist queryable typed `Unsealed` results without a fabricated observation ID; conflict-free sealed `Deny` remains distinguishable. |
 | `gate-analysis-input-reconciliation` | Close preserves caller-supplied opening scan/entry/profile overrides, records a current `AnalysisInputId` only for a sealed revision, recomputes config-derived effective values for self-writes, and accepts other source/config differences only through this gate's leased-plus-actual writes or exact reconciled terminal transitions. |
 | `gate-final-observation` | External or unexplained source/config drift after capture or sealing cannot produce `Allow` or release the active lease; a planned self-writable input is accepted only after current recapture and owner reanalysis. |
-| `gate-lifecycle-effects` | Introduced, expanded, unchanged, resolved, and baseline-unavailable unresolved/opacity facts produce the exact typed delta signals, effects, and lifecycle transitions; static limitation rows never bypass comparison. |
+| `gate-lifecycle-effects` | Introduced, unchanged, regressed, improved, mixed/incomparable, resolved, and baseline-unavailable unresolved/opacity facts produce exactly the dimension-owned signals and effects; cases include `{a,b}->{b,c}`, Workspace-to-Package and Package-to-Workspace scope, confidence/grounding rank changes, owner-manifest payload replacement, and changed evidence identity. |
+| `gate-immutable-opening-delta` | Repeated nonauthorizing close attempts always compare with the immutable opening semantic baseline; a prior failed close cannot turn an introduced blocker into unchanged advisory evidence, and a sealed stale snapshot never replaces current protected reads. |
 | `lifecycle-operation-idempotency` | Pre/post, abandon, pin/unpin, prune-plan creation, and prune confirmation use one operation contract: same ID/request joins, safely retries, or returns one committed result; conflicting reuse is malformed; injected post-commit delivery failure is recovered through `operation show`. |
 | `gate-reopen-after-process-exit` | Open and close a gate, terminate the process, then use a new process to show the exact gate revision and page its findings/evidence. |
 | `unplanned-edit` | Unplanned changed, new, removed, and renamed paths cannot receive an allow decision. |
@@ -435,7 +462,8 @@ Every corpus row, including retention fault injection, drives the public `lumin`
 | `required-capability-failure` | Overview warns that dead analysis is unavailable and never renders zero. |
 | `snapshot-and-latest` | Mid-scan drift blocks completion; failed or interrupted attempts remain visible beside the last completed run. |
 | `bounded-nested-query` | Run and gate-revision pages expose immutable scope, totals, truncation, and stable top-level and nested continuation. |
-| `collection-ordering` | Findings, evidence, relations, files, runs, active gates, capabilities, and plan items traverse exactly once under their versioned ordering despite randomized insertion/backend traversal. |
+| `collection-ordering` | Findings, evidence, relations, files, runs, active gates, and plan items traverse exactly once under their versioned ordering despite randomized insertion/backend traversal. |
+| `capabilities-pagination` | Current-binary and exact-run capability collections each exceed the test page size and traverse exactly once through `--cursor` under `capabilities.v1` without crossing scope. |
 | `request-path-escape` | Caller-declared root escape exits `2` without operation record, gate ID, or lease; later admitted alias drift and final containment violation follow their distinct stale/block contracts. |
 | `corrupt-store` | Corrupt canonical storage hard-stops without fallback or empty evidence. |
 | `crash-publication` | Attempt allocation, running-envelope, latest-pointer, run-rename, terminal-attempt, and pointer-replacement crash points each have the single ARCH-002 outcome; a renamed orphan without terminal success remains interrupted and is never adopted as success. |
@@ -443,8 +471,9 @@ Every corpus row, including retention fault injection, drives the public `lumin`
 | `retention-plan-pagination` | A prepared plan allocates one repository-scoped ID/content identity; unrelated repository mutation does not break its cursor, while cross-plan cursor reuse is malformed. |
 | `retention-public-lookup` | At every fault point, direct run/gate lookup, plan show, and operation show agree on `Live`, `Pruning`, or `Pruned`; tombstones never appear as empty findings or plain not-found. |
 | `retention-independent-pins` | Two consumers receive distinct `PinId` values for one run; removing either leaves the other protection intact and prune eligibility changes only after the last reference is removed. |
+| `retention-active-transition-reference` | A opens, disjoint B closes, and a prune plan for B reports A's transition reference and excludes B/capsule; A later reconciles and closes, after which a new plan may include the released closure. |
 | `retention-crash-protocol` | Faults before/after tombstone, during each canonical-to-trash move, before `Pruned`, and during physical reclamation recover to the single ARCH-002 state without treating a missing payload as successful deletion. |
-| `lifecycle-store-migration` | Copy-on-write migration preserves attempt/catalog sequences, operation results, transitions, plans/tombstones, independent pins, and every gate revision; failed validation leaves the prior store authoritative. |
+| `lifecycle-store-migration` | One process holds an old generation token while another migrates; transaction-scoped handles close before replacement, every migration crash point selects the ARCH-002 recovery rule, all logical records/references survive, and the old process must reopen/revalidate before its late mutation can commit. |
 
 The corpus must include repositories synthesized from or minimized around real failure shapes, including Vue core-style package layouts and a Next.js route-group layout. A copied fixture records origin, license, source revision, and modifications in a local `PROVENANCE.md`; synthetic structure is preferred when copied code is unnecessary. Store-state fixtures are generated in a test temp root and do not require committing ignored `.lumin` output.
 
@@ -531,7 +560,7 @@ These omissions must be visible through `lumin capabilities` and relevant overvi
 4. A reachable file's unused export remains a candidate.
 5. `jobs=1` and repeated default-job runs produce identical canonical semantic dumps and finding IDs; runtime metrics and physical store bytes are excluded.
 6. Randomized worker completion tests preserve output identity.
-7. No analyzed source payload is read or parsed more than once for extraction in a cold run; the separate final hash-only freshness pass is measured and does not reparse.
+7. No analyzed source/config payload is read or parsed more than once for extraction in a cold run, including demand-closure continuation and cached-demand miss paths; the separate final hash-only freshness pass is measured and does not reparse.
 8. No runtime path executes Node or Cargo.
 9. Windows/Linux packages and Codex/Claude Code adapters pass one public binary behavior contract without embedded semantic fallbacks.
 10. A user can perform pre-write and post-write using path-scoped typed flags, stable machine output, caller-retained operation IDs, and one explicit gate ID; the completed gate reopens in a new process.
@@ -542,17 +571,22 @@ These omissions must be visible through `lumin capabilities` and relevant overvi
 15. Strict workspace formatting, lint, unit, integration, corpus, dependency-edge, and package checks pass.
 16. The public binary meets the approved Phase 1 performance and memory targets on every blocking environment and reports the `/mnt/<drive>` diagnostic separately.
 17. Operation-ID retry and post-commit delivery recovery never duplicate any gate or retention lifecycle mutation.
-18. Publication and public retention commands preserve one crash outcome per point, one deletion truth, and intact latest/pin/reference closure.
-19. Pre-write and post-write seal owner-reported semantic inputs by fixed point before deriving an authorizing observation ID.
+18. Publication and public retention commands preserve one crash outcome per point, one deletion truth, and intact latest/pin/transition-reference closure.
+19. Pre-write and post-write reserve every owner-demanded semantic input before inventory capture or owner/cache consumption and seal only finished exact consulted inputs before deriving an authorizing observation ID.
 20. Explicit entry and resolution-profile precedence, including embedded Vue scripts, is deterministic and fully represented in `AnalysisInputId`.
 21. Every first-slice incomplete/unsupported/opaque reason has an exhaustive owner, limitation scope, absence effect, and gate relevance without directly assigning lifecycle effect.
-22. Warm cache replay validates and returns the complete owner envelope, preserving cold-run semantic reads, effects, and observation binding.
+22. Warm cache replay validates and returns the complete owner outcome/capability state, diagnostics, payload, limitations, gate-neutral signals, and consulted inputs, preserving cold-run request-specific effects, observation binding, and semantic dump.
 23. Every authorizing result has a sealed observation ID, while a nonauthorizing closure failure returns typed unsealed evidence without a fabricated ID.
-24. Every public collection uses one versioned canonical ordering; immutable retention-plan pages remain resumable across unrelated repository mutations.
+24. Every public collection uses one versioned canonical ordering and continuation surface, including current-binary/run capabilities; immutable retention-plan pages remain resumable across unrelated repository mutations.
 25. Public lookup distinguishes live, pruning, pruned, never-existing, and corrupt records and agrees with plan/operation state at every retention crash point.
 26. Audit and pre-write expose the complete scan invocation tier; post-write reuses the caller override tier without replacement, recomputes validated config-derived values, and gives every caller/config containment case one result.
-27. Static limitation meaning and lifecycle delta policy are separate; introduced, expanded, unchanged, resolved, and unavailable-baseline facts produce exactly one signal path.
+27. Static limitation meaning and lifecycle delta policy are separate; the total introduced/unchanged/regressed/improved/mixed/resolved/unavailable relation classifies every target, domain, confidence, grounding, and evidence change before signals are mapped.
 28. Independent run pins cannot remove one another's protection, and lifecycle migration/tombstone rules preserve the complete durable catalog.
+29. The engine capability registry alone emits compiled-profile unavailable facts/signals and never substitutes analysis for an absent capability owner.
+30. Retention cannot remove a terminal transition capsule while an active gate references it, and releasing that reference cannot alter the active gate's later reconciliation result.
+31. Lifecycle-store migration uses transaction-scoped handles and generation fencing; every crash point has one recovery rule and an old-generation late writer cannot commit without reopening and revalidation.
+32. Every post-write delta compares with the immutable opening semantic baseline, and a sealed stale or prior failed close cannot silently replace that baseline or current protected reads.
+33. Repository-input cache entries contain only gate-neutral signals; the owning capability recomputes request-specific signals for each current `GateProjectionContext`.
 
 ## 15. Acceptance Traceability
 
@@ -564,28 +598,33 @@ These omissions must be visible through `lumin capabilities` and relevant overvi
 | 4 | `reachable_module_keeps_dead_exports` | `reachable-dead-sibling` | `lumin-xtask corpus foundation` | The unused sibling remains a candidate. |
 | 5 | `semantic_dump_is_worker_invariant` | full foundation corpus | `lumin-xtask corpus foundation --determinism` | Canonical semantic dump and finding IDs match. |
 | 6 | `scheduler_completion_order_is_irrelevant` | randomized stage-result fixture | `cargo test -p lumin-engine` | Repeated randomized completion yields one semantic dump. |
-| 7 | `source_payload_is_extracted_once` | read-counter plus Vue external script | `lumin-xtask corpus foundation` | Read/parse counters distinguish extraction from final hash validation. |
+| 7 | `source_payload_is_extracted_once` | read-counter, semantic-demand continuation/cache-miss, plus Vue external script | `lumin-xtask corpus foundation` | Every source/config payload is consumed once; owned continuation and cached-demand miss do not trigger a second parse, while final hash validation remains distinct. |
 | 8 | `runtime_has_no_source_fallback` | package runtime probe | `lumin-xtask package-check <target>` | Execution succeeds with Node and Cargo unavailable. |
 | 9 | `packages_and_skills_share_behavior_contract` | package fixture set plus packaged Codex/Claude adapters | both target package checks plus `lumin-xtask package-check skills` | Windows/Linux query values match; both adapters invoke the same public commands/DTOs with no embedded semantic table or source fallback. |
 | 10 | `gate_round_trip_requires_ids_and_reopens` | `mixed-vue-gate`, `gate-reopen-after-process-exit` | `lumin-xtask corpus foundation` | Operation/gate IDs complete the round trip, then a new process queries the exact completed revision and paged evidence. |
 | 11 | `gate_conflicts_and_transitions_are_serializable` | parallel/config/self-semantic-write/path identity/intervening-transition rows | `lumin-xtask corpus foundation` | Read/read admits; direct conflicts reject; this gate's leased-plus-actual config writes are recaptured; disjoint terminal chains reconcile; active or unexplained changes cannot authorize. |
 | 12 | `all_pages_are_reachable` | `bounded-nested-query` | `lumin-xtask corpus foundation` | Run and gate-revision cursor traversal returns exactly `total` top-level and nested items without following a newer scope. |
-| 13 | `default_publication_is_bounded` | output-layout fixture | `lumin-xtask corpus foundation` | Only the repository lifecycle store, attempt/run envelopes, canonical evidence store, and latest pointer are published. |
+| 13 | `default_publication_is_bounded` | output-layout fixture | `lumin-xtask corpus foundation` | Only the repository lifecycle lock/store, attempt/run envelopes, canonical evidence store, and latest pointer are published; the migration intent exists only during migration. |
 | 14 | `failure_and_freshness_are_visible` | required-failure, parse, snapshot, request-path-escape, and corrupt-store rows | `lumin-xtask corpus foundation` | `overview` or the gate response exposes incomplete/stale/failed/malformed states and never zero. |
 | 15 | `repository_policy_suite` | workspace and source policy | fmt, Clippy, workspace test, architecture-check | Every required quality command exits successfully. |
 | 16 | `release_performance_matrix` | named benchmark corpora | `lumin-xtask benchmark foundation` | Blocking time/memory targets are met and the `/mnt/<drive>` diagnostic is reported. |
 | 17 | `lifecycle_mutations_are_idempotent` | `lifecycle-operation-idempotency` | `lumin-xtask corpus foundation` | Every mutation retry returns one committed result and `operation show` recovers injected delivery failure. |
-| 18 | `publication_and_retention_have_one_crash_truth` | publication and retention crash rows | `lumin-xtask corpus foundation --store-crash` | Public commands drive every fault point; tombstone/trash recovery is unique and protected closure survives. |
-| 19 | `semantic_reads_reach_fixed_point` | `gate-semantic-read-closure`, `gate-self-semantic-write` | `lumin-xtask corpus foundation` | A newly consulted input extends reservation/conflict checks, planned self-writable inputs are recaptured, and no partial observation authorizes. |
+| 18 | `publication_and_retention_have_one_crash_truth` | publication and retention crash rows | `lumin-xtask corpus foundation --store-crash` | Public commands drive every fault point; tombstone/trash recovery is unique and latest/pin/transition-reference closure survives. |
+| 19 | `semantic_reads_are_reserved_before_consumption` | `gate-semantic-read-closure`, `gate-self-semantic-write` | `lumin-xtask corpus foundation` | A new demand is conflict-checked/reserved before capture or consumption, self-writable inputs are recaptured, and only finished exact reads can seal. |
 | 20 | `entry_and_profile_selection_are_canonical` | entry/profile and Vue override rows | `lumin-xtask corpus foundation` | Effective entries and every importer profile match precedence and persisted input identity. |
 | 21 | `limitation_registry_is_exhaustive` | `limitation-scope-exhaustiveness` plus failure rows | `lumin-xtask architecture-check` and corpus foundation | Every private reason maps scope/absence/relevance exactly once and cannot directly choose lifecycle effect. |
-| 22 | `warm_cache_replays_owner_semantics` | `gate-semantic-read-closure-warm-cache` | `lumin-xtask corpus foundation` and determinism | Cold/warm facts, consulted reads, effects, and observation binding match; an active config writer still blocks warm authorization. |
+| 22 | `warm_cache_replays_owner_semantics` | `gate-semantic-read-closure-warm-cache` | `lumin-xtask corpus foundation` and determinism | Cold/warm outcome state, diagnostics, payload, limitations, reads, signals/effects, binding, and semantic dump match; an active config writer still blocks warm authorization. |
 | 23 | `observation_binding_is_honest` | `gate-unsealed-observation` | `lumin-xtask corpus foundation` | Authorizing results are sealed; closure failures persist typed unsealed domains without a partial ID and retry returns the same binding. |
-| 24 | `collection_orders_and_plan_scope_are_stable` | `bounded-nested-query`, `collection-ordering`, `retention-plan-pagination` | `lumin-xtask corpus foundation --determinism` | Every collection traverses exactly once under its ordering ID; unrelated mutations do not invalidate immutable plan pages. |
+| 24 | `collection_orders_and_plan_scope_are_stable` | `bounded-nested-query`, `collection-ordering`, `capabilities-pagination`, `retention-plan-pagination` | `lumin-xtask corpus foundation --determinism` | Every collection, including binary/run capabilities, traverses exactly once under its ordering ID; unrelated mutations do not invalidate immutable plan pages. |
 | 25 | `retention_state_is_public` | `retention-public-lookup` plus retention crash rows | `lumin-xtask corpus foundation --store-crash` | Direct target, plan, and operation queries expose the same typed live/pruning/pruned truth and never empty deletion evidence. |
 | 26 | `scan_tier_and_containment_are_canonical` | `scan-invocation-containment`, `gate-self-semantic-write` | `lumin-xtask corpus foundation` | Audit/pre-write flags persist in the digest/input ID; post-write replacements fail; validated self-written config recomputes effective values; every root-containment class matches Section 3.1. |
-| 27 | `gate_delta_policy_is_single_path` | `gate-lifecycle-effects` | `lumin-xtask corpus foundation` and architecture-check | Baseline/current classifications alone create adverse delta signals; static limitations cannot double-map effects. |
-| 28 | `references_and_lifecycle_migration_preserve_truth` | `retention-independent-pins` plus lifecycle migration fixture | `lumin-xtask corpus foundation --store-crash` | Independent pins survive one another; migration preserves attempts, operations, transitions, plans, tombstones, pins, and gates. |
+| 27 | `gate_delta_policy_is_total` | `gate-lifecycle-effects` | `lumin-xtask corpus foundation` and architecture-check | Every key/payload relation, including mixed sets, narrowed/expanded domains, ranks, and incomparable evidence, has one exhaustive classification and signal path. |
+| 28 | `references_and_lifecycle_migration_preserve_truth` | `retention-independent-pins`, `retention-active-transition-reference`, and lifecycle migration fixtures | `lumin-xtask corpus foundation --store-crash` | Independent pins/references survive one another; migration preserves attempts, operations, transitions, plans, tombstones, pins, and gates. |
+| 29 | `capability_unavailability_has_one_owner` | `capability-availability-authority` | `lumin-xtask architecture-check` and corpus foundation | The engine registry alone emits availability facts/signals, evidence policy maps them, and no fallback capability runs. |
+| 30 | `active_gates_protect_transition_proof` | `retention-active-transition-reference` | `lumin-xtask corpus foundation --store-crash` | B's terminal capsule remains excluded while A references it; A later reconciles exactly and reference release enables a new plan. |
+| 31 | `lifecycle_migration_fences_generations` | `lifecycle-store-migration` | `lumin-xtask corpus foundation --store-crash` | Multi-process fault injection preserves one generation and rejects/reopens every old-generation late mutation. |
+| 32 | `failed_close_keeps_opening_baseline` | `gate-immutable-opening-delta` | `lumin-xtask corpus foundation` | Retry still classifies against opening facts, and stale historical evidence never becomes current read protection. |
+| 33 | `cache_projection_is_gate_contextual` | `cache-gate-context-projection` | `lumin-xtask corpus foundation --determinism` | One cached outcome yields owner-recomputed signals for each intent; no prior gate effect is replayed. |
 
 ## 16. Product AC Coverage
 
@@ -594,10 +633,10 @@ These omissions must be visible through `lumin capabilities` and relevant overvi
 | 1 one native process | in scope | Slice AC 8 and architecture-check runtime-launch policy. |
 | 2 prebuilt Windows/Linux | in scope | Slice AC 8-9 and package probes. |
 | 3 worker determinism | in scope | Slice AC 5-6. |
-| 4 required failure visible | in scope | Slice AC 14 and failure corpus. |
+| 4 required failure visible | in scope | Slice AC 14/29 and failure/availability corpus. |
 | 5 no intent JSON workflow | in scope | Slice AC 10 and gate round trip. |
 | 6 completed gate queryable | in scope | Slice AC 10 plus restart/reopen corpus. |
-| 7 resumable truncation | in scope | Slice AC 12/24 and nested, collection-ordering, and retention-plan cursor corpus. |
+| 7 resumable truncation | in scope | Slice AC 12/24 and nested, capabilities, collection-ordering, and retention-plan cursor corpus. |
 | 8 framework miss isolation | in scope | Slice AC 2. |
 | 9 identity-scoped public export | in scope | Slice AC 3-4. |
 | 10 projections are noncanonical | in scope | Slice AC 13 and projection checks. |
@@ -605,10 +644,10 @@ These omissions must be visible through `lumin capabilities` and relevant overvi
 | 12 corpus/platform/performance evidence | completion-gated | Slice AC 1, 9, and 16; remains unclaimed until all pass. |
 | 13 latest failure visible | in scope | Slice AC 14 and `snapshot-and-latest`. |
 | 14 explicit post-write gate ID | in scope | Slice AC 10. |
-| 15 semantic baseline conflict | in scope | Slice AC 11/23/27 and baseline/final-observation, lifecycle-delta, plus intervening-transition corpus. |
+| 15 semantic baseline conflict | in scope | Slice AC 11/23/27/30/32 and baseline/final-observation, total lifecycle-delta, plus transition-reference corpus. |
 | 16 idempotent lifecycle mutation | in scope | Slice AC 17/28 and operation-delivery plus independent-pin corpus. |
-| 17 semantic-read fixed point | in scope | Slice AC 19/22/23 and cold/warm semantic-read-closure plus honest-binding corpus. |
-| 18 crash-consistent retention | in scope | Slice AC 18/24/25/28 and public retention crash/query/reference corpus. |
+| 17 semantic-read fixed point | in scope | Slice AC 19/22/23/33 and cold/warm demand-reservation, gate-context, plus honest-binding corpus. |
+| 18 crash-consistent retention | in scope | Slice AC 18/24/25/28/30/31 and public retention crash/query/reference/generation corpus. |
 
 ## 17. Verification Commands
 
