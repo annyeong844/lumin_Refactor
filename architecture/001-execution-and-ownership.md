@@ -56,12 +56,12 @@ The stage topology is dialect-neutral. `decompose-sfc` emits model-owned SFC str
 The model represents:
 
 - explicit SFC dialect identity and capability status;
-- `EmbeddedSourceUnitId`, parent `SourceId`, parent byte-span mapping, parse mode, and content identity;
+- `EmbeddedSourceUnitId`, parent `LogicalSourceId`, parent byte-span mapping, parse mode, and content identity;
 - inline embedded bytes owned only until extraction completes;
-- `ExternalEmbeddedSourceRef(SourceId)` for `<script src>` rather than a copied source unit;
+- `ExternalEmbeddedSourceRef(LogicalSourceId)` for `<script src>` rather than a copied source unit;
 - logical SFC attachment identity separately from the physical source span owner.
 
-An external script is read and parsed once for a given parse mode. Its JS facts and source-use edges remain owned by the physical `SourceId`; finalization emits an `SfcScriptAttachment` that links the parent SFC to those facts without cloning them under a second module identity. Inline facts remain owned by their `EmbeddedSourceUnitId`. A `lang` attribute that conflicts with the external file's supported parse mode is explicit unsupported evidence in the first slice, not permission to parse the same source under an implicit second mode.
+An external script target is one lexical `LogicalSourceId`. Inventory may share its `PayloadSnapshotId` and compatible parse result with another logical alias of the same physical file, but JS facts, package/config context, source-use edges, and resolution remain owned by each logical source. Finalization emits an `SfcScriptAttachment` that links the parent SFC to the target logical facts without inventing another module identity. Inline facts remain owned by their `EmbeddedSourceUnitId`. A `lang` attribute that conflicts with the external file's supported parse mode is explicit unsupported evidence in the first slice, not permission to parse the same payload under an implicit second mode.
 
 ## 3. Kahn Scheduler Contract
 
@@ -181,7 +181,9 @@ Cache state is non-semantic. Cold misses and warm hits over the same exact obser
 
 ### 5.2 Shared Inputs
 
-Large immutable byte buffers may use `Arc<[u8]>` when multiple real consumers require the same bytes. `Arc` cloning is allowed only for intentional immutable sharing. Shared mutable parser, graph, or evidence state is forbidden.
+Large immutable byte buffers may use `Arc<[u8]>` when multiple real consumers require the same bytes. `Arc` cloning is allowed only for intentional immutable sharing. One validated `PayloadSnapshotId` may back several `LogicalSourceId` tasks, and a compatible path-independent parse product may be reused, but every task receives its own logical path, source kind, package/config ownership, scan role, and resolver context. Physical identity cannot deduplicate a logical task or choose a representative path. Shared mutable parser, graph, or evidence state is forbidden.
+
+Configuration follows the same single-consumption boundary. `lumin-inventory` lowers each exact tsconfig/package payload once into an immutable model-owned ordered `ConfigDocument`; scan, ownership, and resolver owners share that project value rather than reparsing bytes or exchanging a third-party JSON tree.
 
 ### 5.3 Worker Outputs
 
@@ -196,7 +198,7 @@ Every fan-in point has a single reducer that:
 1. receives all required owned outputs;
 2. sorts by stable semantic keys;
 3. assigns stable IDs;
-4. deduplicates according to the owning contract;
+4. deduplicates according to the owning contract, never merging logical sources merely because they share a physical file or payload;
 5. materializes the next immutable stage snapshot.
 
 Stable ordering keys include normalized repository path, source span, symbol identity, use kind, and finding rule. Wall-clock completion order is never an ordering key.
@@ -352,13 +354,13 @@ Metrics describe execution but do not redefine semantic findings.
 4. Parser AST types cannot be named from downstream crates.
 5. No global Rayon pool is used.
 6. No worker mutates canonical graph or store state.
-7. The exact bytes used for a cache identity are the bytes parsed.
+7. The exact bytes used for a cache identity are the bytes parsed; payload/parse reuse cannot merge distinct logical source contexts.
 8. A missing SFC target produces typed unresolved evidence while unrelated files complete.
 9. A hard-stop cannot publish a run marked complete.
 10. Cold and warm corpus benchmarks report stage timings and peak memory on native Windows, WSL ext4, and the declared Linux CI platform.
 11. A cache hit validates and replays the complete owner outcome, diagnostics, limitations, payload, gate-neutral signals, and consulted inputs; cold/warm execution over the same exact observation produces the same capability state, request-specific effects, observation binding, and canonical semantic dump.
 12. The stage node set is fixed before inventory executes; language presence changes only input batches.
-13. SFC finalization remains owned by `lumin-sfc`; first-slice Vue binding completes there, unsupported dialects remain visible, and an external script payload is not read or parsed twice for one mode.
+13. SFC finalization remains owned by `lumin-sfc`; first-slice Vue binding completes there, unsupported dialects remain visible, and an external script payload is not read or parsed twice for one mode while every lexical alias retains its own logical source context.
 14. Snapshot drift during a scan prevents completed-run publication, and later query drift is visible.
 15. Repository input changes alter `AnalysisInputId` without altering `AnalysisContractId`; software semantic-version changes alter the contract ID.
 16. A newly discovered semantic input is demanded, conflict-checked, and reserved before inventory captures it or an owner/cache validator consumes it.
