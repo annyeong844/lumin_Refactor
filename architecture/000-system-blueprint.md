@@ -86,7 +86,7 @@ This tree describes the final destination. Crates are created only when an accep
 
 Owns the dependency-light domain vocabulary:
 
-- normalized repository-relative paths;
+- losslessly encoded, normalized repository-relative paths and nonauthoritative escaped display values;
 - source, symbol, use, span, and package identifiers;
 - source snapshots and fingerprints;
 - language-neutral module and symbol facts;
@@ -99,6 +99,8 @@ Owns the dependency-light domain vocabulary:
 - the typed gate-projection context routed to capability owners after cold/cache validation;
 - dependency-light confidence and grounding rank values used by owner facts and deltas;
 - completeness and opacity states.
+
+`RepoPath` is a component sequence, never a Unicode `String`. `repo-path.v1` stores a portable component as its exact UTF-8 bytes without normalization, a non-UTF-8 Unix component as exact bytes, and a non-scalar Windows component as exact WTF-16 code units. Its versioned length-prefixed binary encoding is the sole lexical key for source IDs, ordering, hashes, leases, cache keys, and cursor anchors; observed physical identity and parent-specific comparison behavior remain separate facts. The absolute repository root uses the same lossless native atoms plus platform root/volume and physical identity in `RepositoryRootIdentity`; it is never squeezed into a relative `RepoPath` or display string. Protocol display text cannot be converted back into identity.
 
 It must not depend on parsers, filesystems, persistence engines, CLI frameworks, or artifact formats. It is not a miscellaneous helper crate.
 
@@ -168,6 +170,8 @@ Framework crates choose the semantic kind of an edge; the resolver determines it
 
 `lumin-resolve` owns resolution-profile selection. A typed invocation override wins and supersedes only profile selection. Without that override, the effective value in an importer's nearest controlling `tsconfig` selects the profile when supported; an explicit unsupported value is incomplete rather than skipped; and an importer with no explicit value uses the named product default, `bundler`. Unreadable controlling configuration remains incomplete even under an override because non-profile resolver inputs may be unknown. Embedded SFC script source uses are importers under this same rule; template-to-component binding consumes resolved script bindings and is not a second resolver lane. The resolver records the selected profile, source, and reason as model facts. Configuration choices participate in `AnalysisInputId`, while the mapping/default policy version participates in `AnalysisContractId`.
 
+`lumin-resolve` also owns the closed `resolver-config-semantics.v1` registry. Every field and nested shape that can enter first-slice TypeScript, JavaScript, workspace-package, or public-surface resolution is classified exactly once as `SupportedAndModeled`, `KnownResolutionNeutral`, or `UnsupportedResolutionAffecting`. Unknown `compilerOptions` keys, unknown shapes beneath a registered resolver field, and future fields absent from the compiled compatibility registry are unsupported rather than presumed neutral. Unknown top-level `package.json` fields are neutral only under the explicit package-top-level rule because the product resolver never consults them. Encountering an unsupported affecting field emits owner-scoped incomplete evidence before probing; no invocation profile override suppresses another unsupported resolver input. The registry version and compatibility baseline participate in `AnalysisContractId`, while every observed field/value identity participates in `AnalysisInputId` and semantic-read closure.
+
 ### 4.6 `lumin-graph`
 
 Owns deterministic symbol and source-use graph construction. It consumes already extracted and resolved facts. It does not parse files, probe the filesystem, interpret package manifests, or know Vue/Next/Nuxt conventions.
@@ -196,7 +200,7 @@ No analysis crate writes artifacts or mutates the canonical graph. Analysis-spec
 
 ### 4.8 `lumin-store`
 
-Owns immutable run persistence, exact-input cache persistence, and write-gate transactions. The selected persistence engine, physical cache schema, migrations, and locking primitives are private. Capability owners define semantic cache keys; only `lumin-store` calls the backend API or commits storage.
+Owns immutable run persistence, exact-input cache persistence, write-gate transactions, no-follow admission of the reserved `.lumin` namespace, and the exclusive catalog-publication guard shared by latest publication/recovery, retention confirmation, and migration. The selected persistence engine, physical cache schema, migrations, directory-handle operations, and locking primitives are private. Capability owners define semantic cache keys; only `lumin-store` calls the backend API or commits storage.
 
 ### 4.9 `lumin-engine`
 
@@ -233,8 +237,9 @@ Type ownership and value authority are distinct:
 | Fact | Type owner | Value authority |
 | --- | --- | --- |
 | `BuildIdentity` | `lumin-model` | `lumin-cli` constructs it once from compile-time release metadata and passes it inward. |
-| `AnalysisContractId` | `lumin-model` | `lumin-engine` derives it only from the ordered software semantic versions of the profile, extractors, resolver, graph, and selected rules. |
-| `AnalysisInputId` | `lumin-model` | `lumin-engine` derives it from repository identity, profile parameters, effective explicit entries, scan policy, source-set identity, and consulted repository configuration identities. |
+| `AnalysisContractId` | `lumin-model` | `lumin-engine` derives it only from the ordered software semantic versions of the profile, inventory/path/scan contracts, extractors, resolver/config registry, graph, and selected rules. |
+| `AnalysisInputId` | `lumin-model` | `lumin-engine` derives it from repository identity, profile parameters, effective explicit entries, exact canonical path/source-set identity, scan policy, and consulted repository configuration identities. |
+| `RepoPath`, `RepositoryRootIdentity`, their canonical bytes, and path comparison facts | `lumin-model` | `lumin-inventory` lowers native OS paths/roots losslessly and observes physical identity/comparison behavior; no other crate reconstructs identity from display text. |
 | `RepositoryId` | `lumin-model` | `lumin-inventory` derives it from the canonical root and repository identity inputs. |
 | `AttemptId`, `RunId`, `GateId` | `lumin-model` | `lumin-store` allocates and persists them. |
 | `OperationId` | `lumin-model` | The caller creates it before a mutating gate or retention lifecycle command; `lumin-store` binds it to one repository-scoped request digest and committed result. |
@@ -252,8 +257,10 @@ Type ownership and value authority are distinct:
 | `GateProjectionContext` | `lumin-model` | `lumin-engine` derives it from normalized intent/affected scope and the exact opening/current gate identities; capability owners consume it only after validating their owner outcome, and it never participates in a repository-input-only cache payload. |
 | `GateEffect`, `GateDecision`, and lifecycle state | `lumin-evidence` | `lumin-evidence::gate_policy` owns the closed signal-to-effect table and policy version; the engine only invokes that mapping and applies the canonical reducer/transition tables. |
 | `EvidenceQuery`, `CollectionOrderingId`, and `PageAnchor` | `lumin-evidence` | The engine query service validates filters, selects the owner-defined collection ordering version, and derives deterministic continuation anchors; `lumin-protocol` encodes and decodes opaque cursors. |
+| `RepoPathDto` and escaped path display | `lumin-protocol` | The protocol always carries canonical `repo-path.v1` bytes and may add readable UTF-8/display projections; decoding validates canonical bytes instead of trusting the projection. |
 | External protocol version and DTO schema | `lumin-protocol` | `lumin-protocol`. |
 | Run envelope, evidence-store, lifecycle-store, and cache schema versions | `lumin-store` | `lumin-store`. |
+| State-namespace schema/marker and `CatalogPublicationGuard` | `lumin-store` project API | `lumin-store` binds `.lumin` to one repository/root identity and exclusively serializes latest publication/recovery, latest-sensitive retention confirmation, and migration. |
 | `StoreGeneration` and `MigrationIntent` | `lumin-store` project API | `lumin-store` allocates the next generation under the exclusive repository migration lock; every transaction is fenced to the generation of the backend handle it opened. |
 | Extractor, resolver, graph, and rule semantic versions | project-owned model values | The owning capability crate. |
 
@@ -310,7 +317,7 @@ CI reads `cargo metadata` and rejects workspace dependency edges not listed in t
 
 `tools/xtask` is one development-only crate with `architecture-check`, `corpus`, and `package-check` subcommands. It may inspect `cargo metadata`, repository policy files, fixtures, and public binary behavior. Production crates never depend on it, it is not linked into `lumin`, and it does not import private analysis internals to manufacture expected results.
 
-The architecture check combines `cargo metadata`, scoped Clippy disallowed-method/type policy, owner-path source checks, exhaustive owner matches, and compile/public-API boundary fixtures. It rejects global Rayon entry points, runtime Node/Cargo launch sites, source-file reads outside `lumin-inventory`, backend API use or backend handles outside `lumin-store`, backend handles that escape one repository-lock transaction, OXC imports outside `lumin-js`, configured third-party types in public project APIs or owner continuations, continuations containing borrowed parser/allocator state or open handles, owners that consume unsupplied/unreserved semantic inputs, gate projections that access I/O or emit late demands, cache envelopes missing owner outcome or diagnostic state, unavailable-capability signals outside the engine registry, limitation variants without static scope/absence/relevance ownership, semantic fact fields absent from their owner's key/dimension/metadata registry, non-total post-write delta mappings, and adverse lifecycle effects that bypass typed delta classification. Corpus and package checks execute the public binary.
+The architecture check combines `cargo metadata`, scoped Clippy disallowed-method/type policy, owner-path source checks, exhaustive owner matches, and compile/public-API boundary fixtures. It rejects global Rayon entry points, runtime Node/Cargo launch sites, source-file reads outside `lumin-inventory`, backend API use or backend handles outside `lumin-store`, backend handles that escape one repository-lock transaction, OXC imports outside `lumin-js`, configured third-party types in public project APIs or owner continuations, continuations containing borrowed parser/allocator state or open handles, owners that consume unsupplied/unreserved semantic inputs, gate projections that access I/O or emit late demands, cache envelopes missing owner outcome or diagnostic state, unavailable-capability signals outside the engine registry, limitation variants without static scope/absence/relevance ownership, semantic fact fields absent from their owner's key/dimension/metadata registry, non-total post-write delta mappings, adverse lifecycle effects that bypass typed delta classification, string/lossy path identity, raw `.lumin` filesystem access outside store-owned no-follow helpers, latest compare/replace or retention confirmation outside the exclusive catalog guard, resolver fields or shapes absent from `resolver-config-semantics.v1`, unsupported affecting fields that fail to emit incomplete evidence, and any product `ScanLock` correctness primitive. Corpus and package checks execute the public binary.
 
 ## 6. Forbidden Dependencies
 
@@ -412,6 +419,10 @@ No implementation file should normally exceed 500 lines excluding tests. A file 
 14. Cache replay, observation binding, gate delta classification, retention plans, pins, and collection ordering use the authority table without duplicate policy in engine, store, protocol, or CLI.
 15. Every semantic input is demanded before reservation/capture/consumption, every unavailable capability signal has the named registry owner, and every post-write fact relation has one exhaustive delta classification.
 16. Active-gate transition references and generation-fenced transaction handles prevent retention or lifecycle-store migration from invalidating a live transaction's proof.
+17. Every native repository path has one lossless `repo-path.v1` identity and wire round trip; display text, Unicode normalization, and backend collation cannot merge distinct names.
+18. Every first-slice resolver-affecting configuration field/shape is modeled or emits scoped incomplete evidence through the closed resolver registry, while registered neutral fields cannot change probing.
+19. Only `lumin-store` opens the reserved `.lumin` namespace or acquires `CatalogPublicationGuard`; latest/retention/migration code cannot bypass its no-follow and exclusive-lock APIs.
+20. Architecture v1 contains no `ScanLock` product type or correctness claim; scheduler coordination cannot substitute for snapshot, reservation, or lifecycle-store owners.
 
 ## 12. Review Questions
 

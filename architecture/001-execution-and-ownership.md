@@ -250,10 +250,12 @@ No task may swallow a panic, channel closure, parse failure, or persistence erro
 ## 9. Filesystem and I/O Rules
 
 - Inventory enumerates the source set once without retaining all source bytes.
+- Inventory lowers every enumerated native path into the lossless ARCH-002 `RepoPath` representation before identity, ordering, cache, or query use; display text is never an identity key.
 - Each analyzed worktree payload is read once for extraction per cold run; a separate final hash-only freshness pass is permitted.
 - Every parser consumes the same bytes used to compute that snapshot's content identity.
 - Downstream stages consume facts, not source files.
-- Result transport occurs after storage transaction locks, scan locks, and operation-liveness leases are released. An `Active` gate's durable logical path lease is repository state, not a held runtime lock, and remains until close or abandon.
+- Result transport occurs after storage transaction locks, any `CatalogPublicationGuard`, and operation-liveness leases are released. An `Active` gate's durable logical path lease is repository state, not a held runtime lock, and remains until close or abandon.
+- Architecture v1 defines no repository-wide or process-local `scan lock`. Process-local scheduler coordination has no safety authority; snapshot truth comes from inventory capture and final freshness validation, while gate safety comes from provisional reservations, durable logical leases, and lifecycle-store transactions.
 - Canonical persistence uses one writer and the ARCH-002 crash-consistent publication protocol.
 - WSL `/mnt/<drive>` performance is measured separately from WSL ext4 and native Windows; Rayon is not presented as a cure for cross-filesystem latency.
 
@@ -362,3 +364,4 @@ Metrics describe execution but do not redefine semantic findings.
 16. A newly discovered semantic input is demanded, conflict-checked, and reserved before inventory captures it or an owner/cache validator consumes it.
 17. Request-specific gate signals and post-write deltas are recomputed by the owning capability from the current `GateProjectionContext` and immutable opening baseline; they are never replayed from a repository-input-only cache or a prior failed close.
 18. Semantic-input closure never rereads or reparses a payload already consumed in the same cold execution; owner continuations contain no parser/allocator references, third-party public types, or open handles.
+19. No `scan lock` participates in correctness or result transport; process-local scheduling cannot replace inventory freshness, lifecycle reservations, or durable gate leases.

@@ -64,6 +64,7 @@ Lumin hard-stops only when continuing would make the run contract dishonest, inc
 
 - malformed or unsupported request schemas;
 - a declared repository path escaping its root;
+- a caller targeting the reserved state namespace, or a foreign/redirected/mismatched `.lumin` namespace;
 - corrupt canonical evidence storage;
 - an impossible internal invariant;
 - a required capability failing without an artifact-visible incomplete result.
@@ -104,6 +105,18 @@ Every user-facing command that mutates gate or retention lifecycle state carries
 
 Retention is a public, crash-consistent lifecycle operation. It cannot expose a record as deleted before its canonical indexes and payload ownership agree, cannot remove a protected latest/pinned/active-transition reference closure, and has one recoverable outcome at every deletion boundary. A known record in `Pruning` or `Pruned` state remains distinguishable from a never-existing ID through public queries, and independent pins cannot remove one another's protection. Lifecycle-store migration admits mutations in exactly one generation: backend handles are transaction-scoped, replacement is generation-fenced, and every migration crash boundary has one recovery rule.
 
+### 2.9 Path and State Integrity
+
+Repository path identity is lossless. Lumin does not require a native path to be printable Unicode and never uses escaped display text, lossy conversion, Unicode normalization, or backend collation as a source ID, ordering key, cursor anchor, cache key, or gate lease. Native command input and machine DTOs round-trip the same canonical path bytes.
+
+`.lumin` and every physical alias/descendant are a product-owned reserved state namespace, not authored repository content. Lumin admits it through no-follow, repository-bound directory identities and refuses foreign, redirected, mismatched, or externally mutated state. A caller cannot scan or lease that namespace as a planned write.
+
+Latest pointer publication is one cross-process serialized compare/merge/replace operation. Concurrent attempts merge `latestAttempt` by `(sequence, Running < Terminal)` and `latestCompleted` by successful originating sequence, while retention confirmation uses the same guard; atomic file replacement alone is not treated as lost-update protection.
+
+### 2.10 Resolver Configuration Honesty
+
+Every configuration field or nested shape that can affect supported resolution is either modeled, explicitly known resolution-neutral under a versioned compatibility baseline, or reported as scoped unsupported evidence before probing. An unknown or unsupported affecting field cannot silently fall through to a simpler resolver, public surface, or invocation override and cannot support an absence claim.
+
 ## 3. Non-Goals
 
 Lumin v2 does not:
@@ -137,6 +150,10 @@ Lumin v2 does not:
 16. Retrying any committed gate or retention lifecycle mutation by operation ID returns the same durable result and never creates a duplicate revision, plan, pin change, or deletion.
 17. An authorizing gate result is derived only after every newly demanded input is conflict-checked and reserved before capture/consumption, cold and warm paths produce the same complete owner outcome and semantic inputs, no demand remains, and the sealed read set passes final conflict and freshness validation; a nonauthorizing unsealed result names no fabricated observation ID.
 18. Public retention commands and lookups preserve one crash-recoverable, queryable state at every deletion boundary and cannot break latest, independent pin, active-gate transition, operation, attempt, run, gate, or lifecycle-generation referential integrity.
+19. Concurrent latest publication, recovery, retention confirmation, and migration cannot regress either pointer, lose an independent pointer-field update, strand terminal state behind same-sequence `Running`, or publish a pruned target.
+20. Every admitted native repository path has one lossless canonical identity and machine round trip; distinct Linux byte names, Windows native names, and physical aliases cannot be merged through display conversion.
+21. `.lumin` is a no-follow reserved namespace bound to one repository/root identity; foreign or redirected state and caller writes fail before scan evidence or gate authorization.
+22. Every resolver-affecting configuration field/shape outside the modeled subset emits scoped incomplete evidence before probing and disables affected absence claims.
 
 ## 5. Verification Contract
 

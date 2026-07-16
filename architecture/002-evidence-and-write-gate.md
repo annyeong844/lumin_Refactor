@@ -28,6 +28,7 @@ The internal workspace layout is:
 
 ```text
 .lumin/
+  repository.json
   latest.json
   lifecycle.lock
   lifecycle.store
@@ -48,9 +49,21 @@ The internal workspace layout is:
 
 Users and agents do not edit these files directly.
 
+### 2.0 Reserved State Namespace
+
+`.lumin` is a product-owned reserved namespace, including every physical alias and descendant. It is never authored source, a scan target, or a legal gate write. Repository open performs a no-follow namespace admission before reading or creating canonical state:
+
+1. Open the canonical repository root by stable directory handle and open or create its direct `.lumin` child without following a symlink, junction, mount-style reparse point, or later alias. The state namespace and every managed parent (`attempts`, `runs`, `trash`, and `cache`) must be real directories on the state filesystem/volume required by their atomic-rename protocol.
+2. Create or validate `repository.json`, which stores the state-namespace schema, `RepositoryId`, canonical root identity, and root physical identity. Initialization uses create-new/no-follow operations and durable parent flushes. An empty pre-existing reserved directory or a known interrupted initialization remnant may be completed under `lifecycle.lock`; a nonempty unrecognized namespace, unknown top-level entry, invalid marker, or repository/root identity mismatch is a `ForeignStateNamespace` integrity hard-stop and is never adopted or overwritten.
+3. Open every managed descendant relative to verified directory handles with the platform no-follow equivalent, then revalidate parent identities before publication, retention moves, migration replacement, and gate commit. A symlink, junction, reparse point, mount crossing, or identity change in a managed parent is a store-integrity hard-stop.
+
+Caller input whose lexical path is `.lumin`, descends from it, or physically aliases any verified state object is malformed before operation allocation: exit `2`, no operation/gate/lease. External mutation of canonical state discovered after admission is not an unplanned source edit; it is a typed integrity hard-stop and cannot append a successful gate revision. Inventory always excludes the reserved namespace by lexical and physical identity.
+
+Initial namespace publication has one recovery order: create/open the real `.lumin` directory, create/open `lifecycle.lock` without following, acquire its exclusive side, publish `repository.json` by flushed temporary file plus atomic rename and parent flush, then create the remaining managed parents/store. A crash before the marker leaves no canonical repository state; recovery may remove only the named marker temporary and resume under the same no-follow checks. A crash after the marker leaves that matching marker authoritative and resumes missing managed parents/store idempotently. Any other pre-marker entry or post-marker identity/schema disagreement is foreign state, not an initialization remnant.
+
 ### 2.1 `attempt.json`
 
-Audit start is ordered and crash-recoverable. One repository-catalog transaction allocates the attempt ID/sequence and durable process-liveness lease. Lumin then writes and flushes a `Running` `attempt.json`, advances `latestAttempt` with the sequence-checked replacement protocol, and begins scanning only after both publications are durable. A sequence allocated before its envelope may become a legal gap; it is never reused. A terminal audit atomically replaces the running envelope once with an immutable terminal envelope containing repository/build/request identity, timestamps, success or failure class, concise diagnostics, and optional completed run ID. A hard-stop or unstable snapshot therefore remains addressable even when no run exists.
+Audit start is ordered and crash-recoverable. One repository-catalog transaction allocates the attempt ID/sequence and durable process-liveness lease. Lumin then writes and flushes a `Running` `attempt.json`, advances `latestAttempt` under the exclusive catalog-publication guard defined below, and begins scanning only after both publications are durable. A sequence allocated before its envelope may become a legal gap; it is never reused. A terminal audit atomically replaces the running envelope once with an immutable terminal envelope containing repository/build/request identity, timestamps, success or failure class, concise diagnostics, and optional completed run ID. A hard-stop or unstable snapshot therefore remains addressable even when no run exists.
 
 ### 2.2 `run.json`
 
@@ -81,13 +94,17 @@ Runtime metrics are canonical run records but belong to a non-semantic partition
 
 Only `lumin-store` knows the physical schema or backend API. No public product contract exposes SQL, tables, or backend-specific keys.
 
-Run publication is a crash-consistent multi-object commit protocol, not one fictional atomic filesystem operation:
+Run publication is a crash-consistent multi-object commit protocol, not one fictional atomic filesystem operation. Every operation that publishes/repairs either latest pointer or confirms retention against latest targets acquires the exclusive side of stable `lifecycle.lock` as the `CatalogPublicationGuard`. This guard is cross-process and spans the final current-generation/linkage validation, read of the existing pointer document, field-wise monotonic-key merge, temporary write, atomic replacement, and required flush. Migration uses the same exclusive side and therefore cannot overlap. A shared lock or backend single-writer assumption is not sufficient.
+
+`latestAttempt` and `latestCompleted` are merged independently. `latestAttempt` uses the total monotonic key `(attempt_sequence, envelope_phase)`, where `Running < Terminal`; a terminal envelope therefore advances the same attempt sequence, an identical phase/result is idempotent, and two different terminal results for one sequence are an integrity hard-stop. `latestCompleted` uses the originating successful attempt sequence; the same sequence/run is idempotent and the same sequence naming another run is an integrity hard-stop. A candidate replaces only a greater key while preserving the other field. Thus a later failed attempt may advance `latestAttempt` while an older successful completion still advances `latestCompleted`, but neither field can regress or strand a terminal attempt behind its own `Running` projection.
+
+Publication then follows:
 
 1. Build `evidence.store` and `run.json` in a private staging directory on the same filesystem as `.lumin/runs`.
 2. Close the store, validate its schema and semantic identity, record size/hash in `run.json`, durably flush required files, then durably flush the staging directory using the platform-supported equivalent.
 3. Atomically rename the validated staging directory to its immutable run directory and durably flush the `runs` parent.
 4. Publish the terminal `attempt.json` by same-directory temporary write, durable flush, atomic replacement, and parent flush.
-5. Under the shared side of stable `lifecycle.lock`, open the current generation, compare attempt sequences, write and flush a complete replacement `latest.json`, atomically replace it, close the store handle, and flush `.lumin` before releasing the lock. A migration or stale process therefore cannot split the pointer check from the generation it observed or move either pointer backward.
+5. Acquire `CatalogPublicationGuard`, open and validate the current generation/linkage, close the transaction-scoped backend handle, reread the current `latest.json`, apply the field-wise monotonic-key merge, write and flush a complete replacement when either field advances, atomically replace it, and flush `.lumin` before releasing the guard. If retention won the guard and the candidate target is now `Pruning`/`Pruned`, publication does not create a pointer and returns the typed nonpublication/integrity result owned by that lifecycle state; if publication wins, retention confirmation observes changed latest/catalog state and remains `Prepared` with `Stale`.
 
 A failed terminal attempt cannot link an evidence store as its completed run. A crash may leave a validated run directory before terminal linkage; recovery treats it only as the orphan case below. Recovery validates target existence, run envelope, store hash/schema, attempt linkage, and sequence before trusting a pointer. A dangling or corrupt pointer is rejected and reported; Lumin does not silently reinterpret an older run as latest. Staging and pointer-temp remnants are noncanonical and may be removed only after validation.
 
@@ -105,11 +122,15 @@ Every crash point has one outcome:
 
 The durable process lease identifies the process/operation that may finish a `Running` attempt. Recovery authority begins only after platform liveness checks prove that lease released. An orphan without a terminal success attempt is inspectable recovery evidence and retention input, not a completed run or an automatic success candidate.
 
+The publication probe forces sequence 10 and 11 publishers to read/complete in reverse order, forces one attempt's `Running -> Terminal` update at the same sequence, and races publication against retention confirmation. The only valid final pointer fields are their independent monotonic maxima; no lost update, stranded `Running`, dangling target, or unreported retention win is permitted.
+
 ### 2.4 `lifecycle.store`
 
 The repository-wide `lifecycle.store` contains its `StoreGeneration`, audit attempt sequence/process-lease catalog metadata, operation-id records, provisional admission and semantic-read-extension reservations, declared intents, logical path leases, baseline fingerprints and facts, advisory findings, immutable worktree transitions/capsules/active-gate references, close-out deltas, retention plans/tombstones, and lifecycle history for every gate in that repository. Attempt evidence remains in `attempt.json`; the catalog metadata exists only for allocation and recovery.
 
 One transactional store is required so overlap detection and lease creation commit atomically across concurrent Lumin processes. Completed gate records become immutable by application contract. Active gates are not temporary transport records and are never silently removed while open.
+
+The repository lock order is fixed: verified state-directory handle, then `lifecycle.lock`, then a transaction-scoped backend handle/transaction. Ordinary transactions acquire the shared side. Publication, latest recovery, latest-sensitive retention confirmation, and migration enter through the already-held exclusive `CatalogPublicationGuard` token and must not reacquire the shared side. No code acquires `lifecycle.lock` while holding a backend handle or keeps a backend handle after releasing the lock. Publication may close its backend transaction and perform the pointer file replace while retaining the exclusive guard; retention closes its confirmation transaction before later trash moves. There is no scan lock in this order.
 
 ### 2.5 Cache
 
@@ -302,7 +323,7 @@ lumin pre-write \
 For a large path set:
 
 ```text
-<NUL-delimited paths> | lumin pre-write --operation-id op_... --paths0-from -
+<NUL-delimited native path records> | lumin pre-write --operation-id op_... --paths0-from -
 ```
 
 The caller creates and retains a repository-scoped `OperationId` before invoking a mutating lifecycle command. Reusing it with different canonical input is malformed and cannot mutate state. With the same request digest, a retry returns a committed result immediately, joins a still-live execution without starting another mutation, or re-acquires and re-executes an operation proven interrupted before any gate-lifecycle or durable-path-lease mutation. Provisional reservation and operation-attempt records may already exist; they are recovery metadata, not authorization. No arbitrary timeout converts a live execution into an interrupted one.
@@ -338,7 +359,7 @@ Typed analysis inputs such as the scan include/exclude/role tier, explicit entri
 
 An optional lane exists only when its canonical capability owner is registered in the active product slice. Requesting an unavailable lane returns `Incomplete`; the engine and language crates do not implement temporary substitutes.
 
-Symbol and dependency intent is path-scoped. The path identifies the consuming source or package context; Lumin resolves its nearest owner manifest. A dependency addition adds the inferred owner manifest and lockfile to the leased write set. NUL-delimited input preserves legal newline-containing paths.
+Symbol and dependency intent is path-scoped. The path identifies the consuming source or package context; Lumin resolves its nearest owner manifest. A dependency addition adds the inferred owner manifest and lockfile to the leased write set. Command-line path flags are read through native `args_os` semantics. `--paths0-from` uses NUL-separated raw path bytes on Unix and canonical WTF-8 records on Windows; both decode into `repo-path.v1`, preserve legal newline-containing paths, and round-trip through the machine DTO without using display text.
 
 Lumin infers from planned paths:
 
@@ -441,7 +462,7 @@ If the close process dies before its final transaction, liveness recovery remove
 
 Actual delta derives from the baseline and current inventory identity maps. A rename is canonical only when one baseline path and one current path share the same unique persistent filesystem identity; otherwise even identical content is reported conservatively as remove plus add. VCS status may accelerate candidate discovery but is never the truth owner. Both rename endpoints require leases in either representation.
 
-Only `Allow` and `AllowWithWarnings` commit the terminal close result, worktree transition, and logical lease release in one store transaction. `Deny`, `Incomplete`, and `Stale` append an immutable close-attempt revision and keep the gate active until a later successful close or explicit abandon; only a conflict-free sealed current `Deny`/`Incomplete` read set may replace that active revision's protection. A sealed stale snapshot is preserved as historical evidence but never becomes current protection. Result transport occurs after storage transaction locks, scan locks, and operation-liveness leases are released. The durable logical path lease and protected semantic reads of an `Active` gate remain repository state until a later validated revision, close, or abandon.
+Only `Allow` and `AllowWithWarnings` commit the terminal close result, worktree transition, and logical lease release in one store transaction. `Deny`, `Incomplete`, and `Stale` append an immutable close-attempt revision and keep the gate active until a later successful close or explicit abandon; only a conflict-free sealed current `Deny`/`Incomplete` read set may replace that active revision's protection. A sealed stale snapshot is preserved as historical evidence but never becomes current protection. Result transport occurs after storage transaction locks, any `CatalogPublicationGuard`, and operation-liveness leases are released. The durable logical path lease and protected semantic reads of an `Active` gate remain repository state until a later validated revision, close, or abandon. Architecture v1 has no `scan lock`; reservations, snapshots, final validation, and lifecycle transactions own the safety guarantees.
 
 ## 8. Concurrent Agents and Path Leases
 
@@ -454,6 +475,15 @@ Path identity follows the observed root filesystem:
 - physical identity wins for existing aliases; root-wide case policy is only a fallback when a parent-specific observation is unavailable, and Linux byte-distinct names are never collapsed by generic Unicode normalization;
 - directory leases conflict with descendants, and a rename requires both source and destination leases;
 - an alias that reaches the same existing file conflicts even when its spelling differs.
+
+The lexical representation is lossless and backend-neutral:
+
+- `RepoPath` is a normalized relative component sequence. A portable component stores exact UTF-8 bytes with no NFC/NFD/case normalization; a non-UTF-8 Unix component stores exact native bytes; a Windows component not representable as Unicode scalar text stores exact WTF-16 code units. `.`/`..`, root prefixes, embedded separators, and NUL are rejected before identity creation.
+- `RepositoryRootIdentity` encodes the absolute native root with the same atoms plus platform prefix/volume and observed physical directory identity. `RepositoryId`, state admission, and root-equality checks use it; a root that is not printable Unicode remains supported and cannot collide with another root through display conversion.
+- `repo-path.v1` is a version tag plus length-prefixed component-kind/payload records. These canonical bytes, not display text or backend collation, are used for `SourceId`, stable finding identity, ordering, hashing, gate sets, cache keys, and cursor anchors. Portable UTF-8 paths have the same canonical bytes on Windows and Unix; native-only components remain explicitly platform-kind-tagged.
+- Every JSON/machine path uses `RepoPathDto { encoding: "repo-path.v1", canonicalBase64, display, utf8? }`. `canonicalBase64` is required and lossless; `utf8` is present only for a wholly portable path; `display` is escaped, nonauthoritative text. Decoding validates canonical form and rejects disagreement among fields. Human output may show `display` but never accepts it as an identity round trip.
+- Git-wildmatch operates on slash-separated `RepoPathMatchBytes`: exact UTF-8 bytes for portable components, raw bytes for Unix native components, and canonical WTF-8 for Windows native components. Ignore-file patterns retain their file bytes; invocation/JSON patterns are UTF-8. No Unicode normalization occurs, and wildcard matching cannot merge two distinct canonical paths.
+- Existing physical identity and observed parent comparison behavior remain separate from lexical bytes. They may establish alias conflicts but never rewrite canonical spelling or cause Linux byte-distinct names to share a key.
 
 On `pre-write`:
 
@@ -634,7 +664,7 @@ Pin allocates and returns one repository-scoped `PinId`. Unpin accepts that exac
 
 Plan creation allocates a model-owned `RetentionPlanId` and persists one immutable `Prepared` plan in the same transaction; the ID is scoped to the repository and collision-checked by `lumin-store`. It deletes nothing. A run plan contains the exact attempt, completed-run, orphan-payload, every independent pin/reference, byte count, exclusions, repository catalog revision, and content identity. A gate plan contains the exact terminal gate, revisions, findings/evidence, operation records, terminal `WorktreeTransition`/`TransitionCapsule`, and any `ActiveGateTransitionRef` that excludes that closure from deletion. The content identity derives from the canonically ordered logical plan payload under the lifecycle schema, never backend row/page order. The plan plus its creation/confirmation operation records are not members of their own deletable closure; they become the minimal retained tombstone. `plan show` pages the immutable retention-plan scope and never creates a replacement plan from repeated filters. Unrelated repository mutations do not invalidate paging; confirmation separately revalidates the current catalog. Gate retention uses the `lumin gate prune` commands above; no second cleanup owner exists.
 
-Confirmation accepts only the exact plan ID plus a new operation ID. Before deletion begins, one lifecycle-store transaction revalidates pin/lifecycle/catalog/latest/transition-reference state and every record identity. A changed input leaves the plan `Prepared` and returns `Stale`. Pinned or active records are never eligible. A terminal gate and its transition capsule are also ineligible while any `ActiveGateTransitionRef` points to that capsule; retention cannot turn a later active close from reconcilable into missing-transition `Deny`. The current `latestAttempt` target and `latestCompleted` target are never eligible, and each retains its linked attempt/run closure. The plan reports every exclusion reason.
+Confirmation accepts only the exact plan ID plus a new operation ID. Before deletion begins, it acquires `CatalogPublicationGuard`; under that same exclusive guard one lifecycle-store transaction revalidates pin/lifecycle/catalog/latest/transition-reference state and every record identity, then commits `Pruning` or leaves the plan unchanged before releasing the guard. A changed input leaves the plan `Prepared` and returns `Stale`. Pinned or active records are never eligible. A terminal gate and its transition capsule are also ineligible while any `ActiveGateTransitionRef` points to that capsule; retention cannot turn a later active close from reconcilable into missing-transition `Deny`. The current `latestAttempt` target and `latestCompleted` target are never eligible, and each retains its linked attempt/run closure. The plan reports every exclusion reason. A concurrent publisher that wins first changes latest/catalog state and makes confirmation stale; confirmation that wins first makes a later publication revalidate the target's typed retention state before any pointer write.
 
 Deletion is a crash-consistent state machine:
 
@@ -680,9 +710,9 @@ Successful plan creation, resumable `Pruning`, and logical `Pruned` results exit
 
 Architecture v1 retains minimal plan/record/operation tombstones for the repository lifetime. They are not eligible for second-order pruning in the first slice; their count and bytes are measured separately in retention probes. Any future compaction requires an explicit lifecycle-schema and retention-contract amendment rather than silently erasing deletion history.
 
-Attempt sequences are allocated atomically in the catalog; a sequence becomes a started attempt only when its `Running` envelope is durable. Concurrent completion cannot move either pointer backward: `latestAttempt` identifies the highest started sequence and its success/failure status, while `latestCompleted` identifies the highest sequence that published a complete run. `overview` shows a newer failed attempt before presenting an older completed run.
+Attempt sequences are allocated atomically in the catalog; a sequence becomes a started attempt only when its `Running` envelope is durable. `CatalogPublicationGuard` serializes the complete read/compare/merge/replace interval across concurrent publishers, recovery, retention confirmation, and migration. `latestAttempt` identifies the highest `(started sequence, envelope phase)` and its success/failure status, while `latestCompleted` identifies the highest sequence that published a complete run. `overview` shows a newer failed attempt before presenting an older completed run.
 
-If a process disappears before terminal publication, later store recovery follows the exact crash table in Section 2.3. In particular, a renamed run directory without a terminal success attempt remains an unpointed orphan beside an `Interrupted` attempt and is never adopted as success. Process leases are operation-liveness records, not scan locks, durable gate path leases, or result-transport locks.
+If a process disappears before terminal publication, later store recovery follows the exact crash table in Section 2.3. In particular, a renamed run directory without a terminal success attempt remains an unpointed orphan beside an `Interrupted` attempt and is never adopted as success. Process leases are operation-liveness records, not durable gate path leases or result-transport locks.
 
 Completed run directories are never migrated in place. Compatible old run schemas are read through versioned adapters or a disposable derived index. Unsupported schemas are reported as incompatible, not corrupt or empty.
 
@@ -711,23 +741,25 @@ Every migration crash point has one recovery rule:
 
 ## 12. Security and Integrity
 
-- Repository roots and planned paths are canonicalized before storage.
+- Repository roots and planned paths are losslessly lowered to `RepositoryRootIdentity`/`repo-path.v1`, then physically canonicalized for containment without rewriting their lexical bytes.
+- `.lumin` and every lexical/physical alias or descendant are a reserved product state namespace admitted only by the no-follow Section 2.0 protocol; they cannot be scan entries or gate writes.
+- `repository.json` and every managed state parent must match the current `RepositoryId`, canonical root identity, physical directory identity, and state-namespace schema. Foreign, redirected, or externally mutated state hard-stops without adoption or source-delta fallback.
 - A caller-declared path that resolves outside the root is malformed input and creates no operation or gate record.
 - Any repository-owned configuration field declared as a repository path that lexically or physically resolves outside the root is malformed configuration and cannot publish a completed run or authorizing gate; a root-contained missing/excluded entry is typed incomplete evidence instead.
 - Unsupported external configuration semantics are scoped incomplete evidence and never authorize an undeclared source/config read outside the root.
 - If an admitted existing path's alias/symlink identity later resolves outside the root, baseline identity drift is `Stale`; if a planned new/final path is observed outside the root at close, the containment-invariant signal is `Block`/`Deny`.
 - Each resolved existing prefix's comparison behavior and physical identity, plus the fallback root policy, are persisted with each gate.
 - Store writes use validated typed operations; raw backend queries do not cross `lumin-store`.
-- Store locks live under the repository-owned `.lumin` directory, not a shared global temp path.
+- Store locks live under the verified repository-owned `.lumin` directory, not a shared global temp path. Latest publication, latest recovery, retention confirmation against latest, and migration use the exclusive side; ordinary transaction-scoped store access uses the shared side.
 - Published run envelopes contain evidence-store hashes.
-- Run publication and latest-pointer replacement follow the crash-consistent, durable, sequence-checked protocol in Section 2.3.
+- Run publication and latest-pointer replacement follow the crash-consistent, durable, exclusively serialized sequence-merge protocol in Section 2.3.
 - A gate cannot close under a different repository identity.
 - An operation ID is repository-scoped and bound to one canonical request digest; conflicting reuse is malformed.
 - Incompatible lifecycle schemas fail closed with a concise recovery instruction.
 
 ## 13. Acceptance Criteria
 
-1. A complete default audit creates only the repository lifecycle lock/store, small attempt/run envelopes, latest pointer, and canonical evidence store; the migration intent exists only while migration is live.
+1. A complete default audit creates only the repository state marker, lifecycle lock/store, small attempt/run envelopes, latest pointer, and canonical evidence store; the migration intent exists only while migration is live.
 2. An agent can answer a focused finding question without opening either file directly.
 3. Every bounded response, including binary- and run-scoped capabilities, supports explicit continuation.
 4. Projection limits cannot change canonical counts.
@@ -740,7 +772,7 @@ Every migration crash point has one recovery rule:
 11. A stale or incompatible gate cannot be interpreted as passed.
 12. Dependency checks use the nearest owner manifest for the planned paths.
 13. Completed gate evidence remains queryable after process exit.
-14. No storage transaction lock, scan lock, or operation-liveness lease is held while stdout or a result projection is transported; an active gate's durable logical path lease remains.
+14. No storage transaction lock, `CatalogPublicationGuard`, or operation-liveness lease is held while stdout or a result projection is transported; an active gate's durable logical path lease remains, and no separate scan lock exists.
 15. Architecture v1 selects exactly one store backend only after the correctness probes and measured comparison pass.
 16. `latestAttempt` exposes a newer failure while `latestCompleted` preserves the last complete run.
 17. Post-write cannot run without an explicit gate ID.
@@ -766,3 +798,6 @@ Every migration crash point has one recovery rule:
 37. Post-write reuses the exact caller-supplied opening scan/entry/profile override tier, rejects replacement parameters, and recomputes config-derived effective values only from validated self-writable inputs.
 38. Lifecycle effects consume one exhaustive owner-produced total delta relation over identity, targets, affected domain, confidence, grounding, and evidence rather than static limitation rows.
 39. Independent `PinId` and active-gate transition references protect one another, minimal tombstones remain auditable, and generation-fenced lifecycle-store migration preserves the complete logical catalog.
+40. Concurrent latest publishers, recovery, retention confirmation, and migration serialize through one exclusive guard; field-wise monotonic keys cannot regress, strand a terminal attempt behind `Running`, or lose an independent pointer update.
+41. Every repository path, machine DTO, NUL-stream input, stable ID, ordering key, cursor, and gate set round-trips one lossless `repo-path.v1` identity without display or Unicode-normalization collisions.
+42. `.lumin` and every alias/descendant are no-follow reserved state; foreign identity, redirected managed parents, caller writes, or external mutation fail before scan evidence or gate success can treat them as ordinary source state.
