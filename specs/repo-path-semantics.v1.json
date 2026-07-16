@@ -116,7 +116,15 @@
       "encoding": "repo-path.v1",
       "canonicalBase64": "RFC 4648 standard alphabet with required padding and no whitespace; decode then canonical re-encode must equal the input",
       "display": "protocol-owned escaped nonauthoritative text",
-      "utf8": "optional slash-joined Unicode-scalar string only when every component is PortableUtf8; it must re-encode to canonicalBase64"
+      "utf8": "optional slash-joined Unicode-scalar string only when every component is PortableUtf8; it must re-encode to canonicalBase64",
+      "validation": "encoding and canonicalBase64 are required; every present utf8 projection must lower to the same canonical bytes; display is never parsed as identity"
+    },
+    "repositoryRootDto": {
+      "encoding": "repository-root.v1",
+      "canonicalBase64": "RFC 4648 standard alphabet with required padding and no whitespace; decode then canonical re-encode must equal the input and include the complete physical identity",
+      "display": "required protocol-owned escaped nonauthoritative text derived from the decoded root",
+      "readableAddress": "optional canonical address projection only when every address component is PortableUtf8: /components for Unix, C:/components for drive, //server/share/components for UNC, or //?/Volume{lowercase-RFC4122-guid}/components for a volume GUID; it excludes physical identity and must reparse to the decoded platform, address kind, prefix, and components",
+      "validation": "encoding, canonicalBase64, and display are required; a present readableAddress disagreement is malformed; display is never parsed; a parallel structured platform, volume, component, or physical-identity representation is forbidden"
     },
     "paths0Unix": "NUL-delimited slash-separated exact native bytes; NUL is never legal inside one path",
     "paths0Windows": "NUL-delimited slash-separated canonical WTF-8; paired surrogates encode as one scalar UTF-8 sequence, unpaired surrogates encode as three-byte WTF-8, and CESU-8 for a valid pair is rejected",
@@ -151,6 +159,49 @@
       "matchBytesHex": "f09f9880",
       "nulRecordHex": "f09f988000"
     }
+  ],
+  "rootDtoGoldenVectors": [
+    {
+      "id": "root-dto-unix-repo",
+      "rootVector": "root-unix-repo",
+      "encoding": "repository-root.v1",
+      "canonicalBase64": "TFVNUlJPT1QAAQEBAAAAAQEAAAAEcmVwbwEAAAAAAAAAAQAAAAAAAAAC",
+      "display": "/repo",
+      "readableAddress": "/repo"
+    },
+    {
+      "id": "root-dto-windows-drive",
+      "rootVector": "root-windows-drive",
+      "encoding": "repository-root.v1",
+      "canonicalBase64": "TFVNUlJPT1QAAQICQwAAAAEBAAAABHJlcG8CAAAAAAAAAAEAAQIDBAUGBwgJCgsMDQ4P",
+      "display": "C:/repo",
+      "readableAddress": "C:/repo"
+    },
+    {
+      "id": "root-dto-windows-unc",
+      "rootVector": "root-windows-unc",
+      "encoding": "repository-root.v1",
+      "canonicalBase64": "TFVNUlJPT1QAAQIDAQAAAAZzZXJ2ZXIBAAAABXNoYXJlAAAAAQEAAAAEcmVwbwIAAAAAAAAAAQABAgMEBQYHCAkKCwwNDg8=",
+      "display": "//server/share/repo",
+      "readableAddress": "//server/share/repo"
+    },
+    {
+      "id": "root-dto-windows-volume-guid",
+      "rootVector": "root-windows-volume-guid",
+      "encoding": "repository-root.v1",
+      "canonicalBase64": "TFVNUlJPT1QAAQIEABEiM0RVZneImaq7zN3u/wAAAAEBAAAABHJlcG8CAAAAAAAAAAEAAQIDBAUGBwgJCgsMDQ4P",
+      "display": "//?/Volume{00112233-4455-6677-8899-aabbccddeeff}/repo",
+      "readableAddress": "//?/Volume{00112233-4455-6677-8899-aabbccddeeff}/repo"
+    }
+  ],
+  "rootDtoRejectionVectors": [
+    "missing or non-repository-root.v1 encoding",
+    "missing, unpadded, whitespace-containing, or noncanonical canonicalBase64",
+    "canonicalBase64 that decodes as repo-path.v1 or omits the physical-identity record",
+    "readableAddress whose platform, address kind, prefix, or components disagree with canonicalBase64",
+    "lowercase drive, noncanonical volume GUID spelling, or nonportable component in readableAddress",
+    "parallel structured platform, volume, component, or physical-identity fields",
+    "attempt to recover identity from display"
   ],
   "goldenVectors": [
     {
@@ -232,6 +283,6 @@
     "wireOwner": "lumin-protocol",
     "artifactIdentity": "SHA-256 of exact checked-in file bytes, supplied by the candidate manifest and compiled into AnalysisContractId",
     "runtimeForm": "one lumin-model project-owned pure codec generated from this artifact; lumin-inventory supplies native atoms and lumin-protocol supplies wire/display adapters by calling that codec, with no runtime artifact read or duplicate encoder",
-    "requiredCheck": "architecture-check compares artifact bytes, the single generated model-codec digest, all golden/rejection vectors, canonical decoder behavior, and owner-specific native/wire adapter boundaries"
+    "requiredCheck": "architecture-check compares artifact bytes, the single generated model-codec digest, all path/root/native-I/O/DTO golden and rejection vectors, canonical decoder and DTO disagreement behavior, and owner-specific native/wire adapter boundaries"
   }
 }

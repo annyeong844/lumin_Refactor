@@ -29,7 +29,7 @@
     "objectOrder": "source declaration order",
     "duplicateKeys": "malformed configuration hard-stop",
     "packageSyntax": "strict JSON lowered to project-owned values and source spans",
-    "pnpmWorkspaceSyntax": "UTF-8 YAML mapping limited to plain keys, strings, arrays, and mappings; duplicate keys, aliases, anchors, merge keys, custom tags, multi-document streams, and non-string package patterns are malformed configuration hard-stops",
+    "pnpmWorkspaceSyntax": "UTF-8 restricted YAML 1.2 mapping lowered to ConfigDocument: exact lowercase null/true/false become null/boolean, JSON base-10 number grammar becomes a finite number, and every other permitted plain or quoted scalar becomes a string; block or flow arrays and mappings recurse under the same rule. Duplicate keys, aliases, anchors, merge keys, custom tags, multi-document streams, timestamps, binary scalars, non-finite numbers, and non-string package patterns are malformed configuration hard-stops",
     "boundaryRule": "No serde_json::Value, YAML parser node, or unparsed second read crosses the crate boundary."
   },
   "packageJson": {
@@ -56,9 +56,9 @@
       },
       {
         "path": "name",
-        "shape": "string",
+        "shape": "package-name.v1",
         "classification": "SupportedAndModeled",
-        "rule": "package-identity",
+        "rule": "package-identity-v1",
         "shapeMismatchLimitation": "PackageIdentityUnsupported"
       },
       {
@@ -98,6 +98,7 @@
       "module",
       "react-native",
       "sideEffects",
+      "tsconfig",
       "type",
       "types",
       "typesVersions",
@@ -131,11 +132,20 @@
       },
       {
         "path": "packageConfigs",
-        "shape": "object",
+        "shape": "any-pnpm-value",
         "classification": "UnsupportedInventoryAffecting",
         "limitation": "PnpmDependencySemanticsUnsupported"
       }
     ],
+    "unsupportedValueRecognition": {
+      "any-pnpm-value": "any ConfigDocument value representable by the restricted YAML subset, including null, boolean, finite number, string, array, and mapping",
+      "packageConfigsPinnedForms": [
+        {"id": "mapping", "valueShape": "mapping whose package selectors map to rule mappings containing ordinary scalar or collection values", "yaml": "packageConfigs:\n  project-1:\n    saveExact: true\n", "result": "PnpmDependencySemanticsUnsupported"},
+        {"id": "array-of-rules", "valueShape": "array of rule mappings, including nested selector arrays and boolean values such as saveExact: true", "yaml": "packageConfigs:\n  - match: [project-1, project-2]\n    saveExact: true\n", "result": "PnpmDependencySemanticsUnsupported"}
+      ],
+      "result": "a syntactically valid packageConfigs value in either pinned form emits PnpmDependencySemanticsUnsupported; the first slice does not interpret or apply its rules",
+      "malformedControl": "syntax outside the restricted YAML subset or a malformed YAML stream is a configuration hard-stop and is not relabeled as an unsupported feature"
+    },
     "membershipRule": {
       "rootPackage": "the directory containing pnpm-workspace.yaml is always a workspace package",
       "missingPackages": "the workspace contains only the root package",
@@ -152,6 +162,22 @@
       "malformedOrUnsupported": "never fall back to package.json#workspaces"
     }
   },
+  "packageIdentityRule": {
+    "version": "package-name.v1",
+    "baselineRelation": "deliberate strict first-slice package-name subset; a baseline-valid name outside this grammar is visible PackageIdentityUnsupported rather than normalized or guessed",
+    "grammar": "one to 214 ASCII bytes; either [a-z0-9][a-z0-9._-]* or @[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*; uppercase, whitespace, percent, colon, backslash, empty segment, and every other byte are unsupported",
+    "missingName": "an admitted package without name has no bare-package identity but may remain in workspace membership",
+    "invalidOrEmpty": "PackageIdentityUnsupported at Workspace scope; no bare-package mapping is emitted",
+    "duplicate": "if two or more admitted workspace packages declare the same exact validated name, every conflicting declaration emits PackageIdentityUnsupported and no first, last, nearest, or source-order winner is selected",
+    "ordering": "validated names compare by exact ASCII bytes; package paths used in diagnostics compare by repo-path.v1 bytes",
+    "goldenVectors": [
+      {"id": "unscoped", "input": "lumin-core", "result": "PackageIdentity(lumin-core)"},
+      {"id": "scoped", "input": "@acme/tsconfig", "result": "PackageIdentity(@acme/tsconfig)"},
+      {"id": "missing", "input": null, "result": "NoBarePackageIdentity"},
+      {"id": "duplicate", "inputs": ["@acme/core", "@acme/core"], "result": ["PackageIdentityUnsupported", "PackageIdentityUnsupported"]}
+    ],
+    "rejectionVectors": ["", "Uppercase", "@scope/", ".hidden", "name with space", "name%2fother", "name:tag", "name\\other"]
+  },
   "ownerBoundary": {
     "generatedRuntimeForm": "lumin-inventory project-owned immutable table generated from this artifact",
     "emittedFacts": [
@@ -163,6 +189,6 @@
     ],
     "resolverInput": "lumin-engine passes only model-owned inventory facts and the inventory-parsed ConfigDocument to lumin-resolve; there is no inventory-to-resolve Cargo edge and no duplicated workspace policy",
     "artifactIdentity": "SHA-256 of exact checked-in file bytes, supplied by the candidate manifest and compiled into AnalysisContractId",
-    "requiredCheck": "architecture-check compares artifact bytes, pinned baseline hashes, disjoint field ownership with the resolver artifact, every shape-to-limitation family, generated inventory table digest, and the absence of an inventory-to-resolve Cargo edge"
+    "requiredCheck": "architecture-check compares artifact bytes, pinned baseline hashes, disjoint field ownership with the resolver artifact, package-name and duplicate-identity vectors, restricted-YAML scalar coverage, both pinned packageConfigs forms, every shape-to-limitation family, generated inventory table digest, and the absence of an inventory-to-resolve Cargo edge"
   }
 }

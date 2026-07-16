@@ -219,6 +219,21 @@
   "resolverRules": {
     "extends": {
       "supported": "one string naming a root-contained relative config or a discovered workspace package config",
+      "workspacePackageConfig": {
+        "packageSelection": "consume one exact inventory-owned workspace package mapping; duplicate or unsupported package identity remains inventory-owned PackageIdentityUnsupported, prevents config selection, and is never renamed or resolved by source order",
+        "field": "package.json#tsconfig",
+        "fieldShape": "one nonempty Unicode-scalar string",
+        "fallback": "use package-root/tsconfig.json only when the tsconfig field is absent",
+        "target": "resolve the selected field relative to the package root as a root-contained regular config file",
+        "semanticInputs": "the selected package manifest and selected config target are owner-declared SemanticInputDemand values and are reserved before capture or consumption",
+        "failure": "empty or malformed field, missing target, unsupported package lookup, physical or lexical root escape, cycle, or unreadable target is TsconfigSemanticsUnsupported; unsupported package identity propagates its inventory-owned limitation",
+        "goldenVectors": [
+          {"id": "custom-field", "packageJson": {"name": "@acme/tsconfig", "tsconfig": "configs/base.json"}, "selected": "configs/base.json"},
+          {"id": "field-absent-fallback", "packageJson": {"name": "@acme/tsconfig"}, "selected": "tsconfig.json"},
+          {"id": "empty-field", "packageJson": {"name": "@acme/tsconfig", "tsconfig": ""}, "result": "TsconfigSemanticsUnsupported"},
+          {"id": "escape-field", "packageJson": {"name": "@acme/tsconfig", "tsconfig": "../base.json"}, "result": "TsconfigSemanticsUnsupported"}
+        ]
+      },
       "unsupported": "arrays, external-package lookup, cycles, root escape, and project-reference redirection"
     },
     "baseUrl": {
@@ -256,34 +271,34 @@
         "fallback": "legacy main and declaration-entry rules"
       },
       "bundler": {
-        "exports": "enabled",
-        "imports": "unsupported-by-first-slice",
+        "exports": "enabled-modeled",
+        "imports": "enabled-unsupported",
         "valueConditions": ["import"],
         "typeConditions": ["types", "import"],
         "excludedConditions": ["node", "require"],
         "fallback": "bundler package-entry rules"
       },
       "node16-import": {
-        "exports": "enabled",
-        "imports": "unsupported-by-first-slice",
+        "exports": "enabled-modeled",
+        "imports": "enabled-unsupported",
         "valueConditions": ["node", "import"],
         "typeConditions": ["node", "types", "import"]
       },
       "node16-require": {
-        "exports": "enabled",
-        "imports": "unsupported-by-first-slice",
+        "exports": "enabled-modeled",
+        "imports": "enabled-unsupported",
         "valueConditions": ["node", "require"],
         "typeConditions": ["node", "types", "require"]
       },
       "nodenext-import": {
-        "exports": "enabled",
-        "imports": "unsupported-by-first-slice",
+        "exports": "enabled-modeled",
+        "imports": "enabled-unsupported",
         "valueConditions": ["node", "import"],
         "typeConditions": ["node", "types", "import"]
       },
       "nodenext-require": {
-        "exports": "enabled",
-        "imports": "unsupported-by-first-slice",
+        "exports": "enabled-modeled",
+        "imports": "enabled-unsupported",
         "valueConditions": ["node", "require"],
         "typeConditions": ["node", "types", "require"]
       }
@@ -304,19 +319,33 @@
   "packageJson": {
     "delegatedInventoryArtifact": "specs/inventory-config-semantics.v1.json",
     "dispatchOrder": "resolver-owned exact field, delegated inventory-owned exact field, then unknownTopLevel; delegated fields never take the neutral fallback",
+    "applicabilityDispatch": {
+      "order": "select the importer profile/lane and field applicability before validating a field shape or emitting a limitation",
+      "NotConsultedForProfile": "record the raw manifest identity in AnalysisInputId but do not validate, probe, or emit a limitation for this field",
+      "ApplicableModeled": "validate the registered shape and execute the named modeled rule",
+      "ApplicableUnsupported": "recognize the registered presence/shape and emit the named owner limitation before target probing",
+      "invariant": "a disabled feature is always NotConsultedForProfile; an enabled unsupported feature is always ApplicableUnsupported",
+      "goldenVectors": [
+        {"id": "node-malformed-exports", "profileLane": "node-value", "field": "exports", "value": 7, "state": "NotConsultedForProfile", "limitation": null},
+        {"id": "node-imports-present", "profileLane": "node-value", "field": "imports", "value": {"#x": "./x.js"}, "state": "NotConsultedForProfile", "limitation": null},
+        {"id": "bundler-malformed-exports", "profileLane": "bundler-value", "field": "exports", "value": 7, "state": "ApplicableModeled", "limitation": "PublicSurfaceUnsupported"},
+        {"id": "bundler-observed-imports", "profileLane": "bundler-value", "field": "imports", "value": {"#x": "./x.js"}, "specifier": "#x", "state": "ApplicableUnsupported", "limitation": "PackageImportsUnsupported"}
+      ]
+    },
     "unknownTopLevel": {"classification": "KnownResolutionNeutral", "reason": "tooling-metadata-only"},
     "fields": [
-      {"path": "browser", "shape": "string|object|false", "classification": "UnsupportedResolutionAffecting", "limitation": "PublicSurfaceUnsupported", "shapeMismatchLimitation": "PublicSurfaceUnsupported"},
-      {"path": "exports", "shape": "exports-v1", "classification": "SupportedAndModeled", "rule": "exports-v1", "shapeMismatchLimitation": "PublicSurfaceUnsupported"},
-      {"path": "imports", "shape": "any", "classification": "UnsupportedResolutionAffecting", "limitation": "PackageImportsUnsupported"},
-      {"path": "main", "shape": "string", "classification": "SupportedAndModeled", "rule": "main-field", "shapeMismatchLimitation": "PublicSurfaceUnsupported"},
-      {"path": "module", "shape": "string", "classification": "SupportedAndModeled", "rule": "module-field", "shapeMismatchLimitation": "PublicSurfaceUnsupported"},
-      {"path": "react-native", "shape": "string|object", "classification": "UnsupportedResolutionAffecting", "limitation": "PublicSurfaceUnsupported", "shapeMismatchLimitation": "PublicSurfaceUnsupported"},
-      {"path": "sideEffects", "shape": "boolean|array<string>", "classification": "UnsupportedResolutionAffecting", "limitation": "PublicSurfaceUnsupported", "shapeMismatchLimitation": "PublicSurfaceUnsupported"},
-      {"path": "type", "shape": "enum(module,commonjs)", "classification": "SupportedAndModeled", "rule": "node-package-type", "shapeMismatchLimitation": "ImporterFormatUnsupported"},
-      {"path": "types", "shape": "string", "classification": "SupportedAndModeled", "rule": "types-field", "shapeMismatchLimitation": "PublicSurfaceUnsupported"},
-      {"path": "typesVersions", "shape": "object", "classification": "UnsupportedResolutionAffecting", "limitation": "PublicSurfaceUnsupported", "shapeMismatchLimitation": "PublicSurfaceUnsupported"},
-      {"path": "typings", "shape": "string", "classification": "SupportedAndModeled", "rule": "typings-field", "shapeMismatchLimitation": "PublicSurfaceUnsupported"}
+      {"path": "browser", "shape": "string|object|false", "appliesWhen": "bundler value lane when exports is absent or NotConsultedForProfile", "classification": "UnsupportedResolutionAffecting", "limitation": "PublicSurfaceUnsupported", "shapeMismatchLimitation": "PublicSurfaceUnsupported"},
+      {"path": "exports", "shape": "exports-v1", "appliesWhen": "selected profile exports state is enabled-modeled", "classification": "SupportedAndModeled", "rule": "exports-v1", "shapeMismatchLimitation": "PublicSurfaceUnsupported"},
+      {"path": "imports", "shape": "any", "appliesWhen": "an internal # specifier is observed and selected profile imports state is enabled-unsupported", "classification": "UnsupportedResolutionAffecting", "limitation": "PackageImportsUnsupported"},
+      {"path": "main", "shape": "string", "appliesWhen": "value lane fallback when exports is absent or NotConsultedForProfile", "classification": "SupportedAndModeled", "rule": "main-field", "shapeMismatchLimitation": "PublicSurfaceUnsupported"},
+      {"path": "module", "shape": "string", "appliesWhen": "bundler value lane fallback when exports is absent", "classification": "SupportedAndModeled", "rule": "module-field", "shapeMismatchLimitation": "PublicSurfaceUnsupported"},
+      {"path": "react-native", "shape": "string|object", "appliesWhen": "bundler value lane fallback when exports is absent", "classification": "UnsupportedResolutionAffecting", "limitation": "PublicSurfaceUnsupported", "shapeMismatchLimitation": "PublicSurfaceUnsupported"},
+      {"path": "sideEffects", "shape": "boolean|array<string>", "appliesWhen": "side-effect reachability is requested in any profile", "classification": "UnsupportedResolutionAffecting", "limitation": "PublicSurfaceUnsupported", "shapeMismatchLimitation": "PublicSurfaceUnsupported"},
+      {"path": "tsconfig", "shape": "nonempty-string", "appliesWhen": "a supported workspace-package config extends selects this package", "classification": "SupportedAndModeled", "rule": "workspace-package-tsconfig-field", "shapeMismatchLimitation": "TsconfigSemanticsUnsupported"},
+      {"path": "type", "shape": "enum(module,commonjs)", "appliesWhen": "node16 or nodenext importer-format selection", "classification": "SupportedAndModeled", "rule": "node-package-type", "shapeMismatchLimitation": "ImporterFormatUnsupported"},
+      {"path": "types", "shape": "string", "appliesWhen": "type lane fallback when exports is absent or NotConsultedForProfile", "classification": "SupportedAndModeled", "rule": "typings-then-types-field", "shapeMismatchLimitation": "PublicSurfaceUnsupported"},
+      {"path": "typesVersions", "shape": "object", "appliesWhen": "type lane fallback when exports is absent or NotConsultedForProfile", "classification": "UnsupportedResolutionAffecting", "limitation": "PublicSurfaceUnsupported", "shapeMismatchLimitation": "PublicSurfaceUnsupported"},
+      {"path": "typings", "shape": "string", "appliesWhen": "type lane fallback when exports is absent or NotConsultedForProfile", "classification": "SupportedAndModeled", "rule": "typings-then-types-field", "shapeMismatchLimitation": "PublicSurfaceUnsupported"}
     ],
     "inventoryOwnedFields": [
       "dependencies",
@@ -327,12 +356,45 @@
       "private",
       "workspaces"
     ],
+    "entrySelection": {
+      "typeFallbackOrder": ["typings", "types", "declaration-companion"],
+      "valueFallbackOrderByBundler": ["module", "main"],
+      "valueFallbackOrderByNode": ["main"],
+      "applicableUnsupportedBeforeFallback": ["browser", "react-native"],
+      "jointFieldVector": {"packageJson": {"typings": "./legacy.d.ts", "types": "./modern.d.ts"}, "selected": "./legacy.d.ts"}
+    },
     "exportsGrammar": {
       "root": "string | null | condition-object | subpath-object",
       "subpathKey": ". or ./path or ./single-* pattern",
       "subpathValue": "string | null | condition-object",
       "conditionObject": "source-ordered object whose keys are only supportedConditionKeys and whose values are string or null",
-      "targetString": "must begin ./ and remain package-root-contained after substitution",
+      "targetString": "package-target-path.v1: one Unicode-scalar string beginning ./; percent signs, question marks, number signs, backslashes, NUL, empty components, dot, dot-dot, and node_modules components are forbidden",
+      "targetLowering": {
+        "policyVersion": "package-target-path.v1",
+        "baselineRelation": "Node lowers through URL semantics; the first slice deliberately uses a stricter path-only rule that rejects every percent escape, query, and fragment instead of partially emulating WHATWG URL behavior",
+        "order": [
+          "validate the source target as one Unicode-scalar path-only string beginning ./",
+          "reject percent, query, fragment, backslash, NUL, and invalid or empty source components before substitution",
+          "validate the matched subpath or pattern capture as slash-separated Unicode-scalar components with the same forbidden set",
+          "substitute the one-star capture without percent decoding or URL construction",
+          "split the substituted result on slash and revalidate every nonempty component",
+          "append components to the package-root lexical RepoPath through the model codec",
+          "prove lexical and physical repository-root containment before any inventory probe"
+        ],
+        "acceptedVector": {"target": "./dist/*.js", "capture": "internal/x", "repoPathComponents": ["dist", "internal", "x.js"]},
+        "rejectionVectors": [
+          {"target": "./dist%2Findex.js", "reason": "percent-escape-forbidden"},
+          {"target": "./dist%5Cindex.js", "reason": "percent-escape-forbidden"},
+          {"target": "./%2e/index.js", "reason": "percent-escape-forbidden"},
+          {"target": "./%6eode_modules/x.js", "reason": "percent-escape-forbidden"},
+          {"target": "./percent%25.js", "reason": "percent-escape-forbidden"},
+          {"target": "./index.js?mode=x", "reason": "query-forbidden"},
+          {"target": "./index.js#fragment", "reason": "fragment-forbidden"},
+          {"target": "./bad%ZZ.js", "reason": "percent-escape-forbidden"},
+          {"target": ".\\index.js", "reason": "backslash-forbidden"}
+        ],
+        "failure": "PublicSurfaceUnsupported; no target probe or absence claim is permitted"
+      },
       "patternComparator": {
         "source": "Node patternKeyCompare at nodePackageBaseline.resolverSource",
         "selectionPhases": "perform direct exact-key lookup first; only if absent, compare matching one-star keys",
@@ -352,7 +414,7 @@
       "invalidSegmentSource": "(^|\\\\|/)((\\.|%2e)(\\.|%2e)?|(n|%6e|%4e)(o|%6f|%4f)(d|%64|%44)(e|%65|%45)(_|%5f)(m|%6d|%4d)(o|%6f|%4f)(d|%64|%44)(u|%75|%55)(l|%6c|%4c)(e|%65|%45)(s|%73|%53))?(\\\\|/|$), case-insensitive",
       "deprecatedInvalidSegmentSource": "(^|\\\\|/)((\\.|%2e)(\\.|%2e)?|(n|%6e|%4e)(o|%6f|%4f)(d|%64|%44)(e|%65|%45)(_|%5f)(m|%6d|%4d)(o|%6f|%4f)(d|%64|%44)(u|%75|%55)(l|%6c|%4c)(e|%65|%45)(s|%73|%53))(\\\\|/|$), case-insensitive",
       "segmentPolicy": "dot, dot-dot, node_modules, and empty target/substitution segments matched by the pinned rules are PublicSurfaceUnsupported; treating Node's deprecation-only empty-segment case as unsupported is an explicit stricter Lumin v1 rule",
-      "forbidden": "arrays, nested condition objects, mixed subpath/condition keys, multiple stars, unknown conditions, non-string targets, empty/dot/dot-dot/node_modules target or substituted segments including percent-encoded/case variants, and package-root escape",
+      "forbidden": "arrays, nested condition objects, mixed subpath/condition keys, multiple stars, unknown conditions, non-string targets, any percent sign, query, fragment, backslash, NUL, empty/dot/dot-dot/node_modules target or substituted components, and lexical or physical package-root escape",
       "forbiddenResult": "PublicSurfaceUnsupported"
     }
   },
@@ -360,6 +422,6 @@
     "artifactPath": "specs/resolver-config-semantics.v1.json",
     "artifactIdentity": "SHA-256 of exact checked-in file bytes, supplied by the candidate manifest and compiled into AnalysisContractId",
     "runtimeForm": "lumin-resolve project-owned generated table compiled from this artifact; no runtime source-file fallback",
-    "requiredCheck": "architecture-check compares artifact byte hash, TypeScript/Node source hashes, baseline key-set digest, owner-disjoint fields, profile feature/condition sets, field-specific mismatch limitations, exports comparator/segment rules, exhaustive classifications, and compiled-table digest"
+    "requiredCheck": "architecture-check compares artifact byte hash, TypeScript/Node source hashes, baseline key-set digest, owner-disjoint fields, profile feature/condition/applicability states, workspace-package tsconfig semantics, joint entry precedence, field-specific mismatch limitations, exports comparator/target-lowering vectors, exhaustive classifications, and compiled-table digest"
   }
 }
