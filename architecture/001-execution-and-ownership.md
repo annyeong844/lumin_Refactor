@@ -109,7 +109,7 @@ Capability crates may use Rayon parallel iterators only while installed in the e
 
 ### 5.1 Source Workers
 
-Inventory enumerates normalized `SourceEntry` values without retaining the entire corpus bytes. An engine-owned file-worker adapter asks `lumin-inventory` to read one entry and create a `SourceSnapshot` from the exact worktree bytes, then queries `lumin-store` through a backend-neutral cache reader. It drops hit bytes or calls the owning language extractor for miss bytes. Language capability crates never read arbitrary files or open the cache or persistence backend themselves.
+Inventory enumerates normalized `SourceEntry` values without retaining the entire corpus bytes. An engine-owned file-worker adapter asks `lumin-inventory` to read one entry and create a `SourceSnapshot` from the exact worktree bytes, then queries `lumin-store` through a backend-neutral cache reader. It may drop hit bytes only after validating the complete owner-authored replay envelope below; otherwise it calls the owning capability for a miss. Language capability crates never read arbitrary files or open the cache or persistence backend themselves.
 
 For parser-backed languages, each worker owns:
 
@@ -121,7 +121,24 @@ For parser-backed languages, each worker owns:
 
 AST and allocator-backed references never cross the worker boundary. Workers lower all retained information into project-owned values before returning.
 
-Cache misses return fact records and cache-write candidates as owned outputs. One deterministic cache writer commits compatible entries after reduction; cache writes never mutate canonical run evidence.
+Every reusable result is one model-owned envelope:
+
+```text
+CachedCapabilityOutput<T> {
+  owner_contract_version,
+  exact_input_key,
+  facts,
+  signals,
+  limitations,
+  consulted_semantic_inputs
+}
+```
+
+The capability owner creates all semantic fields and owns the version. A cache hit replays the whole envelope as that owner's output; the engine never reconstructs consulted inputs from facts, diagnostics, store rows, or display text. Before accepting a hit, inventory and the engine validate the owner contract version, primary exact-input key, and every consulted source/config identity against the current observation. Any mismatch is a full miss and reruns the owner. An identity that cannot be observed produces typed incomplete evidence rather than a partial hit. Cache misses return the same envelope plus a cache-write candidate as owned output. One deterministic cache writer commits compatible entries after reduction; cache writes never mutate canonical run evidence.
+
+Reusable signals in the envelope are valid only for its exact key. Post-write `GateDeltaClassification` is recomputed by the fact owner from validated baseline/current envelopes; it is cacheable only when both observation identities and the delta-policy version participate in the exact key. A warm hit therefore cannot replay an introduced/expanded classification against a different baseline.
+
+Cache state is non-semantic. Cold misses and warm hits over the same exact observation must return identical facts, signals, limitations, consulted-input closure, gate effects, and observation identity.
 
 ### 5.2 Shared Inputs
 
@@ -194,7 +211,7 @@ Failures are classified by their owner:
 
 Every incomplete or opaque result carries a model-owned limitation scope: `File`, `Module`, `ExplicitTargets`, `Package`, or `Workspace`. Analysis owners must intersect that scope with candidate evidence before making an absence claim. A vertical slice defines the normative scope for each supported failure and opacity class; reducers cannot invent or widen it silently.
 
-Each active slice owns a closed registry for every incomplete, unsupported, and opaque reason it can emit. Every reason maps exhaustively to its fact owner, limitation scope, optional target derivation, downstream absence effect, and gate signal. Capability crates convert their private reason enums through exhaustive matches; architecture verification fails when a reason can be emitted without a mapping.
+Each active slice owns a closed registry for every incomplete, unsupported, and opaque reason it can emit. Every reason maps exhaustively to its fact owner, limitation scope, optional target derivation, downstream absence effect, and gate relevance. Capability crates convert their private reason enums through exhaustive matches; architecture verification fails when a reason can be emitted without a mapping. A required-evidence gap may emit its named incomplete signal directly. At post-write, a complete adverse or opaque fact must first pass through the owning capability's typed baseline/current delta classification before any adverse lifecycle signal is emitted. Pre-write may emit only a named advisory signal for a complete existing fact; it never fabricates a post-write delta. The static registry never selects `GateEffect`.
 
 Already running workers may finish and release resources, but their outputs are not promoted into a completed run after a hard-stop. Cancellation is cooperative and artifact-visible; elapsed wall-time caps are not a correctness mechanism.
 
@@ -225,7 +242,7 @@ Any query that presents a current-worktree absence claim performs the required f
 
 ### 9.2 Semantic-Read Closure
 
-Every capability owner that reads a source or configuration identity returns model-owned `ConsultedSemanticInputs` with its facts and signals. The engine does not infer this set from display diagnostics, and an owner cannot read an unreported path behind the inventory boundary.
+Every capability owner that reads a source or configuration identity returns model-owned `ConsultedSemanticInputs` with its facts and signals. A validated cache replay is treated as that same complete owner return. The engine does not infer this set from display diagnostics, and an owner cannot read an unreported path behind the inventory boundary.
 
 Gate analysis closes semantic inputs by monotonic fixed point:
 
@@ -246,7 +263,9 @@ Incremental reuse is an optimization over exact inputs, never a source of truth.
 - `AnalysisContractId` contains only ordered software semantic component versions and answers whether two evidence sets share one analysis meaning;
 - `AnalysisInputId` contains repository identity, profile parameters, effective explicit entries, scan policy, source-set identity, and consulted semantic configuration identities and answers whether the same software contract observed the same repository inputs.
 
-A configuration or source change creates a new `AnalysisInputId`, cache miss, or stale baseline under the same compatible `AnalysisContractId`. It never masquerades as binary semantic incompatibility. A software policy-version change creates a new `AnalysisContractId` even when repository bytes are unchanged.
+A configuration or source change creates a new `AnalysisInputId` and invalidates exact cache reuse under the same compatible `AnalysisContractId`. Historical evidence reports that change as drift. An active gate classifies it under ARCH-002 as an explained self-write, an exact reconciled transition, or external/unexplained drift; a planned self-write is not stale merely because the path is also a semantic input. Repository change never masquerades as binary semantic incompatibility. A software policy-version change creates a new `AnalysisContractId` even when repository bytes are unchanged.
+
+A gate does not require whole-value equality between opening and close `AnalysisInputId`. Its caller-supplied invocation override tier - explicit profile, entry, and scan flags - must remain identical because post-write cannot replace it. Effective values derived from repository configuration are semantic inputs, not immutable caller arguments. An opening semantic input that is in both this gate's leased-write set and exact actual-write set is a self-writable input: close recaptures its current identity, recomputes any effective values it owns, reruns affected owners, and represents the change in the current input ID and gate delta. Every other opening consulted read must remain exact unless an ARCH-002 reconciliation rule explicitly explains it. The close revision records the current input ID and explanation chain only when its observation is sealed; an external or unexplained difference is stale, incomplete, or denied.
 
 Per-file fact identity includes:
 
@@ -303,7 +322,8 @@ Metrics describe execution but do not redefine semantic findings.
 8. A missing SFC target produces typed unresolved evidence while unrelated files complete.
 9. A hard-stop cannot publish a run marked complete.
 10. Cold and warm corpus benchmarks report stage timings and peak memory on native Windows, WSL ext4, and the declared Linux CI platform.
-11. The stage node set is fixed before inventory executes; language presence changes only input batches.
-12. SFC finalization remains owned by `lumin-sfc`; first-slice Vue binding completes there, unsupported dialects remain visible, and an external script payload is not read or parsed twice for one mode.
-13. Snapshot drift during a scan prevents completed-run publication, and later query drift is visible.
-14. Repository input changes alter `AnalysisInputId` without altering `AnalysisContractId`; software semantic-version changes alter the contract ID.
+11. A cache hit validates and replays the complete owner envelope, and cold/warm execution over the same exact observation produces identical consulted reads, effects, and observation binding.
+12. The stage node set is fixed before inventory executes; language presence changes only input batches.
+13. SFC finalization remains owned by `lumin-sfc`; first-slice Vue binding completes there, unsupported dialects remain visible, and an external script payload is not read or parsed twice for one mode.
+14. Snapshot drift during a scan prevents completed-run publication, and later query drift is visible.
+15. Repository input changes alter `AnalysisInputId` without altering `AnalysisContractId`; software semantic-version changes alter the contract ID.

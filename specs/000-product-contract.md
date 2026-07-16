@@ -92,15 +92,17 @@ Concurrent transactions may proceed only when their exclusive write leases do no
 
 An authorizing baseline or close observation includes every exact semantic input actually consulted by its capability owners. If analysis discovers another input, Lumin extends and rechecks the read reservation and reruns affected analysis until the set is closed; it cannot authorize from a partial read set.
 
+Cache reuse cannot change this safety contract. A warm execution replays the owner-authored facts, signals, limitations, and consulted semantic inputs together and validates every identity before reuse; otherwise it performs grounded work again or reports incomplete evidence. Cold and warm execution of the same exact inputs cannot protect different semantic-read sets.
+
 In one shared worktree, Lumin authorizes observable repository state transitions, not unverifiable operating-system process authorship. A gate may analyze concurrently, but close-out reconciles every intervening terminal gate transition in store order. An unexplained change or a still-active intervening write cannot be approved as this gate's delta.
 
 Every gate result has one decision: `Allow`, `AllowWithWarnings`, `Deny`, `Incomplete`, or `Stale`. Only the first two authorize the requested lifecycle step. Machine-readable output and process exit behavior are stable product contracts.
 
-A nonauthorizing pre-write creates a queryable rejected record but no active lease. A nonauthorizing post-write appends an attempted revision and leaves the existing gate active. Authorization is bound to the exact final worktree/config observation returned with the decision.
+A nonauthorizing pre-write creates a queryable rejected record but no active lease. A nonauthorizing post-write appends an attempted revision and leaves the existing gate active. Authorization is bound to the exact final worktree/config observation returned with the decision. A result that could not seal an observation returns a typed unsealed binding with its attempted domain and blocking inputs; it never fabricates a partial observation ID.
 
 Every user-facing command that mutates gate or retention lifecycle state carries a caller-retained operation ID. This includes gate open/close/abandon and durable retention plan, pin, unpin, and confirmation mutations. Retrying the same operation ID and request returns the same committed result instead of duplicating state; reusing it for different input is malformed. A result-delivery failure does not erase an already committed result, which remains recoverable by operation ID.
 
-Retention is a public, crash-consistent lifecycle operation. It cannot expose a record as deleted before its canonical indexes and payload ownership agree, cannot remove a protected latest/pinned/reference closure, and has one recoverable outcome at every deletion boundary.
+Retention is a public, crash-consistent lifecycle operation. It cannot expose a record as deleted before its canonical indexes and payload ownership agree, cannot remove a protected latest/pinned/reference closure, and has one recoverable outcome at every deletion boundary. A known record in `Pruning` or `Pruned` state remains distinguishable from a never-existing ID through public queries, and independent pins cannot remove one another's protection.
 
 ## 3. Non-Goals
 
@@ -131,10 +133,10 @@ Lumin v2 does not:
 12. Every accepted slice includes real corpus fixtures, platform verification, and measured performance evidence.
 13. The latest failed attempt cannot be hidden behind an older completed run.
 14. Post-write cannot infer or auto-select a gate ID.
-15. A write that invalidates another gate's semantic baseline, cannot be reconciled to an immutable intervening gate transition, or changes the final close observation is rejected, incomplete, or visibly stale before approval.
+15. A write that invalidates another gate's semantic baseline, cannot be reconciled to an immutable intervening gate transition, or changes the final close observation is rejected, incomplete, or visibly stale before approval; lifecycle policy distinguishes introduced, expanded, unchanged, resolved, and unavailable-baseline facts before assigning an effect.
 16. Retrying any committed gate or retention lifecycle mutation by operation ID returns the same durable result and never creates a duplicate revision, plan, pin change, or deletion.
-17. An authorizing gate result is derived only after capability-reported semantic inputs reach a fixed point and the sealed read set passes final conflict and freshness validation.
-18. Public retention commands preserve one crash-recoverable state at every deletion boundary and cannot break latest, pin, operation, attempt, run, or gate referential integrity.
+17. An authorizing gate result is derived only after cold or warm capability outputs report the same complete semantic inputs, those inputs reach a fixed point, and the sealed read set passes final conflict and freshness validation; a nonauthorizing unsealed result names no fabricated observation ID.
+18. Public retention commands and lookups preserve one crash-recoverable, queryable state at every deletion boundary and cannot break latest, independent pin, operation, attempt, run, or gate referential integrity.
 
 ## 5. Verification Contract
 
