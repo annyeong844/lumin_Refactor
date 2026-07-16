@@ -91,6 +91,8 @@ Owns the dependency-light domain vocabulary:
 - source snapshots and fingerprints;
 - language-neutral module and symbol facts;
 - typed resolution outcomes;
+- exact consulted-semantic-input sets returned by capability owners;
+- closed limitation reasons and their model-owned scopes;
 - build, analysis-contract, analysis-input, repository, attempt, run, gate, operation, gate-baseline-observation, gate-close-observation, and embedded-source identity value types;
 - dependency-light gate signals and their originating owner/rule identities;
 - completeness and opacity states.
@@ -117,6 +119,7 @@ Owns repository observation:
 - root validation and scan scope;
 - ignore and exclusion policy application;
 - workspace and nearest-manifest ownership;
+- explicit entry declarations and their normalized source identities;
 - semantic configuration snapshots;
 - extraction payload snapshots, final freshness identities, and source-set fingerprints;
 - generated, test-like, vendored, and out-of-scope classification.
@@ -160,7 +163,7 @@ Framework crates choose the semantic kind of an edge; the resolver determines it
 
 `lumin-resolve` also lowers inventory-owned package metadata into model-owned `PackageSurfaceDeclaration` facts. The graph consumes those declarations but never interprets `package.json` fields itself.
 
-`lumin-resolve` owns resolution-profile selection. A typed invocation override wins and supersedes only profile selection. Without that override, the explicit value in an importer's nearest controlling `tsconfig` selects the profile when supported; an explicit unsupported value is incomplete rather than skipped; and an importer with no explicit value uses the named product default, `bundler`. Unreadable controlling configuration remains incomplete even under an override because non-profile resolver inputs may be unknown. The resolver records the selected profile, source, and reason as model facts. Configuration choices participate in `AnalysisInputId`, while the mapping/default policy version participates in `AnalysisContractId`.
+`lumin-resolve` owns resolution-profile selection. A typed invocation override wins and supersedes only profile selection. Without that override, the effective value in an importer's nearest controlling `tsconfig` selects the profile when supported; an explicit unsupported value is incomplete rather than skipped; and an importer with no explicit value uses the named product default, `bundler`. Unreadable controlling configuration remains incomplete even under an override because non-profile resolver inputs may be unknown. Embedded SFC script source uses are importers under this same rule; template-to-component binding consumes resolved script bindings and is not a second resolver lane. The resolver records the selected profile, source, and reason as model facts. Configuration choices participate in `AnalysisInputId`, while the mapping/default policy version participates in `AnalysisContractId`.
 
 ### 4.6 `lumin-graph`
 
@@ -228,10 +231,11 @@ Type ownership and value authority are distinct:
 | --- | --- | --- |
 | `BuildIdentity` | `lumin-model` | `lumin-cli` constructs it once from compile-time release metadata and passes it inward. |
 | `AnalysisContractId` | `lumin-model` | `lumin-engine` derives it only from the ordered software semantic versions of the profile, extractors, resolver, graph, and selected rules. |
-| `AnalysisInputId` | `lumin-model` | `lumin-engine` derives it from repository identity, profile parameters, scan policy, source-set identity, and consulted repository configuration identities. |
+| `AnalysisInputId` | `lumin-model` | `lumin-engine` derives it from repository identity, profile parameters, effective explicit entries, scan policy, source-set identity, and consulted repository configuration identities. |
 | `RepositoryId` | `lumin-model` | `lumin-inventory` derives it from the canonical root and repository identity inputs. |
 | `AttemptId`, `RunId`, `GateId` | `lumin-model` | `lumin-store` allocates and persists them. |
-| `OperationId` | `lumin-model` | The caller creates it before a mutating gate command; `lumin-store` binds it to one repository-scoped request digest and committed result. |
+| `OperationId` | `lumin-model` | The caller creates it before a mutating gate or retention lifecycle command; `lumin-store` binds it to one repository-scoped request digest and committed result. |
+| `ConsultedSemanticInputs` | `lumin-model` | Every capability owner returns the exact source/config identities it consulted; `lumin-engine` computes a monotonic union and may seal an observation only after that union reaches a fixed point. |
 | `GateBaselineObservationId` | `lumin-model` | `lumin-engine` derives it from the exact declared/leased observation domain, semantic reads, content identities, and gate-catalog revision accepted at open. |
 | `GateCloseObservationId` | `lumin-model` | `lumin-engine` derives it from the exact actual-write and semantic-read sets, content identities, and transition/catalog revision accepted at close. |
 | `GateSignal` | `lumin-model` | Capability owners emit signals from their facts; the engine gate service emits only named transaction-invariant signals from typed store/inventory outcomes. |
@@ -342,6 +346,7 @@ lumin files
 lumin capabilities
 lumin pre-write
 lumin post-write <gate-id>
+lumin operation
 lumin gate
 lumin runs
 lumin export

@@ -90,13 +90,17 @@ Pre-write opens a durable transaction and returns one gate ID. Post-write requir
 
 Concurrent transactions may proceed only when their exclusive write leases do not overlap and no transaction writes another active gate's semantic inputs. Mixed-language work is one user transaction with internally owned language lanes.
 
+An authorizing baseline or close observation includes every exact semantic input actually consulted by its capability owners. If analysis discovers another input, Lumin extends and rechecks the read reservation and reruns affected analysis until the set is closed; it cannot authorize from a partial read set.
+
 In one shared worktree, Lumin authorizes observable repository state transitions, not unverifiable operating-system process authorship. A gate may analyze concurrently, but close-out reconciles every intervening terminal gate transition in store order. An unexplained change or a still-active intervening write cannot be approved as this gate's delta.
 
 Every gate result has one decision: `Allow`, `AllowWithWarnings`, `Deny`, `Incomplete`, or `Stale`. Only the first two authorize the requested lifecycle step. Machine-readable output and process exit behavior are stable product contracts.
 
 A nonauthorizing pre-write creates a queryable rejected record but no active lease. A nonauthorizing post-write appends an attempted revision and leaves the existing gate active. Authorization is bound to the exact final worktree/config observation returned with the decision.
 
-Every mutating gate command carries a caller-retained operation ID. Retrying the same operation ID and request returns the same committed gate/revision instead of duplicating state; reusing it for different input is malformed. A result-delivery failure does not erase an already committed decision, which remains recoverable by operation ID.
+Every user-facing command that mutates gate or retention lifecycle state carries a caller-retained operation ID. This includes gate open/close/abandon and durable retention plan, pin, unpin, and confirmation mutations. Retrying the same operation ID and request returns the same committed result instead of duplicating state; reusing it for different input is malformed. A result-delivery failure does not erase an already committed result, which remains recoverable by operation ID.
+
+Retention is a public, crash-consistent lifecycle operation. It cannot expose a record as deleted before its canonical indexes and payload ownership agree, cannot remove a protected latest/pinned/reference closure, and has one recoverable outcome at every deletion boundary.
 
 ## 3. Non-Goals
 
@@ -128,7 +132,9 @@ Lumin v2 does not:
 13. The latest failed attempt cannot be hidden behind an older completed run.
 14. Post-write cannot infer or auto-select a gate ID.
 15. A write that invalidates another gate's semantic baseline, cannot be reconciled to an immutable intervening gate transition, or changes the final close observation is rejected, incomplete, or visibly stale before approval.
-16. Retrying a committed pre-write or post-write operation by operation ID returns the same durable result and never creates a duplicate gate or close revision.
+16. Retrying any committed gate or retention lifecycle mutation by operation ID returns the same durable result and never creates a duplicate revision, plan, pin change, or deletion.
+17. An authorizing gate result is derived only after capability-reported semantic inputs reach a fixed point and the sealed read set passes final conflict and freshness validation.
+18. Public retention commands preserve one crash-recoverable state at every deletion boundary and cannot break latest, pin, operation, attempt, run, or gate referential integrity.
 
 ## 5. Verification Contract
 

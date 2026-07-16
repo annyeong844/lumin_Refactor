@@ -194,6 +194,8 @@ Failures are classified by their owner:
 
 Every incomplete or opaque result carries a model-owned limitation scope: `File`, `Module`, `ExplicitTargets`, `Package`, or `Workspace`. Analysis owners must intersect that scope with candidate evidence before making an absence claim. A vertical slice defines the normative scope for each supported failure and opacity class; reducers cannot invent or widen it silently.
 
+Each active slice owns a closed registry for every incomplete, unsupported, and opaque reason it can emit. Every reason maps exhaustively to its fact owner, limitation scope, optional target derivation, downstream absence effect, and gate signal. Capability crates convert their private reason enums through exhaustive matches; architecture verification fails when a reason can be emitted without a mapping.
+
 Already running workers may finish and release resources, but their outputs are not promoted into a completed run after a hard-stop. Cancellation is cooperative and artifact-visible; elapsed wall-time caps are not a correctness mechanism.
 
 No task may swallow a panic, channel closure, parse failure, or persistence error and replace it with default data.
@@ -221,6 +223,20 @@ Before publishing a completed run, inventory repeats source/config set discovery
 
 Any query that presents a current-worktree absence claim performs the required freshness comparison. A historical query may skip that work only by reporting `Unverifiable` for current-worktree freshness. Stored source fingerprints still describe exactly which bytes the historical evidence analyzed.
 
+### 9.2 Semantic-Read Closure
+
+Every capability owner that reads a source or configuration identity returns model-owned `ConsultedSemanticInputs` with its facts and signals. The engine does not infer this set from display diagnostics, and an owner cannot read an unreported path behind the inventory boundary.
+
+Gate analysis closes semantic inputs by monotonic fixed point:
+
+1. start from the declared and owner-inferred candidate read set;
+2. capture exact identities and run the affected owners;
+3. union every returned `ConsultedSemanticInputs` value;
+4. when the union grows, reserve the new reads against active writers, capture their exact identities, and rerun every owner whose result can change;
+5. seal the set only when a complete iteration adds no input.
+
+The admitted source/config inventory is finite, so closure uses set growth rather than an arbitrary iteration or wall-time cap. A dynamic or opaque input that cannot be bounded becomes a typed scoped limitation and prevents an authorizing gate decision; it is never omitted to force convergence. Baseline and close observation IDs are derived only after closure and include the sealed set. Final freshness and catalog validation still run after sealing.
+
 ## 10. Incremental Identity
 
 Incremental reuse is an optimization over exact inputs, never a source of truth.
@@ -228,7 +244,7 @@ Incremental reuse is an optimization over exact inputs, never a source of truth.
 `AnalysisContractId` and `AnalysisInputId` are deliberately different:
 
 - `AnalysisContractId` contains only ordered software semantic component versions and answers whether two evidence sets share one analysis meaning;
-- `AnalysisInputId` contains repository identity, profile parameters, scan policy, source-set identity, and consulted semantic configuration identities and answers whether the same software contract observed the same repository inputs.
+- `AnalysisInputId` contains repository identity, profile parameters, effective explicit entries, scan policy, source-set identity, and consulted semantic configuration identities and answers whether the same software contract observed the same repository inputs.
 
 A configuration or source change creates a new `AnalysisInputId`, cache miss, or stale baseline under the same compatible `AnalysisContractId`. It never masquerades as binary semantic incompatibility. A software policy-version change creates a new `AnalysisContractId` even when repository bytes are unchanged.
 

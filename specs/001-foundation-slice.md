@@ -69,6 +69,7 @@ The root configuration shape is closed in this slice:
 ```json
 {
   "schemaVersion": "lumin-config.v1",
+  "entries": ["src/main.ts"],
   "scan": {
     "include": ["src/**"],
     "exclude": ["src/legacy/**"],
@@ -77,7 +78,9 @@ The root configuration shape is closed in this slice:
 }
 ```
 
-Unknown fields, unknown roles, conflicting role declarations, or a second config file are configuration failures. Patterns are canonical-root-relative, slash-normalized Git-wildmatch patterns. Repeated CLI `--include <pattern>`, `--exclude <pattern>`, and `--role-at <pattern> <role>` values form the invocation tier; they do not mutate `lumin.json`.
+Unknown fields, unknown roles, malformed patterns, conflicting role declarations, or a second root config are request/configuration hard-stops: no completed run or authorizing gate decision is published. They are not converted into scoped limitations. Patterns are canonical-root-relative, slash-normalized Git-wildmatch patterns. Repeated CLI `--include <pattern>`, `--exclude <pattern>`, and `--role-at <pattern> <role>` values form the invocation tier; they do not mutate `lumin.json`.
+
+Repeated `--entry <repo-path>` values on audit or pre-write form the invocation entry tier. When at least one is supplied they replace, rather than append to, `lumin.json.entries`; otherwise configured entries apply. Post-write reuses the baseline tier. Entry paths are canonical-root-relative source paths, are normalized and deduplicated by `SourceId`, and do not override hard exclusions or scan exclusion. A caller entry that escapes the root is malformed; a configured, missing, ignored, excluded, or out-of-domain entry is typed incomplete configuration evidence. Effective entries and their configuration source participate in `AnalysisInputId` and gate semantic reads.
 
 Scan admission uses this order:
 
@@ -143,10 +146,10 @@ Resolution is performed against the immutable source inventory and semantic conf
 `lumin-resolve` selects a typed profile for every importer with this precedence:
 
 1. An explicit invocation-wide `--resolution-profile <bundler|node|node16|nodenext>` override.
-2. The explicit `compilerOptions.moduleResolution` in the importer's nearest controlling `tsconfig`: `bundler` -> `bundler`, `node`/`node10` -> `node`, `node16` -> `node16`, and `nodenext` -> `nodenext`; unsupported values follow the incomplete rule below.
+2. The effective `compilerOptions.moduleResolution`, after applying the supported root-contained `extends` chain, in the importer's nearest controlling `tsconfig`: `bundler` -> `bundler`, `node`/`node10` -> `node`, `node16` -> `node16`, and `nodenext` -> `nodenext`; unsupported values follow the incomplete rule below.
 3. The named first-slice product default, `bundler`, when no explicit supported value exists.
 
-Without an invocation override, an explicit unsupported value such as `classic` or an unknown value makes resolution incomplete for affected importers; it never falls through to the product default. The invocation override supersedes only `moduleResolution` profile selection. An unreadable controlling config remains incomplete even under an override because aliases, package ownership, or other semantic inputs may be unknown. Without an override, mixed workspaces retain importer-local profiles from their nearest configs. The override deliberately applies to every importer in the invocation. Vue script edges remain a dialect-owned `bundler` lane and record that reason separately.
+Without an invocation override, an explicit unsupported value such as `classic` or an unknown value makes resolution incomplete for affected importers; it never falls through to the product default. The invocation override supersedes only `moduleResolution` profile selection. An unreadable controlling config remains incomplete even under an override because aliases, package ownership, or other semantic inputs may be unknown. Without an override, mixed workspaces retain importer-local profiles from their nearest configs. The override applies to every importer, including inline and external Vue script source uses. Vue template-to-component binding consumes already resolved script bindings and is not a resolver profile lane; `<script src>` is an exact SFC source reference rather than a JavaScript package-resolution fallback.
 
 Audit and pre-write accept the typed override; post-write reuses the profile facts stored in its baseline and cannot replace them. Every selected profile records mode, source (`invocation`, config path, or `product-default`), and reason. Those values and consulted configs participate in `AnalysisInputId`; `resolution-profile-selection.v1`, its mappings, and the default participate in `AnalysisContractId`.
 
@@ -159,7 +162,7 @@ Audit and pre-write accept the typed override; post-write reuses the profile fac
 | Runtime `.cjs` candidate | Value space: `.cts`, `.cjs`. Type space inserts `.d.cts` after `.cts`. |
 | Extensionless path in a permitting mode | Derive the host `.js` candidate and apply its substitution row. Do not invent extensionless `.mts`, `.cts`, `.mjs`, or `.cjs` candidates. |
 | Directory in a permitting mode | Resolve its supported `package.json` entry under the package-field rules, then derive an `index.js` host candidate and apply the `.js` substitution row. |
-| Unsupported explicit extension | Return `NonSourceAsset` or typed `Unsupported` evidence. Do not substitute a declaration sidecar. |
+| Unsupported explicit extension | Return grounded `NonSourceAsset`. Do not substitute a declaration sidecar or create an internal-consumer limitation. |
 
 A declaration may satisfy type-space resolution but never proves that a runtime value target exists. When a value import also has declaration evidence, the resolver records that type companion separately from the value target.
 
@@ -168,14 +171,14 @@ Specifier and configuration policy is:
 | Class | Contract |
 | --- | --- |
 | Resolution mode | Support `bundler`, legacy `node`, `node16`, and `nodenext`. Bundler/legacy-node and CJS lanes permit extensionless and directory fallback; Node16/NodeNext ESM lanes require an explicit relative extension and skip the extensionless and directory rows. Unsupported modes make resolution incomplete rather than selecting a fallback mode. |
-| Importer format | In Node16/NodeNext, `.mts`/`.mjs` are ESM and `.cts`/`.cjs` are CJS. `.ts`/`.tsx`/`.js`/`.jsx` and matching declarations use the nearest package `"type": "module"`, otherwise CJS. Static import/export selects `import` for ESM and `require` for CJS; `require()` always selects `require`, and dynamic `import()` selects `import`. Vue script edges use the bundler lane. |
+| Importer format | In Node16/NodeNext, `.mts`/`.mjs` are ESM and `.cts`/`.cjs` are CJS. `.ts`/`.tsx`/`.js`/`.jsx` and matching declarations use the nearest package `"type": "module"`, otherwise CJS. Static import/export selects `import` for ESM and `require` for CJS; `require()` always selects `require`, and dynamic `import()` selects `import`. Embedded Vue script uses the same selected profile and importer-format rules as a physical source with that script mode. |
 | Relative | Resolve inside the canonical root with the probe order above. Route-group characters such as `(doc)` are ordinary path bytes. |
 | Tsconfig | Use the importer's nearest config, root-contained relative/workspace-package `extends`, child override semantics, and the `baseUrl` of the config that declares each mapping. Cycles are incomplete configuration evidence. External-package extends and project-reference redirection are unsupported in this slice. |
 | `paths` | Exact key before wildcard; wildcard keys permit one `*` and use longest literal prefix then declaration order. Probe mapped targets before `baseUrl` and package resolution. |
 | Workspace package | Resolve `exports` exact key before one-star patterns. Within a condition object, the first supported matching branch in declaration order wins; the active set includes `types` for type space, `import` or `require` for the edge mode, `node`, and `default`. Edge resolution selects one lane; external public-surface protection follows the supported-lane union in Section 5.1. Unsupported condition shapes remain visible. |
 | Package fields without `exports` | Type space probes `types`, then `typings`, then a declaration companion for the selected value target. Value space uses `module` then `main` in bundler mode and `main` in Node modes, followed by permitted directory fallback. A type field never proves runtime value liveness. |
 | Bare external | Classify as `External` after workspace ownership lookup; never probe a similarly named relative file. |
-| Absolute, URL, package `imports`, or unsupported alias | Return typed `Unsupported` or `Unresolved` evidence with the limitation scope below; never skip the record. |
+| Root-absolute internal-looking specifier, package `imports`, or unsupported alias | Return typed `Unsupported` or `Unresolved` evidence with the limitation scope below; never skip the record. URL imports are complete external/non-source outcomes and do not create an internal-consumer limitation. |
 | Generated virtual | Resolve only through an observed generated mapping; otherwise retain a typed virtual limitation. |
 
 Every source use receives one `ResolutionOutcome`. A skipped record without a typed reason is a contract failure. The resolver policy version participates in `AnalysisContractId`; consulted configuration identities participate in exact cache keys and `AnalysisInputId`.
@@ -202,7 +205,7 @@ The default query reports candidates, confidence, protection reasons, and limita
 
 | Fact | Contract |
 | --- | --- |
-| Entry root | Explicit CLI entries and the targets selected for the active resolution profile establish module reachability. No heuristic `src/index` entry is invented. |
+| Entry root | Invocation entries replace configured entries; otherwise `lumin.json.entries` apply. Package public targets selected across the supported profile lanes are additional roots for non-private packages. No heuristic `src/index` entry is invented. A private package with neither an effective explicit entry nor a real workspace consumer has incomplete entry coverage, so package-wide unreachable absence claims are disabled rather than treating every module as dead. |
 | Public value surface | When `exports` exists, evaluate it independently for every supported external value lane (`node-import`, `node-require`, and `bundler-import`) and union the selected targets. Without `exports`, union `module` for bundler consumers and `main` for Node plus bundler fallback. A target protects only identities it actually exposes; a barrel never protects unexported siblings. |
 | Public type surface | Evaluate type-enabled import and require lanes in declaration order, then `types`/`typings` when `exports` is absent, and union type identities only. A value target or type branch cannot protect the other namespace. |
 | Public-surface opacity | An unsupported condition shape or unresolved selected public branch makes the affected package surface incomplete; it cannot silently protect the whole file or permit a dead-identity absence claim. |
@@ -213,21 +216,36 @@ The default query reports candidates, confidence, protection reasons, and limita
 
 ### 5.2 Uncertainty Propagation
 
-An exact absence candidate is emitted only when no potential-consumer limitation intersects that identity. An intersecting limitation produces queryable incomplete liveness evidence, not a deletion candidate.
+An exact absence candidate is emitted only when no potential-consumer limitation intersects that identity. An intersecting limitation produces queryable incomplete liveness evidence, not a deletion candidate. The following registry is exhaustive for first-slice typed incomplete, unsupported, and opaque outcomes:
 
-| Condition | Limitation scope |
-| --- | --- |
-| Recoverable parse with complete module-use extraction | `File`; extracted target facts remain usable, while unsupported local definitions stay limited to the file. |
-| Unrecoverable parse or unknown module-use completeness | `Workspace`; the file could hide a consumer anywhere in the supported scan scope. |
-| Nonliteral dynamic import | `ExplicitTargets` when a static path prefix bounds inventory matches; otherwise `Workspace`. |
-| Unsupported `import.meta.glob` | `ExplicitTargets` for a literal static base; otherwise the importer's `Package`. |
-| Computed CommonJS property on a resolved module | `Module` for that target and broad use across its value exports. |
-| Opaque Vue template | Imported component candidates and observed global registrations as `ExplicitTargets`; `Package` when that set cannot be bounded. |
-| Unsupported SFC dialect | `Workspace`; its unparsed script or template could hide consumers anywhere in the supported scan scope. |
-| Unresolved internal relative/configured alias | Resolver probe candidates as `ExplicitTargets`; `Workspace` when configuration opacity prevents a bounded domain. |
-| Unknown generated virtual module | Observed generated-map targets as `ExplicitTargets`; otherwise the importer's `Package`. |
+| Reason variant | Fact owner | Scope and target derivation | Downstream absence effect | Gate signal/effect when intersecting the gate |
+| --- | --- | --- | --- | --- |
+| `JsRecoverableParseLocal` | `lumin-js` | `File`; module-use extraction is proven complete. | Keep extracted uses; disable unsupported local-definition absence only. | `RequiredEvidenceIncomplete` -> `Incomplete` when the changed definition needs the missing fact. |
+| `JsModuleUseUnknown` | `lumin-js` | `Workspace`; the file may hide a consumer anywhere in scan scope. | Disable intersecting workspace absence claims. | `RequiredEvidenceIncomplete` -> `Incomplete`. |
+| `SourcePayloadUnavailable` | `lumin-inventory` | `Workspace` for an admitted unreadable source. | Disable workspace absence because its imports cannot be bounded. | `RequiredEvidenceIncomplete` -> `Incomplete`. |
+| `DynamicImportNonLiteral` | `lumin-js` | `ExplicitTargets` from a static inventory prefix, otherwise `Workspace`. | Treat bounded targets as broad consumers; otherwise disable workspace absence. | `NewOpacity` -> `Incomplete`. |
+| `ImportMetaGlobUnsupported` | `lumin-js` | `ExplicitTargets` from a literal static base, otherwise the importer's `Package`. | Disable absence only in the derived target/package domain. | `NewOpacity` -> `Incomplete`. |
+| `CommonJsComputedMember` | `lumin-js` | `Module` for the resolved target. | Mark all value exports on that module broadly consumed, without exact fan-in. | `NewOpacity` -> `Incomplete` only when newly introduced in the affected set. |
+| `VueTemplateOpaque` | `lumin-sfc` | Imported component candidates and observed global registrations as `ExplicitTargets`; otherwise the parent `Package`. | Disable component-identity absence in that domain. | `NewOpacity` -> `Incomplete`. |
+| `SfcDecompositionUnknown` | `lumin-sfc` | `Workspace`; script/resource boundaries or module-use completeness are unknown. | Disable workspace consumer absence. | `RequiredEvidenceIncomplete` -> `Incomplete`. |
+| `VueExternalScriptModeConflict` | `lumin-sfc` | Parent and external source owner `Package`; `Workspace` when their owners differ or cannot be proven. | Disable script-consumer and template-binding absence in that domain. | `RequiredEvidenceIncomplete` -> `Incomplete`. |
+| `SfcDialectUnavailable` | `lumin-sfc` | `Workspace`. | No dead-consumer absence may rely on the unparsed dialect. | `RequiredOwnerUnavailable` -> `Incomplete`. |
+| `InternalSpecifierUnresolved` | `lumin-resolve` | Ordered probe candidates as `ExplicitTargets`; `Workspace` when target configuration is opaque. | Disable absence for candidates; opaque configuration disables workspace absence. | Complete unresolved evidence -> `UnresolvedInternal`/`Block`; opaque target derivation -> `RequiredEvidenceIncomplete`/`Incomplete`. |
+| `PackageImportsUnsupported` | `lumin-resolve` | The importer's `Package`. | Disable package-local absence because `#` mappings may hide internal consumers. | `RequiredEvidenceIncomplete` -> `Incomplete`. |
+| `AliasShapeUnsupported` | `lumin-resolve` | `Package` when every affected importer has one owner, otherwise `Workspace`. | Disable absence in the affected configuration domain. | `RequiredEvidenceIncomplete` -> `Incomplete`. |
+| `AbsoluteInternalSpecifierUnsupported` | `lumin-resolve` | `Workspace`. | Disable workspace absence; the target may be any root-contained source. | `RequiredEvidenceIncomplete` -> `Incomplete`. |
+| `TsconfigPayloadUnavailable` | `lumin-inventory` | `Package` when all importers controlled by the unreadable input share one owner, otherwise `Workspace`. | Disable absence in that configuration domain. | `RequiredEvidenceIncomplete` -> `Incomplete`. |
+| `TsconfigSemanticsUnsupported` | `lumin-resolve` | `Package` when all importers affected by a cycle, external-package extends, unsupported project-reference redirect, or unsupported mode share one owner; otherwise `Workspace`. | Disable absence in that configuration domain. | `RequiredEvidenceIncomplete` -> `Incomplete`. |
+| `PublicSurfaceUnsupported` | `lumin-resolve` | The owning `Package`. | Do not protect every sibling and do not emit package-surface absence. | `RequiredEvidenceIncomplete` -> `Incomplete`. |
+| `GeneratedVirtualUnknown` | `lumin-resolve` | Observed generated-map targets as `ExplicitTargets`; otherwise the importer's `Package`. | Disable absence in the derived domain. | `NewOpacity` -> `Incomplete`. |
+| `ScanOrIgnoreInputUnobservable` | `lumin-inventory` | `Workspace`. | Disable workspace absence because scan membership is unknown. | `RequiredEvidenceIncomplete` -> `Incomplete`. |
+| `PackageMetadataUnobservable` | `lumin-inventory` | The known owner `Package`, otherwise `Workspace`. | Disable owner/public/dependency absence in that domain. | `RequiredEvidenceIncomplete` -> `Incomplete`. |
+| `DependencyOwnerAmbiguous` | `lumin-inventory` | The source owner's `Package`; `Workspace` when package ownership is also ambiguous. | Disable dependency-owner absence and inferred lockfile writes in that domain. | `RequiredEvidenceIncomplete` -> `Incomplete`. |
+| `WorkspaceOwnershipUnsupported` | `lumin-inventory` | `Workspace`. | Disable workspace/package ownership absence. | `RequiredEvidenceIncomplete` -> `Incomplete`. |
+| `ExplicitEntryUnavailable` | `lumin-inventory` | The derivable owner `Package`, otherwise `Workspace`. | Disable unreachable-module absence for that domain. | `RequiredEvidenceIncomplete` -> `Incomplete`. |
+| `CapabilityUnavailable` | `lumin-engine` capability registry | Declared paths/analysis area as `ExplicitTargets`; SFC dialects use the stricter row above. | Disable unavailable language, shape, clone, or discipline claims without rerouting ownership. | `RequiredOwnerUnavailable` -> `Incomplete`. |
 
-The limitation and its scope are canonical evidence. Reducers may narrow a scope only with additional grounded targets and may never silently drop it.
+URL imports and grounded non-source assets are complete external/non-source outcomes, not limitations. Caller root escape is malformed input, and store corruption is a hard-stop; neither is forced into this table. Private owner enums convert to these model reasons through exhaustive matches, and `lumin-xtask architecture-check` fails if a reason lacks a scope/effect mapping. Reducers may narrow a scope only with additional grounded targets and may never silently drop it.
 
 ## 6. Canonical Evidence and Query Contract
 
@@ -246,7 +264,7 @@ No legacy analysis JSON is emitted by default.
 The slice implements:
 
 ```text
-lumin audit [--resolution-profile <bundler|node|node16|nodenext>]
+lumin audit [--entry <repo-path> ...] [--resolution-profile <bundler|node|node16|nodenext>]
 lumin overview
 lumin findings --run <run-id> --area dead-code [--cursor <cursor>]
 lumin explain --run <run-id> <finding-id> [--evidence-cursor <cursor>] [--relations-cursor <cursor>]
@@ -263,22 +281,31 @@ All collection queries are bounded, deterministic, and cursor-resumable. Require
 The slice implements:
 
 ```text
-lumin pre-write --operation-id <operation-id> [typed intent flags]
+lumin pre-write --operation-id <operation-id> [--entry <repo-path> ...] [--resolution-profile <profile>] [typed intent flags]
 lumin post-write <gate-id> --operation-id <operation-id>
+lumin operation show <operation-id>
 lumin gate show <gate-id> [--revision <revision>]
 lumin gate findings <gate-id> --revision <revision> [--cursor <cursor>]
 lumin gate explain <gate-id> --revision <revision> <finding-id> [--evidence-cursor <cursor>] [--relations-cursor <cursor>]
 lumin gate list --active [--cursor <cursor>]
-lumin gate operation show <operation-id>
-lumin gate abandon <gate-id> --reason <text>
+lumin gate abandon <gate-id> --operation-id <operation-id> --reason <text>
+lumin gate prune plan --terminal-before <timestamp> --operation-id <operation-id>
+lumin gate prune plan show <plan-id> [--cursor <cursor>]
+lumin gate prune confirm <plan-id> --operation-id <operation-id>
+lumin runs list [--cursor <cursor>]
+lumin runs pin <run-id> --operation-id <operation-id> --reason <text>
+lumin runs unpin <run-id> --operation-id <operation-id>
+lumin runs prune plan --before <timestamp> --operation-id <operation-id>
+lumin runs prune plan show <plan-id> [--cursor <cursor>]
+lumin runs prune confirm <plan-id> --operation-id <operation-id>
 ```
 
 Required behavior:
 
 - no request JSON file;
-- caller-retained operation IDs make pre-write and post-write retries idempotent;
+- caller-retained operation IDs make every gate and retention lifecycle mutation idempotent and recoverable through `lumin operation show`;
 - one durable gate ID returned by pre-write;
-- baseline built from exact worktree bytes and returned as `GateBaselineObservationId`;
+- baseline and close observations built only after owner-reported semantic inputs reach a fixed point, with every added read reserved and conflict-checked;
 - language and nearest dependency owner inferred from planned paths;
 - mixed JS/TS/SFC paths handled inside one gate, with unsupported dialects remaining explicit;
 - write/write and write/semantic-read conflicts rejected;
@@ -289,7 +316,8 @@ Required behavior:
 - post-write requires the explicit gate ID and checks actual writes against other active gates;
 - post-write does not launch a full audit unless explicitly requested;
 - storage/scan/operation-liveness locks released before result transport while an active gate's durable path lease remains;
-- completed gate remains queryable.
+- completed gate remains queryable;
+- public retention commands execute the ARCH-002 `Prepared -> Pruning -> Pruned` protocol and never bypass the lifecycle store through `lumin-xtask` internals.
 
 First-slice owners emit typed signals; `lumin-evidence::gate_policy` assigns these effects:
 
@@ -299,8 +327,8 @@ First-slice owners emit typed signals; `lumin-evidence::gate_policy` assigns the
 | newly unresolved internal edge | `lumin-resolve` | `Block` |
 | missing declared dependency ownership | `lumin-inventory` | `Block` |
 | new dead export with zero exact/broad fan-in, complete potential-consumer coverage, no public protection, and no generated/vendor mute | `lumin-dead` | `Block` |
-| required owner unavailable/failed, newly opaque evidence intersecting the planned affected set, unobservable required delta input, or changed path awaiting another active gate's terminal transition | owning capability or engine gate service | `Incomplete` |
-| baseline/config/source drift, changed admitted alias escaping root, or intervening transition touching semantic reads | owning observation fact plus engine gate service | `Stale` |
+| required owner unavailable/failed, newly opaque evidence intersecting the planned affected set, unobservable required delta input, semantic-read closure conflict, or changed path awaiting another active gate's terminal transition | owning capability or engine gate service | `Incomplete` |
+| baseline/config/source drift, changed admitted alias escaping root, an intervening transition touching sealed opening reads, or a transition after close-read sealing | owning observation fact plus engine gate service | `Stale` |
 | unchanged pre-existing finding or grounded low-confidence/advisory candidate | owning capability | `Warn` |
 
 Caller-declared root escape is not a signal: it is malformed input, exits `2`, and creates no operation, gate ID, record, or lease. Signal types stay dependency-light in `lumin-model`; the closed mapping and `gate-policy.v1` stay in `lumin-evidence`; the engine only invokes the mapping and ARCH-002 reducer. Pre-write rejection creates no durable gate lease; failed post-write remains active and records the attempted revision.
@@ -330,6 +358,8 @@ There is no sequential compatibility engine.
 
 The implementation creates repository fixtures with hand-authored expected truth, not expectations copied from the legacy output.
 
+Every corpus row, including retention fault injection, drives the public `lumin` command DTOs in a child process. `lumin-xtask` may prepare fixtures and select a named test-build crash point, but it cannot import private store APIs or mutate lifecycle rows to manufacture the expected state.
+
 | Corpus case | Required truth |
 | --- | --- |
 | `plain-esm` | Exact named/default/type-only fan-in and side-effect reachability remain distinct. |
@@ -342,12 +372,14 @@ The implementation creates repository fixtures with hand-authored expected truth
 | `module-format-conditions` | Node16/NodeNext importer format selects import/require conditions from extension, nearest package type, and edge syntax. |
 | `public-condition-union` | Import, require, bundler, and type public lanes protect only the identities selected for each supported lane. |
 | `package-fields-no-exports` | Bundler `module`, Node/bundler `main`, and type fields follow their declared resolution and public-protection roles. |
-| `resolution-profile-selection` | Invocation override wins; otherwise mixed importers use nearest supported tsconfig profiles; no-config importers use the recorded `bundler` product default; explicit unsupported values remain incomplete. |
+| `resolution-profile-selection` | Invocation override wins for physical and embedded-script importers; otherwise mixed importers use nearest effective supported tsconfig profiles; no-config importers use the recorded `bundler` product default; explicit unsupported values remain incomplete. |
+| `explicit-entry-selection` | Repeated invocation entries replace configured entries, aliases deduplicate by `SourceId`, excluded/missing entries stay incomplete, public package targets remain roots, and a private package with no grounded root cannot produce package-wide unreachable absence. |
 | `reachable-dead-sibling` | A live file can still contain a zero-fan-in dead export candidate. |
 | `public-reexport-sibling` | One public re-export is protected; three unexported dead siblings remain candidates. |
 | `vue-entry` | `main.js -> App.vue` resolves and the graph completes. |
 | `vue-inline-script-setup` | Inline script facts bind template components through `finalize-sfc-facts` with parent spans. |
 | `vue-external-script` | External script bytes are parsed once and attached without copied facts; conflicting mode is unsupported. |
+| `vue-resolution-override` | A Vue embedded script follows invocation `node16`/`nodenext` extension rules and bundler override rules exactly; template binding consumes the resulting resolved script binding rather than selecting another lane. |
 | `vue-missing-target` | Missing `.vue` import becomes unresolved evidence without aborting other files. |
 | `vue-non-source-asset` | Style/resource references do not resolve to declaration sidecars or source edges. |
 | `sfc-dialect-boundary` | `.vue`, `.svelte`, and `.astro` enter one SFC stage contract; Vue completes, while Svelte/Astro return explicit dialect-scoped unavailable evidence and workspace liveness limitation without graph abortion or framework policy outside `lumin-sfc`. |
@@ -357,15 +389,17 @@ The implementation creates repository fixtures with hand-authored expected truth
 | `import-meta-glob` | Supported relative patterns expand deterministically; unsupported aliases remain visible. |
 | `cjs-computed` | Computed destructuring or export access degrades to broad evidence. |
 | `parse-failure-propagation` | Recoverable and unrecoverable parse limitations constrain only the scopes defined in Section 5.2. |
+| `limitation-scope-exhaustiveness` | Every first-slice private reason converts through an exhaustive match to one Section 5.2 model reason, scope, absence effect, and gate signal; missing mappings fail architecture-check. |
 | `nearest-manifest` | Dependency checks use the owner manifest nearest each planned path. |
 | `parallel-gates` | Read/read overlap coexists; write/write and write/read conflict atomically. |
-| `intervening-gate-transitions` | Disjoint A/B gates may analyze together; A reconciles B only after B publishes an exact terminal identity chain, stays incomplete while B's changed path is active, becomes stale when B touches A's semantic reads, and denies unexplained third-party changes. |
+| `intervening-gate-transitions` | Disjoint A/B gates may analyze together; A reconciles B only after B publishes an exact terminal identity chain, stays incomplete while B's changed path is active, becomes stale when B touches A's sealed opening reads, and denies unexplained third-party changes. |
 | `gate-path-identity` | New paths, aliases, directory descendants, symlinks/junctions, case policy, and rename endpoints follow ARCH-002. |
 | `gate-config-drift` | A changed semantic input makes the gate stale; an actual cross-gate write is denied. |
 | `gate-prewrite-observation` | Provisional admission, editor quiescence, exact baseline capture, and final store promotion bind `Allow` to one returned `GateBaselineObservationId`; interrupted admission leaves no active gate lease. |
+| `gate-semantic-read-closure` | A adds an import/config read of a path leased by active B; owner-reported input expansion extends the reservation and keeps A incomplete until B is terminal, then recaptures exact current bytes and seals one fixed-point observation. |
 | `gate-final-observation` | Source/config drift during post-write cannot produce `Allow` or release the active lease. |
 | `gate-lifecycle-effects` | Every pre/post decision follows the fixed effect precedence and lifecycle transition table. |
-| `gate-operation-idempotency` | Same operation ID/request joins live work, retries an interrupted pre-commit execution, or returns one committed gate/close revision; conflicting reuse is malformed; a new close after a failed revision needs a new operation ID; injected post-commit delivery failure is recovered through `gate operation show`. |
+| `lifecycle-operation-idempotency` | Pre/post, abandon, pin/unpin, prune-plan creation, and prune confirmation use one operation contract: same ID/request joins, safely retries, or returns one committed result; conflicting reuse is malformed; injected post-commit delivery failure is recovered through `operation show`. |
 | `gate-reopen-after-process-exit` | Open and close a gate, terminate the process, then use a new process to show the exact gate revision and page its findings/evidence. |
 | `unplanned-edit` | Unplanned changed, new, removed, and renamed paths cannot receive an allow decision. |
 | `mixed-vue-gate` | JS and Vue changes share one user gate and keep owner-specific facts. |
@@ -375,7 +409,8 @@ The implementation creates repository fixtures with hand-authored expected truth
 | `request-path-escape` | Caller-declared root escape exits `2` without operation record, gate ID, or lease; later admitted alias drift and final containment violation follow their distinct stale/block contracts. |
 | `corrupt-store` | Corrupt canonical storage hard-stops without fallback or empty evidence. |
 | `crash-publication` | Attempt allocation, running-envelope, latest-pointer, run-rename, terminal-attempt, and pointer-replacement crash points each have the single ARCH-002 outcome; a renamed orphan without terminal success remains interrupted and is never adopted as success. |
-| `retention-latest-protection` | Prune plans exclude both latest-pointer targets and their linked attempt/run closure, and stale confirmation cannot create a dangling pointer. |
+| `retention-latest-protection` | Public prune-plan/show/confirm commands exclude both latest-pointer targets and linked closure, and stale confirmation cannot enter `Pruning` or create a dangling pointer. |
+| `retention-crash-protocol` | Faults before/after tombstone, during each canonical-to-trash move, before `Pruned`, and during physical reclamation recover to the single ARCH-002 state without treating a missing payload as successful deletion. |
 
 The corpus must include repositories synthesized from or minimized around real failure shapes, including Vue core-style package layouts and a Next.js route-group layout. A copied fixture records origin, license, source revision, and modifications in a local `PROVENANCE.md`; synthetic structure is preferred when copied code is unnecessary. Store-state fixtures are generated in a test temp root and do not require committing ignored `.lumin` output.
 
@@ -472,8 +507,11 @@ These omissions must be visible through `lumin capabilities` and relevant overvi
 14. Required failures, snapshot freshness, and unsupported capabilities are prominent and queryable.
 15. Strict workspace formatting, lint, unit, integration, corpus, dependency-edge, and package checks pass.
 16. The public binary meets the approved Phase 1 performance and memory targets on every blocking environment and reports the `/mnt/<drive>` diagnostic separately.
-17. Operation-ID retry and post-commit delivery recovery never duplicate a gate or close revision.
-18. Publication recovery and retention preserve one crash outcome per point and cannot leave a latest pointer dangling.
+17. Operation-ID retry and post-commit delivery recovery never duplicate any gate or retention lifecycle mutation.
+18. Publication and public retention commands preserve one crash outcome per point, one deletion truth, and intact latest/pin/reference closure.
+19. Pre-write and post-write seal owner-reported semantic inputs by fixed point before deriving an authorizing observation ID.
+20. Explicit entry and resolution-profile precedence, including embedded Vue scripts, is deterministic and fully represented in `AnalysisInputId`.
+21. Every first-slice incomplete/unsupported/opaque reason has an exhaustive owner, limitation scope, absence effect, and gate mapping.
 
 ## 15. Acceptance Traceability
 
@@ -495,8 +533,11 @@ These omissions must be visible through `lumin capabilities` and relevant overvi
 | 14 | `failure_and_freshness_are_visible` | required-failure, parse, snapshot, request-path-escape, and corrupt-store rows | `lumin-xtask corpus foundation` | `overview` or the gate response exposes incomplete/stale/failed/malformed states and never zero. |
 | 15 | `repository_policy_suite` | workspace and source policy | fmt, Clippy, workspace test, architecture-check | Every required quality command exits successfully. |
 | 16 | `release_performance_matrix` | named benchmark corpora | `lumin-xtask benchmark foundation` | Blocking time/memory targets are met and the `/mnt/<drive>` diagnostic is reported. |
-| 17 | `gate_mutations_are_idempotent` | `gate-operation-idempotency` | `lumin-xtask corpus foundation` | Retry returns one committed gate/revision and operation query recovers an injected delivery failure. |
-| 18 | `publication_and_prune_preserve_pointer_truth` | crash and retention rows | `lumin-xtask corpus foundation --store-crash` | Every crash point has one outcome and prune never removes a protected latest linkage. |
+| 17 | `lifecycle_mutations_are_idempotent` | `lifecycle-operation-idempotency` | `lumin-xtask corpus foundation` | Every mutation retry returns one committed result and `operation show` recovers injected delivery failure. |
+| 18 | `publication_and_retention_have_one_crash_truth` | publication and retention crash rows | `lumin-xtask corpus foundation --store-crash` | Public commands drive every fault point; tombstone/trash recovery is unique and protected closure survives. |
+| 19 | `semantic_reads_reach_fixed_point` | `gate-semantic-read-closure` | `lumin-xtask corpus foundation` | A newly consulted input extends reservation/conflict checks and no partial observation authorizes. |
+| 20 | `entry_and_profile_selection_are_canonical` | entry/profile and Vue override rows | `lumin-xtask corpus foundation` | Effective entries and every importer profile match precedence and persisted input identity. |
+| 21 | `limitation_registry_is_exhaustive` | `limitation-scope-exhaustiveness` plus failure rows | `lumin-xtask architecture-check` and corpus foundation | Every private reason maps exactly once; missing mapping fails before product evidence. |
 
 ## 16. Product AC Coverage
 
@@ -517,7 +558,9 @@ These omissions must be visible through `lumin capabilities` and relevant overvi
 | 13 latest failure visible | in scope | Slice AC 14 and `snapshot-and-latest`. |
 | 14 explicit post-write gate ID | in scope | Slice AC 10. |
 | 15 semantic baseline conflict | in scope | Slice AC 11 and baseline/final-observation plus intervening-transition corpus. |
-| 16 idempotent gate mutation | in scope | Slice AC 17 and operation-delivery recovery corpus. |
+| 16 idempotent lifecycle mutation | in scope | Slice AC 17 and operation-delivery recovery corpus. |
+| 17 semantic-read fixed point | in scope | Slice AC 19 and semantic-read-closure corpus. |
+| 18 crash-consistent retention | in scope | Slice AC 18 and public retention crash corpus. |
 
 ## 17. Verification Commands
 
