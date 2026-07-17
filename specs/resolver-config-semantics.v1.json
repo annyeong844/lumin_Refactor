@@ -11,6 +11,8 @@
     "sourceTagCommit": "5ccf24e9c4f7a66cbce23bdd0476fabb39945b9b",
     "moduleResolverSource": "src/compiler/moduleNameResolver.ts",
     "moduleResolverSourceSha256": "b2c971b6674b3312e43cd198ee250dba86a55fea8b06b28388737e4db7b32c7f",
+    "configParserSource": "src/compiler/commandLineParser.ts",
+    "configParserSourceSha256": "e48e42605eef2b1880947b658187cf455b3c91aa4bcf32007ab7296b088009ab",
     "compilerOptionExtraction": "unique optionDeclarations names where isCommandLineOnly is not true, sorted by UTF-8 byte order; each digest line is name, TAB, normalized shape, LF",
     "compilerOptionCount": 122,
     "compilerOptionKeyShapeSha256": "f2fb5da0cf33ea694a8bf4ccae909a1526e7978693c15ac1a6b10b3cdfbc9d9a"
@@ -218,7 +220,56 @@
   },
   "resolverRules": {
     "extends": {
-      "supported": "one string naming a root-contained relative config or a discovered workspace package config",
+      "supported": "one nonempty string selected only by extends-specifier-selection.v1 as a root-contained relative config or an exact discovered workspace package identity",
+      "specifierSelection": {
+        "policyVersion": "extends-specifier-selection.v1",
+        "baselineRelation": "Pinned TypeScript normalizes slashes, selects rooted/relative exact files before one .json fallback, and otherwise invokes its NodeNext JSON-config resolver. Lumin preserves the relative exact-then-.json order but deliberately narrows nonrelative selection to one exact inventory-owned workspace PackageIdentity; rooted paths, package subpaths, and external-package lookup are visible unsupported semantics.",
+        "input": "one nonempty Unicode-scalar string; empty or NUL-containing input is a malformed-configuration hard-stop and no Unicode normalization or URL decoding occurs",
+        "slashNormalization": "replace every U+005C reverse solidus with U+002F solidus before dispatch; preserve every other scalar exactly",
+        "dispatchOrder": [
+          "a POSIX-rooted, Windows drive-rooted, UNC, or device-rooted value creates no target demand; a value provably outside the canonical repository root is a malformed-configuration hard-stop, otherwise rooted syntax is TsconfigSemanticsUnsupported",
+          "a normalized value beginning ./ or ../ enters relativeConfig",
+          "a whole normalized value matching inventory-config-semantics.v1 package-name.v1 enters exactWorkspacePackage",
+          "every other value, including a package subpath or unsupported external-package form, is TsconfigSemanticsUnsupported and creates no package or filesystem probe"
+        ],
+        "relativeConfig": {
+          "base": "the declaring config directory",
+          "lexicalRule": "resolve dot and dot-dot components; an empty component or trailing separator is TsconfigSemanticsUnsupported without a demand, while a lexical or physical repository-root escape is a malformed-configuration hard-stop, not scoped incomplete evidence",
+          "selectionOrder": [
+            "emit one SemanticInputDemand for the normalized exact candidate and reserve it before inventory captures a regular-file identity or a parent-bound missing-path observation",
+            "if the exact candidate is a root-contained readable regular file, select it even when its name does not end in .json",
+            "if the exact candidate is absent or non-regular and its normalized spelling does not end with exact ASCII .json, append .json once, demand and reserve that fallback, and select it only when it is a root-contained readable regular file",
+            "otherwise emit TsconfigSemanticsUnsupported; there is no directory, package.json, or tsconfig.json fallback for a relative specifier"
+          ],
+          "observation": "every demanded hit or miss, including the parent identity that grounds absence, participates in ConsultedSemanticInputs, AnalysisInputId, cache identity, and gate read protection; an unreadable exact file fails without trying the .json fallback"
+        },
+        "exactWorkspacePackage": {
+          "selection": "match the complete normalized string against exactly one inventory-owned PackageIdentity; no prefix, source-order, nearest-package, or subpath match is permitted",
+          "missing": "a syntactically valid package name absent from the admitted workspace is unsupported external-package extends and emits TsconfigSemanticsUnsupported without node_modules lookup",
+          "invalidOrDuplicate": "preserve inventory-owned PackageIdentityUnsupported and select no config",
+          "next": "after exact selection, apply workspacePackageConfig below"
+        },
+        "goldenVectors": [
+          {"id": "relative-explicit-json", "input": "./base.json", "filesystem": {"./base.json": "regular"}, "demands": ["./base.json"], "selected": "./base.json"},
+          {"id": "relative-exact-wins", "input": "./base", "filesystem": {"./base": "regular", "./base.json": "regular"}, "demands": ["./base"], "selected": "./base"},
+          {"id": "relative-json-fallback", "input": "./base", "filesystem": {"./base": "missing", "./base.json": "regular"}, "demands": ["./base", "./base.json"], "selected": "./base.json"},
+          {"id": "relative-missing", "input": "./base", "filesystem": {"./base": "missing", "./base.json": "missing"}, "demands": ["./base", "./base.json"], "result": "TsconfigSemanticsUnsupported"},
+          {"id": "relative-backslash-normalization", "input": ".\\base", "filesystem": {"./base": "missing", "./base.json": "regular"}, "demands": ["./base", "./base.json"], "selected": "./base.json"},
+          {"id": "relative-empty-component", "input": ".//base.json", "demands": [], "result": "TsconfigSemanticsUnsupported"},
+          {"id": "relative-trailing-separator", "input": "./base/", "demands": [], "result": "TsconfigSemanticsUnsupported"},
+          {"id": "relative-parent-contained", "input": "../base.json", "normalizedTarget": "<root-contained-parent>/base.json", "filesystem": {"<root-contained-parent>/base.json": "regular"}, "demands": ["<root-contained-parent>/base.json"], "selected": "../base.json"},
+          {"id": "relative-root-escape", "input": "../../outside.json", "demands": [], "result": "malformed configuration hard-stop", "reason": "repository-root escape"},
+          {"id": "workspace-scoped-exact", "input": "@acme/tsconfig", "workspacePackageNames": ["@acme/tsconfig"], "selectedPackage": "@acme/tsconfig"},
+          {"id": "workspace-unscoped-exact", "input": "tooling-config", "workspacePackageNames": ["tooling-config"], "selectedPackage": "tooling-config"},
+          {"id": "workspace-duplicate", "input": "@acme/tsconfig", "workspacePackageNames": ["@acme/tsconfig", "@acme/tsconfig"], "demands": [], "result": "PackageIdentityUnsupported"},
+          {"id": "workspace-package-subpath", "input": "@acme/tsconfig/base", "demands": [], "result": "TsconfigSemanticsUnsupported"},
+          {"id": "external-package", "input": "external-config", "workspacePackageNames": [], "demands": [], "result": "TsconfigSemanticsUnsupported"},
+          {"id": "empty", "input": "", "demands": [], "result": "malformed configuration hard-stop", "reason": "malformed extends scalar"},
+          {"id": "nul", "input": "\u0000", "demands": [], "result": "malformed configuration hard-stop", "reason": "malformed extends scalar"},
+          {"id": "rooted-contained-path", "canonicalRoot": "/repo", "input": "/repo/config/base.json", "demands": [], "result": "TsconfigSemanticsUnsupported"},
+          {"id": "rooted-path-escape", "canonicalRoot": "/repo", "input": "/config/base.json", "demands": [], "result": "malformed configuration hard-stop", "reason": "repository-root escape"}
+        ]
+      },
       "workspacePackageConfig": {
         "packageSelection": "consume one exact inventory-owned workspace package mapping; duplicate or unsupported package identity remains inventory-owned PackageIdentityUnsupported, prevents config selection, and is never renamed or resolved by source order",
         "field": "package.json#tsconfig",
@@ -226,15 +277,20 @@
         "fallback": "use package-root/tsconfig.json only when the tsconfig field is absent",
         "target": "resolve the selected field relative to the package root as a root-contained regular config file",
         "semanticInputs": "the selected package manifest and selected config target are owner-declared SemanticInputDemand values and are reserved before capture or consumption",
-        "failure": "empty or malformed field, missing target, unsupported package lookup, physical or lexical root escape, cycle, or unreadable target is TsconfigSemanticsUnsupported; unsupported package identity propagates its inventory-owned limitation",
+        "failure": "empty or malformed field, missing target, a target leaving the selected package root while remaining repository-root-contained, cycle, or unreadable target is TsconfigSemanticsUnsupported; canonical repository-root escape is a malformed-configuration hard-stop; unsupported package identity propagates its inventory-owned limitation",
         "goldenVectors": [
           {"id": "custom-field", "packageJson": {"name": "@acme/tsconfig", "tsconfig": "configs/base.json"}, "selected": "configs/base.json"},
           {"id": "field-absent-fallback", "packageJson": {"name": "@acme/tsconfig"}, "selected": "tsconfig.json"},
           {"id": "empty-field", "packageJson": {"name": "@acme/tsconfig", "tsconfig": ""}, "result": "TsconfigSemanticsUnsupported"},
-          {"id": "escape-field", "packageJson": {"name": "@acme/tsconfig", "tsconfig": "../base.json"}, "result": "TsconfigSemanticsUnsupported"}
+          {"id": "package-root-escape-field", "packageJson": {"name": "@acme/tsconfig", "tsconfig": "../base.json"}, "context": "target remains inside the repository but leaves the selected package root", "result": "TsconfigSemanticsUnsupported"}
         ]
       },
-      "unsupported": "arrays, external-package lookup, cycles, root escape, and project-reference redirection"
+      "chainApplication": {
+        "order": "after a selector target is reserved and captured, compare its canonical RepoPath/config identity with the ordered active extends stack before parsing or applying it; a repeat is TsconfigSemanticsUnsupported",
+        "merge": "recursively apply the selected parent first, then apply the child config as the final override; each baseUrl and paths target remains relative to the config that declares it",
+        "identity": "the selected target spelling, every hit/miss observation, captured config identity, ordered chain, and effective child override participate in AnalysisInputId; the selector and merge policy versions participate in AnalysisContractId"
+      },
+      "unsupported": "arrays, repository-contained rooted paths, package subpaths, external-package lookup, cycles, package-root escape, and project-reference redirection; canonical repository-root escape is a malformed-configuration hard-stop"
     },
     "baseUrl": {
       "supported": "one root-contained string resolved relative to the declaring config"
@@ -422,6 +478,6 @@
     "artifactPath": "specs/resolver-config-semantics.v1.json",
     "artifactIdentity": "SHA-256 of exact checked-in file bytes, supplied by the candidate manifest and compiled into AnalysisContractId",
     "runtimeForm": "lumin-resolve project-owned generated table compiled from this artifact; no runtime source-file fallback",
-    "requiredCheck": "architecture-check compares artifact byte hash, TypeScript/Node source hashes, baseline key-set digest, owner-disjoint fields, profile feature/condition/applicability states, workspace-package tsconfig semantics, joint entry precedence, field-specific mismatch limitations, exports comparator/target-lowering vectors, exhaustive classifications, and compiled-table digest"
+    "requiredCheck": "architecture-check compares artifact byte hash, TypeScript module-resolver/config-parser and Node source hashes, baseline key-set digest, owner-disjoint fields, profile feature/condition/applicability states, extends-specifier dispatch and relative/package golden vectors, workspace-package tsconfig semantics, joint entry precedence, field-specific mismatch limitations, exports comparator/target-lowering vectors, exhaustive classifications, and compiled-table digest"
   }
 }
