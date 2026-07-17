@@ -26,7 +26,8 @@ Freeze decision: blocked
 | Prior exact-Git externally reverified candidate | `491f47824023253ea61001b4678d2e391db49268`; all 16 files were bound to the exact Git tree, B-07 passed, R3 alias/condition/owner/comparator repairs substantially passed, and H-09/H-11 reopened under R4 |
 | Latest exact-Git externally reverified candidate | `d7e96b091d7c18118b839e61de2569247a9729c1`; all 16 files were bound to the exact Git tree, B-07 and all direct R3/R4 repairs passed, independent machine checks passed `151/151`, and NEW-H10-01/NEW-H11-01 reopened H-10/H-11 |
 | Current resolution candidate | `65e60216891bb3d826a4778f84cb8aaa377abe92`; exact independent document/design verification passed, execution evidence pending |
-| Backend-selection amendment candidate | `58b10608eb2bb740e411281dbcc313d5ff23707c`; selects exact `redb 4.1.0`, records store/OXC evidence, and awaits exact external independent verification |
+| Superseded backend-selection amendment candidate | `58b10608eb2bb740e411281dbcc313d5ff23707c`; invalidated before external review because its exact checkout omitted 20 manifest-listed raw build logs hidden by the root `*.log` ignore rule; do not review this candidate |
+| Backend-selection amendment candidate | `579c2358f5e2245a977abdedcee7e06ba3f4e46e`; preserves those raw logs in Git, selects exact `redb 4.1.0`, records store/OXC evidence, and awaits exact external independent verification |
 | Verifier | external independent reviewer, report supplied by the user; not the architecture-authoring Codex session |
 | Earlier externally reverified input manifest/report | `2ff71a19ebd5fd2939f1aa6da77a2d3276c320791a19a1364670ab78d9c2210e` / `67a001b2cbfd6af36d3e60712d8dfa2bab6dfcc4a7756114f87b9d34d5530611` |
 | Prior externally reverified input manifest/report | `9d2366afa0fa360397fbf4ae7c0ad4205d34739f20f8f7acff70207b2152b6fd` / `07df439ded1101b3ddea1328880579be918db1cfbe8d7861d28c0ca1d18ad20a` |
@@ -40,9 +41,10 @@ Freeze decision: blocked
 | Current independent machine checks | `239/239` passed; script `2e22cd5a31f98e58c370da304cd30db62f7c76fe8fe31995d8a239741a991e88`, result `d54c06c85a31b96f11c39929aedda03b311dc2cac032e30f05e5ac357f912914` |
 | Current independent binding/finding evidence | Git binding `0f1c1814a73e27197ea5549d23eae19525d11a67150712e76ce1584467e36981`; finding matrix `86827ebb5f699e1ed2e664445b91cba07993f0c301ad9f2bd2debe5d86554873` |
 | Verification result | `65e6021` passed B-07, H-01 through H-12, all R3/R4 findings, NEW-H10-01/NEW-H11-01, every B/C/E/G predecessor, and the independent document/design review with no new finding or accepted risk; overall Phase 0 remains blocked only by execution and measurement evidence |
-| Backend-selection candidate manifest/review | `8bbbc177f4aeb7ee648b5f3808dfbf3fb9e9dc18389802b0797af786e5e7c44c` / external report pending |
+| Superseded backend-selection candidate manifest | `8bbbc177f4aeb7ee648b5f3808dfbf3fb9e9dc18389802b0797af786e5e7c44c`; invalid because two committed packet manifests named 20 raw build logs absent from the exact Git tree |
+| Backend-selection candidate manifest/review | `b43b8b0ea9c3c0c8938363091aaf4de0e7a4a3b3babb225582a85b050a104375` / external report pending |
 
-The first report verified the exact first amended revision. Several later reports verified supplied byte manifests but could not bind loose uploads to their declared Git commits. Exact-tree reports subsequently passed B-07 for `491f478`, `d7e96b0`, and now `65e6021`, each only for its own named revision. The current independent freeze report excluded Author-Side Preflight from PASS evidence, reproduced all 16 Git-object bindings and the manifest, passed 239 machine checks, found no REOPEN/NEW item, and closed NEW-H10-01/NEW-H11-01. The later ledger blob is outside the 16-file architecture packet and does not retroactively change that candidate identity.
+The first report verified the exact first amended revision. Several later reports verified supplied byte manifests but could not bind loose uploads to their declared Git commits. Exact-tree reports subsequently passed B-07 for `491f478`, `d7e96b0`, and now `65e6021`, each only for its own named revision. The current independent freeze report excluded Author-Side Preflight from PASS evidence, reproduced all 16 Git-object bindings and the manifest, passed 239 machine checks, found no REOPEN/NEW item, and closed NEW-H10-01/NEW-H11-01. The later ledger blob is outside the 16-file architecture packet and does not retroactively change that candidate identity. The superseded `58b1060` backend amendment never reached external review: exact-checkout verification exposed its incomplete evidence tree, and `579c235` replaces it without rewriting that history.
 
 ## Freeze Blocker Resolution Ledger
 
@@ -186,12 +188,21 @@ ee686f81164ff40b281483afaae591793964cc576afaca0ce7b5b51a6798b4a6  specs/repo-pat
 
 ### Backend-selection amendment candidate
 
-The next exact candidate is Git commit
-`58b10608eb2bb740e411281dbcc313d5ff23707c`, commit message
-`Select redb and record Phase 0 probe evidence`. It records exact `redb 4.1.0` as the
-sole production backend, adds architecture-check and Slice enforcement, preserves the
-backend-neutral store contract, and commits the Windows/WSL2/native store plus OXC
-probe packets. This ledger is a later commit and is not part of the 16-file candidate.
+Git commit `58b10608eb2bb740e411281dbcc313d5ff23707c` and manifest
+`8bbbc177f4aeb7ee648b5f3808dfbf3fb9e9dc18389802b0797af786e5e7c44c` are
+**superseded and must not be used for external review**. A detached exact checkout
+showed that its WSL2 and native-Linux evidence manifests named 20 raw build logs that
+were absent from the Git tree because the root `*.log` rule ignored them.
+
+The replacement exact candidate is Git commit
+`579c2358f5e2245a977abdedcee7e06ba3f4e46e`, commit message
+`Preserve raw store build logs in evidence packets`. It retains the semantic selection
+from `58b1060`: exact `redb 4.1.0` remains the sole production backend, the
+architecture-check and Slice enforce that choice, the store contract remains
+backend-neutral, and the Windows/WSL2/native store plus OXC probe packets remain
+committed. It also narrows the log-ignore exception to committed probe evidence and adds
+the 20 manifest-listed build logs. This ledger is a later commit and is not part of the
+16-file candidate.
 
 The amendment has author-side evidence but **no external PASS yet**. B-07 and the
 substantive selection/rationale must be independently reverified from this exact Git
@@ -199,12 +210,12 @@ tree. The candidate manifest uses the same ordinal path, two-space, and LF rules
 SHA-256 is:
 
 ```text
-8bbbc177f4aeb7ee648b5f3808dfbf3fb9e9dc18389802b0797af786e5e7c44c
+b43b8b0ea9c3c0c8938363091aaf4de0e7a4a3b3babb225582a85b050a104375
 ```
 
 ```text
 bcae0103cba68300201e6db53dc2d2418cda78e40f1fb73417ee340f9f12396a  .gitattributes
-b2c9f1a98c478549391043205022ae49b30338336e4f91f1cfd146ca1b46670e  .gitignore
+8165fdcd0eec420eca4acf8eac2ce3e852cb2c6b012c7d2d56a72eb91d63d4bd  .gitignore
 9c0e25902cffdf233324aaea24e3b12bec22327e6a5c9022da762836b59a7062  AGENTS.md
 18326ce8d50fd7154755912533d77e8ff987c8da48a104fc7244c24a13b8c139  README.md
 2e540685f83e0ea730e1260de25649d379a142d685adce0eb5c8ea5ea45de36f  SDD.md
@@ -220,6 +231,12 @@ ee686f81164ff40b281483afaae591793964cc576afaca0ce7b5b51a6798b4a6  specs/repo-pat
 17dbece96b064d83ad39d905bf044e17286a3e813106b21fd50f6b1d00728e15  문서(한글)/AGENTS.ko.md
 2456a9b89bb8f24a76b63d674cd62f0dcb64038ecada488a7d523af1476a1f28  문서(한글)/SDD.ko.md
 ```
+
+Before this ledger update, a new detached checkout of `579c235` independently replayed
+all five committed packet manifests from Git: Windows store `12/12`, WSL2 store
+`37/37`, native Linux store `37/37`, OXC `80/80`, and backend selection `2/2`, for
+`168/168` byte checks with a clean worktree. This is author-side packet-integrity
+evidence, not an external independent PASS.
 
 The selection packet manifest SHA-256 is
 `ce14aaab83942e83e6b874d972aef06d03aa03d64c68370cefebac3339287ea6`.
