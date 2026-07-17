@@ -3,6 +3,8 @@ target/
 **/target/
 *.tmp
 *.log
+!reviews/probes/**/evidence/*.log
+!reviews/probes/**/evidence/**/*.log
 .env
 .DS_Store
 Thumbs.db
