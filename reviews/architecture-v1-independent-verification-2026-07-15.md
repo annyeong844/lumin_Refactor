@@ -2,7 +2,7 @@
 
 Document role: current Architecture v1 freeze verification owner
 
-Status: author preflight complete; exact independent re-verification pending
+Status: independent document/design review passed; execution and measurement gates pending
 
 Freeze decision: blocked
 
@@ -25,7 +25,7 @@ Freeze decision: blocked
 | Prior externally reverified candidate | `74dded225d098253fa46b2972c6d18547e739581`; all 14 supplied packet bytes matched, H-10 passed at document level, H-09/H-11 reopened under R3, and exact Git binding remained pending |
 | Prior exact-Git externally reverified candidate | `491f47824023253ea61001b4678d2e391db49268`; all 16 files were bound to the exact Git tree, B-07 passed, R3 alias/condition/owner/comparator repairs substantially passed, and H-09/H-11 reopened under R4 |
 | Latest exact-Git externally reverified candidate | `d7e96b091d7c18118b839e61de2569247a9729c1`; all 16 files were bound to the exact Git tree, B-07 and all direct R3/R4 repairs passed, independent machine checks passed `151/151`, and NEW-H10-01/NEW-H11-01 reopened H-10/H-11 |
-| Current resolution candidate | `65e60216891bb3d826a4778f84cb8aaa377abe92`; independent verification still required |
+| Current resolution candidate | `65e60216891bb3d826a4778f84cb8aaa377abe92`; exact independent document/design verification passed, execution evidence pending |
 | Verifier | external independent reviewer, report supplied by the user; not the architecture-authoring Codex session |
 | Earlier externally reverified input manifest/report | `2ff71a19ebd5fd2939f1aa6da77a2d3276c320791a19a1364670ab78d9c2210e` / `67a001b2cbfd6af36d3e60712d8dfa2bab6dfcc4a7756114f87b9d34d5530611` |
 | Prior externally reverified input manifest/report | `9d2366afa0fa360397fbf4ae7c0ad4205d34739f20f8f7acff70207b2152b6fd` / `07df439ded1101b3ddea1328880579be918db1cfbe8d7861d28c0ca1d18ad20a` |
@@ -35,10 +35,12 @@ Freeze decision: blocked
 | Prior externally reverified input manifest/report | `de1e4682a5cecbeb0ed7474db9fc25d9240baf4b739eba7abc442882d7879a4c` / `c5d4bf25a8d2b04686281ff3b1eef28b5d3eac8fa4bdd88e3c5b30d913110e0c` |
 | Prior exact-Git input manifest/report | `2988ff4d2f5fd054f60a5453d836d5974d3ea141e8d833416ce13929b4216cbc` / `d34efac5375720bb75f6898f8297245b20b2e73bb0b556c561a308df4667a96d` |
 | Latest externally reverified exact-Git input manifest/report | `fb3717e4417d2b5220aab1c89ecedaed49fccdbb88569952462e2f3002b05843` / `4d9b7f24ba52ffc5258487a64c44da64c187f10d0d3be9fe4c2e73622357dd24` |
-| Current candidate manifest | `66925583362be22257dd7357072d176cd3f1ae3d4f99874a53f6689b7cf535e0`; independent report pending |
-| Verification result | `d7e96b0` remained blocked: B-07, all direct R3/R4 repairs, and 151 independent machine checks passed; H-10 reopened under NEW-H10-01 because managed-parent physical identity was not durably bound, H-11 reopened under NEW-H11-01 because `tsconfig.extends` dispatch/candidate selection was not machine-complete, and all measured gates remain pending |
+| Current independently reverified manifest/report | `66925583362be22257dd7357072d176cd3f1ae3d4f99874a53f6689b7cf535e0` / `f7f25de96436862e6650195ec9248a85585ad03a9feb588c4cddfca4c2effbeb` |
+| Current independent machine checks | `239/239` passed; script `2e22cd5a31f98e58c370da304cd30db62f7c76fe8fe31995d8a239741a991e88`, result `d54c06c85a31b96f11c39929aedda03b311dc2cac032e30f05e5ac357f912914` |
+| Current independent binding/finding evidence | Git binding `0f1c1814a73e27197ea5549d23eae19525d11a67150712e76ce1584467e36981`; finding matrix `86827ebb5f699e1ed2e664445b91cba07993f0c301ad9f2bd2debe5d86554873` |
+| Verification result | `65e6021` passed B-07, H-01 through H-12, all R3/R4 findings, NEW-H10-01/NEW-H11-01, every B/C/E/G predecessor, and the independent document/design review with no new finding or accepted risk; overall Phase 0 remains blocked only by execution and measurement evidence |
 
-The first report verified the exact first amended revision. Several later reports verified supplied byte manifests but could not bind loose uploads to their declared Git commits. The external R4 report checked `491f478` from the exact Git tree, and the latest independent freeze report checked `d7e96b0` the same way: all 16 blob identities and the manifest matched, so B-07 passes for those exact revisions. The latest report excluded Author-Side Preflight from PASS evidence, preserved all direct R3/R4 repairs as PASS, and opened NEW-H10-01/NEW-H11-01. None of that exact-revision evidence transfers to `65e6021`; the current resolution requires a new exact-checkout independent review.
+The first report verified the exact first amended revision. Several later reports verified supplied byte manifests but could not bind loose uploads to their declared Git commits. Exact-tree reports subsequently passed B-07 for `491f478`, `d7e96b0`, and now `65e6021`, each only for its own named revision. The current independent freeze report excluded Author-Side Preflight from PASS evidence, reproduced all 16 Git-object bindings and the manifest, passed 239 machine checks, found no REOPEN/NEW item, and closed NEW-H10-01/NEW-H11-01. The later ledger blob is outside the 16-file architecture packet and does not retroactively change that candidate identity.
 
 ## Freeze Blocker Resolution Ledger
 
@@ -54,7 +56,7 @@ The first report verified the exact first amended revision. Several later report
 | C-05 crash outcome conflict | External PASS | The publication crash table remains single-outcome. The current candidate binds the immutable lifecycle-lock object, state-directory identity, and exact managed-parent set into the marker/store and yields `CatalogPublicationGuard` only after complete entry-to-handle revalidation. NEW-H10-01 is preserved separately. |
 | C-06 commit/transport recovery | External PASS | The operation contract covers pre/post, abandon, pin/unpin, prune-plan creation, and confirmation, with one general `lumin operation show` recovery query. |
 | C-07 retention/latest integrity | External PASS | Latest closures remain ineligible; the marker-bound exclusive publication guard serializes latest-sensitive retention confirmation, active-gate references protect reconciliation proof, and generation-fenced migration cannot proceed through a replacement global or managed-parent namespace object. NEW-H10-01 is preserved separately. |
-| B-07 exact review identity | External PASS for `d7e96b0`; current-candidate proof pending | The independent freeze reviewer bound all 16 bytes to the exact `d7e96b0` Git tree and reproduced its manifest. This ledger now names `65e6021`, which requires its own independent checkout and manifest verification. |
+| B-07 exact review identity | External PASS for `65e6021` | The independent freeze reviewer bound all 16 bytes to the exact `65e6021` Git tree and reproduced manifest SHA-256 `66925583362be22257dd7357072d176cd3f1ae3d4f99874a53f6689b7cf535e0`. This PASS is revision-specific. |
 | E-01 semantic-read closure | External PASS after prior H-01/H-02 reopen | Owners emit unconsumed path demands first; the engine reserves/captures before cold continuation or prerequisite-keyed cache replay, and only complete owner outcomes may seal exact consulted inputs. |
 | E-02 command-wide mutation idempotency | External PASS | Every gate/retention lifecycle mutation requires `OperationId`; read-only plan/show/page commands do not. |
 | E-03 retention deletion crash state | External PASS after prior H-05/H-06 reopen | Canonical deletion states remain queryable, terminal transition capsules stay protected for active gates, and migration has transaction-scoped handles, generation fencing, and a crash table. |
@@ -78,8 +80,8 @@ The first report verified the exact first amended revision. Several later report
 | H-07 capabilities continuation surface | External PASS | ARCH-002 and SLICE-001 expose `lumin capabilities [--run <run-id>] [--cursor <cursor>]` with binary/run scope corpus traversal. |
 | H-08 concurrent latest publication | External document PASS; measured proof pending | Store-owned `CatalogPublicationGuard` serializes latest read, monotonic field-wise merge, replace, flush, repair, and latest-sensitive retention confirmation; `(attempt_sequence, envelope_phase)` permits same-sequence Running-to-Terminal advance without regression. |
 | H-09 path encoding and logical/physical deduplication | External PASS | The exact `repo-path-semantics.v1` artifact owns `RepoPathDto` and `RepositoryRootDto`, including full root physical identity, canonical Base64, readable-projection disagreement rejection, and DTO vectors. Logical/physical/payload identities and alias-write closure remain separate. |
-| H-10 reserved `.lumin` and stable lock identity | External REOPEN under NEW-H10-01 -> accept finding; independent PASS pending | The current candidate adds the exact `Attempts | Runs | Trash | Cache` `ManagedStateParentBinding` set. Marker/store bind each directory identity, immutable one-link anchor identity, and parent nonce; every anchor cross-binds the global namespace and its own tuple, and all state mutations revalidate the complete set. |
-| H-11 exhaustive resolver-config handling | External REOPEN under NEW-H11-01 -> accept finding; independent PASS pending | The resolver artifact now owns `extends-specifier-selection.v1`: rooted/relative/exact-workspace dispatch, exact-first plus one `.json` fallback, no package-subpath/external probe, exact package identity, cycle/merge timing, staged demands, and golden hard-stop/unsupported outcomes. |
+| H-10 reserved `.lumin` and stable lock identity | External PASS; execution fault proof pending | The exact `Attempts | Runs | Trash | Cache` `ManagedStateParentBinding` set is marker/store-bound. Every immutable anchor cross-binds directory/anchor identities and parent nonce to the global namespace, and state mutations revalidate the complete set. The prior parent-swap counterexample is closed at document level. |
+| H-11 exhaustive resolver-config handling | External PASS; public resolver corpus pending | The resolver artifact owns `extends-specifier-selection.v1`: rooted/relative/exact-workspace dispatch, exact-first plus one `.json` fallback, no package-subpath/external probe, exact package identity, cycle/merge timing, staged demands, and 18 golden outcomes. The prior selector ambiguity is closed at document level. |
 | H-12 undefined scan lock | External PASS | Architecture v1 defines no scan lock. Snapshot/freshness validation, provisional reservations, durable path leases, and lifecycle transactions own safety; scheduler coordination is non-authoritative and architecture checks reject a `ScanLock` type. |
 | R3-H11-01 profile-specific package conditions | External PASS | Condition sets remain pinned; field applicability runs before shape validation so legacy `node` does not emit limitations for disabled `exports`/`imports`, while enabled unsupported features do. |
 | R3-H11-02 pnpm workspace registry and Cargo owner | External PASS | Inventory retains sole workspace ownership with no reverse Cargo edge and recognizes both pinned valid `packageConfigs` forms, booleans, and collection values before emitting `PnpmDependencySemanticsUnsupported`. |
@@ -93,10 +95,10 @@ The first report verified the exact first amended revision. Several later report
 | R4-H11-03 disabled-feature applicability | External PASS | Applicability precedes shape validation; `NotConsultedForProfile` retains raw input identity without a limitation or probe, while enabled unsupported fields fail closed. |
 | R4-H11-04 package-target URL/percent meaning | External PASS | The artifact records a deliberate stricter path-only divergence and rejects percent, query, fragment, backslash, invalid components, and containment failure before probing. |
 | R4-H11-05 valid pnpm `packageConfigs` forms | External PASS | Restricted YAML values include booleans and block/flow collections; exact mapping and array examples both reach `PnpmDependencySemanticsUnsupported`. |
-| NEW-H10-01 managed state-parent replacement binding | External REOPEN -> accept finding; independent PASS pending | The exact four managed parents now have durable directory/anchor/nonce bindings in marker/store, immutable cross-bound anchors, complete pre/post-mutation verification, initialization recovery, and public child-process swap corpus. Cache payload descendants remain disposable without making the cache parent replaceable. |
-| NEW-H11-01 `tsconfig.extends` specifier selection | External REOPEN -> accept finding; independent PASS pending | The exact resolver artifact now fixes slash normalization, malformed/rooted/relative/package dispatch, exact candidate then one `.json` fallback, exact workspace identity only, package-subpath/external no-probe outcomes, cycle/merge order, input identity, and golden vectors. |
+| NEW-H10-01 managed state-parent replacement binding | External PASS; execution fault proof pending | The exact four managed parents have durable directory/anchor/nonce bindings in marker/store, immutable cross-bound anchors, complete pre/post-mutation verification, initialization recovery, and a public child-process swap corpus. Cache payload descendants remain disposable without making the cache parent replaceable. |
+| NEW-H11-01 `tsconfig.extends` specifier selection | External PASS; public resolver corpus pending | The exact resolver artifact fixes slash normalization, malformed/rooted/relative/package dispatch, exact candidate then one `.json` fallback, exact workspace identity only, package-subpath/external no-probe outcomes, cycle/merge order, input identity, and golden vectors. |
 
-`Accept finding` records the architecture-authoring decision. It is not an independent `PASS`.
+Historical `Accept finding` entries record architecture-authoring decisions and were never treated as independent PASS evidence. The current PASS decisions above come from the exact-tree external report for `65e6021`.
 
 ## Author-Side Preflight
 
@@ -126,7 +128,7 @@ The architecture-authoring session re-read the current candidate before packagin
 | Package identity closure | `package-name.v1` is one strict exact grammar; missing names create no bare identity, while empty/invalid and duplicate workspace names yield `PackageIdentityUnsupported` without a first/last/nearest winner. |
 | Scan coordination ownership | No `ScanLock` exists. Repository safety remains with snapshots/freshness, reservations, durable leases, and lifecycle transactions; scheduler coordination cannot authorize evidence. |
 
-This author-side preflight found no remaining known NEW-H10-01/NEW-H11-01 contradiction after those repairs. The final docs/artifact check passed `175/175`; duplicate-key parsing, the 122-option digest, disjoint 7/12 owner partition, exact selector vectors, local links, LF/BOM/whitespace, and `git diff --check` passed. The seven pinned upstream byte checks also reproduced. These are author checks, not freeze approval: `65e6021` still requires independent checkout review and every measured gate below.
+This author-side preflight found no remaining known NEW-H10-01/NEW-H11-01 contradiction after those repairs. The final docs/artifact check passed `175/175`; duplicate-key parsing, the 122-option digest, disjoint 7/12 owner partition, exact selector vectors, local links, LF/BOM/whitespace, and `git diff --check` passed. The seven pinned upstream byte checks also reproduced. These author checks remain non-evidence. The later exact-tree external report independently passed the document/design review; every execution and measurement gate below remains outstanding.
 
 ## High-Priority Follow-Up Ledger
 
@@ -153,9 +155,9 @@ This author-side preflight found no remaining known NEW-H10-01/NEW-H11-01 contra
 | Extends specifier selection | `resolver-config-semantics.v1` owns malformed/rooted/relative/exact-workspace dispatch, exact-first/one-`.json` candidate order, package-subpath/external no-probe outcomes, chain timing, child overrides, and every golden vector. |
 | Tombstone lifetime | Architecture v1 retains minimal deletion tombstones for repository lifetime and measures their count/bytes; no hidden second-order pruning exists. |
 
-## Exact Independent Re-verification Packet
+## Exact Independent Re-verification Result and Reproduction Packet
 
-The independent reviewer must inspect Git commit `65e60216891bb3d826a4778f84cb8aaa377abe92`, not this later ledger commit and not a loose export. The 16-file candidate manifest is sorted by repository-relative path using ordinal ordering; each line is `sha256`, two spaces, path, LF. Its SHA-256 is:
+The accepted independent reviewer inspected Git commit `65e60216891bb3d826a4778f84cb8aaa377abe92`, not this later ledger commit or a loose export, and passed all 16 Git-object bindings. Any reproduction must use that exact revision. The candidate manifest is sorted by repository-relative path using ordinal ordering; each line is `sha256`, two spaces, path, LF. Its SHA-256 is:
 
 ```text
 66925583362be22257dd7357072d176cd3f1ae3d4f99874a53f6689b7cf535e0
@@ -180,7 +182,7 @@ ee686f81164ff40b281483afaae591793964cc576afaca0ce7b5b51a6798b4a6  specs/repo-pat
 2456a9b89bb8f24a76b63d674cd62f0dcb64038ecada488a7d523af1476a1f28  문서(한글)/SDD.ko.md
 ```
 
-The reviewer must report `PASS`, `REOPEN`, or a new finding for H-01 through H-12, every R3 finding, R4-H09-01, R4-H11-01 through R4-H11-05, NEW-H10-01, NEW-H11-01, their relevant B/G/E/C predecessors, the packaged-skill and process-reopen proofs, and B-07 exact revision binding. It must also check that:
+Any repeat reviewer must report `PASS`, `REOPEN`, or a new finding for H-01 through H-12, every R3 finding, R4-H09-01, R4-H11-01 through R4-H11-05, NEW-H10-01, NEW-H11-01, their relevant B/G/E/C predecessors, the packaged-skill and process-reopen proofs, and B-07 exact revision binding. It must also check that:
 
 - one implementable Cargo edge exists for every gate signal/effect owner, including compiled-profile unavailability, owner diagnostics, confidence/grounding ranks, and delta dimensions;
 - every new semantic input is demanded without consumption, reserved before capture, and supplied through an owned continuation or prerequisite-keyed cache step;
@@ -217,15 +219,17 @@ The reviewer must report `PASS`, `REOPEN`, or a new finding for H-01 through H-1
 - default output, retention exclusions, skill probes, and process-reopen proof match the acceptance tables;
 - both canonical Korean files, all three exact machine artifacts, and every other manifest entry are read from the exact Git tree rather than omitted from a loose upload.
 
-The resulting report must name the exact commit and manifest hash, state reviewer independence, preserve reopened/new IDs and accepted risks, and publish its own SHA-256. Document review cannot pass the measured backend, OXC, package, or performance gates below.
+The accepted report names the exact commit and manifest hash, states reviewer independence, preserves finding IDs and accepted risks, and publishes SHA-256 `f7f25de96436862e6650195ec9248a85585ad03a9feb588c4cddfca4c2effbeb`. Its document/design PASS cannot pass the measured backend, OXC, package, public-behavior, provenance, or performance gates below.
 
 ## Remaining Freeze Gates
 
-1. Independently re-verify exact commit `65e60216891bb3d826a4778f84cb8aaa377abe92` using the packet above, including both canonical Korean sources and all three exact machine artifacts from that Git tree.
-2. Run and record the store correctness/measurement comparison, including concurrent latest publication/retention, reserved-state initialization, lifecycle-lock/state-directory/managed-parent replacement, every lifecycle-operation recovery, tombstone/trash retention, and generation-fenced migration crash point.
-3. Run and record OXC memory/stack feasibility.
-4. Run and record Windows/Linux packaging feasibility, including raw/native path round trips and both packaged skill adapters.
-5. Approve numeric Phase 1 budgets from named probe evidence.
-6. Obtain the separate independent design review required by repository policy.
+The exact-tree independent document/design review requirement is passed by the report identified above. The remaining blockers are execution or measurement evidence only:
+
+1. Run and record the `redb` versus bundled SQLite store correctness, contention, corruption-visibility, crash, recovery, build, binary-size, latency, memory, and store-size comparison, including namespace bootstrap, publication/latest, retention, migration, lifecycle operations, stale-generation writers, and lifecycle-lock/state-directory/four-parent/anchor replacement faults.
+2. Run and record OXC allocator lifetime, worker-stack, peak-RSS, and jobs-scaling feasibility on the named corpus.
+3. Run and record Windows NTFS, WSL ext4, and Linux ext4/musl package feasibility, including Unix raw-byte and Windows WTF-16/UNC/volume-root round trips plus both packaged skill adapters using the same public binary/DTO contract.
+4. Run the public-behavior evidence for process-exit gate reopen, operation-result recovery, every collection's pagination, cold/warm equivalence, and `jobs=1` versus default-jobs deterministic semantic output.
+5. Reproduce every pinned upstream source/tarball/artifact SHA-256 in a clean `architecture-check`/probe environment.
+6. Approve numeric Phase 1 time, peak-RSS, and binary-size budgets from the named probe evidence, keeping the `/mnt/<drive>` diagnostic separate as specified.
 
 Every gate above must be `passed` or an explicitly reviewed accepted risk with rationale, owner, scope, and expiry. There are currently no accepted risks. Architecture v1 remains draft and Phase 1 implementation remains blocked.
