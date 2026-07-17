@@ -225,6 +225,31 @@ The accepted report names the exact commit and manifest hash, states reviewer in
 
 The exact-tree independent document/design review requirement is passed by the report identified above. The remaining blockers are execution or measurement evidence only:
 
+### Partial execution evidence: Windows x64 store probe
+
+The standalone packet at
+`reviews/probes/phase0-store-backend-windows-x64-2026-07-17/` is accepted as **partial
+execution evidence**, not as backend selection or a complete gate PASS. It is bound to
+candidate `65e60216891bb3d826a4778f84cb8aaa377abe92`; its evidence manifest SHA-256 is
+`b370b648e2d2a1d5840e9e1ed4ec7bf2646fc5421d1765924f168df6ac82d4a0` and its summary
+SHA-256 is `35de7a5f8cebbd5a62f070565307d7ef51d2cba8abba2c57484a5b27fa77dbf0`.
+The complete 34-entry source/report/raw-evidence packet is indexed by
+`PACKET-SHA256SUMS`, whose SHA-256 is
+`b6f22604adca624bcfd4d7183159caf25b70163855a8fcff3759f7b4573f0b34`.
+
+On Windows x64, both exact `redb 4.1.0` and bundled SQLite through exact
+`rusqlite 0.39.0` passed 32 conflicting and 32 disjoint two-process admission rounds,
+death before/after commit, and 42 backend/fault cases each. Those cases include
+indexed paging, visible corruption, publication/latest, both publication-retention
+race orders, retention, migration/stale generation, and state/lock/four-parent/anchor
+replacement, content, and extra-link hard stops. The packet also preserves structured
+build, binary, dependency, latency, working-set, and store-size measurements.
+
+This result does not cover Linux/musl, every required filesystem, namespace-bootstrap
+death recovery, product operation delivery/idempotency, public-binary behavior, or
+approved budgets. It therefore narrows remaining gate 1 but does not close it, and it
+does not authorize a backend choice.
+
 1. Run and record the `redb` versus bundled SQLite store correctness, contention, corruption-visibility, crash, recovery, build, binary-size, latency, memory, and store-size comparison, including namespace bootstrap, publication/latest, retention, migration, lifecycle operations, stale-generation writers, and lifecycle-lock/state-directory/four-parent/anchor replacement faults.
 2. Run and record OXC allocator lifetime, worker-stack, peak-RSS, and jobs-scaling feasibility on the named corpus.
 3. Run and record Windows NTFS, WSL ext4, and Linux ext4/musl package feasibility, including Unix raw-byte and Windows WTF-16/UNC/volume-root round trips plus both packaged skill adapters using the same public binary/DTO contract.

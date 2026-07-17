@@ -1,0 +1,131 @@
+{
+  "probe_id": "lumin-store-backend-measurement-v1",
+  "architecture_commit": "65e60216891bb3d826a4778f84cb8aaa377abe92",
+  "architecture_manifest_sha256": "66925583362be22257dd7357072d176cd3f1ae3d4f99874a53f6689b7cf535e0",
+  "started_unix_millis": 1784268618054,
+  "finished_unix_millis": 1784268620294,
+  "host_os": "windows",
+  "host_arch": "x86_64",
+  "backend": "redb",
+  "executable": "C:\\Users\\endof\\Downloads\\lumin-perf-lab\\phase0-store-backend-probe\\target-measure-redb\\release\\lumin-phase0-store-probe.exe",
+  "executable_bytes": 1895936,
+  "command": [
+    "C:\\Users\\endof\\Downloads\\lumin-perf-lab\\phase0-store-backend-probe\\target-measure-redb\\release\\lumin-phase0-store-probe.exe",
+    "benchmark",
+    "--backend",
+    "redb",
+    "--records",
+    "10000",
+    "--record-bytes",
+    "256",
+    "--durable-transactions",
+    "200",
+    "--output",
+    "evidence\\benchmark-redb-windows-x64.json"
+  ],
+  "records": 10000,
+  "record_bytes": 256,
+  "durable_transactions": 200,
+  "initialize_micros": 14920,
+  "bulk_insert_micros": 79226,
+  "first_reopen_query_micros": 8002,
+  "warm_reopen_query": {
+    "samples": 100,
+    "min_micros": 4344,
+    "p50_micros": 5534,
+    "p95_micros": 8152,
+    "p99_micros": 8793,
+    "max_micros": 11717,
+    "mean_micros": 5861
+  },
+  "durable_admission": {
+    "samples": 200,
+    "min_micros": 4248,
+    "p50_micros": 6993,
+    "p95_micros": 10784,
+    "p99_micros": 15914,
+    "max_micros": 22821,
+    "mean_micros": 7510
+  },
+  "peak_working_set_bytes": 15343616,
+  "store_bytes": 8425472,
+  "source_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "3c604eaf4ccb0f1dd9f342cf8fc0871a7f0787757212b7e0fe961d3d248174d4"
+    },
+    {
+      "path": "Cargo.lock",
+      "sha256": "204f73d487705f1d25219e87a16a9767b2ff35ba5f605b1261a9e49c23be48aa"
+    },
+    {
+      "path": "rust-toolchain.toml",
+      "sha256": "0d7b2f6589d3a2d9ea22b782a107ddafc0da08bdca08e3524b0cf4db12c12da9"
+    },
+    {
+      "path": "rustfmt.toml",
+      "sha256": "9699c08443f72fc9220697806f0692708e8e99b1b9eca02836d1ed92cde2b128"
+    },
+    {
+      "path": "README.md",
+      "sha256": "a327599fa9d1fa53fc2f6247cda000eba6964897bfd5c3f42572292537416dbb"
+    },
+    {
+      "path": "PROBE-CONTRACT.md",
+      "sha256": "26c2d980020ab959ee2d8064422582f526b3000026216093476367931ee6a575"
+    },
+    {
+      "path": "scripts/collect-build-metrics.ps1",
+      "sha256": "aae9f0ab63202f41bc554dc77b63051585127deffe0c0ee1e61dc9a4b505c025"
+    },
+    {
+      "path": "scripts/package-evidence.ps1",
+      "sha256": "69f476fd88a2cb4733eea59f6d22a1d573281694a4c51f86991acad47a73b44b"
+    },
+    {
+      "path": "src/main.rs",
+      "sha256": "34d7edce5199cb4ad1f3a09cca3987337d920cc093d1a9d1f68970b952ee82cb"
+    },
+    {
+      "path": "src/lifecycle.rs",
+      "sha256": "f4b7d71008fe24103e93769d7f5d7c296519add242cfe05985c12dbb67789aa5"
+    },
+    {
+      "path": "src/namespace.rs",
+      "sha256": "4e7f1958aa21dc2650047991e6fd5cce5aceab79668a5b9dc2499d9cb03b23a4"
+    },
+    {
+      "path": "src/model.rs",
+      "sha256": "ea47ab428bec5415186feee063c75a5041b91efd994359b0f4e1930f037003dd"
+    },
+    {
+      "path": "src/runner.rs",
+      "sha256": "4fc39eaa4f1786505d17f1b2c7506aab8f8d5447929f7f2f442a7f0bee6de500"
+    },
+    {
+      "path": "src/util.rs",
+      "sha256": "ed035ea3810f9beadb791c3d602a92a2690334c153590f68388905093c989a52"
+    },
+    {
+      "path": "src/backend/mod.rs",
+      "sha256": "70000767b86e5a7dc344f5b00f05183d0fb9766fbfcadbf4f8f918a3ab6ea0e6"
+    },
+    {
+      "path": "src/backend_contract.rs",
+      "sha256": "1b7920e00c1f35c40db5eed2e214ced0eb05652ff45c354cdc1c513f6c2fb0dd"
+    },
+    {
+      "path": "src/benchmark.rs",
+      "sha256": "d2588c8ecebe72a2b2273e8460a9ae92cbb38b7862d0fd8d45b11579c8f3eb4f"
+    },
+    {
+      "path": "src/backend/redb_backend.rs",
+      "sha256": "46da5069c58b118d38a6a1f0a69eb45e8aba0d917818459915432acdac620733"
+    },
+    {
+      "path": "src/backend/sqlite_backend.rs",
+      "sha256": "cf906537cb97b437af890178b1034f2eef97f070636effd826566a3331efb34a"
+    }
+  ],
+  "status": "PASS"
+}

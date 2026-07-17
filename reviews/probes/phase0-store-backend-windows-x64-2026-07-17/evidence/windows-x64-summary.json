@@ -1,0 +1,98 @@
+{
+    "probe_id":  "lumin-store-windows-x64-evidence-summary-v1",
+    "scope":  "windows-x64-partial-phase0-evidence",
+    "status":  "PASS",
+    "architecture_commit":  "65e60216891bb3d826a4778f84cb8aaa377abe92",
+    "architecture_manifest_sha256":  "66925583362be22257dd7357072d176cd3f1ae3d4f99874a53f6689b7cf535e0",
+    "backend_selected":  false,
+    "correctness":  {
+                        "admission_rounds_per_backend":  32,
+                        "admission_backends":  [
+                                                   "redb",
+                                                   "sqlite"
+                                               ],
+                        "fault_cases_per_backend":  42,
+                        "total_fault_cases":  84
+                    },
+    "measurements":  [
+                         {
+                             "backend":  "redb",
+                             "initialize_micros":  14920,
+                             "bulk_insert_micros":  79226,
+                             "first_reopen_query_micros":  8002,
+                             "warm_reopen_query":  {
+                                                       "samples":  100,
+                                                       "min_micros":  4344,
+                                                       "p50_micros":  5534,
+                                                       "p95_micros":  8152,
+                                                       "p99_micros":  8793,
+                                                       "max_micros":  11717,
+                                                       "mean_micros":  5861
+                                                   },
+                             "durable_admission":  {
+                                                       "samples":  200,
+                                                       "min_micros":  4248,
+                                                       "p50_micros":  6993,
+                                                       "p95_micros":  10784,
+                                                       "p99_micros":  15914,
+                                                       "max_micros":  22821,
+                                                       "mean_micros":  7510
+                                                   },
+                             "peak_working_set_bytes":  15343616,
+                             "store_bytes":  8425472,
+                             "binary_bytes":  1895936,
+                             "clean_build_millis":  102067,
+                             "incremental_build_millis":  1330,
+                             "transitive_package_count":  28,
+                             "rust_unsafe_keyword_line_count":  13545,
+                             "native_source_file_count":  0,
+                             "native_source_bytes":  0
+                         },
+                         {
+                             "backend":  "sqlite",
+                             "initialize_micros":  49476,
+                             "bulk_insert_micros":  142547,
+                             "first_reopen_query_micros":  20282,
+                             "warm_reopen_query":  {
+                                                       "samples":  100,
+                                                       "min_micros":  11799,
+                                                       "p50_micros":  16336,
+                                                       "p95_micros":  28066,
+                                                       "p99_micros":  32521,
+                                                       "max_micros":  42687,
+                                                       "mean_micros":  17667
+                                                   },
+                             "durable_admission":  {
+                                                       "samples":  200,
+                                                       "min_micros":  13208,
+                                                       "p50_micros":  19594,
+                                                       "p95_micros":  27069,
+                                                       "p99_micros":  47166,
+                                                       "max_micros":  116550,
+                                                       "mean_micros":  20713
+                                                   },
+                             "peak_working_set_bytes":  11816960,
+                             "store_bytes":  3182592,
+                             "binary_bytes":  2808320,
+                             "clean_build_millis":  121813,
+                             "incremental_build_millis":  702,
+                             "transitive_package_count":  41,
+                             "rust_unsafe_keyword_line_count":  18046,
+                             "native_source_file_count":  10,
+                             "native_source_bytes":  20340001
+                         }
+                     ],
+    "interpretation":  [
+                           "Correctness passed for this Windows x64 harness and case set.",
+                           "The first reopen query is not an operating-system cold-cache measurement.",
+                           "The unsafe keyword count is a comparison surface, not a safety audit.",
+                           "No backend is selected until all blocking platform and correctness evidence passes."
+                       ],
+    "pending":  [
+                    "Linux ext4 and Linux musl store/fault/package evidence",
+                    "required filesystem durable-flush and lock semantics",
+                    "native path/root and packaged skill evidence",
+                    "OXC memory and worker-stack evidence",
+                    "approved cross-platform numeric budgets"
+                ]
+}

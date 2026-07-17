@@ -1,0 +1,5 @@
+# Raw probe bytes are hash-addressed evidence; do not normalize them on Git I/O.
+evidence/** -text -diff
+source/** -text diff
+source/rust-toolchain.toml -text -diff
+source/rustfmt.toml -text -diff

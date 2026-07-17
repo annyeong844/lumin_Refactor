@@ -1,0 +1,1258 @@
+{
+  "probe_id": "lumin-store-publication-retention-migration-fault-v1",
+  "architecture_commit": "65e60216891bb3d826a4778f84cb8aaa377abe92",
+  "architecture_manifest_sha256": "66925583362be22257dd7357072d176cd3f1ae3d4f99874a53f6689b7cf535e0",
+  "started_unix_millis": 1784268591218,
+  "finished_unix_millis": 1784268604855,
+  "host_os": "windows",
+  "host_arch": "x86_64",
+  "executable": "C:\\Users\\endof\\Downloads\\lumin-perf-lab\\phase0-store-backend-probe\\target\\release\\lumin-phase0-store-probe.exe",
+  "command": [
+    "C:\\Users\\endof\\Downloads\\lumin-perf-lab\\phase0-store-backend-probe\\target\\release\\lumin-phase0-store-probe.exe",
+    "fault-matrix",
+    "--backend",
+    "all",
+    "--watchdog-ms",
+    "30000",
+    "--output",
+    "evidence\\fault-matrix-windows-x64.json"
+  ],
+  "watchdog_millis": 30000,
+  "source_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "3c604eaf4ccb0f1dd9f342cf8fc0871a7f0787757212b7e0fe961d3d248174d4"
+    },
+    {
+      "path": "Cargo.lock",
+      "sha256": "204f73d487705f1d25219e87a16a9767b2ff35ba5f605b1261a9e49c23be48aa"
+    },
+    {
+      "path": "rust-toolchain.toml",
+      "sha256": "0d7b2f6589d3a2d9ea22b782a107ddafc0da08bdca08e3524b0cf4db12c12da9"
+    },
+    {
+      "path": "rustfmt.toml",
+      "sha256": "9699c08443f72fc9220697806f0692708e8e99b1b9eca02836d1ed92cde2b128"
+    },
+    {
+      "path": "README.md",
+      "sha256": "a327599fa9d1fa53fc2f6247cda000eba6964897bfd5c3f42572292537416dbb"
+    },
+    {
+      "path": "PROBE-CONTRACT.md",
+      "sha256": "26c2d980020ab959ee2d8064422582f526b3000026216093476367931ee6a575"
+    },
+    {
+      "path": "scripts/collect-build-metrics.ps1",
+      "sha256": "aae9f0ab63202f41bc554dc77b63051585127deffe0c0ee1e61dc9a4b505c025"
+    },
+    {
+      "path": "scripts/package-evidence.ps1",
+      "sha256": "69f476fd88a2cb4733eea59f6d22a1d573281694a4c51f86991acad47a73b44b"
+    },
+    {
+      "path": "src/main.rs",
+      "sha256": "34d7edce5199cb4ad1f3a09cca3987337d920cc093d1a9d1f68970b952ee82cb"
+    },
+    {
+      "path": "src/lifecycle.rs",
+      "sha256": "f4b7d71008fe24103e93769d7f5d7c296519add242cfe05985c12dbb67789aa5"
+    },
+    {
+      "path": "src/namespace.rs",
+      "sha256": "4e7f1958aa21dc2650047991e6fd5cce5aceab79668a5b9dc2499d9cb03b23a4"
+    },
+    {
+      "path": "src/model.rs",
+      "sha256": "ea47ab428bec5415186feee063c75a5041b91efd994359b0f4e1930f037003dd"
+    },
+    {
+      "path": "src/runner.rs",
+      "sha256": "4fc39eaa4f1786505d17f1b2c7506aab8f8d5447929f7f2f442a7f0bee6de500"
+    },
+    {
+      "path": "src/util.rs",
+      "sha256": "ed035ea3810f9beadb791c3d602a92a2690334c153590f68388905093c989a52"
+    },
+    {
+      "path": "src/backend/mod.rs",
+      "sha256": "70000767b86e5a7dc344f5b00f05183d0fb9766fbfcadbf4f8f918a3ab6ea0e6"
+    },
+    {
+      "path": "src/backend_contract.rs",
+      "sha256": "1b7920e00c1f35c40db5eed2e214ced0eb05652ff45c354cdc1c513f6c2fb0dd"
+    },
+    {
+      "path": "src/benchmark.rs",
+      "sha256": "d2588c8ecebe72a2b2273e8460a9ae92cbb38b7862d0fd8d45b11579c8f3eb4f"
+    },
+    {
+      "path": "src/backend/redb_backend.rs",
+      "sha256": "46da5069c58b118d38a6a1f0a69eb45e8aba0d917818459915432acdac620733"
+    },
+    {
+      "path": "src/backend/sqlite_backend.rs",
+      "sha256": "cf906537cb97b437af890178b1034f2eef97f070636effd826566a3331efb34a"
+    }
+  ],
+  "backends": [
+    {
+      "backend": "redb",
+      "status": "PASS",
+      "cases": [
+        {
+          "domain": "backend-contract",
+          "crash_point": "indexed-query",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 208638,
+          "observation": {
+            "first": "record-00000000",
+            "last": "record-00000999",
+            "page_size": 37,
+            "pages": 28,
+            "records": 1000
+          }
+        },
+        {
+          "domain": "backend-contract",
+          "crash_point": "corruption-visible",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 29740,
+          "observation": {
+            "original_bytes": 1056768,
+            "overwritten_header_bytes": 32,
+            "visible_error": "open redb database C:\\Users\\endof\\Downloads\\lumin-perf-lab\\phase0-store-backend-probe\\work\\fault-redb\\backend-contract\\corruption-visible\\lifecycle.redb: I/O error: invalid data"
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "before-attempt-catalog-allocation",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 61139,
+          "observation": {
+            "attempt_phase": null,
+            "latest_attempt_phase": null,
+            "latest_completed": null,
+            "next_sequence": 1,
+            "orphan_run": false,
+            "run_directory_exists": false
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-catalog-allocation",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 73724,
+          "observation": {
+            "attempt_phase": null,
+            "latest_attempt_phase": null,
+            "latest_completed": null,
+            "next_sequence": 2,
+            "orphan_run": false,
+            "run_directory_exists": false
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-running-envelope",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 118183,
+          "observation": {
+            "attempt_phase": "interrupted",
+            "latest_attempt_phase": "interrupted",
+            "latest_completed": null,
+            "next_sequence": 2,
+            "orphan_run": false,
+            "run_directory_exists": false
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-latest-running",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 137345,
+          "observation": {
+            "attempt_phase": "interrupted",
+            "latest_attempt_phase": "interrupted",
+            "latest_completed": null,
+            "next_sequence": 2,
+            "orphan_run": false,
+            "run_directory_exists": false
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-run-rename",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 163703,
+          "observation": {
+            "attempt_phase": "interrupted",
+            "latest_attempt_phase": "interrupted",
+            "latest_completed": null,
+            "next_sequence": 2,
+            "orphan_run": true,
+            "run_directory_exists": true
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-terminal-attempt",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 159990,
+          "observation": {
+            "attempt_phase": "complete",
+            "latest_attempt_phase": "complete",
+            "latest_completed": 1,
+            "next_sequence": 2,
+            "orphan_run": false,
+            "run_directory_exists": true
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-latest-temp",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 180462,
+          "observation": {
+            "attempt_phase": "complete",
+            "latest_attempt_phase": "complete",
+            "latest_completed": 1,
+            "next_sequence": 2,
+            "orphan_run": false,
+            "run_directory_exists": true
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-latest-replace",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 196398,
+          "observation": {
+            "attempt_phase": "complete",
+            "latest_attempt_phase": "complete",
+            "latest_completed": 1,
+            "next_sequence": 2,
+            "orphan_run": false,
+            "run_directory_exists": true
+          }
+        },
+        {
+          "domain": "publication-concurrency",
+          "crash_point": "reverse-sequence-independent-fields",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 124160,
+          "observation": {
+            "latest_attempt": {
+              "phase": "interrupted",
+              "run_id": null,
+              "sequence": 11
+            },
+            "latest_completed": 10
+          }
+        },
+        {
+          "domain": "publication-concurrency",
+          "crash_point": "same-sequence-terminal-beats-running",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 118833,
+          "observation": {
+            "latest_attempt": {
+              "phase": "complete",
+              "run_id": "run-10",
+              "sequence": 10
+            },
+            "latest_completed": 10
+          }
+        },
+        {
+          "domain": "publication-retention-race",
+          "crash_point": "publication-first-makes-retention-stale",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 136665,
+          "observation": {
+            "latest": {
+              "latest_attempt": {
+                "phase": "complete",
+                "run_id": "run-10",
+                "sequence": 10
+              },
+              "latest_completed": 10
+            },
+            "loser": {
+              "outcome": "stale_latest_target",
+              "role": "retention"
+            },
+            "record_state": "active",
+            "retention_plan": "prepared",
+            "winner": {
+              "outcome": "published",
+              "role": "publication"
+            }
+          }
+        },
+        {
+          "domain": "publication-retention-race",
+          "crash_point": "retention-first-blocks-publication",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 138882,
+          "observation": {
+            "latest": {
+              "latest_attempt": null,
+              "latest_completed": null
+            },
+            "loser": {
+              "outcome": "retention_blocked",
+              "role": "publication"
+            },
+            "record_state": "pruning",
+            "retention_plan": "pruning",
+            "winner": {
+              "outcome": "entered_pruning",
+              "role": "retention"
+            }
+          }
+        },
+        {
+          "domain": "retention",
+          "crash_point": "before-prepared-plan",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 79793,
+          "observation": {
+            "canonical_payload_exists": true,
+            "plan_state": null,
+            "record_state": "active",
+            "trash_payload_exists": false
+          }
+        },
+        {
+          "domain": "retention",
+          "crash_point": "after-prepared-plan",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 83523,
+          "observation": {
+            "canonical_payload_exists": true,
+            "plan_state": "prepared",
+            "record_state": "active",
+            "trash_payload_exists": false
+          }
+        },
+        {
+          "domain": "retention",
+          "crash_point": "after-pruning-commit",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 109809,
+          "observation": {
+            "canonical_payload_exists": false,
+            "plan_state": "pruned",
+            "record_state": "pruned",
+            "trash_payload_exists": true
+          }
+        },
+        {
+          "domain": "retention",
+          "crash_point": "after-payload-move",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 118571,
+          "observation": {
+            "canonical_payload_exists": false,
+            "plan_state": "pruned",
+            "record_state": "pruned",
+            "trash_payload_exists": true
+          }
+        },
+        {
+          "domain": "retention",
+          "crash_point": "after-pruned-commit",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 120694,
+          "observation": {
+            "canonical_payload_exists": false,
+            "plan_state": "pruned",
+            "record_state": "pruned",
+            "trash_payload_exists": false
+          }
+        },
+        {
+          "domain": "retention",
+          "crash_point": "after-physical-reclamation",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 118975,
+          "observation": {
+            "canonical_payload_exists": false,
+            "plan_state": "pruned",
+            "record_state": "pruned",
+            "trash_payload_exists": false
+          }
+        },
+        {
+          "domain": "retention-integrity",
+          "crash_point": "both-canonical-and-trash",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 69519,
+          "observation": {
+            "diagnostic": "retention item has both-or-neither canonical/trash identity",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "retention-integrity",
+          "crash_point": "neither-canonical-nor-trash",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 57356,
+          "observation": {
+            "diagnostic": "retention item has both-or-neither canonical/trash identity",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "migration",
+          "crash_point": "before-migration-intent",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 52723,
+          "observation": {
+            "generation": 1,
+            "intent_exists": false,
+            "replacement_exists": false,
+            "stale_compare_exchange_rejected": null
+          }
+        },
+        {
+          "domain": "migration",
+          "crash_point": "after-migration-intent",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 132709,
+          "observation": {
+            "generation": 2,
+            "intent_exists": false,
+            "replacement_exists": false,
+            "stale_compare_exchange_rejected": null
+          }
+        },
+        {
+          "domain": "migration",
+          "crash_point": "after-validated-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 118114,
+          "observation": {
+            "generation": 2,
+            "intent_exists": false,
+            "replacement_exists": false,
+            "stale_compare_exchange_rejected": null
+          }
+        },
+        {
+          "domain": "migration",
+          "crash_point": "after-canonical-replace",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 120387,
+          "observation": {
+            "generation": 2,
+            "intent_exists": false,
+            "replacement_exists": false,
+            "stale_compare_exchange_rejected": null
+          }
+        },
+        {
+          "domain": "migration",
+          "crash_point": "after-intent-removal",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 109691,
+          "observation": {
+            "generation": 2,
+            "intent_exists": false,
+            "replacement_exists": false,
+            "stale_compare_exchange_rejected": null
+          }
+        },
+        {
+          "domain": "migration",
+          "crash_point": "stale-generation-writer",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 101942,
+          "observation": {
+            "generation": 2,
+            "intent_exists": false,
+            "replacement_exists": false,
+            "stale_compare_exchange_rejected": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "state-directory-copy-swap",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 142597,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "namespace physical binding mismatch",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "lifecycle-lock-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 123620,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "namespace physical binding mismatch",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "lifecycle-lock-content-mutation",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 119732,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "lifecycle lock header changed",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "lifecycle-lock-extra-link",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 111642,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "lifecycle lock has extra links",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "attempts-parent-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 133737,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "namespace physical binding mismatch",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "runs-parent-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 116764,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "namespace physical binding mismatch",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "trash-parent-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 123719,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "namespace physical binding mismatch",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "cache-parent-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 120778,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "namespace physical binding mismatch",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "attempts-anchor-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 135165,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "namespace physical binding mismatch",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "runs-anchor-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 138618,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "namespace physical binding mismatch",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "trash-anchor-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 139905,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "namespace physical binding mismatch",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "cache-anchor-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 137869,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "namespace physical binding mismatch",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "runs-anchor-content-mutation",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 122014,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "managed parent runs anchor header changed",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "runs-anchor-extra-link",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 107237,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "managed parent runs anchor has extra links",
+            "hard_stop": true
+          }
+        }
+      ]
+    },
+    {
+      "backend": "sqlite",
+      "status": "PASS",
+      "cases": [
+        {
+          "domain": "backend-contract",
+          "crash_point": "indexed-query",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 358519,
+          "observation": {
+            "first": "record-00000000",
+            "last": "record-00000999",
+            "page_size": 37,
+            "pages": 28,
+            "records": 1000
+          }
+        },
+        {
+          "domain": "backend-contract",
+          "crash_point": "corruption-visible",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 56670,
+          "observation": {
+            "original_bytes": 16384,
+            "overwritten_header_bytes": 32,
+            "visible_error": "file is not a database: Error code 26: file is not a database"
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "before-attempt-catalog-allocation",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 113518,
+          "observation": {
+            "attempt_phase": null,
+            "latest_attempt_phase": null,
+            "latest_completed": null,
+            "next_sequence": 1,
+            "orphan_run": false,
+            "run_directory_exists": false
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-catalog-allocation",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 120069,
+          "observation": {
+            "attempt_phase": null,
+            "latest_attempt_phase": null,
+            "latest_completed": null,
+            "next_sequence": 2,
+            "orphan_run": false,
+            "run_directory_exists": false
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-running-envelope",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 199997,
+          "observation": {
+            "attempt_phase": "interrupted",
+            "latest_attempt_phase": "interrupted",
+            "latest_completed": null,
+            "next_sequence": 2,
+            "orphan_run": false,
+            "run_directory_exists": false
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-latest-running",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 195216,
+          "observation": {
+            "attempt_phase": "interrupted",
+            "latest_attempt_phase": "interrupted",
+            "latest_completed": null,
+            "next_sequence": 2,
+            "orphan_run": false,
+            "run_directory_exists": false
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-run-rename",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 218738,
+          "observation": {
+            "attempt_phase": "interrupted",
+            "latest_attempt_phase": "interrupted",
+            "latest_completed": null,
+            "next_sequence": 2,
+            "orphan_run": true,
+            "run_directory_exists": true
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-terminal-attempt",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 217029,
+          "observation": {
+            "attempt_phase": "complete",
+            "latest_attempt_phase": "complete",
+            "latest_completed": 1,
+            "next_sequence": 2,
+            "orphan_run": false,
+            "run_directory_exists": true
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-latest-temp",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 241033,
+          "observation": {
+            "attempt_phase": "complete",
+            "latest_attempt_phase": "complete",
+            "latest_completed": 1,
+            "next_sequence": 2,
+            "orphan_run": false,
+            "run_directory_exists": true
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-latest-replace",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 240734,
+          "observation": {
+            "attempt_phase": "complete",
+            "latest_attempt_phase": "complete",
+            "latest_completed": 1,
+            "next_sequence": 2,
+            "orphan_run": false,
+            "run_directory_exists": true
+          }
+        },
+        {
+          "domain": "publication-concurrency",
+          "crash_point": "reverse-sequence-independent-fields",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 147495,
+          "observation": {
+            "latest_attempt": {
+              "phase": "interrupted",
+              "run_id": null,
+              "sequence": 11
+            },
+            "latest_completed": 10
+          }
+        },
+        {
+          "domain": "publication-concurrency",
+          "crash_point": "same-sequence-terminal-beats-running",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 142574,
+          "observation": {
+            "latest_attempt": {
+              "phase": "complete",
+              "run_id": "run-10",
+              "sequence": 10
+            },
+            "latest_completed": 10
+          }
+        },
+        {
+          "domain": "publication-retention-race",
+          "crash_point": "publication-first-makes-retention-stale",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 183592,
+          "observation": {
+            "latest": {
+              "latest_attempt": {
+                "phase": "complete",
+                "run_id": "run-10",
+                "sequence": 10
+              },
+              "latest_completed": 10
+            },
+            "loser": {
+              "outcome": "stale_latest_target",
+              "role": "retention"
+            },
+            "record_state": "active",
+            "retention_plan": "prepared",
+            "winner": {
+              "outcome": "published",
+              "role": "publication"
+            }
+          }
+        },
+        {
+          "domain": "publication-retention-race",
+          "crash_point": "retention-first-blocks-publication",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 197848,
+          "observation": {
+            "latest": {
+              "latest_attempt": null,
+              "latest_completed": null
+            },
+            "loser": {
+              "outcome": "retention_blocked",
+              "role": "publication"
+            },
+            "record_state": "pruning",
+            "retention_plan": "pruning",
+            "winner": {
+              "outcome": "entered_pruning",
+              "role": "retention"
+            }
+          }
+        },
+        {
+          "domain": "retention",
+          "crash_point": "before-prepared-plan",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 128247,
+          "observation": {
+            "canonical_payload_exists": true,
+            "plan_state": null,
+            "record_state": "active",
+            "trash_payload_exists": false
+          }
+        },
+        {
+          "domain": "retention",
+          "crash_point": "after-prepared-plan",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 187560,
+          "observation": {
+            "canonical_payload_exists": true,
+            "plan_state": "prepared",
+            "record_state": "active",
+            "trash_payload_exists": false
+          }
+        },
+        {
+          "domain": "retention",
+          "crash_point": "after-pruning-commit",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 212602,
+          "observation": {
+            "canonical_payload_exists": false,
+            "plan_state": "pruned",
+            "record_state": "pruned",
+            "trash_payload_exists": true
+          }
+        },
+        {
+          "domain": "retention",
+          "crash_point": "after-payload-move",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 236347,
+          "observation": {
+            "canonical_payload_exists": false,
+            "plan_state": "pruned",
+            "record_state": "pruned",
+            "trash_payload_exists": true
+          }
+        },
+        {
+          "domain": "retention",
+          "crash_point": "after-pruned-commit",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 220141,
+          "observation": {
+            "canonical_payload_exists": false,
+            "plan_state": "pruned",
+            "record_state": "pruned",
+            "trash_payload_exists": false
+          }
+        },
+        {
+          "domain": "retention",
+          "crash_point": "after-physical-reclamation",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 211981,
+          "observation": {
+            "canonical_payload_exists": false,
+            "plan_state": "pruned",
+            "record_state": "pruned",
+            "trash_payload_exists": false
+          }
+        },
+        {
+          "domain": "retention-integrity",
+          "crash_point": "both-canonical-and-trash",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 110055,
+          "observation": {
+            "diagnostic": "retention item has both-or-neither canonical/trash identity",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "retention-integrity",
+          "crash_point": "neither-canonical-nor-trash",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 151102,
+          "observation": {
+            "diagnostic": "retention item has both-or-neither canonical/trash identity",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "migration",
+          "crash_point": "before-migration-intent",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 83690,
+          "observation": {
+            "generation": 1,
+            "intent_exists": false,
+            "replacement_exists": false,
+            "stale_compare_exchange_rejected": null
+          }
+        },
+        {
+          "domain": "migration",
+          "crash_point": "after-migration-intent",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 241814,
+          "observation": {
+            "generation": 2,
+            "intent_exists": false,
+            "replacement_exists": false,
+            "stale_compare_exchange_rejected": null
+          }
+        },
+        {
+          "domain": "migration",
+          "crash_point": "after-validated-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 227031,
+          "observation": {
+            "generation": 2,
+            "intent_exists": false,
+            "replacement_exists": false,
+            "stale_compare_exchange_rejected": null
+          }
+        },
+        {
+          "domain": "migration",
+          "crash_point": "after-canonical-replace",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 219561,
+          "observation": {
+            "generation": 2,
+            "intent_exists": false,
+            "replacement_exists": false,
+            "stale_compare_exchange_rejected": null
+          }
+        },
+        {
+          "domain": "migration",
+          "crash_point": "after-intent-removal",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 204903,
+          "observation": {
+            "generation": 2,
+            "intent_exists": false,
+            "replacement_exists": false,
+            "stale_compare_exchange_rejected": null
+          }
+        },
+        {
+          "domain": "migration",
+          "crash_point": "stale-generation-writer",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 231421,
+          "observation": {
+            "generation": 2,
+            "intent_exists": false,
+            "replacement_exists": false,
+            "stale_compare_exchange_rejected": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "state-directory-copy-swap",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 204206,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "namespace physical binding mismatch",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "lifecycle-lock-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 169036,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "namespace physical binding mismatch",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "lifecycle-lock-content-mutation",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 149157,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "lifecycle lock header changed",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "lifecycle-lock-extra-link",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 153521,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "lifecycle lock has extra links",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "attempts-parent-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 157704,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "namespace physical binding mismatch",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "runs-parent-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 172305,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "namespace physical binding mismatch",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "trash-parent-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 225378,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "namespace physical binding mismatch",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "cache-parent-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 179871,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "namespace physical binding mismatch",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "attempts-anchor-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 158452,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "namespace physical binding mismatch",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "runs-anchor-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 162991,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "namespace physical binding mismatch",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "trash-anchor-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 179704,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "namespace physical binding mismatch",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "cache-anchor-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 152265,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "namespace physical binding mismatch",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "runs-anchor-content-mutation",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 157032,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "managed parent runs anchor header changed",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "runs-anchor-extra-link",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 170682,
+          "observation": {
+            "canonical_mutation_written": false,
+            "diagnostic": "managed parent runs anchor has extra links",
+            "hard_stop": true
+          }
+        }
+      ]
+    }
+  ],
+  "overall_status": "PASS"
+}

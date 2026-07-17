@@ -1,0 +1,72 @@
+{
+    "probe_id":  "lumin-store-build-surface-v1",
+    "architecture_commit":  "65e60216891bb3d826a4778f84cb8aaa377abe92",
+    "architecture_manifest_sha256":  "66925583362be22257dd7357072d176cd3f1ae3d4f99874a53f6689b7cf535e0",
+    "target":  "x86_64-pc-windows-msvc",
+    "host_os":  "Microsoft Windows NT 10.0.26200.0",
+    "rustc":  "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: x86_64-pc-windows-msvc\nrelease: 1.96.0\nLLVM version: 22.1.2",
+    "cargo":  "cargo 1.96.0 (30a34c682 2026-05-25)",
+    "collector_sha256":  "aae9f0ab63202f41bc554dc77b63051585127deffe0c0ee1e61dc9a4b505c025",
+    "results":  [
+                    {
+                        "backend":  "redb",
+                        "feature":  "redb-backend",
+                        "target_directory":  "target-measure-redb",
+                        "clean_build":  {
+                                            "command":  "cargo build --release --locked --no-default-features --features redb-backend --target-dir C:\\Users\\endof\\Downloads\\lumin-perf-lab\\phase0-store-backend-probe\\target-measure-redb",
+                                            "elapsed_millis":  102067,
+                                            "log":  "evidence/build-redb-clean.log",
+                                            "log_sha256":  "213440d0edae78a5c14815cdfa9ece1d6bba0bea1582a5477ebe6e05884f2f9f"
+                                        },
+                        "incremental_build":  {
+                                                  "command":  "cargo build --release --locked --no-default-features --features redb-backend --target-dir C:\\Users\\endof\\Downloads\\lumin-perf-lab\\phase0-store-backend-probe\\target-measure-redb",
+                                                  "elapsed_millis":  1330,
+                                                  "log":  "evidence/build-redb-incremental.log",
+                                                  "log_sha256":  "c0b5694104210a9318c2f09e556d1821e20b326d9d50e2bdf0013ac4bf7dac6b"
+                                              },
+                        "binary_bytes":  1895936,
+                        "binary_sha256":  "0a0ea57290361b27d8fb807ea8bd68a9514282a8f85731d2ff6707c21633ded8",
+                        "dependency_surface":  {
+                                                   "selected_package_count_including_probe":  29,
+                                                   "transitive_package_count":  28,
+                                                   "rust_unsafe_keyword_line_count":  13545,
+                                                   "packages_with_rust_unsafe_keyword":  19,
+                                                   "native_source_file_count":  0,
+                                                   "native_source_bytes":  0,
+                                                   "dependency_tree":  "evidence/dependency-tree-redb.txt",
+                                                   "dependency_tree_sha256":  "c737fe7fa5f1337ffc59b30513df57c8224eaefd45ce2bf715520591626f6324",
+                                                   "method":  "Selected Cargo resolve nodes; dependency .rs lines matching word unsafe; native .c/.h/.cc/.cpp/.S/.asm files and bytes. This is a reproducible surface metric, not a safety audit."
+                                               }
+                    },
+                    {
+                        "backend":  "sqlite",
+                        "feature":  "sqlite-backend",
+                        "target_directory":  "target-measure-sqlite",
+                        "clean_build":  {
+                                            "command":  "cargo build --release --locked --no-default-features --features sqlite-backend --target-dir C:\\Users\\endof\\Downloads\\lumin-perf-lab\\phase0-store-backend-probe\\target-measure-sqlite",
+                                            "elapsed_millis":  121813,
+                                            "log":  "evidence/build-sqlite-clean.log",
+                                            "log_sha256":  "ccefe1cd14c173424bfbbddf819594aa7a5bc37b366bcbf5d9ae32f3e6a53a13"
+                                        },
+                        "incremental_build":  {
+                                                  "command":  "cargo build --release --locked --no-default-features --features sqlite-backend --target-dir C:\\Users\\endof\\Downloads\\lumin-perf-lab\\phase0-store-backend-probe\\target-measure-sqlite",
+                                                  "elapsed_millis":  702,
+                                                  "log":  "evidence/build-sqlite-incremental.log",
+                                                  "log_sha256":  "e0e3bdd5ff8da15cf4fdcb4570a322fc01424ecc74fc48395199f577704b33be"
+                                              },
+                        "binary_bytes":  2808320,
+                        "binary_sha256":  "c4059ac3788e468be18edf3d0c49c5965121410761f36db901c29f365a241a2d",
+                        "dependency_surface":  {
+                                                   "selected_package_count_including_probe":  42,
+                                                   "transitive_package_count":  41,
+                                                   "rust_unsafe_keyword_line_count":  18046,
+                                                   "packages_with_rust_unsafe_keyword":  28,
+                                                   "native_source_file_count":  10,
+                                                   "native_source_bytes":  20340001,
+                                                   "dependency_tree":  "evidence/dependency-tree-sqlite.txt",
+                                                   "dependency_tree_sha256":  "1596237fb91925a613766d72f528f98fd07b1812c39fdbd45a7244235328b5db",
+                                                   "method":  "Selected Cargo resolve nodes; dependency .rs lines matching word unsafe; native .c/.h/.cc/.cpp/.S/.asm files and bytes. This is a reproducible surface metric, not a safety audit."
+                                               }
+                    }
+                ]
+}
