@@ -105,10 +105,29 @@ pub struct BackendReport {
     pub database_bytes: u64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct SourceFileHash {
     pub path: String,
     pub sha256: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct ExecutableIdentity {
+    pub path: PathBuf,
+    pub bytes: u64,
+    pub sha256: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct IdentityReport {
+    pub probe_id: String,
+    pub architecture_commit: String,
+    pub architecture_manifest_sha256: String,
+    pub executable: PathBuf,
+    pub executable_bytes: u64,
+    pub executable_sha256: String,
+    pub source_files: Vec<SourceFileHash>,
+    pub source_manifest_sha256: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -121,10 +140,13 @@ pub struct ProbeReport {
     pub host_os: String,
     pub host_arch: String,
     pub executable: PathBuf,
+    pub executable_bytes: u64,
+    pub executable_sha256: String,
     pub command: Vec<String>,
     pub rounds: u32,
     pub watchdog_millis: u64,
     pub source_files: Vec<SourceFileHash>,
+    pub source_manifest_sha256: String,
     pub backends: Vec<BackendReport>,
     pub overall_status: String,
 }
@@ -156,9 +178,12 @@ pub struct FaultMatrixReport {
     pub host_os: String,
     pub host_arch: String,
     pub executable: PathBuf,
+    pub executable_bytes: u64,
+    pub executable_sha256: String,
     pub command: Vec<String>,
     pub watchdog_millis: u64,
     pub source_files: Vec<SourceFileHash>,
+    pub source_manifest_sha256: String,
     pub backends: Vec<FaultBackendReport>,
     pub overall_status: String,
 }
@@ -186,6 +211,7 @@ pub struct BenchmarkReport {
     pub backend: BackendKind,
     pub executable: PathBuf,
     pub executable_bytes: u64,
+    pub executable_sha256: String,
     pub command: Vec<String>,
     pub records: usize,
     pub record_bytes: usize,
@@ -198,5 +224,6 @@ pub struct BenchmarkReport {
     pub peak_working_set_bytes: Option<u64>,
     pub store_bytes: u64,
     pub source_files: Vec<SourceFileHash>,
+    pub source_manifest_sha256: String,
     pub status: String,
 }

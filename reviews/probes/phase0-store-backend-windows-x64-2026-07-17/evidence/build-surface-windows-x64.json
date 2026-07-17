@@ -6,26 +6,32 @@
     "host_os":  "Microsoft Windows NT 10.0.26200.0",
     "rustc":  "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: x86_64-pc-windows-msvc\nrelease: 1.96.0\nLLVM version: 22.1.2",
     "cargo":  "cargo 1.96.0 (30a34c682 2026-05-25)",
-    "collector_sha256":  "aae9f0ab63202f41bc554dc77b63051585127deffe0c0ee1e61dc9a4b505c025",
+    "collector_sha256":  "71561d26e89624cad4577784d5f2e5f8e0241ec0c19c019c0a8cb995fb2e04c9",
+    "harness_executable":  {
+                               "path":  "target/release/lumin-phase0-store-probe.exe",
+                               "bytes":  4020224,
+                               "sha256":  "a6d58e49c8cc40856c2e97e64e3a49bed827843098799ed1af19bfba33eea151"
+                           },
     "results":  [
                     {
                         "backend":  "redb",
                         "feature":  "redb-backend",
                         "target_directory":  "target-measure-redb",
+                        "binary":  "target-measure-redb/release/lumin-phase0-store-probe.exe",
                         "clean_build":  {
-                                            "command":  "cargo build --release --locked --no-default-features --features redb-backend --target-dir C:\\Users\\endof\\Downloads\\lumin-perf-lab\\phase0-store-backend-probe\\target-measure-redb",
-                                            "elapsed_millis":  102067,
+                                            "command":  "cargo build --release --locked --no-default-features --features redb-backend --target-dir C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\target-measure-redb",
+                                            "elapsed_millis":  134033,
                                             "log":  "evidence/build-redb-clean.log",
-                                            "log_sha256":  "213440d0edae78a5c14815cdfa9ece1d6bba0bea1582a5477ebe6e05884f2f9f"
+                                            "log_sha256":  "3f5012738bb035659843f0981a523cf710d857176ec52e16e93330c9d15a5257"
                                         },
                         "incremental_build":  {
-                                                  "command":  "cargo build --release --locked --no-default-features --features redb-backend --target-dir C:\\Users\\endof\\Downloads\\lumin-perf-lab\\phase0-store-backend-probe\\target-measure-redb",
-                                                  "elapsed_millis":  1330,
+                                                  "command":  "cargo build --release --locked --no-default-features --features redb-backend --target-dir C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\target-measure-redb",
+                                                  "elapsed_millis":  783,
                                                   "log":  "evidence/build-redb-incremental.log",
-                                                  "log_sha256":  "c0b5694104210a9318c2f09e556d1821e20b326d9d50e2bdf0013ac4bf7dac6b"
+                                                  "log_sha256":  "41b69614d7c63dd49eb8df6007e65883b2a1a5447b58c83285b958ff11900497"
                                               },
-                        "binary_bytes":  1895936,
-                        "binary_sha256":  "0a0ea57290361b27d8fb807ea8bd68a9514282a8f85731d2ff6707c21633ded8",
+                        "binary_bytes":  2333696,
+                        "binary_sha256":  "eda4c6bcfd592deb103b46c697fe646c9d5f5cb83e4c4cbed62287c7d0389e0f",
                         "dependency_surface":  {
                                                    "selected_package_count_including_probe":  29,
                                                    "transitive_package_count":  28,
@@ -34,7 +40,7 @@
                                                    "native_source_file_count":  0,
                                                    "native_source_bytes":  0,
                                                    "dependency_tree":  "evidence/dependency-tree-redb.txt",
-                                                   "dependency_tree_sha256":  "c737fe7fa5f1337ffc59b30513df57c8224eaefd45ce2bf715520591626f6324",
+                                                   "dependency_tree_sha256":  "ef7f972a46aacc8391e806d1a6622495664b30bfc534a9d92afc5167eb64c2fc",
                                                    "method":  "Selected Cargo resolve nodes; dependency .rs lines matching word unsafe; native .c/.h/.cc/.cpp/.S/.asm files and bytes. This is a reproducible surface metric, not a safety audit."
                                                }
                     },
@@ -42,20 +48,21 @@
                         "backend":  "sqlite",
                         "feature":  "sqlite-backend",
                         "target_directory":  "target-measure-sqlite",
+                        "binary":  "target-measure-sqlite/release/lumin-phase0-store-probe.exe",
                         "clean_build":  {
-                                            "command":  "cargo build --release --locked --no-default-features --features sqlite-backend --target-dir C:\\Users\\endof\\Downloads\\lumin-perf-lab\\phase0-store-backend-probe\\target-measure-sqlite",
-                                            "elapsed_millis":  121813,
+                                            "command":  "cargo build --release --locked --no-default-features --features sqlite-backend --target-dir C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\target-measure-sqlite",
+                                            "elapsed_millis":  139292,
                                             "log":  "evidence/build-sqlite-clean.log",
-                                            "log_sha256":  "ccefe1cd14c173424bfbbddf819594aa7a5bc37b366bcbf5d9ae32f3e6a53a13"
+                                            "log_sha256":  "be8cb389b5d0ecc494379007396ac85087986d62a4dfbf34e358340b6aa9cf1f"
                                         },
                         "incremental_build":  {
-                                                  "command":  "cargo build --release --locked --no-default-features --features sqlite-backend --target-dir C:\\Users\\endof\\Downloads\\lumin-perf-lab\\phase0-store-backend-probe\\target-measure-sqlite",
-                                                  "elapsed_millis":  702,
+                                                  "command":  "cargo build --release --locked --no-default-features --features sqlite-backend --target-dir C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\target-measure-sqlite",
+                                                  "elapsed_millis":  798,
                                                   "log":  "evidence/build-sqlite-incremental.log",
-                                                  "log_sha256":  "e0e3bdd5ff8da15cf4fdcb4570a322fc01424ecc74fc48395199f577704b33be"
+                                                  "log_sha256":  "c1107626442efedc633dc2a5c49de86199b7940560fe8b35165c993965ac4d0b"
                                               },
-                        "binary_bytes":  2808320,
-                        "binary_sha256":  "c4059ac3788e468be18edf3d0c49c5965121410761f36db901c29f365a241a2d",
+                        "binary_bytes":  3247104,
+                        "binary_sha256":  "6575f533da43375616158006be874beacd0131e439acd63210be21c5dbfe908d",
                         "dependency_surface":  {
                                                    "selected_package_count_including_probe":  42,
                                                    "transitive_package_count":  41,
@@ -64,7 +71,7 @@
                                                    "native_source_file_count":  10,
                                                    "native_source_bytes":  20340001,
                                                    "dependency_tree":  "evidence/dependency-tree-sqlite.txt",
-                                                   "dependency_tree_sha256":  "1596237fb91925a613766d72f528f98fd07b1812c39fdbd45a7244235328b5db",
+                                                   "dependency_tree_sha256":  "a4a721e037554a58108c4c86bdf4fa9df3bdc7e4a192f8e05a104ad92169fd5e",
                                                    "method":  "Selected Cargo resolve nodes; dependency .rs lines matching word unsafe; native .c/.h/.cc/.cpp/.S/.asm files and bytes. This is a reproducible surface metric, not a safety audit."
                                                }
                     }

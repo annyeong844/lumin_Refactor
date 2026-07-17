@@ -1,0 +1,199 @@
+{
+  "probe_id": "lumin-store-native-linux-ext4-musl-x64-evidence-summary-v1",
+  "scope": "native-linux-ext4-gnu-musl-phase0-evidence",
+  "status": "PASS",
+  "architecture_commit": "65e60216891bb3d826a4778f84cb8aaa377abe92",
+  "architecture_manifest_sha256": "66925583362be22257dd7357072d176cd3f1ae3d4f99874a53f6689b7cf535e0",
+  "source_manifest_sha256": "30be1edac70bb27f78c626bf7099aee1f825f2a0f59797a72b9acdc781e9725e",
+  "backend_selected": false,
+  "toolchain": {
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.96.0\nLLVM version: 22.1.2",
+    "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
+    "zig": "0.16.0",
+    "zig_distribution_sha256": "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00",
+    "cargo_zigbuild": "0.23.0"
+  },
+  "collector_sha256": "7b96a095303cd6ec93f6db6d667407d47c636d399037aa2d83b5de442227d1ba",
+  "verifier_sha256": "1cbe7384d5dce0b55094847b2a4ae970d0a94aa663f195c980bfe7f7fa83a2b8",
+  "correctness": {
+    "modes": [
+      "gnu",
+      "musl"
+    ],
+    "admission_rounds_per_backend_per_mode": 32,
+    "fault_cases_per_backend_per_mode": 47,
+    "total_fault_cases": 188,
+    "namespace_injected_and_detected": 76,
+    "namespace_kernel_prevented_before_displacement": 0
+  },
+  "harnesses": {
+    "gnu": {
+      "path": "/home/runner/work/lumin_Refactor/lumin_Refactor/reviews/probes/phase0-store-backend-windows-x64-2026-07-17/source/target/release/lumin-phase0-store-probe",
+      "bytes": 4151896,
+      "sha256": "94d7569f9e001e0c58c7b97fa271b4a46062fe55b71524f8434e6103ba35600a"
+    },
+    "musl": {
+      "path": "/home/runner/work/lumin_Refactor/lumin_Refactor/reviews/probes/phase0-store-backend-windows-x64-2026-07-17/source/target-musl-all/x86_64-unknown-linux-musl/release/lumin-phase0-store-probe",
+      "bytes": 3843776,
+      "sha256": "14016b805b32995eb53d4c5d122f7ac67481112aa10dc6e5ba65a96062dd308f"
+    }
+  },
+  "native_host": {
+    "uname": "Linux runnervm3jd5f 6.17.0-1020-azure #20~24.04.1-Ubuntu SMP Fri Jun 19 20:09:14 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux",
+    "filesystem": "/      ext4   /dev/sda1"
+  },
+  "measurements": [
+    {
+      "mode": "gnu",
+      "backend": "redb",
+      "executable_sha256": "57783a220ff495c1e03602befd2283114dfe507a32a2e137dbd5928ba8e484ec",
+      "initialize_micros": 2402,
+      "bulk_insert_micros": 23347,
+      "first_reopen_query_micros": 749,
+      "warm_reopen_query": {
+        "samples": 100,
+        "min_micros": 433,
+        "p50_micros": 473,
+        "p95_micros": 617,
+        "p99_micros": 843,
+        "max_micros": 1568,
+        "mean_micros": 509
+      },
+      "durable_admission": {
+        "samples": 200,
+        "min_micros": 491,
+        "p50_micros": 557,
+        "p95_micros": 726,
+        "p99_micros": 1341,
+        "max_micros": 2873,
+        "mean_micros": 598
+      },
+      "peak_working_set_bytes": 13004800,
+      "store_bytes": 8425472,
+      "binary_bytes": 2158424,
+      "clean_build_millis": 27610,
+      "incremental_build_millis": 44,
+      "transitive_package_count": 31,
+      "rust_unsafe_keyword_line_count": 10020,
+      "native_source_file_count": 0,
+      "native_source_bytes": 0
+    },
+    {
+      "mode": "gnu",
+      "backend": "sqlite",
+      "executable_sha256": "9e18b6f96262a8e1f40b27b14ab3b9c777c82ff0f29410338c526cc5fd8ffd9a",
+      "initialize_micros": 3723,
+      "bulk_insert_micros": 24597,
+      "first_reopen_query_micros": 539,
+      "warm_reopen_query": {
+        "samples": 100,
+        "min_micros": 342,
+        "p50_micros": 357,
+        "p95_micros": 385,
+        "p99_micros": 446,
+        "max_micros": 455,
+        "mean_micros": 362
+      },
+      "durable_admission": {
+        "samples": 200,
+        "min_micros": 1232,
+        "p50_micros": 1394,
+        "p95_micros": 1654,
+        "p99_micros": 2483,
+        "max_micros": 2921,
+        "mean_micros": 1443
+      },
+      "peak_working_set_bytes": 12320768,
+      "store_bytes": 3182592,
+      "binary_bytes": 3458200,
+      "clean_build_millis": 62181,
+      "incremental_build_millis": 51,
+      "transitive_package_count": 43,
+      "rust_unsafe_keyword_line_count": 14518,
+      "native_source_file_count": 10,
+      "native_source_bytes": 20340001
+    },
+    {
+      "mode": "musl",
+      "backend": "redb",
+      "executable_sha256": "d30793c9ced5c6f2b73fcfff022113341fd1113283d228cb9ddd522c70acbfa3",
+      "initialize_micros": 2527,
+      "bulk_insert_micros": 33143,
+      "first_reopen_query_micros": 811,
+      "warm_reopen_query": {
+        "samples": 100,
+        "min_micros": 425,
+        "p50_micros": 481,
+        "p95_micros": 548,
+        "p99_micros": 786,
+        "max_micros": 2221,
+        "mean_micros": 504
+      },
+      "durable_admission": {
+        "samples": 200,
+        "min_micros": 476,
+        "p50_micros": 577,
+        "p95_micros": 803,
+        "p99_micros": 976,
+        "max_micros": 16492,
+        "mean_micros": 677
+      },
+      "peak_working_set_bytes": 23576576,
+      "store_bytes": 8425472,
+      "binary_bytes": 2143256,
+      "clean_build_millis": 27256,
+      "incremental_build_millis": 230,
+      "transitive_package_count": 31,
+      "rust_unsafe_keyword_line_count": 10020,
+      "native_source_file_count": 0,
+      "native_source_bytes": 0
+    },
+    {
+      "mode": "musl",
+      "backend": "sqlite",
+      "executable_sha256": "aa46ef7afb172784ad53a7eb7183816e739b7188baec6d2ee6ed5c5c2ada8ed4",
+      "initialize_micros": 3903,
+      "bulk_insert_micros": 29542,
+      "first_reopen_query_micros": 646,
+      "warm_reopen_query": {
+        "samples": 100,
+        "min_micros": 390,
+        "p50_micros": 402,
+        "p95_micros": 429,
+        "p99_micros": 469,
+        "max_micros": 508,
+        "mean_micros": 408
+      },
+      "durable_admission": {
+        "samples": 200,
+        "min_micros": 1238,
+        "p50_micros": 1387,
+        "p95_micros": 1635,
+        "p99_micros": 2172,
+        "max_micros": 3211,
+        "mean_micros": 1430
+      },
+      "peak_working_set_bytes": 16240640,
+      "store_bytes": 3182592,
+      "binary_bytes": 3173920,
+      "clean_build_millis": 21739,
+      "incremental_build_millis": 227,
+      "transitive_package_count": 43,
+      "rust_unsafe_keyword_line_count": 14518,
+      "native_source_file_count": 10,
+      "native_source_bytes": 20340001
+    }
+  ],
+  "interpretation": [
+    "Correctness passed for the exact GNU and musl case sets on this native Linux ext4 host.",
+    "All namespace replacements were injected and detected after displacement.",
+    "The musl harness and feature binaries are static ELF executables without dynamic NEEDED entries.",
+    "The first reopen query is not an operating-system cold-cache measurement.",
+    "The unsafe keyword count is a comparison surface, not a safety audit.",
+    "This packet completes the native Linux store candidate comparison but does not itself select the backend."
+  ],
+  "pending": [
+    "native path/root and packaged skill evidence",
+    "approved cross-platform numeric budgets"
+  ]
+}

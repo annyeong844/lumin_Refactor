@@ -1,0 +1,87 @@
+{
+  "probe_id": "lumin-phase0-store-probe-identity-v1",
+  "architecture_commit": "65e60216891bb3d826a4778f84cb8aaa377abe92",
+  "architecture_manifest_sha256": "66925583362be22257dd7357072d176cd3f1ae3d4f99874a53f6689b7cf535e0",
+  "executable": "/home/endof/lumin-phase0-store-probe-65e6021-20260717/target-measure-musl-sqlite/x86_64-unknown-linux-musl/release/lumin-phase0-store-probe",
+  "executable_bytes": 3173744,
+  "executable_sha256": "7f0001a8324a60d8eb39ee8d3d1c3ed4c4b24ffa7d3c857180cf6258475208c4",
+  "source_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "ea3301b97716608f8f4367b7cc0cf9637c092dd83fbc47c3b03af1371589db4a"
+    },
+    {
+      "path": "Cargo.lock",
+      "sha256": "f590ca931667e08963ebd63a829e38dc4f826ef54373ee35390acea180acb107"
+    },
+    {
+      "path": "rust-toolchain.toml",
+      "sha256": "0d7b2f6589d3a2d9ea22b782a107ddafc0da08bdca08e3524b0cf4db12c12da9"
+    },
+    {
+      "path": "rustfmt.toml",
+      "sha256": "9699c08443f72fc9220697806f0692708e8e99b1b9eca02836d1ed92cde2b128"
+    },
+    {
+      "path": "README.md",
+      "sha256": "aaff6455fa0c1a263bcd76451db52ae5922997e1bc9657e18b9d5667092db256"
+    },
+    {
+      "path": "PROBE-CONTRACT.md",
+      "sha256": "652ae14d81ff1217bf87b511bce3e4112c3eb976786ee809bd7ddbf64f2a86f3"
+    },
+    {
+      "path": "scripts/collect-build-metrics.ps1",
+      "sha256": "71561d26e89624cad4577784d5f2e5f8e0241ec0c19c019c0a8cb995fb2e04c9"
+    },
+    {
+      "path": "scripts/package-evidence.ps1",
+      "sha256": "8a72ee95e48ac8cba61536171a8342c5d085a2af537c13c9ff26223bcb22936a"
+    },
+    {
+      "path": "src/main.rs",
+      "sha256": "4b070ddb010d8ec81e93c3f9beac19df946b098adb9b53b21f8919185c4cc8a0"
+    },
+    {
+      "path": "src/lifecycle.rs",
+      "sha256": "37c78dd0c479f582988b19094ee54944f64a228abc4d93c4ca1bf9f9a5e2f87b"
+    },
+    {
+      "path": "src/namespace.rs",
+      "sha256": "70688c2124a0627e477528f968a3f2bb961c9f34d64a4eccc55a0b97fcd9c0b0"
+    },
+    {
+      "path": "src/model.rs",
+      "sha256": "dca177565204d261745124fdafa252424936bca2a65ebe9e1787883f693e66c2"
+    },
+    {
+      "path": "src/runner.rs",
+      "sha256": "4fc39eaa4f1786505d17f1b2c7506aab8f8d5447929f7f2f442a7f0bee6de500"
+    },
+    {
+      "path": "src/util.rs",
+      "sha256": "ec26916eeaa12152117d9b0e823d5d757718b23bf059e5ced53b2b80dbcf7f60"
+    },
+    {
+      "path": "src/backend/mod.rs",
+      "sha256": "70000767b86e5a7dc344f5b00f05183d0fb9766fbfcadbf4f8f918a3ab6ea0e6"
+    },
+    {
+      "path": "src/backend_contract.rs",
+      "sha256": "1b7920e00c1f35c40db5eed2e214ced0eb05652ff45c354cdc1c513f6c2fb0dd"
+    },
+    {
+      "path": "src/benchmark.rs",
+      "sha256": "2c3896a8840a1996cc0f70d5fd17e46e02578d6d32f2a19b1f37e7529a8251f5"
+    },
+    {
+      "path": "src/backend/redb_backend.rs",
+      "sha256": "46da5069c58b118d38a6a1f0a69eb45e8aba0d917818459915432acdac620733"
+    },
+    {
+      "path": "src/backend/sqlite_backend.rs",
+      "sha256": "cf906537cb97b437af890178b1034f2eef97f070636effd826566a3331efb34a"
+    }
+  ],
+  "source_manifest_sha256": "30be1edac70bb27f78c626bf7099aee1f825f2a0f59797a72b9acdc781e9725e"
+}

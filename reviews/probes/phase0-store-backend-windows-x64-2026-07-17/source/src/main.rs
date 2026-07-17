@@ -15,8 +15,10 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail, ensure};
 
-use crate::model::{BackendKind, FaultMatrixReport, HoldPhase, ProbeReport};
-use crate::util::{source_hashes, unix_millis, write_json_durable};
+use crate::model::{BackendKind, FaultMatrixReport, HoldPhase, IdentityReport, ProbeReport};
+use crate::util::{
+    executable_identity, source_hashes, source_manifest_sha256, unix_millis, write_json_durable,
+};
 
 const ARCHITECTURE_COMMIT: &str = "65e60216891bb3d826a4778f84cb8aaa377abe92";
 const ARCHITECTURE_MANIFEST_SHA256: &str =
@@ -24,7 +26,10 @@ const ARCHITECTURE_MANIFEST_SHA256: &str =
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("error: {error:#}");
+        eprintln!("error: {error}");
+        for cause in error.chain().skip(1) {
+            eprintln!("caused by: {cause}");
+        }
         std::process::exit(1);
     }
 }
@@ -34,6 +39,7 @@ fn run() -> Result<()> {
     let command = arguments.get(1).map(String::as_str).unwrap_or("help");
     match command {
         "run" => run_parent(&arguments[2..]),
+        "identity" => run_identity(),
         "fault-matrix" => run_fault_matrix_parent(&arguments[2..]),
         "benchmark" => run_benchmark_parent(&arguments[2..]),
         "child-admit" => run_child_admit(&arguments[2..]),
@@ -41,6 +47,7 @@ fn run() -> Result<()> {
         "child-publication" => run_fault_child(&arguments[2..], "publication"),
         "child-retention" => run_fault_child(&arguments[2..], "retention"),
         "child-migration" => run_fault_child(&arguments[2..], "migration"),
+        "child-stale-writer" => run_stale_writer_child(&arguments[2..]),
         "child-namespace" => run_namespace_child(&arguments[2..]),
         "child-latest-publish" => run_latest_publish_child(&arguments[2..]),
         "child-publication-retention" => run_publication_retention_child(&arguments[2..]),
@@ -50,6 +57,23 @@ fn run() -> Result<()> {
         }
         unknown => bail!("unknown command {unknown:?}"),
     }
+}
+
+fn run_identity() -> Result<()> {
+    let executable = executable_identity()?;
+    let source_files = source_hashes();
+    let report = IdentityReport {
+        probe_id: "lumin-phase0-store-probe-identity-v1".to_owned(),
+        architecture_commit: ARCHITECTURE_COMMIT.to_owned(),
+        architecture_manifest_sha256: ARCHITECTURE_MANIFEST_SHA256.to_owned(),
+        executable: executable.path,
+        executable_bytes: executable.bytes,
+        executable_sha256: executable.sha256,
+        source_manifest_sha256: source_manifest_sha256(&source_files),
+        source_files,
+    };
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
 }
 
 fn run_benchmark_parent(arguments: &[String]) -> Result<()> {
@@ -108,6 +132,8 @@ fn run_fault_matrix_parent(arguments: &[String]) -> Result<()> {
     } else {
         "FAIL"
     };
+    let executable = executable_identity()?;
+    let source_files = source_hashes();
     let report = FaultMatrixReport {
         probe_id: "lumin-store-publication-retention-migration-fault-v1".to_owned(),
         architecture_commit: ARCHITECTURE_COMMIT.to_owned(),
@@ -116,10 +142,13 @@ fn run_fault_matrix_parent(arguments: &[String]) -> Result<()> {
         finished_unix_millis: unix_millis()?,
         host_os: env::consts::OS.to_owned(),
         host_arch: env::consts::ARCH.to_owned(),
-        executable: env::current_exe()?,
+        executable: executable.path,
+        executable_bytes: executable.bytes,
+        executable_sha256: executable.sha256,
         command: env::args().collect(),
         watchdog_millis,
-        source_files: source_hashes()?,
+        source_manifest_sha256: source_manifest_sha256(&source_files),
+        source_files,
         backends: backend_reports,
         overall_status: overall_status.to_owned(),
     };
@@ -165,6 +194,8 @@ fn run_parent(arguments: &[String]) -> Result<()> {
     } else {
         "FAIL"
     };
+    let executable = executable_identity()?;
+    let source_files = source_hashes();
     let report = ProbeReport {
         probe_id: "lumin-store-cross-process-admission-v1".to_owned(),
         architecture_commit: ARCHITECTURE_COMMIT.to_owned(),
@@ -173,11 +204,14 @@ fn run_parent(arguments: &[String]) -> Result<()> {
         finished_unix_millis: unix_millis()?,
         host_os: env::consts::OS.to_owned(),
         host_arch: env::consts::ARCH.to_owned(),
-        executable: env::current_exe()?,
+        executable: executable.path,
+        executable_bytes: executable.bytes,
+        executable_sha256: executable.sha256,
         command: env::args().collect(),
         rounds,
         watchdog_millis,
-        source_files: source_hashes()?,
+        source_manifest_sha256: source_manifest_sha256(&source_files),
+        source_files,
         backends: backend_reports,
         overall_status: overall_status.to_owned(),
     };
@@ -234,20 +268,43 @@ fn run_fault_child(arguments: &[String], domain: &str) -> Result<()> {
 fn run_namespace_child(arguments: &[String]) -> Result<()> {
     let backend = BackendKind::from_str(&required(arguments, "--backend")?)?;
     let repository_root = PathBuf::from(required(arguments, "--repository-root")?);
+    let operation = required(arguments, "--operation")?;
+    let checkpoint = required(arguments, "--checkpoint")?;
     let ready = PathBuf::from(required(arguments, "--ready")?);
     let go = PathBuf::from(required(arguments, "--go")?);
     let result = PathBuf::from(required(arguments, "--result")?);
     let watchdog_millis = required(arguments, "--watchdog-ms")?
         .parse::<u64>()
         .context("parse namespace child --watchdog-ms")?;
-    namespace::run_namespace_child(
+    namespace::run_namespace_child(namespace::NamespaceChildRequest {
+        backend_kind: backend,
+        repository_root: &repository_root,
+        operation: &operation,
+        checkpoint: &checkpoint,
+        ready: &ready,
+        go: &go,
+        result: &result,
+        watchdog: Duration::from_millis(watchdog_millis),
+    })
+}
+
+fn run_stale_writer_child(arguments: &[String]) -> Result<()> {
+    let backend = BackendKind::from_str(&required(arguments, "--backend")?)?;
+    let root = PathBuf::from(required(arguments, "--root")?);
+    let ready = PathBuf::from(required(arguments, "--ready")?);
+    let resume = PathBuf::from(required(arguments, "--resume")?);
+    let result = PathBuf::from(required(arguments, "--result")?);
+    let watchdog_millis = required(arguments, "--watchdog-ms")?
+        .parse::<u64>()
+        .context("parse stale-writer --watchdog-ms")?;
+    lifecycle::run_stale_writer_child(lifecycle::StaleWriterRequest {
         backend,
-        &repository_root,
-        &ready,
-        &go,
-        &result,
-        Duration::from_millis(watchdog_millis),
-    )
+        root,
+        ready,
+        resume,
+        result,
+        watchdog: Duration::from_millis(watchdog_millis),
+    })
 }
 
 fn run_latest_publish_child(arguments: &[String]) -> Result<()> {
@@ -257,7 +314,9 @@ fn run_latest_publish_child(arguments: &[String]) -> Result<()> {
     let phase = required(arguments, "--phase")?;
     let barrier = PathBuf::from(required(arguments, "--barrier")?);
     let actor = required(arguments, "--actor")?;
-    let delay_millis = required(arguments, "--delay-ms")?.parse::<u64>()?;
+    let hold_guard = required(arguments, "--hold-guard")?
+        .parse::<bool>()
+        .context("parse latest-publish --hold-guard")?;
     let result = PathBuf::from(required(arguments, "--result")?);
     let watchdog_millis = required(arguments, "--watchdog-ms")?.parse::<u64>()?;
     lifecycle::run_latest_publish_child(lifecycle::LatestPublishRequest {
@@ -267,7 +326,7 @@ fn run_latest_publish_child(arguments: &[String]) -> Result<()> {
         phase,
         barrier,
         actor,
-        delay: Duration::from_millis(delay_millis),
+        hold_guard,
         result,
         watchdog: Duration::from_millis(watchdog_millis),
     })

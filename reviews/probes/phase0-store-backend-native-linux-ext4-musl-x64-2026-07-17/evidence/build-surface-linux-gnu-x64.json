@@ -1,0 +1,83 @@
+{
+  "probe_id": "lumin-store-linux-build-surface-v1",
+  "architecture_commit": "65e60216891bb3d826a4778f84cb8aaa377abe92",
+  "architecture_manifest_sha256": "66925583362be22257dd7357072d176cd3f1ae3d4f99874a53f6689b7cf535e0",
+  "mode": "gnu",
+  "target": "x86_64-unknown-linux-gnu",
+  "host_uname": "Linux runnervm3jd5f 6.17.0-1020-azure #20~24.04.1-Ubuntu SMP Fri Jun 19 20:09:14 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux",
+  "filesystem": "/      ext4   /dev/sda1",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.96.0\nLLVM version: 22.1.2",
+  "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
+  "zig": null,
+  "cargo_zigbuild": null,
+  "collector_sha256": "7b96a095303cd6ec93f6db6d667407d47c636d399037aa2d83b5de442227d1ba",
+  "harness_executable": {
+    "path": "/home/runner/work/lumin_Refactor/lumin_Refactor/reviews/probes/phase0-store-backend-windows-x64-2026-07-17/source/target/release/lumin-phase0-store-probe",
+    "bytes": 4151896,
+    "sha256": "94d7569f9e001e0c58c7b97fa271b4a46062fe55b71524f8434e6103ba35600a"
+  },
+  "results": [
+    {
+      "backend": "redb",
+      "feature": "redb-backend",
+      "target_directory": "target-measure-gnu-redb",
+      "binary": "target-measure-gnu-redb/release/lumin-phase0-store-probe",
+      "clean_build": {
+        "command": "cargo build --release --locked --no-default-features --features redb-backend --target-dir /home/runner/work/lumin_Refactor/lumin_Refactor/reviews/probes/phase0-store-backend-windows-x64-2026-07-17/source/target-measure-gnu-redb",
+        "elapsed_millis": 27610,
+        "log": "evidence-native-linux/build-gnu-redb-clean.log",
+        "log_sha256": "cb5440aa9a0f4a107bc927e7b9f8abf1e0a22fa535376dcfca2b1734f46e5558"
+      },
+      "incremental_build": {
+        "command": "cargo build --release --locked --no-default-features --features redb-backend --target-dir /home/runner/work/lumin_Refactor/lumin_Refactor/reviews/probes/phase0-store-backend-windows-x64-2026-07-17/source/target-measure-gnu-redb",
+        "elapsed_millis": 44,
+        "log": "evidence-native-linux/build-gnu-redb-incremental.log",
+        "log_sha256": "9576f1f7e73fc2bb1ec2336aae60cb485c591eadc60a1b998573411c34057e08"
+      },
+      "binary_bytes": 2158424,
+      "binary_sha256": "57783a220ff495c1e03602befd2283114dfe507a32a2e137dbd5928ba8e484ec",
+      "dependency_surface": {
+        "selected_package_count_including_probe": 32,
+        "transitive_package_count": 31,
+        "rust_unsafe_keyword_line_count": 10020,
+        "packages_with_rust_unsafe_keyword": 23,
+        "native_source_file_count": 0,
+        "native_source_bytes": 0,
+        "dependency_tree": "evidence-native-linux/dependency-tree-gnu-redb.txt",
+        "dependency_tree_sha256": "f3f3ff353c1ab32ec7704b03f20818a513d345e78b23bd5585dc35ff6f3a8283",
+        "method": "Selected Cargo resolve nodes; dependency .rs lines matching word unsafe; native .c/.h/.cc/.cpp/.S/.asm files and bytes. This is a reproducible surface metric, not a safety audit."
+      }
+    },
+    {
+      "backend": "sqlite",
+      "feature": "sqlite-backend",
+      "target_directory": "target-measure-gnu-sqlite",
+      "binary": "target-measure-gnu-sqlite/release/lumin-phase0-store-probe",
+      "clean_build": {
+        "command": "cargo build --release --locked --no-default-features --features sqlite-backend --target-dir /home/runner/work/lumin_Refactor/lumin_Refactor/reviews/probes/phase0-store-backend-windows-x64-2026-07-17/source/target-measure-gnu-sqlite",
+        "elapsed_millis": 62181,
+        "log": "evidence-native-linux/build-gnu-sqlite-clean.log",
+        "log_sha256": "4bacca3884c40b28624588d708f1760949e5a00a61209ded3a704f5507934941"
+      },
+      "incremental_build": {
+        "command": "cargo build --release --locked --no-default-features --features sqlite-backend --target-dir /home/runner/work/lumin_Refactor/lumin_Refactor/reviews/probes/phase0-store-backend-windows-x64-2026-07-17/source/target-measure-gnu-sqlite",
+        "elapsed_millis": 51,
+        "log": "evidence-native-linux/build-gnu-sqlite-incremental.log",
+        "log_sha256": "9576f1f7e73fc2bb1ec2336aae60cb485c591eadc60a1b998573411c34057e08"
+      },
+      "binary_bytes": 3458200,
+      "binary_sha256": "9e18b6f96262a8e1f40b27b14ab3b9c777c82ff0f29410338c526cc5fd8ffd9a",
+      "dependency_surface": {
+        "selected_package_count_including_probe": 44,
+        "transitive_package_count": 43,
+        "rust_unsafe_keyword_line_count": 14518,
+        "packages_with_rust_unsafe_keyword": 31,
+        "native_source_file_count": 10,
+        "native_source_bytes": 20340001,
+        "dependency_tree": "evidence-native-linux/dependency-tree-gnu-sqlite.txt",
+        "dependency_tree_sha256": "84b398ca8bcbd25451964d4c1809200c1728147d3a3ff2c05ab117ced0728fc6",
+        "method": "Selected Cargo resolve nodes; dependency .rs lines matching word unsafe; native .c/.h/.cc/.cpp/.S/.asm files and bytes. This is a reproducible surface metric, not a safety audit."
+      }
+    }
+  ]
+}

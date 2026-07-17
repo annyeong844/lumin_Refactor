@@ -46,6 +46,8 @@ SLICE-001 creates only crates that contain real slice behavior:
 
 The development-only `lumin-xtask` crate contains architecture, corpus, determinism, and package verification commands. It is not a product capability or runtime dependency.
 
+`lumin-store` uses exact `redb 4.1.0`, selected by the ARCH-002 Phase 0 correctness and measured-comparison gate. Bundled SQLite and `rusqlite` remain probe-only dependencies outside the production workspace. The Slice has no second backend feature, runtime selector, fallback database, or backend-specific type outside `lumin-store`.
+
 The Rust, clone, structure, and discipline analysis crates are not created in this slice. Shape and type-escape intent lanes therefore remain unavailable; requesting either returns visible unavailable/incomplete evidence rather than a temporary implementation in `lumin-js` or `lumin-engine`.
 
 ## 3. Supported Source Contract

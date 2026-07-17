@@ -1,6 +1,6 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -8,7 +8,47 @@ use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::model::SourceFileHash;
+use crate::model::{ExecutableIdentity, SourceFileHash};
+
+const EMBEDDED_SOURCE_FILES: [(&str, &[u8]); 19] = [
+    ("Cargo.toml", include_bytes!("../Cargo.toml")),
+    ("Cargo.lock", include_bytes!("../Cargo.lock")),
+    (
+        "rust-toolchain.toml",
+        include_bytes!("../rust-toolchain.toml"),
+    ),
+    ("rustfmt.toml", include_bytes!("../rustfmt.toml")),
+    ("README.md", include_bytes!("../README.md")),
+    ("PROBE-CONTRACT.md", include_bytes!("../PROBE-CONTRACT.md")),
+    (
+        "scripts/collect-build-metrics.ps1",
+        include_bytes!("../scripts/collect-build-metrics.ps1"),
+    ),
+    (
+        "scripts/package-evidence.ps1",
+        include_bytes!("../scripts/package-evidence.ps1"),
+    ),
+    ("src/main.rs", include_bytes!("main.rs")),
+    ("src/lifecycle.rs", include_bytes!("lifecycle.rs")),
+    ("src/namespace.rs", include_bytes!("namespace.rs")),
+    ("src/model.rs", include_bytes!("model.rs")),
+    ("src/runner.rs", include_bytes!("runner.rs")),
+    ("src/util.rs", include_bytes!("util.rs")),
+    ("src/backend/mod.rs", include_bytes!("backend/mod.rs")),
+    (
+        "src/backend_contract.rs",
+        include_bytes!("backend_contract.rs"),
+    ),
+    ("src/benchmark.rs", include_bytes!("benchmark.rs")),
+    (
+        "src/backend/redb_backend.rs",
+        include_bytes!("backend/redb_backend.rs"),
+    ),
+    (
+        "src/backend/sqlite_backend.rs",
+        include_bytes!("backend/sqlite_backend.rs"),
+    ),
+];
 
 pub fn unix_millis() -> Result<u128> {
     Ok(SystemTime::now()
@@ -116,41 +156,53 @@ pub fn wait_forever() -> ! {
     }
 }
 
-pub fn source_hashes() -> Result<Vec<SourceFileHash>> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let relative_paths = [
-        "Cargo.toml",
-        "Cargo.lock",
-        "rust-toolchain.toml",
-        "rustfmt.toml",
-        "README.md",
-        "PROBE-CONTRACT.md",
-        "scripts/collect-build-metrics.ps1",
-        "scripts/package-evidence.ps1",
-        "src/main.rs",
-        "src/lifecycle.rs",
-        "src/namespace.rs",
-        "src/model.rs",
-        "src/runner.rs",
-        "src/util.rs",
-        "src/backend/mod.rs",
-        "src/backend_contract.rs",
-        "src/benchmark.rs",
-        "src/backend/redb_backend.rs",
-        "src/backend/sqlite_backend.rs",
-    ];
-    relative_paths
+pub fn source_hashes() -> Vec<SourceFileHash> {
+    EMBEDDED_SOURCE_FILES
         .into_iter()
-        .map(|relative| {
-            let path = root.join(relative);
-            let bytes = fs::read(&path)
-                .with_context(|| format!("read source file for hashing {}", path.display()))?;
-            Ok(SourceFileHash {
-                path: relative.replace('\\', "/"),
-                sha256: format!("{:x}", Sha256::digest(bytes)),
-            })
+        .map(|(path, bytes)| SourceFileHash {
+            path: path.to_owned(),
+            sha256: format!("{:x}", Sha256::digest(bytes)),
         })
         .collect()
+}
+
+pub fn source_manifest_sha256(source_files: &[SourceFileHash]) -> String {
+    let mut lines = source_files
+        .iter()
+        .map(|source| format!("{}  {}\n", source.sha256, source.path))
+        .collect::<Vec<_>>();
+    lines.sort_unstable();
+    format!("{:x}", Sha256::digest(lines.concat().as_bytes()))
+}
+
+pub fn executable_identity() -> Result<ExecutableIdentity> {
+    let path = std::env::current_exe().context("resolve running executable")?;
+    let bytes =
+        fs::read(&path).with_context(|| format!("read running executable {}", path.display()))?;
+    Ok(ExecutableIdentity {
+        path,
+        bytes: u64::try_from(bytes.len()).context("executable size exceeds u64")?,
+        sha256: format!("{:x}", Sha256::digest(bytes)),
+    })
+}
+
+pub fn copy_directory(source: &Path, destination: &Path) -> Result<()> {
+    fs::create_dir_all(destination)
+        .with_context(|| format!("create copied directory {}", destination.display()))?;
+    for entry in fs::read_dir(source)
+        .with_context(|| format!("read copied directory {}", source.display()))?
+    {
+        let entry = entry?;
+        let destination_path = destination.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_directory(&entry.path(), &destination_path)?;
+        } else {
+            fs::copy(entry.path(), &destination_path).with_context(|| {
+                format!("copy fixture file into {}", destination_path.display())
+            })?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(unix)]

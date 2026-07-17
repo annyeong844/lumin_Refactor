@@ -1,0 +1,198 @@
+{
+  "probe_id": "lumin-store-wsl2-ext4-musl-x64-evidence-summary-v1",
+  "scope": "wsl2-ext4-gnu-musl-partial-phase0-evidence",
+  "status": "PASS",
+  "architecture_commit": "65e60216891bb3d826a4778f84cb8aaa377abe92",
+  "architecture_manifest_sha256": "66925583362be22257dd7357072d176cd3f1ae3d4f99874a53f6689b7cf535e0",
+  "source_manifest_sha256": "30be1edac70bb27f78c626bf7099aee1f825f2a0f59797a72b9acdc781e9725e",
+  "backend_selected": false,
+  "toolchain": {
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.96.0\nLLVM version: 22.1.2",
+    "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
+    "zig": "0.16.0",
+    "zig_distribution_sha256": "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00",
+    "cargo_zigbuild": "0.23.0"
+  },
+  "collector_sha256": "7b96a095303cd6ec93f6db6d667407d47c636d399037aa2d83b5de442227d1ba",
+  "verifier_sha256": "103301ffcc09cf7c6b7b8b4cb6ca6a3daf97fc52b392fb600e5a6ee8428e4d70",
+  "correctness": {
+    "modes": [
+      "gnu",
+      "musl"
+    ],
+    "admission_rounds_per_backend_per_mode": 32,
+    "fault_cases_per_backend_per_mode": 47,
+    "total_fault_cases": 188,
+    "namespace_injected_and_detected": 76,
+    "namespace_kernel_prevented_before_displacement": 0
+  },
+  "harnesses": {
+    "gnu": {
+      "path": "/home/endof/lumin-phase0-store-probe-65e6021-20260717/target/release/lumin-phase0-store-probe",
+      "bytes": 4151736,
+      "sha256": "3714880f76e2ac970dcc6017e015b587485b00c042fde0514cc678dd0728d98a"
+    },
+    "musl": {
+      "path": "/home/endof/lumin-phase0-store-probe-65e6021-20260717/target-musl-all/x86_64-unknown-linux-musl/release/lumin-phase0-store-probe",
+      "bytes": 3843552,
+      "sha256": "d731f14eddeb4be9cd08952e0afad27cc73e74ba55288d89819747751e09d2e5"
+    }
+  },
+  "measurements": [
+    {
+      "mode": "gnu",
+      "backend": "redb",
+      "executable_sha256": "7177d95f0089339eb7856b366701de249430aec123c15ad6510b17d5edc135dc",
+      "initialize_micros": 59834,
+      "bulk_insert_micros": 128351,
+      "first_reopen_query_micros": 14368,
+      "warm_reopen_query": {
+        "samples": 100,
+        "min_micros": 11059,
+        "p50_micros": 14117,
+        "p95_micros": 16751,
+        "p99_micros": 20485,
+        "max_micros": 20608,
+        "mean_micros": 14379
+      },
+      "durable_admission": {
+        "samples": 200,
+        "min_micros": 13853,
+        "p50_micros": 17286,
+        "p95_micros": 20274,
+        "p99_micros": 21888,
+        "max_micros": 24529,
+        "mean_micros": 17399
+      },
+      "peak_working_set_bytes": 12451840,
+      "store_bytes": 8425472,
+      "binary_bytes": 2158264,
+      "clean_build_millis": 151247,
+      "incremental_build_millis": 374,
+      "transitive_package_count": 31,
+      "rust_unsafe_keyword_line_count": 10020,
+      "native_source_file_count": 0,
+      "native_source_bytes": 0
+    },
+    {
+      "mode": "gnu",
+      "backend": "sqlite",
+      "executable_sha256": "cd384f2c44156d13599049b89fb24174c7d624850781187b50d9912187b0f767",
+      "initialize_micros": 57358,
+      "bulk_insert_micros": 126010,
+      "first_reopen_query_micros": 1014,
+      "warm_reopen_query": {
+        "samples": 100,
+        "min_micros": 595,
+        "p50_micros": 1017,
+        "p95_micros": 2689,
+        "p99_micros": 3510,
+        "max_micros": 4991,
+        "mean_micros": 1251
+      },
+      "durable_admission": {
+        "samples": 200,
+        "min_micros": 17607,
+        "p50_micros": 22849,
+        "p95_micros": 32596,
+        "p99_micros": 40166,
+        "max_micros": 77220,
+        "mean_micros": 24486
+      },
+      "peak_working_set_bytes": 12144640,
+      "store_bytes": 3182592,
+      "binary_bytes": 3458008,
+      "clean_build_millis": 380233,
+      "incremental_build_millis": 604,
+      "transitive_package_count": 43,
+      "rust_unsafe_keyword_line_count": 14518,
+      "native_source_file_count": 10,
+      "native_source_bytes": 20340001
+    },
+    {
+      "mode": "musl",
+      "backend": "redb",
+      "executable_sha256": "603ecf22519129f274fa1ba868b692c94df6c2a0e7cd274df20dbac073214b72",
+      "initialize_micros": 48414,
+      "bulk_insert_micros": 152831,
+      "first_reopen_query_micros": 24644,
+      "warm_reopen_query": {
+        "samples": 100,
+        "min_micros": 10936,
+        "p50_micros": 14360,
+        "p95_micros": 18002,
+        "p99_micros": 20704,
+        "max_micros": 22061,
+        "mean_micros": 14649
+      },
+      "durable_admission": {
+        "samples": 200,
+        "min_micros": 13066,
+        "p50_micros": 16307,
+        "p95_micros": 20621,
+        "p99_micros": 30840,
+        "max_micros": 69495,
+        "mean_micros": 17243
+      },
+      "peak_working_set_bytes": 22544384,
+      "store_bytes": 8425472,
+      "binary_bytes": 2143032,
+      "clean_build_millis": 90892,
+      "incremental_build_millis": 644,
+      "transitive_package_count": 31,
+      "rust_unsafe_keyword_line_count": 10020,
+      "native_source_file_count": 0,
+      "native_source_bytes": 0
+    },
+    {
+      "mode": "musl",
+      "backend": "sqlite",
+      "executable_sha256": "7f0001a8324a60d8eb39ee8d3d1c3ed4c4b24ffa7d3c857180cf6258475208c4",
+      "initialize_micros": 48922,
+      "bulk_insert_micros": 88417,
+      "first_reopen_query_micros": 1279,
+      "warm_reopen_query": {
+        "samples": 100,
+        "min_micros": 604,
+        "p50_micros": 879,
+        "p95_micros": 1520,
+        "p99_micros": 3754,
+        "max_micros": 5657,
+        "mean_micros": 1009
+      },
+      "durable_admission": {
+        "samples": 200,
+        "min_micros": 17904,
+        "p50_micros": 21081,
+        "p95_micros": 23548,
+        "p99_micros": 25657,
+        "max_micros": 28752,
+        "mean_micros": 21218
+      },
+      "peak_working_set_bytes": 16777216,
+      "store_bytes": 3182592,
+      "binary_bytes": 3173744,
+      "clean_build_millis": 47269,
+      "incremental_build_millis": 473,
+      "transitive_package_count": 43,
+      "rust_unsafe_keyword_line_count": 14518,
+      "native_source_file_count": 10,
+      "native_source_bytes": 20340001
+    }
+  ],
+  "interpretation": [
+    "Correctness passed for the exact GNU and musl case sets on this WSL2 ext4 host.",
+    "All namespace replacements were injected and detected after displacement.",
+    "The musl harness and feature binaries are static ELF executables without dynamic NEEDED entries.",
+    "The first reopen query is not an operating-system cold-cache measurement.",
+    "The unsafe keyword count is a comparison surface, not a safety audit.",
+    "No backend is selected until all blocking native platform and correctness evidence passes."
+  ],
+  "pending": [
+    "native non-WSL Linux ext4 and musl package/filesystem evidence",
+    "remaining required filesystem durable-flush and lock semantics",
+    "native path/root and packaged skill evidence",
+    "OXC memory and worker-stack evidence",
+    "approved cross-platform numeric budgets"
+  ]
+}

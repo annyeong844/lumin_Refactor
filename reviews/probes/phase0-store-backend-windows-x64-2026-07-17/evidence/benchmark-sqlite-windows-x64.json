@@ -2,15 +2,16 @@
   "probe_id": "lumin-store-backend-measurement-v1",
   "architecture_commit": "65e60216891bb3d826a4778f84cb8aaa377abe92",
   "architecture_manifest_sha256": "66925583362be22257dd7357072d176cd3f1ae3d4f99874a53f6689b7cf535e0",
-  "started_unix_millis": 1784268627244,
-  "finished_unix_millis": 1784268633429,
+  "started_unix_millis": 1784289561170,
+  "finished_unix_millis": 1784289567285,
   "host_os": "windows",
   "host_arch": "x86_64",
   "backend": "sqlite",
-  "executable": "C:\\Users\\endof\\Downloads\\lumin-perf-lab\\phase0-store-backend-probe\\target-measure-sqlite\\release\\lumin-phase0-store-probe.exe",
-  "executable_bytes": 2808320,
+  "executable": "C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\target-measure-sqlite\\release\\lumin-phase0-store-probe.exe",
+  "executable_bytes": 3247104,
+  "executable_sha256": "6575f533da43375616158006be874beacd0131e439acd63210be21c5dbfe908d",
   "command": [
-    "C:\\Users\\endof\\Downloads\\lumin-perf-lab\\phase0-store-backend-probe\\target-measure-sqlite\\release\\lumin-phase0-store-probe.exe",
+    "C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\target-measure-sqlite\\release\\lumin-phase0-store-probe.exe",
     "benchmark",
     "--backend",
     "sqlite",
@@ -26,37 +27,37 @@
   "records": 10000,
   "record_bytes": 256,
   "durable_transactions": 200,
-  "initialize_micros": 49476,
-  "bulk_insert_micros": 142547,
-  "first_reopen_query_micros": 20282,
+  "initialize_micros": 56954,
+  "bulk_insert_micros": 137236,
+  "first_reopen_query_micros": 17031,
   "warm_reopen_query": {
     "samples": 100,
-    "min_micros": 11799,
-    "p50_micros": 16336,
-    "p95_micros": 28066,
-    "p99_micros": 32521,
-    "max_micros": 42687,
-    "mean_micros": 17667
+    "min_micros": 9022,
+    "p50_micros": 13758,
+    "p95_micros": 18075,
+    "p99_micros": 21205,
+    "max_micros": 21795,
+    "mean_micros": 14062
   },
   "durable_admission": {
     "samples": 200,
-    "min_micros": 13208,
-    "p50_micros": 19594,
-    "p95_micros": 27069,
-    "p99_micros": 47166,
-    "max_micros": 116550,
-    "mean_micros": 20713
+    "min_micros": 17148,
+    "p50_micros": 21770,
+    "p95_micros": 26594,
+    "p99_micros": 28071,
+    "max_micros": 30060,
+    "mean_micros": 22089
   },
-  "peak_working_set_bytes": 11816960,
+  "peak_working_set_bytes": 13189120,
   "store_bytes": 3182592,
   "source_files": [
     {
       "path": "Cargo.toml",
-      "sha256": "3c604eaf4ccb0f1dd9f342cf8fc0871a7f0787757212b7e0fe961d3d248174d4"
+      "sha256": "ea3301b97716608f8f4367b7cc0cf9637c092dd83fbc47c3b03af1371589db4a"
     },
     {
       "path": "Cargo.lock",
-      "sha256": "204f73d487705f1d25219e87a16a9767b2ff35ba5f605b1261a9e49c23be48aa"
+      "sha256": "f590ca931667e08963ebd63a829e38dc4f826ef54373ee35390acea180acb107"
     },
     {
       "path": "rust-toolchain.toml",
@@ -68,35 +69,35 @@
     },
     {
       "path": "README.md",
-      "sha256": "a327599fa9d1fa53fc2f6247cda000eba6964897bfd5c3f42572292537416dbb"
+      "sha256": "aaff6455fa0c1a263bcd76451db52ae5922997e1bc9657e18b9d5667092db256"
     },
     {
       "path": "PROBE-CONTRACT.md",
-      "sha256": "26c2d980020ab959ee2d8064422582f526b3000026216093476367931ee6a575"
+      "sha256": "652ae14d81ff1217bf87b511bce3e4112c3eb976786ee809bd7ddbf64f2a86f3"
     },
     {
       "path": "scripts/collect-build-metrics.ps1",
-      "sha256": "aae9f0ab63202f41bc554dc77b63051585127deffe0c0ee1e61dc9a4b505c025"
+      "sha256": "71561d26e89624cad4577784d5f2e5f8e0241ec0c19c019c0a8cb995fb2e04c9"
     },
     {
       "path": "scripts/package-evidence.ps1",
-      "sha256": "69f476fd88a2cb4733eea59f6d22a1d573281694a4c51f86991acad47a73b44b"
+      "sha256": "8a72ee95e48ac8cba61536171a8342c5d085a2af537c13c9ff26223bcb22936a"
     },
     {
       "path": "src/main.rs",
-      "sha256": "34d7edce5199cb4ad1f3a09cca3987337d920cc093d1a9d1f68970b952ee82cb"
+      "sha256": "4b070ddb010d8ec81e93c3f9beac19df946b098adb9b53b21f8919185c4cc8a0"
     },
     {
       "path": "src/lifecycle.rs",
-      "sha256": "f4b7d71008fe24103e93769d7f5d7c296519add242cfe05985c12dbb67789aa5"
+      "sha256": "37c78dd0c479f582988b19094ee54944f64a228abc4d93c4ca1bf9f9a5e2f87b"
     },
     {
       "path": "src/namespace.rs",
-      "sha256": "4e7f1958aa21dc2650047991e6fd5cce5aceab79668a5b9dc2499d9cb03b23a4"
+      "sha256": "70688c2124a0627e477528f968a3f2bb961c9f34d64a4eccc55a0b97fcd9c0b0"
     },
     {
       "path": "src/model.rs",
-      "sha256": "ea47ab428bec5415186feee063c75a5041b91efd994359b0f4e1930f037003dd"
+      "sha256": "dca177565204d261745124fdafa252424936bca2a65ebe9e1787883f693e66c2"
     },
     {
       "path": "src/runner.rs",
@@ -104,7 +105,7 @@
     },
     {
       "path": "src/util.rs",
-      "sha256": "ed035ea3810f9beadb791c3d602a92a2690334c153590f68388905093c989a52"
+      "sha256": "ec26916eeaa12152117d9b0e823d5d757718b23bf059e5ced53b2b80dbcf7f60"
     },
     {
       "path": "src/backend/mod.rs",
@@ -116,7 +117,7 @@
     },
     {
       "path": "src/benchmark.rs",
-      "sha256": "d2588c8ecebe72a2b2273e8460a9ae92cbb38b7862d0fd8d45b11579c8f3eb4f"
+      "sha256": "2c3896a8840a1996cc0f70d5fd17e46e02578d6d32f2a19b1f37e7529a8251f5"
     },
     {
       "path": "src/backend/redb_backend.rs",
@@ -127,5 +128,6 @@
       "sha256": "cf906537cb97b437af890178b1034f2eef97f070636effd826566a3331efb34a"
     }
   ],
+  "source_manifest_sha256": "30be1edac70bb27f78c626bf7099aee1f825f2a0f59797a72b9acdc781e9725e",
   "status": "PASS"
 }

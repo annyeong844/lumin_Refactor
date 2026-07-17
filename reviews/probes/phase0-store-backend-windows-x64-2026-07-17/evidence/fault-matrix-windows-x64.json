@@ -2,13 +2,15 @@
   "probe_id": "lumin-store-publication-retention-migration-fault-v1",
   "architecture_commit": "65e60216891bb3d826a4778f84cb8aaa377abe92",
   "architecture_manifest_sha256": "66925583362be22257dd7357072d176cd3f1ae3d4f99874a53f6689b7cf535e0",
-  "started_unix_millis": 1784268591218,
-  "finished_unix_millis": 1784268604855,
+  "started_unix_millis": 1784289161421,
+  "finished_unix_millis": 1784289197503,
   "host_os": "windows",
   "host_arch": "x86_64",
-  "executable": "C:\\Users\\endof\\Downloads\\lumin-perf-lab\\phase0-store-backend-probe\\target\\release\\lumin-phase0-store-probe.exe",
+  "executable": "C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\target\\release\\lumin-phase0-store-probe.exe",
+  "executable_bytes": 4020224,
+  "executable_sha256": "a6d58e49c8cc40856c2e97e64e3a49bed827843098799ed1af19bfba33eea151",
   "command": [
-    "C:\\Users\\endof\\Downloads\\lumin-perf-lab\\phase0-store-backend-probe\\target\\release\\lumin-phase0-store-probe.exe",
+    "C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\target\\release\\lumin-phase0-store-probe.exe",
     "fault-matrix",
     "--backend",
     "all",
@@ -21,11 +23,11 @@
   "source_files": [
     {
       "path": "Cargo.toml",
-      "sha256": "3c604eaf4ccb0f1dd9f342cf8fc0871a7f0787757212b7e0fe961d3d248174d4"
+      "sha256": "ea3301b97716608f8f4367b7cc0cf9637c092dd83fbc47c3b03af1371589db4a"
     },
     {
       "path": "Cargo.lock",
-      "sha256": "204f73d487705f1d25219e87a16a9767b2ff35ba5f605b1261a9e49c23be48aa"
+      "sha256": "f590ca931667e08963ebd63a829e38dc4f826ef54373ee35390acea180acb107"
     },
     {
       "path": "rust-toolchain.toml",
@@ -37,35 +39,35 @@
     },
     {
       "path": "README.md",
-      "sha256": "a327599fa9d1fa53fc2f6247cda000eba6964897bfd5c3f42572292537416dbb"
+      "sha256": "aaff6455fa0c1a263bcd76451db52ae5922997e1bc9657e18b9d5667092db256"
     },
     {
       "path": "PROBE-CONTRACT.md",
-      "sha256": "26c2d980020ab959ee2d8064422582f526b3000026216093476367931ee6a575"
+      "sha256": "652ae14d81ff1217bf87b511bce3e4112c3eb976786ee809bd7ddbf64f2a86f3"
     },
     {
       "path": "scripts/collect-build-metrics.ps1",
-      "sha256": "aae9f0ab63202f41bc554dc77b63051585127deffe0c0ee1e61dc9a4b505c025"
+      "sha256": "71561d26e89624cad4577784d5f2e5f8e0241ec0c19c019c0a8cb995fb2e04c9"
     },
     {
       "path": "scripts/package-evidence.ps1",
-      "sha256": "69f476fd88a2cb4733eea59f6d22a1d573281694a4c51f86991acad47a73b44b"
+      "sha256": "8a72ee95e48ac8cba61536171a8342c5d085a2af537c13c9ff26223bcb22936a"
     },
     {
       "path": "src/main.rs",
-      "sha256": "34d7edce5199cb4ad1f3a09cca3987337d920cc093d1a9d1f68970b952ee82cb"
+      "sha256": "4b070ddb010d8ec81e93c3f9beac19df946b098adb9b53b21f8919185c4cc8a0"
     },
     {
       "path": "src/lifecycle.rs",
-      "sha256": "f4b7d71008fe24103e93769d7f5d7c296519add242cfe05985c12dbb67789aa5"
+      "sha256": "37c78dd0c479f582988b19094ee54944f64a228abc4d93c4ca1bf9f9a5e2f87b"
     },
     {
       "path": "src/namespace.rs",
-      "sha256": "4e7f1958aa21dc2650047991e6fd5cce5aceab79668a5b9dc2499d9cb03b23a4"
+      "sha256": "70688c2124a0627e477528f968a3f2bb961c9f34d64a4eccc55a0b97fcd9c0b0"
     },
     {
       "path": "src/model.rs",
-      "sha256": "ea47ab428bec5415186feee063c75a5041b91efd994359b0f4e1930f037003dd"
+      "sha256": "dca177565204d261745124fdafa252424936bca2a65ebe9e1787883f693e66c2"
     },
     {
       "path": "src/runner.rs",
@@ -73,7 +75,7 @@
     },
     {
       "path": "src/util.rs",
-      "sha256": "ed035ea3810f9beadb791c3d602a92a2690334c153590f68388905093c989a52"
+      "sha256": "ec26916eeaa12152117d9b0e823d5d757718b23bf059e5ced53b2b80dbcf7f60"
     },
     {
       "path": "src/backend/mod.rs",
@@ -85,7 +87,7 @@
     },
     {
       "path": "src/benchmark.rs",
-      "sha256": "d2588c8ecebe72a2b2273e8460a9ae92cbb38b7862d0fd8d45b11579c8f3eb4f"
+      "sha256": "2c3896a8840a1996cc0f70d5fd17e46e02578d6d32f2a19b1f37e7529a8251f5"
     },
     {
       "path": "src/backend/redb_backend.rs",
@@ -96,6 +98,7 @@
       "sha256": "cf906537cb97b437af890178b1034f2eef97f070636effd826566a3331efb34a"
     }
   ],
+  "source_manifest_sha256": "30be1edac70bb27f78c626bf7099aee1f825f2a0f59797a72b9acdc781e9725e",
   "backends": [
     {
       "backend": "redb",
@@ -106,7 +109,7 @@
           "crash_point": "indexed-query",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 208638,
+          "elapsed_micros": 664044,
           "observation": {
             "first": "record-00000000",
             "last": "record-00000999",
@@ -120,11 +123,11 @@
           "crash_point": "corruption-visible",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 29740,
+          "elapsed_micros": 86486,
           "observation": {
             "original_bytes": 1056768,
             "overwritten_header_bytes": 32,
-            "visible_error": "open redb database C:\\Users\\endof\\Downloads\\lumin-perf-lab\\phase0-store-backend-probe\\work\\fault-redb\\backend-contract\\corruption-visible\\lifecycle.redb: I/O error: invalid data"
+            "visible_error": "open redb database C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\backend-contract\\corruption-visible\\lifecycle.redb: I/O error: invalid data"
           }
         },
         {
@@ -132,7 +135,7 @@
           "crash_point": "before-attempt-catalog-allocation",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 61139,
+          "elapsed_micros": 142336,
           "observation": {
             "attempt_phase": null,
             "latest_attempt_phase": null,
@@ -147,7 +150,7 @@
           "crash_point": "after-catalog-allocation",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 73724,
+          "elapsed_micros": 173767,
           "observation": {
             "attempt_phase": null,
             "latest_attempt_phase": null,
@@ -162,7 +165,7 @@
           "crash_point": "after-running-envelope",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 118183,
+          "elapsed_micros": 353486,
           "observation": {
             "attempt_phase": "interrupted",
             "latest_attempt_phase": "interrupted",
@@ -177,7 +180,7 @@
           "crash_point": "after-latest-running",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 137345,
+          "elapsed_micros": 327010,
           "observation": {
             "attempt_phase": "interrupted",
             "latest_attempt_phase": "interrupted",
@@ -192,7 +195,7 @@
           "crash_point": "after-run-rename",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 163703,
+          "elapsed_micros": 330138,
           "observation": {
             "attempt_phase": "interrupted",
             "latest_attempt_phase": "interrupted",
@@ -207,7 +210,7 @@
           "crash_point": "after-terminal-attempt",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 159990,
+          "elapsed_micros": 328723,
           "observation": {
             "attempt_phase": "complete",
             "latest_attempt_phase": "complete",
@@ -222,7 +225,7 @@
           "crash_point": "after-latest-temp",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 180462,
+          "elapsed_micros": 343103,
           "observation": {
             "attempt_phase": "complete",
             "latest_attempt_phase": "complete",
@@ -237,7 +240,7 @@
           "crash_point": "after-latest-replace",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 196398,
+          "elapsed_micros": 328455,
           "observation": {
             "attempt_phase": "complete",
             "latest_attempt_phase": "complete",
@@ -252,14 +255,29 @@
           "crash_point": "reverse-sequence-independent-fields",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 124160,
+          "elapsed_micros": 306717,
           "observation": {
-            "latest_attempt": {
-              "phase": "interrupted",
-              "run_id": null,
-              "sequence": 11
+            "forced_commit_order": [
+              {
+                "actor": "newer-failure",
+                "commit_ordinal": 1,
+                "outcome": "published"
+              },
+              {
+                "actor": "older-success",
+                "commit_ordinal": 2,
+                "outcome": "published"
+              }
+            ],
+            "latest": {
+              "latest_attempt": {
+                "phase": "interrupted",
+                "run_id": null,
+                "sequence": 11
+              },
+              "latest_completed": 10
             },
-            "latest_completed": 10
+            "second_actor_observed_lock_contention": true
           }
         },
         {
@@ -267,14 +285,29 @@
           "crash_point": "same-sequence-terminal-beats-running",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 118833,
+          "elapsed_micros": 266593,
           "observation": {
-            "latest_attempt": {
-              "phase": "complete",
-              "run_id": "run-10",
-              "sequence": 10
+            "forced_commit_order": [
+              {
+                "actor": "terminal",
+                "commit_ordinal": 1,
+                "outcome": "published"
+              },
+              {
+                "actor": "running",
+                "commit_ordinal": 2,
+                "outcome": "published"
+              }
+            ],
+            "latest": {
+              "latest_attempt": {
+                "phase": "complete",
+                "run_id": "run-10",
+                "sequence": 10
+              },
+              "latest_completed": 10
             },
-            "latest_completed": 10
+            "second_actor_observed_lock_contention": true
           }
         },
         {
@@ -282,7 +315,7 @@
           "crash_point": "publication-first-makes-retention-stale",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 136665,
+          "elapsed_micros": 317787,
           "observation": {
             "latest": {
               "latest_attempt": {
@@ -309,7 +342,7 @@
           "crash_point": "retention-first-blocks-publication",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 138882,
+          "elapsed_micros": 353508,
           "observation": {
             "latest": {
               "latest_attempt": null,
@@ -332,7 +365,7 @@
           "crash_point": "before-prepared-plan",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 79793,
+          "elapsed_micros": 203826,
           "observation": {
             "canonical_payload_exists": true,
             "plan_state": null,
@@ -345,7 +378,7 @@
           "crash_point": "after-prepared-plan",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 83523,
+          "elapsed_micros": 225932,
           "observation": {
             "canonical_payload_exists": true,
             "plan_state": "prepared",
@@ -358,7 +391,7 @@
           "crash_point": "after-pruning-commit",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 109809,
+          "elapsed_micros": 358272,
           "observation": {
             "canonical_payload_exists": false,
             "plan_state": "pruned",
@@ -371,7 +404,7 @@
           "crash_point": "after-payload-move",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 118571,
+          "elapsed_micros": 436288,
           "observation": {
             "canonical_payload_exists": false,
             "plan_state": "pruned",
@@ -384,7 +417,7 @@
           "crash_point": "after-pruned-commit",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 120694,
+          "elapsed_micros": 371967,
           "observation": {
             "canonical_payload_exists": false,
             "plan_state": "pruned",
@@ -397,7 +430,7 @@
           "crash_point": "after-physical-reclamation",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 118975,
+          "elapsed_micros": 351560,
           "observation": {
             "canonical_payload_exists": false,
             "plan_state": "pruned",
@@ -410,7 +443,7 @@
           "crash_point": "both-canonical-and-trash",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 69519,
+          "elapsed_micros": 184269,
           "observation": {
             "diagnostic": "retention item has both-or-neither canonical/trash identity",
             "hard_stop": true
@@ -421,7 +454,7 @@
           "crash_point": "neither-canonical-nor-trash",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 57356,
+          "elapsed_micros": 182030,
           "observation": {
             "diagnostic": "retention item has both-or-neither canonical/trash identity",
             "hard_stop": true
@@ -432,12 +465,12 @@
           "crash_point": "before-migration-intent",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 52723,
+          "elapsed_micros": 135879,
           "observation": {
             "generation": 1,
             "intent_exists": false,
             "replacement_exists": false,
-            "stale_compare_exchange_rejected": null
+            "stale_writer": null
           }
         },
         {
@@ -445,12 +478,12 @@
           "crash_point": "after-migration-intent",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 132709,
+          "elapsed_micros": 351759,
           "observation": {
             "generation": 2,
             "intent_exists": false,
             "replacement_exists": false,
-            "stale_compare_exchange_rejected": null
+            "stale_writer": null
           }
         },
         {
@@ -458,12 +491,12 @@
           "crash_point": "after-validated-replacement",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 118114,
+          "elapsed_micros": 361597,
           "observation": {
             "generation": 2,
             "intent_exists": false,
             "replacement_exists": false,
-            "stale_compare_exchange_rejected": null
+            "stale_writer": null
           }
         },
         {
@@ -471,12 +504,12 @@
           "crash_point": "after-canonical-replace",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 120387,
+          "elapsed_micros": 328783,
           "observation": {
             "generation": 2,
             "intent_exists": false,
             "replacement_exists": false,
-            "stale_compare_exchange_rejected": null
+            "stale_writer": null
           }
         },
         {
@@ -484,12 +517,12 @@
           "crash_point": "after-intent-removal",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 109691,
+          "elapsed_micros": 309702,
           "observation": {
             "generation": 2,
             "intent_exists": false,
             "replacement_exists": false,
-            "stale_compare_exchange_rejected": null
+            "stale_writer": null
           }
         },
         {
@@ -497,12 +530,20 @@
           "crash_point": "stale-generation-writer",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 101942,
+          "elapsed_micros": 411033,
           "observation": {
             "generation": 2,
             "intent_exists": false,
             "replacement_exists": false,
-            "stale_compare_exchange_rejected": true
+            "stale_writer": {
+              "logical_catalog_preserved": true,
+              "mutation_attempted": false,
+              "observed_generation": 2,
+              "outcome": "generation_changed",
+              "process_id": 44832,
+              "token_generation": 1,
+              "transaction_closed_before_analysis": true
+            }
           }
         },
         {
@@ -510,11 +551,15 @@
           "crash_point": "state-directory-copy-swap",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 142597,
+          "elapsed_micros": 364560,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "namespace physical binding mismatch",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": null,
+            "injection_error": "fault rename C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\state-directory-copy-swap\\.lumin -> C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\state-directory-copy-swap\\.lumin.replaced: 액세스가 거부되었습니다. (os error 5)",
+            "injection_outcome": "kernel-prevented-before-displacement",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -522,11 +567,22 @@
           "crash_point": "lifecycle-lock-replacement",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 123620,
+          "elapsed_micros": 340994,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "namespace physical binding mismatch",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "state entry no longer names held object: C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\lifecycle-lock-replacement\\.lumin\\lifecycle.lock",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -534,11 +590,22 @@
           "crash_point": "lifecycle-lock-content-mutation",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 119732,
+          "elapsed_micros": 342245,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "lifecycle lock header changed",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "state entry no longer names held object: C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\lifecycle-lock-content-mutation\\.lumin\\lifecycle.lock",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -546,11 +613,22 @@
           "crash_point": "lifecycle-lock-extra-link",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 111642,
+          "elapsed_micros": 323812,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "lifecycle lock has extra links",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "lifecycle lock has extra links",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -558,11 +636,15 @@
           "crash_point": "attempts-parent-replacement",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 133737,
+          "elapsed_micros": 309498,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "namespace physical binding mismatch",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": null,
+            "injection_error": "fault rename C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\attempts-parent-replacement\\.lumin\\attempts -> C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\attempts-parent-replacement\\.lumin\\attempts.replaced: 액세스가 거부되었습니다. (os error 5)",
+            "injection_outcome": "kernel-prevented-before-displacement",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -570,11 +652,15 @@
           "crash_point": "runs-parent-replacement",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 116764,
+          "elapsed_micros": 334995,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "namespace physical binding mismatch",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": null,
+            "injection_error": "fault rename C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\runs-parent-replacement\\.lumin\\runs -> C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\runs-parent-replacement\\.lumin\\runs.replaced: 액세스가 거부되었습니다. (os error 5)",
+            "injection_outcome": "kernel-prevented-before-displacement",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -582,11 +668,15 @@
           "crash_point": "trash-parent-replacement",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 123719,
+          "elapsed_micros": 312765,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "namespace physical binding mismatch",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": null,
+            "injection_error": "fault rename C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\trash-parent-replacement\\.lumin\\trash -> C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\trash-parent-replacement\\.lumin\\trash.replaced: 액세스가 거부되었습니다. (os error 5)",
+            "injection_outcome": "kernel-prevented-before-displacement",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -594,11 +684,15 @@
           "crash_point": "cache-parent-replacement",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 120778,
+          "elapsed_micros": 311741,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "namespace physical binding mismatch",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": null,
+            "injection_error": "fault rename C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\cache-parent-replacement\\.lumin\\cache -> C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\cache-parent-replacement\\.lumin\\cache.replaced: 액세스가 거부되었습니다. (os error 5)",
+            "injection_outcome": "kernel-prevented-before-displacement",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -606,11 +700,22 @@
           "crash_point": "attempts-anchor-replacement",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 135165,
+          "elapsed_micros": 310094,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "namespace physical binding mismatch",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed-parent anchor attempts: state entry no longer names held object: C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\attempts-anchor-replacement\\.lumin\\attempts\\namespace.anchor",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -618,11 +723,22 @@
           "crash_point": "runs-anchor-replacement",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 138618,
+          "elapsed_micros": 321799,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "namespace physical binding mismatch",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed-parent anchor runs: state entry no longer names held object: C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\runs-anchor-replacement\\.lumin\\runs\\namespace.anchor",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -630,11 +746,22 @@
           "crash_point": "trash-anchor-replacement",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 139905,
+          "elapsed_micros": 282210,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "namespace physical binding mismatch",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed-parent anchor trash: state entry no longer names held object: C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\trash-anchor-replacement\\.lumin\\trash\\namespace.anchor",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -642,11 +769,22 @@
           "crash_point": "cache-anchor-replacement",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 137869,
+          "elapsed_micros": 344448,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "namespace physical binding mismatch",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed-parent anchor cache: state entry no longer names held object: C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\cache-anchor-replacement\\.lumin\\cache\\namespace.anchor",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -654,11 +792,22 @@
           "crash_point": "runs-anchor-content-mutation",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 122014,
+          "elapsed_micros": 387062,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "managed parent runs anchor header changed",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "parse held managed-parent anchor runs: expected value at line 1 column 1",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -666,11 +815,102 @@
           "crash_point": "runs-anchor-extra-link",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 107237,
+          "elapsed_micros": 423835,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "managed parent runs anchor has extra links",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "managed parent runs anchor has extra links",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "runs-parent-replacement-after-run-rename",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 377563,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "after-mutation",
+            "child_result": null,
+            "injection_error": "fault rename C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\runs-parent-replacement-after-run-rename\\.lumin\\runs -> C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\runs-parent-replacement-after-run-rename\\.lumin\\runs.replaced: 액세스가 거부되었습니다. (os error 5)",
+            "injection_outcome": "kernel-prevented-before-displacement",
+            "operation": "run-publish",
+            "physical_mutation_performed": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "runs-parent-replacement-before-final-commit",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 444035,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-commit",
+            "child_result": null,
+            "injection_error": "fault rename C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\runs-parent-replacement-before-final-commit\\.lumin\\runs -> C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\runs-parent-replacement-before-final-commit\\.lumin\\runs.replaced: 액세스가 거부되었습니다. (os error 5)",
+            "injection_outcome": "kernel-prevented-before-displacement",
+            "operation": "run-publish",
+            "physical_mutation_performed": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "trash-parent-replacement-before-trash-move",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 380803,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": null,
+            "injection_error": "fault rename C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\trash-parent-replacement-before-trash-move\\.lumin\\trash -> C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\trash-parent-replacement-before-trash-move\\.lumin\\trash.replaced: 액세스가 거부되었습니다. (os error 5)",
+            "injection_outcome": "kernel-prevented-before-displacement",
+            "operation": "trash-move",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "trash-parent-replacement-after-trash-move",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 375681,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "after-mutation",
+            "child_result": null,
+            "injection_error": "fault rename C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\trash-parent-replacement-after-trash-move\\.lumin\\trash -> C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\trash-parent-replacement-after-trash-move\\.lumin\\trash.replaced: 액세스가 거부되었습니다. (os error 5)",
+            "injection_outcome": "kernel-prevented-before-displacement",
+            "operation": "trash-move",
+            "physical_mutation_performed": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "trash-parent-replacement-before-final-commit",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 463091,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-commit",
+            "child_result": null,
+            "injection_error": "fault rename C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\trash-parent-replacement-before-final-commit\\.lumin\\trash -> C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-redb\\namespace\\trash-parent-replacement-before-final-commit\\.lumin\\trash.replaced: 액세스가 거부되었습니다. (os error 5)",
+            "injection_outcome": "kernel-prevented-before-displacement",
+            "operation": "trash-move",
+            "physical_mutation_performed": true
           }
         }
       ]
@@ -684,7 +924,7 @@
           "crash_point": "indexed-query",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 358519,
+          "elapsed_micros": 1284330,
           "observation": {
             "first": "record-00000000",
             "last": "record-00000999",
@@ -698,7 +938,7 @@
           "crash_point": "corruption-visible",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 56670,
+          "elapsed_micros": 199967,
           "observation": {
             "original_bytes": 16384,
             "overwritten_header_bytes": 32,
@@ -710,7 +950,7 @@
           "crash_point": "before-attempt-catalog-allocation",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 113518,
+          "elapsed_micros": 201548,
           "observation": {
             "attempt_phase": null,
             "latest_attempt_phase": null,
@@ -725,7 +965,7 @@
           "crash_point": "after-catalog-allocation",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 120069,
+          "elapsed_micros": 364755,
           "observation": {
             "attempt_phase": null,
             "latest_attempt_phase": null,
@@ -740,7 +980,7 @@
           "crash_point": "after-running-envelope",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 199997,
+          "elapsed_micros": 593589,
           "observation": {
             "attempt_phase": "interrupted",
             "latest_attempt_phase": "interrupted",
@@ -755,7 +995,7 @@
           "crash_point": "after-latest-running",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 195216,
+          "elapsed_micros": 562220,
           "observation": {
             "attempt_phase": "interrupted",
             "latest_attempt_phase": "interrupted",
@@ -770,7 +1010,7 @@
           "crash_point": "after-run-rename",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 218738,
+          "elapsed_micros": 764024,
           "observation": {
             "attempt_phase": "interrupted",
             "latest_attempt_phase": "interrupted",
@@ -785,7 +1025,7 @@
           "crash_point": "after-terminal-attempt",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 217029,
+          "elapsed_micros": 546208,
           "observation": {
             "attempt_phase": "complete",
             "latest_attempt_phase": "complete",
@@ -800,7 +1040,7 @@
           "crash_point": "after-latest-temp",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 241033,
+          "elapsed_micros": 658707,
           "observation": {
             "attempt_phase": "complete",
             "latest_attempt_phase": "complete",
@@ -815,7 +1055,7 @@
           "crash_point": "after-latest-replace",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 240734,
+          "elapsed_micros": 625574,
           "observation": {
             "attempt_phase": "complete",
             "latest_attempt_phase": "complete",
@@ -830,14 +1070,29 @@
           "crash_point": "reverse-sequence-independent-fields",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 147495,
+          "elapsed_micros": 428467,
           "observation": {
-            "latest_attempt": {
-              "phase": "interrupted",
-              "run_id": null,
-              "sequence": 11
+            "forced_commit_order": [
+              {
+                "actor": "newer-failure",
+                "commit_ordinal": 1,
+                "outcome": "published"
+              },
+              {
+                "actor": "older-success",
+                "commit_ordinal": 2,
+                "outcome": "published"
+              }
+            ],
+            "latest": {
+              "latest_attempt": {
+                "phase": "interrupted",
+                "run_id": null,
+                "sequence": 11
+              },
+              "latest_completed": 10
             },
-            "latest_completed": 10
+            "second_actor_observed_lock_contention": true
           }
         },
         {
@@ -845,14 +1100,29 @@
           "crash_point": "same-sequence-terminal-beats-running",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 142574,
+          "elapsed_micros": 417695,
           "observation": {
-            "latest_attempt": {
-              "phase": "complete",
-              "run_id": "run-10",
-              "sequence": 10
+            "forced_commit_order": [
+              {
+                "actor": "terminal",
+                "commit_ordinal": 1,
+                "outcome": "published"
+              },
+              {
+                "actor": "running",
+                "commit_ordinal": 2,
+                "outcome": "published"
+              }
+            ],
+            "latest": {
+              "latest_attempt": {
+                "phase": "complete",
+                "run_id": "run-10",
+                "sequence": 10
+              },
+              "latest_completed": 10
             },
-            "latest_completed": 10
+            "second_actor_observed_lock_contention": true
           }
         },
         {
@@ -860,7 +1130,7 @@
           "crash_point": "publication-first-makes-retention-stale",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 183592,
+          "elapsed_micros": 412834,
           "observation": {
             "latest": {
               "latest_attempt": {
@@ -887,7 +1157,7 @@
           "crash_point": "retention-first-blocks-publication",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 197848,
+          "elapsed_micros": 429170,
           "observation": {
             "latest": {
               "latest_attempt": null,
@@ -910,7 +1180,7 @@
           "crash_point": "before-prepared-plan",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 128247,
+          "elapsed_micros": 275665,
           "observation": {
             "canonical_payload_exists": true,
             "plan_state": null,
@@ -923,7 +1193,7 @@
           "crash_point": "after-prepared-plan",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 187560,
+          "elapsed_micros": 340627,
           "observation": {
             "canonical_payload_exists": true,
             "plan_state": "prepared",
@@ -936,7 +1206,7 @@
           "crash_point": "after-pruning-commit",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 212602,
+          "elapsed_micros": 456873,
           "observation": {
             "canonical_payload_exists": false,
             "plan_state": "pruned",
@@ -949,7 +1219,7 @@
           "crash_point": "after-payload-move",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 236347,
+          "elapsed_micros": 565811,
           "observation": {
             "canonical_payload_exists": false,
             "plan_state": "pruned",
@@ -962,7 +1232,7 @@
           "crash_point": "after-pruned-commit",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 220141,
+          "elapsed_micros": 477966,
           "observation": {
             "canonical_payload_exists": false,
             "plan_state": "pruned",
@@ -975,7 +1245,7 @@
           "crash_point": "after-physical-reclamation",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 211981,
+          "elapsed_micros": 495188,
           "observation": {
             "canonical_payload_exists": false,
             "plan_state": "pruned",
@@ -988,7 +1258,7 @@
           "crash_point": "both-canonical-and-trash",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 110055,
+          "elapsed_micros": 247307,
           "observation": {
             "diagnostic": "retention item has both-or-neither canonical/trash identity",
             "hard_stop": true
@@ -999,7 +1269,7 @@
           "crash_point": "neither-canonical-nor-trash",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 151102,
+          "elapsed_micros": 259180,
           "observation": {
             "diagnostic": "retention item has both-or-neither canonical/trash identity",
             "hard_stop": true
@@ -1010,12 +1280,12 @@
           "crash_point": "before-migration-intent",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 83690,
+          "elapsed_micros": 157923,
           "observation": {
             "generation": 1,
             "intent_exists": false,
             "replacement_exists": false,
-            "stale_compare_exchange_rejected": null
+            "stale_writer": null
           }
         },
         {
@@ -1023,12 +1293,12 @@
           "crash_point": "after-migration-intent",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 241814,
+          "elapsed_micros": 386560,
           "observation": {
             "generation": 2,
             "intent_exists": false,
             "replacement_exists": false,
-            "stale_compare_exchange_rejected": null
+            "stale_writer": null
           }
         },
         {
@@ -1036,12 +1306,12 @@
           "crash_point": "after-validated-replacement",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 227031,
+          "elapsed_micros": 384992,
           "observation": {
             "generation": 2,
             "intent_exists": false,
             "replacement_exists": false,
-            "stale_compare_exchange_rejected": null
+            "stale_writer": null
           }
         },
         {
@@ -1049,12 +1319,12 @@
           "crash_point": "after-canonical-replace",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 219561,
+          "elapsed_micros": 374727,
           "observation": {
             "generation": 2,
             "intent_exists": false,
             "replacement_exists": false,
-            "stale_compare_exchange_rejected": null
+            "stale_writer": null
           }
         },
         {
@@ -1062,12 +1332,12 @@
           "crash_point": "after-intent-removal",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 204903,
+          "elapsed_micros": 352060,
           "observation": {
             "generation": 2,
             "intent_exists": false,
             "replacement_exists": false,
-            "stale_compare_exchange_rejected": null
+            "stale_writer": null
           }
         },
         {
@@ -1075,12 +1345,20 @@
           "crash_point": "stale-generation-writer",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 231421,
+          "elapsed_micros": 412748,
           "observation": {
             "generation": 2,
             "intent_exists": false,
             "replacement_exists": false,
-            "stale_compare_exchange_rejected": true
+            "stale_writer": {
+              "logical_catalog_preserved": true,
+              "mutation_attempted": false,
+              "observed_generation": 2,
+              "outcome": "generation_changed",
+              "process_id": 37448,
+              "token_generation": 1,
+              "transaction_closed_before_analysis": true
+            }
           }
         },
         {
@@ -1088,11 +1366,15 @@
           "crash_point": "state-directory-copy-swap",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 204206,
+          "elapsed_micros": 378882,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "namespace physical binding mismatch",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": null,
+            "injection_error": "fault rename C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\state-directory-copy-swap\\.lumin -> C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\state-directory-copy-swap\\.lumin.replaced: 액세스가 거부되었습니다. (os error 5)",
+            "injection_outcome": "kernel-prevented-before-displacement",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -1100,11 +1382,22 @@
           "crash_point": "lifecycle-lock-replacement",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 169036,
+          "elapsed_micros": 380352,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "namespace physical binding mismatch",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "state entry no longer names held object: C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\lifecycle-lock-replacement\\.lumin\\lifecycle.lock",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -1112,11 +1405,22 @@
           "crash_point": "lifecycle-lock-content-mutation",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 149157,
+          "elapsed_micros": 365648,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "lifecycle lock header changed",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "state entry no longer names held object: C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\lifecycle-lock-content-mutation\\.lumin\\lifecycle.lock",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -1124,11 +1428,22 @@
           "crash_point": "lifecycle-lock-extra-link",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 153521,
+          "elapsed_micros": 440016,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "lifecycle lock has extra links",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "lifecycle lock has extra links",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -1136,11 +1451,15 @@
           "crash_point": "attempts-parent-replacement",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 157704,
+          "elapsed_micros": 343774,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "namespace physical binding mismatch",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": null,
+            "injection_error": "fault rename C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\attempts-parent-replacement\\.lumin\\attempts -> C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\attempts-parent-replacement\\.lumin\\attempts.replaced: 액세스가 거부되었습니다. (os error 5)",
+            "injection_outcome": "kernel-prevented-before-displacement",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -1148,11 +1467,15 @@
           "crash_point": "runs-parent-replacement",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 172305,
+          "elapsed_micros": 390562,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "namespace physical binding mismatch",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": null,
+            "injection_error": "fault rename C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\runs-parent-replacement\\.lumin\\runs -> C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\runs-parent-replacement\\.lumin\\runs.replaced: 액세스가 거부되었습니다. (os error 5)",
+            "injection_outcome": "kernel-prevented-before-displacement",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -1160,11 +1483,15 @@
           "crash_point": "trash-parent-replacement",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 225378,
+          "elapsed_micros": 405576,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "namespace physical binding mismatch",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": null,
+            "injection_error": "fault rename C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\trash-parent-replacement\\.lumin\\trash -> C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\trash-parent-replacement\\.lumin\\trash.replaced: 액세스가 거부되었습니다. (os error 5)",
+            "injection_outcome": "kernel-prevented-before-displacement",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -1172,11 +1499,15 @@
           "crash_point": "cache-parent-replacement",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 179871,
+          "elapsed_micros": 392960,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "namespace physical binding mismatch",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": null,
+            "injection_error": "fault rename C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\cache-parent-replacement\\.lumin\\cache -> C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\cache-parent-replacement\\.lumin\\cache.replaced: 액세스가 거부되었습니다. (os error 5)",
+            "injection_outcome": "kernel-prevented-before-displacement",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -1184,11 +1515,22 @@
           "crash_point": "attempts-anchor-replacement",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 158452,
+          "elapsed_micros": 424047,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "namespace physical binding mismatch",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed-parent anchor attempts: state entry no longer names held object: C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\attempts-anchor-replacement\\.lumin\\attempts\\namespace.anchor",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -1196,11 +1538,22 @@
           "crash_point": "runs-anchor-replacement",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 162991,
+          "elapsed_micros": 440035,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "namespace physical binding mismatch",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed-parent anchor runs: state entry no longer names held object: C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\runs-anchor-replacement\\.lumin\\runs\\namespace.anchor",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -1208,11 +1561,22 @@
           "crash_point": "trash-anchor-replacement",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 179704,
+          "elapsed_micros": 471143,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "namespace physical binding mismatch",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed-parent anchor trash: state entry no longer names held object: C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\trash-anchor-replacement\\.lumin\\trash\\namespace.anchor",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -1220,11 +1584,22 @@
           "crash_point": "cache-anchor-replacement",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 152265,
+          "elapsed_micros": 415873,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "namespace physical binding mismatch",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed-parent anchor cache: state entry no longer names held object: C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\cache-anchor-replacement\\.lumin\\cache\\namespace.anchor",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -1232,11 +1607,22 @@
           "crash_point": "runs-anchor-content-mutation",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 157032,
+          "elapsed_micros": 450412,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "managed parent runs anchor header changed",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "parse held managed-parent anchor runs: expected value at line 1 column 1",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
           }
         },
         {
@@ -1244,11 +1630,102 @@
           "crash_point": "runs-anchor-extra-link",
           "status": "PASS",
           "error": null,
-          "elapsed_micros": 170682,
+          "elapsed_micros": 458649,
           "observation": {
-            "canonical_mutation_written": false,
-            "diagnostic": "managed parent runs anchor has extra links",
-            "hard_stop": true
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "managed parent runs anchor has extra links",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "runs-parent-replacement-after-run-rename",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 422495,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "after-mutation",
+            "child_result": null,
+            "injection_error": "fault rename C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\runs-parent-replacement-after-run-rename\\.lumin\\runs -> C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\runs-parent-replacement-after-run-rename\\.lumin\\runs.replaced: 액세스가 거부되었습니다. (os error 5)",
+            "injection_outcome": "kernel-prevented-before-displacement",
+            "operation": "run-publish",
+            "physical_mutation_performed": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "runs-parent-replacement-before-final-commit",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 543258,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-commit",
+            "child_result": null,
+            "injection_error": "fault rename C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\runs-parent-replacement-before-final-commit\\.lumin\\runs -> C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\runs-parent-replacement-before-final-commit\\.lumin\\runs.replaced: 액세스가 거부되었습니다. (os error 5)",
+            "injection_outcome": "kernel-prevented-before-displacement",
+            "operation": "run-publish",
+            "physical_mutation_performed": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "trash-parent-replacement-before-trash-move",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 390821,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": null,
+            "injection_error": "fault rename C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\trash-parent-replacement-before-trash-move\\.lumin\\trash -> C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\trash-parent-replacement-before-trash-move\\.lumin\\trash.replaced: 액세스가 거부되었습니다. (os error 5)",
+            "injection_outcome": "kernel-prevented-before-displacement",
+            "operation": "trash-move",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "trash-parent-replacement-after-trash-move",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 462053,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "after-mutation",
+            "child_result": null,
+            "injection_error": "fault rename C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\trash-parent-replacement-after-trash-move\\.lumin\\trash -> C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\trash-parent-replacement-after-trash-move\\.lumin\\trash.replaced: 액세스가 거부되었습니다. (os error 5)",
+            "injection_outcome": "kernel-prevented-before-displacement",
+            "operation": "trash-move",
+            "physical_mutation_performed": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "trash-parent-replacement-before-final-commit",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 480502,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-commit",
+            "child_result": null,
+            "injection_error": "fault rename C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\trash-parent-replacement-before-final-commit\\.lumin\\trash -> C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\work\\fault-sqlite\\namespace\\trash-parent-replacement-before-final-commit\\.lumin\\trash.replaced: 액세스가 거부되었습니다. (os error 5)",
+            "injection_outcome": "kernel-prevented-before-displacement",
+            "operation": "trash-move",
+            "physical_mutation_performed": true
           }
         }
       ]

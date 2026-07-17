@@ -197,6 +197,7 @@ name = "lumin-phase0-store-probe"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "getrandom",
  "redb",
  "rusqlite",
  "serde",

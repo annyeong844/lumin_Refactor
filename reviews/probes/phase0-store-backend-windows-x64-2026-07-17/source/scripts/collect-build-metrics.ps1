@@ -135,6 +135,15 @@ function Get-DependencySurface([string]$Backend, [string]$Feature) {
 }
 
 $Results = [Collections.Generic.List[object]]::new()
+$HarnessBinary = Join-Path $Root "target/release/lumin-phase0-store-probe.exe"
+if (-not (Test-Path -LiteralPath $HarnessBinary -PathType Leaf)) {
+    throw "missing all-features release harness binary: $HarnessBinary"
+}
+$HarnessExecutable = [pscustomobject][ordered]@{
+    path = Get-ProbeRelativePath $HarnessBinary
+    bytes = (Get-Item -LiteralPath $HarnessBinary).Length
+    sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $HarnessBinary).Hash.ToLowerInvariant()
+}
 foreach ($Spec in @(
     [pscustomobject][ordered]@{ backend = "redb"; feature = "redb-backend" },
     [pscustomobject][ordered]@{ backend = "sqlite"; feature = "sqlite-backend" }
@@ -153,6 +162,7 @@ foreach ($Spec in @(
         backend = $Backend
         feature = $Feature
         target_directory = Get-ProbeRelativePath $TargetDirectory
+        binary = Get-ProbeRelativePath $Binary
         clean_build = $Clean
         incremental_build = $Incremental
         binary_bytes = (Get-Item -LiteralPath $Binary).Length
@@ -170,6 +180,7 @@ $Report = [pscustomobject][ordered]@{
     rustc = (& rustc -Vv) -join "`n"
     cargo = (& cargo -V) -join "`n"
     collector_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $PSCommandPath).Hash.ToLowerInvariant()
+    harness_executable = $HarnessExecutable
     results = @($Results)
 }
 

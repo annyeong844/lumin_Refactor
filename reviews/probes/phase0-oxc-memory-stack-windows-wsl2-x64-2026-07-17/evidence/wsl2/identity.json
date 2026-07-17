@@ -1,0 +1,80 @@
+{
+  "probe_id": "lumin-phase0-oxc-identity-v1",
+  "architecture_commit": "65e60216891bb3d826a4778f84cb8aaa377abe92",
+  "architecture_manifest_sha256": "66925583362be22257dd7357072d176cd3f1ae3d4f99874a53f6689b7cf535e0",
+  "host_os": "linux",
+  "host_arch": "x86_64",
+  "available_parallelism": 12,
+  "executable": {
+    "path": "/home/endof/lumin-phase0-oxc-probe-65e6021-20260717/source/target/release/lumin-phase0-oxc-probe",
+    "bytes": 1920328,
+    "sha256": "9cfb24eabb52ce51b06c95199a6ff5f0d17108a98ffbe2d8822cdcfde396d60a"
+  },
+  "source_files": [
+    {
+      "path": ".gitignore",
+      "sha256": "243a31cda0ac105b055b66327ee3d3f88053eb0bc07b29ab858996814a527118"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "fc440283108b5eb8ab458480c19bff9a505e3fab30cc40a664b0924894752269"
+    },
+    {
+      "path": "Cargo.lock",
+      "sha256": "94626a6e9d1cf8b0ab75ca7281d7a704c2e7f8151bd4dd001054b6139204febb"
+    },
+    {
+      "path": "rust-toolchain.toml",
+      "sha256": "5100153f3b37edca1ad058cc62c2ed96b940f2216a2031c462815b883b04da19"
+    },
+    {
+      "path": "rustfmt.toml",
+      "sha256": "ea28b4cd116f4d79ec2ed46898f8ddeba905a6088da958a6ec64431f93c7c4f4"
+    },
+    {
+      "path": "README.md",
+      "sha256": "63e6e17a04bd8650883df9dbf6eb34f8b1cb7aa14d7a608f364c563678e7b464"
+    },
+    {
+      "path": "PROBE-CONTRACT.md",
+      "sha256": "0b975e7f6c22703d48ab1917dfe45b432f870af2dd502145dcac7058da0a2125"
+    },
+    {
+      "path": "scripts/prepare-corpus.py",
+      "sha256": "70e328281cb530d1d1b1d43df2df1988fca4aba267a9d7814da01aa30d04f37f"
+    },
+    {
+      "path": "scripts/run-matrix.py",
+      "sha256": "c6009e7a8b9b530f840cce8510260f264c39c2a00f7b451fbf60acfca3e0931f"
+    },
+    {
+      "path": "scripts/package-evidence.py",
+      "sha256": "551a9c10d0add44542cc6d76ce702e458cbde98b97fdd6357fc6428416af4342"
+    },
+    {
+      "path": "src/main.rs",
+      "sha256": "1186e45d1aa14210e3a48b52b3225d8aa94c2c2866cf2028b5aaedef0e090490"
+    },
+    {
+      "path": "src/model.rs",
+      "sha256": "e200472b1848cdd35f3e54e0e2b2db667a806dd12da610117f0002570c70e4f8"
+    },
+    {
+      "path": "src/corpus.rs",
+      "sha256": "a74d22376cafb86988c4fc83629b749364b6fe1b83c5bb3180be2568c01c9bff"
+    },
+    {
+      "path": "src/probe.rs",
+      "sha256": "14996bc69da6cd266a4fa936df837c88d326741953ecf6b5df8cada516c4d4ce"
+    },
+    {
+      "path": "src/memory.rs",
+      "sha256": "b8ef0c0d20503ee6b0d987820c41d76d5b220867b2b4737e0deccb10f1497a2b"
+    },
+    {
+      "path": "src/util.rs",
+      "sha256": "7991e37abe5e162c5f4ddac826e24a454fd4888689942d616ee3fa98dacff07a"
+    }
+  ],
+  "source_manifest_sha256": "e9b405f9816cbf6d0276b22d4dbb2f4c80b35a2839fb05704541401a11b2a024"
+}

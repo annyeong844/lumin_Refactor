@@ -2,20 +2,20 @@
   "probe_id": "lumin-store-cross-process-admission-v1",
   "architecture_commit": "65e60216891bb3d826a4778f84cb8aaa377abe92",
   "architecture_manifest_sha256": "66925583362be22257dd7357072d176cd3f1ae3d4f99874a53f6689b7cf535e0",
-  "started_unix_millis": 1784268568587,
-  "finished_unix_millis": 1784268582679,
+  "started_unix_millis": 1784289127306,
+  "finished_unix_millis": 1784289153262,
   "host_os": "windows",
   "host_arch": "x86_64",
-  "executable": "C:\\Users\\endof\\Downloads\\lumin-perf-lab\\phase0-store-backend-probe\\target\\release\\lumin-phase0-store-probe.exe",
+  "executable": "C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\target\\release\\lumin-phase0-store-probe.exe",
+  "executable_bytes": 4020224,
+  "executable_sha256": "a6d58e49c8cc40856c2e97e64e3a49bed827843098799ed1af19bfba33eea151",
   "command": [
-    "C:\\Users\\endof\\Downloads\\lumin-perf-lab\\phase0-store-backend-probe\\target\\release\\lumin-phase0-store-probe.exe",
+    "C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-store-backend-windows-x64-2026-07-17\\source\\target\\release\\lumin-phase0-store-probe.exe",
     "run",
     "--backend",
     "all",
     "--rounds",
     "32",
-    "--watchdog-ms",
-    "30000",
     "--output",
     "evidence\\admission-windows-x64.json"
   ],
@@ -24,11 +24,11 @@
   "source_files": [
     {
       "path": "Cargo.toml",
-      "sha256": "3c604eaf4ccb0f1dd9f342cf8fc0871a7f0787757212b7e0fe961d3d248174d4"
+      "sha256": "ea3301b97716608f8f4367b7cc0cf9637c092dd83fbc47c3b03af1371589db4a"
     },
     {
       "path": "Cargo.lock",
-      "sha256": "204f73d487705f1d25219e87a16a9767b2ff35ba5f605b1261a9e49c23be48aa"
+      "sha256": "f590ca931667e08963ebd63a829e38dc4f826ef54373ee35390acea180acb107"
     },
     {
       "path": "rust-toolchain.toml",
@@ -40,35 +40,35 @@
     },
     {
       "path": "README.md",
-      "sha256": "a327599fa9d1fa53fc2f6247cda000eba6964897bfd5c3f42572292537416dbb"
+      "sha256": "aaff6455fa0c1a263bcd76451db52ae5922997e1bc9657e18b9d5667092db256"
     },
     {
       "path": "PROBE-CONTRACT.md",
-      "sha256": "26c2d980020ab959ee2d8064422582f526b3000026216093476367931ee6a575"
+      "sha256": "652ae14d81ff1217bf87b511bce3e4112c3eb976786ee809bd7ddbf64f2a86f3"
     },
     {
       "path": "scripts/collect-build-metrics.ps1",
-      "sha256": "aae9f0ab63202f41bc554dc77b63051585127deffe0c0ee1e61dc9a4b505c025"
+      "sha256": "71561d26e89624cad4577784d5f2e5f8e0241ec0c19c019c0a8cb995fb2e04c9"
     },
     {
       "path": "scripts/package-evidence.ps1",
-      "sha256": "69f476fd88a2cb4733eea59f6d22a1d573281694a4c51f86991acad47a73b44b"
+      "sha256": "8a72ee95e48ac8cba61536171a8342c5d085a2af537c13c9ff26223bcb22936a"
     },
     {
       "path": "src/main.rs",
-      "sha256": "34d7edce5199cb4ad1f3a09cca3987337d920cc093d1a9d1f68970b952ee82cb"
+      "sha256": "4b070ddb010d8ec81e93c3f9beac19df946b098adb9b53b21f8919185c4cc8a0"
     },
     {
       "path": "src/lifecycle.rs",
-      "sha256": "f4b7d71008fe24103e93769d7f5d7c296519add242cfe05985c12dbb67789aa5"
+      "sha256": "37c78dd0c479f582988b19094ee54944f64a228abc4d93c4ca1bf9f9a5e2f87b"
     },
     {
       "path": "src/namespace.rs",
-      "sha256": "4e7f1958aa21dc2650047991e6fd5cce5aceab79668a5b9dc2499d9cb03b23a4"
+      "sha256": "70688c2124a0627e477528f968a3f2bb961c9f34d64a4eccc55a0b97fcd9c0b0"
     },
     {
       "path": "src/model.rs",
-      "sha256": "ea47ab428bec5415186feee063c75a5041b91efd994359b0f4e1930f037003dd"
+      "sha256": "dca177565204d261745124fdafa252424936bca2a65ebe9e1787883f693e66c2"
     },
     {
       "path": "src/runner.rs",
@@ -76,7 +76,7 @@
     },
     {
       "path": "src/util.rs",
-      "sha256": "ed035ea3810f9beadb791c3d602a92a2690334c153590f68388905093c989a52"
+      "sha256": "ec26916eeaa12152117d9b0e823d5d757718b23bf059e5ced53b2b80dbcf7f60"
     },
     {
       "path": "src/backend/mod.rs",
@@ -88,7 +88,7 @@
     },
     {
       "path": "src/benchmark.rs",
-      "sha256": "d2588c8ecebe72a2b2273e8460a9ae92cbb38b7862d0fd8d45b11579c8f3eb4f"
+      "sha256": "2c3896a8840a1996cc0f70d5fd17e46e02578d6d32f2a19b1f37e7529a8251f5"
     },
     {
       "path": "src/backend/redb_backend.rs",
@@ -99,6 +99,7 @@
       "sha256": "cf906537cb97b437af890178b1034f2eef97f070636effd826566a3331efb34a"
     }
   ],
+  "source_manifest_sha256": "30be1edac70bb27f78c626bf7099aee1f825f2a0f59797a72b9acdc781e9725e",
   "backends": [
     {
       "backend": "redb",
@@ -113,7 +114,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0000/a.ts",
-              "elapsed_micros": 8811,
+              "elapsed_micros": 23629,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -123,7 +124,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0000/a.ts",
-              "elapsed_micros": 7936,
+              "elapsed_micros": 32019,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -136,7 +137,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 80725
+          "elapsed_micros": 133807
         },
         {
           "round": 1,
@@ -146,7 +147,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0001/a.ts",
-              "elapsed_micros": 8152,
+              "elapsed_micros": 22675,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -156,7 +157,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0001/a.ts",
-              "elapsed_micros": 12236,
+              "elapsed_micros": 33679,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -169,7 +170,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 74599
+          "elapsed_micros": 140390
         },
         {
           "round": 2,
@@ -179,7 +180,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0002/a.ts",
-              "elapsed_micros": 10613,
+              "elapsed_micros": 18347,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -189,7 +190,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0002/a.ts",
-              "elapsed_micros": 14127,
+              "elapsed_micros": 26485,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -202,7 +203,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 79843
+          "elapsed_micros": 121519
         },
         {
           "round": 3,
@@ -212,7 +213,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0003/a.ts",
-              "elapsed_micros": 8546,
+              "elapsed_micros": 20085,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -222,7 +223,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0003/a.ts",
-              "elapsed_micros": 12376,
+              "elapsed_micros": 20135,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -235,7 +236,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 72534
+          "elapsed_micros": 133698
         },
         {
           "round": 4,
@@ -245,7 +246,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0004/a.ts",
-              "elapsed_micros": 7230,
+              "elapsed_micros": 17520,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -255,7 +256,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0004/a.ts",
-              "elapsed_micros": 10690,
+              "elapsed_micros": 24169,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -268,7 +269,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 69645
+          "elapsed_micros": 118216
         },
         {
           "round": 5,
@@ -278,7 +279,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0005/a.ts",
-              "elapsed_micros": 6241,
+              "elapsed_micros": 21113,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -288,7 +289,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0005/a.ts",
-              "elapsed_micros": 10566,
+              "elapsed_micros": 25289,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -301,7 +302,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 61200
+          "elapsed_micros": 131015
         },
         {
           "round": 6,
@@ -311,7 +312,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0006/a.ts",
-              "elapsed_micros": 7489,
+              "elapsed_micros": 17780,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -321,7 +322,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0006/a.ts",
-              "elapsed_micros": 10185,
+              "elapsed_micros": 27775,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -334,7 +335,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 68708
+          "elapsed_micros": 131370
         },
         {
           "round": 7,
@@ -344,7 +345,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0007/a.ts",
-              "elapsed_micros": 6549,
+              "elapsed_micros": 18980,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -354,7 +355,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0007/a.ts",
-              "elapsed_micros": 10964,
+              "elapsed_micros": 29841,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -367,7 +368,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 61926
+          "elapsed_micros": 129086
         },
         {
           "round": 8,
@@ -377,7 +378,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0008/a.ts",
-              "elapsed_micros": 8353,
+              "elapsed_micros": 15608,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -387,7 +388,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0008/a.ts",
-              "elapsed_micros": 9865,
+              "elapsed_micros": 25050,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -400,7 +401,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 67216
+          "elapsed_micros": 124171
         },
         {
           "round": 9,
@@ -410,7 +411,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0009/a.ts",
-              "elapsed_micros": 7985,
+              "elapsed_micros": 17605,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -420,7 +421,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0009/a.ts",
-              "elapsed_micros": 12617,
+              "elapsed_micros": 16734,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -433,7 +434,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 71194
+          "elapsed_micros": 134213
         },
         {
           "round": 10,
@@ -443,7 +444,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0010/a.ts",
-              "elapsed_micros": 10830,
+              "elapsed_micros": 19738,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -453,7 +454,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0010/a.ts",
-              "elapsed_micros": 13900,
+              "elapsed_micros": 31209,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -466,7 +467,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 106919
+          "elapsed_micros": 133256
         },
         {
           "round": 11,
@@ -476,30 +477,30 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0011/a.ts",
-              "elapsed_micros": 14743,
+              "elapsed_micros": 16454,
               "outcome": {
-                "status": "conflict",
-                "holder_gate_id": "actor-b"
+                "status": "admitted",
+                "gate_id": "actor-a"
               }
             },
             {
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0011/a.ts",
-              "elapsed_micros": 5511,
+              "elapsed_micros": 26353,
               "outcome": {
-                "status": "admitted",
-                "gate_id": "actor-b"
+                "status": "conflict",
+                "holder_gate_id": "actor-a"
               }
             }
           ],
           "canonical_holders": [
             [
               "src/conflict/0011/a.ts",
-              "actor-b"
+              "actor-a"
             ]
           ],
-          "elapsed_micros": 98894
+          "elapsed_micros": 129012
         },
         {
           "round": 12,
@@ -509,7 +510,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0012/a.ts",
-              "elapsed_micros": 19080,
+              "elapsed_micros": 20864,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -519,7 +520,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0012/a.ts",
-              "elapsed_micros": 50119,
+              "elapsed_micros": 18078,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -532,7 +533,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 280994
+          "elapsed_micros": 128366
         },
         {
           "round": 13,
@@ -542,7 +543,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0013/a.ts",
-              "elapsed_micros": 9722,
+              "elapsed_micros": 15818,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -552,7 +553,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0013/a.ts",
-              "elapsed_micros": 15642,
+              "elapsed_micros": 24051,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -565,7 +566,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 100114
+          "elapsed_micros": 114635
         },
         {
           "round": 14,
@@ -575,7 +576,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0014/a.ts",
-              "elapsed_micros": 9221,
+              "elapsed_micros": 18521,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -585,7 +586,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0014/a.ts",
-              "elapsed_micros": 15300,
+              "elapsed_micros": 27349,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -598,7 +599,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 89946
+          "elapsed_micros": 125306
         },
         {
           "round": 15,
@@ -608,7 +609,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0015/a.ts",
-              "elapsed_micros": 9257,
+              "elapsed_micros": 19784,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -618,7 +619,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0015/a.ts",
-              "elapsed_micros": 14680,
+              "elapsed_micros": 25639,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -631,7 +632,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 97385
+          "elapsed_micros": 129469
         },
         {
           "round": 16,
@@ -641,7 +642,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0016/a.ts",
-              "elapsed_micros": 7805,
+              "elapsed_micros": 17440,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -651,7 +652,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0016/a.ts",
-              "elapsed_micros": 11066,
+              "elapsed_micros": 26874,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -664,7 +665,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 74564
+          "elapsed_micros": 117161
         },
         {
           "round": 17,
@@ -674,7 +675,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0017/a.ts",
-              "elapsed_micros": 7095,
+              "elapsed_micros": 18924,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -684,7 +685,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0017/a.ts",
-              "elapsed_micros": 12433,
+              "elapsed_micros": 25952,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -697,7 +698,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 69261
+          "elapsed_micros": 113039
         },
         {
           "round": 18,
@@ -707,7 +708,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0018/a.ts",
-              "elapsed_micros": 7831,
+              "elapsed_micros": 20033,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -717,7 +718,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0018/a.ts",
-              "elapsed_micros": 12931,
+              "elapsed_micros": 26764,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -730,7 +731,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 71783
+          "elapsed_micros": 116755
         },
         {
           "round": 19,
@@ -740,7 +741,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0019/a.ts",
-              "elapsed_micros": 6163,
+              "elapsed_micros": 16827,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -750,7 +751,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0019/a.ts",
-              "elapsed_micros": 8405,
+              "elapsed_micros": 28967,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -763,7 +764,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 54602
+          "elapsed_micros": 113722
         },
         {
           "round": 20,
@@ -773,30 +774,30 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0020/a.ts",
-              "elapsed_micros": 12228,
+              "elapsed_micros": 19210,
               "outcome": {
-                "status": "conflict",
-                "holder_gate_id": "actor-b"
+                "status": "admitted",
+                "gate_id": "actor-a"
               }
             },
             {
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0020/a.ts",
-              "elapsed_micros": 4439,
+              "elapsed_micros": 26520,
               "outcome": {
-                "status": "admitted",
-                "gate_id": "actor-b"
+                "status": "conflict",
+                "holder_gate_id": "actor-a"
               }
             }
           ],
           "canonical_holders": [
             [
               "src/conflict/0020/a.ts",
-              "actor-b"
+              "actor-a"
             ]
           ],
-          "elapsed_micros": 58630
+          "elapsed_micros": 124602
         },
         {
           "round": 21,
@@ -806,30 +807,30 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0021/a.ts",
-              "elapsed_micros": 16208,
+              "elapsed_micros": 18231,
               "outcome": {
-                "status": "conflict",
-                "holder_gate_id": "actor-b"
+                "status": "admitted",
+                "gate_id": "actor-a"
               }
             },
             {
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0021/a.ts",
-              "elapsed_micros": 6369,
+              "elapsed_micros": 27647,
               "outcome": {
-                "status": "admitted",
-                "gate_id": "actor-b"
+                "status": "conflict",
+                "holder_gate_id": "actor-a"
               }
             }
           ],
           "canonical_holders": [
             [
               "src/conflict/0021/a.ts",
-              "actor-b"
+              "actor-a"
             ]
           ],
-          "elapsed_micros": 70468
+          "elapsed_micros": 120176
         },
         {
           "round": 22,
@@ -839,30 +840,30 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0022/a.ts",
-              "elapsed_micros": 14220,
+              "elapsed_micros": 19669,
               "outcome": {
-                "status": "conflict",
-                "holder_gate_id": "actor-b"
+                "status": "admitted",
+                "gate_id": "actor-a"
               }
             },
             {
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0022/a.ts",
-              "elapsed_micros": 5512,
+              "elapsed_micros": 27779,
               "outcome": {
-                "status": "admitted",
-                "gate_id": "actor-b"
+                "status": "conflict",
+                "holder_gate_id": "actor-a"
               }
             }
           ],
           "canonical_holders": [
             [
               "src/conflict/0022/a.ts",
-              "actor-b"
+              "actor-a"
             ]
           ],
-          "elapsed_micros": 66625
+          "elapsed_micros": 118775
         },
         {
           "round": 23,
@@ -872,7 +873,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0023/a.ts",
-              "elapsed_micros": 6576,
+              "elapsed_micros": 22509,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -882,7 +883,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0023/a.ts",
-              "elapsed_micros": 10737,
+              "elapsed_micros": 35072,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -895,7 +896,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 55834
+          "elapsed_micros": 163637
         },
         {
           "round": 24,
@@ -905,7 +906,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0024/a.ts",
-              "elapsed_micros": 5399,
+              "elapsed_micros": 22021,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -915,7 +916,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0024/a.ts",
-              "elapsed_micros": 11099,
+              "elapsed_micros": 29820,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -928,7 +929,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 54749
+          "elapsed_micros": 140515
         },
         {
           "round": 25,
@@ -938,7 +939,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0025/a.ts",
-              "elapsed_micros": 5702,
+              "elapsed_micros": 21259,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -948,7 +949,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0025/a.ts",
-              "elapsed_micros": 10780,
+              "elapsed_micros": 27358,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -961,7 +962,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 53815
+          "elapsed_micros": 129680
         },
         {
           "round": 26,
@@ -971,7 +972,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0026/a.ts",
-              "elapsed_micros": 7882,
+              "elapsed_micros": 22978,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -981,7 +982,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0026/a.ts",
-              "elapsed_micros": 13033,
+              "elapsed_micros": 35908,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -994,7 +995,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 80194
+          "elapsed_micros": 146299
         },
         {
           "round": 27,
@@ -1004,7 +1005,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0027/a.ts",
-              "elapsed_micros": 7435,
+              "elapsed_micros": 20737,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1014,7 +1015,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0027/a.ts",
-              "elapsed_micros": 11658,
+              "elapsed_micros": 29211,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -1027,7 +1028,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 70396
+          "elapsed_micros": 140391
         },
         {
           "round": 28,
@@ -1037,7 +1038,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0028/a.ts",
-              "elapsed_micros": 7472,
+              "elapsed_micros": 20682,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1047,7 +1048,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0028/a.ts",
-              "elapsed_micros": 10431,
+              "elapsed_micros": 25234,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -1060,7 +1061,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 67756
+          "elapsed_micros": 135563
         },
         {
           "round": 29,
@@ -1070,7 +1071,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0029/a.ts",
-              "elapsed_micros": 7281,
+              "elapsed_micros": 20513,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1080,7 +1081,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0029/a.ts",
-              "elapsed_micros": 10031,
+              "elapsed_micros": 31515,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -1093,7 +1094,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 61587
+          "elapsed_micros": 145087
         },
         {
           "round": 30,
@@ -1103,7 +1104,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0030/a.ts",
-              "elapsed_micros": 9197,
+              "elapsed_micros": 20559,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1113,7 +1114,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0030/a.ts",
-              "elapsed_micros": 12461,
+              "elapsed_micros": 18685,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -1126,7 +1127,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 75825
+          "elapsed_micros": 150949
         },
         {
           "round": 31,
@@ -1136,7 +1137,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/conflict/0031/a.ts",
-              "elapsed_micros": 7183,
+              "elapsed_micros": 34711,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1146,7 +1147,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/conflict/0031/a.ts",
-              "elapsed_micros": 12622,
+              "elapsed_micros": 44634,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -1159,7 +1160,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 69388
+          "elapsed_micros": 169858
         }
       ],
       "disjoint_rounds": [
@@ -1171,7 +1172,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0000/a.ts",
-              "elapsed_micros": 7787,
+              "elapsed_micros": 19754,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1181,7 +1182,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0000/b.ts",
-              "elapsed_micros": 11689,
+              "elapsed_micros": 32722,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -1198,7 +1199,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 68009
+          "elapsed_micros": 164347
         },
         {
           "round": 1,
@@ -1208,7 +1209,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0001/a.ts",
-              "elapsed_micros": 7467,
+              "elapsed_micros": 20737,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1218,7 +1219,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0001/b.ts",
-              "elapsed_micros": 11830,
+              "elapsed_micros": 34081,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -1235,7 +1236,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 77857
+          "elapsed_micros": 150895
         },
         {
           "round": 2,
@@ -1245,7 +1246,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0002/a.ts",
-              "elapsed_micros": 7663,
+              "elapsed_micros": 18770,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1255,7 +1256,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0002/b.ts",
-              "elapsed_micros": 13516,
+              "elapsed_micros": 31461,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -1272,7 +1273,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 81494
+          "elapsed_micros": 131747
         },
         {
           "round": 3,
@@ -1282,7 +1283,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0003/a.ts",
-              "elapsed_micros": 7614,
+              "elapsed_micros": 20772,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1292,7 +1293,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0003/b.ts",
-              "elapsed_micros": 11776,
+              "elapsed_micros": 38710,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -1309,7 +1310,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 76629
+          "elapsed_micros": 162652
         },
         {
           "round": 4,
@@ -1319,7 +1320,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0004/a.ts",
-              "elapsed_micros": 7250,
+              "elapsed_micros": 17876,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1329,7 +1330,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0004/b.ts",
-              "elapsed_micros": 8463,
+              "elapsed_micros": 26928,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -1346,7 +1347,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 73757
+          "elapsed_micros": 144224
         },
         {
           "round": 5,
@@ -1356,7 +1357,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0005/a.ts",
-              "elapsed_micros": 6681,
+              "elapsed_micros": 17684,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1366,7 +1367,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0005/b.ts",
-              "elapsed_micros": 10617,
+              "elapsed_micros": 28934,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -1383,7 +1384,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 68258
+          "elapsed_micros": 155513
         },
         {
           "round": 6,
@@ -1393,7 +1394,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0006/a.ts",
-              "elapsed_micros": 13402,
+              "elapsed_micros": 19046,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1403,7 +1404,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0006/b.ts",
-              "elapsed_micros": 5043,
+              "elapsed_micros": 31019,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -1420,7 +1421,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 67075
+          "elapsed_micros": 138083
         },
         {
           "round": 7,
@@ -1430,7 +1431,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0007/a.ts",
-              "elapsed_micros": 6933,
+              "elapsed_micros": 23550,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1440,7 +1441,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0007/b.ts",
-              "elapsed_micros": 12080,
+              "elapsed_micros": 27471,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -1457,7 +1458,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 73410
+          "elapsed_micros": 160605
         },
         {
           "round": 8,
@@ -1467,7 +1468,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0008/a.ts",
-              "elapsed_micros": 7424,
+              "elapsed_micros": 22891,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1477,7 +1478,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0008/b.ts",
-              "elapsed_micros": 10337,
+              "elapsed_micros": 37620,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -1494,7 +1495,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 70026
+          "elapsed_micros": 165311
         },
         {
           "round": 9,
@@ -1504,7 +1505,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0009/a.ts",
-              "elapsed_micros": 8264,
+              "elapsed_micros": 18955,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1514,7 +1515,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0009/b.ts",
-              "elapsed_micros": 13862,
+              "elapsed_micros": 28172,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -1531,7 +1532,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 81965
+          "elapsed_micros": 146674
         },
         {
           "round": 10,
@@ -1541,7 +1542,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0010/a.ts",
-              "elapsed_micros": 8979,
+              "elapsed_micros": 23030,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1551,7 +1552,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0010/b.ts",
-              "elapsed_micros": 14371,
+              "elapsed_micros": 25923,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -1568,7 +1569,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 93681
+          "elapsed_micros": 147567
         },
         {
           "round": 11,
@@ -1578,7 +1579,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0011/a.ts",
-              "elapsed_micros": 13583,
+              "elapsed_micros": 20860,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1588,7 +1589,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0011/b.ts",
-              "elapsed_micros": 21700,
+              "elapsed_micros": 27606,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -1605,7 +1606,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 191640
+          "elapsed_micros": 155683
         },
         {
           "round": 12,
@@ -1615,7 +1616,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0012/a.ts",
-              "elapsed_micros": 9857,
+              "elapsed_micros": 18971,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1625,7 +1626,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0012/b.ts",
-              "elapsed_micros": 21000,
+              "elapsed_micros": 20609,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -1642,7 +1643,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 135124
+          "elapsed_micros": 136620
         },
         {
           "round": 13,
@@ -1652,7 +1653,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0013/a.ts",
-              "elapsed_micros": 8765,
+              "elapsed_micros": 18561,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1662,7 +1663,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0013/b.ts",
-              "elapsed_micros": 15253,
+              "elapsed_micros": 29163,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -1679,7 +1680,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 102274
+          "elapsed_micros": 136408
         },
         {
           "round": 14,
@@ -1689,7 +1690,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0014/a.ts",
-              "elapsed_micros": 14348,
+              "elapsed_micros": 17893,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1699,7 +1700,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0014/b.ts",
-              "elapsed_micros": 14633,
+              "elapsed_micros": 27780,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -1716,7 +1717,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 115409
+          "elapsed_micros": 149271
         },
         {
           "round": 15,
@@ -1726,7 +1727,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0015/a.ts",
-              "elapsed_micros": 8114,
+              "elapsed_micros": 16826,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1736,7 +1737,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0015/b.ts",
-              "elapsed_micros": 15147,
+              "elapsed_micros": 26309,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -1753,7 +1754,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 88267
+          "elapsed_micros": 137599
         },
         {
           "round": 16,
@@ -1763,7 +1764,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0016/a.ts",
-              "elapsed_micros": 7993,
+              "elapsed_micros": 19137,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1773,7 +1774,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0016/b.ts",
-              "elapsed_micros": 12372,
+              "elapsed_micros": 29575,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -1790,7 +1791,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 83954
+          "elapsed_micros": 143792
         },
         {
           "round": 17,
@@ -1800,7 +1801,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0017/a.ts",
-              "elapsed_micros": 6356,
+              "elapsed_micros": 25965,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1810,7 +1811,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0017/b.ts",
-              "elapsed_micros": 7086,
+              "elapsed_micros": 39312,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -1827,7 +1828,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 63108
+          "elapsed_micros": 164557
         },
         {
           "round": 18,
@@ -1837,7 +1838,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0018/a.ts",
-              "elapsed_micros": 8845,
+              "elapsed_micros": 14458,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1847,7 +1848,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0018/b.ts",
-              "elapsed_micros": 13122,
+              "elapsed_micros": 26694,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -1864,7 +1865,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 78123
+          "elapsed_micros": 132855
         },
         {
           "round": 19,
@@ -1874,7 +1875,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0019/a.ts",
-              "elapsed_micros": 6942,
+              "elapsed_micros": 20574,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1884,7 +1885,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0019/b.ts",
-              "elapsed_micros": 11864,
+              "elapsed_micros": 29127,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -1901,7 +1902,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 68570
+          "elapsed_micros": 141482
         },
         {
           "round": 20,
@@ -1911,7 +1912,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0020/a.ts",
-              "elapsed_micros": 5514,
+              "elapsed_micros": 18126,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1921,7 +1922,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0020/b.ts",
-              "elapsed_micros": 12020,
+              "elapsed_micros": 27593,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -1938,7 +1939,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 64839
+          "elapsed_micros": 144015
         },
         {
           "round": 21,
@@ -1948,7 +1949,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0021/a.ts",
-              "elapsed_micros": 7263,
+              "elapsed_micros": 17591,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1958,7 +1959,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0021/b.ts",
-              "elapsed_micros": 12402,
+              "elapsed_micros": 30983,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -1975,7 +1976,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 73456
+          "elapsed_micros": 141433
         },
         {
           "round": 22,
@@ -1985,7 +1986,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0022/a.ts",
-              "elapsed_micros": 5993,
+              "elapsed_micros": 26909,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -1995,7 +1996,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0022/b.ts",
-              "elapsed_micros": 8949,
+              "elapsed_micros": 32761,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -2012,7 +2013,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 64983
+          "elapsed_micros": 154180
         },
         {
           "round": 23,
@@ -2022,7 +2023,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0023/a.ts",
-              "elapsed_micros": 7706,
+              "elapsed_micros": 18267,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2032,7 +2033,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0023/b.ts",
-              "elapsed_micros": 11236,
+              "elapsed_micros": 29361,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -2049,7 +2050,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 60972
+          "elapsed_micros": 169373
         },
         {
           "round": 24,
@@ -2059,7 +2060,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0024/a.ts",
-              "elapsed_micros": 6852,
+              "elapsed_micros": 22338,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2069,7 +2070,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0024/b.ts",
-              "elapsed_micros": 13945,
+              "elapsed_micros": 38150,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -2086,7 +2087,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 67921
+          "elapsed_micros": 157290
         },
         {
           "round": 25,
@@ -2096,7 +2097,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0025/a.ts",
-              "elapsed_micros": 14389,
+              "elapsed_micros": 24220,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2106,7 +2107,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0025/b.ts",
-              "elapsed_micros": 4842,
+              "elapsed_micros": 34568,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -2123,7 +2124,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 67966
+          "elapsed_micros": 146260
         },
         {
           "round": 26,
@@ -2133,7 +2134,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0026/a.ts",
-              "elapsed_micros": 7925,
+              "elapsed_micros": 24494,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2143,7 +2144,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0026/b.ts",
-              "elapsed_micros": 12430,
+              "elapsed_micros": 34088,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -2160,7 +2161,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 83749
+          "elapsed_micros": 154550
         },
         {
           "round": 27,
@@ -2170,7 +2171,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0027/a.ts",
-              "elapsed_micros": 7734,
+              "elapsed_micros": 24185,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2180,7 +2181,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0027/b.ts",
-              "elapsed_micros": 11220,
+              "elapsed_micros": 34150,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -2197,7 +2198,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 79427
+          "elapsed_micros": 157333
         },
         {
           "round": 28,
@@ -2207,7 +2208,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0028/a.ts",
-              "elapsed_micros": 7766,
+              "elapsed_micros": 23880,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2217,7 +2218,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0028/b.ts",
-              "elapsed_micros": 14840,
+              "elapsed_micros": 37120,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -2234,7 +2235,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 76821
+          "elapsed_micros": 177610
         },
         {
           "round": 29,
@@ -2244,7 +2245,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0029/a.ts",
-              "elapsed_micros": 8306,
+              "elapsed_micros": 27885,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2254,7 +2255,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0029/b.ts",
-              "elapsed_micros": 12520,
+              "elapsed_micros": 41987,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -2271,7 +2272,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 84400
+          "elapsed_micros": 167232
         },
         {
           "round": 30,
@@ -2281,7 +2282,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0030/a.ts",
-              "elapsed_micros": 8302,
+              "elapsed_micros": 20128,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2291,7 +2292,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0030/b.ts",
-              "elapsed_micros": 8017,
+              "elapsed_micros": 29347,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -2308,7 +2309,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 78155
+          "elapsed_micros": 209328
         },
         {
           "round": 31,
@@ -2318,7 +2319,7 @@
               "backend": "redb",
               "actor": "actor-a",
               "key": "src/disjoint/0031/a.ts",
-              "elapsed_micros": 8059,
+              "elapsed_micros": 19199,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2328,7 +2329,7 @@
               "backend": "redb",
               "actor": "actor-b",
               "key": "src/disjoint/0031/b.ts",
-              "elapsed_micros": 13333,
+              "elapsed_micros": 37521,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -2345,7 +2346,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 75662
+          "elapsed_micros": 160725
         }
       ],
       "crash_cases": [
@@ -2355,14 +2356,14 @@
             "backend": "redb",
             "actor": "recovery",
             "key": "src/crash/uncommitted.ts",
-            "elapsed_micros": 7294,
+            "elapsed_micros": 23201,
             "outcome": {
               "status": "admitted",
               "gate_id": "recovery"
             }
           },
           "canonical_holder": "recovery",
-          "elapsed_micros": 69813
+          "elapsed_micros": 171561
         },
         {
           "phase": "committed",
@@ -2370,17 +2371,17 @@
             "backend": "redb",
             "actor": "recovery",
             "key": "src/crash/committed.ts",
-            "elapsed_micros": 7455,
+            "elapsed_micros": 26743,
             "outcome": {
               "status": "conflict",
               "holder_gate_id": "crash-committed-gate"
             }
           },
           "canonical_holder": "crash-committed-gate",
-          "elapsed_micros": 74270
+          "elapsed_micros": 172543
         }
       ],
-      "database_bytes": 69771139
+      "database_bytes": 69771207
     },
     {
       "backend": "sqlite",
@@ -2395,7 +2396,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0000/a.ts",
-              "elapsed_micros": 15422,
+              "elapsed_micros": 33601,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2405,7 +2406,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0000/a.ts",
-              "elapsed_micros": 6404,
+              "elapsed_micros": 37050,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -2418,7 +2419,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 71145
+          "elapsed_micros": 172287
         },
         {
           "round": 1,
@@ -2428,7 +2429,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0001/a.ts",
-              "elapsed_micros": 12713,
+              "elapsed_micros": 33659,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2438,7 +2439,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0001/a.ts",
-              "elapsed_micros": 5143,
+              "elapsed_micros": 12730,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -2451,7 +2452,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 64394
+          "elapsed_micros": 126381
         },
         {
           "round": 2,
@@ -2461,7 +2462,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0002/a.ts",
-              "elapsed_micros": 15019,
+              "elapsed_micros": 45266,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2471,7 +2472,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0002/a.ts",
-              "elapsed_micros": 4780,
+              "elapsed_micros": 23996,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -2484,7 +2485,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 84621
+          "elapsed_micros": 140136
         },
         {
           "round": 3,
@@ -2494,7 +2495,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0003/a.ts",
-              "elapsed_micros": 18781,
+              "elapsed_micros": 31616,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2504,7 +2505,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0003/a.ts",
-              "elapsed_micros": 10984,
+              "elapsed_micros": 32964,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -2517,7 +2518,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 98146
+          "elapsed_micros": 159604
         },
         {
           "round": 4,
@@ -2527,7 +2528,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0004/a.ts",
-              "elapsed_micros": 14105,
+              "elapsed_micros": 26022,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2537,7 +2538,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0004/a.ts",
-              "elapsed_micros": 14080,
+              "elapsed_micros": 12112,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -2550,7 +2551,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 72658
+          "elapsed_micros": 125080
         },
         {
           "round": 5,
@@ -2560,7 +2561,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0005/a.ts",
-              "elapsed_micros": 12809,
+              "elapsed_micros": 25566,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2570,7 +2571,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0005/a.ts",
-              "elapsed_micros": 5259,
+              "elapsed_micros": 11974,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -2583,7 +2584,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 64129
+          "elapsed_micros": 120554
         },
         {
           "round": 6,
@@ -2593,7 +2594,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0006/a.ts",
-              "elapsed_micros": 12133,
+              "elapsed_micros": 28287,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2603,7 +2604,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0006/a.ts",
-              "elapsed_micros": 4407,
+              "elapsed_micros": 10096,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -2616,7 +2617,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 65250
+          "elapsed_micros": 137102
         },
         {
           "round": 7,
@@ -2626,7 +2627,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0007/a.ts",
-              "elapsed_micros": 12944,
+              "elapsed_micros": 22758,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2636,7 +2637,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0007/a.ts",
-              "elapsed_micros": 5705,
+              "elapsed_micros": 10827,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -2649,7 +2650,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 55091
+          "elapsed_micros": 105037
         },
         {
           "round": 8,
@@ -2659,7 +2660,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0008/a.ts",
-              "elapsed_micros": 12523,
+              "elapsed_micros": 28547,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2669,7 +2670,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0008/a.ts",
-              "elapsed_micros": 7994,
+              "elapsed_micros": 18876,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -2682,7 +2683,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 69054
+          "elapsed_micros": 128468
         },
         {
           "round": 9,
@@ -2692,7 +2693,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0009/a.ts",
-              "elapsed_micros": 13512,
+              "elapsed_micros": 40800,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2702,7 +2703,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0009/a.ts",
-              "elapsed_micros": 5966,
+              "elapsed_micros": 53676,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -2715,7 +2716,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 68565
+          "elapsed_micros": 196520
         },
         {
           "round": 10,
@@ -2725,7 +2726,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0010/a.ts",
-              "elapsed_micros": 12038,
+              "elapsed_micros": 23596,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2735,7 +2736,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0010/a.ts",
-              "elapsed_micros": 7165,
+              "elapsed_micros": 11423,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -2748,7 +2749,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 53208
+          "elapsed_micros": 112971
         },
         {
           "round": 11,
@@ -2758,7 +2759,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0011/a.ts",
-              "elapsed_micros": 11681,
+              "elapsed_micros": 29580,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2768,7 +2769,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0011/a.ts",
-              "elapsed_micros": 6351,
+              "elapsed_micros": 11815,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -2781,7 +2782,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 57264
+          "elapsed_micros": 130497
         },
         {
           "round": 12,
@@ -2791,7 +2792,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0012/a.ts",
-              "elapsed_micros": 11229,
+              "elapsed_micros": 26141,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2801,7 +2802,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0012/a.ts",
-              "elapsed_micros": 4007,
+              "elapsed_micros": 14583,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -2814,7 +2815,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 55742
+          "elapsed_micros": 132964
         },
         {
           "round": 13,
@@ -2824,7 +2825,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0013/a.ts",
-              "elapsed_micros": 14979,
+              "elapsed_micros": 33106,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2834,7 +2835,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0013/a.ts",
-              "elapsed_micros": 5764,
+              "elapsed_micros": 12190,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -2847,7 +2848,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 73582
+          "elapsed_micros": 135649
         },
         {
           "round": 14,
@@ -2857,7 +2858,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0014/a.ts",
-              "elapsed_micros": 12554,
+              "elapsed_micros": 28032,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2867,7 +2868,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0014/a.ts",
-              "elapsed_micros": 5887,
+              "elapsed_micros": 14802,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -2880,7 +2881,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 60255
+          "elapsed_micros": 145291
         },
         {
           "round": 15,
@@ -2890,7 +2891,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0015/a.ts",
-              "elapsed_micros": 15585,
+              "elapsed_micros": 33056,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2900,7 +2901,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0015/a.ts",
-              "elapsed_micros": 6304,
+              "elapsed_micros": 13272,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -2913,7 +2914,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 80469
+          "elapsed_micros": 132687
         },
         {
           "round": 16,
@@ -2923,7 +2924,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0016/a.ts",
-              "elapsed_micros": 13798,
+              "elapsed_micros": 30644,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2933,7 +2934,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0016/a.ts",
-              "elapsed_micros": 5951,
+              "elapsed_micros": 15475,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -2946,7 +2947,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 67405
+          "elapsed_micros": 123748
         },
         {
           "round": 17,
@@ -2956,7 +2957,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0017/a.ts",
-              "elapsed_micros": 14885,
+              "elapsed_micros": 23644,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2966,7 +2967,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0017/a.ts",
-              "elapsed_micros": 6240,
+              "elapsed_micros": 14071,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -2979,7 +2980,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 66453
+          "elapsed_micros": 106506
         },
         {
           "round": 18,
@@ -2989,7 +2990,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0018/a.ts",
-              "elapsed_micros": 13878,
+              "elapsed_micros": 24335,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -2999,7 +3000,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0018/a.ts",
-              "elapsed_micros": 9274,
+              "elapsed_micros": 10900,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -3012,7 +3013,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 65892
+          "elapsed_micros": 129977
         },
         {
           "round": 19,
@@ -3022,7 +3023,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0019/a.ts",
-              "elapsed_micros": 17449,
+              "elapsed_micros": 25107,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3032,7 +3033,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0019/a.ts",
-              "elapsed_micros": 11747,
+              "elapsed_micros": 11512,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -3045,7 +3046,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 77257
+          "elapsed_micros": 107347
         },
         {
           "round": 20,
@@ -3055,7 +3056,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0020/a.ts",
-              "elapsed_micros": 13114,
+              "elapsed_micros": 27007,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3065,7 +3066,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0020/a.ts",
-              "elapsed_micros": 9565,
+              "elapsed_micros": 12450,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -3078,7 +3079,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 66148
+          "elapsed_micros": 123470
         },
         {
           "round": 21,
@@ -3088,7 +3089,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0021/a.ts",
-              "elapsed_micros": 13779,
+              "elapsed_micros": 24320,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3098,7 +3099,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0021/a.ts",
-              "elapsed_micros": 6802,
+              "elapsed_micros": 23874,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -3111,7 +3112,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 70706
+          "elapsed_micros": 133423
         },
         {
           "round": 22,
@@ -3121,7 +3122,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0022/a.ts",
-              "elapsed_micros": 12090,
+              "elapsed_micros": 33570,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3131,7 +3132,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0022/a.ts",
-              "elapsed_micros": 4202,
+              "elapsed_micros": 14730,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -3144,7 +3145,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 55849
+          "elapsed_micros": 140140
         },
         {
           "round": 23,
@@ -3154,7 +3155,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0023/a.ts",
-              "elapsed_micros": 15881,
+              "elapsed_micros": 28443,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3164,7 +3165,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0023/a.ts",
-              "elapsed_micros": 6585,
+              "elapsed_micros": 12305,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -3177,7 +3178,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 77903
+          "elapsed_micros": 108254
         },
         {
           "round": 24,
@@ -3187,7 +3188,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0024/a.ts",
-              "elapsed_micros": 12285,
+              "elapsed_micros": 25051,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3197,7 +3198,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0024/a.ts",
-              "elapsed_micros": 4969,
+              "elapsed_micros": 12685,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -3210,7 +3211,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 65816
+          "elapsed_micros": 110166
         },
         {
           "round": 25,
@@ -3220,7 +3221,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0025/a.ts",
-              "elapsed_micros": 14822,
+              "elapsed_micros": 27634,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3230,7 +3231,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0025/a.ts",
-              "elapsed_micros": 5575,
+              "elapsed_micros": 10994,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -3243,7 +3244,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 67396
+          "elapsed_micros": 113939
         },
         {
           "round": 26,
@@ -3253,7 +3254,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0026/a.ts",
-              "elapsed_micros": 13979,
+              "elapsed_micros": 25989,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3263,7 +3264,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0026/a.ts",
-              "elapsed_micros": 9345,
+              "elapsed_micros": 15149,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -3276,7 +3277,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 71317
+          "elapsed_micros": 115350
         },
         {
           "round": 27,
@@ -3286,7 +3287,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0027/a.ts",
-              "elapsed_micros": 13094,
+              "elapsed_micros": 24116,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3296,7 +3297,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0027/a.ts",
-              "elapsed_micros": 5304,
+              "elapsed_micros": 11624,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -3309,7 +3310,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 64941
+          "elapsed_micros": 97885
         },
         {
           "round": 28,
@@ -3319,7 +3320,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0028/a.ts",
-              "elapsed_micros": 11610,
+              "elapsed_micros": 22898,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3329,7 +3330,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0028/a.ts",
-              "elapsed_micros": 8063,
+              "elapsed_micros": 9389,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -3342,7 +3343,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 55839
+          "elapsed_micros": 99492
         },
         {
           "round": 29,
@@ -3352,30 +3353,30 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0029/a.ts",
-              "elapsed_micros": 21766,
+              "elapsed_micros": 25317,
               "outcome": {
-                "status": "conflict",
-                "holder_gate_id": "actor-b"
+                "status": "admitted",
+                "gate_id": "actor-a"
               }
             },
             {
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0029/a.ts",
-              "elapsed_micros": 17533,
+              "elapsed_micros": 11258,
               "outcome": {
-                "status": "admitted",
-                "gate_id": "actor-b"
+                "status": "conflict",
+                "holder_gate_id": "actor-a"
               }
             }
           ],
           "canonical_holders": [
             [
               "src/conflict/0029/a.ts",
-              "actor-b"
+              "actor-a"
             ]
           ],
-          "elapsed_micros": 80061
+          "elapsed_micros": 100298
         },
         {
           "round": 30,
@@ -3385,7 +3386,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0030/a.ts",
-              "elapsed_micros": 13076,
+              "elapsed_micros": 32325,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3395,7 +3396,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0030/a.ts",
-              "elapsed_micros": 7086,
+              "elapsed_micros": 19627,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -3408,7 +3409,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 58886
+          "elapsed_micros": 136229
         },
         {
           "round": 31,
@@ -3418,7 +3419,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/conflict/0031/a.ts",
-              "elapsed_micros": 14591,
+              "elapsed_micros": 24211,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3428,7 +3429,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/conflict/0031/a.ts",
-              "elapsed_micros": 9330,
+              "elapsed_micros": 15217,
               "outcome": {
                 "status": "conflict",
                 "holder_gate_id": "actor-a"
@@ -3441,7 +3442,7 @@
               "actor-a"
             ]
           ],
-          "elapsed_micros": 71651
+          "elapsed_micros": 124087
         }
       ],
       "disjoint_rounds": [
@@ -3453,7 +3454,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0000/a.ts",
-              "elapsed_micros": 12024,
+              "elapsed_micros": 27818,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3463,7 +3464,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0000/b.ts",
-              "elapsed_micros": 5996,
+              "elapsed_micros": 21397,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -3480,7 +3481,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 71175
+          "elapsed_micros": 145387
         },
         {
           "round": 1,
@@ -3490,7 +3491,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0001/a.ts",
-              "elapsed_micros": 13244,
+              "elapsed_micros": 29125,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3500,7 +3501,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0001/b.ts",
-              "elapsed_micros": 7575,
+              "elapsed_micros": 20437,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -3517,7 +3518,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 80890
+          "elapsed_micros": 160899
         },
         {
           "round": 2,
@@ -3527,7 +3528,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0002/a.ts",
-              "elapsed_micros": 15263,
+              "elapsed_micros": 35323,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3537,7 +3538,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0002/b.ts",
-              "elapsed_micros": 9143,
+              "elapsed_micros": 27905,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -3554,7 +3555,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 87161
+          "elapsed_micros": 170000
         },
         {
           "round": 3,
@@ -3564,7 +3565,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0003/a.ts",
-              "elapsed_micros": 15357,
+              "elapsed_micros": 28199,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3574,7 +3575,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0003/b.ts",
-              "elapsed_micros": 6816,
+              "elapsed_micros": 19145,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -3591,7 +3592,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 88497
+          "elapsed_micros": 154496
         },
         {
           "round": 4,
@@ -3601,7 +3602,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0004/a.ts",
-              "elapsed_micros": 16301,
+              "elapsed_micros": 52440,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3611,7 +3612,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0004/b.ts",
-              "elapsed_micros": 11479,
+              "elapsed_micros": 83176,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -3628,7 +3629,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 82746
+          "elapsed_micros": 243356
         },
         {
           "round": 5,
@@ -3638,7 +3639,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0005/a.ts",
-              "elapsed_micros": 14559,
+              "elapsed_micros": 23995,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3648,7 +3649,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0005/b.ts",
-              "elapsed_micros": 7169,
+              "elapsed_micros": 14686,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -3665,7 +3666,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 81914
+          "elapsed_micros": 133771
         },
         {
           "round": 6,
@@ -3675,7 +3676,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0006/a.ts",
-              "elapsed_micros": 11627,
+              "elapsed_micros": 26697,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3685,7 +3686,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0006/b.ts",
-              "elapsed_micros": 5490,
+              "elapsed_micros": 18700,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -3702,7 +3703,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 68995
+          "elapsed_micros": 138610
         },
         {
           "round": 7,
@@ -3712,7 +3713,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0007/a.ts",
-              "elapsed_micros": 14820,
+              "elapsed_micros": 32450,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3722,7 +3723,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0007/b.ts",
-              "elapsed_micros": 11195,
+              "elapsed_micros": 19849,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -3739,7 +3740,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 89588
+          "elapsed_micros": 158746
         },
         {
           "round": 8,
@@ -3749,7 +3750,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0008/a.ts",
-              "elapsed_micros": 13525,
+              "elapsed_micros": 29544,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3759,7 +3760,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0008/b.ts",
-              "elapsed_micros": 8667,
+              "elapsed_micros": 16475,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -3776,7 +3777,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 75409
+          "elapsed_micros": 143378
         },
         {
           "round": 9,
@@ -3786,7 +3787,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0009/a.ts",
-              "elapsed_micros": 10360,
+              "elapsed_micros": 29449,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3796,7 +3797,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0009/b.ts",
-              "elapsed_micros": 7721,
+              "elapsed_micros": 27520,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -3813,7 +3814,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 62204
+          "elapsed_micros": 156501
         },
         {
           "round": 10,
@@ -3823,7 +3824,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0010/a.ts",
-              "elapsed_micros": 12182,
+              "elapsed_micros": 22093,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3833,7 +3834,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0010/b.ts",
-              "elapsed_micros": 8902,
+              "elapsed_micros": 16039,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -3850,7 +3851,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 67575
+          "elapsed_micros": 136274
         },
         {
           "round": 11,
@@ -3860,7 +3861,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0011/a.ts",
-              "elapsed_micros": 30760,
+              "elapsed_micros": 28750,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3870,7 +3871,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0011/b.ts",
-              "elapsed_micros": 5986,
+              "elapsed_micros": 20058,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -3887,7 +3888,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 92323
+          "elapsed_micros": 169545
         },
         {
           "round": 12,
@@ -3897,7 +3898,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0012/a.ts",
-              "elapsed_micros": 11490,
+              "elapsed_micros": 25992,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3907,7 +3908,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0012/b.ts",
-              "elapsed_micros": 6227,
+              "elapsed_micros": 18771,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -3924,7 +3925,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 73558
+          "elapsed_micros": 134013
         },
         {
           "round": 13,
@@ -3934,7 +3935,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0013/a.ts",
-              "elapsed_micros": 13228,
+              "elapsed_micros": 34804,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3944,7 +3945,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0013/b.ts",
-              "elapsed_micros": 12978,
+              "elapsed_micros": 22510,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -3961,7 +3962,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 86404
+          "elapsed_micros": 165539
         },
         {
           "round": 14,
@@ -3971,7 +3972,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0014/a.ts",
-              "elapsed_micros": 13479,
+              "elapsed_micros": 27378,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -3981,7 +3982,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0014/b.ts",
-              "elapsed_micros": 7639,
+              "elapsed_micros": 18429,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -3998,7 +3999,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 74776
+          "elapsed_micros": 156306
         },
         {
           "round": 15,
@@ -4008,7 +4009,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0015/a.ts",
-              "elapsed_micros": 14331,
+              "elapsed_micros": 30419,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -4018,7 +4019,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0015/b.ts",
-              "elapsed_micros": 9973,
+              "elapsed_micros": 17497,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -4035,7 +4036,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 87353
+          "elapsed_micros": 146342
         },
         {
           "round": 16,
@@ -4045,7 +4046,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0016/a.ts",
-              "elapsed_micros": 15543,
+              "elapsed_micros": 34963,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -4055,7 +4056,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0016/b.ts",
-              "elapsed_micros": 11619,
+              "elapsed_micros": 23251,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -4072,7 +4073,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 90317
+          "elapsed_micros": 161852
         },
         {
           "round": 17,
@@ -4082,7 +4083,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0017/a.ts",
-              "elapsed_micros": 12727,
+              "elapsed_micros": 29347,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -4092,7 +4093,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0017/b.ts",
-              "elapsed_micros": 9164,
+              "elapsed_micros": 18159,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -4109,7 +4110,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 85964
+          "elapsed_micros": 146903
         },
         {
           "round": 18,
@@ -4119,7 +4120,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0018/a.ts",
-              "elapsed_micros": 18934,
+              "elapsed_micros": 36864,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -4129,7 +4130,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0018/b.ts",
-              "elapsed_micros": 8693,
+              "elapsed_micros": 20948,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -4146,7 +4147,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 97818
+          "elapsed_micros": 152898
         },
         {
           "round": 19,
@@ -4156,7 +4157,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0019/a.ts",
-              "elapsed_micros": 13296,
+              "elapsed_micros": 29118,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -4166,7 +4167,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0019/b.ts",
-              "elapsed_micros": 6337,
+              "elapsed_micros": 20175,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -4183,7 +4184,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 79442
+          "elapsed_micros": 143113
         },
         {
           "round": 20,
@@ -4193,7 +4194,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0020/a.ts",
-              "elapsed_micros": 12116,
+              "elapsed_micros": 25317,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -4203,7 +4204,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0020/b.ts",
-              "elapsed_micros": 6273,
+              "elapsed_micros": 15532,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -4220,7 +4221,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 74658
+          "elapsed_micros": 142693
         },
         {
           "round": 21,
@@ -4230,7 +4231,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0021/a.ts",
-              "elapsed_micros": 13490,
+              "elapsed_micros": 36674,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -4240,7 +4241,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0021/b.ts",
-              "elapsed_micros": 5249,
+              "elapsed_micros": 27280,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -4257,7 +4258,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 81179
+          "elapsed_micros": 160670
         },
         {
           "round": 22,
@@ -4267,7 +4268,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0022/a.ts",
-              "elapsed_micros": 14210,
+              "elapsed_micros": 24050,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -4277,7 +4278,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0022/b.ts",
-              "elapsed_micros": 6101,
+              "elapsed_micros": 16601,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -4294,7 +4295,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 85347
+          "elapsed_micros": 124646
         },
         {
           "round": 23,
@@ -4304,7 +4305,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0023/a.ts",
-              "elapsed_micros": 12304,
+              "elapsed_micros": 33407,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -4314,7 +4315,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0023/b.ts",
-              "elapsed_micros": 4944,
+              "elapsed_micros": 22595,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -4331,7 +4332,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 81840
+          "elapsed_micros": 136297
         },
         {
           "round": 24,
@@ -4341,7 +4342,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0024/a.ts",
-              "elapsed_micros": 12869,
+              "elapsed_micros": 29924,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -4351,7 +4352,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0024/b.ts",
-              "elapsed_micros": 7243,
+              "elapsed_micros": 18716,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -4368,7 +4369,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 72680
+          "elapsed_micros": 131007
         },
         {
           "round": 25,
@@ -4378,7 +4379,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0025/a.ts",
-              "elapsed_micros": 14418,
+              "elapsed_micros": 27918,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -4388,7 +4389,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0025/b.ts",
-              "elapsed_micros": 7230,
+              "elapsed_micros": 19821,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -4405,7 +4406,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 74578
+          "elapsed_micros": 130370
         },
         {
           "round": 26,
@@ -4415,7 +4416,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0026/a.ts",
-              "elapsed_micros": 14992,
+              "elapsed_micros": 19692,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -4425,7 +4426,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0026/b.ts",
-              "elapsed_micros": 10684,
+              "elapsed_micros": 15522,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -4442,7 +4443,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 86089
+          "elapsed_micros": 113165
         },
         {
           "round": 27,
@@ -4452,7 +4453,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0027/a.ts",
-              "elapsed_micros": 11323,
+              "elapsed_micros": 30031,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -4462,7 +4463,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0027/b.ts",
-              "elapsed_micros": 5520,
+              "elapsed_micros": 24408,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -4479,7 +4480,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 69931
+          "elapsed_micros": 128259
         },
         {
           "round": 28,
@@ -4489,7 +4490,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0028/a.ts",
-              "elapsed_micros": 13092,
+              "elapsed_micros": 27801,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -4499,7 +4500,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0028/b.ts",
-              "elapsed_micros": 5255,
+              "elapsed_micros": 17096,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -4516,7 +4517,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 75397
+          "elapsed_micros": 124338
         },
         {
           "round": 29,
@@ -4526,7 +4527,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0029/a.ts",
-              "elapsed_micros": 9766,
+              "elapsed_micros": 22058,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -4536,7 +4537,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0029/b.ts",
-              "elapsed_micros": 7135,
+              "elapsed_micros": 16543,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -4553,7 +4554,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 70893
+          "elapsed_micros": 118238
         },
         {
           "round": 30,
@@ -4563,7 +4564,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0030/a.ts",
-              "elapsed_micros": 14874,
+              "elapsed_micros": 40338,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -4573,7 +4574,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0030/b.ts",
-              "elapsed_micros": 6438,
+              "elapsed_micros": 76988,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -4590,7 +4591,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 94293
+          "elapsed_micros": 240218
         },
         {
           "round": 31,
@@ -4600,7 +4601,7 @@
               "backend": "sqlite",
               "actor": "actor-a",
               "key": "src/disjoint/0031/a.ts",
-              "elapsed_micros": 15230,
+              "elapsed_micros": 35676,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-a"
@@ -4610,7 +4611,7 @@
               "backend": "sqlite",
               "actor": "actor-b",
               "key": "src/disjoint/0031/b.ts",
-              "elapsed_micros": 7124,
+              "elapsed_micros": 24447,
               "outcome": {
                 "status": "admitted",
                 "gate_id": "actor-b"
@@ -4627,7 +4628,7 @@
               "actor-b"
             ]
           ],
-          "elapsed_micros": 77304
+          "elapsed_micros": 204276
         }
       ],
       "crash_cases": [
@@ -4637,14 +4638,14 @@
             "backend": "sqlite",
             "actor": "recovery",
             "key": "src/crash/uncommitted.ts",
-            "elapsed_micros": 12163,
+            "elapsed_micros": 24419,
             "outcome": {
               "status": "admitted",
               "gate_id": "recovery"
             }
           },
           "canonical_holder": "recovery",
-          "elapsed_micros": 107298
+          "elapsed_micros": 150346
         },
         {
           "phase": "committed",
@@ -4652,17 +4653,17 @@
             "backend": "sqlite",
             "actor": "recovery",
             "key": "src/crash/committed.ts",
-            "elapsed_micros": 10837,
+            "elapsed_micros": 20316,
             "outcome": {
               "status": "conflict",
               "holder_gate_id": "crash-committed-gate"
             }
           },
           "canonical_holder": "crash-committed-gate",
-          "elapsed_micros": 98009
+          "elapsed_micros": 143787
         }
       ],
-      "database_bytes": 1106067
+      "database_bytes": 1106122
     }
   ],
   "overall_status": "PASS"

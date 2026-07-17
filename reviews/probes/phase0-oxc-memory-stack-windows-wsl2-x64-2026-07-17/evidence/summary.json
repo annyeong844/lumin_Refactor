@@ -1,0 +1,241 @@
+{
+  "architecture_commit": "65e60216891bb3d826a4778f84cb8aaa377abe92",
+  "architecture_manifest_sha256": "66925583362be22257dd7357072d176cd3f1ae3d4f99874a53f6689b7cf535e0",
+  "conclusion": {
+    "document_contract": "observed feasible on the named Windows NTFS and WSL2 ext4 matrices",
+    "native_linux_evidence": "PENDING",
+    "numeric_budget": "NOT_APPROVED",
+    "product_stack_policy": "NOT_SELECTED",
+    "product_worker_default": "NOT_SELECTED"
+  },
+  "corpus_bytes": 7472776,
+  "corpus_file_count": 709,
+  "corpus_id": "lumin-lab-35290cb-plus-stack-stress-v1",
+  "corpus_manifest_sha256": "82baf59e6c3708e1f68c36d711bb47cbe081d468f3b554ac93cf7af36a85eb9b",
+  "platforms": [
+    {
+      "allocator_lifetime_current_rss_bytes": [
+        6598656,
+        7245824,
+        7114752,
+        7467008,
+        7135232,
+        7168000,
+        7217152,
+        7475200
+      ],
+      "available_parallelism": 12,
+      "binary": {
+        "bytes": 1384448,
+        "path": "C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-oxc-memory-stack-windows-wsl2-x64-2026-07-17\\source\\target\\release\\lumin-phase0-oxc-probe.exe",
+        "sha256": "b8eb1f7595e82e9706c567504782676ea2f5b912ee8971f74043a3377c236db3"
+      },
+      "filesystem_class": "ntfs",
+      "jobs": [
+        {
+          "allocator_capacity_bytes_total": 85391168,
+          "child_elapsed_micros": 1425066,
+          "peak_rss_bytes": 11042816,
+          "wave_elapsed_micros": [
+            362695,
+            328471,
+            331268
+          ],
+          "workers": 1
+        },
+        {
+          "allocator_capacity_bytes_total": 85391168,
+          "child_elapsed_micros": 1056817,
+          "peak_rss_bytes": 12029952,
+          "wave_elapsed_micros": [
+            226190,
+            213949,
+            181308
+          ],
+          "workers": 2
+        },
+        {
+          "allocator_capacity_bytes_total": 85391168,
+          "child_elapsed_micros": 805749,
+          "peak_rss_bytes": 13332480,
+          "wave_elapsed_micros": [
+            122328,
+            116906,
+            127674
+          ],
+          "workers": 4
+        },
+        {
+          "allocator_capacity_bytes_total": 85391168,
+          "child_elapsed_micros": 662436,
+          "peak_rss_bytes": 14286848,
+          "wave_elapsed_micros": [
+            94685,
+            73891,
+            82546
+          ],
+          "workers": 8
+        },
+        {
+          "allocator_capacity_bytes_total": 85391168,
+          "child_elapsed_micros": 636413,
+          "peak_rss_bytes": 16035840,
+          "wave_elapsed_micros": [
+            87517,
+            84314,
+            77744
+          ],
+          "workers": 12
+        }
+      ],
+      "minimum_observed_passing_stack_bytes": 1048576,
+      "platform": "windows-x64",
+      "stack_results": [
+        {
+          "return_code": 3221225725,
+          "stack_bytes": 262144,
+          "status": "FAIL"
+        },
+        {
+          "return_code": 3221225725,
+          "stack_bytes": 524288,
+          "status": "FAIL"
+        },
+        {
+          "return_code": 0,
+          "stack_bytes": 1048576,
+          "status": "PASS"
+        },
+        {
+          "return_code": 0,
+          "stack_bytes": 2097152,
+          "status": "PASS"
+        },
+        {
+          "return_code": 0,
+          "stack_bytes": 4194304,
+          "status": "PASS"
+        },
+        {
+          "return_code": 0,
+          "stack_bytes": 8388608,
+          "status": "PASS"
+        }
+      ]
+    },
+    {
+      "allocator_lifetime_current_rss_bytes": [
+        5877760,
+        6299648,
+        6205440,
+        6205440,
+        6205440,
+        6205440,
+        6205440,
+        6336512
+      ],
+      "available_parallelism": 12,
+      "binary": {
+        "bytes": 1920328,
+        "path": "/home/endof/lumin-phase0-oxc-probe-65e6021-20260717/source/target/release/lumin-phase0-oxc-probe",
+        "sha256": "9cfb24eabb52ce51b06c95199a6ff5f0d17108a98ffbe2d8822cdcfde396d60a"
+      },
+      "filesystem_class": "ext4",
+      "jobs": [
+        {
+          "allocator_capacity_bytes_total": 85391168,
+          "child_elapsed_micros": 542881,
+          "peak_rss_bytes": 9445376,
+          "wave_elapsed_micros": [
+            176702,
+            137540,
+            143738
+          ],
+          "workers": 1
+        },
+        {
+          "allocator_capacity_bytes_total": 85391168,
+          "child_elapsed_micros": 330307,
+          "peak_rss_bytes": 10092544,
+          "wave_elapsed_micros": [
+            89476,
+            77343,
+            84241
+          ],
+          "workers": 2
+        },
+        {
+          "allocator_capacity_bytes_total": 85391168,
+          "child_elapsed_micros": 246228,
+          "peak_rss_bytes": 11927552,
+          "wave_elapsed_micros": [
+            47246,
+            53114,
+            59601
+          ],
+          "workers": 4
+        },
+        {
+          "allocator_capacity_bytes_total": 85391168,
+          "child_elapsed_micros": 219725,
+          "peak_rss_bytes": 13819904,
+          "wave_elapsed_micros": [
+            40640,
+            38785,
+            49014
+          ],
+          "workers": 8
+        },
+        {
+          "allocator_capacity_bytes_total": 85391168,
+          "child_elapsed_micros": 255370,
+          "peak_rss_bytes": 16367616,
+          "wave_elapsed_micros": [
+            50968,
+            55928,
+            50360
+          ],
+          "workers": 12
+        }
+      ],
+      "minimum_observed_passing_stack_bytes": 1048576,
+      "platform": "wsl2-x64",
+      "stack_results": [
+        {
+          "return_code": -6,
+          "stack_bytes": 262144,
+          "status": "FAIL"
+        },
+        {
+          "return_code": -6,
+          "stack_bytes": 524288,
+          "status": "FAIL"
+        },
+        {
+          "return_code": 0,
+          "stack_bytes": 1048576,
+          "status": "PASS"
+        },
+        {
+          "return_code": 0,
+          "stack_bytes": 2097152,
+          "status": "PASS"
+        },
+        {
+          "return_code": 0,
+          "stack_bytes": 4194304,
+          "status": "PASS"
+        },
+        {
+          "return_code": 0,
+          "stack_bytes": 8388608,
+          "status": "PASS"
+        }
+      ]
+    }
+  ],
+  "schema": "lumin-phase0-oxc-evidence-v1",
+  "semantic_digest": "28aa44da0f371535feb01052cfd1c9298862c247110a76b5f5ae696d9f1b8721",
+  "source_manifest_sha256": "e9b405f9816cbf6d0276b22d4dbb2f4c80b35a2839fb05704541401a11b2a024",
+  "status": "PASS"
+}

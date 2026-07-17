@@ -1,0 +1,54 @@
+name: Phase 0 native Linux store probe
+
+on:
+  push:
+    branches:
+      - phase0-native-store-probe-20260717
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact runner commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Install system probe tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes binutils file xz-utils
+
+      - name: Install exact Rust toolchain
+        run: |
+          rustup toolchain install 1.96.0 --profile minimal --component clippy,rustfmt
+          rustup target add x86_64-unknown-linux-musl --toolchain 1.96.0
+          rustup default 1.96.0
+
+      - name: Install exact Zig distribution
+        run: |
+          curl --fail --location --retry 3 \
+            https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz \
+            --output "$RUNNER_TEMP/zig.tar.xz"
+          echo '70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  '"$RUNNER_TEMP/zig.tar.xz" | sha256sum --check
+          tar --extract --xz --file "$RUNNER_TEMP/zig.tar.xz" --directory "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/zig-x86_64-linux-0.16.0" >> "$GITHUB_PATH"
+
+      - name: Install exact cargo-zigbuild
+        run: cargo install cargo-zigbuild --version 0.23.0 --locked
+
+      - name: Run native ext4 GNU and musl matrix
+        run: bash reviews/probes/phase0-store-backend-native-linux-ext4-musl-x64-2026-07-17/runner/run-native.sh
+
+      - name: Upload raw native evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: phase0-native-store-evidence-${{ github.sha }}
+          path: |
+            reviews/probes/phase0-store-backend-native-linux-ext4-musl-x64-2026-07-17/evidence
+            reviews/probes/phase0-store-backend-native-linux-ext4-musl-x64-2026-07-17/runner-provenance.json
+            reviews/probes/phase0-store-backend-windows-x64-2026-07-17/source/evidence-native-linux
+          if-no-files-found: error
+          retention-days: 7

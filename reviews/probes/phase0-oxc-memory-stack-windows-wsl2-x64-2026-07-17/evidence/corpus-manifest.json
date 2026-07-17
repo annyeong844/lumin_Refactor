@@ -1,0 +1,4267 @@
+{
+  "schema": "lumin-phase0-oxc-corpus-v1",
+  "corpus_id": "lumin-lab-35290cb-plus-stack-stress-v1",
+  "source_repository": "https://github.com/annyeong844/lumin_lab.git",
+  "source_commit": "35290cb683a37e83bc8c915d1d0f9ca0f3f96fd0",
+  "generator_sha256": "70e328281cb530d1d1b1d43df2df1988fca4aba267a9d7814da01aa30d04f37f",
+  "legacy_file_count": 705,
+  "legacy_bytes": 7302528,
+  "synthetic_file_count": 4,
+  "synthetic_bytes": 170248,
+  "entries": [
+    {
+      "path": "__lumin_stress__/nested-object-types-256.ts",
+      "class": "synthetic-stack",
+      "bytes": 3107,
+      "sha256": "840b59c6317d3377ae8f0716aed7720c37eaddd4251b20b3148559457d2c8b53"
+    },
+    {
+      "path": "__lumin_stress__/nested-parentheses-512.js",
+      "class": "synthetic-stack",
+      "bytes": 1049,
+      "sha256": "48fba7f33de9c4110034747b26720151a1f2bb72d983af22de6acbcd8078b709"
+    },
+    {
+      "path": "__lumin_stress__/nested-tsx-elements-256.tsx",
+      "class": "synthetic-stack",
+      "bytes": 3362,
+      "sha256": "560c2e58f263201d00cff3d6bf15016902d2d40f90a57968aaa6e40d70c3c13c"
+    },
+    {
+      "path": "__lumin_stress__/top-level-declarations-4096.ts",
+      "class": "synthetic-stack",
+      "bytes": 162730,
+      "sha256": "05b6ad231e1f924d7c4b02287d4d5f3b5146991722242062cd46c1d2cb74a546"
+    },
+    {
+      "path": "_lib/alias-map.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 31140,
+      "sha256": "54cdfc530fec3e66257c3816022701c215f10a53dc393b66add47c8d08418763"
+    },
+    {
+      "path": "_lib/any-contamination-summary.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5176,
+      "sha256": "f5518954df1f5aab8d2b4ddea5607a37bfda5dbaaddd9514e2a86484a269acca"
+    },
+    {
+      "path": "_lib/any-contamination.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6532,
+      "sha256": "486b41a021fd66437e4863825894968f9a4339fc4c4011b435c1e65cd1bc5356"
+    },
+    {
+      "path": "_lib/artifacts.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4417,
+      "sha256": "3aec33ca0d182204de40f077eb6ea221404288f272cf5caff5393cca29a86588"
+    },
+    {
+      "path": "_lib/atomic-write.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1775,
+      "sha256": "4fa31fb029fbd9c3ddcc98db3af5590ebf0805ddf4bcfbcbc7b5013b5b1788a6"
+    },
+    {
+      "path": "_lib/audit-canon-draft.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3959,
+      "sha256": "1102462477cd45068d1504d2c6012a64e03a4b737392cc9d96afe22bdd53a60c"
+    },
+    {
+      "path": "_lib/audit-core-contract-fixtures.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4079,
+      "sha256": "7a3e317f3b334409a31641d542306cc89a31976ffa9c7c802b6bdd3283693de5"
+    },
+    {
+      "path": "_lib/audit-core-contract.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8509,
+      "sha256": "cb81b590fd8e675849d3246c6e6027e36c2eab83daf0f25af24689480623f7bb"
+    },
+    {
+      "path": "_lib/audit-core.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 100597,
+      "sha256": "65d1a3b7c7cf2664286baade7feeadbd2fa76ec0b807e34f04892e8d42b6c2b4"
+    },
+    {
+      "path": "_lib/audit-manifest.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 15193,
+      "sha256": "2fe126d24ec680508aa0f2333b9991a96b96e560f5b62ba6698b5d452bccff19"
+    },
+    {
+      "path": "_lib/audit-review-pack.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 18597,
+      "sha256": "a6dc6754f911fe85f5f463d1947501f1975404c6bcb0619f1709b11e3d6f3538"
+    },
+    {
+      "path": "_lib/audit-summary.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 29596,
+      "sha256": "551d0cddbde1b0487b85b5bb37402c829edde8c60a76e99b6e59251a60ffe639"
+    },
+    {
+      "path": "_lib/barrel-discipline-artifact.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 515,
+      "sha256": "0c4e70e024c54703d796ebba478cbfa2a587affa285a7277e17714018a3091d3"
+    },
+    {
+      "path": "_lib/blind-zones.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 21667,
+      "sha256": "07d51385fe1ccf0d9b69e6613f2f374e4cef6236b55890da0691a46bb9610db4"
+    },
+    {
+      "path": "_lib/block-clone-artifact.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11049,
+      "sha256": "148776f95ee6f087b57dd377c8d17590002c468b5aa052531922cc222e1c7eff"
+    },
+    {
+      "path": "_lib/calibration-corpora.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3839,
+      "sha256": "1b452b823c490df2c74390f841f4e432df245f69e357fd688ed58a0756d9e1e7"
+    },
+    {
+      "path": "_lib/call-graph-bounded.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3920,
+      "sha256": "7212017917d89fc7463903565635202285c221a916d94b6834f67b78897372ea"
+    },
+    {
+      "path": "_lib/canon-draft-helpers.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 15004,
+      "sha256": "d28d68ce594f48e52fedf44994eab54cbb90d53e39fd73145b55b0839325c6f2"
+    },
+    {
+      "path": "_lib/canon-draft-naming.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 17518,
+      "sha256": "3ecb552f32bedb8ff6168a3de62a40323ead685755587319d206be57b01b26e9"
+    },
+    {
+      "path": "_lib/canon-draft-topology.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 18124,
+      "sha256": "8591c4c4dfd0976ccde047729b305ad01ee86e1761113afecba8d3c25e0b7e42"
+    },
+    {
+      "path": "_lib/canon-draft-types.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14245,
+      "sha256": "5c9113e0c3091bd27bfb1f38e2226782be4777f9dc9f1c8ed7f0e171cee1fe1d"
+    },
+    {
+      "path": "_lib/canon-draft-utils.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7830,
+      "sha256": "7cb431ce972a98c8e24fa5c71c0bc3f625816a531daace2d00913258b03a3e8d"
+    },
+    {
+      "path": "_lib/canon-draft.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2696,
+      "sha256": "2293747926ada98f36208e3b5a09a0bb1d07fd014d7000ef3a3e2f6a83d1526b"
+    },
+    {
+      "path": "_lib/check-canon-artifact.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3094,
+      "sha256": "45e05e07ad6b3f8c33303dd9b38ad265e7f0a7e82f97110e12e971fbc460f64b"
+    },
+    {
+      "path": "_lib/check-canon-helpers.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14082,
+      "sha256": "b9764432b0a39bceca0867c47e391fb842cf718f13b5610201c0e3b7b8bc7155"
+    },
+    {
+      "path": "_lib/check-canon-markdown.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8191,
+      "sha256": "66ad50683b531040a7bf3fc88fe987683eac7be82c433e5aac60c5ac7082f063"
+    },
+    {
+      "path": "_lib/check-canon-naming-parser.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8013,
+      "sha256": "6062de2b6bc92ed3c7407f952010d90928730a77df96b12bb617b631a3ab6850"
+    },
+    {
+      "path": "_lib/check-canon-naming.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11963,
+      "sha256": "94dfdb1e29cbc009eabd274ac4954ae37ed961b0de6b38c1b5043f1e0cef4a70"
+    },
+    {
+      "path": "_lib/check-canon-topology-parser.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9840,
+      "sha256": "80c0dd8d1654608310ee915efd9f4c069addb8e2870d9b517f780bce063bba87"
+    },
+    {
+      "path": "_lib/check-canon-topology.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 13637,
+      "sha256": "1bf035f1b1b37c03840c1dbd54fc1eb0327d480f688d391b6496e560832b6402"
+    },
+    {
+      "path": "_lib/check-canon-types.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 13072,
+      "sha256": "76213bb40440ac1e62f370dc4e2b09f831db7a0cbe351b175099863d69b815bb"
+    },
+    {
+      "path": "_lib/check-canon-utils.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8286,
+      "sha256": "050b43281e45e4347fa9e28254f491172df3028c79be40780f5ef7c150de140f"
+    },
+    {
+      "path": "_lib/classify-facts-ast-counter.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 12280,
+      "sha256": "27dc0d0ab2bc3f4c4fa9b02d1c416c42cc179e9d415e77e65a4ded763e9d39cf"
+    },
+    {
+      "path": "_lib/classify-facts.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5854,
+      "sha256": "b6a09a75944c2735b6b4c378d8527a95ec6ea5b52b37b285daa5edf50beab949"
+    },
+    {
+      "path": "_lib/classify-policies.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9320,
+      "sha256": "da63305849d96924977bb628165351d4194080a68508684cc9dcd0560219f086"
+    },
+    {
+      "path": "_lib/cli.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3014,
+      "sha256": "7b70d7187f73371e630671a63720d1b3604361047e9f256a6660145c0eabf8af"
+    },
+    {
+      "path": "_lib/code-shape-normalize.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2320,
+      "sha256": "b18d132c2b72a2780f24e0166f45d2bce312553fce14b3b21681676871eda004"
+    },
+    {
+      "path": "_lib/collect-files.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8619,
+      "sha256": "5b671ff7f8532ed647ae6ae511c96f52b4ea06ffd7c90a6cc44278552c94dabd"
+    },
+    {
+      "path": "_lib/contract-pinned-exports.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7741,
+      "sha256": "5726185c192b5dfe23c32da03a1c72a8022f7ffdc967b34a14e6ccfbcd1e9424"
+    },
+    {
+      "path": "_lib/definition-id.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 673,
+      "sha256": "fac98fdc96ec3db6848521c152947a019645758f4fd4aff767b48c195849c501"
+    },
+    {
+      "path": "_lib/dependency-guard.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6430,
+      "sha256": "57da6772b8d64e5874bf7b05648ff63f9ae380218f02c5ecc17cb126927bfe86"
+    },
+    {
+      "path": "_lib/entry-surface-artifact.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 536,
+      "sha256": "1d2a57e2821019374a0860feee63a94a2e237e2e73ad9b98fbe39e8995f072c1"
+    },
+    {
+      "path": "_lib/entry-surface.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14048,
+      "sha256": "73eb51b8edad051372e0ff6e227231b921a237c01a4df30cf160a23338a409fd"
+    },
+    {
+      "path": "_lib/export-action-safety-artifact.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 532,
+      "sha256": "2d51d67a71812e342adaae5d6664639c8d20fef2868ca660854b86b93d5d00fe"
+    },
+    {
+      "path": "_lib/export-action-safety.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 20675,
+      "sha256": "804b91d92c62c2539cec2a8fd4387a66daa3f7b487afa2b137141f19d7ebb4a1"
+    },
+    {
+      "path": "_lib/extract-go.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1713,
+      "sha256": "4a36dd8f9236010d2bc7bb58c697a06d035746aa940d5ac6b60c6bb7200364f7"
+    },
+    {
+      "path": "_lib/extract-py.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2369,
+      "sha256": "5cbf310036a2297c7faa50e0b4d5457e084ed12b5ae1f6fade4ad59aa19841c2"
+    },
+    {
+      "path": "_lib/extract-ts-escapes.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14016,
+      "sha256": "cd4bed81da2314c94eb255f88d8d4e924b2d78c3738894fe50d6a62d58450a82"
+    },
+    {
+      "path": "_lib/extract-ts-rust-hybrid.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4897,
+      "sha256": "5f973746a5f75e1c1ff289870b9d07e870fd235003932da8c293b7fa09379e18"
+    },
+    {
+      "path": "_lib/extract-ts.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2029,
+      "sha256": "9e2fefae4dc7e87a68136c9c81677d5aaab556ac79ffb95cebceae3381552bc1"
+    },
+    {
+      "path": "_lib/finding-provenance.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 12235,
+      "sha256": "c0db9445f3640bede1177956b8226e0eaa9a10972a6bf18f4bc8bc4da815266b"
+    },
+    {
+      "path": "_lib/framework-policy-facts.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5415,
+      "sha256": "48a865fa7be0e7b5bdf28eafd56c92cb1742f4e4401e5bc6962f695c9a58040c"
+    },
+    {
+      "path": "_lib/framework-policy-matrix.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 18548,
+      "sha256": "234cb9d112d5a7c93d1cddd3b77a5fb8f9cf8c0c00fd8de9ae319c34ac189aee"
+    },
+    {
+      "path": "_lib/framework-resource-surfaces.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 909,
+      "sha256": "c9f619c38e120570ed64af5213ab576a2b1eca4a36df4c75f866979b43166c67"
+    },
+    {
+      "path": "_lib/function-clone-artifact.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 12714,
+      "sha256": "e06b25ab8d7b2fb7629b7808e74343d814b10ed7fc11beb5a08388c3a63e62d7"
+    },
+    {
+      "path": "_lib/function-signature-hash.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6525,
+      "sha256": "4ca5b7de5d2491bb69254c55a21bbdca30d9363e7e77deb21740eebe8ff17f9d"
+    },
+    {
+      "path": "_lib/generated-artifact-evidence.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8402,
+      "sha256": "be8cee847e801f20cd4791bdb57de2b68a7f995765e3f40929ef4c16f2018b8d"
+    },
+    {
+      "path": "_lib/generated-artifact-mode.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 387,
+      "sha256": "81ce7a4dfff9aae49eac12b45f2ead3ff55b1a2bae8fe1b4c563658ef3a0c50a"
+    },
+    {
+      "path": "_lib/generated-blind-zone-relevance.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8624,
+      "sha256": "a9c1178840a3e4ae086843fb9a6d274005dc42efbb1b07742e23a7d1583dfec5"
+    },
+    {
+      "path": "_lib/generated-virtual-surface.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3244,
+      "sha256": "8a15ac25adbac392e119d69173cf7d5e70ff4a9286bffc973b805a9a056b09c5"
+    },
+    {
+      "path": "_lib/hook-ack-observer.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2455,
+      "sha256": "eee978a5661ce2521f5e00096125f94b25307707a6ae131338e13b07b4557290"
+    },
+    {
+      "path": "_lib/hook-event-drain.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1650,
+      "sha256": "ebc720d353ab5210282d47ba2731235ffa26a2fff7a024a8c87eb6c31c2e430d"
+    },
+    {
+      "path": "_lib/hook-event-renderer.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3106,
+      "sha256": "bc9d38ff4120d80c7097cbd648c8eb08d338f13aa00c4a4a248f5d8ca1703379"
+    },
+    {
+      "path": "_lib/hook-event-store.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 10272,
+      "sha256": "d4ad47e75f6b9a3f088262b39f8575957f69b5dd1789331f72bf110351b76673"
+    },
+    {
+      "path": "_lib/hook-id-safety.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1544,
+      "sha256": "e7d75cfa1edc5b5c01195eef1af48c76ff874067f7117af8bc8fab732b29d90f"
+    },
+    {
+      "path": "_lib/hook-path-safety.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4909,
+      "sha256": "73b04c91ac34634b2ee99fd40e42929f9e39439f53b2e0823269db95a084517c"
+    },
+    {
+      "path": "_lib/hook-post-write-lite.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5213,
+      "sha256": "cfcaeab531f441745c10427cb8f4c09773d14a3eaeef5f61eeccb434ab4b8b37"
+    },
+    {
+      "path": "_lib/hook-preimage-store.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4836,
+      "sha256": "795008b587f7e4b25bb05f5ca002f1df678ef794556a027fe3779e1f8fdc9ff1"
+    },
+    {
+      "path": "_lib/import-meta-glob-expansion.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4244,
+      "sha256": "97a35b00c8d1ede0b2b094dbea3e3e02148d45d85301edfa2c0d4b0884ea2f1d"
+    },
+    {
+      "path": "_lib/incremental-cache-store.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8972,
+      "sha256": "69e8b1f5855c9841d89483b79b1528c5c3b3ba070927b0a4fb6d8971c7257906"
+    },
+    {
+      "path": "_lib/incremental-snapshot.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6212,
+      "sha256": "a7b8210637bb7d0cd531de90fd20be8488a71d948500b57e60581888149eeb4d"
+    },
+    {
+      "path": "_lib/incremental.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5139,
+      "sha256": "2a660d2a8a7d31968883a270a7d007e6e9c3ba12a15c4e20b6bdf81237c910de"
+    },
+    {
+      "path": "_lib/inline-pattern-artifact.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9045,
+      "sha256": "2a90d7006e39d0a6f2dd665b81698b1056ecd9fb19ca6647348a493f1d3871df"
+    },
+    {
+      "path": "_lib/js-module-edge-scanner.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8696,
+      "sha256": "337dd4ae2224ae2ba2ea98df6aae83d90ddc6bd6e740e65b4d5941073fb96a44"
+    },
+    {
+      "path": "_lib/lang.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2873,
+      "sha256": "ddafa7c7b58039cb8d5812bcaf56bb7ea9f9b87b849e61e1ef1f1c826b31ee03"
+    },
+    {
+      "path": "_lib/line-offset.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1290,
+      "sha256": "0df3d50db2b2c797a7852be98bbfd01d3ef804453f3c5a442fa42e6d02730ff0"
+    },
+    {
+      "path": "_lib/lint-enforcement.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4445,
+      "sha256": "bdc1331d10a0d177c072f560e98d37b9a1b69d43bda67bd1af2365c131e50ca8"
+    },
+    {
+      "path": "_lib/mdx-consumers.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4157,
+      "sha256": "88a597f5eda42c3883579cb0bdec5ac3bf0e11912195cebeaaed50649628ad0e"
+    },
+    {
+      "path": "_lib/module-reachability.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1002,
+      "sha256": "3c4b02d4396b077365bb8a5e5e0290f52a629182a1b3326a50332c102f6e5260"
+    },
+    {
+      "path": "_lib/p6-measurement.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 15856,
+      "sha256": "23782d324fbb60a4eced0d8d1a77b938db0f4d3684011819b7eb079b36e0058b"
+    },
+    {
+      "path": "_lib/package-exports.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9346,
+      "sha256": "b4ee6608b92ba6ef4d46cd2da4b0cf33446ae875dc1b2ccc4e4cea00c4262668"
+    },
+    {
+      "path": "_lib/parse-oxc.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2436,
+      "sha256": "f2bf63c6f71f05bd25315e7cd61542838f7a7d6c35d3d1240c16ef2da5d04668"
+    },
+    {
+      "path": "_lib/paths.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4365,
+      "sha256": "b2bde449bda2194e4536835d4f8cc72911a83383bef618d390bec42443ac0b68"
+    },
+    {
+      "path": "_lib/pre-write-token-policy.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1844,
+      "sha256": "b15af8875aa3b2e9f7fc8fcb23d46040256911cb1cdb1d36e055065ea9d1ea09"
+    },
+    {
+      "path": "_lib/producer-phase-timing.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4012,
+      "sha256": "09730e16f40bfc9452a2c0fdfd5eeee1540207d9fe0b1bf1d6e81aaf8a363e04"
+    },
+    {
+      "path": "_lib/public-surface.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 25103,
+      "sha256": "c8703f94b312c7dbaca8a112391a90b3376e8d9005cab1da43d8b7cc3284ccba"
+    },
+    {
+      "path": "_lib/python.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 12188,
+      "sha256": "9accf12b86b76f55be315d6fceb14df914662779d84382c54bb6034fb9973550"
+    },
+    {
+      "path": "_lib/ranking.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 18642,
+      "sha256": "3893ce30481d69d691ccab4d7521d68e0dbd1fa8135bfb2b478590f4676cd98e"
+    },
+    {
+      "path": "_lib/repo-mode.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5841,
+      "sha256": "c27645e0b0649678b74ded63ddfd849f89ee53aa27132db254a2f8fba4e69f84"
+    },
+    {
+      "path": "_lib/resolver-blind-zone-relevance.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7105,
+      "sha256": "30e166f39b4dd8b0d44ec8f5f3a64ed59cda44f3d9e9c9b806fa6da362bc4c15"
+    },
+    {
+      "path": "_lib/resolver-blocked-hints.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3656,
+      "sha256": "439ea58084481f1f1450489d64b6eaa7af586160d8b57577b94d34d2a68138d8"
+    },
+    {
+      "path": "_lib/resolver-capabilities.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1330,
+      "sha256": "8a224750de69359bdec101aef39db80f90243b65b9d2137ccac33109ff715fa5"
+    },
+    {
+      "path": "_lib/resolver-core.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 44555,
+      "sha256": "0aefee978148cbec4fb73a1fc2f07ab5f2212dab79e0f6f1afb87542036f87bd"
+    },
+    {
+      "path": "_lib/rust-topology-prefer-gate.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11049,
+      "sha256": "65c5e96b002aadc9b1e94a95c338098c6f8b6cf19e8783a1809184cefcbe584f"
+    },
+    {
+      "path": "_lib/rust-topology-prefer.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7748,
+      "sha256": "c215fc62b3047f8054e9c2358aefefb5690dcf885a71e181de6985b14272ad19"
+    },
+    {
+      "path": "_lib/rust-topology-quorum.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14325,
+      "sha256": "56a0bb70562addfb33e58510c095dc4a007e60891b118a7e80c8b37855740ac4"
+    },
+    {
+      "path": "_lib/rust-topology-scanner.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8270,
+      "sha256": "7d701f36f8384bcefc56258b7b80da9e6318056ec77d5e72884077189744221d"
+    },
+    {
+      "path": "_lib/scan-excludes.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1731,
+      "sha256": "a32df0c3582d47ddc91d7aa750e55a28fd6c45b3d908b46527ffb77be6853816"
+    },
+    {
+      "path": "_lib/self-audit-excludes.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1103,
+      "sha256": "4efd5bc48d3281fd6049d78aae557b72afe83b1bfe4504a3fd6b029b4f7bfca5"
+    },
+    {
+      "path": "_lib/sfc-consumers.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 43816,
+      "sha256": "89285ade09e256de1b7e6d41e4561af6bd2d8baebc87ebc7e00058d560c2a7ec"
+    },
+    {
+      "path": "_lib/sfc-file-facts.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2409,
+      "sha256": "82abfe89125da5dd77c1119949d085e6675cac58e6f2ee3c91b21d56d63bc2d1"
+    },
+    {
+      "path": "_lib/shape-hash.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 15635,
+      "sha256": "0995d82947653d79a716b487085541971f64d9028196939c77e91348570d21ae"
+    },
+    {
+      "path": "_lib/shape-index-artifact.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5337,
+      "sha256": "fae014f04206a24371a4dffeba907cc2154bae261051940a871a63d937d74e41"
+    },
+    {
+      "path": "_lib/shape-index-schema.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4428,
+      "sha256": "d075c05ff2598b516c34daaff215bd0ec53ded3e805e5f08248479eb6b4ce2c2"
+    },
+    {
+      "path": "_lib/source-inventory.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 10157,
+      "sha256": "30900f129aeea6085be65e1698bf2cf8f9c1b7bf5a1b49abc271745319c30bab"
+    },
+    {
+      "path": "_lib/source-use-assembly-request.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9689,
+      "sha256": "697ee4e58ad25eb8abd00d93dd4c598e0af8aa574b2d6dea854a361239d4f4f9"
+    },
+    {
+      "path": "_lib/source-use-record-builder.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8509,
+      "sha256": "1aaab02fe54d1b6d0153faf489c98a0c6bc3359ee0746ca46044d586d85c411d"
+    },
+    {
+      "path": "_lib/symbol-graph-discovery.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 19875,
+      "sha256": "a1f1b9c2e068180e0f53772112d7bde10c72b6906f36eaf7ccffe99e241e51d4"
+    },
+    {
+      "path": "_lib/symbol-graph-finalizer.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14225,
+      "sha256": "d34a8d8232abd79ce19fdf71116a145b7a09a7e5bf40530464d1a364bfc22620"
+    },
+    {
+      "path": "_lib/symbol-graph-request.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6231,
+      "sha256": "68f21de74b4a026faba1cc4119147cf88d1eadbb73d3bc8520c0e6a28b3ffb02"
+    },
+    {
+      "path": "_lib/symbol-graph-resolver.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9580,
+      "sha256": "cdc5b35c7e5816cb778ae16c090246b4dfd261bc956fa7fcb4db778dbda886cb"
+    },
+    {
+      "path": "_lib/symbol-graph-sfc-discovery.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6328,
+      "sha256": "87312b1ec52581eea4f20d1debf95b8e1a71e06653588147aa19a5b22eedecf8"
+    },
+    {
+      "path": "_lib/symbol-graph-sfc-inputs.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5002,
+      "sha256": "7f4e7662305f5f527e971bf17b30ca7b828ece49f01d0e6a533af5e0a7f44473"
+    },
+    {
+      "path": "_lib/symbol-graph-source-use-planner.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7776,
+      "sha256": "b7e101c0e985a35e2d553f9c2721e24188c6f80a9e3cf805624cb8b92460407b"
+    },
+    {
+      "path": "_lib/test-paths.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3368,
+      "sha256": "71647c58ef3a9051b1273b69b7c218cd24c09c73d319eb5b9313eddd0217ec20"
+    },
+    {
+      "path": "_lib/threshold-policies.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7139,
+      "sha256": "1fb6b3ff866b0278488ab42dcd1d279ffc0f102bc2160933091e6526c1ce8d77"
+    },
+    {
+      "path": "_lib/topology-mermaid.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8483,
+      "sha256": "f6ed907538b66e8d81b58cfebc04296992167f4c9c458c4f83fd551f04bd6269"
+    },
+    {
+      "path": "_lib/tree-sitter-langs.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9055,
+      "sha256": "2367a7a64a80cb487b111e4d5c9c6e8c0f8a982a490cf072390c8964b965020e"
+    },
+    {
+      "path": "_lib/tsconfig-paths.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9972,
+      "sha256": "f084cfcaf03668d9c00301e448e224b23a06a7124557c17a4d999adb4d34586f"
+    },
+    {
+      "path": "_lib/unused-deps-artifact.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 798,
+      "sha256": "19613c7f25b935b90210b203f8eaedb4e5e673f1dfb9f2c460eee8fae4bae6ab"
+    },
+    {
+      "path": "_lib/vocab.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5734,
+      "sha256": "91c5a09bde8072743febdd09249cb3c979e0ac9d51e6b68f4f58f6edcdcf3bf5"
+    },
+    {
+      "path": "any-inventory.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8355,
+      "sha256": "1573483d540f9b581884a5dbeb2db9505272d18834d1d63f388ca66a7fcd75df"
+    },
+    {
+      "path": "audit-repo.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 28421,
+      "sha256": "68df52709e30efa30d33834c42f4346886e59aa22e3671ef856044f9fd78bb0a"
+    },
+    {
+      "path": "build-block-clone-index.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9610,
+      "sha256": "da79bde5c15c4ea737c11a29a589fc439a98004307b3b00b91a1948f77da7498"
+    },
+    {
+      "path": "build-call-graph.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 23276,
+      "sha256": "8f47a673a6ad6a058ec33a86ef6335d82c4ec0cb6bbb5e0c10564a8d4b15c9bc"
+    },
+    {
+      "path": "build-entry-surface.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1613,
+      "sha256": "0b2e8b2bf2242a485e92b354b7beebdd57e56630a3819c6f0d65255e34ca9c47"
+    },
+    {
+      "path": "build-framework-resource-surfaces.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3127,
+      "sha256": "cea274ef7534b924710beb7c929242e9d873fcb1657eca8129fc67da8a12004c"
+    },
+    {
+      "path": "build-function-clone-index.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6633,
+      "sha256": "d88dab1925fc204ae0970fd00c9e55b278662a5519a1821ce54271e040d48e99"
+    },
+    {
+      "path": "build-inline-pattern-index.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1868,
+      "sha256": "d583902857796fce339475da612867fb4b61860b44ae73a8f34fbd42db9f0d1d"
+    },
+    {
+      "path": "build-module-reachability.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2376,
+      "sha256": "ec9c308cdcabe245de1cc4e96e018e18f69e0e930f196366b055ed5345e49070"
+    },
+    {
+      "path": "build-resolver-diagnostics.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1798,
+      "sha256": "d9bad7b9b28e9ba706ac53705392fdcf81ce54408c43f2f00b63adaa6880f7fc"
+    },
+    {
+      "path": "build-shape-index.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6522,
+      "sha256": "260fbdd54bc04a71aec3206dbf297c39ddac9d6998fae9ca71bd1d4c3606c76e"
+    },
+    {
+      "path": "build-symbol-graph.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 44524,
+      "sha256": "89b65b04daf50d56d01bff35461d3598a01ced5c2334318256cdb4868c3ed788"
+    },
+    {
+      "path": "build-unused-deps.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2132,
+      "sha256": "d31584234dc3dfe8afbc8113a79fd3a62ae2e4d3996d7efae148d9af39517e44"
+    },
+    {
+      "path": "check-barrel-discipline.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6198,
+      "sha256": "5a4d808280fe6d1c74552ba6cd832127c9766c32851f81f13ec3b901dec684be"
+    },
+    {
+      "path": "check-canon.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 12930,
+      "sha256": "6160a53b5d282fdf7c9d485f1b8dcec1fe586326b02ea2620f2c82407fdfc421"
+    },
+    {
+      "path": "checklist-facts.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 15234,
+      "sha256": "99d82342ac27b7683111a77f3223b7cbffa690ee6ca72addfa0b39b2ea3a0031"
+    },
+    {
+      "path": "classify-dead-exports.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 31986,
+      "sha256": "56399b042948b1d6c898b2d5c464bfef5117c1bb86fa7a25a0feb7fd95be2cf7"
+    },
+    {
+      "path": "compare-repos.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2992,
+      "sha256": "e1a22a2296b27bd3eaac3544dc2ecc3c4dfe43930e430b18f155d3d39e3d44c7"
+    },
+    {
+      "path": "emit-sarif.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2236,
+      "sha256": "3970cd452ad3f6b09896a7d5a3006408d8bcf52a9836acd07cb2f1b29d4361ff"
+    },
+    {
+      "path": "eslint.config.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2824,
+      "sha256": "068c1a75a7bf1218660698e33647459b940257c97468e981ddcb43a89b338c49"
+    },
+    {
+      "path": "export-action-safety.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1381,
+      "sha256": "d77981c2b096df53ed42ff1d66c06e374a7f23a905512f7a7f3b51cdd3481d14"
+    },
+    {
+      "path": "generate-canon-draft.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 12431,
+      "sha256": "ed61f3f66a9ad64bdf2b86d6bb33519bac5fa1cfe1d93f6262c2c72a0b7304dd"
+    },
+    {
+      "path": "hooks/_runner-utils.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1274,
+      "sha256": "8f486055a8e7e8011ce141d9f13c3c57930fff1add417af56bc266d44cb5641e"
+    },
+    {
+      "path": "hooks/post-tool-batch.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 407,
+      "sha256": "58f8652ef5106e60bdb1b5edaae8ecad85905f2cb662663facbbdd91d4323905"
+    },
+    {
+      "path": "hooks/pre-tool-use.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1607,
+      "sha256": "d3a7e9089c6cc10b603c893bc42acc894d277814533a837d4e391c1c40f0c38f"
+    },
+    {
+      "path": "hooks/stop.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 691,
+      "sha256": "a4907119600ed95f13003e9373f0a362cdde0450d770aa0737fe013915b02239"
+    },
+    {
+      "path": "hooks/user-prompt-submit.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 781,
+      "sha256": "6d9cd42533f22999734c685b3d1c2cac348cc1c938ab4e3e0e2b6873eca52280"
+    },
+    {
+      "path": "measure-discipline.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2386,
+      "sha256": "db3f20fa38444deeaa5fa5dbfda9098a9e5ccdc5b8bfff9d102eccad6d1b90da"
+    },
+    {
+      "path": "measure-staleness.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4155,
+      "sha256": "8e0072e8c58465601cd76056e0eb47c0b5277d96aea91a5b0bb18730716b48c6"
+    },
+    {
+      "path": "measure-topology.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 25179,
+      "sha256": "f99a4c315fca9277517b4f783fcee97de7930645d75ae789efb73eb7827648b7"
+    },
+    {
+      "path": "merge-runtime-evidence.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4040,
+      "sha256": "c7226ceb41b61cdf28ed76a9cd72aefdfb6226d6bfe92eafa5a46140f298abf4"
+    },
+    {
+      "path": "p6-measurement.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6170,
+      "sha256": "4fb94411156f36b018dc3d4106c133d7ecc23a5dcb5afd4822290bfc8be35ba3"
+    },
+    {
+      "path": "rank-fixes.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5986,
+      "sha256": "6920edcef4fb084835f2974ae437cc92444591fab1a498ddbb9835a4c6ba769a"
+    },
+    {
+      "path": "resolve-method-calls.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 20646,
+      "sha256": "b0addb0f4597d551ca182ea1beeb6befb0383f581163796737d5494cd01989af"
+    },
+    {
+      "path": "scripts/build-plugin-package.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9206,
+      "sha256": "c1440dd061ff427391fbf87d4e9f6359050c20cefc4531b8cc0ff06009f824d8"
+    },
+    {
+      "path": "scripts/build-skill.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 31575,
+      "sha256": "03dd279ff50d82fec6fc43408b5d76fddc871ca23d9170e29b92772b44491c0d"
+    },
+    {
+      "path": "scripts/check-doc-script-refs.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3529,
+      "sha256": "cdffa901bccbbfd3a23035d4d10ca8dcb0b7a9efa10c7a0abe94fefa4381131e"
+    },
+    {
+      "path": "scripts/check-drift.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4605,
+      "sha256": "f08c60f4aa96cd2600ce2f739b7172a164aca1f8b466f26e6ba1862c7b992be8"
+    },
+    {
+      "path": "scripts/hook-doctor.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2268,
+      "sha256": "72d026186878e59a3694ee7b09732360d15cb5c7b159a7c4f1129f8069212c1e"
+    },
+    {
+      "path": "scripts/publish-public-plugin.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14520,
+      "sha256": "46faba23b379561825954c1ed96c6e7658bb3d590009fef11ac1d432089e00f3"
+    },
+    {
+      "path": "scripts/record-rust-topology-quorum.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6272,
+      "sha256": "e19ef70096e0b080a3cfcd567a5761537900ebce27d1e224a7e1981b3f416425"
+    },
+    {
+      "path": "scripts/run-syntax-check.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1505,
+      "sha256": "b3171cb97b77b89688c5b4afe540e6461a75c3340753080c018d9872c81f89b4"
+    },
+    {
+      "path": "scripts/run-tests-grouped.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 12603,
+      "sha256": "06f3ea0e9b36528d2b0ee80a9005a4055406467210e2e7d128bedf2ae9967d90"
+    },
+    {
+      "path": "scripts/run-tests.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1899,
+      "sha256": "9df76794632cdc6ffb33b8ebc351d5dc618f197b15b7f32be1d1b7d1cf4946ca"
+    },
+    {
+      "path": "scripts/smoke-test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2585,
+      "sha256": "656403abf45a6114890e1af09e0d0ffad828af8f445c25171dc4de718ba253f9"
+    },
+    {
+      "path": "scripts/update-test-doc.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 32141,
+      "sha256": "fbc5ffe625c4a29caecf572dbf1044b12736068cfb482c2c25a8e5d296513945"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/alias-map.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 31140,
+      "sha256": "54cdfc530fec3e66257c3816022701c215f10a53dc393b66add47c8d08418763"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/any-contamination-summary.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5176,
+      "sha256": "f5518954df1f5aab8d2b4ddea5607a37bfda5dbaaddd9514e2a86484a269acca"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/any-contamination.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6532,
+      "sha256": "486b41a021fd66437e4863825894968f9a4339fc4c4011b435c1e65cd1bc5356"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/artifacts.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4417,
+      "sha256": "3aec33ca0d182204de40f077eb6ea221404288f272cf5caff5393cca29a86588"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/atomic-write.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1775,
+      "sha256": "4fa31fb029fbd9c3ddcc98db3af5590ebf0805ddf4bcfbcbc7b5013b5b1788a6"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/audit-canon-draft.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3959,
+      "sha256": "1102462477cd45068d1504d2c6012a64e03a4b737392cc9d96afe22bdd53a60c"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/audit-core-contract-fixtures.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4079,
+      "sha256": "7a3e317f3b334409a31641d542306cc89a31976ffa9c7c802b6bdd3283693de5"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/audit-core-contract.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8509,
+      "sha256": "cb81b590fd8e675849d3246c6e6027e36c2eab83daf0f25af24689480623f7bb"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/audit-core.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 100597,
+      "sha256": "65d1a3b7c7cf2664286baade7feeadbd2fa76ec0b807e34f04892e8d42b6c2b4"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/audit-manifest.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 15193,
+      "sha256": "2fe126d24ec680508aa0f2333b9991a96b96e560f5b62ba6698b5d452bccff19"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/audit-review-pack.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 18597,
+      "sha256": "a6dc6754f911fe85f5f463d1947501f1975404c6bcb0619f1709b11e3d6f3538"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/audit-summary.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 29596,
+      "sha256": "551d0cddbde1b0487b85b5bb37402c829edde8c60a76e99b6e59251a60ffe639"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/barrel-discipline-artifact.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 515,
+      "sha256": "0c4e70e024c54703d796ebba478cbfa2a587affa285a7277e17714018a3091d3"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/blind-zones.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 21667,
+      "sha256": "07d51385fe1ccf0d9b69e6613f2f374e4cef6236b55890da0691a46bb9610db4"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/block-clone-artifact.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11049,
+      "sha256": "148776f95ee6f087b57dd377c8d17590002c468b5aa052531922cc222e1c7eff"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/calibration-corpora.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3839,
+      "sha256": "1b452b823c490df2c74390f841f4e432df245f69e357fd688ed58a0756d9e1e7"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/call-graph-bounded.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3920,
+      "sha256": "7212017917d89fc7463903565635202285c221a916d94b6834f67b78897372ea"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/canon-draft-helpers.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14992,
+      "sha256": "18751f8e6c44a0ffb4194d2c54127388c9bfcd51a91cacc19a2023f0ad3eef7a"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/canon-draft-naming.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 17506,
+      "sha256": "3e9d3e8ece2bc0138b43670314bb9469239b27c7b0c79dea2976518e8f6ad450"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/canon-draft-topology.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 18118,
+      "sha256": "5923dd8272eb80040b770f6c2946a60a5ea90ff9515989bd3ffc4c8032ea487e"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/canon-draft-types.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14221,
+      "sha256": "52bbf65d9f17b40e7f955a810d4a2c6cd0f968a8bc31e127e8e6e9699f9fc5b9"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/canon-draft-utils.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7794,
+      "sha256": "88a1e8db63a4053dab047df19570e5b7469a9942c2effb76014947821106d9f9"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/canon-draft.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2696,
+      "sha256": "2293747926ada98f36208e3b5a09a0bb1d07fd014d7000ef3a3e2f6a83d1526b"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/check-canon-artifact.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3094,
+      "sha256": "45e05e07ad6b3f8c33303dd9b38ad265e7f0a7e82f97110e12e971fbc460f64b"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/check-canon-helpers.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14082,
+      "sha256": "b9764432b0a39bceca0867c47e391fb842cf718f13b5610201c0e3b7b8bc7155"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/check-canon-markdown.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8191,
+      "sha256": "66ad50683b531040a7bf3fc88fe987683eac7be82c433e5aac60c5ac7082f063"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/check-canon-naming-parser.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8013,
+      "sha256": "6062de2b6bc92ed3c7407f952010d90928730a77df96b12bb617b631a3ab6850"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/check-canon-naming.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11963,
+      "sha256": "94dfdb1e29cbc009eabd274ac4954ae37ed961b0de6b38c1b5043f1e0cef4a70"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/check-canon-topology-parser.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9840,
+      "sha256": "80c0dd8d1654608310ee915efd9f4c069addb8e2870d9b517f780bce063bba87"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/check-canon-topology.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 13637,
+      "sha256": "1bf035f1b1b37c03840c1dbd54fc1eb0327d480f688d391b6496e560832b6402"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/check-canon-types.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 13072,
+      "sha256": "76213bb40440ac1e62f370dc4e2b09f831db7a0cbe351b175099863d69b815bb"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/check-canon-utils.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8286,
+      "sha256": "050b43281e45e4347fa9e28254f491172df3028c79be40780f5ef7c150de140f"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/classify-facts-ast-counter.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 12280,
+      "sha256": "27dc0d0ab2bc3f4c4fa9b02d1c416c42cc179e9d415e77e65a4ded763e9d39cf"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/classify-facts.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5854,
+      "sha256": "b6a09a75944c2735b6b4c378d8527a95ec6ea5b52b37b285daa5edf50beab949"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/classify-policies.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9320,
+      "sha256": "da63305849d96924977bb628165351d4194080a68508684cc9dcd0560219f086"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/cli.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3014,
+      "sha256": "7b70d7187f73371e630671a63720d1b3604361047e9f256a6660145c0eabf8af"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/code-shape-normalize.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2320,
+      "sha256": "b18d132c2b72a2780f24e0166f45d2bce312553fce14b3b21681676871eda004"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/collect-files.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8619,
+      "sha256": "5b671ff7f8532ed647ae6ae511c96f52b4ea06ffd7c90a6cc44278552c94dabd"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/contract-pinned-exports.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7741,
+      "sha256": "5726185c192b5dfe23c32da03a1c72a8022f7ffdc967b34a14e6ccfbcd1e9424"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/definition-id.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 673,
+      "sha256": "fac98fdc96ec3db6848521c152947a019645758f4fd4aff767b48c195849c501"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/dependency-guard.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6430,
+      "sha256": "57da6772b8d64e5874bf7b05648ff63f9ae380218f02c5ecc17cb126927bfe86"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/entry-surface-artifact.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 536,
+      "sha256": "1d2a57e2821019374a0860feee63a94a2e237e2e73ad9b98fbe39e8995f072c1"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/entry-surface.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14048,
+      "sha256": "73eb51b8edad051372e0ff6e227231b921a237c01a4df30cf160a23338a409fd"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/export-action-safety-artifact.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 532,
+      "sha256": "2d51d67a71812e342adaae5d6664639c8d20fef2868ca660854b86b93d5d00fe"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/export-action-safety.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 20675,
+      "sha256": "804b91d92c62c2539cec2a8fd4387a66daa3f7b487afa2b137141f19d7ebb4a1"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/extract-go.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1713,
+      "sha256": "4a36dd8f9236010d2bc7bb58c697a06d035746aa940d5ac6b60c6bb7200364f7"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/extract-py.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2369,
+      "sha256": "5cbf310036a2297c7faa50e0b4d5457e084ed12b5ae1f6fade4ad59aa19841c2"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/extract-ts-escapes.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14004,
+      "sha256": "6fec607ac733c278193bca5231103462d22a7f3af4cb707e5e18a78e7eacac2e"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/extract-ts-rust-hybrid.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4897,
+      "sha256": "5f973746a5f75e1c1ff289870b9d07e870fd235003932da8c293b7fa09379e18"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/extract-ts.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2029,
+      "sha256": "9e2fefae4dc7e87a68136c9c81677d5aaab556ac79ffb95cebceae3381552bc1"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/finding-provenance.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 12235,
+      "sha256": "c0db9445f3640bede1177956b8226e0eaa9a10972a6bf18f4bc8bc4da815266b"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/framework-policy-facts.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5415,
+      "sha256": "48a865fa7be0e7b5bdf28eafd56c92cb1742f4e4401e5bc6962f695c9a58040c"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/framework-policy-matrix.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 18548,
+      "sha256": "234cb9d112d5a7c93d1cddd3b77a5fb8f9cf8c0c00fd8de9ae319c34ac189aee"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/framework-resource-surfaces.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 909,
+      "sha256": "c9f619c38e120570ed64af5213ab576a2b1eca4a36df4c75f866979b43166c67"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/function-clone-artifact.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 12714,
+      "sha256": "e06b25ab8d7b2fb7629b7808e74343d814b10ed7fc11beb5a08388c3a63e62d7"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/function-signature-hash.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6525,
+      "sha256": "4ca5b7de5d2491bb69254c55a21bbdca30d9363e7e77deb21740eebe8ff17f9d"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/generated-artifact-evidence.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8402,
+      "sha256": "be8cee847e801f20cd4791bdb57de2b68a7f995765e3f40929ef4c16f2018b8d"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/generated-artifact-mode.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 387,
+      "sha256": "81ce7a4dfff9aae49eac12b45f2ead3ff55b1a2bae8fe1b4c563658ef3a0c50a"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/generated-blind-zone-relevance.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8624,
+      "sha256": "a9c1178840a3e4ae086843fb9a6d274005dc42efbb1b07742e23a7d1583dfec5"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/generated-virtual-surface.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3244,
+      "sha256": "8a15ac25adbac392e119d69173cf7d5e70ff4a9286bffc973b805a9a056b09c5"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/hook-ack-observer.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2455,
+      "sha256": "eee978a5661ce2521f5e00096125f94b25307707a6ae131338e13b07b4557290"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/hook-event-drain.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1650,
+      "sha256": "ebc720d353ab5210282d47ba2731235ffa26a2fff7a024a8c87eb6c31c2e430d"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/hook-event-renderer.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3106,
+      "sha256": "bc9d38ff4120d80c7097cbd648c8eb08d338f13aa00c4a4a248f5d8ca1703379"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/hook-event-store.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 10272,
+      "sha256": "d4ad47e75f6b9a3f088262b39f8575957f69b5dd1789331f72bf110351b76673"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/hook-id-safety.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1544,
+      "sha256": "e7d75cfa1edc5b5c01195eef1af48c76ff874067f7117af8bc8fab732b29d90f"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/hook-path-safety.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4909,
+      "sha256": "73b04c91ac34634b2ee99fd40e42929f9e39439f53b2e0823269db95a084517c"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/hook-post-write-lite.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5213,
+      "sha256": "cfcaeab531f441745c10427cb8f4c09773d14a3eaeef5f61eeccb434ab4b8b37"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/hook-preimage-store.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4836,
+      "sha256": "795008b587f7e4b25bb05f5ca002f1df678ef794556a027fe3779e1f8fdc9ff1"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/import-meta-glob-expansion.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4244,
+      "sha256": "97a35b00c8d1ede0b2b094dbea3e3e02148d45d85301edfa2c0d4b0884ea2f1d"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/incremental-cache-store.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8972,
+      "sha256": "69e8b1f5855c9841d89483b79b1528c5c3b3ba070927b0a4fb6d8971c7257906"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/incremental-snapshot.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6212,
+      "sha256": "a7b8210637bb7d0cd531de90fd20be8488a71d948500b57e60581888149eeb4d"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/incremental.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5139,
+      "sha256": "2a660d2a8a7d31968883a270a7d007e6e9c3ba12a15c4e20b6bdf81237c910de"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/inline-pattern-artifact.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9045,
+      "sha256": "2a90d7006e39d0a6f2dd665b81698b1056ecd9fb19ca6647348a493f1d3871df"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/js-module-edge-scanner.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8696,
+      "sha256": "337dd4ae2224ae2ba2ea98df6aae83d90ddc6bd6e740e65b4d5941073fb96a44"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/lang.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2873,
+      "sha256": "ddafa7c7b58039cb8d5812bcaf56bb7ea9f9b87b849e61e1ef1f1c826b31ee03"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/line-offset.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1290,
+      "sha256": "0df3d50db2b2c797a7852be98bbfd01d3ef804453f3c5a442fa42e6d02730ff0"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/lint-enforcement.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4445,
+      "sha256": "bdc1331d10a0d177c072f560e98d37b9a1b69d43bda67bd1af2365c131e50ca8"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/mdx-consumers.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4157,
+      "sha256": "88a597f5eda42c3883579cb0bdec5ac3bf0e11912195cebeaaed50649628ad0e"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/module-reachability.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1002,
+      "sha256": "3c4b02d4396b077365bb8a5e5e0290f52a629182a1b3326a50332c102f6e5260"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/p6-measurement.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 15856,
+      "sha256": "23782d324fbb60a4eced0d8d1a77b938db0f4d3684011819b7eb079b36e0058b"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/package-exports.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9346,
+      "sha256": "b4ee6608b92ba6ef4d46cd2da4b0cf33446ae875dc1b2ccc4e4cea00c4262668"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/parse-oxc.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2436,
+      "sha256": "f2bf63c6f71f05bd25315e7cd61542838f7a7d6c35d3d1240c16ef2da5d04668"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/paths.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4365,
+      "sha256": "b2bde449bda2194e4536835d4f8cc72911a83383bef618d390bec42443ac0b68"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/pre-write-token-policy.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1844,
+      "sha256": "b15af8875aa3b2e9f7fc8fcb23d46040256911cb1cdb1d36e055065ea9d1ea09"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/producer-phase-timing.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4012,
+      "sha256": "09730e16f40bfc9452a2c0fdfd5eeee1540207d9fe0b1bf1d6e81aaf8a363e04"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/public-surface.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 25103,
+      "sha256": "c8703f94b312c7dbaca8a112391a90b3376e8d9005cab1da43d8b7cc3284ccba"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/python.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 12188,
+      "sha256": "9accf12b86b76f55be315d6fceb14df914662779d84382c54bb6034fb9973550"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/ranking.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 18642,
+      "sha256": "3893ce30481d69d691ccab4d7521d68e0dbd1fa8135bfb2b478590f4676cd98e"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/repo-mode.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5841,
+      "sha256": "c27645e0b0649678b74ded63ddfd849f89ee53aa27132db254a2f8fba4e69f84"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/resolver-blind-zone-relevance.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7105,
+      "sha256": "30e166f39b4dd8b0d44ec8f5f3a64ed59cda44f3d9e9c9b806fa6da362bc4c15"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/resolver-blocked-hints.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3656,
+      "sha256": "439ea58084481f1f1450489d64b6eaa7af586160d8b57577b94d34d2a68138d8"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/resolver-capabilities.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1330,
+      "sha256": "8a224750de69359bdec101aef39db80f90243b65b9d2137ccac33109ff715fa5"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/resolver-core.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 44555,
+      "sha256": "0aefee978148cbec4fb73a1fc2f07ab5f2212dab79e0f6f1afb87542036f87bd"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/rust-topology-prefer-gate.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11049,
+      "sha256": "65c5e96b002aadc9b1e94a95c338098c6f8b6cf19e8783a1809184cefcbe584f"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/rust-topology-prefer.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7748,
+      "sha256": "c215fc62b3047f8054e9c2358aefefb5690dcf885a71e181de6985b14272ad19"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/rust-topology-quorum.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14325,
+      "sha256": "56a0bb70562addfb33e58510c095dc4a007e60891b118a7e80c8b37855740ac4"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/rust-topology-scanner.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8270,
+      "sha256": "7d701f36f8384bcefc56258b7b80da9e6318056ec77d5e72884077189744221d"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/scan-excludes.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1731,
+      "sha256": "a32df0c3582d47ddc91d7aa750e55a28fd6c45b3d908b46527ffb77be6853816"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/self-audit-excludes.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1103,
+      "sha256": "4efd5bc48d3281fd6049d78aae557b72afe83b1bfe4504a3fd6b029b4f7bfca5"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/sfc-consumers.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 43816,
+      "sha256": "89285ade09e256de1b7e6d41e4561af6bd2d8baebc87ebc7e00058d560c2a7ec"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/sfc-file-facts.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2409,
+      "sha256": "82abfe89125da5dd77c1119949d085e6675cac58e6f2ee3c91b21d56d63bc2d1"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/shape-hash.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 15635,
+      "sha256": "0995d82947653d79a716b487085541971f64d9028196939c77e91348570d21ae"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/shape-index-artifact.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5337,
+      "sha256": "fae014f04206a24371a4dffeba907cc2154bae261051940a871a63d937d74e41"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/shape-index-schema.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4428,
+      "sha256": "d075c05ff2598b516c34daaff215bd0ec53ded3e805e5f08248479eb6b4ce2c2"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/source-inventory.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 10157,
+      "sha256": "30900f129aeea6085be65e1698bf2cf8f9c1b7bf5a1b49abc271745319c30bab"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/source-use-assembly-request.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9689,
+      "sha256": "697ee4e58ad25eb8abd00d93dd4c598e0af8aa574b2d6dea854a361239d4f4f9"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/source-use-record-builder.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8509,
+      "sha256": "1aaab02fe54d1b6d0153faf489c98a0c6bc3359ee0746ca46044d586d85c411d"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/symbol-graph-discovery.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 19875,
+      "sha256": "a1f1b9c2e068180e0f53772112d7bde10c72b6906f36eaf7ccffe99e241e51d4"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/symbol-graph-finalizer.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14225,
+      "sha256": "d34a8d8232abd79ce19fdf71116a145b7a09a7e5bf40530464d1a364bfc22620"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/symbol-graph-request.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6231,
+      "sha256": "68f21de74b4a026faba1cc4119147cf88d1eadbb73d3bc8520c0e6a28b3ffb02"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/symbol-graph-resolver.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9580,
+      "sha256": "cdc5b35c7e5816cb778ae16c090246b4dfd261bc956fa7fcb4db778dbda886cb"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/symbol-graph-sfc-discovery.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6328,
+      "sha256": "87312b1ec52581eea4f20d1debf95b8e1a71e06653588147aa19a5b22eedecf8"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/symbol-graph-sfc-inputs.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5002,
+      "sha256": "7f4e7662305f5f527e971bf17b30ca7b828ece49f01d0e6a533af5e0a7f44473"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/symbol-graph-source-use-planner.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7776,
+      "sha256": "b7e101c0e985a35e2d553f9c2721e24188c6f80a9e3cf805624cb8b92460407b"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/test-paths.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3368,
+      "sha256": "71647c58ef3a9051b1273b69b7c218cd24c09c73d319eb5b9313eddd0217ec20"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/threshold-policies.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7139,
+      "sha256": "1fb6b3ff866b0278488ab42dcd1d279ffc0f102bc2160933091e6526c1ce8d77"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/topology-mermaid.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8483,
+      "sha256": "f6ed907538b66e8d81b58cfebc04296992167f4c9c458c4f83fd551f04bd6269"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/tree-sitter-langs.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9055,
+      "sha256": "2367a7a64a80cb487b111e4d5c9c6e8c0f8a982a490cf072390c8964b965020e"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/tsconfig-paths.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9972,
+      "sha256": "f084cfcaf03668d9c00301e448e224b23a06a7124557c17a4d999adb4d34586f"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/unused-deps-artifact.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 798,
+      "sha256": "19613c7f25b935b90210b203f8eaedb4e5e673f1dfb9f2c460eee8fae4bae6ab"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/lib/vocab.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5734,
+      "sha256": "91c5a09bde8072743febdd09249cb3c979e0ac9d51e6b68f4f58f6edcdcf3bf5"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/any-inventory.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8349,
+      "sha256": "723c2bc99ed42658014e0c43aff7588ccea741f4f1bd2d13a5ca1bec7ccbacc1"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/audit-repo.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 28409,
+      "sha256": "8532233fc587823aa9997787ad3d7e50a3d0378216eef08fd0df61063c571fb8"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/build-block-clone-index.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9610,
+      "sha256": "fa8035ea6cbf2ecf697fcc666991787e47871c506115cf80a231eff8ecd182a9"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/build-call-graph.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 23276,
+      "sha256": "b3c8dd24458a70347219013ff810c5101a5f7f5fdbf1ef2d92fa9f8a284463c4"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/build-entry-surface.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1613,
+      "sha256": "ff859751ff7ae64a88830bbfb9a176f8ff37ef1735b141f4d1993e353702fffa"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/build-framework-resource-surfaces.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3127,
+      "sha256": "c1702d6591aa4379ecf5cdfc04107e429a0659ec86bc03098e5b5608885f6417"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/build-function-clone-index.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6633,
+      "sha256": "23469afc4ceb11c0a53da2f266cf2cb1b9631592df226cc014be4232ae563240"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/build-inline-pattern-index.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1868,
+      "sha256": "ac34445e323e0be61dd6eeee32d1ed8ceff6f6c952a566a391a9023f17e4105b"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/build-module-reachability.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2376,
+      "sha256": "6ab7a3898b1369ddb04b651830ba8a28f638e82fa387365541df11278aa669b3"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/build-resolver-diagnostics.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1798,
+      "sha256": "8523e364eb2d22e24536837a7d66a94bd3cdb3ad4b9b88ac88de4b82d954171b"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/build-shape-index.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6522,
+      "sha256": "93a9c2aafbad7de76b9997dea9f0955efba391244a641bb0d0e39a4dcb8b8dd6"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/build-symbol-graph.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 44524,
+      "sha256": "6c5a73af366387348ad75de25ba7da1f04ffb6f0d38337431fe36c84d53b0cf6"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/build-unused-deps.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2132,
+      "sha256": "ded56a28d9fe892eab0c39b3885e618e0253b3fee258a8f153c4391b1440a9cc"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/check-barrel-discipline.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6198,
+      "sha256": "59204645c600ab40b281aad2e6299495c106752ad9230afd29670eda8364be4c"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/check-canon.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 12906,
+      "sha256": "8cc4bce2a66eb55884d78a69b577d81c4fe6e06931d6d7631b26b738697fc713"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/checklist-facts.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 15234,
+      "sha256": "e687f67910fef2588f595a8de9df8d57b3a0037e67ecdff08ed8afcfc215de5a"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/classify-dead-exports.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 31986,
+      "sha256": "db8b8769d5635e2b70fbedae49f0b650f50621640f42f1231ded2f10f9eabf80"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/compare-repos.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2992,
+      "sha256": "3d28665088af6b41468f91c6abe83b030278e84848cdeb8a878bc2e41b5ea9f6"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/emit-sarif.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2236,
+      "sha256": "ee0caf839fc14ee39ba975e302d90b1816b38577a64d4c4dac9abe3030f5a5fd"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/export-action-safety.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1381,
+      "sha256": "ee6ab4aadd8fcecf2b156127b9650cdaf4bfc0d02d6e0e5e7880ca51927be09d"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/generate-canon-draft.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 12413,
+      "sha256": "08e44763cc5d48a2c7fd86e3c6a0fd8e3db7be41673eb891e6835df2f9e589c9"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/measure-discipline.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2386,
+      "sha256": "a19cd8e813d39ed0398dee8761fc67369919fe1772789d4a616273548e632fcf"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/measure-staleness.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4155,
+      "sha256": "64969611e3b1c4d38eb9efb0fcf4208e239c102a110bb69c1057d24ef15eea04"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/measure-topology.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 25179,
+      "sha256": "eeb7d2b59c4a9d3923ba491f18dc26e39c50f0d803188a015ae223ecd63a48d9"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/merge-runtime-evidence.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4040,
+      "sha256": "181dfbcf0b48dbab900d538c498e71eccb3d906225b215083c8e758e9f92ffc9"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/p6-measurement.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6170,
+      "sha256": "da155cb2b8505776e7884e866674f0a4b59e2aa3f196d11b99079e3a4f301211"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/rank-fixes.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5986,
+      "sha256": "ffc933551390812e6a145102146beb933bca2be0403c38a53f0b40165849623c"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/resolve-method-calls.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 20646,
+      "sha256": "7997352d0dcc01c44d6eefcdae93546ba150700664278254bbf8694ed56b9e79"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/_engine/producers/triage-repo.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11362,
+      "sha256": "4d8b8b2afc0e8ca7aabea7af05e026dfc1c2517e73a686a0d744a7bd5187ac6f"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/scripts/audit-repo.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 553,
+      "sha256": "02a88b145dd92d6d449807e97cefa0f7cdfdb79dc93756a48036e07ae1c7d753"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/scripts/check-canon.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 555,
+      "sha256": "0868bc3db12c2d3124661f6962e7511a6e849c4b56349e27e9372b70b75a922c"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/scripts/generate-canon-draft.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 573,
+      "sha256": "091b2af67988b7b90da220b8a30a2e8d8c3551fca34d4bb018798489a3a48819"
+    },
+    {
+      "path": "skills/lumin-repo-lens-lab/scripts/smoke-test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2585,
+      "sha256": "656403abf45a6114890e1af09e0d0ffad828af8f445c25171dc4de718ba253f9"
+    },
+    {
+      "path": "test-harness/fixtures/tiny-ts-repo/src/index.ts",
+      "class": "legacy-exact-git",
+      "bytes": 203,
+      "sha256": "09b3b5465cd53b15552cc53ba4677b4df38bec09cd61ed87fa11585597ffbeed"
+    },
+    {
+      "path": "test-harness/fixtures/tiny-ts-repo/src/utils/date.ts",
+      "class": "legacy-exact-git",
+      "bytes": 501,
+      "sha256": "517dfaa1e74d776b253e8721e8b4b3fbbc38bf5470cf78a32de686b6a75c9d5c"
+    },
+    {
+      "path": "test-harness/fixtures/tiny-ts-repo/src/views/User.ts",
+      "class": "legacy-exact-git",
+      "bytes": 514,
+      "sha256": "05a64c590a0f2370d3fe79e7d2945aac21e955e02594bc7fa870190a6b259eac"
+    },
+    {
+      "path": "test-harness/lib/lint-prompts.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5114,
+      "sha256": "e1dcd5ce227f357d74c22ffa003afd85dd0ee79fdbf35dbd49556dcb8c8cd31d"
+    },
+    {
+      "path": "test-harness/lib/verify-behavior-corpus.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8545,
+      "sha256": "bc573298cb86f1a68dc734cb0f69f8f0a9241b8958e346de61057a00ae90971e"
+    },
+    {
+      "path": "test-harness/lib/verify-citations.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 12360,
+      "sha256": "c88a3b6128b54782dd9bcb8653baaff551710e52f93da8a5b0b9a4aa8dfc2451"
+    },
+    {
+      "path": "test-harness/lib/verify-refactor-plan.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5219,
+      "sha256": "59dc6c6ddb330566d543e2f5f752c4d40f588a1f14c8e4a0ebec6f326748e368"
+    },
+    {
+      "path": "test-harness/lib/verify.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9515,
+      "sha256": "bdecfaf22ec0a4b3ed2dc9fac383df5c6d16a4efbafb7a652ee950b6d68dd406"
+    },
+    {
+      "path": "tests/_helpers/temp-repo-fixture.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4482,
+      "sha256": "f17eef6ae6157f4c18b9c01539066fbffd23e46c80eb9d6a7ec110c875c32278"
+    },
+    {
+      "path": "tests/alias.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5788,
+      "sha256": "bc8f7f732a487cdc7243c3b937f181538e7dda3ae3816d1b91f0eba7c70bc6f6"
+    },
+    {
+      "path": "tests/any-inventory-incremental.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7480,
+      "sha256": "134a745bf13d923f63c3d05e1ae27ca4fc4cd882d91219900542da8a67018c9f"
+    },
+    {
+      "path": "tests/any-inventory.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8537,
+      "sha256": "9986e08674716de45b475ec4f321b189b23949f1cbe6bb7d2f5bb7c2ffed8b06"
+    },
+    {
+      "path": "tests/audit-core-bridge.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 10321,
+      "sha256": "b6714336ad7e50f1ed3aa996f5f1283a2b019c9e4e60e8b7a0401946037393fa"
+    },
+    {
+      "path": "tests/audit-manifest-export-surface.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 54554,
+      "sha256": "0ab764e1bca0c9ae0f8b3737c89fdfa23c117844cbc6a92984c212857b04da4d"
+    },
+    {
+      "path": "tests/audit-repo-artifact-brief.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 20183,
+      "sha256": "7e9e73a222fbc2aab1aee146945caeb53d07f4604cb67d51c72521cc751f6795"
+    },
+    {
+      "path": "tests/audit-repo-blind-zones.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 30856,
+      "sha256": "d97a67ba81f1c2813e679fe9048dfd3abf24f06c1698deefe4248e2294d1abd1"
+    },
+    {
+      "path": "tests/audit-repo-canon-draft.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 21317,
+      "sha256": "29ed2adbd5b5790b77d928f8fad98c716eb3fc613475f5ae5aa52f5320e75ef0"
+    },
+    {
+      "path": "tests/audit-repo-check-canon.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 16404,
+      "sha256": "0f9781f2af3c0a44e29028934ca564da0fe4bdf6dd1a7f40664f55b8aee393af"
+    },
+    {
+      "path": "tests/audit-repo-full-profile-staleness.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5557,
+      "sha256": "1a453050f12303f20fd3bef72996d0d6b606d1fc106b2ae818fe4fa67403b838"
+    },
+    {
+      "path": "tests/audit-repo-lifecycle-artifacts.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2429,
+      "sha256": "4a95dbc14c3fb10c4cef9438fe7990bfc6c2afba710f266ed33afe406be2fcb1"
+    },
+    {
+      "path": "tests/audit-repo-manifest-performance.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 13955,
+      "sha256": "ff2f2632e3b28f237642052948d589d28bc5cdeb023f89229b8452b86d31d0fe"
+    },
+    {
+      "path": "tests/audit-repo-post-write.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 25329,
+      "sha256": "d9b6cecb1962ccfcef693ce49cf55737c4d83e0f9afe1499eaeb117085282585"
+    },
+    {
+      "path": "tests/audit-repo-pre-write.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 22229,
+      "sha256": "b0406778e89487c6bb194faf08a76841b105b8c5790c1fbd4cbb81355a1115e2"
+    },
+    {
+      "path": "tests/audit-repo-scan-range.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7337,
+      "sha256": "1c142f0a6e1843fa0e3a8fded1f2b6fdefe33d38d29fc72d7e0475b841381a94"
+    },
+    {
+      "path": "tests/audit-repo-symbol-incremental.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2571,
+      "sha256": "b8fb617601933e1b32084352c088e21aac1039b11965beb4167f8c3d6ff7352c"
+    },
+    {
+      "path": "tests/behavior-corpus-verifier.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5158,
+      "sha256": "18edb28a5ac48e59c7e5f0bcb93b144ce54afafaa2c651d5d996c1380ab3ee4a"
+    },
+    {
+      "path": "tests/build-block-clone-index.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 17871,
+      "sha256": "86cb8611c8a372b3bd0de4a6d3b21527eecb70cc23342bdcb50ced641d24b787"
+    },
+    {
+      "path": "tests/build-framework-resource-surfaces.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5304,
+      "sha256": "ef6a68874483435a02cc4653a412493d5b486ce78ab5c57bd98d1793fe55639d"
+    },
+    {
+      "path": "tests/build-function-clone-index.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 18879,
+      "sha256": "0b65b1fba8f15f2c537aadbbb0f2450e483f22ba40eb9346d7e224e3e0d48ba6"
+    },
+    {
+      "path": "tests/build-shape-index.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11327,
+      "sha256": "54fed41cf47dc3c2d76e285dfbd59fb69fcd68ba6ac1d4d7c2d65ba6985b5a9e"
+    },
+    {
+      "path": "tests/calibration-corpora.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2361,
+      "sha256": "c62b65a3f59ee3e0f9e5d5a205917dc728fcf61606138911f6f72c4c2f5c28af"
+    },
+    {
+      "path": "tests/call-graph-bounded.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3523,
+      "sha256": "a9942558dd8f80d7a6a6843b6b2378f11663cf7fde27330481f2cb4276ef5f27"
+    },
+    {
+      "path": "tests/call-graph-parse-errors.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2290,
+      "sha256": "d10ba0fed0d734449e0dba067607c24f8b983be4e257d412cc34f3da1f93862c"
+    },
+    {
+      "path": "tests/call-graph-truncation-defense.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2056,
+      "sha256": "e24da1963880ad503276c35565e393d82907e372cee5c4a31116ea4dcd585e09"
+    },
+    {
+      "path": "tests/canon-draft-helper-registry.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11480,
+      "sha256": "87084cb009a72cb645b4c443695a244149fb89c48134125b2721ab45c1f9253c"
+    },
+    {
+      "path": "tests/canon-draft-helpers.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5286,
+      "sha256": "3fc3c41d3addc13fd9b67967ee9fcac6be48cfc5233e8eae9e30032c2a9c8e43"
+    },
+    {
+      "path": "tests/canon-draft-integration-helpers.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9002,
+      "sha256": "380dacd9ae5501b9c0e20d912c327c2763a55dd332864a158ecb22ac24e7e013"
+    },
+    {
+      "path": "tests/canon-draft-integration-topology.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8214,
+      "sha256": "212fdf0c34930722b90c00b45b6873a0e2753bcfc58b76e84e0b75a1265ade22"
+    },
+    {
+      "path": "tests/canon-draft-integration.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5699,
+      "sha256": "d3c1caee5e3722a620cdba6b28ac4b5d0b4ea87eebefcb4d9d4b89d258f81d8d"
+    },
+    {
+      "path": "tests/canon-draft-naming-structure.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8687,
+      "sha256": "df1fd97f09d989192893c1cc53c7be21b3c64c87262663d83396be1cb75dee85"
+    },
+    {
+      "path": "tests/canon-draft-naming.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7217,
+      "sha256": "a36b48582c76e2b5eeaf59fbeacdf86fbc6802d795a6d6891dd5567ecacadddd"
+    },
+    {
+      "path": "tests/canon-draft-topology-structure.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7324,
+      "sha256": "4f3efd17eb34435cafdfcbb631461172105dcabb8407c5f15c4c383c439aab8b"
+    },
+    {
+      "path": "tests/canon-draft-topology.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3904,
+      "sha256": "820b3ee2e4d9bb98c6115f387fffeef39a93b2db638602123c279391763f98df"
+    },
+    {
+      "path": "tests/canon-draft-type-ownership.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 13228,
+      "sha256": "ef36b54c64f3f4e78277d805b8ba5dc6b0c2b95995cefb34acaf1a6ce0704ccb"
+    },
+    {
+      "path": "tests/canon-draft.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5966,
+      "sha256": "4d7ab7360038f786b6246988ea5e5fcb77e324feda0c5e356f25605d250f03a4"
+    },
+    {
+      "path": "tests/canon-drift-parser-contract.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7900,
+      "sha256": "a861501b0465e998c438680d8090fade1d43ac471b41411ea641f5aeb11bd633"
+    },
+    {
+      "path": "tests/canonical-fact-model-drift.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3884,
+      "sha256": "3d7ca148f42ec3e1ba7585e6e2cc4a686b45b9734b9f0631bfa871cc7e1f1bf3"
+    },
+    {
+      "path": "tests/check-canon-artifact.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8342,
+      "sha256": "6de52b127a8650dc25dfa9159703dc28fd46615941918c3c6171b28445b8ff0b"
+    },
+    {
+      "path": "tests/check-canon-helpers.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11749,
+      "sha256": "bbf6ea58c24d9a17c0ef961df6a6303f3af83b0669c786d41cb02f0a16d557b7"
+    },
+    {
+      "path": "tests/check-canon-integration.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 12581,
+      "sha256": "d5f2cc9390a3958f4aa55492b0e600187713e05b299a9be44bc43e7f1e8611c8"
+    },
+    {
+      "path": "tests/check-canon-naming.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 12300,
+      "sha256": "7da423789058584f8f5e5a2f53fda2306723f7e27be071cc67f4ebeb5f93e202"
+    },
+    {
+      "path": "tests/check-canon-topology.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 10505,
+      "sha256": "5211dc43d21f5c6b3cf8cf150c370e87e0a25efa996c750ad6b348219e33882b"
+    },
+    {
+      "path": "tests/check-canon-types.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14911,
+      "sha256": "b2c76ff90f9e04091342a57288572de51a93e3e79688117e0fb7df2a09c26e87"
+    },
+    {
+      "path": "tests/check-canon-utils.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 16595,
+      "sha256": "48d4109e8b18febb3d890fa70bcd0af90e0aa943d306d5c0cf87df5b7d9c98f6"
+    },
+    {
+      "path": "tests/checklist-facts.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 27837,
+      "sha256": "b2a8449312bc5059297fcdf5bfc62ff2141c4ae5f86ceb74468e60818e647767"
+    },
+    {
+      "path": "tests/citation-verifier.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6231,
+      "sha256": "6f48876e8798eecdf2e992e27cd311c67a3f53d507038a616d3170012ccf4bd5"
+    },
+    {
+      "path": "tests/cjs-classification.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6157,
+      "sha256": "3dcde90c8f76d5aea299b17957641280a605d1da5780e5d87ea93e6be3713bfe"
+    },
+    {
+      "path": "tests/cjs-export-surface-artifact.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2241,
+      "sha256": "330f1c2a3822f930657a44b6e1832c487bf3fef21543f889b78aa2209821eb30"
+    },
+    {
+      "path": "tests/cjs-integration.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2693,
+      "sha256": "0939d0e2e8e7a4b46381133b94dd768b697b16ee4a45ac8cd61309ba640aabad"
+    },
+    {
+      "path": "tests/class-method-prewrite-surface.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3644,
+      "sha256": "927c411a815f096108b6cc5fd5d52a9442fd8cd2acf4b58bda966e304d75e623"
+    },
+    {
+      "path": "tests/classification-gates.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 63139,
+      "sha256": "fab1056ac916dc86490764ffefbc79d3018c419e134fb1cf9fb5911b93527480"
+    },
+    {
+      "path": "tests/classification-label-emission-corpus.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6560,
+      "sha256": "0049ad9b4f389d67abeb8d222c65a43283aec4b379538f56a3127f23391cfb3d"
+    },
+    {
+      "path": "tests/classify-facts-ast.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 16533,
+      "sha256": "214a3fa89a1d1e563d27863c0c460caf3168c1ee479845a6a00d39065f64e0a3"
+    },
+    {
+      "path": "tests/classify-performance-metadata.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8449,
+      "sha256": "5ccccbcc295b1e9881e30a71be0830ddb46f95774d7b2593dafc748d9c315d41"
+    },
+    {
+      "path": "tests/classify-policies-export-surface.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 674,
+      "sha256": "8245c73ac626956304105c7ae94bd5f4478fabb54e529d2e2b54b50dd4d4d4a1"
+    },
+    {
+      "path": "tests/cli.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3784,
+      "sha256": "d0caeb5c69041be7f0e477b0862345e76284144f167dfdaaf7dd14afef5c3355"
+    },
+    {
+      "path": "tests/collect.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8743,
+      "sha256": "8d57d83ae58ed06e956f0440f19b9593e4472707715cb6342e41d478d2e4cf72"
+    },
+    {
+      "path": "tests/corpus.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 78063,
+      "sha256": "844a07c9a911e5c19890a64a488b4294c7043aa49d38ddd47506b1a680943c89"
+    },
+    {
+      "path": "tests/definition-id-canonical.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2861,
+      "sha256": "fd034a3de9fa7973d5ba53e666bf6ae91cdab0623b74cb6eacaba1fdb2be5e9a"
+    },
+    {
+      "path": "tests/definition-id-export.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 381,
+      "sha256": "d7eb9c452c2bfdceb76dd7256d153d5eceda1b09f827c0dbe2ef30f3836161a1"
+    },
+    {
+      "path": "tests/dynamic-import.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4323,
+      "sha256": "9aefd33ca3ed92df38594ba57cc165a3d1afcf397194d803aff29a5ba0c322c2"
+    },
+    {
+      "path": "tests/entry-surface-artifact.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 17228,
+      "sha256": "a2444de46af7b220d953522190a6b0585b89baca83e37a1f2d3d4ad2a858bdef"
+    },
+    {
+      "path": "tests/evidence-honesty.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6202,
+      "sha256": "4fa7990026512d57eb915b092457427fcac1917853c7dbd08a5706c842197a3c"
+    },
+    {
+      "path": "tests/export-action-safety.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6958,
+      "sha256": "9ac8ebcb0b8f5982660ab008231ec716854da3b557aa67fe867ad447bb1ae4b8"
+    },
+    {
+      "path": "tests/extract-cjs-consumer.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8192,
+      "sha256": "3d5e9e2a82e839502ab8cf92ae03bd1d73b26d1eaaec2ea9fffab20905690527"
+    },
+    {
+      "path": "tests/extract-cjs-export-surface.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2315,
+      "sha256": "64304a721c298229184671a2bbe1f04fc22c8890915f668c4ca190309145a7d8"
+    },
+    {
+      "path": "tests/extract-ts-escapes.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8708,
+      "sha256": "55cfd0b63a3abf9812c1024b8bc435521d17291ffb8214773a4e1774e7b3b985"
+    },
+    {
+      "path": "tests/file-delta-export.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 458,
+      "sha256": "aeee283bd6ce683185298450296f0a757f07d68d1b7f0124975b952b3c58fc23"
+    },
+    {
+      "path": "tests/finding-local-provenance.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 28046,
+      "sha256": "81ebb9c11a9f5815653def272079ed60ffbb7990c781aaab8821c3432dc88ce7"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-added/src/bar.ts",
+      "class": "legacy-exact-git",
+      "bytes": 33,
+      "sha256": "37931e246f98334252e0d463c3a4f7ba404946ff4b9e30592c92dbd3301d6f5b"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-added/src/c1.ts",
+      "class": "legacy-exact-git",
+      "bytes": 80,
+      "sha256": "555aa727e2d35b8be6d7603288ee83b27ab8e0d1cea7652b1a107d32f97188fc"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-added/src/c2.ts",
+      "class": "legacy-exact-git",
+      "bytes": 40,
+      "sha256": "25e64b7afaeeeac41488b6458ed7c54cc62adddd18c02c74c2238f05067b8f38"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-added/src/c3.ts",
+      "class": "legacy-exact-git",
+      "bytes": 40,
+      "sha256": "25e64b7afaeeeac41488b6458ed7c54cc62adddd18c02c74c2238f05067b8f38"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-added/src/foo.ts",
+      "class": "legacy-exact-git",
+      "bytes": 33,
+      "sha256": "3df90b63ad378d372632e2b5a0148ce3d301c09ca650e4f642e4340d0f3b3f7a"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-clean/src/c1.ts",
+      "class": "legacy-exact-git",
+      "bytes": 40,
+      "sha256": "25e64b7afaeeeac41488b6458ed7c54cc62adddd18c02c74c2238f05067b8f38"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-clean/src/c2.ts",
+      "class": "legacy-exact-git",
+      "bytes": 40,
+      "sha256": "25e64b7afaeeeac41488b6458ed7c54cc62adddd18c02c74c2238f05067b8f38"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-clean/src/c3.ts",
+      "class": "legacy-exact-git",
+      "bytes": 40,
+      "sha256": "25e64b7afaeeeac41488b6458ed7c54cc62adddd18c02c74c2238f05067b8f38"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-clean/src/foo.ts",
+      "class": "legacy-exact-git",
+      "bytes": 33,
+      "sha256": "3df90b63ad378d372632e2b5a0148ce3d301c09ca650e4f642e4340d0f3b3f7a"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-contamination-changed/src/c1.ts",
+      "class": "legacy-exact-git",
+      "bytes": 41,
+      "sha256": "6cb9de2f0e4f410560db13966c5919106f07e807e2112f534ce202b15dd03b1d"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-contamination-changed/src/c2.ts",
+      "class": "legacy-exact-git",
+      "bytes": 41,
+      "sha256": "a8ceb08ae5b95c55b16313b5461cd2d905c0dfd1979a4c97b2622c488404518c"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-contamination-changed/src/c3.ts",
+      "class": "legacy-exact-git",
+      "bytes": 41,
+      "sha256": "7727e7752ce9a0b427a60b429a5bd68d8c3cb951f60635ac6ca096dedc69e057"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-contamination-changed/src/foo.ts",
+      "class": "legacy-exact-git",
+      "bytes": 59,
+      "sha256": "a7a97c66263fd67d47bef8466db249614b9c8d99dfd935a41ae429c2e70ac885"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-fan-in-tier-changed/src/c1.ts",
+      "class": "legacy-exact-git",
+      "bytes": 40,
+      "sha256": "25e64b7afaeeeac41488b6458ed7c54cc62adddd18c02c74c2238f05067b8f38"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-fan-in-tier-changed/src/c2.ts",
+      "class": "legacy-exact-git",
+      "bytes": 40,
+      "sha256": "25e64b7afaeeeac41488b6458ed7c54cc62adddd18c02c74c2238f05067b8f38"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-fan-in-tier-changed/src/c3.ts",
+      "class": "legacy-exact-git",
+      "bytes": 40,
+      "sha256": "25e64b7afaeeeac41488b6458ed7c54cc62adddd18c02c74c2238f05067b8f38"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-fan-in-tier-changed/src/foo.ts",
+      "class": "legacy-exact-git",
+      "bytes": 33,
+      "sha256": "3df90b63ad378d372632e2b5a0148ce3d301c09ca650e4f642e4340d0f3b3f7a"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-label-changed/src/c1.ts",
+      "class": "legacy-exact-git",
+      "bytes": 40,
+      "sha256": "25e64b7afaeeeac41488b6458ed7c54cc62adddd18c02c74c2238f05067b8f38"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-label-changed/src/c2.ts",
+      "class": "legacy-exact-git",
+      "bytes": 40,
+      "sha256": "25e64b7afaeeeac41488b6458ed7c54cc62adddd18c02c74c2238f05067b8f38"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-label-changed/src/c3.ts",
+      "class": "legacy-exact-git",
+      "bytes": 40,
+      "sha256": "25e64b7afaeeeac41488b6458ed7c54cc62adddd18c02c74c2238f05067b8f38"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-label-changed/src/foo.ts",
+      "class": "legacy-exact-git",
+      "bytes": 33,
+      "sha256": "3df90b63ad378d372632e2b5a0148ce3d301c09ca650e4f642e4340d0f3b3f7a"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-removed/src/c1.ts",
+      "class": "legacy-exact-git",
+      "bytes": 40,
+      "sha256": "25e64b7afaeeeac41488b6458ed7c54cc62adddd18c02c74c2238f05067b8f38"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-removed/src/c2.ts",
+      "class": "legacy-exact-git",
+      "bytes": 40,
+      "sha256": "25e64b7afaeeeac41488b6458ed7c54cc62adddd18c02c74c2238f05067b8f38"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-removed/src/c3.ts",
+      "class": "legacy-exact-git",
+      "bytes": 40,
+      "sha256": "25e64b7afaeeeac41488b6458ed7c54cc62adddd18c02c74c2238f05067b8f38"
+    },
+    {
+      "path": "tests/fixtures/canon-drift-helpers-removed/src/foo.ts",
+      "class": "legacy-exact-git",
+      "bytes": 33,
+      "sha256": "3df90b63ad378d372632e2b5a0148ce3d301c09ca650e4f642e4340d0f3b3f7a"
+    },
+    {
+      "path": "tests/framework-policy-facts.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4549,
+      "sha256": "9893d578da811201cc60d22890f756d6062f3e43fcec9c603edfea88894cb8e1"
+    },
+    {
+      "path": "tests/framework-policy-matrix.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 15453,
+      "sha256": "45d040af5cb78d6432c3065beed839973b8d0534bdfb82d0722a2eaa2d0a0a10"
+    },
+    {
+      "path": "tests/framework-resource-surfaces.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6692,
+      "sha256": "ae3b0127876636b3d4c9ac12d9575e0785e5829ce3171d7b1318329a2ab61fd5"
+    },
+    {
+      "path": "tests/function-clone-audit-forwarding.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3960,
+      "sha256": "d142de2ba9ca8d699c42bbbfba0d6f0de521393c2a663f666a7e10600c3fa83b"
+    },
+    {
+      "path": "tests/function-clone-incremental.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9078,
+      "sha256": "271c23ce04bc06d8151e0076ffb569e448c06a7f6ec7478b41f9229d67ba3dec"
+    },
+    {
+      "path": "tests/generate-canon-draft-cli-helpers.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8189,
+      "sha256": "3d9b842265ae8a4b01f7b7bf1d92725e2446ee0147c845779dedff3acd6cb00c"
+    },
+    {
+      "path": "tests/generate-canon-draft-cli-naming.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7556,
+      "sha256": "de329ffa98f9766757adc42dd014547a6b9166b7fb0f098e1b22d71b31b4ddeb"
+    },
+    {
+      "path": "tests/generate-canon-draft-cli-topology.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7736,
+      "sha256": "1c1789f0060837f7ff1f937471ce2096181a8fb8635c11f11cec576be6412df1"
+    },
+    {
+      "path": "tests/generate-canon-draft-cli.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9427,
+      "sha256": "efde138f3c47abfe91e6ab6fc113e6ee29f35326381168b754d1074ada09ef01"
+    },
+    {
+      "path": "tests/generate-check-canon-cli.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 21891,
+      "sha256": "914cb58d0061929ff37f3f849ad1881d376b6d76e3b4301e10a803d349aa2a09"
+    },
+    {
+      "path": "tests/generated-artifact-evidence.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6736,
+      "sha256": "f43ab38a44bb186df701fe3ebe58eda7df3b2b17043f681d3b413f666ec83610"
+    },
+    {
+      "path": "tests/generated-blind-zone-relevance.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6833,
+      "sha256": "e1ed4f7111d52de3465021618cbe40953dea724092b5ad2a1a776742faa60497"
+    },
+    {
+      "path": "tests/generated-consumer-blind-zones.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3091,
+      "sha256": "99cdb69b7270c98d50e841a7fc77cae4f13181876c4a997d557a43976a110ab3"
+    },
+    {
+      "path": "tests/generated-virtual-surface.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6151,
+      "sha256": "14406533fa54c68437830528e8fa82a9a943360cdadeff182e63a4132fd0469b"
+    },
+    {
+      "path": "tests/github-actions-ci-policy.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3459,
+      "sha256": "af82c67a7c7698f682461b94d5d833677260163d1915909ed43077b679f08e34"
+    },
+    {
+      "path": "tests/hardcoding.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4310,
+      "sha256": "eb2a460a19ee698547fcea6d04df84d1c8daf6270db479002b1321434d5ddbc0"
+    },
+    {
+      "path": "tests/hash-imports.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11054,
+      "sha256": "c2fdb00a193dd0c7fed1d23388f326fd111a448a87c3bf5454d339356c8277f9"
+    },
+    {
+      "path": "tests/hook-ack-observer.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5669,
+      "sha256": "c67fc436b3a0f36a97377ef4671cf7c208a88f042de10d91fb18690ac05e7cb3"
+    },
+    {
+      "path": "tests/hook-doctor.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1288,
+      "sha256": "4da079a409ef2129887d7a640cee6deb2354c354113414d6f07f5f1bad897d6b"
+    },
+    {
+      "path": "tests/hook-event-drain-renderer.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6719,
+      "sha256": "a9f5c650d12294542797d030496286c6a6d9c936099d1a7faf11e69f60fe6945"
+    },
+    {
+      "path": "tests/hook-event-store.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 10046,
+      "sha256": "272c29d5ee756660814d5fcf3f503e2e2ca0dde6961958b9f4a6087d1460e4b1"
+    },
+    {
+      "path": "tests/hook-id-safety.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2570,
+      "sha256": "ea0e5e30d621e0edfbb146d1b098be68dcd06ced623617b634e5837222a5b7b0"
+    },
+    {
+      "path": "tests/hook-path-safety.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3029,
+      "sha256": "9b1982e3060feee98c449d47f567d5ac810b76215dd63317c8cb1f45c6eb0602"
+    },
+    {
+      "path": "tests/hook-post-write-lite.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7715,
+      "sha256": "b241a1760c39e12131122aec9337e02adbdcd1eb520f35c9f6ab242f24ec8ed8"
+    },
+    {
+      "path": "tests/hook-preimage-store.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7688,
+      "sha256": "fdd2704560e45ea00458437fa78d6de5c32b8aafe9ca80862dcb7253e71f913a"
+    },
+    {
+      "path": "tests/hook-runner-scripts.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7050,
+      "sha256": "971b0db6d2fd21fd5d002e4e86b36e802772f75a42bbf7d1f349a20eb6eaaea3"
+    },
+    {
+      "path": "tests/import-meta-glob-diagnostics.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6753,
+      "sha256": "adafbf8008b6d9aa8440e7434fd3b40846b705c993559fa87dcae1c14655007e"
+    },
+    {
+      "path": "tests/incremental-cache-store.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4594,
+      "sha256": "dcd248da07df600f22bd158d6456edfa28fc74963b433e7638c7af75dcbdcfa5"
+    },
+    {
+      "path": "tests/incremental-legacy-cache.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5672,
+      "sha256": "84406950f19141f8887c0c073e7b0eb36c80daebdbb76e5f6e53249df6d2f48b"
+    },
+    {
+      "path": "tests/incremental-snapshot.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4688,
+      "sha256": "b7cf255722592592c1d55e9f37e6d0e54d39cf728d600a7e05f35adb3ac88887"
+    },
+    {
+      "path": "tests/inline-pattern-index.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7079,
+      "sha256": "06063f31ed743680c3e2742b24abe758b676b297ca98fe217b31f1cabc0a3460"
+    },
+    {
+      "path": "tests/js-module-edge-scanner.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8363,
+      "sha256": "34df4bdf83efa66f95f490b7a4e0ce10569d847fa709794cc96f3086757099fd"
+    },
+    {
+      "path": "tests/jsonc-edge-cases.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4850,
+      "sha256": "324798c8e851c68ee5da0f8502078d5acc99995d4878a3559f7817817da2e917"
+    },
+    {
+      "path": "tests/lang-matrix.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5926,
+      "sha256": "477eef5b3536b72eaec9287db9d703e4d67f028d666d0abf098b2c864878ba22"
+    },
+    {
+      "path": "tests/maintainer-scripts.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2339,
+      "sha256": "6f3c3a987bbf36e62cfe5471b495f68741b608ad4b3d16f3b37ffdf9d42b2784"
+    },
+    {
+      "path": "tests/mdx-consumers.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4131,
+      "sha256": "f166d0c59b628f3bf031f0577ad6b11e79f8bee0a13e3eb7066ed99209ca7c8a"
+    },
+    {
+      "path": "tests/mode-dispatch.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9294,
+      "sha256": "17172e9cec283255651875b10525360966bb5a48fc57660cef5b06fd5174dedd"
+    },
+    {
+      "path": "tests/module-reachability.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7250,
+      "sha256": "9c80cb9ea4d8bc2a651fa5c793701cce9973d74980b330d306f82e74fb8d341d"
+    },
+    {
+      "path": "tests/namespace-reexport-deadness.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5006,
+      "sha256": "9234668c7ae6f0a7b75cb9d1cd5e64d8dd8d67857040210828ebc5261e6e7ea3"
+    },
+    {
+      "path": "tests/node-imports-unsupported.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6643,
+      "sha256": "6ea204675a1d78e4fd300f4156ed1e8c2cc29f0e0324607d53ad3eec1d8eeea4"
+    },
+    {
+      "path": "tests/output-source-layout-diagnostics.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4888,
+      "sha256": "1a21ff29c310982cc33e5417f071ed39c6f6db95a9837f72f34520f35a8a43cf"
+    },
+    {
+      "path": "tests/p6-measurement.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 19468,
+      "sha256": "38f8da39000a6b49ade2ac5f753ccceaf54d1c084d37c65d090d81d9193f98d2"
+    },
+    {
+      "path": "tests/p6-member-precision.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 10180,
+      "sha256": "1714c20091a08af37473cd4d26df3fde4675cb1688f1ed87cfe7424358f6c9e8"
+    },
+    {
+      "path": "tests/p6-safe-fix-calibration.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9854,
+      "sha256": "e6191213584df5867c4425e88ea2eae5da9736ebe204a44358b9dbeae13746c7"
+    },
+    {
+      "path": "tests/plugin-package.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8668,
+      "sha256": "3685c71679c5f95254b212ada1dc0115a28d411a64d9f7c52588f7a817e28141"
+    },
+    {
+      "path": "tests/post-write-artifact.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7280,
+      "sha256": "9848f871422841641de36049e6e5d1091f32e8349739ac618d20bbb95db93d33"
+    },
+    {
+      "path": "tests/post-write-cli.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 16290,
+      "sha256": "faaed1e84903dafdb1070444008d9167832ac1106b466da7f0d787f81060816f"
+    },
+    {
+      "path": "tests/post-write-delta.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 32681,
+      "sha256": "b2119e173c9d33dd0e435fbbdfc8936eb24bdf39b1feefb642a25bc92af50010"
+    },
+    {
+      "path": "tests/post-write-incremental.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4452,
+      "sha256": "73c4f5948fd912b5105df428899e533358a3ce395666655f68633eae2fb98400"
+    },
+    {
+      "path": "tests/post-write-integration.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 13117,
+      "sha256": "db3d72520f99e61d24e086757f104a34896a9849584cacfdcfaff5d7e947c205"
+    },
+    {
+      "path": "tests/post-write-render.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 15663,
+      "sha256": "c80e96e939f675e299ce05265da639febda9340e21ded90aeea25f48665500da"
+    },
+    {
+      "path": "tests/pre-write-advisory-artifact.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6990,
+      "sha256": "2bab5039d378a3faea72930846ebf0d162876282f69b5f4771ff94f57590b47d"
+    },
+    {
+      "path": "tests/pre-write-bootstrap.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6645,
+      "sha256": "55a577199cb9078b93efddc7f8fbca3e46a3804f798e27f1e3c4dcb8f3f830b3"
+    },
+    {
+      "path": "tests/pre-write-canonical-parser.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7903,
+      "sha256": "a5495d9e61f5acfb3545a5b6174d739e2eb65de3c80b2f712fd25ac8c034b359"
+    },
+    {
+      "path": "tests/pre-write-class-method-cues.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2682,
+      "sha256": "428e738bb502ded093f6a82bf8357ee649601c983be453c1a7e3866e6e21b9a8"
+    },
+    {
+      "path": "tests/pre-write-cli.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 29334,
+      "sha256": "5a0ad079def6bb5229e029c90b25837ffeaca338b7004fb0265cc3b828e1a880"
+    },
+    {
+      "path": "tests/pre-write-cue-muted.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4428,
+      "sha256": "21cc96db2eaa21a7f4c1036073f0b4635ae5aa2231e87303486fd2b187210e5b"
+    },
+    {
+      "path": "tests/pre-write-drift.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6719,
+      "sha256": "82708ad779d3ebd8ed970587d1b6360432d272aa37ceac5661b8a25e182513b9"
+    },
+    {
+      "path": "tests/pre-write-evidence-gaps.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2591,
+      "sha256": "779d4f509f68462c6bb75e5055e62153c9b6b206dc2747264c14f78bf13a33f1"
+    },
+    {
+      "path": "tests/pre-write-exact-safe-cues.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8863,
+      "sha256": "1f6c1493a197d510b66da5f33b0921c6efc12139e6e4b0b818df5402f3fb32f3"
+    },
+    {
+      "path": "tests/pre-write-file-inline-cues.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4456,
+      "sha256": "b074bf5e7ab94c6e4a27e38e2f54b074a878c7e46e20ad284d34666978785c1f"
+    },
+    {
+      "path": "tests/pre-write-inline-patterns.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4624,
+      "sha256": "4f31a78a36449ef64aa46e069e58cb7b8a4f757bbc833cdfdaefc30d4afce74a"
+    },
+    {
+      "path": "tests/pre-write-integration.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6112,
+      "sha256": "9c8bd24f6192d43c4f40f395d042cf4cfe7ba4dfc3d43c3fedd2ff6837312a43"
+    },
+    {
+      "path": "tests/pre-write-intent.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 10952,
+      "sha256": "01a35ce4f203446f4b1936dfba952f206aa4cf62de643afa76d4a4aa8099c11e"
+    },
+    {
+      "path": "tests/pre-write-inventory-hook.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6084,
+      "sha256": "baadf38848506e0d08ceb3994f6fa719656722c335c66553bd1090840903b564"
+    },
+    {
+      "path": "tests/pre-write-local-op-cues.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5143,
+      "sha256": "6dc34d89f03bac7d2b284e243655be4c616b947ef9aaf318c44e1375d7b87cd6"
+    },
+    {
+      "path": "tests/pre-write-local-operation-index.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6984,
+      "sha256": "24f361eb73d061720987fa4f90a15c738036064ec27bd93d6d57fdeeb7bf5770"
+    },
+    {
+      "path": "tests/pre-write-lookup-dep.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7860,
+      "sha256": "ed586dd8436ceb498456b939eb3a28ea49dba786802fb0b5a95ed0cc558cf601"
+    },
+    {
+      "path": "tests/pre-write-lookup-file.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7918,
+      "sha256": "40bdb74febe0456a88e0d4edb9cd71f9ad7a48c6964d8eb12685405f364107e7"
+    },
+    {
+      "path": "tests/pre-write-lookup-name.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 19925,
+      "sha256": "e99418ec03b375ad5f80b58a1b9298dae6975ac54760f510f2d2fb5ba5906c45"
+    },
+    {
+      "path": "tests/pre-write-lookup-shape.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8281,
+      "sha256": "7088f7350831513f4aa58305b00fa3029e91c0898e6d574b2bd2c53eb0fbb4f2"
+    },
+    {
+      "path": "tests/pre-write-render.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 55222,
+      "sha256": "624a7ffd562b93b11f2f4c032b9f29936b44301e72befc2ba23029ef389c82e8"
+    },
+    {
+      "path": "tests/pre-write-service-op-cues.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6889,
+      "sha256": "efb7850ec6584bd05890f84dd2e0c50a174d2c176ac3281c4578c57b5aa2180c"
+    },
+    {
+      "path": "tests/pre-write-shape-index.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3463,
+      "sha256": "d522ba81f189f7ca6b17cb657a7e76eb040f193c1f03066ee5a33fbede2d7e49"
+    },
+    {
+      "path": "tests/public-deep-import-risk.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9426,
+      "sha256": "5e77b9e942f4c6ea73a6389ee83aaf66f3b9294b0a8d1d798888279f83063634"
+    },
+    {
+      "path": "tests/public-surface.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 12377,
+      "sha256": "558604cb3831cf2b7b6eed57713b8564ac0825063996de987409f58e83fe7220"
+    },
+    {
+      "path": "tests/publish-public-plugin.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11880,
+      "sha256": "9faf2ccb1aede24e3adfa594b1a44b25b526d1966137e68d08d99c8cb28f3ab1"
+    },
+    {
+      "path": "tests/python-conventions.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5872,
+      "sha256": "fd3a64710f72af779f2378efd3b03d6cc21acb97c7d7bef18e40ce6211042418"
+    },
+    {
+      "path": "tests/rank-fixes.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 53190,
+      "sha256": "7781213d76a9c79953e96df6fd6618b638632aaacc591cd2fc6904219468d126"
+    },
+    {
+      "path": "tests/refactor-plan-verifier.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6320,
+      "sha256": "785a7f7c677cb98dda4b2208cdde74307a62bb54d92133f587dddaad99d34b20"
+    },
+    {
+      "path": "tests/resolved-edges.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5645,
+      "sha256": "150f2fe1e2d2d123b424eb67a277dc5d4d5fdddef5a0a69b234e79a9a58f6008"
+    },
+    {
+      "path": "tests/resolver-blind-zone-relevance.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6588,
+      "sha256": "78d236f9b476c2747b4b9eb0de16785693fa52c84b8f0f0bfc41da1d0d235125"
+    },
+    {
+      "path": "tests/resolver-diagnostics-artifacts.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9497,
+      "sha256": "5851f33b2ec45db582ff135b546c969951ad91916c3d78a246f71ca73936ca7b"
+    },
+    {
+      "path": "tests/resolver-paths.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14277,
+      "sha256": "0947319750080666f9d9f0a4b26e16dce2195a6971098475d5b51229907bcb57"
+    },
+    {
+      "path": "tests/run-tests-grouped.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2581,
+      "sha256": "7c17ecf253e75c77c74bec757e17dc5526f97fabf1c726fe681c20d4685726de"
+    },
+    {
+      "path": "tests/rust-topology-prefer-gate.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14235,
+      "sha256": "e8b3d1bedbab91daf991975f8d6dd3dc61207276af4abf6e5afc13e311b078e8"
+    },
+    {
+      "path": "tests/rust-topology-prefer.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8351,
+      "sha256": "cec027e5cbff8a7c4a3c26043ba271d50819daf2df5e6cf9d6e15db7891d6d69"
+    },
+    {
+      "path": "tests/rust-topology-quorum.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11359,
+      "sha256": "868eac64aab80f70c9ead5f574642d9b44827adb37eaa8ffe3dad8ade7f69754"
+    },
+    {
+      "path": "tests/rust-topology-scanner-bridge.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6243,
+      "sha256": "f5d4dd31d36377a8aec442e819855ce6c5a237126217c4556d0d54f8962cb31c"
+    },
+    {
+      "path": "tests/sarif-fix-plan.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6065,
+      "sha256": "dab07b4031cbfd88dd06f6392f7526e8115ba259820a84ae9dfdd930bf24cf1b"
+    },
+    {
+      "path": "tests/sfc-consumers.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 78688,
+      "sha256": "7fcbb904b4cd2463fd91f8431218829e93560c6a53de93b6684402bf0a0dc29a"
+    },
+    {
+      "path": "tests/shape-hash.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 10307,
+      "sha256": "5837fd41e774b12ed8738f67d4eb4c07b506f5d36229fc5b00e4c3833848f816"
+    },
+    {
+      "path": "tests/shape-index-incremental.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6337,
+      "sha256": "31f9ba4de0d7d958ae4be26ae8eb659b2971c4430f2b0453eabce481a53f04b4"
+    },
+    {
+      "path": "tests/shell-safety.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6239,
+      "sha256": "cb7390c63e3312818bf400ca355a90eb77ccbdfaf97af19144de0b4ca14e0d7c"
+    },
+    {
+      "path": "tests/skill-package.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 45148,
+      "sha256": "50cce168e0fbec1a76a94e46f781d05ecd6a70529a420ce9cf9d00b2341906d6"
+    },
+    {
+      "path": "tests/skill-surface.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 41504,
+      "sha256": "d67c4264c85cff37def7683470f90466842e008f9753b46c2f0d08046febd1a4"
+    },
+    {
+      "path": "tests/smoke-uncovered.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 12961,
+      "sha256": "ef5291bd59b1260a543e4ab31b708f4a3bcf9964f6a8de50cbe85a6081fcffc9"
+    },
+    {
+      "path": "tests/staleness-incremental.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6591,
+      "sha256": "b4c55081f59d9ed31696a4c13e696f2687133438b1189a9e3cc96b947a643415"
+    },
+    {
+      "path": "tests/symbol-graph-incremental.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 13240,
+      "sha256": "8e671c28986060001bd5f5a12490d37dcc9967a8beff2c87098f8a06b8eb2432"
+    },
+    {
+      "path": "tests/symlink-aliasing.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3583,
+      "sha256": "a4af98622eba342e48aca1b0f268ff32e0c9d23cccc63ac9845f7cff80415857"
+    },
+    {
+      "path": "tests/temp-repo-fixture-helper.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3512,
+      "sha256": "b9f8834d9ed10c729235fe52f69972046a99f6150d4e053d693583b28d712147"
+    },
+    {
+      "path": "tests/test-alias.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7606,
+      "sha256": "f0616b53cd64eddef68875c5d0cc96a2f26c7402a57fc7cf2c2764a2a7646efa"
+    },
+    {
+      "path": "tests/test-any-inventory-incremental.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6293,
+      "sha256": "e7ee70a995c43e7feec6878cffa6356d4f30e35b566137b8b6a77fd3be9e9120"
+    },
+    {
+      "path": "tests/test-any-inventory.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11174,
+      "sha256": "c49dcdd247d0fbfc0209cecff68551c5a5f70995538c887841556686bf4b9117"
+    },
+    {
+      "path": "tests/test-audit-manifest-export-surface.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 52304,
+      "sha256": "ddc2c54452a3f77b109d3078eaadb0a07780de08d21b64f95465b7be5bbcecfa"
+    },
+    {
+      "path": "tests/test-audit-repo-canon-draft.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 19872,
+      "sha256": "cfd67d475a2cce3eb87a61c1fb0e7c8bed40d00c581a626022bc865e51d3429e"
+    },
+    {
+      "path": "tests/test-audit-repo-check-canon.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 15196,
+      "sha256": "9799b1abe42df0fb130413cae64e5cb492e0838e970d0f2b0d150af9ad4a4a36"
+    },
+    {
+      "path": "tests/test-audit-repo-post-write.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 23809,
+      "sha256": "c2630fd7b4365ab891166ee268ca136a4aac3817a14aa87aad7f6e72c66a29b9"
+    },
+    {
+      "path": "tests/test-audit-repo-pre-write.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 17618,
+      "sha256": "3b08ace48e7a9dbaf09468c54b7c8dd4bfcbb77db8d47b3e65ca71a2a9688fe4"
+    },
+    {
+      "path": "tests/test-audit-repo-symbol-incremental.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2544,
+      "sha256": "8bc3408b8321b5cac0e029068331227cf287610fd3625ff059a89c1f967ca670"
+    },
+    {
+      "path": "tests/test-audit-repo.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 82515,
+      "sha256": "a46e25247aac0e0ac59ce1c2ec7bc48d138c0ce2da634c039a6ad22244fb26b1"
+    },
+    {
+      "path": "tests/test-behavior-corpus-verifier.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4364,
+      "sha256": "e58b35843c76f98040b47af248e601fb2f5c15759fa50c29bd05933e52a9e9ec"
+    },
+    {
+      "path": "tests/test-build-block-clone-index.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 19497,
+      "sha256": "01e68ee41d8eece50387f729541e8bd32e976480e7243bea510d14f3ab178129"
+    },
+    {
+      "path": "tests/test-build-framework-resource-surfaces.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5381,
+      "sha256": "2313582eff005fec180ac31a361f80547fabd9fad4d0331ba3a6895af247a832"
+    },
+    {
+      "path": "tests/test-build-function-clone-index.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 19386,
+      "sha256": "b6df52ff427434700f622718a78ac3e60a8adc2e795fd1476a3bea78756cfd6d"
+    },
+    {
+      "path": "tests/test-build-shape-index.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11449,
+      "sha256": "6aa5e92f259aac0dad7ebb4db5e40ac94591981290157cebcfd1bc9064d8afde"
+    },
+    {
+      "path": "tests/test-calibration-corpora.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1960,
+      "sha256": "a1fee5db1b8fafb9727954888a57d41a50f17b365b43f7b94d5e38fce9ef85d1"
+    },
+    {
+      "path": "tests/test-call-graph-bounded.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4322,
+      "sha256": "57899dcbc5eacb5767635941068ae61653f3a1fd176cbca0bc2a3d43c019aafb"
+    },
+    {
+      "path": "tests/test-call-graph-parse-errors.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2683,
+      "sha256": "08f67cd116d99b38d5f2d4ed1493200dfbd5af946109158933dfaae08b4e0d77"
+    },
+    {
+      "path": "tests/test-call-graph-truncation-defense.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2544,
+      "sha256": "b514be65bdf148074273e96d4b3ad4ff172f6760c4aeea8af5851c2685a0e7dd"
+    },
+    {
+      "path": "tests/test-canon-draft-helper-registry.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 23869,
+      "sha256": "c2d416c5b37f64e11987f2b81a83ed40349aa99cf7ce86280d739f3f0aa037a1"
+    },
+    {
+      "path": "tests/test-canon-draft-helpers.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14400,
+      "sha256": "078793abbdf86d7b7a6069541db6d10fab0da11e80b6bd931a7fdd365ac1c28c"
+    },
+    {
+      "path": "tests/test-canon-draft-integration-helpers.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 15219,
+      "sha256": "cb14f35cbe99962052d762941bdf502bef4977e14118f60db965c1f6b1420368"
+    },
+    {
+      "path": "tests/test-canon-draft-integration-topology.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 13354,
+      "sha256": "7b6ac6b40eec4f4caca915d007bb529825b031dd88302ef3b4ca125fc9cb2a29"
+    },
+    {
+      "path": "tests/test-canon-draft-integration.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8857,
+      "sha256": "fc70245e3d31cd01e67aa898878a5046d5992d0631a1cb953062928fce4cc7a6"
+    },
+    {
+      "path": "tests/test-canon-draft-naming-structure.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14191,
+      "sha256": "bc46886ed5352a891091e751e24e1a36122559a8d4f72475107d399378517f2b"
+    },
+    {
+      "path": "tests/test-canon-draft-naming.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11246,
+      "sha256": "cd91af41931f1b06e4ff48652563d76b32fa10b94cd5947a306a27ce51ba6614"
+    },
+    {
+      "path": "tests/test-canon-draft-topology-structure.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 19521,
+      "sha256": "b10562184073c6a7557b22a5335f8b6515c729aeac5043496c5fb2d64be1bf84"
+    },
+    {
+      "path": "tests/test-canon-draft-topology.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11423,
+      "sha256": "4b74f07530cfad5a4279d091a9105620649141ff75dd2ae9c8612ff9ef430b12"
+    },
+    {
+      "path": "tests/test-canon-draft-type-ownership.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 20965,
+      "sha256": "361facb9989cd9143928521543f447838c473fe2a76e7791e8bf85c26f4c0ec7"
+    },
+    {
+      "path": "tests/test-canon-draft.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 10755,
+      "sha256": "20535155ecb82978f2c0c319b8f09161fd70bdb5aff462ed8314acfbf952f095"
+    },
+    {
+      "path": "tests/test-canon-drift-parser-contract.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11862,
+      "sha256": "392fff4825e36f0218f62eb159f36a341fdb02f51a7f89676eb985bedbe6ff5b"
+    },
+    {
+      "path": "tests/test-canonical-fact-model-drift.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7434,
+      "sha256": "a651f31835462a1953c126dbb9583d5e1d02208d9e563b90836d7a1364eecfe1"
+    },
+    {
+      "path": "tests/test-check-canon-artifact.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11409,
+      "sha256": "c36b52f1095a40a9183ee069b8cb115b49ba03edaf04cca7e0d82674ea5559aa"
+    },
+    {
+      "path": "tests/test-check-canon-helpers.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 22601,
+      "sha256": "a99e1e54e09a7c579e3fa6dfe60581e9b66a58f6c3a09f66e3bbac5d1ed84d74"
+    },
+    {
+      "path": "tests/test-check-canon-integration.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 21014,
+      "sha256": "daab1184d2c1886817e580be4e9cb6cbad195c1757f01a177f08c94387531c95"
+    },
+    {
+      "path": "tests/test-check-canon-naming.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 17125,
+      "sha256": "cafaf22568e59bb36c2c22874bfb5daa7f1672e648310eb0227caa9f479b7432"
+    },
+    {
+      "path": "tests/test-check-canon-topology.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 24015,
+      "sha256": "dd67cdd738935f96cc70aa26bedd55d6814e3cbc95424679727ac7f1646fb4e7"
+    },
+    {
+      "path": "tests/test-check-canon-types.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 20253,
+      "sha256": "91f8dba4861742a177ed55c8c262d3795b4696bb2d05854cc68a16920ac82bb0"
+    },
+    {
+      "path": "tests/test-check-canon-utils.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 36426,
+      "sha256": "23176bdd06257dd0751dee007b0df4b091793dbe1ae1059f1da22f77b0f2c776"
+    },
+    {
+      "path": "tests/test-checklist-facts.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 38667,
+      "sha256": "0b2702d8145cbd2879455f9c47328d5e37f84f6e143a804d738017cac0d939f5"
+    },
+    {
+      "path": "tests/test-citation-verifier.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5655,
+      "sha256": "6d6a25ea33ac04d9daf1fa1c78eb32bd04ca21df0b16b0c76fc8a1aeb2f12e42"
+    },
+    {
+      "path": "tests/test-cjs-classification.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6789,
+      "sha256": "1d809d4244b075d4a55736d3ea6aa8c5e7098e2ae0e11cee0f4c7adabd615bbf"
+    },
+    {
+      "path": "tests/test-cjs-export-surface-artifact.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2477,
+      "sha256": "a1dc4d55ee807d1a0ddf3352dbecd34cf330c55f63d1195bd4fa1529d0f49f1f"
+    },
+    {
+      "path": "tests/test-cjs-integration.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3032,
+      "sha256": "3df925ac8d4d2dea292300a89ac861cf7fb6b2e5c374c6a1ad6d4087d79225ec"
+    },
+    {
+      "path": "tests/test-class-method-prewrite-surface.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3637,
+      "sha256": "a16c37d8f2918b1f302b42e5656b6afe6c16f623b8e391e52d875fa4d643cabc"
+    },
+    {
+      "path": "tests/test-classification-gates.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 60920,
+      "sha256": "7eb4fbcee5614d39d255c6f35ab19b1ef418851118218c7205c275e1f883f357"
+    },
+    {
+      "path": "tests/test-classification-label-emission-corpus.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7032,
+      "sha256": "bc5ecf021f86245f0bfe38c406967a08d048e2a6ee9646a62f87fb1b5f8383f4"
+    },
+    {
+      "path": "tests/test-classify-facts-ast.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 19552,
+      "sha256": "fb710ad75ae2bb2e1fc78e36195e76e517b6af7d72938e2aaea7ecb297b0bd93"
+    },
+    {
+      "path": "tests/test-classify-performance-metadata.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6749,
+      "sha256": "0e2ece338782e89b80feeca55ab39a63181e0ece71daefc8427586fc8ebef56b"
+    },
+    {
+      "path": "tests/test-classify-policies-export-surface.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1031,
+      "sha256": "c4a0c56c674c2262cf6bddcac2f354a40e37a41bfcfa10c7ce09181233b2cf5a"
+    },
+    {
+      "path": "tests/test-cli.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5619,
+      "sha256": "0f9f7abb58715f382d6a37b7290e1f6bf75d219830a1e8fb84d9a3b503ee7111"
+    },
+    {
+      "path": "tests/test-collect.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11925,
+      "sha256": "8d57af3da7e1b8f48b3a25508958a76a2a7b39e6aa281320f233a71ae2ac33a5"
+    },
+    {
+      "path": "tests/test-corpus.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 73727,
+      "sha256": "109a4e830a8d1122a5db97c85326f5646ca04939f15bb553dd8940615864269c"
+    },
+    {
+      "path": "tests/test-definition-id-canonical.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4236,
+      "sha256": "655bd689cf3adb50627cee4b66316cb67cfe75e913cacc339c76962963506194"
+    },
+    {
+      "path": "tests/test-definition-id-export.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 724,
+      "sha256": "289ff677a850be9fb1920d46e6bf216ef5829f12cd142a4656db08f91852e728"
+    },
+    {
+      "path": "tests/test-dynamic-import.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6394,
+      "sha256": "b25dee02068ea54d24dbeabf887524aa0a0e59516c6a1dcd1785ce8d3fba7944"
+    },
+    {
+      "path": "tests/test-entry-surface-artifact.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 25037,
+      "sha256": "933ba061ffa7328ccd4ed4203e4317967889cad129a6210a34be93eabe19e7f0"
+    },
+    {
+      "path": "tests/test-evidence-honesty.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8357,
+      "sha256": "09a8c3e02be747e777341c423e574ed15f328d6c908c5a71d7cebd4096baced0"
+    },
+    {
+      "path": "tests/test-export-action-safety.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6772,
+      "sha256": "6b991c093c056204e36c84df5c8ed26f69513c2965d9e9348ba7b565ae462a49"
+    },
+    {
+      "path": "tests/test-extract-cjs-consumer.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7305,
+      "sha256": "5610c2cdcbfbe14af38049d22199089ff85e0bc530b4ec6dd344ae10c3737b66"
+    },
+    {
+      "path": "tests/test-extract-cjs-export-surface.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2759,
+      "sha256": "d0a8fd6ce5918ea1dca7c3f1b8cac2c04aeb96a05fc031dfbf1491698f9e0617"
+    },
+    {
+      "path": "tests/test-extract-ts-escapes.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14002,
+      "sha256": "0d13dfabf84b003253fc3afa28e3106ccd29b0e47f6778243e0c488089092551"
+    },
+    {
+      "path": "tests/test-file-delta-export.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 800,
+      "sha256": "9a34d4884cc4423e347faa0e6d84993b18e1e694e03d425c850bde53c640098f"
+    },
+    {
+      "path": "tests/test-finding-local-provenance.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 20270,
+      "sha256": "90e00a6f0eac61de2d14c8b48eebbb442adc385e60372008164e798520807e8c"
+    },
+    {
+      "path": "tests/test-framework-policy-facts.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4513,
+      "sha256": "6c4b7ee141b4a20780defe30479e55c2548ae50989c679e9f53922089ae4f649"
+    },
+    {
+      "path": "tests/test-framework-policy-matrix.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 15331,
+      "sha256": "213d3b24a219b6ef37a18f55806ca5310e8439cf1caaffed5389ab095b42b15b"
+    },
+    {
+      "path": "tests/test-framework-resource-surfaces.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7019,
+      "sha256": "6426044ae1ddcbf1cbe50f1c73b307ca105aedd14abef9e57f8d0919e0e3f2ef"
+    },
+    {
+      "path": "tests/test-function-clone-audit-forwarding.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3974,
+      "sha256": "5a154391b0cf28fdb12993f69328fe0d208b049eef22ef17d796a87997fedc36"
+    },
+    {
+      "path": "tests/test-function-clone-incremental.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9559,
+      "sha256": "9bef2919c4529176d3c65cfd654bcec53d6085bca4492d33645de4438dd5bfeb"
+    },
+    {
+      "path": "tests/test-generate-canon-draft-cli-helpers.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14286,
+      "sha256": "ee9982dc6ea5e04c6719bafeb6808d948cb182bf660b037b08d4d5aefaddb18e"
+    },
+    {
+      "path": "tests/test-generate-canon-draft-cli-naming.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 10070,
+      "sha256": "0f2f86b82796f3fe0f70b3d8a3127f3a154e607ce33d9514839f41732f459220"
+    },
+    {
+      "path": "tests/test-generate-canon-draft-cli-topology.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 16648,
+      "sha256": "14479a391fbb35f39827ef4644bd4eff0d7435460cd6a078e0d3b57a46e89826"
+    },
+    {
+      "path": "tests/test-generate-canon-draft-cli.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 12270,
+      "sha256": "5cc6b0ef62613dbad43520b535ec995980ed6ff30bd0dc3cee96da51010f99d2"
+    },
+    {
+      "path": "tests/test-generate-check-canon-cli.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 30730,
+      "sha256": "e6c629195839edd8ff037f2ce00ba61b2052a6711771299d121d7f06ad313067"
+    },
+    {
+      "path": "tests/test-generated-artifact-evidence.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6468,
+      "sha256": "50d95edff575a11717ab2a6fe79de0205c6f83fd8db4774871a5907d4a86fd14"
+    },
+    {
+      "path": "tests/test-generated-blind-zone-relevance.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6444,
+      "sha256": "6f5e621a776716afe6d0834cf55a4bbb4326ac1bb8071e973a6707a6cacb46c7"
+    },
+    {
+      "path": "tests/test-generated-consumer-blind-zones.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4935,
+      "sha256": "08dd6562457e5bc7f08c270965015e86b9ebf728c08091a2943a1c06ec59401a"
+    },
+    {
+      "path": "tests/test-generated-virtual-surface.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9040,
+      "sha256": "e71355cb8045643d95f8f7bf2ddd6a12fe0a1747ab9a797ab086dbd3bc93fdda"
+    },
+    {
+      "path": "tests/test-github-actions-ci-policy.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2002,
+      "sha256": "7de6e554440f441955414fa52300f4f7325a4a7f2e52f2d8deb3fe67b7681589"
+    },
+    {
+      "path": "tests/test-hardcoding.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5521,
+      "sha256": "012a814bb2799340b35d454818e6b7a321fb1612f15ed2a301877e6eb95128e2"
+    },
+    {
+      "path": "tests/test-hash-imports.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14210,
+      "sha256": "74de020d9681330f719f269bea0695d6fe6790002457658f31ce8b5e4a85aa1e"
+    },
+    {
+      "path": "tests/test-hook-ack-observer.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5670,
+      "sha256": "5d0055359fc06570656551cd46c5479a7b9754ecca7ea67fb697a026199060ee"
+    },
+    {
+      "path": "tests/test-hook-doctor.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1580,
+      "sha256": "1c361257ede5282159a942138d384cd37ddab746e6d2fd26b5958f4d822f10e0"
+    },
+    {
+      "path": "tests/test-hook-event-drain-renderer.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6723,
+      "sha256": "f8d91f9b3ec877faa9c3cbe970a14c89b475383958c3e7c57169832deb9190d2"
+    },
+    {
+      "path": "tests/test-hook-event-store.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9788,
+      "sha256": "64481d14fdbf733802a2f19a37fcb25e72c9953190bb20c4eff1abc5aa40dadc"
+    },
+    {
+      "path": "tests/test-hook-id-safety.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2739,
+      "sha256": "1af85c8d48278d511d2be8f28bd87f5976aaf21d49f615bd6b8e4cf171589f32"
+    },
+    {
+      "path": "tests/test-hook-path-safety.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3246,
+      "sha256": "34df7de20dff9125dc11bca479cdd3546ee189b54155c206918f24fdf27885c1"
+    },
+    {
+      "path": "tests/test-hook-post-write-lite.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7475,
+      "sha256": "2ce8ab992d4f013218552853e708eed23b62d520bca8c5a655b5cdb08e5534e4"
+    },
+    {
+      "path": "tests/test-hook-preimage-store.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7381,
+      "sha256": "83008430ea095984b0072effb4f70b939998ec7c4750e3a28e23917bd156714e"
+    },
+    {
+      "path": "tests/test-hook-runner-scripts.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6954,
+      "sha256": "d735eddcb30292e41c22c8f6a88bfcd214909f0dada22d40708b72621087dbfc"
+    },
+    {
+      "path": "tests/test-import-meta-glob-diagnostics.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7062,
+      "sha256": "108c9a737e7cd389741d1209bd84eca9c29ca6c5a09d65ccffa65c566a40199a"
+    },
+    {
+      "path": "tests/test-incremental-cache-store.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4573,
+      "sha256": "3364e158382732d9f883e6486798d25e0965f6023389fe4c3d3c051ed14cca9a"
+    },
+    {
+      "path": "tests/test-incremental-snapshot.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4640,
+      "sha256": "904c1d494b9cb610a460e5d2370acb07cfbc95b4bf9c633f84d0d1c646754a93"
+    },
+    {
+      "path": "tests/test-incremental.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7164,
+      "sha256": "4e74d090140e129dafed49631caef71c8b4b01c29e8fa68a4cd8dd3158bff547"
+    },
+    {
+      "path": "tests/test-inline-pattern-index.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7406,
+      "sha256": "611cf3a214c9307f1809769750968d9d8281899d1c4bc1ccb2e4780f3282312c"
+    },
+    {
+      "path": "tests/test-js-module-edge-scanner.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6874,
+      "sha256": "ed8ee823ea5be8409d64b5ad1eecd2183830edcebdf85b8e469054ccafe80272"
+    },
+    {
+      "path": "tests/test-jsonc-edge-cases.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11061,
+      "sha256": "7c131427d4f38d70edd26e8b2c5fbb454d293d2fdab8a63742b79f860ea9808d"
+    },
+    {
+      "path": "tests/test-lang-matrix.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7157,
+      "sha256": "afb8ac9ba910b2da01ebe887b40151f306da65c09076d1b70b063702c9861045"
+    },
+    {
+      "path": "tests/test-maintainer-scripts.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2273,
+      "sha256": "6cba548e56c350b53d4256a3211e232d4b0b8b87d3e0c968b127af0b29cea953"
+    },
+    {
+      "path": "tests/test-mdx-consumers.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5516,
+      "sha256": "7a0915f763c4b027c2270c5840dcc0e1fd1fe631d96a4b662cb8b86da6ab86aa"
+    },
+    {
+      "path": "tests/test-mode-dispatch.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9880,
+      "sha256": "fb1c381e3df01c6a023e393e46c35d1d1e94bcb21acac6915565b524435edc91"
+    },
+    {
+      "path": "tests/test-module-reachability.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8595,
+      "sha256": "b899c3bf0dabc36832a36d09be6bfc354db4ee119eb8d3fe1626002399737e92"
+    },
+    {
+      "path": "tests/test-namespace-reexport-deadness.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6204,
+      "sha256": "62b2953240a9165d44130b20c2c61b7958748d423953f821f026b05bbdfee4c8"
+    },
+    {
+      "path": "tests/test-node-imports-unsupported.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9117,
+      "sha256": "deb6b40ddd08505c0fffca61f2bcafae47f55b8d0930512acef623b1883aac5a"
+    },
+    {
+      "path": "tests/test-output-source-layout-diagnostics.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5495,
+      "sha256": "0c9455d861077b7b902f407646672730271a5abc40c8f8b9cdb6253aab41750c"
+    },
+    {
+      "path": "tests/test-p6-measurement.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 18254,
+      "sha256": "638e8d524458aa04893f4cfc4723cc7cd8260920602794112c353960345bc241"
+    },
+    {
+      "path": "tests/test-p6-member-precision.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9726,
+      "sha256": "2ffaf0ef8f12861198675e7b6629c2eb66f67cef0300a12e8879633b985680d4"
+    },
+    {
+      "path": "tests/test-p6-safe-fix-calibration.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9504,
+      "sha256": "69b29e536f7e771c9adb1c78bc94995f7bafa73a6060192e0fb6fba3c4786a20"
+    },
+    {
+      "path": "tests/test-plugin-package.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7616,
+      "sha256": "9af050fc59ff2ea621c612ae5b77307178c8095f12ba87e808fb88d611bbdec2"
+    },
+    {
+      "path": "tests/test-post-write-artifact.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6903,
+      "sha256": "861f2f8b9c030584007d1c3f0e995438e1bef49a3dc30d87227635e42d2e7793"
+    },
+    {
+      "path": "tests/test-post-write-cli.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 15517,
+      "sha256": "1c4f2df5877715a9154ccaed5d37d0ab1fed5cb3d2475b7569ffa4a8c409d24f"
+    },
+    {
+      "path": "tests/test-post-write-delta.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 31183,
+      "sha256": "1162bfde8196feee6f2bef367f38c7be0af074446777ff29a965904e56e8bb82"
+    },
+    {
+      "path": "tests/test-post-write-incremental.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4285,
+      "sha256": "9df522d08a7df66a4f125fda2bdfa88896ab7887d83e2e7a41cea1c96d4fa7ff"
+    },
+    {
+      "path": "tests/test-post-write-integration.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 12272,
+      "sha256": "458c0b1bdc8be04094ca43b4d2be65af958cace9569c13cdc4655238cee3396c"
+    },
+    {
+      "path": "tests/test-post-write-render.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14784,
+      "sha256": "9e3d08f4482555ed0726bb2e43674e8abbbfb9e9b1ede39ad00c60fafb71d024"
+    },
+    {
+      "path": "tests/test-pre-write-advisory-artifact.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9116,
+      "sha256": "b74830beedc8d7259f57f0796c6a615adfc4f99beef060d85d63a33191c9def2"
+    },
+    {
+      "path": "tests/test-pre-write-bootstrap.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 10490,
+      "sha256": "1286f7187b04bf5f501efa83ef6dc663819e6dcdb3914dc2aa9f4d195c023e07"
+    },
+    {
+      "path": "tests/test-pre-write-canonical-parser.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11264,
+      "sha256": "07f6c08b08e5685561f7ab27bbc11dcdf8a20825e5af4a772e4b9ece4448276d"
+    },
+    {
+      "path": "tests/test-pre-write-cli.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 42133,
+      "sha256": "8a20c7eb1e5e3f860a2ad47684cb9b25fe7bad005b4e77ad3e5b325edc7f9169"
+    },
+    {
+      "path": "tests/test-pre-write-cue-tiers.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 26812,
+      "sha256": "8bfe4f6fc6c91c3eb351bfa7f09eea9aff9f6f686cd3fba6eb274cda6819c0d3"
+    },
+    {
+      "path": "tests/test-pre-write-drift.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9719,
+      "sha256": "5685cfbd26925aa23fefe9c67db23ab275a406d418068fe506ddbbc63db67f2e"
+    },
+    {
+      "path": "tests/test-pre-write-inline-patterns.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4640,
+      "sha256": "3fa9d9fb64ca1f033a209f076c54c170c864eda8a0276a23db1fcf300b5b1a07"
+    },
+    {
+      "path": "tests/test-pre-write-integration.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8222,
+      "sha256": "4bea60f1457ca9884178b97cadd2fef2b5273e9a4b992d2dfd0b96ec605e60a9"
+    },
+    {
+      "path": "tests/test-pre-write-intent.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 16924,
+      "sha256": "8b6994751cdea59e6af63f401b5e671790c9cd23b39ba9f00888b6b2fd91058e"
+    },
+    {
+      "path": "tests/test-pre-write-inventory-hook.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9218,
+      "sha256": "448d2fb3458fb5afd58a18076b45217586f623d06a6aaedd559849ea1ec23887"
+    },
+    {
+      "path": "tests/test-pre-write-local-operation-index.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7228,
+      "sha256": "cdb0db4e95abf9a5dc13aaa6df9a090cdaa137aa390386dc0ecd6a98b0b2d503"
+    },
+    {
+      "path": "tests/test-pre-write-lookup-dep.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11841,
+      "sha256": "51865c2acb4b75acce1e9ea0b3be61ae8133aca95df2ad6a76954b5755d3d6a3"
+    },
+    {
+      "path": "tests/test-pre-write-lookup-file.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14426,
+      "sha256": "0943acdcb8b5ff60a4476b59070d70beb8b4963138fa4c7b23f50624f76404e5"
+    },
+    {
+      "path": "tests/test-pre-write-lookup-name.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 33047,
+      "sha256": "28ac75ffe9efb39a90bf4c755d8eaf748fc64e1cbcb38f7779ca3f13b42739ca"
+    },
+    {
+      "path": "tests/test-pre-write-lookup-shape.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11625,
+      "sha256": "784fa513499487de69d7244d445e7ca8dce684c42396400ce44ffd0dd1ef9c61"
+    },
+    {
+      "path": "tests/test-pre-write-render.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 50362,
+      "sha256": "8928ce870d59a1c6bae43e420bf5e9c39729d00365b86d2b8c97008b09801b34"
+    },
+    {
+      "path": "tests/test-pre-write-shape-index.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3581,
+      "sha256": "2049511476b970877d3bb64f9091deac7501597c7ada4eb162a22c5612d01834"
+    },
+    {
+      "path": "tests/test-public-deep-import-risk.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 10189,
+      "sha256": "837454d5ddddc73c3f6d274f83c9dd542d25eecf6e7e568bf0d5623b58fa28c0"
+    },
+    {
+      "path": "tests/test-public-surface.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 14567,
+      "sha256": "923980629c4f2fbe4c592bdc0fa8547d21ee639baa4048a512b72129476f0faf"
+    },
+    {
+      "path": "tests/test-publish-public-plugin.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11637,
+      "sha256": "a3904f6087a423093e3cb0ad2544a369b591b6da2a661aca947527e39349f587"
+    },
+    {
+      "path": "tests/test-python-conventions.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8407,
+      "sha256": "f9b9b1a39cc0cb68907872a1d1bccb40cdc69573986589fab3f425699651323e"
+    },
+    {
+      "path": "tests/test-rank-fixes.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 48528,
+      "sha256": "d027a193f34200a65ceb16603b65572653575eaaf4e489802c899386af3171f6"
+    },
+    {
+      "path": "tests/test-refactor-plan-verifier.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5829,
+      "sha256": "24d548a646917ec07b5412ae6c87fec8219a4fa618a884c0c328cfda183d684b"
+    },
+    {
+      "path": "tests/test-resolved-edges.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5810,
+      "sha256": "91bb65855bcc9647788c039868555b77c5418518fcb5aad232e17453d71f8cba"
+    },
+    {
+      "path": "tests/test-resolver-blind-zone-relevance.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7143,
+      "sha256": "b366f95e97adb5b28cb885bad2e6006222a63b3133e9f6a560555c5e94121808"
+    },
+    {
+      "path": "tests/test-resolver-diagnostics-artifacts.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9653,
+      "sha256": "e91646c03980756e99f3f6e4de6ef85d65a15da609569418234d54fafd84a6d8"
+    },
+    {
+      "path": "tests/test-resolver-paths.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 18153,
+      "sha256": "a6ab6c097d95e15b01d52a61a8b414773bb54efbef2285d16687583faea1ccb6"
+    },
+    {
+      "path": "tests/test-run-tests-grouped.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6369,
+      "sha256": "4d3778ba7570def3fd917b92f38a5d9121252931384c4731d5a2f639bccfd7ec"
+    },
+    {
+      "path": "tests/test-sarif-fix-plan.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6865,
+      "sha256": "222d3e2ba5b241d983186ae06158b886de8b4e4026f782b64d210aebe1e07747"
+    },
+    {
+      "path": "tests/test-sfc-consumers.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 92361,
+      "sha256": "6151c3ac917e391bdc678af79db9415c5f20426f74c708b5c0ed4ad104460da2"
+    },
+    {
+      "path": "tests/test-shape-hash.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8660,
+      "sha256": "0e3c9cc91cefbac74d03e6c76c7f9cd476f47ac4dd6991c3e1a98e9e2e2621b5"
+    },
+    {
+      "path": "tests/test-shape-index-incremental.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6766,
+      "sha256": "421ffbb46bb246b7ca71ddb37cd0b8e68e9b4e38ef757c5c2908c8758c6edfc4"
+    },
+    {
+      "path": "tests/test-shell-safety.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 10849,
+      "sha256": "0368747a7c823f423e09b2dbc11d0f04675d548eede545b443b796e344f966fd"
+    },
+    {
+      "path": "tests/test-skill-package.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 41902,
+      "sha256": "636cd0c8cfe0e2c245427ebe84cc127682e1f74acf455081415fe7fa49d8c738"
+    },
+    {
+      "path": "tests/test-skill-surface.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 39709,
+      "sha256": "5df7fadb5176bd38e4e8784b8ece29bbc0a9da23651620a17fc0f9925a3a1e79"
+    },
+    {
+      "path": "tests/test-smoke-uncovered.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 20043,
+      "sha256": "b4e11256bb00a889ca04e5bec9e62026b313d0a18d290f76cab6d6918728efb4"
+    },
+    {
+      "path": "tests/test-symbol-graph-incremental.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 10640,
+      "sha256": "6a16b2dd4f59af3b77e4858b5267c6cf577df59183d7d1a43cbf70fd2022f1a2"
+    },
+    {
+      "path": "tests/test-symlink-aliasing.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6215,
+      "sha256": "7cd9c3cc5d97c025ebc9c50775d9dd6fdc032cf78ab1ef57179937c9d71891c8"
+    },
+    {
+      "path": "tests/test-temp-repo-fixture-helper.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3804,
+      "sha256": "a3668d50463dd71d8f0964c404e6b8e21d6aa792f470351eef2e859efed548df"
+    },
+    {
+      "path": "tests/test-threshold-policies.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 2585,
+      "sha256": "9fced832ca6b7ba87f2edaa7a8210a4e0a6b0b2463cabd888ef439bfc91e535e"
+    },
+    {
+      "path": "tests/test-threshold-policy-drift-guard.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1602,
+      "sha256": "ba1587ba407f12a05c4fae24955ecee8a146f7a1e5de698eec504bb54a072850"
+    },
+    {
+      "path": "tests/test-topology-mermaid.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4636,
+      "sha256": "26fadc35e83038caf5d4032ef1468461af5a036964e685653e0fdb35b80454b0"
+    },
+    {
+      "path": "tests/test-topology-producer-cross-edges.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6718,
+      "sha256": "27dcb6e2a665d4f7d3f95a28a6a03d02a1c38e1868e9aea15167ca05196e5380"
+    },
+    {
+      "path": "tests/test-tsconfig-paths-scoped.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 45249,
+      "sha256": "facf31f77ed749b734ffa2c340786560126af8963f2543199204a74ab3cf9f5d"
+    },
+    {
+      "path": "tests/test-type-only-reexport.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7653,
+      "sha256": "7661a33c5584dd9d47f0ebeb2d7a65b4212c205089fc32ff4f164540d207b213"
+    },
+    {
+      "path": "tests/test-unused-deps-producer.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8795,
+      "sha256": "39195d15e00f7064cf796b34f2905425f25036f611e180ac833f7b6037fb0b19"
+    },
+    {
+      "path": "tests/test-update-test-doc.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8018,
+      "sha256": "aa7c99e4fea83face202ed02028872efc8a43147457f4a94a8459ec3e28b6612"
+    },
+    {
+      "path": "tests/test-vocab.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 9255,
+      "sha256": "4ea98cf2db9e791b2d18e5a178907d50b9888e819fd74b2404ab6976b187a181"
+    },
+    {
+      "path": "tests/test-wildcard.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6379,
+      "sha256": "7e45cdd4ff02398013cd1269bfcc596db79becb0268baf7fcf267531d9f1d306"
+    },
+    {
+      "path": "tests/test-workspace-no-exports.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 26245,
+      "sha256": "78457d37df936f6cd17d4a1c07864270b809252df98fd2d4053aaa51a4a08e3a"
+    },
+    {
+      "path": "tests/threshold-policies.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3025,
+      "sha256": "75f56daca7889277c70f2832260141972415204219ea20a01100992a84b1849a"
+    },
+    {
+      "path": "tests/threshold-policy-drift-guard.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 1883,
+      "sha256": "74b6aac2929ffc1bc7714122156eb05590ba88b407a679cda001e8f226f4fc20"
+    },
+    {
+      "path": "tests/topology-mermaid.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 4420,
+      "sha256": "883b2398057634cbe18fe51a6519e37319c63687667235cd897593360056a8b2"
+    },
+    {
+      "path": "tests/topology-producer-cross-edges.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 7900,
+      "sha256": "e7254347b66745cc153a1e3c2743048e5c08ae849ead238181c984de595bb365"
+    },
+    {
+      "path": "tests/topology-rust-prefer.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 25568,
+      "sha256": "6a69f15fdaab973b84d439bb5be071b459325c5c931060e75d805026f59ef105"
+    },
+    {
+      "path": "tests/tsconfig-paths-scoped.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 17593,
+      "sha256": "80bc0565791acd758dd78f0308d692ccef1c68509617f272fab2b5fa96da6faa"
+    },
+    {
+      "path": "tests/type-only-reexport.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 3998,
+      "sha256": "a4e6a21f69640dc8329ca65437489ab844716509b63209dea4249ecb7ba34644"
+    },
+    {
+      "path": "tests/unused-deps-producer.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 8324,
+      "sha256": "d8b081593bfdafd9a1c8dc56452b49a739799269946fb092c9e632523d6e7a13"
+    },
+    {
+      "path": "tests/update-test-doc.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6041,
+      "sha256": "d5aa7426f76df5ee9347302660f05a4c314a27d9a45bc6fa1e90079f3f93aa9f"
+    },
+    {
+      "path": "tests/vocab.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 5976,
+      "sha256": "a7da7fa83c27de82e4784436afd95964ff0b2da0be6d99d338e4d800e536d042"
+    },
+    {
+      "path": "tests/wildcard.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 6634,
+      "sha256": "f92391d07009ca243b2de2c7abf4823f151fd577574b9158cd97a46749a4fd11"
+    },
+    {
+      "path": "tests/workspace-no-exports.test.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 15837,
+      "sha256": "62f280f5752c4b65a8c24298328c8c18ba702b45c576c906ff2aae7161060cfe"
+    },
+    {
+      "path": "triage-repo.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 11362,
+      "sha256": "e43a4426b81b6ed4aa7b2ed283aab5bca3d7e1a6e2383a8a489547fb6e7966e5"
+    },
+    {
+      "path": "vitest.config.mjs",
+      "class": "legacy-exact-git",
+      "bytes": 251,
+      "sha256": "5ab27744d9ff3795dc2f73eaea175bfad46f251ff1019e705f2f460d5f88a431"
+    }
+  ]
+}

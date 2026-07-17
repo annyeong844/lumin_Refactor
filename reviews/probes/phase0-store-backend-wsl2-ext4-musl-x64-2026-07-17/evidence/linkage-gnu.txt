@@ -1,0 +1,6 @@
+./target/release/lumin-phase0-store-probe: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=95c242ee1c240248dcfb6846d4ddeb578dd83eb1, stripped
+	linux-vdso.so.1 (0x00007fff555fc000)
+	libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007f555ca00000)
+	libm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007f555cd17000)
+	libgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007f555d26d000)
+	/lib64/ld-linux-x86-64.so.2 (0x00007f555d2a5000)

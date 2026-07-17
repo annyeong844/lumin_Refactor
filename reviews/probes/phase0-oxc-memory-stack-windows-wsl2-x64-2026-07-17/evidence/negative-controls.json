@@ -1,0 +1,23 @@
+{
+  "architecture_commit": "65e60216891bb3d826a4778f84cb8aaa377abe92",
+  "cases": [
+    {
+      "id": "raw-report-byte-append",
+      "mutation": "Append one ASCII space to windows/runs/jobs-0001.json without changing the matrix raw-file identity.",
+      "observed_error": "matrix evidence identity mismatch: runs/jobs-0001.json",
+      "observed_exit_code": 1,
+      "result": "PASS_REJECTED"
+    },
+    {
+      "id": "matrix-digest-substitution",
+      "mutation": "Replace the Windows matrix semantic digest with 64 zeroes without changing child reports.",
+      "observed_error": "run report field mismatch: stack-01048576 semantic_digest",
+      "observed_exit_code": 1,
+      "result": "PASS_REJECTED"
+    }
+  ],
+  "corpus_manifest_sha256": "82baf59e6c3708e1f68c36d711bb47cbe081d468f3b554ac93cf7af36a85eb9b",
+  "probe_source_manifest_sha256": "e9b405f9816cbf6d0276b22d4dbb2f4c80b35a2839fb05704541401a11b2a024",
+  "schema": "lumin-phase0-oxc-negative-controls-v1",
+  "status": "PASS"
+}

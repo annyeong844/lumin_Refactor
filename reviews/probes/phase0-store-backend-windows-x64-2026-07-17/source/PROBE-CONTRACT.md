@@ -54,12 +54,22 @@ Each backend must pass all of these cases before its performance numbers are ran
 - process death at all five migration boundaries and rejection of an old-generation
   late writer;
 - state-directory, lifecycle-lock, all four managed-parent, and all four anchor
-  replacement races;
+  replacement races, including run publication and trash moves immediately before
+  physical mutation, after physical mutation, and before canonical commit;
 - lifecycle-lock and anchor content mutation and extra-hard-link races.
 
-Namespace cases capture Windows volume/file identity through no-follow handles. The
-child validates before the injected race and must revalidate to a typed hard-stop
-before writing the test-only canonical-success marker.
+Namespace cases capture stable filesystem/volume and object identity through no-follow
+handles. Mutable link count is a live integrity observation, not part of persistent
+object identity: lifecycle-lock and anchor files must remain one-link objects, while a
+directory's Unix `st_nlink` may legitimately change as child directories are created or
+moved. Every case records one of two noninterchangeable outcomes:
+`injected-and-detected`, where the child revalidates to a typed hard-stop, or
+`kernel-prevented-before-displacement`, where Windows refuses a state/managed-parent
+directory rename while the complete bound handle set is held. Kernel prevention is
+accepted only for the named directory-replacement cases, includes the raw OS error,
+terminates the waiting child, and must leave the canonical store uncommitted. It is
+Windows evidence, not a substitute for an injected-and-detected result on a platform
+that permits displacement.
 
 ## Measurement method
 
@@ -83,9 +93,16 @@ The keyword count is a comparison surface, not a safety audit.
 
 Any correctness invariant failure rejects that backend before performance ranking. A
 harness watchdog expiration is a correctness failure (`Wedged`), not a product timeout
-policy. The Windows x64 result is partial Phase 0 evidence only; it cannot satisfy the
-required Linux/musl, filesystem, package, native-path, OXC, or numeric-budget gates and
-cannot by itself select a production backend.
+policy. Each platform result is partial Phase 0 evidence only. Windows x64 and WSL2
+ext4/musl observations do not replace native Linux filesystem/package evidence and
+cannot satisfy native-path, OXC, or numeric-budget gates or select a production backend
+by themselves.
+
+Each executable embeds the exact probe-source byte hashes used to compile it. The
+packager invokes each measured binary's `identity` command, recomputes that embedded
+source manifest, requires admission/fault/benchmark/current-tree agreement, and binds
+every report to the on-disk SHA-256 and byte length of the measured release binary.
+Runtime source-tree reads are a drift check, not executable provenance.
 
 ## Backend configurations
 

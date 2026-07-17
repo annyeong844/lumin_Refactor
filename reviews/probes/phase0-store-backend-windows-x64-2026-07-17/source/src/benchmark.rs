@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 
 use crate::backend;
 use crate::model::{BackendKind, BenchmarkReport, LatencySummary};
-use crate::util::{source_hashes, unix_millis};
+use crate::util::{executable_identity, source_hashes, source_manifest_sha256, unix_millis};
 
 const ARCHITECTURE_COMMIT: &str = "65e60216891bb3d826a4778f84cb8aaa377abe92";
 const ARCHITECTURE_MANIFEST_SHA256: &str =
@@ -79,7 +79,8 @@ pub fn run_benchmark(
     }
     backend::prepare_for_replace(backend_kind, &database)?;
 
-    let executable = std::env::current_exe()?;
+    let executable = executable_identity()?;
+    let source_files = source_hashes();
     Ok(BenchmarkReport {
         probe_id: "lumin-store-backend-measurement-v1".to_owned(),
         architecture_commit: ARCHITECTURE_COMMIT.to_owned(),
@@ -89,8 +90,9 @@ pub fn run_benchmark(
         host_os: std::env::consts::OS.to_owned(),
         host_arch: std::env::consts::ARCH.to_owned(),
         backend: backend_kind,
-        executable_bytes: fs::metadata(&executable)?.len(),
-        executable,
+        executable: executable.path,
+        executable_bytes: executable.bytes,
+        executable_sha256: executable.sha256,
         command: std::env::args().collect(),
         records,
         record_bytes,
@@ -102,7 +104,8 @@ pub fn run_benchmark(
         durable_admission: summarize(admission_samples)?,
         peak_working_set_bytes: peak_working_set_bytes()?,
         store_bytes: directory_size(&root)?,
-        source_files: source_hashes()?,
+        source_manifest_sha256: source_manifest_sha256(&source_files),
+        source_files,
         status: "PASS".to_owned(),
     })
 }

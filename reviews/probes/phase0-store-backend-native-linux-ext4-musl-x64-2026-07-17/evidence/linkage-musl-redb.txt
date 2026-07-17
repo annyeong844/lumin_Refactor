@@ -1,0 +1,42 @@
+/home/runner/work/lumin_Refactor/lumin_Refactor/reviews/probes/phase0-store-backend-windows-x64-2026-07-17/source/target-measure-musl-redb/x86_64-unknown-linux-musl/release/lumin-phase0-store-probe: ELF 64-bit LSB executable, x86-64, version 1 (SYSV), statically linked, stripped
+	not a dynamic executable
+
+Elf file type is EXEC (Executable file)
+Entry point 0x10823e0
+There are 9 program headers, starting at offset 64
+
+Program Headers:
+  Type           Offset             VirtAddr           PhysAddr
+                 FileSiz            MemSiz              Flags  Align
+  PHDR           0x0000000000000040 0x0000000001000040 0x0000000001000040
+                 0x00000000000001f8 0x00000000000001f8  R      0x8
+  LOAD           0x0000000000000000 0x0000000001000000 0x0000000001000000
+                 0x00000000000813e0 0x00000000000813e0  R      0x1000
+  LOAD           0x00000000000813e0 0x00000000010823e0 0x00000000010823e0
+                 0x000000000017db6f 0x000000000017db6f  R E    0x1000
+  LOAD           0x00000000001fef50 0x0000000001200f50 0x0000000001200f50
+                 0x000000000000b530 0x000000000000c0b0  RW     0x1000
+  LOAD           0x000000000020a480 0x000000000120d480 0x000000000120d480
+                 0x0000000000000af8 0x000000000000a088  RW     0x1000
+  TLS            0x00000000001fef50 0x0000000001200f50 0x0000000001200f50
+                 0x0000000000000020 0x000000000000006c  R      0x8
+  GNU_RELRO      0x00000000001fef50 0x0000000001200f50 0x0000000001200f50
+                 0x000000000000b530 0x000000000000c0b0  R      0x1
+  GNU_EH_FRAME   0x000000000005f5f8 0x000000000105f5f8 0x000000000105f5f8
+                 0x00000000000043a4 0x00000000000043a4  R      0x4
+  GNU_STACK      0x0000000000000000 0x0000000000000000 0x0000000000000000
+                 0x0000000000000000 0x0000000001000000  RW     0x0
+
+ Section to Segment mapping:
+  Segment Sections...
+   00     
+   01     .rodata .gcc_except_table .eh_frame_hdr .eh_frame 
+   02     .text 
+   03     .tdata .data.rel.ro .got .relro_padding 
+   04     .data .bss 
+   05     .tdata .tbss 
+   06     .tdata .data.rel.ro .got .relro_padding 
+   07     .eh_frame_hdr 
+   08     
+
+There is no dynamic section in this file.

@@ -1,0 +1,26 @@
+[package]
+name = "lumin-phase0-oxc-probe"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = "=1.0.103"
+oxc_allocator = "=0.126.0"
+oxc_parser = "=0.126.0"
+oxc_span = "=0.126.0"
+rayon = "=1.11.0"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.150"
+sha2 = "=0.10.9"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = [
+  "Win32_System_ProcessStatus",
+  "Win32_System_Threading",
+] }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+

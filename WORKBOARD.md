@@ -2,7 +2,7 @@
 
 Status: active architecture draft
 
-Revision: 2026-07-16
+Revision: 2026-07-17
 
 ## One-Line Purpose
 
@@ -23,7 +23,7 @@ Lumin is a native repository-audit engine and Codex/Claude Code skill that gives
 
 ## Active Work
 
-Resolve and independently verify every remaining Architecture v1 freeze gate owned by REVIEW-002.
+Bind and independently verify the redb backend-selection amendment, then close the remaining package, public-behavior, provenance, and numeric-budget gates owned by REVIEW-002.
 
 ## Routing Rules
 

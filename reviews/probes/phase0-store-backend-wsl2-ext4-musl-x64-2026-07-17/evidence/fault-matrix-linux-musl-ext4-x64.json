@@ -1,0 +1,1875 @@
+{
+  "probe_id": "lumin-store-publication-retention-migration-fault-v1",
+  "architecture_commit": "65e60216891bb3d826a4778f84cb8aaa377abe92",
+  "architecture_manifest_sha256": "66925583362be22257dd7357072d176cd3f1ae3d4f99874a53f6689b7cf535e0",
+  "started_unix_millis": 1784287248793,
+  "finished_unix_millis": 1784287277243,
+  "host_os": "linux",
+  "host_arch": "x86_64",
+  "executable": "/home/endof/lumin-phase0-store-probe-65e6021-20260717/target-musl-all/x86_64-unknown-linux-musl/release/lumin-phase0-store-probe",
+  "executable_bytes": 3843552,
+  "executable_sha256": "d731f14eddeb4be9cd08952e0afad27cc73e74ba55288d89819747751e09d2e5",
+  "command": [
+    "./target-musl-all/x86_64-unknown-linux-musl/release/lumin-phase0-store-probe",
+    "fault-matrix",
+    "--backend",
+    "all",
+    "--watchdog-ms",
+    "30000",
+    "--output",
+    "evidence-final/fault-matrix-linux-musl-ext4-x64.json"
+  ],
+  "watchdog_millis": 30000,
+  "source_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "ea3301b97716608f8f4367b7cc0cf9637c092dd83fbc47c3b03af1371589db4a"
+    },
+    {
+      "path": "Cargo.lock",
+      "sha256": "f590ca931667e08963ebd63a829e38dc4f826ef54373ee35390acea180acb107"
+    },
+    {
+      "path": "rust-toolchain.toml",
+      "sha256": "0d7b2f6589d3a2d9ea22b782a107ddafc0da08bdca08e3524b0cf4db12c12da9"
+    },
+    {
+      "path": "rustfmt.toml",
+      "sha256": "9699c08443f72fc9220697806f0692708e8e99b1b9eca02836d1ed92cde2b128"
+    },
+    {
+      "path": "README.md",
+      "sha256": "aaff6455fa0c1a263bcd76451db52ae5922997e1bc9657e18b9d5667092db256"
+    },
+    {
+      "path": "PROBE-CONTRACT.md",
+      "sha256": "652ae14d81ff1217bf87b511bce3e4112c3eb976786ee809bd7ddbf64f2a86f3"
+    },
+    {
+      "path": "scripts/collect-build-metrics.ps1",
+      "sha256": "71561d26e89624cad4577784d5f2e5f8e0241ec0c19c019c0a8cb995fb2e04c9"
+    },
+    {
+      "path": "scripts/package-evidence.ps1",
+      "sha256": "8a72ee95e48ac8cba61536171a8342c5d085a2af537c13c9ff26223bcb22936a"
+    },
+    {
+      "path": "src/main.rs",
+      "sha256": "4b070ddb010d8ec81e93c3f9beac19df946b098adb9b53b21f8919185c4cc8a0"
+    },
+    {
+      "path": "src/lifecycle.rs",
+      "sha256": "37c78dd0c479f582988b19094ee54944f64a228abc4d93c4ca1bf9f9a5e2f87b"
+    },
+    {
+      "path": "src/namespace.rs",
+      "sha256": "70688c2124a0627e477528f968a3f2bb961c9f34d64a4eccc55a0b97fcd9c0b0"
+    },
+    {
+      "path": "src/model.rs",
+      "sha256": "dca177565204d261745124fdafa252424936bca2a65ebe9e1787883f693e66c2"
+    },
+    {
+      "path": "src/runner.rs",
+      "sha256": "4fc39eaa4f1786505d17f1b2c7506aab8f8d5447929f7f2f442a7f0bee6de500"
+    },
+    {
+      "path": "src/util.rs",
+      "sha256": "ec26916eeaa12152117d9b0e823d5d757718b23bf059e5ced53b2b80dbcf7f60"
+    },
+    {
+      "path": "src/backend/mod.rs",
+      "sha256": "70000767b86e5a7dc344f5b00f05183d0fb9766fbfcadbf4f8f918a3ab6ea0e6"
+    },
+    {
+      "path": "src/backend_contract.rs",
+      "sha256": "1b7920e00c1f35c40db5eed2e214ced0eb05652ff45c354cdc1c513f6c2fb0dd"
+    },
+    {
+      "path": "src/benchmark.rs",
+      "sha256": "2c3896a8840a1996cc0f70d5fd17e46e02578d6d32f2a19b1f37e7529a8251f5"
+    },
+    {
+      "path": "src/backend/redb_backend.rs",
+      "sha256": "46da5069c58b118d38a6a1f0a69eb45e8aba0d917818459915432acdac620733"
+    },
+    {
+      "path": "src/backend/sqlite_backend.rs",
+      "sha256": "cf906537cb97b437af890178b1034f2eef97f070636effd826566a3331efb34a"
+    }
+  ],
+  "source_manifest_sha256": "30be1edac70bb27f78c626bf7099aee1f825f2a0f59797a72b9acdc781e9725e",
+  "backends": [
+    {
+      "backend": "redb",
+      "status": "PASS",
+      "cases": [
+        {
+          "domain": "backend-contract",
+          "crash_point": "indexed-query",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 1063679,
+          "observation": {
+            "first": "record-00000000",
+            "last": "record-00000999",
+            "page_size": 37,
+            "pages": 28,
+            "records": 1000
+          }
+        },
+        {
+          "domain": "backend-contract",
+          "crash_point": "corruption-visible",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 106918,
+          "observation": {
+            "original_bytes": 1056768,
+            "overwritten_header_bytes": 32,
+            "visible_error": "open redb database /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-redb/backend-contract/corruption-visible/lifecycle.redb: I/O error: invalid data"
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "before-attempt-catalog-allocation",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 129344,
+          "observation": {
+            "attempt_phase": null,
+            "latest_attempt_phase": null,
+            "latest_completed": null,
+            "next_sequence": 1,
+            "orphan_run": false,
+            "run_directory_exists": false
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-catalog-allocation",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 199087,
+          "observation": {
+            "attempt_phase": null,
+            "latest_attempt_phase": null,
+            "latest_completed": null,
+            "next_sequence": 2,
+            "orphan_run": false,
+            "run_directory_exists": false
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-running-envelope",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 305075,
+          "observation": {
+            "attempt_phase": "interrupted",
+            "latest_attempt_phase": "interrupted",
+            "latest_completed": null,
+            "next_sequence": 2,
+            "orphan_run": false,
+            "run_directory_exists": false
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-latest-running",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 345038,
+          "observation": {
+            "attempt_phase": "interrupted",
+            "latest_attempt_phase": "interrupted",
+            "latest_completed": null,
+            "next_sequence": 2,
+            "orphan_run": false,
+            "run_directory_exists": false
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-run-rename",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 270413,
+          "observation": {
+            "attempt_phase": "interrupted",
+            "latest_attempt_phase": "interrupted",
+            "latest_completed": null,
+            "next_sequence": 2,
+            "orphan_run": true,
+            "run_directory_exists": true
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-terminal-attempt",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 368094,
+          "observation": {
+            "attempt_phase": "complete",
+            "latest_attempt_phase": "complete",
+            "latest_completed": 1,
+            "next_sequence": 2,
+            "orphan_run": false,
+            "run_directory_exists": true
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-latest-temp",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 437287,
+          "observation": {
+            "attempt_phase": "complete",
+            "latest_attempt_phase": "complete",
+            "latest_completed": 1,
+            "next_sequence": 2,
+            "orphan_run": false,
+            "run_directory_exists": true
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-latest-replace",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 396196,
+          "observation": {
+            "attempt_phase": "complete",
+            "latest_attempt_phase": "complete",
+            "latest_completed": 1,
+            "next_sequence": 2,
+            "orphan_run": false,
+            "run_directory_exists": true
+          }
+        },
+        {
+          "domain": "publication-concurrency",
+          "crash_point": "reverse-sequence-independent-fields",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 248905,
+          "observation": {
+            "forced_commit_order": [
+              {
+                "actor": "newer-failure",
+                "commit_ordinal": 1,
+                "outcome": "published"
+              },
+              {
+                "actor": "older-success",
+                "commit_ordinal": 2,
+                "outcome": "published"
+              }
+            ],
+            "latest": {
+              "latest_attempt": {
+                "phase": "interrupted",
+                "run_id": null,
+                "sequence": 11
+              },
+              "latest_completed": 10
+            },
+            "second_actor_observed_lock_contention": true
+          }
+        },
+        {
+          "domain": "publication-concurrency",
+          "crash_point": "same-sequence-terminal-beats-running",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 264513,
+          "observation": {
+            "forced_commit_order": [
+              {
+                "actor": "terminal",
+                "commit_ordinal": 1,
+                "outcome": "published"
+              },
+              {
+                "actor": "running",
+                "commit_ordinal": 2,
+                "outcome": "published"
+              }
+            ],
+            "latest": {
+              "latest_attempt": {
+                "phase": "complete",
+                "run_id": "run-10",
+                "sequence": 10
+              },
+              "latest_completed": 10
+            },
+            "second_actor_observed_lock_contention": true
+          }
+        },
+        {
+          "domain": "publication-retention-race",
+          "crash_point": "publication-first-makes-retention-stale",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 344175,
+          "observation": {
+            "latest": {
+              "latest_attempt": {
+                "phase": "complete",
+                "run_id": "run-10",
+                "sequence": 10
+              },
+              "latest_completed": 10
+            },
+            "loser": {
+              "outcome": "stale_latest_target",
+              "role": "retention"
+            },
+            "record_state": "active",
+            "retention_plan": "prepared",
+            "winner": {
+              "outcome": "published",
+              "role": "publication"
+            }
+          }
+        },
+        {
+          "domain": "publication-retention-race",
+          "crash_point": "retention-first-blocks-publication",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 341102,
+          "observation": {
+            "latest": {
+              "latest_attempt": null,
+              "latest_completed": null
+            },
+            "loser": {
+              "outcome": "retention_blocked",
+              "role": "publication"
+            },
+            "record_state": "pruning",
+            "retention_plan": "pruning",
+            "winner": {
+              "outcome": "entered_pruning",
+              "role": "retention"
+            }
+          }
+        },
+        {
+          "domain": "retention",
+          "crash_point": "before-prepared-plan",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 230808,
+          "observation": {
+            "canonical_payload_exists": true,
+            "plan_state": null,
+            "record_state": "active",
+            "trash_payload_exists": false
+          }
+        },
+        {
+          "domain": "retention",
+          "crash_point": "after-prepared-plan",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 285845,
+          "observation": {
+            "canonical_payload_exists": true,
+            "plan_state": "prepared",
+            "record_state": "active",
+            "trash_payload_exists": false
+          }
+        },
+        {
+          "domain": "retention",
+          "crash_point": "after-pruning-commit",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 338403,
+          "observation": {
+            "canonical_payload_exists": false,
+            "plan_state": "pruned",
+            "record_state": "pruned",
+            "trash_payload_exists": true
+          }
+        },
+        {
+          "domain": "retention",
+          "crash_point": "after-payload-move",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 388510,
+          "observation": {
+            "canonical_payload_exists": false,
+            "plan_state": "pruned",
+            "record_state": "pruned",
+            "trash_payload_exists": true
+          }
+        },
+        {
+          "domain": "retention",
+          "crash_point": "after-pruned-commit",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 402875,
+          "observation": {
+            "canonical_payload_exists": false,
+            "plan_state": "pruned",
+            "record_state": "pruned",
+            "trash_payload_exists": false
+          }
+        },
+        {
+          "domain": "retention",
+          "crash_point": "after-physical-reclamation",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 311350,
+          "observation": {
+            "canonical_payload_exists": false,
+            "plan_state": "pruned",
+            "record_state": "pruned",
+            "trash_payload_exists": false
+          }
+        },
+        {
+          "domain": "retention-integrity",
+          "crash_point": "both-canonical-and-trash",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 246962,
+          "observation": {
+            "diagnostic": "retention item has both-or-neither canonical/trash identity",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "retention-integrity",
+          "crash_point": "neither-canonical-nor-trash",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 280531,
+          "observation": {
+            "diagnostic": "retention item has both-or-neither canonical/trash identity",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "migration",
+          "crash_point": "before-migration-intent",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 220149,
+          "observation": {
+            "generation": 1,
+            "intent_exists": false,
+            "replacement_exists": false,
+            "stale_writer": null
+          }
+        },
+        {
+          "domain": "migration",
+          "crash_point": "after-migration-intent",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 492888,
+          "observation": {
+            "generation": 2,
+            "intent_exists": false,
+            "replacement_exists": false,
+            "stale_writer": null
+          }
+        },
+        {
+          "domain": "migration",
+          "crash_point": "after-validated-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 424058,
+          "observation": {
+            "generation": 2,
+            "intent_exists": false,
+            "replacement_exists": false,
+            "stale_writer": null
+          }
+        },
+        {
+          "domain": "migration",
+          "crash_point": "after-canonical-replace",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 376646,
+          "observation": {
+            "generation": 2,
+            "intent_exists": false,
+            "replacement_exists": false,
+            "stale_writer": null
+          }
+        },
+        {
+          "domain": "migration",
+          "crash_point": "after-intent-removal",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 513871,
+          "observation": {
+            "generation": 2,
+            "intent_exists": false,
+            "replacement_exists": false,
+            "stale_writer": null
+          }
+        },
+        {
+          "domain": "migration",
+          "crash_point": "stale-generation-writer",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 539763,
+          "observation": {
+            "generation": 2,
+            "intent_exists": false,
+            "replacement_exists": false,
+            "stale_writer": {
+              "logical_catalog_preserved": true,
+              "mutation_attempted": false,
+              "observed_generation": 2,
+              "outcome": "generation_changed",
+              "process_id": 1578916,
+              "token_generation": 1,
+              "transaction_closed_before_analysis": true
+            }
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "state-directory-copy-swap",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 350526,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-redb/namespace/state-directory-copy-swap/.lumin",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "lifecycle-lock-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 500263,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-redb/namespace/lifecycle-lock-replacement/.lumin/lifecycle.lock",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "lifecycle-lock-content-mutation",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 364449,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-redb/namespace/lifecycle-lock-content-mutation/.lumin/lifecycle.lock",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "lifecycle-lock-extra-link",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 270917,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "lifecycle lock has extra links",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "attempts-parent-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 315674,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed parent attempts: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-redb/namespace/attempts-parent-replacement/.lumin/attempts",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "runs-parent-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 271592,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed parent runs: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-redb/namespace/runs-parent-replacement/.lumin/runs",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "trash-parent-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 332089,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed parent trash: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-redb/namespace/trash-parent-replacement/.lumin/trash",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "cache-parent-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 289232,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed parent cache: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-redb/namespace/cache-parent-replacement/.lumin/cache",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "attempts-anchor-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 290343,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed-parent anchor attempts: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-redb/namespace/attempts-anchor-replacement/.lumin/attempts/namespace.anchor",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "runs-anchor-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 344453,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed-parent anchor runs: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-redb/namespace/runs-anchor-replacement/.lumin/runs/namespace.anchor",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "trash-anchor-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 515721,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed-parent anchor trash: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-redb/namespace/trash-anchor-replacement/.lumin/trash/namespace.anchor",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "cache-anchor-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 578007,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed-parent anchor cache: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-redb/namespace/cache-anchor-replacement/.lumin/cache/namespace.anchor",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "runs-anchor-content-mutation",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 587450,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "parse held managed-parent anchor runs: expected value at line 1 column 1",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "runs-anchor-extra-link",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 496064,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "managed parent runs anchor has extra links",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "runs-parent-replacement-after-run-rename",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 502047,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "after-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "after-mutation",
+              "diagnostic": "verify held managed parent runs: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-redb/namespace/runs-parent-replacement-after-run-rename/.lumin/runs",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": true
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "runs-parent-replacement-before-final-commit",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 341385,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-commit",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-commit",
+              "diagnostic": "verify held managed parent runs: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-redb/namespace/runs-parent-replacement-before-final-commit/.lumin/runs",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": true
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "trash-parent-replacement-before-trash-move",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 403290,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed parent trash: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-redb/namespace/trash-parent-replacement-before-trash-move/.lumin/trash",
+              "hard_stop": true,
+              "operation": "trash-move",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "trash-move",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "trash-parent-replacement-after-trash-move",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 290723,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "after-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "after-mutation",
+              "diagnostic": "verify held managed parent trash: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-redb/namespace/trash-parent-replacement-after-trash-move/.lumin/trash",
+              "hard_stop": true,
+              "operation": "trash-move",
+              "physical_mutation_performed": true
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "trash-move",
+            "physical_mutation_performed": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "trash-parent-replacement-before-final-commit",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 343096,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-commit",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-commit",
+              "diagnostic": "verify held managed parent trash: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-redb/namespace/trash-parent-replacement-before-final-commit/.lumin/trash",
+              "hard_stop": true,
+              "operation": "trash-move",
+              "physical_mutation_performed": true
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "trash-move",
+            "physical_mutation_performed": true
+          }
+        }
+      ]
+    },
+    {
+      "backend": "sqlite",
+      "status": "PASS",
+      "cases": [
+        {
+          "domain": "backend-contract",
+          "crash_point": "indexed-query",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 183099,
+          "observation": {
+            "first": "record-00000000",
+            "last": "record-00000999",
+            "page_size": 37,
+            "pages": 28,
+            "records": 1000
+          }
+        },
+        {
+          "domain": "backend-contract",
+          "crash_point": "corruption-visible",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 107428,
+          "observation": {
+            "original_bytes": 16384,
+            "overwritten_header_bytes": 32,
+            "visible_error": "file is not a database: Error code 26: file is not a database"
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "before-attempt-catalog-allocation",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 162842,
+          "observation": {
+            "attempt_phase": null,
+            "latest_attempt_phase": null,
+            "latest_completed": null,
+            "next_sequence": 1,
+            "orphan_run": false,
+            "run_directory_exists": false
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-catalog-allocation",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 195508,
+          "observation": {
+            "attempt_phase": null,
+            "latest_attempt_phase": null,
+            "latest_completed": null,
+            "next_sequence": 2,
+            "orphan_run": false,
+            "run_directory_exists": false
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-running-envelope",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 254591,
+          "observation": {
+            "attempt_phase": "interrupted",
+            "latest_attempt_phase": "interrupted",
+            "latest_completed": null,
+            "next_sequence": 2,
+            "orphan_run": false,
+            "run_directory_exists": false
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-latest-running",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 326091,
+          "observation": {
+            "attempt_phase": "interrupted",
+            "latest_attempt_phase": "interrupted",
+            "latest_completed": null,
+            "next_sequence": 2,
+            "orphan_run": false,
+            "run_directory_exists": false
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-run-rename",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 603586,
+          "observation": {
+            "attempt_phase": "interrupted",
+            "latest_attempt_phase": "interrupted",
+            "latest_completed": null,
+            "next_sequence": 2,
+            "orphan_run": true,
+            "run_directory_exists": true
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-terminal-attempt",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 557935,
+          "observation": {
+            "attempt_phase": "complete",
+            "latest_attempt_phase": "complete",
+            "latest_completed": 1,
+            "next_sequence": 2,
+            "orphan_run": false,
+            "run_directory_exists": true
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-latest-temp",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 476390,
+          "observation": {
+            "attempt_phase": "complete",
+            "latest_attempt_phase": "complete",
+            "latest_completed": 1,
+            "next_sequence": 2,
+            "orphan_run": false,
+            "run_directory_exists": true
+          }
+        },
+        {
+          "domain": "publication",
+          "crash_point": "after-latest-replace",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 270010,
+          "observation": {
+            "attempt_phase": "complete",
+            "latest_attempt_phase": "complete",
+            "latest_completed": 1,
+            "next_sequence": 2,
+            "orphan_run": false,
+            "run_directory_exists": true
+          }
+        },
+        {
+          "domain": "publication-concurrency",
+          "crash_point": "reverse-sequence-independent-fields",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 345481,
+          "observation": {
+            "forced_commit_order": [
+              {
+                "actor": "newer-failure",
+                "commit_ordinal": 1,
+                "outcome": "published"
+              },
+              {
+                "actor": "older-success",
+                "commit_ordinal": 2,
+                "outcome": "published"
+              }
+            ],
+            "latest": {
+              "latest_attempt": {
+                "phase": "interrupted",
+                "run_id": null,
+                "sequence": 11
+              },
+              "latest_completed": 10
+            },
+            "second_actor_observed_lock_contention": true
+          }
+        },
+        {
+          "domain": "publication-concurrency",
+          "crash_point": "same-sequence-terminal-beats-running",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 329399,
+          "observation": {
+            "forced_commit_order": [
+              {
+                "actor": "terminal",
+                "commit_ordinal": 1,
+                "outcome": "published"
+              },
+              {
+                "actor": "running",
+                "commit_ordinal": 2,
+                "outcome": "published"
+              }
+            ],
+            "latest": {
+              "latest_attempt": {
+                "phase": "complete",
+                "run_id": "run-10",
+                "sequence": 10
+              },
+              "latest_completed": 10
+            },
+            "second_actor_observed_lock_contention": true
+          }
+        },
+        {
+          "domain": "publication-retention-race",
+          "crash_point": "publication-first-makes-retention-stale",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 186919,
+          "observation": {
+            "latest": {
+              "latest_attempt": {
+                "phase": "complete",
+                "run_id": "run-10",
+                "sequence": 10
+              },
+              "latest_completed": 10
+            },
+            "loser": {
+              "outcome": "stale_latest_target",
+              "role": "retention"
+            },
+            "record_state": "active",
+            "retention_plan": "prepared",
+            "winner": {
+              "outcome": "published",
+              "role": "publication"
+            }
+          }
+        },
+        {
+          "domain": "publication-retention-race",
+          "crash_point": "retention-first-blocks-publication",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 215288,
+          "observation": {
+            "latest": {
+              "latest_attempt": null,
+              "latest_completed": null
+            },
+            "loser": {
+              "outcome": "retention_blocked",
+              "role": "publication"
+            },
+            "record_state": "pruning",
+            "retention_plan": "pruning",
+            "winner": {
+              "outcome": "entered_pruning",
+              "role": "retention"
+            }
+          }
+        },
+        {
+          "domain": "retention",
+          "crash_point": "before-prepared-plan",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 133251,
+          "observation": {
+            "canonical_payload_exists": true,
+            "plan_state": null,
+            "record_state": "active",
+            "trash_payload_exists": false
+          }
+        },
+        {
+          "domain": "retention",
+          "crash_point": "after-prepared-plan",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 149578,
+          "observation": {
+            "canonical_payload_exists": true,
+            "plan_state": "prepared",
+            "record_state": "active",
+            "trash_payload_exists": false
+          }
+        },
+        {
+          "domain": "retention",
+          "crash_point": "after-pruning-commit",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 252218,
+          "observation": {
+            "canonical_payload_exists": false,
+            "plan_state": "pruned",
+            "record_state": "pruned",
+            "trash_payload_exists": true
+          }
+        },
+        {
+          "domain": "retention",
+          "crash_point": "after-payload-move",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 233114,
+          "observation": {
+            "canonical_payload_exists": false,
+            "plan_state": "pruned",
+            "record_state": "pruned",
+            "trash_payload_exists": true
+          }
+        },
+        {
+          "domain": "retention",
+          "crash_point": "after-pruned-commit",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 269143,
+          "observation": {
+            "canonical_payload_exists": false,
+            "plan_state": "pruned",
+            "record_state": "pruned",
+            "trash_payload_exists": false
+          }
+        },
+        {
+          "domain": "retention",
+          "crash_point": "after-physical-reclamation",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 205023,
+          "observation": {
+            "canonical_payload_exists": false,
+            "plan_state": "pruned",
+            "record_state": "pruned",
+            "trash_payload_exists": false
+          }
+        },
+        {
+          "domain": "retention-integrity",
+          "crash_point": "both-canonical-and-trash",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 162541,
+          "observation": {
+            "diagnostic": "retention item has both-or-neither canonical/trash identity",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "retention-integrity",
+          "crash_point": "neither-canonical-nor-trash",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 173921,
+          "observation": {
+            "diagnostic": "retention item has both-or-neither canonical/trash identity",
+            "hard_stop": true
+          }
+        },
+        {
+          "domain": "migration",
+          "crash_point": "before-migration-intent",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 99000,
+          "observation": {
+            "generation": 1,
+            "intent_exists": false,
+            "replacement_exists": false,
+            "stale_writer": null
+          }
+        },
+        {
+          "domain": "migration",
+          "crash_point": "after-migration-intent",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 305661,
+          "observation": {
+            "generation": 2,
+            "intent_exists": false,
+            "replacement_exists": false,
+            "stale_writer": null
+          }
+        },
+        {
+          "domain": "migration",
+          "crash_point": "after-validated-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 305028,
+          "observation": {
+            "generation": 2,
+            "intent_exists": false,
+            "replacement_exists": false,
+            "stale_writer": null
+          }
+        },
+        {
+          "domain": "migration",
+          "crash_point": "after-canonical-replace",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 231387,
+          "observation": {
+            "generation": 2,
+            "intent_exists": false,
+            "replacement_exists": false,
+            "stale_writer": null
+          }
+        },
+        {
+          "domain": "migration",
+          "crash_point": "after-intent-removal",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 418421,
+          "observation": {
+            "generation": 2,
+            "intent_exists": false,
+            "replacement_exists": false,
+            "stale_writer": null
+          }
+        },
+        {
+          "domain": "migration",
+          "crash_point": "stale-generation-writer",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 401050,
+          "observation": {
+            "generation": 2,
+            "intent_exists": false,
+            "replacement_exists": false,
+            "stale_writer": {
+              "logical_catalog_preserved": true,
+              "mutation_attempted": false,
+              "observed_generation": 2,
+              "outcome": "generation_changed",
+              "process_id": 1579353,
+              "token_generation": 1,
+              "transaction_closed_before_analysis": true
+            }
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "state-directory-copy-swap",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 415560,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-sqlite/namespace/state-directory-copy-swap/.lumin",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "lifecycle-lock-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 276918,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-sqlite/namespace/lifecycle-lock-replacement/.lumin/lifecycle.lock",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "lifecycle-lock-content-mutation",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 255814,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-sqlite/namespace/lifecycle-lock-content-mutation/.lumin/lifecycle.lock",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "lifecycle-lock-extra-link",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 290427,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "lifecycle lock has extra links",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "attempts-parent-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 230911,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed parent attempts: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-sqlite/namespace/attempts-parent-replacement/.lumin/attempts",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "runs-parent-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 258266,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed parent runs: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-sqlite/namespace/runs-parent-replacement/.lumin/runs",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "trash-parent-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 198029,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed parent trash: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-sqlite/namespace/trash-parent-replacement/.lumin/trash",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "cache-parent-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 222658,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed parent cache: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-sqlite/namespace/cache-parent-replacement/.lumin/cache",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "attempts-anchor-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 212665,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed-parent anchor attempts: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-sqlite/namespace/attempts-anchor-replacement/.lumin/attempts/namespace.anchor",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "runs-anchor-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 290511,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed-parent anchor runs: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-sqlite/namespace/runs-anchor-replacement/.lumin/runs/namespace.anchor",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "trash-anchor-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 195040,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed-parent anchor trash: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-sqlite/namespace/trash-anchor-replacement/.lumin/trash/namespace.anchor",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "cache-anchor-replacement",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 213806,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed-parent anchor cache: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-sqlite/namespace/cache-anchor-replacement/.lumin/cache/namespace.anchor",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "runs-anchor-content-mutation",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 231833,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "parse held managed-parent anchor runs: expected value at line 1 column 1",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "runs-anchor-extra-link",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 207177,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "managed parent runs anchor has extra links",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "runs-parent-replacement-after-run-rename",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 276129,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "after-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "after-mutation",
+              "diagnostic": "verify held managed parent runs: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-sqlite/namespace/runs-parent-replacement-after-run-rename/.lumin/runs",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": true
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "runs-parent-replacement-before-final-commit",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 255358,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-commit",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-commit",
+              "diagnostic": "verify held managed parent runs: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-sqlite/namespace/runs-parent-replacement-before-final-commit/.lumin/runs",
+              "hard_stop": true,
+              "operation": "run-publish",
+              "physical_mutation_performed": true
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "run-publish",
+            "physical_mutation_performed": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "trash-parent-replacement-before-trash-move",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 298340,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-mutation",
+              "diagnostic": "verify held managed parent trash: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-sqlite/namespace/trash-parent-replacement-before-trash-move/.lumin/trash",
+              "hard_stop": true,
+              "operation": "trash-move",
+              "physical_mutation_performed": false
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "trash-move",
+            "physical_mutation_performed": false
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "trash-parent-replacement-after-trash-move",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 302447,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "after-mutation",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "after-mutation",
+              "diagnostic": "verify held managed parent trash: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-sqlite/namespace/trash-parent-replacement-after-trash-move/.lumin/trash",
+              "hard_stop": true,
+              "operation": "trash-move",
+              "physical_mutation_performed": true
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "trash-move",
+            "physical_mutation_performed": true
+          }
+        },
+        {
+          "domain": "namespace",
+          "crash_point": "trash-parent-replacement-before-final-commit",
+          "status": "PASS",
+          "error": null,
+          "elapsed_micros": 588829,
+          "observation": {
+            "canonical_commit_written": false,
+            "checkpoint": "before-commit",
+            "child_result": {
+              "canonical_commit_written": false,
+              "checkpoint": "before-commit",
+              "diagnostic": "verify held managed parent trash: state entry no longer names held object: /home/endof/lumin-phase0-store-probe-65e6021-20260717/work/fault-sqlite/namespace/trash-parent-replacement-before-final-commit/.lumin/trash",
+              "hard_stop": true,
+              "operation": "trash-move",
+              "physical_mutation_performed": true
+            },
+            "injection_error": null,
+            "injection_outcome": "injected-and-detected",
+            "operation": "trash-move",
+            "physical_mutation_performed": true
+          }
+        }
+      ]
+    }
+  ],
+  "overall_status": "PASS"
+}

@@ -1,0 +1,93 @@
+{
+  "schema": "lumin-phase0-store-backend-selection-v1",
+  "status": "PASS",
+  "decision_date": "2026-07-17",
+  "architecture_commit": "65e60216891bb3d826a4778f84cb8aaa377abe92",
+  "architecture_manifest_sha256": "66925583362be22257dd7357072d176cd3f1ae3d4f99874a53f6689b7cf535e0",
+  "probe_source_manifest_sha256": "30be1edac70bb27f78c626bf7099aee1f825f2a0f59797a72b9acdc781e9725e",
+  "selected_backend": {
+    "crate": "redb",
+    "version": "4.1.0",
+    "configuration": "one transaction-scoped database handle per repository-lock transaction with durable commits"
+  },
+  "rejected_production_backend": {
+    "crate": "rusqlite",
+    "version": "0.39.0",
+    "sqlite": "bundled",
+    "reason": "Correctness tied, but the write-gate critical path and distribution surface favor redb. SQLite remains probe-only evidence and is not a runtime fallback."
+  },
+  "evidence": [
+    {
+      "scope": "windows-x64-ntfs",
+      "evidence_manifest_sha256": "6d404cfc4b25ed581a9f021fc6248c6e7a94c2fdc38b668872c009c0f747ef2d",
+      "summary_sha256": "6623d3425294bcf8d5949348dd660a9fa9762d7808a453cb0f1b60df9ea385b3"
+    },
+    {
+      "scope": "wsl2-ext4-gnu-musl-x64",
+      "evidence_manifest_sha256": "c65a9224bfd03482ea947661c70edc7168d1662a18eb1a0447604fa58f807b3e",
+      "summary_sha256": "f12f91a02c3f15f2525b476c330839351054d23fe52176c91fc9adf28d9ff81f"
+    },
+    {
+      "scope": "native-linux-ext4-gnu-musl-x64",
+      "evidence_manifest_sha256": "0544d252540e14b8f9392d8a83a37209748af0995d6dd2240397ec4941e75046",
+      "summary_sha256": "49c3a4f7bc7191ee85ae2f3ce15bec35f4bf48a17619f7574598794dd951e5a9",
+      "github_run_id": "29584914108",
+      "github_runner_commit": "0b5988c8176c73e9d6d8936cbcc90eebcac3c2a5",
+      "github_artifact_sha256": "9ffc3fd385c1d6b8af748eda20c26f623f4a18420a3e9a540cb91b6f0f7706e4"
+    }
+  ],
+  "correctness": {
+    "candidate_failures": 0,
+    "admission_contention_rounds": 640,
+    "forced_admission_death_cases": 20,
+    "backend_fault_cases": 470,
+    "namespace_cases": 190,
+    "namespace_injected_and_detected": 170,
+    "namespace_kernel_prevented_before_displacement": 20
+  },
+  "comparison": {
+    "durable_admission_p50_winner": {
+      "backend": "redb",
+      "scopes_won": 5,
+      "scopes_measured": 5
+    },
+    "release_binary_winner": {
+      "backend": "redb",
+      "scopes_won": 5,
+      "scopes_measured": 5,
+      "observed_byte_advantage_min": 913408,
+      "observed_byte_advantage_max": 1299776
+    },
+    "dependency_surface": {
+      "backend": "redb",
+      "observed_transitive_package_advantage": "12 to 13 fewer packages",
+      "bundled_native_source_bytes": 0
+    },
+    "bounded_query_p50": {
+      "redb_scopes_won": 1,
+      "sqlite_scopes_won": 4
+    },
+    "peak_rss": {
+      "redb_scopes_won": 0,
+      "sqlite_scopes_won": 5
+    },
+    "store_bytes": {
+      "redb": 8425472,
+      "sqlite": 3182592
+    }
+  },
+  "rationale": [
+    "Both candidates passed every frozen correctness oracle, so performance and delivery surfaces may be ranked.",
+    "Durable mutation is the write-gate critical path; redb won its p50 comparison in every measured target and mode.",
+    "redb preserves the one-native-Rust-engine delivery shape with smaller binaries, fewer transitive packages, and no bundled C source.",
+    "SQLite's faster Linux bounded queries, lower peak RSS, and smaller store remain explicit tradeoffs rather than being hidden.",
+    "Production ships only redb 4.1.0. There is no dual backend, migration target choice, or runtime fallback."
+  ],
+  "remaining_phase0_gates": [
+    "Windows/Linux package, native path/root, and packaged skill evidence",
+    "public process-reopen, operation-recovery, pagination, cold/warm, and jobs determinism evidence",
+    "clean pinned-upstream provenance reproduction",
+    "approved numeric Phase 1 time, RSS, and binary-size budgets",
+    "exact Git binding and independent review of the backend-selection architecture amendment"
+  ]
+}

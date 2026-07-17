@@ -164,6 +164,8 @@ Correctness probes inject process death at every row of the publication, retenti
 
 The first failing correctness requirement rejects a candidate before performance ranking. Architecture v1 records one accepted backend and rationale; production does not ship dual backends or a runtime fallback.
 
+The 2026-07-17 selection gate passed for exact `redb 4.1.0` and bundled SQLite through exact `rusqlite 0.39.0`. Both candidates passed the frozen Windows x64/NTFS, WSL2 ext4 GNU/musl, and native non-WSL Linux ext4 GNU/musl correctness matrices. Architecture v1 selects exact `redb 4.1.0` as the sole production backend. Across the five measured target/mode comparisons, redb won every durable-admission p50 and release-binary comparison, used 12-13 fewer transitive packages, and bundled no native C source. SQLite won four bounded-query p50 comparisons, every peak-RSS comparison, and store size; those costs remain inputs to numeric-budget approval rather than being hidden. The exact evidence bindings, contrary metrics, and rationale are recorded in [`phase0-store-backend-selection-2026-07-17`](../reviews/probes/phase0-store-backend-selection-2026-07-17/). Bundled SQLite remains probe-only evidence and is not a product dependency, migration target, selector option, or runtime fallback.
+
 ## 3. Canonical Evidence Model
 
 ```text

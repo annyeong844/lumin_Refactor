@@ -14,7 +14,8 @@ use crate::backend_contract;
 use crate::model::{BackendKind, FaultBackendReport, FaultCaseResult};
 use crate::namespace;
 use crate::util::{
-    atomic_replace_file, create_durable_marker, wait_for_path, wait_forever, write_json_durable,
+    atomic_replace_file, copy_directory, create_durable_marker, wait_for_path, wait_forever,
+    write_json_durable,
 };
 
 const ATTEMPT_SEQUENCE: u64 = 1;
@@ -154,7 +155,7 @@ struct MigrationObservation {
     generation: u64,
     intent_exists: bool,
     replacement_exists: bool,
-    stale_compare_exchange_rejected: Option<bool>,
+    stale_writer: Option<StaleWriterResult>,
 }
 
 pub struct LatestPublishRequest {
@@ -164,9 +165,42 @@ pub struct LatestPublishRequest {
     pub phase: String,
     pub barrier: PathBuf,
     pub actor: String,
-    pub delay: Duration,
+    pub hold_guard: bool,
     pub result: PathBuf,
     pub watchdog: Duration,
+}
+
+pub struct StaleWriterRequest {
+    pub backend: BackendKind,
+    pub root: PathBuf,
+    pub ready: PathBuf,
+    pub resume: PathBuf,
+    pub result: PathBuf,
+    pub watchdog: Duration,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum StaleWriterOutcome {
+    GenerationChanged,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct StaleWriterResult {
+    process_id: u32,
+    token_generation: u64,
+    observed_generation: u64,
+    transaction_closed_before_analysis: bool,
+    logical_catalog_preserved: bool,
+    mutation_attempted: bool,
+    outcome: StaleWriterOutcome,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+struct LatestPublishResult {
+    actor: String,
+    commit_ordinal: usize,
+    outcome: String,
 }
 
 pub struct PublicationRetentionRequest {
@@ -185,8 +219,24 @@ pub fn run_fault_backend(
     work_root: &Path,
 ) -> FaultBackendReport {
     let backend_root = work_root.join(format!("fault-{backend_kind}"));
-    if backend_root.exists() {
-        let _ = fs::remove_dir_all(&backend_root);
+    if backend_root.exists()
+        && let Err(error) = fs::remove_dir_all(&backend_root)
+    {
+        return FaultBackendReport {
+            backend: backend_kind,
+            status: "FAIL".to_owned(),
+            cases: vec![FaultCaseResult {
+                domain: "harness".to_owned(),
+                crash_point: "clean-work-root".to_owned(),
+                status: "FAIL".to_owned(),
+                error: Some(format!(
+                    "remove previous fault root {}: {error}",
+                    backend_root.display()
+                )),
+                elapsed_micros: 0,
+                observation: serde_json::Value::Null,
+            }],
+        };
     }
     let mut cases = Vec::new();
     cases.extend(backend_contract::run_backend_contract_cases(
@@ -234,7 +284,7 @@ pub fn run_fault_backend(
         }));
     }
     cases.push(capture_case("migration", "stale-generation-writer", || {
-        run_stale_writer_case(backend_kind, &backend_root)
+        run_stale_writer_case(backend_kind, watchdog, &backend_root)
     }));
     cases.extend(namespace::run_namespace_cases(
         backend_kind,
@@ -399,6 +449,44 @@ pub fn run_migration_child(
     Ok(())
 }
 
+pub fn run_stale_writer_child(request: StaleWriterRequest) -> Result<()> {
+    let token_catalog = {
+        let _guard = acquire_catalog_read_guard(&request.root)?;
+        read_catalog(request.backend, &request.root)?
+    };
+    let token_generation = token_catalog.generation;
+    create_durable_marker(&request.ready, b"generation-token-captured\n")?;
+    wait_for_path(&request.resume, request.watchdog)?;
+
+    let current_catalog = {
+        let _guard = acquire_catalog_read_guard(&request.root)?;
+        read_catalog(request.backend, &request.root)?
+    };
+    ensure!(
+        current_catalog.generation != token_generation,
+        "migration did not advance the generation"
+    );
+    let mut expected_logical_catalog = token_catalog;
+    expected_logical_catalog.generation = current_catalog.generation;
+    let logical_catalog_preserved = expected_logical_catalog == current_catalog;
+    ensure!(
+        logical_catalog_preserved,
+        "migration changed the logical catalog while fencing the stale token"
+    );
+    write_json_durable(
+        &request.result,
+        &StaleWriterResult {
+            process_id: std::process::id(),
+            token_generation,
+            observed_generation: current_catalog.generation,
+            transaction_closed_before_analysis: true,
+            logical_catalog_preserved,
+            mutation_attempted: false,
+            outcome: StaleWriterOutcome::GenerationChanged,
+        },
+    )
+}
+
 pub fn run_latest_publish_child(request: LatestPublishRequest) -> Result<()> {
     let phase = match request.phase.as_str() {
         "running" => AttemptPhase::Running,
@@ -410,9 +498,40 @@ pub fn run_latest_publish_child(request: LatestPublishRequest) -> Result<()> {
         &request.barrier.join(format!("{}.ready", request.actor)),
         b"ready\n",
     )?;
-    wait_for_path(&request.barrier.join("go"), request.watchdog)?;
-    thread::sleep(request.delay);
-    merge_latest(
+    wait_for_path(
+        &request.barrier.join(format!("{}.start", request.actor)),
+        request.watchdog,
+    )?;
+    create_durable_marker(
+        &request
+            .barrier
+            .join(format!("{}.lock-attempted", request.actor)),
+        b"lock-attempted\n",
+    )?;
+    let _guard = if request.hold_guard {
+        acquire_catalog_guard(&request.root)?
+    } else {
+        acquire_catalog_guard_after_contention(
+            &request.root,
+            &request
+                .barrier
+                .join(format!("{}.lock-blocked", request.actor)),
+            request.watchdog,
+        )?
+    };
+    create_durable_marker(
+        &request
+            .barrier
+            .join(format!("{}.guard-acquired", request.actor)),
+        b"guard-acquired\n",
+    )?;
+    if request.hold_guard {
+        wait_for_path(
+            &request.barrier.join(format!("{}.release", request.actor)),
+            request.watchdog,
+        )?;
+    }
+    let outcome = publish_latest_guarded(
         request.backend,
         &request.root,
         AttemptEnvelope {
@@ -421,13 +540,15 @@ pub fn run_latest_publish_child(request: LatestPublishRequest) -> Result<()> {
             run_id: (phase == AttemptPhase::Complete).then(|| format!("run-{}", request.sequence)),
         },
     )?;
+    ensure!(outcome == "published");
+    let commit_ordinal = record_latest_commit(&request.root, &request.actor)?;
     write_json_durable(
         &request.result,
-        &serde_json::json!({
-            "actor":request.actor,
-            "sequence":request.sequence,
-            "phase":phase
-        }),
+        &LatestPublishResult {
+            actor: request.actor,
+            commit_ordinal,
+            outcome: outcome.to_owned(),
+        },
     )
 }
 
@@ -525,17 +646,17 @@ fn run_latest_concurrency_case(
 
     let actors = if same_sequence {
         [
-            ("terminal", 10_u64, "complete", 0_u64),
-            ("running", 10_u64, "running", 30_u64),
+            ("terminal", 10_u64, "complete", true),
+            ("running", 10_u64, "running", false),
         ]
     } else {
         [
-            ("newer-failure", 11_u64, "interrupted", 0_u64),
-            ("older-success", 10_u64, "complete", 30_u64),
+            ("newer-failure", 11_u64, "interrupted", true),
+            ("older-success", 10_u64, "complete", false),
         ]
     };
     let mut children = Vec::new();
-    for (actor, sequence, phase, delay) in actors {
+    for (actor, sequence, phase, hold_guard) in actors {
         children.push(
             Command::new(env::current_exe()?)
                 .arg("child-latest-publish")
@@ -551,8 +672,8 @@ fn run_latest_concurrency_case(
                 .arg(&barrier)
                 .arg("--actor")
                 .arg(actor)
-                .arg("--delay-ms")
-                .arg(delay.to_string())
+                .arg("--hold-guard")
+                .arg(hold_guard.to_string())
                 .arg("--result")
                 .arg(root.join(format!("{actor}.json")))
                 .arg("--watchdog-ms")
@@ -563,10 +684,42 @@ fn run_latest_concurrency_case(
     for (actor, _, _, _) in actors {
         wait_for_path(&barrier.join(format!("{actor}.ready")), watchdog)?;
     }
-    create_durable_marker(&barrier.join("go"), b"go\n")?;
+    let first_actor = actors[0].0;
+    let second_actor = actors[1].0;
+    create_durable_marker(&barrier.join(format!("{first_actor}.start")), b"start\n")?;
+    wait_for_path(
+        &barrier.join(format!("{first_actor}.guard-acquired")),
+        watchdog,
+    )?;
+    create_durable_marker(&barrier.join(format!("{second_actor}.start")), b"start\n")?;
+    wait_for_path(
+        &barrier.join(format!("{second_actor}.lock-blocked")),
+        watchdog,
+    )?;
+    create_durable_marker(
+        &barrier.join(format!("{first_actor}.release")),
+        b"release\n",
+    )?;
     for child in &mut children {
         wait_for_clean_child(child, watchdog)?;
     }
+    let results = actors
+        .into_iter()
+        .map(|(actor, _, _, _)| {
+            let bytes = fs::read(root.join(format!("{actor}.json")))?;
+            Ok(serde_json::from_slice::<LatestPublishResult>(&bytes)?)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    ensure!(
+        results[0].actor == first_actor && results[0].commit_ordinal == 1,
+        "first latest publisher did not commit first: {:?}",
+        results[0]
+    );
+    ensure!(
+        results[1].actor == second_actor && results[1].commit_ordinal == 2,
+        "second latest publisher did not commit second: {:?}",
+        results[1]
+    );
     let latest = read_latest(&root)?;
     if same_sequence {
         let attempt = latest
@@ -585,7 +738,11 @@ fn run_latest_concurrency_case(
         ensure!(attempt.phase == AttemptPhase::Interrupted);
         ensure!(latest.latest_completed == Some(10));
     }
-    Ok(serde_json::to_value(latest)?)
+    Ok(serde_json::json!({
+        "latest": latest,
+        "forced_commit_order": results,
+        "second_actor_observed_lock_contention": true
+    }))
 }
 
 fn run_publication_retention_case(
@@ -734,8 +891,10 @@ fn run_retention_integrity_case(
         "neither-canonical-nor-trash" => fs::remove_dir_all(&canonical)?,
         _ => bail!("unknown retention integrity fault"),
     }
-    let error = recover_retention(backend_kind, &root)
-        .expect_err("both-or-neither retention state must hard-stop");
+    let error = match recover_retention(backend_kind, &root) {
+        Ok(_) => bail!("both-or-neither retention state did not hard-stop"),
+        Err(error) => error,
+    };
     Ok(serde_json::json!({"hard_stop":true,"diagnostic":format!("{error:#}")}))
 }
 
@@ -760,32 +919,56 @@ fn run_migration_case(
 
 fn run_stale_writer_case(
     backend_kind: BackendKind,
+    watchdog: Duration,
     backend_root: &Path,
 ) -> Result<serde_json::Value> {
     let root = case_root(backend_root, "migration", "stale-generation-writer")?;
     initialize_repository(backend_kind, &root)?;
-    let stale_bytes = read_catalog_bytes(backend_kind, &root)?;
-    write_json_durable(
-        &migration_intent_path(&root),
-        &MigrationIntent {
-            from_generation: 1,
-            to_generation: 2,
-        },
-    )?;
-    build_replacement(backend_kind, &root)?;
-    replace_canonical_store(backend_kind, &root)?;
-    fs::remove_file(migration_intent_path(&root))?;
+    let coordination = root.join("stale-writer-coordination");
+    fs::create_dir_all(&coordination)?;
+    let ready = coordination.join("token.ready");
+    let resume = coordination.join("migration.complete");
+    let result_path = coordination.join("result.json");
+    let mut stale_writer = Command::new(env::current_exe()?)
+        .arg("child-stale-writer")
+        .arg("--backend")
+        .arg(backend_kind.to_string())
+        .arg("--root")
+        .arg(&root)
+        .arg("--ready")
+        .arg(&ready)
+        .arg("--resume")
+        .arg(&resume)
+        .arg("--result")
+        .arg(&result_path)
+        .arg("--watchdog-ms")
+        .arg(watchdog.as_millis().to_string())
+        .spawn()
+        .context("spawn stale-generation writer child")?;
+    wait_for_path(&ready, watchdog)?;
 
-    let mut stale_catalog: Catalog = serde_json::from_slice(&stale_bytes)?;
-    stale_catalog.sentinel = "stale-writer-mutation".to_owned();
-    let stale_replacement = serde_json::to_vec(&stale_catalog)?;
-    let replaced = backend::compare_exchange_catalog(
-        backend_kind,
-        &database_path(&root),
-        Some(&stale_bytes),
-        &stale_replacement,
-    )?;
-    ensure!(!replaced, "stale generation writer committed");
+    {
+        let _guard = acquire_catalog_guard(&root)?;
+        write_json_durable(
+            &migration_intent_path(&root),
+            &MigrationIntent {
+                from_generation: 1,
+                to_generation: 2,
+            },
+        )?;
+        build_replacement(backend_kind, &root)?;
+        replace_canonical_store(backend_kind, &root)?;
+        fs::remove_file(migration_intent_path(&root))?;
+    }
+    create_durable_marker(&resume, b"migration-complete\n")?;
+    wait_for_clean_child(&mut stale_writer, watchdog)?;
+    let stale_writer: StaleWriterResult = serde_json::from_slice(&fs::read(&result_path)?)?;
+    ensure!(stale_writer.token_generation == 1);
+    ensure!(stale_writer.observed_generation == 2);
+    ensure!(stale_writer.transaction_closed_before_analysis);
+    ensure!(stale_writer.logical_catalog_preserved);
+    ensure!(!stale_writer.mutation_attempted);
+    ensure!(stale_writer.outcome == StaleWriterOutcome::GenerationChanged);
     let catalog = read_catalog(backend_kind, &root)?;
     ensure!(catalog.generation == 2);
     ensure!(catalog.sentinel == "phase0-canonical-sentinel");
@@ -793,7 +976,7 @@ fn run_stale_writer_case(
         generation: catalog.generation,
         intent_exists: false,
         replacement_exists: replacement_database_path(&root).exists(),
-        stale_compare_exchange_rejected: Some(true),
+        stale_writer: Some(stale_writer),
     })?)
 }
 
@@ -1095,7 +1278,7 @@ fn recover_migration(backend_kind: BackendKind, root: &Path) -> Result<Migration
             generation: catalog.generation,
             intent_exists: false,
             replacement_exists: replacement_database_path(root).exists(),
-            stale_compare_exchange_rejected: None,
+            stale_writer: None,
         });
     }
     let intent: MigrationIntent = serde_json::from_slice(&fs::read(&intent_path)?)?;
@@ -1120,7 +1303,7 @@ fn recover_migration(backend_kind: BackendKind, root: &Path) -> Result<Migration
         generation: 2,
         intent_exists: false,
         replacement_exists: replacement_database_path(root).exists(),
-        stale_compare_exchange_rejected: None,
+        stale_writer: None,
     })
 }
 
@@ -1182,6 +1365,18 @@ fn merge_latest(backend_kind: BackendKind, root: &Path, candidate: AttemptEnvelo
         "ordinary publication was blocked by retention"
     );
     Ok(())
+}
+
+fn record_latest_commit(root: &Path, actor: &str) -> Result<usize> {
+    let path = root.join("latest-commit-order.json");
+    let mut actors = if path.exists() {
+        serde_json::from_slice::<Vec<String>>(&fs::read(&path)?)?
+    } else {
+        Vec::new()
+    };
+    actors.push(actor.to_owned());
+    write_json_durable(&path, &actors)?;
+    Ok(actors.len())
 }
 
 fn publish_latest_guarded(
@@ -1277,20 +1472,6 @@ fn case_root(backend_root: &Path, domain: &str, point: &str) -> Result<PathBuf> 
     Ok(root)
 }
 
-fn copy_directory(source: &Path, destination: &Path) -> Result<()> {
-    fs::create_dir_all(destination)?;
-    for entry in fs::read_dir(source)? {
-        let entry = entry?;
-        let destination_path = destination.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            copy_directory(&entry.path(), &destination_path)?;
-        } else {
-            fs::copy(entry.path(), destination_path)?;
-        }
-    }
-    Ok(())
-}
-
 fn database_path(root: &Path) -> PathBuf {
     root.join("lifecycle.store")
 }
@@ -1339,6 +1520,47 @@ fn acquire_catalog_guard(root: &Path) -> Result<File> {
         .open(root.join("lifecycle.lock"))?;
     file.lock()?;
     Ok(file)
+}
+
+fn acquire_catalog_read_guard(root: &Path) -> Result<File> {
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(root.join("lifecycle.lock"))?;
+    file.lock_shared()?;
+    Ok(file)
+}
+
+fn acquire_catalog_guard_after_contention(
+    root: &Path,
+    blocked_marker: &Path,
+    watchdog: Duration,
+) -> Result<File> {
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(root.join("lifecycle.lock"))?;
+    let started = Instant::now();
+    let mut blocked_recorded = false;
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(file),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                if !blocked_recorded {
+                    create_durable_marker(blocked_marker, b"lock-blocked\n")?;
+                    blocked_recorded = true;
+                }
+                ensure!(
+                    started.elapsed() < watchdog,
+                    "latest publisher lock-contention watchdog expired"
+                );
+                thread::sleep(Duration::from_millis(1));
+            }
+            Err(error) => {
+                return Err(anyhow::Error::from(error)).context("try exclusive catalog guard");
+            }
+        }
+    }
 }
 
 fn wait_for_clean_child(child: &mut std::process::Child, watchdog: Duration) -> Result<()> {
