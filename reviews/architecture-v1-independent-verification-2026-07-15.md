@@ -2,7 +2,7 @@
 
 Document role: current Architecture v1 freeze verification owner
 
-Status: independent document/design review passed; execution and measurement gates pending
+Status: independent document/design review passed for `65e6021`; backend-selection amendment and remaining execution gates pending
 
 Freeze decision: blocked
 
@@ -26,6 +26,7 @@ Freeze decision: blocked
 | Prior exact-Git externally reverified candidate | `491f47824023253ea61001b4678d2e391db49268`; all 16 files were bound to the exact Git tree, B-07 passed, R3 alias/condition/owner/comparator repairs substantially passed, and H-09/H-11 reopened under R4 |
 | Latest exact-Git externally reverified candidate | `d7e96b091d7c18118b839e61de2569247a9729c1`; all 16 files were bound to the exact Git tree, B-07 and all direct R3/R4 repairs passed, independent machine checks passed `151/151`, and NEW-H10-01/NEW-H11-01 reopened H-10/H-11 |
 | Current resolution candidate | `65e60216891bb3d826a4778f84cb8aaa377abe92`; exact independent document/design verification passed, execution evidence pending |
+| Backend-selection amendment candidate | `58b10608eb2bb740e411281dbcc313d5ff23707c`; selects exact `redb 4.1.0`, records store/OXC evidence, and awaits exact external independent verification |
 | Verifier | external independent reviewer, report supplied by the user; not the architecture-authoring Codex session |
 | Earlier externally reverified input manifest/report | `2ff71a19ebd5fd2939f1aa6da77a2d3276c320791a19a1364670ab78d9c2210e` / `67a001b2cbfd6af36d3e60712d8dfa2bab6dfcc4a7756114f87b9d34d5530611` |
 | Prior externally reverified input manifest/report | `9d2366afa0fa360397fbf4ae7c0ad4205d34739f20f8f7acff70207b2152b6fd` / `07df439ded1101b3ddea1328880579be918db1cfbe8d7861d28c0ca1d18ad20a` |
@@ -39,6 +40,7 @@ Freeze decision: blocked
 | Current independent machine checks | `239/239` passed; script `2e22cd5a31f98e58c370da304cd30db62f7c76fe8fe31995d8a239741a991e88`, result `d54c06c85a31b96f11c39929aedda03b311dc2cac032e30f05e5ac357f912914` |
 | Current independent binding/finding evidence | Git binding `0f1c1814a73e27197ea5549d23eae19525d11a67150712e76ce1584467e36981`; finding matrix `86827ebb5f699e1ed2e664445b91cba07993f0c301ad9f2bd2debe5d86554873` |
 | Verification result | `65e6021` passed B-07, H-01 through H-12, all R3/R4 findings, NEW-H10-01/NEW-H11-01, every B/C/E/G predecessor, and the independent document/design review with no new finding or accepted risk; overall Phase 0 remains blocked only by execution and measurement evidence |
+| Backend-selection candidate manifest/review | `8bbbc177f4aeb7ee648b5f3808dfbf3fb9e9dc18389802b0797af786e5e7c44c` / external report pending |
 
 The first report verified the exact first amended revision. Several later reports verified supplied byte manifests but could not bind loose uploads to their declared Git commits. Exact-tree reports subsequently passed B-07 for `491f478`, `d7e96b0`, and now `65e6021`, each only for its own named revision. The current independent freeze report excluded Author-Side Preflight from PASS evidence, reproduced all 16 Git-object bindings and the manifest, passed 239 machine checks, found no REOPEN/NEW item, and closed NEW-H10-01/NEW-H11-01. The later ledger blob is outside the 16-file architecture packet and does not retroactively change that candidate identity.
 
@@ -182,6 +184,49 @@ ee686f81164ff40b281483afaae591793964cc576afaca0ce7b5b51a6798b4a6  specs/repo-pat
 2456a9b89bb8f24a76b63d674cd62f0dcb64038ecada488a7d523af1476a1f28  문서(한글)/SDD.ko.md
 ```
 
+### Backend-selection amendment candidate
+
+The next exact candidate is Git commit
+`58b10608eb2bb740e411281dbcc313d5ff23707c`, commit message
+`Select redb and record Phase 0 probe evidence`. It records exact `redb 4.1.0` as the
+sole production backend, adds architecture-check and Slice enforcement, preserves the
+backend-neutral store contract, and commits the Windows/WSL2/native store plus OXC
+probe packets. This ledger is a later commit and is not part of the 16-file candidate.
+
+The amendment has author-side evidence but **no external PASS yet**. B-07 and the
+substantive selection/rationale must be independently reverified from this exact Git
+tree. The candidate manifest uses the same ordinal path, two-space, and LF rules. Its
+SHA-256 is:
+
+```text
+8bbbc177f4aeb7ee648b5f3808dfbf3fb9e9dc18389802b0797af786e5e7c44c
+```
+
+```text
+bcae0103cba68300201e6db53dc2d2418cda78e40f1fb73417ee340f9f12396a  .gitattributes
+b2c9f1a98c478549391043205022ae49b30338336e4f91f1cfd146ca1b46670e  .gitignore
+9c0e25902cffdf233324aaea24e3b12bec22327e6a5c9022da762836b59a7062  AGENTS.md
+18326ce8d50fd7154755912533d77e8ff987c8da48a104fc7244c24a13b8c139  README.md
+2e540685f83e0ea730e1260de25649d379a142d685adce0eb5c8ea5ea45de36f  SDD.md
+0be6c91a0df59a16572d39184a05aad90869e5c23e3afd5d815c5f06c7ed48fc  WORKBOARD.md
+e505a30758d5033d837f8cc95719ec1499b7d4d182704a51c98d0910c8473921  architecture/000-system-blueprint.md
+9ab1c72019dc6519a21c02238c6a1d6c57e35018a10ed3842c6e6eae10b632ec  architecture/001-execution-and-ownership.md
+6de31addb2319b44c0cdf81c54c5e4711c5d0f0e844d71b2b37245069528a4e7  architecture/002-evidence-and-write-gate.md
+ad204a0769530c942f62cdd5d7160e73e391608bab6604ad3ccce7b368555518  specs/000-product-contract.md
+4598735504891266c83399f0b1fc31502bf717a01d1b7e48153dda61bb4b4eec  specs/001-foundation-slice.md
+ebca37c3b33f8e4d92ea29e0bcdc51b7cd5ea04a453c4c469a89072f3d2fac02  specs/inventory-config-semantics.v1.json
+ee686f81164ff40b281483afaae591793964cc576afaca0ce7b5b51a6798b4a6  specs/repo-path-semantics.v1.json
+41ffa3dcc108e74dca351b4f3a5fa182090e1481ed6d8333235f38f0459a29a1  specs/resolver-config-semantics.v1.json
+17dbece96b064d83ad39d905bf044e17286a3e813106b21fd50f6b1d00728e15  문서(한글)/AGENTS.ko.md
+2456a9b89bb8f24a76b63d674cd62f0dcb64038ecada488a7d523af1476a1f28  문서(한글)/SDD.ko.md
+```
+
+The selection packet manifest SHA-256 is
+`ce14aaab83942e83e6b874d972aef06d03aa03d64c68370cefebac3339287ea6`.
+The native runner is bound to GitHub Actions run `29584914108`, runner commit
+`0b5988c8176c73e9d6d8936cbcc90eebcac3c2a5`, and artifact SHA-256
+`9ffc3fd385c1d6b8af748eda20c26f623f4a18420a3e9a540cb91b6f0f7706e4`.
+
 Any repeat reviewer must report `PASS`, `REOPEN`, or a new finding for H-01 through H-12, every R3 finding, R4-H09-01, R4-H11-01 through R4-H11-05, NEW-H10-01, NEW-H11-01, their relevant B/G/E/C predecessors, the packaged-skill and process-reopen proofs, and B-07 exact revision binding. It must also check that:
 
 - one implementable Cargo edge exists for every gate signal/effect owner, including compiled-profile unavailability, owner diagnostics, confidence/grounding ranks, and delta dimensions;
@@ -223,38 +268,47 @@ The accepted report names the exact commit and manifest hash, states reviewer in
 
 ## Remaining Freeze Gates
 
-The exact-tree independent document/design review requirement is passed by the report identified above. The remaining blockers are execution or measurement evidence only:
+The exact-tree independent document/design review requirement passed for `65e6021`. The backend-selection amendment reopens exact binding and external review, and the remaining product blockers are execution or measurement evidence:
 
-### Partial execution evidence: Windows x64 store probe
+### Author-side store backend evidence and selection
 
-The standalone packet at
-`reviews/probes/phase0-store-backend-windows-x64-2026-07-17/` is accepted as **partial
-execution evidence**, not as backend selection or a complete gate PASS. It is bound to
-candidate `65e60216891bb3d826a4778f84cb8aaa377abe92`; its evidence manifest SHA-256 is
-`b370b648e2d2a1d5840e9e1ed4ec7bf2646fc5421d1765924f168df6ac82d4a0` and its summary
-SHA-256 is `35de7a5f8cebbd5a62f070565307d7ef51d2cba8abba2c57484a5b27fa77dbf0`.
-The complete 34-entry source/report/raw-evidence packet is indexed by
-`PACKET-SHA256SUMS`, whose SHA-256 is
-`b6f22604adca624bcfd4d7183159caf25b70163855a8fcff3759f7b4573f0b34`.
+The Windows x64/NTFS, WSL2 ext4 GNU/musl, and native non-WSL Linux ext4 GNU/musl
+packets are now complete for the frozen standalone harness. Their evidence-manifest
+SHA-256 values are respectively
+`6d404cfc4b25ed581a9f021fc6248c6e7a94c2fdc38b668872c009c0f747ef2d`,
+`c65a9224bfd03482ea947661c70edc7168d1662a18eb1a0447604fa58f807b3e`,
+and `0544d252540e14b8f9392d8a83a37209748af0995d6dd2240397ec4941e75046`.
+All bind the same architecture and 19-file probe-source identities.
 
-On Windows x64, both exact `redb 4.1.0` and bundled SQLite through exact
-`rusqlite 0.39.0` passed 32 conflicting and 32 disjoint two-process admission rounds,
-death before/after commit, and 42 backend/fault cases each. Those cases include
-indexed paging, visible corruption, publication/latest, both publication-retention
-race orders, retention, migration/stale generation, and state/lock/four-parent/anchor
-replacement, content, and extra-link hard stops. The packet also preserves structured
-build, binary, dependency, latency, working-set, and store-size measurements.
+Both exact `redb 4.1.0` and bundled SQLite through exact `rusqlite 0.39.0` passed
+640 conflicting/disjoint admission rounds, 20 forced-death admission cases, 470
+backend/fault cases, and 190 namespace cases across the required comparison hosts and
+modes. The author-side decision packet at
+`reviews/probes/phase0-store-backend-selection-2026-07-17/` selects exact
+`redb 4.1.0` as the sole production backend. redb won durable-admission p50 and
+release-binary size in all five measured comparisons and carried fewer dependencies
+without bundled C; SQLite's query, RSS, and store-size advantages remain recorded.
 
-This result does not cover Linux/musl, every required filesystem, namespace-bootstrap
-death recovery, product operation delivery/idempotency, public-binary behavior, or
-approved budgets. It therefore narrows remaining gate 1 but does not close it, and it
-does not authorize a backend choice.
+This evidence closes the author-side store correctness/comparison work. It does not
+self-certify the architecture amendment: the changed canonical bytes require a new
+exact Git identity and external independent verification before REVIEW-002 can mark
+the gate passed.
 
-1. Run and record the `redb` versus bundled SQLite store correctness, contention, corruption-visibility, crash, recovery, build, binary-size, latency, memory, and store-size comparison, including namespace bootstrap, publication/latest, retention, migration, lifecycle operations, stale-generation writers, and lifecycle-lock/state-directory/four-parent/anchor replacement faults.
-2. Run and record OXC allocator lifetime, worker-stack, peak-RSS, and jobs-scaling feasibility on the named corpus.
-3. Run and record Windows NTFS, WSL ext4, and Linux ext4/musl package feasibility, including Unix raw-byte and Windows WTF-16/UNC/volume-root round trips plus both packaged skill adapters using the same public binary/DTO contract.
-4. Run the public-behavior evidence for process-exit gate reopen, operation-result recovery, every collection's pagination, cold/warm equivalence, and `jobs=1` versus default-jobs deterministic semantic output.
-5. Reproduce every pinned upstream source/tarball/artifact SHA-256 in a clean `architecture-check`/probe environment.
-6. Approve numeric Phase 1 time, peak-RSS, and binary-size budgets from the named probe evidence, keeping the `/mnt/<drive>` diagnostic separate as specified.
+### Author-side OXC feasibility evidence
+
+The packet at
+`reviews/probes/phase0-oxc-memory-stack-windows-wsl2-x64-2026-07-17/` records exact
+OXC `0.126.0` allocator-lifetime, stack, jobs-scaling, semantic-determinism, and
+peak-RSS evidence on Windows NTFS and WSL2 ext4. Its strict evidence-manifest SHA-256
+is `bfba3524182822ebb9e7ec35c37ae08a1b03380fa0f961675499eef5031790be`.
+The named corpus passed at 1/2/4/8 MiB stacks and jobs 1/2/4/8/12; 256 and 512 KiB
+stacks overflowed as expected. This is feasibility evidence, not an approved product
+stack, worker count, or numeric budget.
+
+1. Bind the backend-selection architecture amendment and all evidence packets to a new exact Git commit, then obtain external independent verification.
+2. Run and record Windows NTFS, WSL ext4, and native Linux ext4/musl package feasibility, including Unix raw-byte and Windows WTF-16/UNC/volume-root round trips plus both packaged skill adapters using the same public binary/DTO contract.
+3. Run the public-behavior evidence for process-exit gate reopen, operation-result recovery, every collection's pagination, cold/warm equivalence, and `jobs=1` versus default-jobs deterministic semantic output.
+4. Reproduce every pinned upstream source/tarball/artifact SHA-256 in a clean `architecture-check`/probe environment.
+5. Approve numeric Phase 1 time, peak-RSS, worker-stack, default-jobs, and binary-size budgets from the named probe evidence, keeping the `/mnt/<drive>` diagnostic separate as specified.
 
 Every gate above must be `passed` or an explicitly reviewed accepted risk with rationale, owner, scope, and expiry. There are currently no accepted risks. Architecture v1 remains draft and Phase 1 implementation remains blocked.
