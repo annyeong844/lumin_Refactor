@@ -1,0 +1,60 @@
+{
+  "schema": "lumin-phase0-backend-independent-review-request-v1",
+  "repository": "annyeong844/lumin_Refactor",
+  "candidate_commit": "579c2358f5e2245a977abdedcee7e06ba3f4e46e",
+  "candidate_commit_message": "Preserve raw store build logs in evidence packets",
+  "candidate_manifest_sha256": "b43b8b0ea9c3c0c8938363091aaf4de0e7a4a3b3babb225582a85b050a104375",
+  "architecture_baseline_commit": "65e60216891bb3d826a4778f84cb8aaa377abe92",
+  "architecture_baseline_manifest_sha256": "66925583362be22257dd7357072d176cd3f1ae3d4f99874a53f6689b7cf535e0",
+  "probe_source_manifest_sha256": "30be1edac70bb27f78c626bf7099aee1f825f2a0f59797a72b9acdc781e9725e",
+  "packet_entry_count": 168,
+  "required_raw_build_log_count": 20,
+  "packets": [
+    {
+      "id": "windows-store",
+      "manifest_path": "reviews/probes/phase0-store-backend-windows-x64-2026-07-17/evidence/SHA256SUMS",
+      "manifest_sha256": "6d404cfc4b25ed581a9f021fc6248c6e7a94c2fdc38b668872c009c0f747ef2d",
+      "entry_count": 12,
+      "summary_path": "reviews/probes/phase0-store-backend-windows-x64-2026-07-17/evidence/windows-x64-summary.json",
+      "summary_sha256": "6623d3425294bcf8d5949348dd660a9fa9762d7808a453cb0f1b60df9ea385b3"
+    },
+    {
+      "id": "wsl2-store",
+      "manifest_path": "reviews/probes/phase0-store-backend-wsl2-ext4-musl-x64-2026-07-17/evidence/SHA256SUMS",
+      "manifest_sha256": "c65a9224bfd03482ea947661c70edc7168d1662a18eb1a0447604fa58f807b3e",
+      "entry_count": 37,
+      "summary_path": "reviews/probes/phase0-store-backend-wsl2-ext4-musl-x64-2026-07-17/evidence/wsl2-ext4-musl-x64-summary.json",
+      "summary_sha256": "f12f91a02c3f15f2525b476c330839351054d23fe52176c91fc9adf28d9ff81f"
+    },
+    {
+      "id": "native-linux-store",
+      "manifest_path": "reviews/probes/phase0-store-backend-native-linux-ext4-musl-x64-2026-07-17/evidence/SHA256SUMS",
+      "manifest_sha256": "0544d252540e14b8f9392d8a83a37209748af0995d6dd2240397ec4941e75046",
+      "entry_count": 37,
+      "summary_path": "reviews/probes/phase0-store-backend-native-linux-ext4-musl-x64-2026-07-17/evidence/native-linux-ext4-musl-x64-summary.json",
+      "summary_sha256": "49c3a4f7bc7191ee85ae2f3ce15bec35f4bf48a17619f7574598794dd951e5a9"
+    },
+    {
+      "id": "oxc-feasibility",
+      "manifest_path": "reviews/probes/phase0-oxc-memory-stack-windows-wsl2-x64-2026-07-17/evidence/SHA256SUMS",
+      "manifest_sha256": "bfba3524182822ebb9e7ec35c37ae08a1b03380fa0f961675499eef5031790be",
+      "entry_count": 80,
+      "summary_path": "reviews/probes/phase0-oxc-memory-stack-windows-wsl2-x64-2026-07-17/evidence/summary.json",
+      "summary_sha256": "2f73daba1fa12b6a518962cab16400faeb275fca08296c02a9ec442f51c9c1c6"
+    },
+    {
+      "id": "backend-selection",
+      "manifest_path": "reviews/probes/phase0-store-backend-selection-2026-07-17/SHA256SUMS",
+      "manifest_sha256": "ce14aaab83942e83e6b874d972aef06d03aa03d64c68370cefebac3339287ea6",
+      "entry_count": 2,
+      "summary_path": "reviews/probes/phase0-store-backend-selection-2026-07-17/selection.json",
+      "summary_sha256": "82a5d5122cd902fc3861fa8d48f831180f2149124ea55e86c318a81f61dbb11b"
+    }
+  ],
+  "native_runner": {
+    "github_run_id": "29584914108",
+    "runner_commit": "0b5988c8176c73e9d6d8936cbcc90eebcac3c2a5",
+    "artifact_sha256": "9ffc3fd385c1d6b8af748eda20c26f623f4a18420a3e9a540cb91b6f0f7706e4"
+  },
+  "independence_boundary": "The verifier and any author preflight are transport and consistency aids only. The external reviewer must inspect the exact Git tree and derive the final PASS, REOPEN, or NEW finding independently."
+}

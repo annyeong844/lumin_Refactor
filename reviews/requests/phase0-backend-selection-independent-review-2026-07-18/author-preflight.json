@@ -1,0 +1,420 @@
+{
+  "candidate_commit": "579c2358f5e2245a977abdedcee7e06ba3f4e46e",
+  "candidate_manifest_sha256": "b43b8b0ea9c3c0c8938363091aaf4de0e7a4a3b3babb225582a85b050a104375",
+  "checks": [
+    {
+      "expected": true,
+      "name": "request-identity",
+      "observed": true,
+      "status": "PASS"
+    },
+    {
+      "expected": "579c2358f5e2245a977abdedcee7e06ba3f4e46e",
+      "name": "exact-candidate-commit",
+      "observed": "579c2358f5e2245a977abdedcee7e06ba3f4e46e",
+      "status": "PASS"
+    },
+    {
+      "expected": "Preserve raw store build logs in evidence packets",
+      "name": "candidate-commit-subject",
+      "observed": "Preserve raw store build logs in evidence packets",
+      "status": "PASS"
+    },
+    {
+      "expected": "b43b8b0ea9c3c0c8938363091aaf4de0e7a4a3b3babb225582a85b050a104375",
+      "name": "request-candidate-manifest-hash",
+      "observed": "b43b8b0ea9c3c0c8938363091aaf4de0e7a4a3b3babb225582a85b050a104375",
+      "status": "PASS"
+    },
+    {
+      "expected": {
+        "entries": 16,
+        "sorted": true
+      },
+      "name": "candidate-manifest-order-and-cardinality",
+      "observed": {
+        "entries": 16,
+        "sorted": true
+      },
+      "status": "PASS"
+    },
+    {
+      "expected": {
+        "failures": [],
+        "manifest_sha256": "b43b8b0ea9c3c0c8938363091aaf4de0e7a4a3b3babb225582a85b050a104375"
+      },
+      "name": "candidate-git-blob-sha256",
+      "observed": {
+        "failures": [],
+        "manifest_sha256": "b43b8b0ea9c3c0c8938363091aaf4de0e7a4a3b3babb225582a85b050a104375"
+      },
+      "status": "PASS"
+    },
+    {
+      "expected": true,
+      "name": "candidate-text-framing",
+      "observed": true,
+      "status": "PASS"
+    },
+    {
+      "expected": [],
+      "name": "machine-artifacts-parse-with-duplicate-key-rejection",
+      "observed": [],
+      "status": "PASS"
+    },
+    {
+      "expected": {
+        "entries": 12,
+        "manifest_sha256": "6d404cfc4b25ed581a9f021fc6248c6e7a94c2fdc38b668872c009c0f747ef2d",
+        "member_failures": [],
+        "summary_sha256": "6623d3425294bcf8d5949348dd660a9fa9762d7808a453cb0f1b60df9ea385b3"
+      },
+      "name": "packet:windows-store",
+      "observed": {
+        "entries": 12,
+        "manifest_sha256": "6d404cfc4b25ed581a9f021fc6248c6e7a94c2fdc38b668872c009c0f747ef2d",
+        "member_failures": [],
+        "summary_sha256": "6623d3425294bcf8d5949348dd660a9fa9762d7808a453cb0f1b60df9ea385b3"
+      },
+      "status": "PASS"
+    },
+    {
+      "expected": {
+        "entries": 37,
+        "manifest_sha256": "c65a9224bfd03482ea947661c70edc7168d1662a18eb1a0447604fa58f807b3e",
+        "member_failures": [],
+        "summary_sha256": "f12f91a02c3f15f2525b476c330839351054d23fe52176c91fc9adf28d9ff81f"
+      },
+      "name": "packet:wsl2-store",
+      "observed": {
+        "entries": 37,
+        "manifest_sha256": "c65a9224bfd03482ea947661c70edc7168d1662a18eb1a0447604fa58f807b3e",
+        "member_failures": [],
+        "summary_sha256": "f12f91a02c3f15f2525b476c330839351054d23fe52176c91fc9adf28d9ff81f"
+      },
+      "status": "PASS"
+    },
+    {
+      "expected": {
+        "entries": 37,
+        "manifest_sha256": "0544d252540e14b8f9392d8a83a37209748af0995d6dd2240397ec4941e75046",
+        "member_failures": [],
+        "summary_sha256": "49c3a4f7bc7191ee85ae2f3ce15bec35f4bf48a17619f7574598794dd951e5a9"
+      },
+      "name": "packet:native-linux-store",
+      "observed": {
+        "entries": 37,
+        "manifest_sha256": "0544d252540e14b8f9392d8a83a37209748af0995d6dd2240397ec4941e75046",
+        "member_failures": [],
+        "summary_sha256": "49c3a4f7bc7191ee85ae2f3ce15bec35f4bf48a17619f7574598794dd951e5a9"
+      },
+      "status": "PASS"
+    },
+    {
+      "expected": {
+        "entries": 80,
+        "manifest_sha256": "bfba3524182822ebb9e7ec35c37ae08a1b03380fa0f961675499eef5031790be",
+        "member_failures": [],
+        "summary_sha256": "2f73daba1fa12b6a518962cab16400faeb275fca08296c02a9ec442f51c9c1c6"
+      },
+      "name": "packet:oxc-feasibility",
+      "observed": {
+        "entries": 80,
+        "manifest_sha256": "bfba3524182822ebb9e7ec35c37ae08a1b03380fa0f961675499eef5031790be",
+        "member_failures": [],
+        "summary_sha256": "2f73daba1fa12b6a518962cab16400faeb275fca08296c02a9ec442f51c9c1c6"
+      },
+      "status": "PASS"
+    },
+    {
+      "expected": {
+        "entries": 2,
+        "manifest_sha256": "ce14aaab83942e83e6b874d972aef06d03aa03d64c68370cefebac3339287ea6",
+        "member_failures": [],
+        "summary_sha256": "82a5d5122cd902fc3861fa8d48f831180f2149124ea55e86c318a81f61dbb11b"
+      },
+      "name": "packet:backend-selection",
+      "observed": {
+        "entries": 2,
+        "manifest_sha256": "ce14aaab83942e83e6b874d972aef06d03aa03d64c68370cefebac3339287ea6",
+        "member_failures": [],
+        "summary_sha256": "82a5d5122cd902fc3861fa8d48f831180f2149124ea55e86c318a81f61dbb11b"
+      },
+      "status": "PASS"
+    },
+    {
+      "expected": 168,
+      "name": "packet-entry-total",
+      "observed": 168,
+      "status": "PASS"
+    },
+    {
+      "expected": 20,
+      "name": "wsl-native-raw-build-logs-present",
+      "observed": 20,
+      "status": "PASS"
+    },
+    {
+      "expected": [],
+      "name": "packet-failure-total",
+      "observed": [],
+      "status": "PASS"
+    },
+    {
+      "expected": true,
+      "name": "selection-identity",
+      "observed": true,
+      "status": "PASS"
+    },
+    {
+      "expected": {
+        "native-linux-ext4-gnu-musl-x64": {
+          "evidence_manifest_sha256": "0544d252540e14b8f9392d8a83a37209748af0995d6dd2240397ec4941e75046",
+          "summary_sha256": "49c3a4f7bc7191ee85ae2f3ce15bec35f4bf48a17619f7574598794dd951e5a9"
+        },
+        "windows-x64-ntfs": {
+          "evidence_manifest_sha256": "6d404cfc4b25ed581a9f021fc6248c6e7a94c2fdc38b668872c009c0f747ef2d",
+          "summary_sha256": "6623d3425294bcf8d5949348dd660a9fa9762d7808a453cb0f1b60df9ea385b3"
+        },
+        "wsl2-ext4-gnu-musl-x64": {
+          "evidence_manifest_sha256": "c65a9224bfd03482ea947661c70edc7168d1662a18eb1a0447604fa58f807b3e",
+          "summary_sha256": "f12f91a02c3f15f2525b476c330839351054d23fe52176c91fc9adf28d9ff81f"
+        }
+      },
+      "name": "selection-evidence-bindings",
+      "observed": {
+        "native-linux-ext4-gnu-musl-x64": {
+          "evidence_manifest_sha256": "0544d252540e14b8f9392d8a83a37209748af0995d6dd2240397ec4941e75046",
+          "github_artifact_sha256": "9ffc3fd385c1d6b8af748eda20c26f623f4a18420a3e9a540cb91b6f0f7706e4",
+          "github_run_id": "29584914108",
+          "github_runner_commit": "0b5988c8176c73e9d6d8936cbcc90eebcac3c2a5",
+          "scope": "native-linux-ext4-gnu-musl-x64",
+          "summary_sha256": "49c3a4f7bc7191ee85ae2f3ce15bec35f4bf48a17619f7574598794dd951e5a9"
+        },
+        "windows-x64-ntfs": {
+          "evidence_manifest_sha256": "6d404cfc4b25ed581a9f021fc6248c6e7a94c2fdc38b668872c009c0f747ef2d",
+          "scope": "windows-x64-ntfs",
+          "summary_sha256": "6623d3425294bcf8d5949348dd660a9fa9762d7808a453cb0f1b60df9ea385b3"
+        },
+        "wsl2-ext4-gnu-musl-x64": {
+          "evidence_manifest_sha256": "c65a9224bfd03482ea947661c70edc7168d1662a18eb1a0447604fa58f807b3e",
+          "scope": "wsl2-ext4-gnu-musl-x64",
+          "summary_sha256": "f12f91a02c3f15f2525b476c330839351054d23fe52176c91fc9adf28d9ff81f"
+        }
+      },
+      "status": "PASS"
+    },
+    {
+      "expected": [
+        "package",
+        "public process-reopen",
+        "upstream provenance",
+        "numeric Phase 1",
+        "independent review"
+      ],
+      "name": "selection-remaining-gates-preserved",
+      "observed": [
+        "Windows/Linux package, native path/root, and packaged skill evidence",
+        "public process-reopen, operation-recovery, pagination, cold/warm, and jobs determinism evidence",
+        "clean pinned-upstream provenance reproduction",
+        "approved numeric Phase 1 time, RSS, and binary-size budgets",
+        "exact Git binding and independent review of the backend-selection architecture amendment"
+      ],
+      "status": "PASS"
+    },
+    {
+      "expected": {
+        "failures": [],
+        "forced_deaths": 20,
+        "rounds": 640
+      },
+      "name": "store-admission-correctness",
+      "observed": {
+        "failures": [],
+        "forced_deaths": 20,
+        "rounds": 640
+      },
+      "status": "PASS"
+    },
+    {
+      "expected": {
+        "cases": 470,
+        "failures": []
+      },
+      "name": "store-fault-matrix-correctness",
+      "observed": {
+        "cases": 470,
+        "failures": []
+      },
+      "status": "PASS"
+    },
+    {
+      "expected": true,
+      "name": "store-summary-identity",
+      "observed": true,
+      "status": "PASS"
+    },
+    {
+      "expected": {
+        "injected": 170,
+        "kernel_prevented": 20
+      },
+      "name": "namespace-case-totals",
+      "observed": {
+        "injected": 170,
+        "kernel_prevented": 20
+      },
+      "status": "PASS"
+    },
+    {
+      "expected": {
+        "backends": [
+          [
+            "redb",
+            "sqlite"
+          ],
+          [
+            "redb",
+            "sqlite"
+          ],
+          [
+            "redb",
+            "sqlite"
+          ],
+          [
+            "redb",
+            "sqlite"
+          ],
+          [
+            "redb",
+            "sqlite"
+          ]
+        ],
+        "groups": 5
+      },
+      "name": "measurement-pair-shape",
+      "observed": {
+        "backends": [
+          [
+            "redb",
+            "sqlite"
+          ],
+          [
+            "redb",
+            "sqlite"
+          ],
+          [
+            "redb",
+            "sqlite"
+          ],
+          [
+            "redb",
+            "sqlite"
+          ],
+          [
+            "redb",
+            "sqlite"
+          ]
+        ],
+        "groups": 5
+      },
+      "status": "PASS"
+    },
+    {
+      "expected": {
+        "derived": {
+          "binary_advantage_max": 1299776,
+          "binary_advantage_min": 913408,
+          "binary_redb": 5,
+          "dependency_advantages": [
+            12,
+            13
+          ],
+          "durable_redb": 5,
+          "query_redb": 1,
+          "query_sqlite": 4,
+          "redb_native_source_bytes": [
+            0
+          ],
+          "redb_store": [
+            8425472
+          ],
+          "rss_redb": 0,
+          "rss_sqlite": 5,
+          "sqlite_native_source_bytes": [
+            20340001
+          ],
+          "sqlite_store": [
+            3182592
+          ]
+        },
+        "selection_matches": true
+      },
+      "name": "measured-backend-comparison",
+      "observed": {
+        "derived": {
+          "binary_advantage_max": 1299776,
+          "binary_advantage_min": 913408,
+          "binary_redb": 5,
+          "dependency_advantages": [
+            12,
+            13
+          ],
+          "durable_redb": 5,
+          "query_redb": 1,
+          "query_sqlite": 4,
+          "redb_native_source_bytes": [
+            0
+          ],
+          "redb_store": [
+            8425472
+          ],
+          "rss_redb": 0,
+          "rss_sqlite": 5,
+          "sqlite_native_source_bytes": [
+            20340001
+          ],
+          "sqlite_store": [
+            3182592
+          ]
+        },
+        "selection_matches": true
+      },
+      "status": "PASS"
+    },
+    {
+      "expected": [],
+      "name": "canonical-redb-selection-clauses",
+      "observed": [],
+      "status": "PASS"
+    },
+    {
+      "expected": true,
+      "name": "probe-log-ignore-exceptions",
+      "observed": true,
+      "status": "PASS"
+    },
+    {
+      "expected": true,
+      "name": "oxc-feasibility-boundary",
+      "observed": true,
+      "status": "PASS"
+    },
+    {
+      "expected": true,
+      "name": "native-runner-provenance-consistency",
+      "observed": true,
+      "status": "PASS"
+    }
+  ],
+  "checks_passed": 29,
+  "checks_total": 29,
+  "limitations": [
+    "This author-provided verifier does not establish reviewer independence.",
+    "The GitHub Actions artifact digest is cross-checked against committed metadata but is not downloaded here.",
+    "Package, public-behavior, upstream-provenance, and numeric-budget gates remain outside this amendment review."
+  ],
+  "origin": "https://github.com/annyeong844/lumin_Refactor.git",
+  "schema": "lumin-phase0-backend-independent-review-preflight-v1",
+  "status": "PASS"
+}
