@@ -2,7 +2,7 @@
 
 Document role: current Architecture v1 freeze verification owner
 
-Status: phase-boundary amendment awaiting independent review; three Phase 0 evidence gates pending
+Status: phase-boundary amendment independently passed; three Phase 0 evidence gates pending
 
 Freeze decision: blocked
 
@@ -29,7 +29,7 @@ Freeze decision: blocked
 | Superseded backend-selection amendment candidate | `58b10608eb2bb740e411281dbcc313d5ff23707c`; invalidated before external review because its exact checkout omitted 20 manifest-listed raw build logs hidden by the root `*.log` ignore rule; do not review this candidate |
 | Externally reviewed backend-selection amendment candidate | `579c2358f5e2245a977abdedcee7e06ba3f4e46e`; B-07, the backend amendment, canonical 168-entry evidence, store correctness/comparison, OXC evidence boundary, and H/R regression review passed; the exact candidate was REOPENED only by NEW-EVIDENCE-01 |
 | Externally reviewed evidence-closure candidate | `b8ff840b5a400d2404d693b290c0fb8d18e59062`; B-07 and NEW-EVIDENCE-01 closure passed, all 16 candidate blobs and 168 canonical evidence paths were preserved, and no existing or new finding was opened |
-| Phase-boundary amendment candidate | `9a0dbe5c89463892c001e864c4f18eeab9e0eaed`; changes only WORKBOARD and SLICE-001 to restore the non-circular Phase 0 feasibility / Phase 1 product-acceptance boundary; independent verdict pending |
+| Externally reviewed phase-boundary amendment candidate | `9a0dbe5c89463892c001e864c4f18eeab9e0eaed`; B-07, NEW-PHASE-GATE-01/F-12 closure, product/acceptance preservation, and the standalone Phase 0 / product Phase 1 boundary passed with no H/R regression or new finding |
 | Verifier | external independent reviewer, report supplied by the user; not the architecture-authoring Codex session |
 | Earlier externally reverified input manifest/report | `2ff71a19ebd5fd2939f1aa6da77a2d3276c320791a19a1364670ab78d9c2210e` / `67a001b2cbfd6af36d3e60712d8dfa2bab6dfcc4a7756114f87b9d34d5530611` |
 | Prior externally reverified input manifest/report | `9d2366afa0fa360397fbf4ae7c0ad4205d34739f20f8f7acff70207b2152b6fd` / `07df439ded1101b3ddea1328880579be918db1cfbe8d7861d28c0ca1d18ad20a` |
@@ -48,9 +48,11 @@ Freeze decision: blocked
 | Evidence-closure candidate manifest/review | `b43b8b0ea9c3c0c8938363091aaf4de0e7a4a3b3babb225582a85b050a104375` / `60f94114a2a20111953355b5c3b056a8994a6e763c404290af5d0bd330f33224` |
 | Evidence-closure transport and bundle | ZIP `80835b39d7f22d182ff733d694a6eca15a12e886576042c2def57dec34f4b7f2`; complete-history bundle `ee7ebaedd8c54430becfb7f27287c5eb73a965b4e6b55b7fda7e4066eadb08a1`; handoff HEAD `a0910e92b1c5af28eff46c9640527dcdd27e23ce` |
 | Evidence-closure independent checks | `34/34` passed; result JSON `721160aeb5a664fafbe39884dbc4ff9ad5b8810287eeadb539e90558d94a9bad`; author verifier output `e89ec3bedf2655f31be1c0e7eaecc9f0410e91d82210d782ad09f1b18fef4fac` remained consistency-only |
-| Phase-boundary candidate manifest/review | `e2ca379a8a659f2febbc4e277c89db67bb02035a6b10467cf78a5663f21cd99a` / independent review pending |
+| Phase-boundary candidate manifest/review | `e2ca379a8a659f2febbc4e277c89db67bb02035a6b10467cf78a5663f21cd99a` / `10df7850e33d309ae4b909cab031213e0712252a5d397d80ae2850a8d1a90bf0` |
+| Phase-boundary transport and bundle | ZIP `2664c78a411f18a6745966e2aceb5c1688809f58c4f06639ebb72ec0217cb8b6`; complete-history bundle `9cf3b4ed64b45895b557f2cc181d5ff9a4b8d4dd5315761815cdc692cf9523c4`; handoff HEAD `f30c649c222b38213119cb2623af652b6a528f30` |
+| Phase-boundary independent checks | `74/74` passed; checker `2fbc9010c2182a78f35ca23de0ee0b3875a3420545b6f57208b2980c903fc42d`, result JSON `0968b16f35230347b4c80cd4dd04031334e66e6c017c444ea9ab97ef2bf854c6`; author verifier output `9fac71144fe7cc43bd0be541e9c52d95eea9e1cd4a321011d2c96f54ca09f8cb` remained consistency-only |
 
-The first report verified the exact first amended revision. Several later reports verified supplied byte manifests but could not bind loose uploads to their declared Git commits. Exact-tree reports subsequently passed B-07 for `491f478`, `d7e96b0`, and `65e6021`, each only for its own named revision. The independent freeze report for `65e6021` excluded Author-Side Preflight from PASS evidence, reproduced all 16 Git-object bindings and the manifest, passed 239 machine checks, found no REOPEN/NEW item, and closed NEW-H10-01/NEW-H11-01. The superseded `58b1060` backend amendment never reached external review: exact-checkout verification exposed its incomplete evidence tree. The external report for replacement `579c235` passed its semantic amendment and canonical evidence but reopened that exact SHA for the separate stale-seal finding NEW-EVIDENCE-01. Exact candidate `b8ff840` deletes only that competing seal; the independent closure report passed B-07, closed NEW-EVIDENCE-01, preserved the 16 owner blobs and all 168 path-addressed evidence bindings, and found no regression or new finding. The later author-side candidate `9a0dbe5` addresses NEW-PHASE-GATE-01 but has no independent PASS yet.
+The first report verified the exact first amended revision. Several later reports verified supplied byte manifests but could not bind loose uploads to their declared Git commits. Exact-tree reports subsequently passed B-07 for `491f478`, `d7e96b0`, and `65e6021`, each only for its own named revision. The independent freeze report for `65e6021` excluded Author-Side Preflight from PASS evidence, reproduced all 16 Git-object bindings and the manifest, passed 239 machine checks, found no REOPEN/NEW item, and closed NEW-H10-01/NEW-H11-01. The superseded `58b1060` backend amendment never reached external review: exact-checkout verification exposed its incomplete evidence tree. The external report for replacement `579c235` passed its semantic amendment and canonical evidence but reopened that exact SHA for the separate stale-seal finding NEW-EVIDENCE-01. Exact candidate `b8ff840` deletes only that competing seal; the independent closure report passed B-07, closed NEW-EVIDENCE-01, preserved the 16 owner blobs and all 168 path-addressed evidence bindings, and found no regression or new finding. The exact-tree report for `9a0dbe5` then passed B-07, closed NEW-PHASE-GATE-01 and its F-12 predecessor, preserved all 38 acceptance criteria, 38 traceability rows, 22 Product ACs, and six distribution requirements, and found no H/R regression or new finding.
 
 ## Freeze Blocker Resolution Ledger
 
@@ -108,9 +110,9 @@ The first report verified the exact first amended revision. Several later report
 | NEW-H10-01 managed state-parent replacement binding | External PASS; execution fault proof pending | The exact four managed parents have durable directory/anchor/nonce bindings in marker/store, immutable cross-bound anchors, complete pre/post-mutation verification, initialization recovery, and a public child-process swap corpus. Cache payload descendants remain disposable without making the cache parent replaceable. |
 | NEW-H11-01 `tsconfig.extends` specifier selection | External PASS; public resolver corpus pending | The exact resolver artifact fixes slash normalization, malformed/rooted/relative/package dispatch, exact candidate then one `.json` fallback, exact workspace identity only, package-subpath/external no-probe outcomes, cycle/merge order, input identity, and golden vectors. |
 | NEW-EVIDENCE-01 stale Windows packet-wide seal | External PASS — CLOSED for `b8ff840` | Exact parent-to-candidate diff deletes only the unreferenced `reviews/probes/phase0-store-backend-windows-x64-2026-07-17/PACKET-SHA256SUMS`. No competing packet-wide seal remains, and the five canonical manifests, 168 unique target paths, 20 nonempty raw logs, backend amendment, and H/R owner bytes are unchanged. |
-| NEW-PHASE-GATE-01 Phase 0/Phase 1 evidence circularity | Author-side accepted; independent review pending | REVIEW-002 had required actual product packages, skill adapters, native product DTO round trips, and public process behavior before Phase 1 could start, while SLICE-001 forbids Phase 0 probes from exposing product APIs or becoming a production scaffold. Candidate `9a0dbe5` restores Phase 0 to standalone feasibility, clean provenance, and numeric-target approval; all product package/skill/public-behavior and achieved-budget proofs remain mandatory Phase 1 exit criteria. This also restores REVIEW-001 F-12's non-circular ordering. |
+| NEW-PHASE-GATE-01 Phase 0/Phase 1 evidence circularity | External PASS — CLOSED for `9a0dbe5` | REVIEW-002 had required actual product packages, skill adapters, native product DTO round trips, and public process behavior before Phase 1 could start, while SLICE-001 forbids Phase 0 probes from exposing product APIs or becoming a production scaffold. Candidate `9a0dbe5` restores Phase 0 to standalone feasibility, clean provenance, and numeric-target approval; all product package/skill/public-behavior and achieved-budget proofs remain mandatory Phase 1 exit criteria. The exact-tree review passed the F-12 ordering, found no weakened requirement, and found no H/R regression or new finding. |
 
-Historical `Accept finding` entries record architecture-authoring decisions and were never treated as independent PASS evidence. Document/design findings above come from the exact-tree report for `65e6021`; backend and evidence-closure decisions additionally come from the exact-tree reports for `579c235` and `b8ff840`. NEW-PHASE-GATE-01 remains author-side only until a new exact-tree independent report accepts or reopens it.
+Historical `Accept finding` entries record architecture-authoring decisions and were never treated as independent PASS evidence. Document/design findings above come from the exact-tree report for `65e6021`; backend, evidence-closure, and phase-boundary decisions additionally come from the exact-tree reports for `579c235`, `b8ff840`, and `9a0dbe5`.
 
 ## Author-Side Preflight
 
@@ -295,6 +297,14 @@ the exact commit, reproduce the manifest, verify the two-file semantic diff, and
 whether NEW-PHASE-GATE-01 and its F-12 predecessor are closed without weakening any
 product requirement.
 
+The external reviewer did so from the complete-history bundle. The report passed the
+ZIP and both manifests, exact commit/parent/tree/subject, two-file diff, all 16 B-07
+members, 14 unchanged owner blobs, three strict machine artifacts, all 38 acceptance
+criteria, all 38 traceability rows, all 22 Product ACs, and all six distribution
+requirements. It found no implementation/scaffold addition, H/R regression, or new
+finding. NEW-PHASE-GATE-01 and F-12 are CLOSED for exact candidate `9a0dbe5`. The report
+SHA-256 is `10df7850e33d309ae4b909cab031213e0712252a5d397d80ae2850a8d1a90bf0`.
+
 The external backend report independently passed all five committed packet manifests
 for `579c235`: Windows store `12/12`, WSL2 store `37/37`, native Linux store `37/37`,
 OXC `80/80`, and backend selection `2/2`, for `168/168` canonical entries. It also
@@ -319,9 +329,9 @@ The native runner is bound to GitHub Actions run `29584914108`, runner commit
 | AR-MEASURE-01 | Phase 0 numeric-budget owner | Use the captured measurements only for ordinal architecture selection. Warm reopen is not represented as OS-cold behavior, and one captured environment is not generalized into a product budget. | Close when clean pinned reproduction and approved time/RSS/stack/jobs/binary budgets are complete. |
 
 NEW-EVIDENCE-01 was not accepted as risk; exact candidate `b8ff840` removed its cause
-and the independent report closed it. NEW-PHASE-GATE-01 is also not accepted as risk;
-candidate `9a0dbe5` requires an independent verdict. Neither accepted risk passes a
-Phase 0 gate or a Phase 1 acceptance criterion.
+and the independent report closed it. NEW-PHASE-GATE-01 was likewise not accepted as
+risk; exact candidate `9a0dbe5` removed the circularity and the independent report closed
+it. Neither accepted risk passes a Phase 0 gate or a Phase 1 acceptance criterion.
 
 ### NEW-PHASE-GATE-01 author-side counterexample and resolution candidate
 
@@ -338,7 +348,8 @@ feasibility and selection, static target/linker/artifact/dependency packaging
 feasibility, clean pinned-upstream provenance, and numeric target approval. The real
 prebuilt binaries, DTO/native-path round trips, skill adapters, public process behavior,
 full corpus, and achieved-budget measurements remain mandatory Phase 1 acceptance.
-Phase 1 stays blocked until the amended Phase 0 gates and this independent review pass.
+The independent review passed this boundary. Phase 1 stays blocked until the three
+remaining Phase 0 evidence gates pass.
 
 Any repeat reviewer must report `PASS`, `REOPEN`, or a new finding for H-01 through H-12, every R3 finding, R4-H09-01, R4-H11-01 through R4-H11-05, NEW-H10-01, NEW-H11-01, NEW-PHASE-GATE-01 and its F-12 predecessor, their relevant B/G/E/C predecessors, the preservation of packaged-skill and process-reopen proofs as Phase 1 acceptance, and B-07 exact revision binding. It must also check that:
 
@@ -382,9 +393,8 @@ The accepted `65e6021` report names the exact commit and manifest hash, states r
 ## Remaining Freeze Gates
 
 The exact-tree document/design review passed for `65e6021`, backend-selection semantics
-and canonical evidence passed for `579c235`, and NEW-EVIDENCE-01 closure passed for
-`b8ff840`. Candidate `9a0dbe5` then repaired the author-identified phase-gate
-circularity, but its exact-tree independent verdict is still pending. The remaining
+and canonical evidence passed for `579c235`, NEW-EVIDENCE-01 closure passed for
+`b8ff840`, and the exact-tree phase-boundary review passed for `9a0dbe5`. The remaining
 Phase 0 blockers are limited to evidence that can exist without a production scaffold:
 
 ### Store backend evidence and selection
@@ -422,10 +432,9 @@ The named corpus passed at 1/2/4/8 MiB stacks and jobs 1/2/4/8/12; 256 and 512 K
 stacks overflowed as expected. This is feasibility evidence, not an approved product
 stack, worker count, or numeric budget.
 
-1. Independently bind and review exact candidate `9a0dbe5`, including B-07, the two-file semantic diff, NEW-PHASE-GATE-01/F-12 closure, and preservation of every product guarantee and Phase 1 acceptance row.
-2. Run and record standalone Windows NTFS, WSL ext4, and native Linux GNU/musl static-packaging feasibility. This probe may establish target toolchain, linker, artifact-format, dependency, and native-distribution viability only; it cannot build, invoke, or emulate public `lumin` APIs, DTOs, skills, or process behavior.
-3. Reproduce every pinned upstream source/tarball/artifact SHA-256 in a clean standalone provenance-verifier/probe environment; Phase 1 architecture-check must later enforce the same pinned identities.
-4. Approve numeric Phase 1 target budgets for time, peak RSS, worker stack, default jobs, and binary size from the named Phase 0 probe evidence, keeping the `/mnt/<drive>` diagnostic separate as specified. These are targets, not achieved-product claims.
+1. Run and record standalone Windows NTFS, WSL ext4, and native Linux GNU/musl static-packaging feasibility. This probe may establish target toolchain, linker, artifact-format, dependency, and native-distribution viability only; it cannot build, invoke, or emulate public `lumin` APIs, DTOs, skills, or process behavior.
+2. Reproduce every pinned upstream source/tarball/artifact SHA-256 in a clean standalone provenance-verifier/probe environment; Phase 1 architecture-check must later enforce the same pinned identities.
+3. Approve numeric Phase 1 target budgets for time, peak RSS, worker stack, default jobs, and binary size from the named Phase 0 probe evidence, keeping the `/mnt/<drive>` diagnostic separate as specified. These are targets, not achieved-product claims.
 
 The following remain mandatory but are Phase 1 exit criteria, not Phase 0 freeze gates:
 
