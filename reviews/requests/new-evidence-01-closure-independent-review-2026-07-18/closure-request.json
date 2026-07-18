@@ -1,0 +1,31 @@
+{
+  "schema": "lumin-new-evidence-01-closure-request-v1",
+  "repository": "annyeong844/lumin_Refactor",
+  "previous_reviewed_candidate": "579c2358f5e2245a977abdedcee7e06ba3f4e46e",
+  "closure_candidate": "b8ff840b5a400d2404d693b290c0fb8d18e59062",
+  "closure_candidate_message": "Remove stale Windows evidence packet seal",
+  "closure_candidate_parent": "f74ac19c247d3f37b9b543dc7a2320afed8bcf28",
+  "candidate_manifest_sha256": "b43b8b0ea9c3c0c8938363091aaf4de0e7a4a3b3babb225582a85b050a104375",
+  "previous_independent_report_sha256": "a2a46171ec93927bac5fb0edb34e6547f668dcc47b56e4a0020b6b404623963a",
+  "finding": {
+    "id": "NEW-EVIDENCE-01",
+    "stale_path": "reviews/probes/phase0-store-backend-windows-x64-2026-07-17/PACKET-SHA256SUMS",
+    "previous_blob_sha1": "e6fd32ebd14bfc4406349145de1fb6497d093d17",
+    "canonical_manifest_path": "reviews/probes/phase0-store-backend-windows-x64-2026-07-17/evidence/SHA256SUMS",
+    "canonical_manifest_sha256": "6d404cfc4b25ed581a9f021fc6248c6e7a94c2fdc38b668872c009c0f747ef2d",
+    "closure": "delete the unreferenced competing packet-wide seal"
+  },
+  "canonical_packet_entry_count": 168,
+  "required_raw_build_log_count": 20,
+  "accepted_risks": [
+    "AR-BACKEND-01",
+    "AR-MEASURE-01"
+  ],
+  "remaining_gates": [
+    "Windows/Linux package, native path/root, and packaged skills",
+    "public process-reopen, recovery, pagination, cold/warm, and jobs determinism",
+    "clean pinned-upstream provenance reproduction",
+    "approved numeric Phase 1 budgets"
+  ],
+  "independence_boundary": "The verifier and author preflight are consistency aids only; an external reviewer must derive the exact-object closure verdict independently."
+}

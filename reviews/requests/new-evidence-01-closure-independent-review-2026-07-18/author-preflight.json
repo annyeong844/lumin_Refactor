@@ -1,0 +1,120 @@
+{
+  "schema": "lumin-new-evidence-01-author-preflight-v1",
+  "status": "PASS",
+  "candidate": "b8ff840b5a400d2404d693b290c0fb8d18e59062",
+  "previous_candidate": "579c2358f5e2245a977abdedcee7e06ba3f4e46e",
+  "candidate_files": 16,
+  "canonical_evidence_entries": 168,
+  "raw_build_logs": 20,
+  "competing_packet_wide_seals": 0,
+  "checks": [
+    {
+      "name": "closure candidate is a commit",
+      "status": "PASS",
+      "observed": "commit"
+    },
+    {
+      "name": "closure commit subject",
+      "status": "PASS",
+      "observed": "Remove stale Windows evidence packet seal"
+    },
+    {
+      "name": "closure commit parent",
+      "status": "PASS",
+      "observed": "f74ac19c247d3f37b9b543dc7a2320afed8bcf28"
+    },
+    {
+      "name": "previous candidate is ancestor",
+      "status": "PASS",
+      "observed": true
+    },
+    {
+      "name": "previous stale blob identity",
+      "status": "PASS",
+      "observed": "e6fd32ebd14bfc4406349145de1fb6497d093d17"
+    },
+    {
+      "name": "previous seal carries superseded Windows manifest",
+      "status": "PASS",
+      "observed": true
+    },
+    {
+      "name": "stale seal absent from closure candidate",
+      "status": "PASS",
+      "observed": true
+    },
+    {
+      "name": "competing packet-wide seals",
+      "status": "PASS",
+      "observed": []
+    },
+    {
+      "name": "exact candidate diff scope",
+      "status": "PASS",
+      "observed": [
+        ["M", "reviews/architecture-v1-independent-verification-2026-07-15.md"],
+        ["D", "reviews/probes/phase0-store-backend-windows-x64-2026-07-17/PACKET-SHA256SUMS"],
+        ["A", "reviews/requests/phase0-backend-selection-independent-review-2026-07-18/README.md"],
+        ["A", "reviews/requests/phase0-backend-selection-independent-review-2026-07-18/SHA256SUMS"],
+        ["A", "reviews/requests/phase0-backend-selection-independent-review-2026-07-18/author-preflight.json"],
+        ["A", "reviews/requests/phase0-backend-selection-independent-review-2026-07-18/candidate-manifest.txt"],
+        ["A", "reviews/requests/phase0-backend-selection-independent-review-2026-07-18/evidence-packets.json"],
+        ["A", "reviews/requests/phase0-backend-selection-independent-review-2026-07-18/review-template.md"],
+        ["A", "reviews/requests/phase0-backend-selection-independent-review-2026-07-18/verify_candidate.py"]
+      ]
+    },
+    {
+      "name": "candidate manifest SHA-256",
+      "status": "PASS",
+      "observed": "b43b8b0ea9c3c0c8938363091aaf4de0e7a4a3b3babb225582a85b050a104375"
+    },
+    {
+      "name": "candidate manifest entry count",
+      "status": "PASS",
+      "observed": 16
+    },
+    {
+      "name": "candidate manifest ordinal path order",
+      "status": "PASS",
+      "observed": true
+    },
+    {
+      "name": "16 candidate blob digests",
+      "status": "PASS",
+      "observed": []
+    },
+    {
+      "name": "16 candidate blob identities unchanged",
+      "status": "PASS",
+      "observed": []
+    },
+    {
+      "name": "five canonical packet manifests",
+      "status": "PASS",
+      "observed": {
+        "windows-store": 12,
+        "wsl2-store": 37,
+        "native-linux-store": 37,
+        "oxc-feasibility": 80,
+        "backend-selection": 2
+      }
+    },
+    {
+      "name": "canonical evidence entry count",
+      "status": "PASS",
+      "observed": 168
+    },
+    {
+      "name": "canonical evidence paths unique",
+      "status": "PASS",
+      "observed": 168
+    },
+    {
+      "name": "WSL2/native raw build logs",
+      "status": "PASS",
+      "observed": 20
+    }
+  ],
+  "failed_checks": [],
+  "independence_boundary": "Author-side consistency output; not external PASS evidence."
+}
