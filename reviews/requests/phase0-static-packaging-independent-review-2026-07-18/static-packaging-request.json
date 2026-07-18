@@ -1,0 +1,59 @@
+{
+  "schema": "lumin-phase0-static-packaging-review-request-v1",
+  "repository": "annyeong844/lumin_Refactor",
+  "candidate": "e0a2810b46f6091895b5e9f7dd4454e8854fee0e",
+  "candidate_parent": "47f8fa9693bb8ecae2cff3ff72e54b0d259676d0",
+  "gate_base": "84fe32d2e57ec10399964999a4a5a60563944a2b",
+  "source_oracle_commit": "e9f4c4f692b8027063ae1ad0909fe97bebc5dc30",
+  "candidate_message": "Normalize static packaging packet manifest",
+  "candidate_tree": "bed2f4dde295bcb0b0b9eaf78d20877468d236fd",
+  "packet_path": "reviews/probes/phase0-static-packaging-windows-wsl2-native-linux-x64-2026-07-18",
+  "packet_manifest": {
+    "entries": 65,
+    "sha256": "b1c685a535a5c5e36011de7b59fd89d8400a29d0b5d06db874b629c6e8180ed7"
+  },
+  "source_manifest": {
+    "entries": 9,
+    "sha256": "dd30eeda67caf9e354838a9ec7974cdd3dc118a9136c2556fcfe56c9f441db45"
+  },
+  "architecture_candidate": "9a0dbe5c89463892c001e864c4f18eeab9e0eaed",
+  "architecture_manifest_sha256": "e2ca379a8a659f2febbc4e277c89db67bb02035a6b10467cf78a5663f21cd99a",
+  "evidence_manifests": {
+    "windows-ntfs": {
+      "entries": 11,
+      "sha256": "0058fc941ced83f449d4cb04f225a46eadd4b977e3bc1bb4a273693c6e936117"
+    },
+    "wsl2-ext4": {
+      "entries": 18,
+      "sha256": "adbf074916222c1590319fca65318c27dbed25d2913173d0a34891a071b55bf2"
+    },
+    "native-linux-ext4": {
+      "entries": 18,
+      "sha256": "3f43d654d612c222c8ebb4be1f4ece1d36066cc17b8354dbee55ba4d1dad2523"
+    }
+  },
+  "native_workflow": {
+    "run_id": "29629760482",
+    "runner_commit": "721984d52e75d2385948767ce8ade6f190babaf2",
+    "artifact_id": "8425075747",
+    "artifact_archive_bytes": 1658670,
+    "artifact_archive_sha256": "073ef5907944f8b79df8eab07d135826365f143c4d590ee3d59d7f57d5926454"
+  },
+  "claim_boundary": {
+    "static_packaging_feasibility_only": true,
+    "product_api_or_scaffold": false,
+    "native_path_root_dto": false,
+    "packaged_skills": false,
+    "public_process_behavior": false,
+    "achieved_product_budgets": false
+  },
+  "phase0_remaining_after_pass": [
+    "clean pinned-upstream provenance reproduction",
+    "numeric Phase 1 target approval from named Phase 0 evidence"
+  ],
+  "accepted_risks": [
+    "AR-BACKEND-01",
+    "AR-MEASURE-01"
+  ],
+  "independence_boundary": "All author-side verifiers and PASS outputs are consistency aids only; the external reviewer must derive the verdict independently from exact Git objects and detached artifacts."
+}

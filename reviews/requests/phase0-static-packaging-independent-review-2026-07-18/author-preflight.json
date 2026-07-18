@@ -1,0 +1,229 @@
+{
+  "candidate": "e0a2810b46f6091895b5e9f7dd4454e8854fee0e",
+  "checks": {
+    "fail": 0,
+    "pass": 43
+  },
+  "independenceBoundary": "Author-side consistency output only; not independent review evidence.",
+  "packetManifestSha256": "b1c685a535a5c5e36011de7b59fd89d8400a29d0b5d06db874b629c6e8180ed7",
+  "results": [
+    {
+      "evidence": "e0a2810b46f6091895b5e9f7dd4454e8854fee0e",
+      "name": "candidate-object",
+      "status": "PASS"
+    },
+    {
+      "evidence": "47f8fa9693bb8ecae2cff3ff72e54b0d259676d0",
+      "name": "candidate-parent",
+      "status": "PASS"
+    },
+    {
+      "evidence": "Normalize static packaging packet manifest",
+      "name": "candidate-subject",
+      "status": "PASS"
+    },
+    {
+      "evidence": "bed2f4dde295bcb0b0b9eaf78d20877468d236fd",
+      "name": "candidate-tree",
+      "status": "PASS"
+    },
+    {
+      "evidence": "['e9f4c4f692b8027063ae1ad0909fe97bebc5dc30', '47f8fa9693bb8ecae2cff3ff72e54b0d259676d0', 'e0a2810b46f6091895b5e9f7dd4454e8854fee0e']",
+      "name": "gate-commit-range",
+      "status": "PASS"
+    },
+    {
+      "evidence": "66 paths under probe packet only",
+      "name": "gate-path-scope",
+      "status": "PASS"
+    },
+    {
+      "evidence": "no .github tree in candidate",
+      "name": "no-product-workflow",
+      "status": "PASS"
+    },
+    {
+      "evidence": "65/65 exact Git blobs",
+      "name": "packet-manifest",
+      "status": "PASS"
+    },
+    {
+      "evidence": "9/9 exact source blobs",
+      "name": "source-manifest",
+      "status": "PASS"
+    },
+    {
+      "evidence": "e2ca379a8a659f2febbc4e277c89db67bb02035a6b10467cf78a5663f21cd99a",
+      "name": "architecture-manifest-digest",
+      "status": "PASS"
+    },
+    {
+      "evidence": "16/16 exact candidate blobs",
+      "name": "architecture-binding",
+      "status": "PASS"
+    },
+    {
+      "evidence": "11/11",
+      "name": "evidence-manifest:windows-ntfs",
+      "status": "PASS"
+    },
+    {
+      "evidence": "{'windows-msvc'}",
+      "name": "summary:windows-ntfs",
+      "status": "PASS"
+    },
+    {
+      "evidence": "exact direct versions",
+      "name": "dependencies:windows-ntfs",
+      "status": "PASS"
+    },
+    {
+      "evidence": "['rayon-core@1.13.0:rayon-core']",
+      "name": "cargo-links:windows-ntfs",
+      "status": "PASS"
+    },
+    {
+      "evidence": "{'schema': 'lumin-phase0-static-packaging-run-v1', 'status': 'PASS', 'os': 'windows', 'arch': 'x86_64', 'targetEnv': 'msvc', 'oxcStatementCount': 2, 'rayonSum': 4950, 'redbValue': 42}",
+      "name": "run-oracle:windows-ntfs/windows-msvc",
+      "status": "PASS"
+    },
+    {
+      "evidence": "18/18",
+      "name": "evidence-manifest:wsl2-ext4",
+      "status": "PASS"
+    },
+    {
+      "evidence": "{'linux-gnu', 'linux-musl'}",
+      "name": "summary:wsl2-ext4",
+      "status": "PASS"
+    },
+    {
+      "evidence": "exact direct versions",
+      "name": "dependencies:wsl2-ext4",
+      "status": "PASS"
+    },
+    {
+      "evidence": "['rayon-core@1.13.0:rayon-core']",
+      "name": "cargo-links:wsl2-ext4",
+      "status": "PASS"
+    },
+    {
+      "evidence": "{'schema': 'lumin-phase0-static-packaging-run-v1', 'status': 'PASS', 'os': 'linux', 'arch': 'x86_64', 'targetEnv': 'gnu', 'oxcStatementCount': 2, 'rayonSum': 4950, 'redbValue': 42}",
+      "name": "run-oracle:wsl2-ext4/linux-gnu",
+      "status": "PASS"
+    },
+    {
+      "evidence": "{'schema': 'lumin-phase0-static-packaging-run-v1', 'status': 'PASS', 'os': 'linux', 'arch': 'x86_64', 'targetEnv': 'musl', 'oxcStatementCount': 2, 'rayonSum': 4950, 'redbValue': 42}",
+      "name": "run-oracle:wsl2-ext4/linux-musl",
+      "status": "PASS"
+    },
+    {
+      "evidence": "no interpreter or NEEDED",
+      "name": "static-musl:wsl2-ext4",
+      "status": "PASS"
+    },
+    {
+      "evidence": "18/18",
+      "name": "evidence-manifest:native-linux-ext4",
+      "status": "PASS"
+    },
+    {
+      "evidence": "{'linux-gnu', 'linux-musl'}",
+      "name": "summary:native-linux-ext4",
+      "status": "PASS"
+    },
+    {
+      "evidence": "exact direct versions",
+      "name": "dependencies:native-linux-ext4",
+      "status": "PASS"
+    },
+    {
+      "evidence": "['rayon-core@1.13.0:rayon-core']",
+      "name": "cargo-links:native-linux-ext4",
+      "status": "PASS"
+    },
+    {
+      "evidence": "{'schema': 'lumin-phase0-static-packaging-run-v1', 'status': 'PASS', 'os': 'linux', 'arch': 'x86_64', 'targetEnv': 'gnu', 'oxcStatementCount': 2, 'rayonSum': 4950, 'redbValue': 42}",
+      "name": "run-oracle:native-linux-ext4/linux-gnu",
+      "status": "PASS"
+    },
+    {
+      "evidence": "{'schema': 'lumin-phase0-static-packaging-run-v1', 'status': 'PASS', 'os': 'linux', 'arch': 'x86_64', 'targetEnv': 'musl', 'oxcStatementCount': 2, 'rayonSum': 4950, 'redbValue': 42}",
+      "name": "run-oracle:native-linux-ext4/linux-musl",
+      "status": "PASS"
+    },
+    {
+      "evidence": "no interpreter or NEEDED",
+      "name": "static-musl:native-linux-ext4",
+      "status": "PASS"
+    },
+    {
+      "evidence": "61/61 author-side artifact checks",
+      "name": "native-independent-checks",
+      "status": "PASS"
+    },
+    {
+      "evidence": "073ef5907944f8b79df8eab07d135826365f143c4d590ee3d59d7f57d5926454",
+      "name": "native-archive",
+      "status": "PASS"
+    },
+    {
+      "evidence": "1411584 8fb4a84858e6e0118d29ab4c53de5b7d8f3275df1146dd6bdbbaafe57960051b",
+      "name": "artifact-identity:windows-msvc",
+      "status": "PASS"
+    },
+    {
+      "evidence": "PE32+ or ELF64 x86-64",
+      "name": "artifact-format:windows-msvc",
+      "status": "PASS"
+    },
+    {
+      "evidence": "1795120 bf558042793a029807db457821ac8030843bbc2494409b46198564a9c8a3bd22",
+      "name": "artifact-identity:wsl2-gnu",
+      "status": "PASS"
+    },
+    {
+      "evidence": "PE32+ or ELF64 x86-64",
+      "name": "artifact-format:wsl2-gnu",
+      "status": "PASS"
+    },
+    {
+      "evidence": "1897184 7d810082567f4b437a5d7aaef6db9a3677fd21d9ef71cc1e659c56679aad04a9",
+      "name": "artifact-identity:wsl2-musl",
+      "status": "PASS"
+    },
+    {
+      "evidence": "PE32+ or ELF64 x86-64",
+      "name": "artifact-format:wsl2-musl",
+      "status": "PASS"
+    },
+    {
+      "evidence": "1795184 790a5afb5c73bb03098939c8bc00a1751398f66774367da2f1b16b423cd9b8c2",
+      "name": "artifact-identity:native-gnu",
+      "status": "PASS"
+    },
+    {
+      "evidence": "PE32+ or ELF64 x86-64",
+      "name": "artifact-format:native-gnu",
+      "status": "PASS"
+    },
+    {
+      "evidence": "1897184 8704f655bd0f53456d7da3dae3dbecd13c7223083da5d8f516d8aca5046bb33e",
+      "name": "artifact-identity:native-musl",
+      "status": "PASS"
+    },
+    {
+      "evidence": "PE32+ or ELF64 x86-64",
+      "name": "artifact-format:native-musl",
+      "status": "PASS"
+    },
+    {
+      "evidence": "request exact identities",
+      "name": "request-binding",
+      "status": "PASS"
+    }
+  ],
+  "schema": "lumin-phase0-static-packaging-author-preflight-v1",
+  "sourceManifestSha256": "dd30eeda67caf9e354838a9ec7974cdd3dc118a9136c2556fcfe56c9f441db45",
+  "status": "PASS"
+}
