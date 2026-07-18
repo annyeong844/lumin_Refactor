@@ -10,12 +10,19 @@ use serde::Serialize;
 
 const PROBE_TABLE: TableDefinition<&str, u64> = TableDefinition::new("probe");
 const TYPESCRIPT_FIXTURE: &str = "const answer: number = 42; export { answer };";
+const ARCHITECTURE_CANDIDATE: &str = "9a0dbe5c89463892c001e864c4f18eeab9e0eaed";
+const ARCHITECTURE_MANIFEST_SHA256: &str =
+    "e2ca379a8a659f2febbc4e277c89db67bb02035a6b10467cf78a5663f21cd99a";
+const SOURCE_MANIFEST_SHA256: &str = env!("LUMIN_PROBE_SOURCE_MANIFEST_SHA256");
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ProbeResult {
     schema: &'static str,
     status: &'static str,
+    architecture_candidate: &'static str,
+    architecture_manifest_sha256: &'static str,
+    source_manifest_sha256: &'static str,
     os: &'static str,
     arch: &'static str,
     target_env: &'static str,
@@ -97,10 +104,20 @@ fn main() -> Result<()> {
         std::env::args_os().len() == 1,
         "this standalone probe accepts no product-like command surface"
     );
+    ensure!(
+        SOURCE_MANIFEST_SHA256.len() == 64
+            && SOURCE_MANIFEST_SHA256
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()),
+        "invalid compile-time source manifest SHA-256"
+    );
 
     let result = ProbeResult {
-        schema: "lumin-phase0-static-packaging-run-v1",
+        schema: "lumin-phase0-static-packaging-run-v2",
         status: "PASS",
+        architecture_candidate: ARCHITECTURE_CANDIDATE,
+        architecture_manifest_sha256: ARCHITECTURE_MANIFEST_SHA256,
+        source_manifest_sha256: SOURCE_MANIFEST_SHA256,
         os: std::env::consts::OS,
         arch: std::env::consts::ARCH,
         target_env: target_env(),

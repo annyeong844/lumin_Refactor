@@ -16,15 +16,23 @@ Every scope must use the exact checked-in source manifest and lockfile under Rus
 4. create, commit, reopen, and read one value through exact redb `4.1.0` in a temporary
    database, then remove the database;
 5. report the compiled OS, architecture, and target environment;
-6. have exactly one Cargo `links` declaration,
+6. report the exact source-manifest SHA-256 and frozen architecture commit/manifest
+   compiled into the executable;
+7. be hashed, copied into a fresh seal-owned execution directory, rehashed, directly
+   inspected as PE/ELF, executed from that exact copy, and rehashed after execution by
+   one sealing boundary;
+8. have exactly one Cargo `links` declaration,
    `rayon-core@1.13.0:rayon-core`; its pinned build script states that it links no
    native library and uses the key only as a one-version uniqueness sentinel;
-7. for musl, contain no program interpreter or dynamic `NEEDED` entry.
+9. for GNU, contain a program interpreter and dynamic `NEEDED` entry; for musl,
+   contain neither.
 
 Windows, WSL2 GNU/musl, and native Linux GNU/musl must all emit the same schema and
 dependency-smoke values. Host identity, filesystem, exact toolchain identity, Cargo
-metadata/tree, raw build output, run output, linkage output, binary SHA-256/size, and
-source manifest identity are retained.
+metadata/tree, raw build output, exact-artifact run output, direct binary inspection,
+pre/post-execution SHA-256/size, and source manifest identity are retained. Pre-existing
+run, inspection, execution, summary, or manifest files are stale input and make sealing
+fail before artifact authorization.
 
 ## Hard Stops
 
@@ -38,6 +46,13 @@ The probe fails rather than degrading when:
   sentinel;
 - build, startup, OXC, Rayon, or redb smoke fails;
 - a musl artifact has an interpreter or dynamic dependency;
+- a GNU artifact lacks its expected interpreter/dynamic dependency;
+- the exact execution copy differs before or after invocation;
+- run output omits or disagrees with the source or architecture identity;
+- retained run/inspection/execution evidence differs from a fresh invocation of the
+  detached artifact supplied to verification;
+- an unrelated native executable, a source-identity-tampered executable, stale generated
+  output, or a dynamic GNU binary labeled as musl is accepted;
 - required raw evidence is absent or not listed by `SHA256SUMS`.
 
 ## Non-Claims

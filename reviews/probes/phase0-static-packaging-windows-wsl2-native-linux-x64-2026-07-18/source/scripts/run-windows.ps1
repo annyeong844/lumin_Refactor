@@ -66,6 +66,9 @@ $Packager = Join-Path $ScriptRoot 'package_evidence.py'
 if ($LASTEXITCODE -ne 0) {
     throw 'source manifest verification failed'
 }
+$SourceManifestPath = Join-Path $SourceRoot 'SHA256SUMS'
+$SourceManifestSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $SourceManifestPath).Hash.ToLowerInvariant()
+$env:LUMIN_PROBE_SOURCE_MANIFEST_SHA256 = $SourceManifestSha256
 
 $rustcVersion = (& $Rustc --version).Trim()
 $rustcVerbose = ((& $Rustc --version --verbose) -join "`n").Trim()
@@ -90,6 +93,7 @@ $hostIdentity = [ordered]@{
     rustcVersion     = $rustcVersion
     rustcVerbose     = $rustcVerbose
     cargoVersion     = $cargoVersion
+    sourceManifestSha256 = $SourceManifestSha256
     windowsVersion   = [Environment]::OSVersion.VersionString
 }
 $hostJson = $hostIdentity | ConvertTo-Json -Depth 4
@@ -124,31 +128,6 @@ $binary = Join-Path $SourceRoot `
 if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) {
     throw "release artifact missing: $binary"
 }
-Invoke-RecordedProcess $binary @() `
-    (Join-Path $EvidencePath 'run-windows-msvc.json') `
-    (Join-Path $EvidencePath 'run-windows-msvc.stderr.log')
-
-$artifact = Get-Item -LiteralPath $binary
-$artifactHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $binary).Hash.ToLowerInvariant()
-$linkage = @(
-    'artifact-format-check: package_evidence.py parses PE signature, machine, and PE32+ magic'
-    "artifact-path: $binary"
-    "artifact-bytes: $($artifact.Length)"
-    "artifact-sha256: $artifactHash"
-    "rust-target: x86_64-pc-windows-msvc"
-)
-$dumpbin = Get-Command dumpbin.exe -ErrorAction SilentlyContinue
-if ($dumpbin) {
-    $linkage += "dumpbin: $($dumpbin.Source)"
-    $linkage += (& $dumpbin.Source /headers /dependents $binary 2>&1 | Out-String).TrimEnd()
-} else {
-    $linkage += 'dumpbin: unavailable; independent PE parsing remains mandatory'
-}
-[IO.File]::WriteAllText(
-    (Join-Path $EvidencePath 'linkage-windows-msvc.txt'),
-    ($linkage -join "`n") + "`n",
-    [Text.UTF8Encoding]::new($false)
-)
 
 & $Python $Packager seal `
     --scope windows-ntfs `
@@ -158,7 +137,10 @@ if ($dumpbin) {
 if ($LASTEXITCODE -ne 0) {
     throw 'evidence sealing failed'
 }
-& $Python $Packager verify --source $SourceRoot --evidence $EvidencePath
+& $Python $Packager verify `
+    --source $SourceRoot `
+    --evidence $EvidencePath `
+    --artifact "windows-msvc=$binary"
 if ($LASTEXITCODE -ne 0) {
     throw 'sealed evidence verification failed'
 }

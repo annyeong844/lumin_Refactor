@@ -36,6 +36,10 @@ evidence=$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$evi
 packager="$script_root/package_evidence.py"
 
 python3 "$packager" verify-source --source "$source_root"
+export LUMIN_PROBE_SOURCE_MANIFEST_SHA256=$(
+  python3 -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' \
+    "$source_root/SHA256SUMS"
+)
 if [[ -e "$evidence" ]]; then
   printf 'refusing existing evidence directory: %s\n' "$evidence" >&2
   exit 1
@@ -61,7 +65,7 @@ if [[ "$scope" == "native-linux-ext4" && "$host_kind" != "native-linux" ]]; then
   printf 'native non-WSL Linux runner required; observed: %s\n' "$uname_text" >&2
   exit 1
 fi
-for command in cargo rustc file ldd readelf findmnt python3; do
+for command in cargo rustc findmnt python3; do
   command -v "$command" >/dev/null || {
     printf 'required command missing: %s\n' "$command" >&2
     exit 1
@@ -107,6 +111,7 @@ print(json.dumps({
     "rustcVersion": os.environ["LUMIN_PROBE_RUSTC_VERSION"],
     "schema": "lumin-phase0-static-packaging-host-v1",
     "scope": os.environ["LUMIN_PROBE_SCOPE"],
+    "sourceManifestSha256": os.environ["LUMIN_PROBE_SOURCE_MANIFEST_SHA256"],
     "sourcePath": os.environ["LUMIN_PROBE_SOURCE_ROOT"],
     "uname": os.environ["LUMIN_PROBE_UNAME"],
 }, indent=2, sort_keys=True))
@@ -137,13 +142,6 @@ for mode in gnu musl; do
     printf 'release artifact missing: %s\n' "$binary" >&2
     exit 1
   }
-  "$binary" >"$evidence/run-$label.json" 2>"$evidence/run-$label.stderr.log"
-  {
-    file "$binary"
-    ldd "$binary" || true
-    readelf -lW "$binary"
-    readelf -dW "$binary"
-  } >"$evidence/linkage-$label.txt" 2>&1
   artifacts+=(--artifact "$label=$binary")
 done
 
@@ -152,5 +150,8 @@ python3 "$packager" seal \
   --source "$source_root" \
   --evidence "$evidence" \
   "${artifacts[@]}"
-python3 "$packager" verify --source "$source_root" --evidence "$evidence"
+python3 "$packager" verify \
+  --source "$source_root" \
+  --evidence "$evidence" \
+  "${artifacts[@]}"
 printf 'PASS: %s\n' "$evidence"

@@ -1,20 +1,29 @@
 #!/usr/bin/env python3
-"""Seal and verify standalone Phase 0 static-packaging evidence."""
+"""Seal and verify exact-artifact Phase 0 static-packaging evidence."""
 
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
+import stat
 import struct
+import subprocess
 import sys
+import tempfile
 from typing import Any
 
 
 ARCHITECTURE_CANDIDATE = "9a0dbe5c89463892c001e864c4f18eeab9e0eaed"
 ARCHITECTURE_MANIFEST = "e2ca379a8a659f2febbc4e277c89db67bb02035a6b10467cf78a5663f21cd99a"
+RUN_SCHEMA = "lumin-phase0-static-packaging-run-v2"
+INSPECTION_SCHEMA = "lumin-phase0-static-packaging-inspection-v1"
+EXECUTION_SCHEMA = "lumin-phase0-static-packaging-execution-v1"
+NEGATIVE_CONTROL_SCHEMA = "lumin-phase0-static-packaging-negative-controls-v1"
+SUMMARY_SCHEMA = "lumin-phase0-static-packaging-summary-v2"
 EXPECTED_DEPENDENCIES = {
     "anyhow": "1.0.103",
     "oxc_allocator": "0.126.0",
@@ -63,28 +72,40 @@ HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 class EvidenceError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, code: str = "evidence-invalid") -> None:
+        super().__init__(message)
+        self.code = code
 
 
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def strict_json(path: Path) -> Any:
+def strict_json_bytes(data: bytes, description: str) -> Any:
     def reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         result: dict[str, Any] = {}
         for key, value in pairs:
             if key in result:
-                raise EvidenceError(f"duplicate JSON key in {path}: {key}")
+                raise EvidenceError(
+                    f"duplicate JSON key in {description}: {key}",
+                    code="duplicate-json-key",
+                )
             result[key] = value
         return result
 
     try:
-        return json.loads(
-            path.read_text(encoding="utf-8"), object_pairs_hook=reject_duplicates
-        )
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise EvidenceError(f"invalid JSON {path}: {exc}") from exc
+        return json.loads(data.decode("utf-8"), object_pairs_hook=reject_duplicates)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise EvidenceError(
+            f"invalid JSON {description}: {exc}", code="run-json-invalid"
+        ) from exc
+
+
+def strict_json(path: Path) -> Any:
+    try:
+        return strict_json_bytes(path.read_bytes(), str(path))
+    except OSError as exc:
+        raise EvidenceError(f"cannot read JSON {path}: {exc}") from exc
 
 
 def validate_relative_path(value: str, manifest: Path) -> None:
@@ -124,7 +145,9 @@ def listed_files(root: Path, manifest: Path, *, source: bool) -> set[str]:
         if not path.is_file() or path == manifest:
             continue
         relative = path.relative_to(root)
-        if source and any(part == "target" or part.startswith("target-") for part in relative.parts):
+        if source and any(
+            part == "target" or part.startswith("target-") for part in relative.parts
+        ):
             continue
         files.add(relative.as_posix())
     return files
@@ -172,53 +195,439 @@ def parse_artifact(value: str) -> tuple[str, Path]:
     return label, Path(raw_path).resolve()
 
 
-def artifact_format(label: str, data: bytes) -> str:
-    if label == "windows-msvc":
-        if len(data) < 64 or data[:2] != b"MZ":
-            raise EvidenceError("Windows artifact is not an MZ executable")
-        pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
-        if pe_offset + 26 > len(data) or data[pe_offset : pe_offset + 4] != b"PE\0\0":
-            raise EvidenceError("Windows artifact has no PE signature")
-        machine = struct.unpack_from("<H", data, pe_offset + 4)[0]
-        optional_magic = struct.unpack_from("<H", data, pe_offset + 24)[0]
-        if machine != 0x8664 or optional_magic != 0x20B:
-            raise EvidenceError(
-                f"Windows artifact is not PE32+ x86-64: machine={machine:#x} "
-                f"magic={optional_magic:#x}"
-            )
-        return "PE32+-x86_64"
+def c_string(data: bytes, offset: int, description: str) -> str:
+    if offset < 0 or offset >= len(data):
+        raise EvidenceError(f"{description} string offset is outside the artifact")
+    end = data.find(b"\0", offset)
+    if end < 0:
+        raise EvidenceError(f"{description} string is not NUL terminated")
+    try:
+        return data[offset:end].decode("utf-8")
+    except UnicodeError as exc:
+        raise EvidenceError(f"{description} string is not UTF-8") from exc
+
+
+def inspect_pe(data: bytes) -> dict[str, Any]:
+    if len(data) < 64 or data[:2] != b"MZ":
+        raise EvidenceError("Windows artifact is not an MZ executable", code="format-mismatch")
+    pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+    if pe_offset + 24 > len(data) or data[pe_offset : pe_offset + 4] != b"PE\0\0":
+        raise EvidenceError("Windows artifact has no PE signature", code="format-mismatch")
+    machine, section_count = struct.unpack_from("<HH", data, pe_offset + 4)
+    optional_size = struct.unpack_from("<H", data, pe_offset + 20)[0]
+    optional_offset = pe_offset + 24
+    if optional_offset + optional_size > len(data):
+        raise EvidenceError("Windows optional header is truncated", code="format-mismatch")
+    optional_magic = struct.unpack_from("<H", data, optional_offset)[0]
+    if machine != 0x8664 or optional_magic != 0x20B:
+        raise EvidenceError(
+            f"Windows artifact is not PE32+ x86-64: machine={machine:#x} "
+            f"magic={optional_magic:#x}",
+            code="format-mismatch",
+        )
+    sections_offset = optional_offset + optional_size
+    sections: list[tuple[int, int, int, int]] = []
+    for index in range(section_count):
+        offset = sections_offset + index * 40
+        if offset + 40 > len(data):
+            raise EvidenceError("Windows section table is truncated", code="format-mismatch")
+        virtual_size, virtual_address, raw_size, raw_offset = struct.unpack_from(
+            "<IIII", data, offset + 8
+        )
+        if raw_offset + raw_size > len(data):
+            raise EvidenceError("Windows section data is truncated", code="format-mismatch")
+        sections.append((virtual_address, max(virtual_size, raw_size), raw_offset, raw_size))
+
+    def rva_to_offset(rva: int) -> int:
+        for virtual_address, span, raw_offset, raw_size in sections:
+            if virtual_address <= rva < virtual_address + span:
+                delta = rva - virtual_address
+                if delta >= raw_size:
+                    break
+                return raw_offset + delta
+        raise EvidenceError(f"Windows RVA {rva:#x} is not file-backed", code="format-mismatch")
+
+    imports: list[str] = []
+    data_directory_offset = optional_offset + 112
+    if optional_size >= 128:
+        import_rva, import_size = struct.unpack_from("<II", data, data_directory_offset + 8)
+        if import_rva and import_size:
+            descriptor_offset = rva_to_offset(import_rva)
+            descriptor_end = min(len(data), descriptor_offset + import_size)
+            while descriptor_offset + 20 <= descriptor_end:
+                descriptor = struct.unpack_from("<IIIII", data, descriptor_offset)
+                if descriptor == (0, 0, 0, 0, 0):
+                    break
+                imports.append(c_string(data, rva_to_offset(descriptor[3]), "PE import"))
+                descriptor_offset += 20
+    imports = sorted(set(imports), key=lambda value: value.casefold())
+    return {
+        "format": "PE32+-x86_64",
+        "interpreter": None,
+        "machine": "x86_64",
+        "neededLibraries": imports,
+        "schema": INSPECTION_SCHEMA,
+        "static": not imports,
+    }
+
+
+def inspect_elf(data: bytes) -> dict[str, Any]:
     if (
-        len(data) < 20
+        len(data) < 64
         or data[:4] != b"\x7fELF"
         or data[4] != 2
         or data[5] != 1
     ):
-        raise EvidenceError(f"{label} artifact is not little-endian ELF64")
+        raise EvidenceError("artifact is not little-endian ELF64", code="format-mismatch")
     machine = struct.unpack_from("<H", data, 18)[0]
     if machine != 62:
-        raise EvidenceError(f"{label} artifact machine is not x86-64: {machine}")
-    return "ELF64-x86_64"
+        raise EvidenceError(
+            f"ELF artifact machine is not x86-64: {machine}", code="format-mismatch"
+        )
+    program_offset = struct.unpack_from("<Q", data, 32)[0]
+    program_entry_size = struct.unpack_from("<H", data, 54)[0]
+    program_count = struct.unpack_from("<H", data, 56)[0]
+    if program_entry_size < 56:
+        raise EvidenceError("ELF program-header entry is too small", code="format-mismatch")
+    programs: list[dict[str, int]] = []
+    for index in range(program_count):
+        offset = program_offset + index * program_entry_size
+        if offset + 56 > len(data):
+            raise EvidenceError("ELF program-header table is truncated", code="format-mismatch")
+        values = struct.unpack_from("<IIQQQQQQ", data, offset)
+        program = {
+            "type": values[0],
+            "offset": values[2],
+            "vaddr": values[3],
+            "filesz": values[5],
+            "memsz": values[6],
+        }
+        if program["offset"] + program["filesz"] > len(data):
+            raise EvidenceError("ELF program segment is truncated", code="format-mismatch")
+        programs.append(program)
+
+    interpreter = None
+    for program in programs:
+        if program["type"] == 3:
+            raw = data[program["offset"] : program["offset"] + program["filesz"]]
+            if not raw.endswith(b"\0"):
+                raise EvidenceError("ELF interpreter is not NUL terminated", code="format-mismatch")
+            interpreter = raw[:-1].decode("utf-8")
+            break
+
+    needed_offsets: list[int] = []
+    string_table_vaddr = None
+    string_table_size = None
+    for program in programs:
+        if program["type"] != 2:
+            continue
+        dynamic_end = program["offset"] + program["filesz"]
+        for offset in range(program["offset"], dynamic_end - 15, 16):
+            tag, value = struct.unpack_from("<qQ", data, offset)
+            if tag == 0:
+                break
+            if tag == 1:
+                needed_offsets.append(value)
+            elif tag == 5:
+                string_table_vaddr = value
+            elif tag == 10:
+                string_table_size = value
+
+    needed: list[str] = []
+    if needed_offsets:
+        if string_table_vaddr is None or string_table_size is None:
+            raise EvidenceError("ELF dynamic string table is missing", code="format-mismatch")
+        string_table_offset = None
+        for program in programs:
+            if (
+                program["type"] == 1
+                and program["vaddr"] <= string_table_vaddr
+                and string_table_vaddr < program["vaddr"] + program["filesz"]
+            ):
+                string_table_offset = (
+                    program["offset"] + string_table_vaddr - program["vaddr"]
+                )
+                break
+        if string_table_offset is None:
+            raise EvidenceError("ELF dynamic string table is not file-backed", code="format-mismatch")
+        if string_table_offset + string_table_size > len(data):
+            raise EvidenceError("ELF dynamic string table is truncated", code="format-mismatch")
+        for needed_offset in needed_offsets:
+            if needed_offset >= string_table_size:
+                raise EvidenceError("ELF DT_NEEDED offset is outside the string table")
+            needed.append(c_string(data, string_table_offset + needed_offset, "ELF needed"))
+    return {
+        "format": "ELF64-x86_64",
+        "interpreter": interpreter,
+        "machine": "x86_64",
+        "neededLibraries": needed,
+        "schema": INSPECTION_SCHEMA,
+        "static": interpreter is None and not needed,
+    }
 
 
-def validate_run(path: Path, label: str) -> dict[str, Any]:
-    run = strict_json(path)
+def inspect_artifact(label: str, data: bytes) -> dict[str, Any]:
+    inspection = inspect_pe(data) if label == "windows-msvc" else inspect_elf(data)
+    inspection = {"label": label, **inspection}
+    if label == "windows-msvc" and inspection["format"] != "PE32+-x86_64":
+        raise EvidenceError("Windows artifact format mismatch", code="format-mismatch")
+    if label.startswith("linux-") and inspection["format"] != "ELF64-x86_64":
+        raise EvidenceError("Linux artifact format mismatch", code="format-mismatch")
+    if label == "linux-musl" and not inspection["static"]:
+        raise EvidenceError(
+            "musl artifact has an interpreter or dynamic dependency",
+            code="dynamic-musl-artifact",
+        )
+    if label == "linux-gnu" and inspection["static"]:
+        raise EvidenceError(
+            "GNU artifact lacks the expected dynamic interpreter/dependencies",
+            code="gnu-linkage-mismatch",
+        )
+    return inspection
+
+
+def expected_run(label: str, source_manifest_sha256: str) -> dict[str, Any]:
     expected_os, expected_env = EXPECTED_RUNS[label]
-    expected = {
-        "schema": "lumin-phase0-static-packaging-run-v1",
-        "status": "PASS",
-        "os": expected_os,
+    return {
         "arch": "x86_64",
-        "targetEnv": expected_env,
+        "architectureCandidate": ARCHITECTURE_CANDIDATE,
+        "architectureManifestSha256": ARCHITECTURE_MANIFEST,
+        "os": expected_os,
         "oxcStatementCount": 2,
         "rayonSum": 4950,
         "redbValue": 42,
+        "schema": RUN_SCHEMA,
+        "sourceManifestSha256": source_manifest_sha256,
+        "status": "PASS",
+        "targetEnv": expected_env,
     }
+
+
+def validate_run_output(
+    stdout: bytes, stderr: bytes, returncode: int, label: str, source_manifest_sha256: str
+) -> dict[str, Any]:
+    if returncode != 0:
+        raise EvidenceError(
+            f"exact artifact execution failed for {label}: exit {returncode}",
+            code="artifact-execution-failed",
+        )
+    if stderr:
+        raise EvidenceError(
+            f"exact artifact wrote stderr for {label}", code="artifact-stderr-nonempty"
+        )
+    run = strict_json_bytes(stdout, f"{label} exact-artifact stdout")
+    expected = expected_run(label, source_manifest_sha256)
     if run != expected:
-        raise EvidenceError(f"unexpected run result for {label}: {run!r}")
-    stderr = path.with_name(f"{path.stem}.stderr.log")
-    if not stderr.is_file() or stderr.stat().st_size != 0:
-        raise EvidenceError(f"probe stderr is missing or nonempty: {stderr}")
+        raise EvidenceError(
+            f"unexpected exact-artifact run result for {label}: {run!r}",
+            code="run-contract-mismatch",
+        )
     return run
+
+
+def execute_copy(data: bytes, label: str) -> subprocess.CompletedProcess[bytes]:
+    digest = sha256(data)
+    suffix = ".exe" if label == "windows-msvc" else ""
+    with tempfile.TemporaryDirectory(prefix="lumin-static-seal-") as directory:
+        executable = Path(directory) / f"artifact-{digest}{suffix}"
+        executable.write_bytes(data)
+        executable.chmod(stat.S_IRUSR | stat.S_IXUSR)
+        try:
+            if sha256(executable.read_bytes()) != digest:
+                raise EvidenceError("execution copy changed before invocation", code="artifact-race")
+            completed = subprocess.run(
+                [str(executable)],
+                cwd=directory,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            if sha256(executable.read_bytes()) != digest:
+                raise EvidenceError("execution copy changed during invocation", code="artifact-race")
+            return completed
+        finally:
+            if os.name == "nt" and executable.exists():
+                executable.chmod(stat.S_IREAD | stat.S_IWRITE)
+
+
+def collect_artifact(
+    label: str, binary: Path, source_manifest_sha256: str
+) -> dict[str, Any]:
+    if not binary.is_file() or binary.is_symlink():
+        raise EvidenceError(f"artifact missing or not regular: {binary}")
+    data = binary.read_bytes()
+    artifact_digest = sha256(data)
+    inspection = inspect_artifact(label, data)
+    completed = execute_copy(data, label)
+    run = validate_run_output(
+        completed.stdout,
+        completed.stderr,
+        completed.returncode,
+        label,
+        source_manifest_sha256,
+    )
+    if sha256(binary.read_bytes()) != artifact_digest:
+        raise EvidenceError("source artifact changed during sealing", code="artifact-race")
+    execution = {
+        "artifactSha256": artifact_digest,
+        "artifactSha256AfterExecution": artifact_digest,
+        "artifactSizeBytes": len(data),
+        "executionCopySha256After": artifact_digest,
+        "executionCopySha256Before": artifact_digest,
+        "exitCode": completed.returncode,
+        "label": label,
+        "runJsonSha256": sha256(completed.stdout),
+        "schema": EXECUTION_SCHEMA,
+        "status": "PASS",
+        "stderrSha256": sha256(completed.stderr),
+    }
+    summary = {
+        "format": inspection["format"],
+        "interpreter": inspection["interpreter"],
+        "label": label,
+        "machine": inspection["machine"],
+        "neededLibraries": inspection["neededLibraries"],
+        "sha256": artifact_digest,
+        "sizeBytes": len(data),
+        "static": inspection["static"],
+    }
+    return {
+        "execution": execution,
+        "inspection": inspection,
+        "run": run,
+        "runBytes": completed.stdout,
+        "stderrBytes": completed.stderr,
+        "summary": summary,
+    }
+
+
+def refuse_generated_outputs(evidence: Path, labels: set[str]) -> None:
+    names = {"negative-controls.json", "SHA256SUMS", "summary.json"}
+    for label in labels:
+        names.update(
+            {
+                f"execution-{label}.json",
+                f"inspection-{label}.json",
+                f"linkage-{label}.txt",
+                f"run-{label}.json",
+                f"run-{label}.stderr.log",
+            }
+        )
+    stale = sorted(name for name in names if (evidence / name).exists())
+    if stale:
+        raise EvidenceError(
+            f"refusing pre-existing generated evidence: {stale!r}",
+            code="stale-generated-output",
+        )
+
+
+def expect_rejection(
+    identifier: str, expected_codes: str | set[str], operation: Any
+) -> dict[str, Any]:
+    allowed = {expected_codes} if isinstance(expected_codes, str) else expected_codes
+    try:
+        operation()
+    except EvidenceError as exc:
+        if exc.code not in allowed:
+            raise EvidenceError(
+                f"negative control {identifier} rejected for {exc.code}, "
+                f"expected one of {sorted(allowed)!r}"
+            ) from exc
+        return {
+            "expectedRejectionCodes": sorted(allowed),
+            "id": identifier,
+            "observed": "REJECTED",
+            "observedRejectionCode": exc.code,
+        }
+    raise EvidenceError(f"negative control was accepted: {identifier}")
+
+
+def negative_controls(
+    artifacts_by_label: dict[str, Path], source_manifest_sha256: str
+) -> dict[str, Any]:
+    first_label = sorted(artifacts_by_label)[0]
+    first_data = artifacts_by_label[first_label].read_bytes()
+    source_bytes = source_manifest_sha256.encode("ascii")
+    if source_bytes not in first_data:
+        raise EvidenceError("source-manifest identity is not embedded in the artifact")
+    tampered = first_data.replace(source_bytes, b"0" * 64)
+
+    def reject_tampered_identity() -> None:
+        inspect_artifact(first_label, tampered)
+        completed = execute_copy(tampered, first_label)
+        validate_run_output(
+            completed.stdout,
+            completed.stderr,
+            completed.returncode,
+            first_label,
+            source_manifest_sha256,
+        )
+
+    controls = [
+        expect_rejection(
+            "tampered-source-identity",
+            {"artifact-execution-failed", "run-contract-mismatch"},
+            reject_tampered_identity,
+        )
+    ]
+
+    native_label = "windows-msvc" if os.name == "nt" else "linux-gnu"
+    foreign_artifact = (
+        Path(os.environ["SystemRoot"]) / "System32" / "where.exe"
+        if os.name == "nt"
+        else Path("/bin/true")
+    )
+
+    def reject_unrelated_native_executable() -> None:
+        collect_artifact(native_label, foreign_artifact, source_manifest_sha256)
+
+    try:
+        reject_unrelated_native_executable()
+    except EvidenceError as exc:
+        controls.append(
+            {
+                "expected": "any hard rejection before authorization",
+                "id": "unrelated-native-executable",
+                "observed": "REJECTED",
+                "observedRejectionCode": exc.code,
+            }
+        )
+    else:
+        raise EvidenceError("unrelated native executable was authorized")
+
+    with tempfile.TemporaryDirectory(prefix="lumin-static-stale-") as directory:
+        stale_root = Path(directory)
+        (stale_root / f"run-{first_label}.json").write_text("{}\n", encoding="utf-8")
+        controls.append(
+            expect_rejection(
+                "pre-existing-run-output",
+                "stale-generated-output",
+                lambda: refuse_generated_outputs(stale_root, {first_label}),
+            )
+        )
+
+    if "linux-gnu" in artifacts_by_label:
+        gnu_data = artifacts_by_label["linux-gnu"].read_bytes()
+        controls.append(
+            expect_rejection(
+                "dynamic-gnu-labeled-musl",
+                "dynamic-musl-artifact",
+                lambda: inspect_artifact("linux-musl", gnu_data),
+            )
+        )
+    else:
+        controls.append(
+            {
+                "id": "dynamic-gnu-labeled-musl",
+                "observed": "NOT_APPLICABLE",
+            }
+        )
+    return {
+        "controls": controls,
+        "schema": NEGATIVE_CONTROL_SCHEMA,
+        "status": "PASS",
+    }
 
 
 def root_dependency_versions(metadata: dict[str, Any]) -> dict[str, str]:
@@ -260,7 +669,7 @@ def cargo_link_declarations(metadata: dict[str, Any]) -> list[str]:
     return linked
 
 
-def validate_host(host: dict[str, Any], scope: str) -> None:
+def validate_host(host: dict[str, Any], scope: str, source_manifest_sha256: str) -> None:
     spec = EXPECTED_SCOPES.get(scope)
     if spec is None:
         raise EvidenceError(f"unknown evidence scope: {scope}")
@@ -278,21 +687,12 @@ def validate_host(host: dict[str, Any], scope: str) -> None:
     for key in ("filesystemDetail", "sourcePath", "rustcVersion", "rustcVerbose", "cargoVersion"):
         if not isinstance(host.get(key), str) or not host[key]:
             raise EvidenceError(f"host identity field missing: {key}")
+    if host.get("sourceManifestSha256") != source_manifest_sha256:
+        raise EvidenceError("host source-manifest identity mismatch")
     if not host["rustcVersion"].startswith("rustc 1.96.0 "):
         raise EvidenceError(f"wrong rustc version: {host['rustcVersion']}")
     if not host["cargoVersion"].startswith("cargo 1.96.0 "):
         raise EvidenceError(f"wrong cargo version: {host['cargoVersion']}")
-
-
-def validate_linkage(path: Path, label: str) -> None:
-    if not path.is_file() or path.stat().st_size == 0:
-        raise EvidenceError(f"linkage evidence missing or empty: {path}")
-    text = path.read_text(encoding="utf-8", errors="replace")
-    if label == "linux-musl":
-        if "INTERP" in text or "Requesting program interpreter" in text or "(NEEDED)" in text:
-            raise EvidenceError("musl artifact contains a dynamic interpreter or dependency")
-        if "not a dynamic executable" not in text and "statically linked" not in text:
-            raise EvidenceError("musl artifact is not proven static")
 
 
 def validate_raw_files(evidence: Path, labels: set[str]) -> None:
@@ -308,8 +708,6 @@ def validate_raw_files(evidence: Path, labels: set[str]) -> None:
             raise EvidenceError(f"release build completion missing: {build_stderr}")
         if tree.stat().st_size == 0:
             raise EvidenceError(f"Cargo tree is empty: {tree}")
-        validate_run(evidence / f"run-{label}.json", label)
-        validate_linkage(evidence / f"linkage-{label}.txt", label)
 
 
 def write_json(path: Path, value: Any) -> None:
@@ -320,22 +718,32 @@ def write_json(path: Path, value: Any) -> None:
     )
 
 
-def expected_artifact_format(label: str) -> str:
-    return "PE32+-x86_64" if label == "windows-msvc" else "ELF64-x86_64"
+def artifact_map(values: list[tuple[str, Path]], scope: str) -> dict[str, Path]:
+    spec = EXPECTED_SCOPES.get(scope)
+    if spec is None:
+        raise EvidenceError(f"unknown scope: {scope}")
+    result = dict(values)
+    if len(result) != len(values) or set(result) != spec["labels"]:
+        raise EvidenceError(
+            f"artifact labels for {scope} must be exactly {sorted(spec['labels'])!r}"
+        )
+    return result
+
+
+def write_generated_artifact(evidence: Path, collected: dict[str, Any]) -> None:
+    label = collected["summary"]["label"]
+    (evidence / f"run-{label}.json").write_bytes(collected["runBytes"])
+    (evidence / f"run-{label}.stderr.log").write_bytes(collected["stderrBytes"])
+    write_json(evidence / f"inspection-{label}.json", collected["inspection"])
+    write_json(evidence / f"execution-{label}.json", collected["execution"])
 
 
 def seal(args: argparse.Namespace) -> dict[str, Any]:
     source = args.source.resolve(strict=True)
     evidence = args.evidence.resolve(strict=True)
     source_identity = verify_source(source)
-    spec = EXPECTED_SCOPES.get(args.scope)
-    if spec is None:
-        raise EvidenceError(f"unknown scope: {args.scope}")
-    artifacts_by_label = dict(args.artifact)
-    if len(artifacts_by_label) != len(args.artifact) or set(artifacts_by_label) != spec["labels"]:
-        raise EvidenceError(
-            f"artifact labels for {args.scope} must be exactly {sorted(spec['labels'])!r}"
-        )
+    artifacts_by_label = artifact_map(args.artifact, args.scope)
+    refuse_generated_outputs(evidence, set(artifacts_by_label))
 
     metadata = strict_json(evidence / "cargo-metadata.json")
     if not isinstance(metadata, dict):
@@ -345,28 +753,24 @@ def seal(args: argparse.Namespace) -> dict[str, Any]:
     host = strict_json(evidence / "host.json")
     if not isinstance(host, dict):
         raise EvidenceError("host identity must be an object")
-    validate_host(host, args.scope)
+    validate_host(host, args.scope, source_identity["sourceManifestSha256"])
     validate_raw_files(evidence, set(artifacts_by_label))
 
-    artifacts = []
-    for label, binary in artifacts_by_label.items():
-        if not binary.is_file():
-            raise EvidenceError(f"artifact missing: {binary}")
-        data = binary.read_bytes()
-        artifacts.append(
-            {
-                "format": artifact_format(label, data),
-                "label": label,
-                "sha256": sha256(data),
-                "sizeBytes": len(data),
-                "static": label == "linux-musl",
-            }
-        )
+    collected = [
+        collect_artifact(label, binary, source_identity["sourceManifestSha256"])
+        for label, binary in sorted(artifacts_by_label.items())
+    ]
+    controls = negative_controls(
+        artifacts_by_label, source_identity["sourceManifestSha256"]
+    )
+    for result in collected:
+        write_generated_artifact(evidence, result)
+    write_json(evidence / "negative-controls.json", controls)
 
     summary = {
         "architectureCandidate": ARCHITECTURE_CANDIDATE,
         "architectureManifestSha256": ARCHITECTURE_MANIFEST,
-        "artifacts": sorted(artifacts, key=lambda item: item["label"]),
+        "artifacts": [result["summary"] for result in collected],
         "cargoLinkDeclarations": linked,
         "cargoLinkInterpretation": {
             "rayon-core@1.13.0:rayon-core": "non-native one-version uniqueness sentinel"
@@ -374,9 +778,10 @@ def seal(args: argparse.Namespace) -> dict[str, Any]:
         "claimBoundary": CLAIM_BOUNDARY,
         "directDependencies": dependencies,
         "host": host,
-        "unexpectedCargoLinkDeclarations": [],
-        "schema": "lumin-phase0-static-packaging-summary-v1",
+        "negativeControls": controls,
+        "schema": SUMMARY_SCHEMA,
         "scope": args.scope,
+        "unexpectedCargoLinkDeclarations": [],
         **source_identity,
     }
     write_json(evidence / "summary.json", summary)
@@ -391,11 +796,13 @@ def seal(args: argparse.Namespace) -> dict[str, Any]:
         for path in files
     ]
     manifest_path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
-    verify(evidence, source)
+    verify(evidence, source, args.artifact)
     return summary
 
 
-def verify(evidence: Path, source: Path) -> dict[str, Any]:
+def verify(
+    evidence: Path, source: Path, artifact_values: list[tuple[str, Path]]
+) -> dict[str, Any]:
     evidence = evidence.resolve(strict=True)
     source_identity = verify_source(source)
     count = verify_manifest(evidence, evidence / "SHA256SUMS", source=False)
@@ -403,11 +810,14 @@ def verify(evidence: Path, source: Path) -> dict[str, Any]:
     if not isinstance(summary, dict):
         raise EvidenceError("summary must be an object")
     scope = summary.get("scope")
-    spec = EXPECTED_SCOPES.get(scope)
-    if spec is None:
-        raise EvidenceError(f"summary scope is invalid: {scope!r}")
+    if not isinstance(scope, str):
+        raise EvidenceError("summary scope is missing")
+    artifacts_by_label = artifact_map(artifact_values, scope)
+    controls = strict_json(evidence / "negative-controls.json")
+    if not isinstance(controls, dict) or controls.get("status") != "PASS":
+        raise EvidenceError("negative-control record is invalid")
     if (
-        summary.get("schema") != "lumin-phase0-static-packaging-summary-v1"
+        summary.get("schema") != SUMMARY_SCHEMA
         or summary.get("status") != "PASS"
         or summary.get("architectureCandidate") != ARCHITECTURE_CANDIDATE
         or summary.get("architectureManifestSha256") != ARCHITECTURE_MANIFEST
@@ -420,12 +830,13 @@ def verify(evidence: Path, source: Path) -> dict[str, Any]:
         or summary.get("unexpectedCargoLinkDeclarations") != []
         or summary.get("sourceFileCount") != source_identity["sourceFileCount"]
         or summary.get("sourceManifestSha256") != source_identity["sourceManifestSha256"]
+        or summary.get("negativeControls") != controls
     ):
         raise EvidenceError("summary contract or source identity mismatch")
     host = strict_json(evidence / "host.json")
     if summary.get("host") != host or not isinstance(host, dict):
         raise EvidenceError("summary host identity mismatch")
-    validate_host(host, scope)
+    validate_host(host, scope, source_identity["sourceManifestSha256"])
     metadata = strict_json(evidence / "cargo-metadata.json")
     if not isinstance(metadata, dict):
         raise EvidenceError("Cargo metadata must be an object")
@@ -435,24 +846,38 @@ def verify(evidence: Path, source: Path) -> dict[str, Any]:
         raise EvidenceError("summary Cargo links declaration mismatch")
     if summary.get("directDependencies") != dependencies:
         raise EvidenceError("summary direct dependency mismatch")
-    artifacts = summary.get("artifacts")
-    if not isinstance(artifacts, list):
-        raise EvidenceError("summary artifacts missing")
-    artifact_labels = {item.get("label") for item in artifacts if isinstance(item, dict)}
-    if len(artifacts) != len(spec["labels"]) or artifact_labels != spec["labels"]:
-        raise EvidenceError("summary artifact labels mismatch")
-    for artifact in artifacts:
-        label = artifact["label"]
-        if (
-            artifact.get("format") != expected_artifact_format(label)
-            or artifact.get("static") != (label == "linux-musl")
-            or not isinstance(artifact.get("sizeBytes"), int)
-            or artifact["sizeBytes"] <= 0
-            or not isinstance(artifact.get("sha256"), str)
-            or not HEX_SHA256.fullmatch(artifact["sha256"])
-        ):
-            raise EvidenceError(f"summary artifact identity invalid: {artifact!r}")
-    validate_raw_files(evidence, set(spec["labels"]))
+    validate_raw_files(evidence, set(artifacts_by_label))
+
+    rerun = [
+        collect_artifact(label, binary, source_identity["sourceManifestSha256"])
+        for label, binary in sorted(artifacts_by_label.items())
+    ]
+    if summary.get("artifacts") != [result["summary"] for result in rerun]:
+        raise EvidenceError("summary artifact identity differs from exact supplied bytes")
+    for result in rerun:
+        label = result["summary"]["label"]
+        if (evidence / f"run-{label}.json").read_bytes() != result["runBytes"]:
+            raise EvidenceError(f"retained run output is stale for {label}")
+        if (evidence / f"run-{label}.stderr.log").read_bytes() != result["stderrBytes"]:
+            raise EvidenceError(f"retained stderr is stale for {label}")
+        if strict_json(evidence / f"inspection-{label}.json") != result["inspection"]:
+            raise EvidenceError(f"retained binary inspection is stale for {label}")
+        if strict_json(evidence / f"execution-{label}.json") != result["execution"]:
+            raise EvidenceError(f"retained execution binding is stale for {label}")
+
+    rerun_controls = negative_controls(
+        artifacts_by_label, source_identity["sourceManifestSha256"]
+    )
+    recorded_control_ids = {
+        item.get("id") for item in controls.get("controls", []) if isinstance(item, dict)
+    }
+    rerun_control_ids = {
+        item.get("id")
+        for item in rerun_controls.get("controls", [])
+        if isinstance(item, dict)
+    }
+    if recorded_control_ids != rerun_control_ids or rerun_controls.get("status") != "PASS":
+        raise EvidenceError("negative controls did not reproduce")
     return {"evidenceFiles": count, "status": "PASS", "summary": summary}
 
 
@@ -463,6 +888,9 @@ def main() -> int:
     source_parser = subparsers.add_parser("verify-source")
     source_parser.add_argument("--source", type=Path, required=True)
 
+    inspect_parser = subparsers.add_parser("inspect")
+    inspect_parser.add_argument("--artifact", type=parse_artifact, required=True)
+
     seal_parser = subparsers.add_parser("seal")
     seal_parser.add_argument("--scope", choices=sorted(EXPECTED_SCOPES), required=True)
     seal_parser.add_argument("--source", type=Path, required=True)
@@ -472,17 +900,22 @@ def main() -> int:
     verify_parser = subparsers.add_parser("verify")
     verify_parser.add_argument("--source", type=Path, required=True)
     verify_parser.add_argument("--evidence", type=Path, required=True)
+    verify_parser.add_argument("--artifact", action="append", type=parse_artifact, required=True)
 
     args = parser.parse_args()
     try:
         if args.command == "verify-source":
             result = verify_source(args.source)
+        elif args.command == "inspect":
+            label, artifact = args.artifact
+            result = inspect_artifact(label, artifact.read_bytes())
         elif args.command == "seal":
             result = seal(args)
         else:
-            result = verify(args.evidence, args.source)
+            result = verify(args.evidence, args.source, args.artifact)
     except (EvidenceError, OSError, KeyError, TypeError, ValueError) as exc:
-        print(f"FAIL: {exc}", file=sys.stderr)
+        code = exc.code if isinstance(exc, EvidenceError) else "unhandled-evidence-error"
+        print(f"FAIL[{code}]: {exc}", file=sys.stderr)
         return 1
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
