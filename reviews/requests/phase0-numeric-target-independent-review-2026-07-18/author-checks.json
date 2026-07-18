@@ -1,0 +1,1388 @@
+{
+  "checks": [
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-line-format",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-safe-path",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-order",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-unique",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-exact-inventory",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:README.md",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:TARGET-CONTRACT.md",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/windows-ntfs/cold/fix-plan.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/windows-ntfs/cold/manifest.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/windows-ntfs/cold/measurement.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/windows-ntfs/cold/producer-performance.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/windows-ntfs/cold/stderr.txt",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/windows-ntfs/cold/stdout.txt",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/windows-ntfs/cold/triage.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/windows-ntfs/host.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/windows-ntfs/warm/fix-plan.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/windows-ntfs/warm/manifest.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/windows-ntfs/warm/measurement.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/windows-ntfs/warm/producer-performance.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/windows-ntfs/warm/stderr.txt",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/windows-ntfs/warm/stdout.txt",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/windows-ntfs/warm/triage.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/wsl-prewrite-discovery-measurement-2026-07-11.md",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/wsl2-ext4/cold/fix-plan.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/wsl2-ext4/cold/manifest.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/wsl2-ext4/cold/measurement.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/wsl2-ext4/cold/producer-performance.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/wsl2-ext4/cold/stderr.txt",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/wsl2-ext4/cold/stdout.txt",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/wsl2-ext4/cold/time.txt",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/wsl2-ext4/cold/triage.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/wsl2-ext4/host.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/wsl2-ext4/warm/fix-plan.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/wsl2-ext4/warm/manifest.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/wsl2-ext4/warm/measurement.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/wsl2-ext4/warm/producer-performance.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/wsl2-ext4/warm/stderr.txt",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/wsl2-ext4/warm/stdout.txt",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/wsl2-ext4/warm/time.txt",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/legacy/wsl2-ext4/warm/triage.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/scale-corpus-expected-truth.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/scale-corpus-manifest.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:evidence/target-selection.json",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:source/capture-legacy-windows.ps1",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:source/capture-legacy-wsl.sh",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:source/generate-scale-corpus.py",
+      "status": "PASS"
+    },
+    {
+      "name": "manifest-member:source/verify-packet.py",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/legacy/windows-ntfs/cold/fix-plan.json",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/legacy/windows-ntfs/cold/manifest.json",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/legacy/windows-ntfs/cold/measurement.json",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/legacy/windows-ntfs/cold/producer-performance.json",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/legacy/windows-ntfs/cold/triage.json",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/legacy/windows-ntfs/host.json",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/legacy/windows-ntfs/warm/fix-plan.json",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/legacy/windows-ntfs/warm/manifest.json",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/legacy/windows-ntfs/warm/measurement.json",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/legacy/windows-ntfs/warm/producer-performance.json",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/legacy/windows-ntfs/warm/triage.json",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/legacy/wsl2-ext4/cold/fix-plan.json",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/legacy/wsl2-ext4/cold/manifest.json",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/legacy/wsl2-ext4/cold/measurement.json",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/legacy/wsl2-ext4/cold/producer-performance.json",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/legacy/wsl2-ext4/cold/triage.json",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/legacy/wsl2-ext4/host.json",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/legacy/wsl2-ext4/warm/fix-plan.json",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/legacy/wsl2-ext4/warm/manifest.json",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/legacy/wsl2-ext4/warm/measurement.json",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/legacy/wsl2-ext4/warm/producer-performance.json",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/legacy/wsl2-ext4/warm/triage.json",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/scale-corpus-expected-truth.json",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/scale-corpus-manifest.json",
+      "status": "PASS"
+    },
+    {
+      "name": "strict-json:evidence/target-selection.json",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-present:.gitattributes",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-bom:.gitattributes",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-cr:.gitattributes",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-final-lf:.gitattributes",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-present:.gitignore",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-bom:.gitignore",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-cr:.gitignore",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-final-lf:.gitignore",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-present:AGENTS.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-bom:AGENTS.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-cr:AGENTS.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-final-lf:AGENTS.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-present:README.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-bom:README.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-cr:README.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-final-lf:README.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-present:SDD.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-bom:SDD.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-cr:SDD.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-final-lf:SDD.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-present:WORKBOARD.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-bom:WORKBOARD.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-cr:WORKBOARD.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-final-lf:WORKBOARD.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-present:architecture/000-system-blueprint.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-bom:architecture/000-system-blueprint.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-cr:architecture/000-system-blueprint.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-final-lf:architecture/000-system-blueprint.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-present:architecture/001-execution-and-ownership.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-bom:architecture/001-execution-and-ownership.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-cr:architecture/001-execution-and-ownership.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-final-lf:architecture/001-execution-and-ownership.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-present:architecture/002-evidence-and-write-gate.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-bom:architecture/002-evidence-and-write-gate.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-cr:architecture/002-evidence-and-write-gate.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-final-lf:architecture/002-evidence-and-write-gate.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-present:specs/000-product-contract.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-bom:specs/000-product-contract.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-cr:specs/000-product-contract.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-final-lf:specs/000-product-contract.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-present:specs/001-foundation-slice.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-bom:specs/001-foundation-slice.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-cr:specs/001-foundation-slice.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-final-lf:specs/001-foundation-slice.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-present:specs/inventory-config-semantics.v1.json",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-bom:specs/inventory-config-semantics.v1.json",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-cr:specs/inventory-config-semantics.v1.json",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-final-lf:specs/inventory-config-semantics.v1.json",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-strict-json:specs/inventory-config-semantics.v1.json",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-present:specs/repo-path-semantics.v1.json",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-bom:specs/repo-path-semantics.v1.json",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-cr:specs/repo-path-semantics.v1.json",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-final-lf:specs/repo-path-semantics.v1.json",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-strict-json:specs/repo-path-semantics.v1.json",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-present:specs/resolver-config-semantics.v1.json",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-bom:specs/resolver-config-semantics.v1.json",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-cr:specs/resolver-config-semantics.v1.json",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-final-lf:specs/resolver-config-semantics.v1.json",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-strict-json:specs/resolver-config-semantics.v1.json",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-present:\ubb38\uc11c(\ud55c\uae00)/AGENTS.ko.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-bom:\ubb38\uc11c(\ud55c\uae00)/AGENTS.ko.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-cr:\ubb38\uc11c(\ud55c\uae00)/AGENTS.ko.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-final-lf:\ubb38\uc11c(\ud55c\uae00)/AGENTS.ko.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-present:\ubb38\uc11c(\ud55c\uae00)/SDD.ko.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-bom:\ubb38\uc11c(\ud55c\uae00)/SDD.ko.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-no-cr:\ubb38\uc11c(\ud55c\uae00)/SDD.ko.md",
+      "status": "PASS"
+    },
+    {
+      "name": "candidate-final-lf:\ubb38\uc11c(\ud55c\uae00)/SDD.ko.md",
+      "status": "PASS"
+    },
+    {
+      "name": "local-link:reviews/probes/phase0-numeric-target-selection-2026-07-18/README.md:TARGET-CONTRACT.md",
+      "status": "PASS"
+    },
+    {
+      "name": "local-link:reviews/probes/phase0-numeric-target-selection-2026-07-18/README.md:TARGET-CONTRACT.md",
+      "status": "PASS"
+    },
+    {
+      "name": "local-link:specs/001-foundation-slice.md:repo-path-semantics.v1.json",
+      "status": "PASS"
+    },
+    {
+      "name": "local-link:specs/001-foundation-slice.md:inventory-config-semantics.v1.json",
+      "status": "PASS"
+    },
+    {
+      "name": "local-link:specs/001-foundation-slice.md:resolver-config-semantics.v1.json",
+      "status": "PASS"
+    },
+    {
+      "name": "local-link:specs/001-foundation-slice.md:../reviews/probes/phase0-numeric-target-selection-2026-07-18/",
+      "status": "PASS"
+    },
+    {
+      "name": "selection-schema",
+      "status": "PASS"
+    },
+    {
+      "name": "selection-status",
+      "status": "PASS"
+    },
+    {
+      "name": "selection-legacy-commit",
+      "status": "PASS"
+    },
+    {
+      "name": "selection-false-negative-baseline",
+      "status": "PASS"
+    },
+    {
+      "name": "selection-false-negative-manifest",
+      "status": "PASS"
+    },
+    {
+      "name": "selection-targets",
+      "status": "PASS"
+    },
+    {
+      "name": "selection-not-achieved",
+      "status": "PASS"
+    },
+    {
+      "name": "selection-legacy-not-truth",
+      "status": "PASS"
+    },
+    {
+      "name": "selection-review-required",
+      "status": "PASS"
+    },
+    {
+      "name": "scale-schema",
+      "status": "PASS"
+    },
+    {
+      "name": "scale-files",
+      "status": "PASS"
+    },
+    {
+      "name": "scale-bytes",
+      "status": "PASS"
+    },
+    {
+      "name": "scale-content-digest",
+      "status": "PASS"
+    },
+    {
+      "name": "truth-filter",
+      "status": "PASS"
+    },
+    {
+      "name": "truth-totals",
+      "status": "PASS"
+    },
+    {
+      "name": "truth-limitations",
+      "status": "PASS"
+    },
+    {
+      "name": "truth-breakdown",
+      "status": "PASS"
+    },
+    {
+      "name": "truth-finding-count",
+      "status": "PASS"
+    },
+    {
+      "name": "truth-finding-tuples-unique",
+      "status": "PASS"
+    },
+    {
+      "name": "scale-manifest-reproduction",
+      "status": "PASS"
+    },
+    {
+      "name": "scale-truth-reproduction",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline-record-count",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:cold:host-platform",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:cold:host-cpu",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:cold:host-workers",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:cold:host-filesystem",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:cold:commit",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:cold:mode",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:cold:files",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:cold:loc",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:cold:js",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:cold:ts",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:cold:rust",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:cold:artifact-bytes",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:cold:producer-wall",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:cold:fix-counts",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:cold:sample-count",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:cold:sample-peak",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:cold:selection-elapsed",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:cold:selection-rss",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:warm:host-platform",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:warm:host-cpu",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:warm:host-workers",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:warm:host-filesystem",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:warm:commit",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:warm:mode",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:warm:files",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:warm:loc",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:warm:js",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:warm:ts",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:warm:rust",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:warm:artifact-bytes",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:warm:producer-wall",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:warm:fix-counts",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:warm:sample-count",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:warm:sample-peak",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:warm:selection-elapsed",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:windows-ntfs:warm:selection-rss",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:cold:host-platform",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:cold:host-cpu",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:cold:host-workers",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:cold:host-filesystem",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:cold:commit",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:cold:mode",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:cold:files",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:cold:loc",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:cold:js",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:cold:ts",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:cold:rust",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:cold:artifact-bytes",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:cold:producer-wall",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:cold:fix-counts",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:cold:gnu-time-owner",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:cold:gnu-time-elapsed",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:cold:gnu-time-rss",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:cold:selection-elapsed",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:cold:selection-rss",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:warm:host-platform",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:warm:host-cpu",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:warm:host-workers",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:warm:host-filesystem",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:warm:commit",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:warm:mode",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:warm:files",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:warm:loc",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:warm:js",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:warm:ts",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:warm:rust",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:warm:artifact-bytes",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:warm:producer-wall",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:warm:fix-counts",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:warm:gnu-time-owner",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:warm:gnu-time-elapsed",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:warm:gnu-time-rss",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:warm:selection-elapsed",
+      "status": "PASS"
+    },
+    {
+      "name": "baseline:wsl2-ext4:warm:selection-rss",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy-lifecycle-record-sha",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy-lifecycle-record-path",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy-lifecycle-files",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy-lifecycle-cargo",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy-lifecycle-cold",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy-lifecycle-warm",
+      "status": "PASS"
+    },
+    {
+      "name": "legacy-lifecycle-post",
+      "status": "PASS"
+    },
+    {
+      "name": "oxc-status",
+      "status": "PASS"
+    },
+    {
+      "name": "oxc-corpus-files",
+      "status": "PASS"
+    },
+    {
+      "name": "oxc-corpus-bytes",
+      "status": "PASS"
+    },
+    {
+      "name": "oxc-corpus-digest",
+      "status": "PASS"
+    },
+    {
+      "name": "oxc-stack-min:windows-x64",
+      "status": "PASS"
+    },
+    {
+      "name": "oxc-stack-4mib:windows-x64",
+      "status": "PASS"
+    },
+    {
+      "name": "oxc-jobs-ratio:windows-x64",
+      "status": "PASS"
+    },
+    {
+      "name": "oxc-stack-min:wsl2-x64",
+      "status": "PASS"
+    },
+    {
+      "name": "oxc-stack-4mib:wsl2-x64",
+      "status": "PASS"
+    },
+    {
+      "name": "oxc-jobs-ratio:wsl2-x64",
+      "status": "PASS"
+    },
+    {
+      "name": "oxc-stack-margin",
+      "status": "PASS"
+    },
+    {
+      "name": "static-status:windows-ntfs",
+      "status": "PASS"
+    },
+    {
+      "name": "static-status:wsl2-ext4",
+      "status": "PASS"
+    },
+    {
+      "name": "static-status:native-linux-ext4",
+      "status": "PASS"
+    },
+    {
+      "name": "static-largest-binary",
+      "status": "PASS"
+    }
+  ],
+  "failed": 0,
+  "passed": 345,
+  "schemaVersion": "phase0-numeric-target-checks.v1",
+  "status": "PASS"
+}

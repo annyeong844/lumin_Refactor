@@ -1,0 +1,102 @@
+{
+  "commit": "a410605ff9f5512cadd1cb105d346444044398ce",
+  "entries": [
+    {
+      "path": ".gitattributes",
+      "sha256": "bcae0103cba68300201e6db53dc2d2418cda78e40f1fb73417ee340f9f12396a",
+      "gitBlobSha1": "eaad072ea91f3c41f60c8752e7fec26cf864a14c",
+      "bytes": 55
+    },
+    {
+      "path": ".gitignore",
+      "sha256": "8165fdcd0eec420eca4acf8eac2ce3e852cb2c6b012c7d2d56a72eb91d63d4bd",
+      "gitBlobSha1": "f181dc5a1a851e571a3dc3035d7c27f635f44241",
+      "bytes": 135
+    },
+    {
+      "path": "AGENTS.md",
+      "sha256": "9c0e25902cffdf233324aaea24e3b12bec22327e6a5c9022da762836b59a7062",
+      "gitBlobSha1": "b31337b98e638a1397af9460199b45b0b9de76c2",
+      "bytes": 4256
+    },
+    {
+      "path": "README.md",
+      "sha256": "18326ce8d50fd7154755912533d77e8ff987c8da48a104fc7244c24a13b8c139",
+      "gitBlobSha1": "016cdfb8c7858226bbbdab72d66b0f232d3181b4",
+      "bytes": 2048
+    },
+    {
+      "path": "SDD.md",
+      "sha256": "2e540685f83e0ea730e1260de25649d379a142d685adce0eb5c8ea5ea45de36f",
+      "gitBlobSha1": "61c0f7d56568b06167ed7bb9de02ed3feb2ae328",
+      "bytes": 2096
+    },
+    {
+      "path": "WORKBOARD.md",
+      "sha256": "10e6e19ed7bff8d7bf4c2216054419e21e801ff3f3b95ca3357544a26c6464f8",
+      "gitBlobSha1": "71cca5c1af0a34d005dddef8f9d4f2375164cc57",
+      "bytes": 3465
+    },
+    {
+      "path": "architecture/000-system-blueprint.md",
+      "sha256": "2c00b6c73321365f618f8fb5ca6a290cbb02574ce30839efd7b54683eee184e6",
+      "gitBlobSha1": "defe36b667440c81a4342da43bb994729682f7fc",
+      "bytes": 37720
+    },
+    {
+      "path": "architecture/001-execution-and-ownership.md",
+      "sha256": "01017635e017ed49ef0aa7ec8ffe29d17f4aced84c9240786d13d174bb0b90cf",
+      "gitBlobSha1": "7ec773a0bf9756203391a9fc152de1677315a98f",
+      "bytes": 30297
+    },
+    {
+      "path": "architecture/002-evidence-and-write-gate.md",
+      "sha256": "5224048b076def8ff73edabf7575bae91cd7533f3c1a3df9a1f03ee101154b4c",
+      "gitBlobSha1": "8448f8cd300dcd4083e8024b966bad2e45d79575",
+      "bytes": 95674
+    },
+    {
+      "path": "specs/000-product-contract.md",
+      "sha256": "ab311142d43bce61c03dedd80ed5035566e34c8a90dee485fc79c3eddbf96bf1",
+      "gitBlobSha1": "2553f3a3493778db1bd626fcdaf645b3caed2d37",
+      "bytes": 17774
+    },
+    {
+      "path": "specs/001-foundation-slice.md",
+      "sha256": "517ea47f7c867a6abb0b551b4eafd5e32e941c3097a5b5db84e40bf04856b7ca",
+      "gitBlobSha1": "f0bdd695dd43c9a83e05d2fadccb346ab69a6f25",
+      "bytes": 111915
+    },
+    {
+      "path": "specs/inventory-config-semantics.v1.json",
+      "sha256": "ebca37c3b33f8e4d92ea29e0bcdc51b7cd5ea04a453c4c469a89072f3d2fac02",
+      "gitBlobSha1": "62859cd3611a2e97b4e73265b7793f947364a44c",
+      "bytes": 11052
+    },
+    {
+      "path": "specs/repo-path-semantics.v1.json",
+      "sha256": "ee686f81164ff40b281483afaae591793964cc576afaca0ce7b5b51a6798b4a6",
+      "gitBlobSha1": "6d75a01db14656cc64bd60afba003512555df7fe",
+      "bytes": 13162
+    },
+    {
+      "path": "specs/resolver-config-semantics.v1.json",
+      "sha256": "41ffa3dcc108e74dca351b4f3a5fa182090e1481ed6d8333235f38f0459a29a1",
+      "gitBlobSha1": "c05a915890e20b90aa0053e4c12f1f87ac63b94f",
+      "bytes": 48429
+    },
+    {
+      "path": "문서(한글)/AGENTS.ko.md",
+      "sha256": "17dbece96b064d83ad39d905bf044e17286a3e813106b21fd50f6b1d00728e15",
+      "gitBlobSha1": "012cc0e27da0800560eabc43879547a788fb6327",
+      "bytes": 4698
+    },
+    {
+      "path": "문서(한글)/SDD.ko.md",
+      "sha256": "2456a9b89bb8f24a76b63d674cd62f0dcb64038ecada488a7d523af1476a1f28",
+      "gitBlobSha1": "f02ea6fd0c93be95cd7a7ebe9d168508088c9621",
+      "bytes": 2181
+    }
+  ],
+  "manifestSha256": "6b23f500e633f28611c27bedb9998fb7ff44a69af6682d58b8554e7b5b33d86c"
+}

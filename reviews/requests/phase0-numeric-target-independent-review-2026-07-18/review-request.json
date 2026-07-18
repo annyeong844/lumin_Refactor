@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "phase0-numeric-target-independent-review-request.v1",
+  "status": "pending_external_review",
+  "repository": "annyeong844/lumin_Refactor",
+  "candidate": "a410605ff9f5512cadd1cb105d346444044398ce",
+  "parent": "5125b4b2ade1c98ff9fc667a7363a659c6799564",
+  "tree": "529a35b9ce677d2a241dd059f81769f8a427a182",
+  "subject": "Select Phase 1 numeric targets",
+  "ledgerCommit": "bee8a2ab685862825c9fcd0efd9ef147715b94c3",
+  "b07ManifestSha256": "6b23f500e633f28611c27bedb9998fb7ff44a69af6682d58b8554e7b5b33d86c",
+  "packetManifestSha256": "a749a5d80600295fe765edbccf8ed23be170a9211151186923e2f3040349c2f4",
+  "packetManifestEntries": 42,
+  "packetTreeEntries": 43,
+  "scaleCorpus": {
+    "schemaVersion": "phase1-scale-findings.v1",
+    "files": 780,
+    "bytes": 7461511,
+    "contentSha256": "9e51b070a934c027e6d2d9a4610fac764592ecb8f05bf41a2ab6f5eb46158d3e",
+    "findingCount": 256,
+    "reviewCandidate": 128,
+    "generatedReviewOnly": 64,
+    "vendoredReviewOnly": 64
+  },
+  "authorChecks": {
+    "status": "PASS",
+    "passed": 345,
+    "failed": 0,
+    "capturedOutputSha256": "f152f92f389809930cd5c95d5b310301e40ee06ea14f52ec906f15aa15d6d065",
+    "requestCopySha256": "c1a316e84a34bb058b8ceeeb1000b632b7ae7bbdde08e611d24c7c41fb632358",
+    "authority": "consistency-only"
+  },
+  "claimBoundary": "Target selection only; no achieved product, package, skill, public behavior, native-path, or product-performance PASS.",
+  "requiredVerdict": [
+    "PASS",
+    "REOPEN",
+    "NEW_FINDING"
+  ]
+}
