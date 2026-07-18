@@ -23,7 +23,7 @@ Lumin is a native repository-audit engine and Codex/Claude Code skill that gives
 
 ## Active Work
 
-Independently verify the Phase 0/Phase 1 gate-boundary amendment, then close the remaining Phase 0-only static-packaging-feasibility, clean-provenance, and numeric-target gates owned by REVIEW-002. Product packages, packaged skill adapters, public behavior, native path/root product round trips, and achieved-budget proofs remain Phase 1 acceptance.
+Close the remaining Phase 0-only clean-provenance and numeric-target gates owned by REVIEW-002. Static-packaging feasibility is independently passed. Product packages, packaged skill adapters, public behavior, native path/root product round trips, and achieved-budget proofs remain Phase 1 acceptance.
 
 ## Routing Rules
 
