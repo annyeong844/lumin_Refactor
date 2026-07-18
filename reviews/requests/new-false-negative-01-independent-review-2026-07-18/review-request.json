@@ -1,0 +1,32 @@
+{
+  "schema": "lumin-new-false-negative-01-review-request-v1",
+  "repository": "annyeong844/lumin_Refactor",
+  "candidate": "a1e07ed7b9e05181cd58bfba5f3846c1baab8a93",
+  "candidate_parent": "f2c1c2b7c5c509e2c82a85daa385a52a16476e10",
+  "candidate_tree": "06d3116c3c9ab398f1f4fa0b5df38a7fe302cb5e",
+  "candidate_message": "Preserve grounded findings from mute policy",
+  "candidate_manifest_sha256": "8b0d2ceddb930533e6967c48e06954f09f53abf8f7a688f4dfb0baeb050a6339",
+  "ledger_commit": "6daf8229b60e50d9adc78c11018df7682784ed7b",
+  "finding": "NEW-FALSE-NEGATIVE-01",
+  "semantic_changed_paths": [
+    "WORKBOARD.md",
+    "architecture/000-system-blueprint.md",
+    "architecture/002-evidence-and-write-gate.md",
+    "specs/000-product-contract.md",
+    "specs/001-foundation-slice.md"
+  ],
+  "required_invariants": [
+    "grounded findings remain canonical regardless of source role or remediation disposition",
+    "unfiltered default finding queries include ReviewOnly findings",
+    "normalized filters and unfiltered scopeTotal are explicit",
+    "FindingDisposition has no Muted or Suppressed variant",
+    "disposition changes remain directionless semantic owner-payload changes",
+    "performance samples cannot pass by changing authored semantic truth"
+  ],
+  "remaining_phase0_gate_after_pass": "numeric Phase 1 target approval",
+  "accepted_risks_preserved": [
+    "AR-BACKEND-01",
+    "AR-MEASURE-01"
+  ],
+  "independence_boundary": "The included verifier checks immutable binding and anchors only; the external reviewer derives the design verdict independently."
+}
