@@ -4,16 +4,26 @@
   "artifacts": [
     {
       "format": "ELF64-x86_64",
+      "interpreter": "/lib64/ld-linux-x86-64.so.2",
       "label": "linux-gnu",
-      "sha256": "790a5afb5c73bb03098939c8bc00a1751398f66774367da2f1b16b423cd9b8c2",
-      "sizeBytes": 1795184,
+      "machine": "x86_64",
+      "neededLibraries": [
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libc.so.6"
+      ],
+      "sha256": "07c708408353f15956ebaecc8e58b196f0ee7af70a9b1f974c9d2a0d4825d69f",
+      "sizeBytes": 1794800,
       "static": false
     },
     {
       "format": "ELF64-x86_64",
+      "interpreter": null,
       "label": "linux-musl",
-      "sha256": "8704f655bd0f53456d7da3dae3dbecd13c7223083da5d8f516d8aca5046bb33e",
-      "sizeBytes": 1897184,
+      "machine": "x86_64",
+      "neededLibraries": [],
+      "sha256": "6ca7bb97f794a631f6375848de2f74c5f2444a7ea27086e09a2b4fec67270563",
+      "sizeBytes": 1901280,
       "static": true
     }
   ],
@@ -46,8 +56,8 @@
     "cargoVersion": "cargo 1.96.0 (30a34c682 2026-05-25)",
     "ciRepository": "annyeong844/lumin_Refactor",
     "ciRunAttempt": "1",
-    "ciRunId": "29629760482",
-    "ciSha": "721984d52e75d2385948767ce8ade6f190babaf2",
+    "ciRunId": "29634512936",
+    "ciSha": "b7560b443d973540020bd2de984a99b69c35d14e",
     "filesystemDetail": "/      ext4   /dev/sda1",
     "filesystemType": "ext4",
     "hostKind": "native-linux",
@@ -56,13 +66,51 @@
     "rustcVersion": "rustc 1.96.0 (ac68faa20 2026-05-25)",
     "schema": "lumin-phase0-static-packaging-host-v1",
     "scope": "native-linux-ext4",
+    "sourceManifestSha256": "38c1a75d06edb12bb2798d93bc1ce788325ca33c6bc12dabd4ef10df943b677c",
     "sourcePath": "/home/runner/work/lumin_Refactor/lumin_Refactor/reviews/probes/phase0-static-packaging-windows-wsl2-native-linux-x64-2026-07-18/source",
     "uname": "Linux runnervm3jd5f 6.17.0-1020-azure #20~24.04.1-Ubuntu SMP Fri Jun 19 20:09:14 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux"
   },
-  "schema": "lumin-phase0-static-packaging-summary-v1",
+  "negativeControls": {
+    "controls": [
+      {
+        "expectedRejectionCodes": [
+          "artifact-execution-failed",
+          "run-contract-mismatch"
+        ],
+        "id": "tampered-source-identity",
+        "observed": "REJECTED",
+        "observedRejectionCode": "artifact-execution-failed"
+      },
+      {
+        "expected": "any hard rejection before authorization",
+        "id": "unrelated-native-executable",
+        "observed": "REJECTED",
+        "observedRejectionCode": "run-json-invalid"
+      },
+      {
+        "expectedRejectionCodes": [
+          "stale-generated-output"
+        ],
+        "id": "pre-existing-run-output",
+        "observed": "REJECTED",
+        "observedRejectionCode": "stale-generated-output"
+      },
+      {
+        "expectedRejectionCodes": [
+          "dynamic-musl-artifact"
+        ],
+        "id": "dynamic-gnu-labeled-musl",
+        "observed": "REJECTED",
+        "observedRejectionCode": "dynamic-musl-artifact"
+      }
+    ],
+    "schema": "lumin-phase0-static-packaging-negative-controls-v1",
+    "status": "PASS"
+  },
+  "schema": "lumin-phase0-static-packaging-summary-v2",
   "scope": "native-linux-ext4",
   "sourceFileCount": 9,
-  "sourceManifestSha256": "dd30eeda67caf9e354838a9ec7974cdd3dc118a9136c2556fcfe56c9f441db45",
+  "sourceManifestSha256": "38c1a75d06edb12bb2798d93bc1ce788325ca33c6bc12dabd4ef10df943b677c",
   "status": "PASS",
   "unexpectedCargoLinkDeclarations": []
 }

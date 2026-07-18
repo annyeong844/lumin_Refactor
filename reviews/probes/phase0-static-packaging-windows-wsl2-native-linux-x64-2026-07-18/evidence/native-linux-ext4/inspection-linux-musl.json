@@ -1,0 +1,9 @@
+{
+  "format": "ELF64-x86_64",
+  "interpreter": null,
+  "label": "linux-musl",
+  "machine": "x86_64",
+  "neededLibraries": [],
+  "schema": "lumin-phase0-static-packaging-inspection-v1",
+  "static": true
+}

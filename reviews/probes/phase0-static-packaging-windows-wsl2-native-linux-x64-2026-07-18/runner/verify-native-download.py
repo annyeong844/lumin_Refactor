@@ -11,10 +11,10 @@ import struct
 from typing import Any
 
 
-EXPECTED_RUN_ID = "29629760482"
-EXPECTED_RUNNER_SHA = "721984d52e75d2385948767ce8ade6f190babaf2"
-EXPECTED_ARCHIVE_SHA256 = "073ef5907944f8b79df8eab07d135826365f143c4d590ee3d59d7f57d5926454"
-EXPECTED_SOURCE_SHA256 = "dd30eeda67caf9e354838a9ec7974cdd3dc118a9136c2556fcfe56c9f441db45"
+EXPECTED_RUN_ID = "29634512936"
+EXPECTED_RUNNER_SHA = "b7560b443d973540020bd2de984a99b69c35d14e"
+EXPECTED_ARCHIVE_SHA256 = "2f238899ccccbb43a1c345eab3746f68da56a86208ef0d46fa11e36853cbb971"
+EXPECTED_SOURCE_SHA256 = "38c1a75d06edb12bb2798d93bc1ce788325ca33c6bc12dabd4ef10df943b677c"
 EXPECTED_DEPENDENCIES = {
     "anyhow": "1.0.103",
     "oxc_allocator": "0.126.0",
@@ -81,7 +81,7 @@ def main() -> None:
         target = evidence / relative
         check(f"member-hash:{relative}", target.is_file() and digest(target) == expected)
         entries.append(relative)
-    check("manifest-cardinality", len(entries) == 18 and len(set(entries)) == 18)
+    check("manifest-cardinality", len(entries) == 21 and len(set(entries)) == 21)
     actual_files = {
         path.relative_to(evidence).as_posix()
         for path in evidence.rglob("*")
@@ -92,7 +92,9 @@ def main() -> None:
     summary = strict_json(evidence / "summary.json")
     check(
         "summary-status-scope",
-        summary["status"] == "PASS" and summary["scope"] == "native-linux-ext4",
+        summary["schema"] == "lumin-phase0-static-packaging-summary-v2"
+        and summary["status"] == "PASS"
+        and summary["scope"] == "native-linux-ext4",
     )
     check(
         "architecture-boundary",
@@ -163,28 +165,64 @@ def main() -> None:
         run = strict_json(evidence / f"run-{label}.json")
         check(
             f"run-oracle:{label}",
-            run["status"] == "PASS"
+            run["schema"] == "lumin-phase0-static-packaging-run-v2"
+            and run["status"] == "PASS"
+            and run["architectureCandidate"]
+            == "9a0dbe5c89463892c001e864c4f18eeab9e0eaed"
+            and run["architectureManifestSha256"]
+            == "e2ca379a8a659f2febbc4e277c89db67bb02035a6b10467cf78a5663f21cd99a"
+            and run["sourceManifestSha256"] == EXPECTED_SOURCE_SHA256
             and run["oxcStatementCount"] == 2
             and run["rayonSum"] == 4950
             and run["redbValue"] == 42,
         )
+        inspection = strict_json(evidence / f"inspection-{label}.json")
+        execution = strict_json(evidence / f"execution-{label}.json")
+        check(
+            f"inspection-binding:{label}",
+            inspection["schema"] == "lumin-phase0-static-packaging-inspection-v1"
+            and inspection["label"] == label
+            and inspection["format"] == "ELF64-x86_64"
+            and inspection["machine"] == "x86_64"
+            and inspection["static"] == by_label[label]["static"]
+            and inspection["interpreter"] == by_label[label]["interpreter"]
+            and inspection["neededLibraries"] == by_label[label]["neededLibraries"],
+        )
+        check(
+            f"execution-binding:{label}",
+            execution["schema"] == "lumin-phase0-static-packaging-execution-v1"
+            and execution["status"] == "PASS"
+            and execution["artifactSha256"] == by_label[label]["sha256"]
+            and execution["artifactSha256AfterExecution"] == by_label[label]["sha256"]
+            and execution["executionCopySha256Before"] == by_label[label]["sha256"]
+            and execution["executionCopySha256After"] == by_label[label]["sha256"]
+            and execution["artifactSizeBytes"] == by_label[label]["sizeBytes"]
+            and execution["exitCode"] == 0,
+        )
 
-    linkage = (evidence / "linkage-linux-musl.txt").read_text(encoding="utf-8")
+    musl_inspection = strict_json(evidence / "inspection-linux-musl.json")
     check(
         "musl-no-interpreter",
-        "INTERP" not in linkage and "Requesting program interpreter" not in linkage,
+        musl_inspection["interpreter"] is None,
     )
-    check("musl-no-needed", "(NEEDED)" not in linkage)
+    check("musl-no-needed", musl_inspection["neededLibraries"] == [])
+    check("musl-static-direct-inspection", musl_inspection["static"] is True)
+    negative = strict_json(evidence / "negative-controls.json")
+    negative_by_id = {item["id"]: item for item in negative["controls"]}
     check(
-        "musl-static-tool-output",
-        "statically linked" in linkage or "not a dynamic executable" in linkage,
+        "negative-controls",
+        negative["status"] == "PASS"
+        and negative_by_id["tampered-source-identity"]["observed"] == "REJECTED"
+        and negative_by_id["unrelated-native-executable"]["observed"] == "REJECTED"
+        and negative_by_id["pre-existing-run-output"]["observed"] == "REJECTED"
+        and negative_by_id["dynamic-gnu-labeled-musl"]["observed"] == "REJECTED",
     )
 
     result = {
         "artifactArchiveBytes": archive.stat().st_size,
         "artifactArchiveSha256": EXPECTED_ARCHIVE_SHA256,
-        "artifactId": "8425075747",
-        "artifactName": f"phase0-static-packaging-native-{EXPECTED_RUNNER_SHA}",
+        "artifactId": "8426637860",
+        "artifactName": f"phase0-static-packaging-binding-{EXPECTED_RUNNER_SHA}",
         "checkCount": len(checks),
         "checks": checks,
         "runnerCommit": EXPECTED_RUNNER_SHA,

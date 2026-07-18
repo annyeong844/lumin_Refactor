@@ -4,15 +4,25 @@
   "artifacts": [
     {
       "format": "ELF64-x86_64",
+      "interpreter": "/lib64/ld-linux-x86-64.so.2",
       "label": "linux-gnu",
-      "sha256": "bf558042793a029807db457821ac8030843bbc2494409b46198564a9c8a3bd22",
-      "sizeBytes": 1795120,
+      "machine": "x86_64",
+      "neededLibraries": [
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libc.so.6"
+      ],
+      "sha256": "6892e467d61fc2ffcc3c0fec73323a8d8c2d789e709cfd801d0ff94ffc50caf4",
+      "sizeBytes": 1794736,
       "static": false
     },
     {
       "format": "ELF64-x86_64",
+      "interpreter": null,
       "label": "linux-musl",
-      "sha256": "7d810082567f4b437a5d7aaef6db9a3677fd21d9ef71cc1e659c56679aad04a9",
+      "machine": "x86_64",
+      "neededLibraries": [],
+      "sha256": "ad9b7d8789111ede6c065805185d21cc07a87400555eedecad859952fb258a32",
       "sizeBytes": 1897184,
       "static": true
     }
@@ -56,13 +66,51 @@
     "rustcVersion": "rustc 1.96.0 (ac68faa20 2026-05-25)",
     "schema": "lumin-phase0-static-packaging-host-v1",
     "scope": "wsl2-ext4",
-    "sourcePath": "/home/endof/lumin-phase0-static-packaging-b2eb6a57/source",
+    "sourceManifestSha256": "38c1a75d06edb12bb2798d93bc1ce788325ca33c6bc12dabd4ef10df943b677c",
+    "sourcePath": "/home/endof/lumin-static-binding-38c1a75d/source",
     "uname": "Linux MyPC 6.6.87.2-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Thu Jun  5 18:30:46 UTC 2025 x86_64 x86_64 x86_64 GNU/Linux"
   },
-  "schema": "lumin-phase0-static-packaging-summary-v1",
+  "negativeControls": {
+    "controls": [
+      {
+        "expectedRejectionCodes": [
+          "artifact-execution-failed",
+          "run-contract-mismatch"
+        ],
+        "id": "tampered-source-identity",
+        "observed": "REJECTED",
+        "observedRejectionCode": "artifact-execution-failed"
+      },
+      {
+        "expected": "any hard rejection before authorization",
+        "id": "unrelated-native-executable",
+        "observed": "REJECTED",
+        "observedRejectionCode": "run-json-invalid"
+      },
+      {
+        "expectedRejectionCodes": [
+          "stale-generated-output"
+        ],
+        "id": "pre-existing-run-output",
+        "observed": "REJECTED",
+        "observedRejectionCode": "stale-generated-output"
+      },
+      {
+        "expectedRejectionCodes": [
+          "dynamic-musl-artifact"
+        ],
+        "id": "dynamic-gnu-labeled-musl",
+        "observed": "REJECTED",
+        "observedRejectionCode": "dynamic-musl-artifact"
+      }
+    ],
+    "schema": "lumin-phase0-static-packaging-negative-controls-v1",
+    "status": "PASS"
+  },
+  "schema": "lumin-phase0-static-packaging-summary-v2",
   "scope": "wsl2-ext4",
   "sourceFileCount": 9,
-  "sourceManifestSha256": "dd30eeda67caf9e354838a9ec7974cdd3dc118a9136c2556fcfe56c9f441db45",
+  "sourceManifestSha256": "38c1a75d06edb12bb2798d93bc1ce788325ca33c6bc12dabd4ef10df943b677c",
   "status": "PASS",
   "unexpectedCargoLinkDeclarations": []
 }

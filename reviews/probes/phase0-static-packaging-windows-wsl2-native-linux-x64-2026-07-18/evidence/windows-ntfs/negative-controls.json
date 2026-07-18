@@ -1,0 +1,33 @@
+{
+  "controls": [
+    {
+      "expectedRejectionCodes": [
+        "artifact-execution-failed",
+        "run-contract-mismatch"
+      ],
+      "id": "tampered-source-identity",
+      "observed": "REJECTED",
+      "observedRejectionCode": "artifact-execution-failed"
+    },
+    {
+      "expected": "any hard rejection before authorization",
+      "id": "unrelated-native-executable",
+      "observed": "REJECTED",
+      "observedRejectionCode": "artifact-execution-failed"
+    },
+    {
+      "expectedRejectionCodes": [
+        "stale-generated-output"
+      ],
+      "id": "pre-existing-run-output",
+      "observed": "REJECTED",
+      "observedRejectionCode": "stale-generated-output"
+    },
+    {
+      "id": "dynamic-gnu-labeled-musl",
+      "observed": "NOT_APPLICABLE"
+    }
+  ],
+  "schema": "lumin-phase0-static-packaging-negative-controls-v1",
+  "status": "PASS"
+}

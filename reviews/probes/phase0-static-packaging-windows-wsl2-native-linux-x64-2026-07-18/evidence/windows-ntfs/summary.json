@@ -4,9 +4,23 @@
   "artifacts": [
     {
       "format": "PE32+-x86_64",
+      "interpreter": null,
       "label": "windows-msvc",
-      "sha256": "8fb4a84858e6e0118d29ab4c53de5b7d8f3275df1146dd6bdbbaafe57960051b",
-      "sizeBytes": 1411584,
+      "machine": "x86_64",
+      "neededLibraries": [
+        "api-ms-win-core-synch-l1-2-0.dll",
+        "api-ms-win-crt-heap-l1-1-0.dll",
+        "api-ms-win-crt-locale-l1-1-0.dll",
+        "api-ms-win-crt-math-l1-1-0.dll",
+        "api-ms-win-crt-runtime-l1-1-0.dll",
+        "api-ms-win-crt-stdio-l1-1-0.dll",
+        "bcryptprimitives.dll",
+        "KERNEL32.dll",
+        "ntdll.dll",
+        "VCRUNTIME140.dll"
+      ],
+      "sha256": "dd7ba4cda6e5654f864c79c18e0aa0a9a96001b0591490e3038d416a11762d7a",
+      "sizeBytes": 1412608,
       "static": false
     }
   ],
@@ -45,13 +59,47 @@
     "rustcVersion": "rustc 1.96.0 (ac68faa20 2026-05-25)",
     "schema": "lumin-phase0-static-packaging-host-v1",
     "scope": "windows-ntfs",
+    "sourceManifestSha256": "38c1a75d06edb12bb2798d93bc1ce788325ca33c6bc12dabd4ef10df943b677c",
     "sourcePath": "C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-static-packaging-windows-wsl2-native-linux-x64-2026-07-18\\source",
     "windowsVersion": "Microsoft Windows NT 10.0.26200.0"
   },
-  "schema": "lumin-phase0-static-packaging-summary-v1",
+  "negativeControls": {
+    "controls": [
+      {
+        "expectedRejectionCodes": [
+          "artifact-execution-failed",
+          "run-contract-mismatch"
+        ],
+        "id": "tampered-source-identity",
+        "observed": "REJECTED",
+        "observedRejectionCode": "artifact-execution-failed"
+      },
+      {
+        "expected": "any hard rejection before authorization",
+        "id": "unrelated-native-executable",
+        "observed": "REJECTED",
+        "observedRejectionCode": "artifact-execution-failed"
+      },
+      {
+        "expectedRejectionCodes": [
+          "stale-generated-output"
+        ],
+        "id": "pre-existing-run-output",
+        "observed": "REJECTED",
+        "observedRejectionCode": "stale-generated-output"
+      },
+      {
+        "id": "dynamic-gnu-labeled-musl",
+        "observed": "NOT_APPLICABLE"
+      }
+    ],
+    "schema": "lumin-phase0-static-packaging-negative-controls-v1",
+    "status": "PASS"
+  },
+  "schema": "lumin-phase0-static-packaging-summary-v2",
   "scope": "windows-ntfs",
   "sourceFileCount": 9,
-  "sourceManifestSha256": "dd30eeda67caf9e354838a9ec7974cdd3dc118a9136c2556fcfe56c9f441db45",
+  "sourceManifestSha256": "38c1a75d06edb12bb2798d93bc1ce788325ca33c6bc12dabd4ef10df943b677c",
   "status": "PASS",
   "unexpectedCargoLinkDeclarations": []
 }

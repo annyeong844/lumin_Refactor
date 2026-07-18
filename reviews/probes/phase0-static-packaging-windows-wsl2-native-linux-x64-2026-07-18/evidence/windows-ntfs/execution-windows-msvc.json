@@ -1,0 +1,13 @@
+{
+  "artifactSha256": "dd7ba4cda6e5654f864c79c18e0aa0a9a96001b0591490e3038d416a11762d7a",
+  "artifactSha256AfterExecution": "dd7ba4cda6e5654f864c79c18e0aa0a9a96001b0591490e3038d416a11762d7a",
+  "artifactSizeBytes": 1412608,
+  "executionCopySha256After": "dd7ba4cda6e5654f864c79c18e0aa0a9a96001b0591490e3038d416a11762d7a",
+  "executionCopySha256Before": "dd7ba4cda6e5654f864c79c18e0aa0a9a96001b0591490e3038d416a11762d7a",
+  "exitCode": 0,
+  "label": "windows-msvc",
+  "runJsonSha256": "f0e2798364113659791ca15d68b2b69f1d41a15e75ee0c5f81c645d620f27727",
+  "schema": "lumin-phase0-static-packaging-execution-v1",
+  "status": "PASS",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

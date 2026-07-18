@@ -1,0 +1,13 @@
+{
+  "artifactSha256": "07c708408353f15956ebaecc8e58b196f0ee7af70a9b1f974c9d2a0d4825d69f",
+  "artifactSha256AfterExecution": "07c708408353f15956ebaecc8e58b196f0ee7af70a9b1f974c9d2a0d4825d69f",
+  "artifactSizeBytes": 1794800,
+  "executionCopySha256After": "07c708408353f15956ebaecc8e58b196f0ee7af70a9b1f974c9d2a0d4825d69f",
+  "executionCopySha256Before": "07c708408353f15956ebaecc8e58b196f0ee7af70a9b1f974c9d2a0d4825d69f",
+  "exitCode": 0,
+  "label": "linux-gnu",
+  "runJsonSha256": "7a2e2507e8e1d51195b6fb165ade6c28f6f0bc41845cd6e3542ad4339eb411d3",
+  "schema": "lumin-phase0-static-packaging-execution-v1",
+  "status": "PASS",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

@@ -13,6 +13,7 @@
   "rustcVersion": "rustc 1.96.0 (ac68faa20 2026-05-25)",
   "schema": "lumin-phase0-static-packaging-host-v1",
   "scope": "wsl2-ext4",
-  "sourcePath": "/home/endof/lumin-phase0-static-packaging-b2eb6a57/source",
+  "sourceManifestSha256": "38c1a75d06edb12bb2798d93bc1ce788325ca33c6bc12dabd4ef10df943b677c",
+  "sourcePath": "/home/endof/lumin-static-binding-38c1a75d/source",
   "uname": "Linux MyPC 6.6.87.2-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Thu Jun  5 18:30:46 UTC 2025 x86_64 x86_64 x86_64 GNU/Linux"
 }

@@ -1,0 +1,20 @@
+{
+  "format": "PE32+-x86_64",
+  "interpreter": null,
+  "label": "windows-msvc",
+  "machine": "x86_64",
+  "neededLibraries": [
+    "api-ms-win-core-synch-l1-2-0.dll",
+    "api-ms-win-crt-heap-l1-1-0.dll",
+    "api-ms-win-crt-locale-l1-1-0.dll",
+    "api-ms-win-crt-math-l1-1-0.dll",
+    "api-ms-win-crt-runtime-l1-1-0.dll",
+    "api-ms-win-crt-stdio-l1-1-0.dll",
+    "bcryptprimitives.dll",
+    "KERNEL32.dll",
+    "ntdll.dll",
+    "VCRUNTIME140.dll"
+  ],
+  "schema": "lumin-phase0-static-packaging-inspection-v1",
+  "static": false
+}

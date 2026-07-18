@@ -1,4 +1,4 @@
-lumin-phase0-static-packaging-probe v0.1.0 (/home/endof/lumin-phase0-static-packaging-b2eb6a57/source)
+lumin-phase0-static-packaging-probe v0.1.0 (/home/endof/lumin-static-binding-38c1a75d/source)
 ├── anyhow v1.0.103
 ├── oxc_allocator v0.126.0
 │   ├── allocator-api2 v0.2.21
