@@ -1,0 +1,831 @@
+{
+  "candidate": "658b5c7334fed8f0e42dd14b9910c9b719f3e55b",
+  "checkCount": 203,
+  "checks": [
+    {
+      "name": "candidate object",
+      "status": "pass"
+    },
+    {
+      "name": "candidate SHA",
+      "status": "pass"
+    },
+    {
+      "name": "candidate parent",
+      "status": "pass"
+    },
+    {
+      "name": "candidate tree",
+      "status": "pass"
+    },
+    {
+      "name": "candidate subject",
+      "status": "pass"
+    },
+    {
+      "name": "request candidate",
+      "status": "pass"
+    },
+    {
+      "name": "request tree",
+      "status": "pass"
+    },
+    {
+      "name": "request runner",
+      "status": "pass"
+    },
+    {
+      "name": "candidate manifest digest",
+      "status": "pass"
+    },
+    {
+      "name": "candidate manifest cardinality",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: .gitattributes",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: .gitignore",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: AGENTS.md",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: README.md",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: SDD.md",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: WORKBOARD.md",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: architecture/000-system-blueprint.md",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: architecture/001-execution-and-ownership.md",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: architecture/002-evidence-and-write-gate.md",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: specs/000-product-contract.md",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: specs/001-foundation-slice.md",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: specs/inventory-config-semantics.v1.json",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: specs/repo-path-semantics.v1.json",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: specs/resolver-config-semantics.v1.json",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: \ubb38\uc11c(\ud55c\uae00)/AGENTS.ko.md",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: \ubb38\uc11c(\ud55c\uae00)/SDD.ko.md",
+      "status": "pass"
+    },
+    {
+      "name": "packet manifest digest",
+      "status": "pass"
+    },
+    {
+      "name": "packet manifest cardinality",
+      "status": "pass"
+    },
+    {
+      "name": "request packet copy",
+      "status": "pass"
+    },
+    {
+      "name": "packet exact inventory",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: README.md",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/SHA256SUMS",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/architecture-manifest.txt",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/derived/compiler-options.tsv",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/derived/typescript-package.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/fetch-metadata.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/host.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/identity/node-tag-object.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/identity/node-tag-ref.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/negative-controls.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/objects/node-packages.md",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/objects/node-resolve.js",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/objects/pnpm-workspace_yaml.md",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/objects/typescript-6.0.0-beta.tgz",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/objects/typescript-commandLineParser.ts",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/objects/typescript-moduleNameResolver.ts",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/objects/typescript.js",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/oracle.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/result.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/source-manifest.txt",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: runner/adversarial-checks.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: runner/adversarial_check.py",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: runner/artifact-download-verification.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: runner/run-native.sh",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: runner/verify_packet.py",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: runner/workflow-artifacts.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: runner/workflow-log.txt",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: runner/workflow-run.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: runner/workflow.yml",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: source/PROBE-CONTRACT.md",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: source/SHA256SUMS",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: source/extract_compiler_options.cjs",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: source/oracle.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: source/verify_provenance.py",
+      "status": "pass"
+    },
+    {
+      "name": "source manifest digest",
+      "status": "pass"
+    },
+    {
+      "name": "source manifest cardinality",
+      "status": "pass"
+    },
+    {
+      "name": "request source copy",
+      "status": "pass"
+    },
+    {
+      "name": "source candidate blob: PROBE-CONTRACT.md",
+      "status": "pass"
+    },
+    {
+      "name": "source runner blob: PROBE-CONTRACT.md",
+      "status": "pass"
+    },
+    {
+      "name": "source candidate blob: extract_compiler_options.cjs",
+      "status": "pass"
+    },
+    {
+      "name": "source runner blob: extract_compiler_options.cjs",
+      "status": "pass"
+    },
+    {
+      "name": "source candidate blob: oracle.json",
+      "status": "pass"
+    },
+    {
+      "name": "source runner blob: oracle.json",
+      "status": "pass"
+    },
+    {
+      "name": "source candidate blob: verify_provenance.py",
+      "status": "pass"
+    },
+    {
+      "name": "source runner blob: verify_provenance.py",
+      "status": "pass"
+    },
+    {
+      "name": "evidence manifest digest",
+      "status": "pass"
+    },
+    {
+      "name": "evidence manifest cardinality",
+      "status": "pass"
+    },
+    {
+      "name": "request evidence copy",
+      "status": "pass"
+    },
+    {
+      "name": "evidence blob: architecture-manifest.txt",
+      "status": "pass"
+    },
+    {
+      "name": "evidence blob: derived/compiler-options.tsv",
+      "status": "pass"
+    },
+    {
+      "name": "evidence blob: derived/typescript-package.json",
+      "status": "pass"
+    },
+    {
+      "name": "evidence blob: fetch-metadata.json",
+      "status": "pass"
+    },
+    {
+      "name": "evidence blob: host.json",
+      "status": "pass"
+    },
+    {
+      "name": "evidence blob: identity/node-tag-object.json",
+      "status": "pass"
+    },
+    {
+      "name": "evidence blob: identity/node-tag-ref.json",
+      "status": "pass"
+    },
+    {
+      "name": "evidence blob: negative-controls.json",
+      "status": "pass"
+    },
+    {
+      "name": "evidence blob: objects/node-packages.md",
+      "status": "pass"
+    },
+    {
+      "name": "evidence blob: objects/node-resolve.js",
+      "status": "pass"
+    },
+    {
+      "name": "evidence blob: objects/pnpm-workspace_yaml.md",
+      "status": "pass"
+    },
+    {
+      "name": "evidence blob: objects/typescript-6.0.0-beta.tgz",
+      "status": "pass"
+    },
+    {
+      "name": "evidence blob: objects/typescript-commandLineParser.ts",
+      "status": "pass"
+    },
+    {
+      "name": "evidence blob: objects/typescript-moduleNameResolver.ts",
+      "status": "pass"
+    },
+    {
+      "name": "evidence blob: objects/typescript.js",
+      "status": "pass"
+    },
+    {
+      "name": "evidence blob: oracle.json",
+      "status": "pass"
+    },
+    {
+      "name": "evidence blob: result.json",
+      "status": "pass"
+    },
+    {
+      "name": "evidence blob: source-manifest.txt",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: evidence/native-linux-clean/derived/typescript-package.json",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: evidence/native-linux-clean/fetch-metadata.json",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: evidence/native-linux-clean/host.json",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: evidence/native-linux-clean/identity/node-tag-object.json",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: evidence/native-linux-clean/identity/node-tag-ref.json",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: evidence/native-linux-clean/negative-controls.json",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: evidence/native-linux-clean/oracle.json",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: evidence/native-linux-clean/result.json",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: runner/adversarial-checks.json",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: runner/artifact-download-verification.json",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: runner/workflow-artifacts.json",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: runner/workflow-run.json",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: source/oracle.json",
+      "status": "pass"
+    },
+    {
+      "name": "annotated tag ref",
+      "status": "pass"
+    },
+    {
+      "name": "tag object URL derivation",
+      "status": "pass"
+    },
+    {
+      "name": "tag object identity",
+      "status": "pass"
+    },
+    {
+      "name": "tag commit identity",
+      "status": "pass"
+    },
+    {
+      "name": "fetch schema",
+      "status": "pass"
+    },
+    {
+      "name": "eight fetch responses",
+      "status": "pass"
+    },
+    {
+      "name": "exact fetch IDs",
+      "status": "pass"
+    },
+    {
+      "name": "fetch URL: typescript-npm-tarball",
+      "status": "pass"
+    },
+    {
+      "name": "fetch status: typescript-npm-tarball",
+      "status": "pass"
+    },
+    {
+      "name": "fetch encoding: typescript-npm-tarball",
+      "status": "pass"
+    },
+    {
+      "name": "fetch retained path: typescript-npm-tarball",
+      "status": "pass"
+    },
+    {
+      "name": "fetch byte length: typescript-npm-tarball",
+      "status": "pass"
+    },
+    {
+      "name": "fetch content length: typescript-npm-tarball",
+      "status": "pass"
+    },
+    {
+      "name": "fetch digest: typescript-npm-tarball",
+      "status": "pass"
+    },
+    {
+      "name": "fetch URL: typescript-module-resolver",
+      "status": "pass"
+    },
+    {
+      "name": "fetch status: typescript-module-resolver",
+      "status": "pass"
+    },
+    {
+      "name": "fetch encoding: typescript-module-resolver",
+      "status": "pass"
+    },
+    {
+      "name": "fetch retained path: typescript-module-resolver",
+      "status": "pass"
+    },
+    {
+      "name": "fetch byte length: typescript-module-resolver",
+      "status": "pass"
+    },
+    {
+      "name": "fetch content length: typescript-module-resolver",
+      "status": "pass"
+    },
+    {
+      "name": "fetch digest: typescript-module-resolver",
+      "status": "pass"
+    },
+    {
+      "name": "fetch URL: typescript-config-parser",
+      "status": "pass"
+    },
+    {
+      "name": "fetch status: typescript-config-parser",
+      "status": "pass"
+    },
+    {
+      "name": "fetch encoding: typescript-config-parser",
+      "status": "pass"
+    },
+    {
+      "name": "fetch retained path: typescript-config-parser",
+      "status": "pass"
+    },
+    {
+      "name": "fetch byte length: typescript-config-parser",
+      "status": "pass"
+    },
+    {
+      "name": "fetch content length: typescript-config-parser",
+      "status": "pass"
+    },
+    {
+      "name": "fetch digest: typescript-config-parser",
+      "status": "pass"
+    },
+    {
+      "name": "fetch URL: node-packages-document",
+      "status": "pass"
+    },
+    {
+      "name": "fetch status: node-packages-document",
+      "status": "pass"
+    },
+    {
+      "name": "fetch encoding: node-packages-document",
+      "status": "pass"
+    },
+    {
+      "name": "fetch retained path: node-packages-document",
+      "status": "pass"
+    },
+    {
+      "name": "fetch byte length: node-packages-document",
+      "status": "pass"
+    },
+    {
+      "name": "fetch content length: node-packages-document",
+      "status": "pass"
+    },
+    {
+      "name": "fetch digest: node-packages-document",
+      "status": "pass"
+    },
+    {
+      "name": "fetch URL: node-esm-resolver",
+      "status": "pass"
+    },
+    {
+      "name": "fetch status: node-esm-resolver",
+      "status": "pass"
+    },
+    {
+      "name": "fetch encoding: node-esm-resolver",
+      "status": "pass"
+    },
+    {
+      "name": "fetch retained path: node-esm-resolver",
+      "status": "pass"
+    },
+    {
+      "name": "fetch byte length: node-esm-resolver",
+      "status": "pass"
+    },
+    {
+      "name": "fetch content length: node-esm-resolver",
+      "status": "pass"
+    },
+    {
+      "name": "fetch digest: node-esm-resolver",
+      "status": "pass"
+    },
+    {
+      "name": "fetch URL: pnpm-workspace-document",
+      "status": "pass"
+    },
+    {
+      "name": "fetch status: pnpm-workspace-document",
+      "status": "pass"
+    },
+    {
+      "name": "fetch encoding: pnpm-workspace-document",
+      "status": "pass"
+    },
+    {
+      "name": "fetch retained path: pnpm-workspace-document",
+      "status": "pass"
+    },
+    {
+      "name": "fetch byte length: pnpm-workspace-document",
+      "status": "pass"
+    },
+    {
+      "name": "fetch content length: pnpm-workspace-document",
+      "status": "pass"
+    },
+    {
+      "name": "fetch digest: pnpm-workspace-document",
+      "status": "pass"
+    },
+    {
+      "name": "fetch URL: node-tag-ref",
+      "status": "pass"
+    },
+    {
+      "name": "fetch status: node-tag-ref",
+      "status": "pass"
+    },
+    {
+      "name": "fetch encoding: node-tag-ref",
+      "status": "pass"
+    },
+    {
+      "name": "fetch retained path: node-tag-ref",
+      "status": "pass"
+    },
+    {
+      "name": "fetch byte length: node-tag-ref",
+      "status": "pass"
+    },
+    {
+      "name": "fetch content length: node-tag-ref",
+      "status": "pass"
+    },
+    {
+      "name": "fetch digest: node-tag-ref",
+      "status": "pass"
+    },
+    {
+      "name": "fetch URL: node-tag-object",
+      "status": "pass"
+    },
+    {
+      "name": "fetch status: node-tag-object",
+      "status": "pass"
+    },
+    {
+      "name": "fetch encoding: node-tag-object",
+      "status": "pass"
+    },
+    {
+      "name": "fetch retained path: node-tag-object",
+      "status": "pass"
+    },
+    {
+      "name": "fetch byte length: node-tag-object",
+      "status": "pass"
+    },
+    {
+      "name": "fetch content length: node-tag-object",
+      "status": "pass"
+    },
+    {
+      "name": "fetch digest: node-tag-object",
+      "status": "pass"
+    },
+    {
+      "name": "host schema",
+      "status": "pass"
+    },
+    {
+      "name": "result schema",
+      "status": "pass"
+    },
+    {
+      "name": "host runner identity",
+      "status": "pass"
+    },
+    {
+      "name": "GITHUB_SHA identity",
+      "status": "pass"
+    },
+    {
+      "name": "result runner identity",
+      "status": "pass"
+    },
+    {
+      "name": "result run identity",
+      "status": "pass"
+    },
+    {
+      "name": "workflow runner identity",
+      "status": "pass"
+    },
+    {
+      "name": "workflow run identity",
+      "status": "pass"
+    },
+    {
+      "name": "workflow success",
+      "status": "pass"
+    },
+    {
+      "name": "workflow job identity",
+      "status": "pass"
+    },
+    {
+      "name": "workflow job success",
+      "status": "pass"
+    },
+    {
+      "name": "seven upstream checks",
+      "status": "pass"
+    },
+    {
+      "name": "compiler option count",
+      "status": "pass"
+    },
+    {
+      "name": "compiler option digest",
+      "status": "pass"
+    },
+    {
+      "name": "nine built-in controls",
+      "status": "pass"
+    },
+    {
+      "name": "built-in control identities",
+      "status": "pass"
+    },
+    {
+      "name": "built-in control status",
+      "status": "pass"
+    },
+    {
+      "name": "nine resealed scenarios",
+      "status": "pass"
+    },
+    {
+      "name": "all resealed scenarios",
+      "status": "pass"
+    },
+    {
+      "name": "closure attack reasons",
+      "status": "pass"
+    },
+    {
+      "name": "one workflow artifact",
+      "status": "pass"
+    },
+    {
+      "name": "artifact ID",
+      "status": "pass"
+    },
+    {
+      "name": "artifact API digest",
+      "status": "pass"
+    },
+    {
+      "name": "artifact workflow head",
+      "status": "pass"
+    },
+    {
+      "name": "detached artifact size",
+      "status": "pass"
+    },
+    {
+      "name": "detached artifact digest",
+      "status": "pass"
+    },
+    {
+      "name": "closure range is probe-only",
+      "status": "pass"
+    },
+    {
+      "name": "temporary workflow absent",
+      "status": "pass"
+    },
+    {
+      "name": "runner ancestry",
+      "status": "pass"
+    },
+    {
+      "name": "runner workflow exact copy",
+      "status": "pass"
+    },
+    {
+      "name": "packet verifier consistency",
+      "status": "pass"
+    }
+  ],
+  "independenceBoundary": "Author preflight is not independent PASS evidence.",
+  "packetVerifier": {
+    "artifactArchiveSha256": "4688a9a192349efe7114fc823474732797ee6ee1f3cf49301056a101dc6857c9",
+    "checks": 65,
+    "evidenceEntries": 18,
+    "evidenceManifestSha256": "439eff660625b3792c9c6438be6d063a94dce07f6a40802b2368a962e0509b68",
+    "packetEntries": 34,
+    "packetManifestSha256": "cc887e448e2a560801c09cd082f55304f689148a74d6f91e837582de70df65a3",
+    "runnerCommit": "7e6ebd097cd69318669494fbd95acecbf627b5b4",
+    "status": "pass"
+  },
+  "schemaVersion": "lumin-new-provenance-01-author-preflight.v1",
+  "status": "pass"
+}

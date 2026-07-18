@@ -1,0 +1,68 @@
+{
+  "schema": "lumin-new-provenance-01-closure-request-v1",
+  "repository": "annyeong844/lumin_Refactor",
+  "finding": "NEW-PROVENANCE-01",
+  "previous_candidate": "e6147b1b2dfea45d223c87f3ba7ffec543e9f82d",
+  "previous_independent_report_sha256": "6826af8f1d578f3a423ae3725be1c3fb254a00e373ff2db4df7e2d4fc9537aaa",
+  "previous_review_transport_sha256": "81ad62d08e134219977b64b4ef96bfd86ea4f81ddbb53432254b172da7f37fbf",
+  "candidate": "658b5c7334fed8f0e42dd14b9910c9b719f3e55b",
+  "candidate_parent": "a1c9f2ee73da78f755fe967d174524f074799683",
+  "candidate_message": "Regenerate exact-bound provenance evidence",
+  "candidate_tree": "15b8777486f7dfe45a1d57650a230b287f21df7b",
+  "gate_base": "6539e9fa7e419bca494e6ab9f1910b6647b942ba",
+  "source_fix_commit": "b73f69b833fdd97c0f10ecb4f58e59dd11227fab",
+  "runner_commit": "7e6ebd097cd69318669494fbd95acecbf627b5b4",
+  "packet_path": "reviews/probes/phase0-pinned-upstream-provenance-2026-07-18",
+  "candidate_manifest": {
+    "entries": 16,
+    "sha256": "ca46f77997c696f8eeefc2feabdb9c1031a6e58e36fcb6f2a7ed4ad1bca84fcd"
+  },
+  "frozen_architecture_manifest": {
+    "entries": 16,
+    "sha256": "e2ca379a8a659f2febbc4e277c89db67bb02035a6b10467cf78a5663f21cd99a"
+  },
+  "packet_manifest": {
+    "entries": 34,
+    "sha256": "cc887e448e2a560801c09cd082f55304f689148a74d6f91e837582de70df65a3"
+  },
+  "source_manifest": {
+    "entries": 4,
+    "sha256": "14185a4c6c74cac84283b89ce2002f4da8c4afb44f50e5f21e2f236aa299d7f3"
+  },
+  "evidence_manifest": {
+    "entries": 18,
+    "sha256": "439eff660625b3792c9c6438be6d063a94dce07f6a40802b2368a962e0509b68"
+  },
+  "clean_workflow": {
+    "run_id": 29642350675,
+    "job_id": 88074824267,
+    "runner_commit": "7e6ebd097cd69318669494fbd95acecbf627b5b4",
+    "artifact_id": 8428995583,
+    "artifact_name": "phase0-pinned-upstream-provenance-7e6ebd097cd69318669494fbd95acecbf627b5b4",
+    "artifact_archive_sha256": "4688a9a192349efe7114fc823474732797ee6ee1f3cf49301056a101dc6857c9",
+    "artifact_archive_size_bytes": 6257298
+  },
+  "closure_contract": {
+    "fetch_response_count": 8,
+    "upstream_byte_checks": 7,
+    "compiler_option_count": 122,
+    "compiler_option_digest": "f2fb5da0cf33ea694a8bf4ccae909a1526e7978693c15ac1a6b10b3cdfbc9d9a",
+    "built_in_negative_controls": 9,
+    "resealed_adversarial_scenarios": 9
+  },
+  "required_negative_controls": [
+    "302/redirect/gzip fetch metadata is rejected after manifest reseal",
+    "forged platform/repositoryHead/GITHUB_SHA is rejected after manifest reseal",
+    "substituted result runnerCommit is rejected after manifest reseal",
+    "workflow head SHA must equal host and result runner identity",
+    "fetch size and SHA-256 must match exact retained bytes"
+  ],
+  "accepted_risks": [
+    "AR-BACKEND-01",
+    "AR-MEASURE-01"
+  ],
+  "phase0_remaining_after_closure": [
+    "numeric Phase 1 target approval from named Phase 0 evidence"
+  ],
+  "independence_boundary": "Author-side verifiers, preflight, summaries, and negative-control PASS records are consistency aids only. Derive the verdict independently from exact Git objects, exact retained bytes, official workflow/artifact identity, and independently reproduced resealed mutations."
+}
