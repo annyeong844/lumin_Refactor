@@ -3,13 +3,15 @@
     "compilerOptionCount": 122,
     "compilerOptionDigest": "f2fb5da0cf33ea694a8bf4ccae909a1526e7978693c15ac1a6b10b3cdfbc9d9a",
     "evidenceEntries": 18,
-    "evidenceManifestSha256": "2228b0ac40afe62d4d72c12919e7dae1a8d1c8a6921f507c6ea6790e56dfc28f",
-    "negativeControls": 6,
-    "runnerCommit": "25bf5c5dd11da351c68c90da54e40b44e62120ce",
+    "evidenceManifestSha256": "439eff660625b3792c9c6438be6d063a94dce07f6a40802b2368a962e0509b68",
+    "negativeControls": 9,
+    "runnerCommit": "7e6ebd097cd69318669494fbd95acecbf627b5b4",
     "status": "pass",
-    "upstreamByteChecks": 7
+    "upstreamByteChecks": 7,
+    "workflowBinding": "external-record",
+    "workflowRunId": 29642350675
   },
-  "scenarioCount": 6,
+  "scenarioCount": 9,
   "scenarios": [
     {
       "actualReasonCode": "byte-sha256-mismatch",
@@ -42,12 +44,30 @@
       "status": "pass"
     },
     {
+      "actualReasonCode": "fetch-metadata-invalid",
+      "expectedReasonCode": "fetch-metadata-invalid",
+      "id": "fetch-transport-metadata-forgery",
+      "status": "pass"
+    },
+    {
+      "actualReasonCode": "host-runner-mismatch",
+      "expectedReasonCode": "host-runner-mismatch",
+      "id": "clean-runner-host-forgery",
+      "status": "pass"
+    },
+    {
+      "actualReasonCode": "host-runner-mismatch",
+      "expectedReasonCode": "host-runner-mismatch",
+      "id": "result-runner-substitution",
+      "status": "pass"
+    },
+    {
       "actualReasonCode": "stale-evidence",
       "expectedReasonCode": "stale-evidence",
       "id": "preexisting-evidence-capture",
       "status": "pass"
     }
   ],
-  "schemaVersion": "lumin-phase0-provenance-adversarial-checks.v1",
+  "schemaVersion": "lumin-phase0-provenance-adversarial-checks.v2",
   "status": "pass"
 }

@@ -1,1 +1,25 @@
-{"total_count":1,"artifacts":[{"id":8427910952,"node_id":"MDg6QXJ0aWZhY3Q4NDI3OTEwOTUy","name":"phase0-pinned-upstream-provenance-25bf5c5dd11da351c68c90da54e40b44e62120ce","size_in_bytes":6257113,"url":"https://api.github.com/repos/annyeong844/lumin_Refactor/actions/artifacts/8427910952","archive_download_url":"https://api.github.com/repos/annyeong844/lumin_Refactor/actions/artifacts/8427910952/zip","expired":false,"digest":"sha256:d5f25626b8c37808da2115483c41bc3facb14338a21cc68e310da332dde9009d","created_at":"2026-07-18T09:08:54Z","updated_at":"2026-07-18T09:08:54Z","expires_at":"2026-07-25T09:08:53Z","workflow_run":{"id":29638671368,"repository_id":1301510511,"head_repository_id":1301510511,"head_branch":"phase0-pinned-provenance-20260718","head_sha":"25bf5c5dd11da351c68c90da54e40b44e62120ce"}}]}
+{
+  "total_count": 1,
+  "artifacts": [
+    {
+      "id": 8428995583,
+      "node_id": "MDg6QXJ0aWZhY3Q4NDI4OTk1NTgz",
+      "name": "phase0-pinned-upstream-provenance-7e6ebd097cd69318669494fbd95acecbf627b5b4",
+      "size_in_bytes": 6257298,
+      "url": "https://api.github.com/repos/annyeong844/lumin_Refactor/actions/artifacts/8428995583",
+      "archive_download_url": "https://api.github.com/repos/annyeong844/lumin_Refactor/actions/artifacts/8428995583/zip",
+      "expired": false,
+      "digest": "sha256:4688a9a192349efe7114fc823474732797ee6ee1f3cf49301056a101dc6857c9",
+      "created_at": "2026-07-18T11:19:23Z",
+      "updated_at": "2026-07-18T11:19:23Z",
+      "expires_at": "2026-07-25T11:19:22Z",
+      "workflow_run": {
+        "id": 29642350675,
+        "repository_id": 1301510511,
+        "head_repository_id": 1301510511,
+        "head_branch": "phase0-provenance-binding-closure-20260718",
+        "head_sha": "7e6ebd097cd69318669494fbd95acecbf627b5b4"
+      }
+    }
+  ]
+}

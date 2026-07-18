@@ -10,13 +10,13 @@ import sys
 from pathlib import Path, PurePosixPath
 
 
-RUN_ID = 29638671368
-JOB_ID = 88065321460
-RUNNER_COMMIT = "25bf5c5dd11da351c68c90da54e40b44e62120ce"
-ARTIFACT_ID = 8427910952
-ARTIFACT_SHA256 = "d5f25626b8c37808da2115483c41bc3facb14338a21cc68e310da332dde9009d"
+RUN_ID = 29642350675
+JOB_ID = 88074824267
+RUNNER_COMMIT = "7e6ebd097cd69318669494fbd95acecbf627b5b4"
+ARTIFACT_ID = 8428995583
+ARTIFACT_SHA256 = "4688a9a192349efe7114fc823474732797ee6ee1f3cf49301056a101dc6857c9"
 EVIDENCE_MANIFEST_SHA256 = (
-    "2228b0ac40afe62d4d72c12919e7dae1a8d1c8a6921f507c6ea6790e56dfc28f"
+    "439eff660625b3792c9c6438be6d063a94dce07f6a40802b2368a962e0509b68"
 )
 HEX_64 = re.compile(r"^[0-9a-f]{64}$")
 
@@ -130,7 +130,9 @@ def main() -> int:
     verifier_result = json.loads(completed.stdout.strip())
     passed("seven upstream byte checks", verifier_result["upstreamByteChecks"] == 7)
     passed("122 compiler options", verifier_result["compilerOptionCount"] == 122)
-    passed("six capture controls", verifier_result["negativeControls"] == 6)
+    passed("nine capture controls", verifier_result["negativeControls"] == 9)
+    passed("external workflow binding", verifier_result["workflowBinding"] == "external-record")
+    passed("workflow run identity", verifier_result["workflowRunId"] == RUN_ID)
 
     run = strict_json(PACKET_ROOT / "runner/workflow-run.json")
     passed("workflow run ID", run["databaseId"] == RUN_ID)
@@ -152,8 +154,12 @@ def main() -> int:
     passed("download verification", download["status"] == "pass" and download["offlineVerification"] == "pass")
 
     adversarial = strict_json(PACKET_ROOT / "runner/adversarial-checks.json")
+    passed(
+        "adversarial schema",
+        adversarial["schemaVersion"] == "lumin-phase0-provenance-adversarial-checks.v2",
+    )
     passed("adversarial status", adversarial["status"] == "pass")
-    passed("six resealed attacks", adversarial["scenarioCount"] == 6)
+    passed("nine resealed attacks", adversarial["scenarioCount"] == 9)
     passed("all resealed attacks rejected", all(row["status"] == "pass" for row in adversarial["scenarios"]))
 
     runner_workflow = run_git(

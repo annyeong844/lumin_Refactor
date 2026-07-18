@@ -1,9 +1,9 @@
-name: Phase 0 clean pinned-upstream provenance probe
+name: Phase 0 clean pinned-upstream provenance closure
 
 on:
   push:
     branches:
-      - phase0-pinned-provenance-20260718
+      - phase0-provenance-binding-closure-20260718
 
 permissions:
   contents: read
@@ -17,7 +17,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Run clean pinned-upstream provenance capture
+      - name: Run exact-bound clean provenance capture
         run: bash reviews/probes/phase0-pinned-upstream-provenance-2026-07-18/runner/run-native.sh
 
       - name: Upload exact raw provenance evidence

@@ -1,1 +1,70 @@
-{"conclusion":"success","createdAt":"2026-07-18T09:08:46Z","databaseId":29638671368,"headSha":"25bf5c5dd11da351c68c90da54e40b44e62120ce","jobs":[{"completedAt":"2026-07-18T09:08:56Z","conclusion":"success","databaseId":88065321460,"name":"native-linux-clean","startedAt":"2026-07-18T09:08:48Z","status":"completed","steps":[{"completedAt":"2026-07-18T09:08:50Z","conclusion":"success","name":"Set up job","number":1,"startedAt":"2026-07-18T09:08:49Z","status":"completed"},{"completedAt":"2026-07-18T09:08:51Z","conclusion":"success","name":"Check out exact runner commit with complete history","number":2,"startedAt":"2026-07-18T09:08:50Z","status":"completed"},{"completedAt":"2026-07-18T09:08:53Z","conclusion":"success","name":"Run clean pinned-upstream provenance capture","number":3,"startedAt":"2026-07-18T09:08:51Z","status":"completed"},{"completedAt":"2026-07-18T09:08:54Z","conclusion":"success","name":"Upload exact raw provenance evidence","number":4,"startedAt":"2026-07-18T09:08:53Z","status":"completed"},{"completedAt":"2026-07-18T09:08:54Z","conclusion":"success","name":"Post Check out exact runner commit with complete history","number":8,"startedAt":"2026-07-18T09:08:54Z","status":"completed"},{"completedAt":"2026-07-18T09:08:54Z","conclusion":"success","name":"Complete job","number":9,"startedAt":"2026-07-18T09:08:54Z","status":"completed"}],"url":"https://github.com/annyeong844/lumin_Refactor/actions/runs/29638671368/job/88065321460"}],"status":"completed","updatedAt":"2026-07-18T09:08:56Z","url":"https://github.com/annyeong844/lumin_Refactor/actions/runs/29638671368"}
+{
+  "conclusion": "success",
+  "createdAt": "2026-07-18T11:19:15Z",
+  "databaseId": 29642350675,
+  "headSha": "7e6ebd097cd69318669494fbd95acecbf627b5b4",
+  "jobs": [
+    {
+      "completedAt": "2026-07-18T11:19:24Z",
+      "conclusion": "success",
+      "databaseId": 88074824267,
+      "name": "native-linux-clean",
+      "startedAt": "2026-07-18T11:19:17Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completedAt": "2026-07-18T11:19:18Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "startedAt": "2026-07-18T11:19:18Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-07-18T11:19:20Z",
+          "conclusion": "success",
+          "name": "Check out exact runner commit with complete history",
+          "number": 2,
+          "startedAt": "2026-07-18T11:19:18Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-07-18T11:19:22Z",
+          "conclusion": "success",
+          "name": "Run exact-bound clean provenance capture",
+          "number": 3,
+          "startedAt": "2026-07-18T11:19:20Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-07-18T11:19:23Z",
+          "conclusion": "success",
+          "name": "Upload exact raw provenance evidence",
+          "number": 4,
+          "startedAt": "2026-07-18T11:19:22Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-07-18T11:19:23Z",
+          "conclusion": "success",
+          "name": "Post Check out exact runner commit with complete history",
+          "number": 8,
+          "startedAt": "2026-07-18T11:19:23Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-07-18T11:19:23Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 9,
+          "startedAt": "2026-07-18T11:19:23Z",
+          "status": "completed"
+        }
+      ],
+      "url": "https://github.com/annyeong844/lumin_Refactor/actions/runs/29642350675/job/88074824267"
+    }
+  ],
+  "status": "completed",
+  "updatedAt": "2026-07-18T11:19:25Z",
+  "url": "https://github.com/annyeong844/lumin_Refactor/actions/runs/29642350675"
+}

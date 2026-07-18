@@ -1,155 +1,155 @@
-native-linux-clean	Set up job	﻿2026-07-18T09:08:49.5610608Z Current runner version: '2.335.1'
-native-linux-clean	Set up job	2026-07-18T09:08:49.5636879Z ##[group]Runner Image Provisioner
-native-linux-clean	Set up job	2026-07-18T09:08:49.5637745Z Hosted Compute Agent
-native-linux-clean	Set up job	2026-07-18T09:08:49.5638815Z Version: 20260707.563
-native-linux-clean	Set up job	2026-07-18T09:08:49.5639492Z Commit: 02667638d2b423fbc733a8e32a88b44996a3ba6e
-native-linux-clean	Set up job	2026-07-18T09:08:49.5640245Z Build Date: 2026-07-07T19:33:50Z
-native-linux-clean	Set up job	2026-07-18T09:08:49.5640947Z Worker ID: {c2878abd-e8de-4ad9-a272-d7ea9cdba66d}
-native-linux-clean	Set up job	2026-07-18T09:08:49.5641668Z Azure Region: eastus
-native-linux-clean	Set up job	2026-07-18T09:08:49.5642344Z ##[endgroup]
-native-linux-clean	Set up job	2026-07-18T09:08:49.5643893Z ##[group]Operating System
-native-linux-clean	Set up job	2026-07-18T09:08:49.5644523Z Ubuntu
-native-linux-clean	Set up job	2026-07-18T09:08:49.5645149Z 24.04.4
-native-linux-clean	Set up job	2026-07-18T09:08:49.5645659Z LTS
-native-linux-clean	Set up job	2026-07-18T09:08:49.5646244Z ##[endgroup]
-native-linux-clean	Set up job	2026-07-18T09:08:49.5646811Z ##[group]Runner Image
-native-linux-clean	Set up job	2026-07-18T09:08:49.5647407Z Image: ubuntu-24.04
-native-linux-clean	Set up job	2026-07-18T09:08:49.5648010Z Version: 20260714.240.1
-native-linux-clean	Set up job	2026-07-18T09:08:49.5649312Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260714.240/images/ubuntu/Ubuntu2404-Readme.md
-native-linux-clean	Set up job	2026-07-18T09:08:49.5651160Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260714.240
-native-linux-clean	Set up job	2026-07-18T09:08:49.5652489Z ##[endgroup]
-native-linux-clean	Set up job	2026-07-18T09:08:49.5653743Z ##[group]GITHUB_TOKEN Permissions
-native-linux-clean	Set up job	2026-07-18T09:08:49.5655868Z Contents: read
-native-linux-clean	Set up job	2026-07-18T09:08:49.5656598Z Metadata: read
-native-linux-clean	Set up job	2026-07-18T09:08:49.5657168Z ##[endgroup]
-native-linux-clean	Set up job	2026-07-18T09:08:49.5659586Z Secret source: Actions
-native-linux-clean	Set up job	2026-07-18T09:08:49.5660431Z Prepare workflow directory
-native-linux-clean	Set up job	2026-07-18T09:08:49.5993749Z Prepare all required actions
-native-linux-clean	Set up job	2026-07-18T09:08:49.6032472Z Getting action download info
-native-linux-clean	Set up job	2026-07-18T09:08:49.7929927Z Download action repository 'actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683' (SHA:11bd71901bbe5b1630ceea73d27597364c9af683)
-native-linux-clean	Set up job	2026-07-18T09:08:49.9370711Z Download action repository 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
-native-linux-clean	Set up job	2026-07-18T09:08:50.1507571Z Complete job name: native-linux-clean
-native-linux-clean	Check out exact runner commit with complete history	﻿2026-07-18T09:08:50.2249538Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.2258331Z ##[group]Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.2259725Z with:
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.2260210Z   fetch-depth: 0
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.2260792Z   repository: annyeong844/lumin_Refactor
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.2264766Z   token: ***
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.2265238Z   ssh-strict: true
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.2265690Z   ssh-user: git
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.2266169Z   persist-credentials: true
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.2266687Z   clean: true
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.2267158Z   sparse-checkout-cone-mode: true
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.2267708Z   fetch-tags: false
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.2268343Z   show-progress: true
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.2268828Z   lfs: false
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.2269317Z   submodules: false
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.2269797Z   set-safe-directory: true
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.2270724Z ##[endgroup]
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3298530Z Syncing repository: annyeong844/lumin_Refactor
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3301258Z ##[group]Getting Git version info
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3302495Z Working directory is '/home/runner/work/lumin_Refactor/lumin_Refactor'
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3304250Z [command]/usr/bin/git version
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3375310Z git version 2.54.0
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3410656Z ##[endgroup]
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3418308Z Temporarily overriding HOME='/home/runner/work/_temp/93167442-7e3f-4840-bf43-086c40215d0c' before making global git config changes
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3420431Z Adding repository directory to the temporary git global config as a safe directory
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3427655Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/lumin_Refactor/lumin_Refactor
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3491702Z Deleting the contents of '/home/runner/work/lumin_Refactor/lumin_Refactor'
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3501051Z ##[group]Initializing the repository
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3506186Z [command]/usr/bin/git init /home/runner/work/lumin_Refactor/lumin_Refactor
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3644745Z hint: Using 'master' as the name for the initial branch. This default branch name
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3646456Z hint: will change to "main" in Git 3.0. To configure the initial branch name
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3648015Z hint: to use in all of your new repositories, which will suppress this warning,
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3649538Z hint: call:
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3650166Z hint:
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3650963Z hint: 	git config --global init.defaultBranch <name>
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3651949Z hint:
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3652881Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3654446Z hint: 'development'. The just-created branch can be renamed via this command:
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3655630Z hint:
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3656260Z hint: 	git branch -m <name>
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3657022Z hint:
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3658296Z hint: Disable this message with "git config set advice.defaultBranchName false"
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3666088Z Initialized empty Git repository in /home/runner/work/lumin_Refactor/lumin_Refactor/.git/
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3680532Z [command]/usr/bin/git remote add origin https://github.com/annyeong844/lumin_Refactor
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3763507Z ##[endgroup]
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3764712Z ##[group]Disabling automatic garbage collection
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3767408Z [command]/usr/bin/git config --local gc.auto 0
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3800317Z ##[endgroup]
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3801473Z ##[group]Setting up auth
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3809100Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.3850106Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.4248004Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.4288363Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.4517380Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.4558015Z ##[endgroup]
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.4559212Z ##[group]Fetching the repository
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:50.4568931Z [command]/usr/bin/git -c protocol.version=2 fetch --prune --no-recurse-submodules origin +refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/*
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:51.0380108Z From https://github.com/annyeong844/lumin_Refactor
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:51.0389708Z  * [new branch]      main       -> origin/main
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:51.0391218Z  * [new branch]      phase0-pinned-provenance-20260718 -> origin/phase0-pinned-provenance-20260718
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:51.0393347Z  * [new branch]      phase0-static-packaging-binding-closure-20260718 -> origin/phase0-static-packaging-binding-closure-20260718
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:51.0395367Z  * [new branch]      phase0-static-packaging-probe-20260718 -> origin/phase0-static-packaging-probe-20260718
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:51.0438609Z [command]/usr/bin/git branch --list --remote origin/phase0-pinned-provenance-20260718
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:51.0476831Z   origin/phase0-pinned-provenance-20260718
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:51.0492203Z [command]/usr/bin/git rev-parse refs/remotes/origin/phase0-pinned-provenance-20260718
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:51.0518032Z 25bf5c5dd11da351c68c90da54e40b44e62120ce
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:51.0524173Z ##[endgroup]
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:51.0526161Z ##[group]Determining the checkout info
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:51.0528736Z ##[endgroup]
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:51.0530312Z [command]/usr/bin/git sparse-checkout disable
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:51.0585734Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:51.0623675Z ##[group]Checking out the ref
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:51.0630671Z [command]/usr/bin/git checkout --progress --force -B phase0-pinned-provenance-20260718 refs/remotes/origin/phase0-pinned-provenance-20260718
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:51.1036106Z Switched to a new branch 'phase0-pinned-provenance-20260718'
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:51.1039029Z branch 'phase0-pinned-provenance-20260718' set up to track 'origin/phase0-pinned-provenance-20260718'.
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:51.1050035Z ##[endgroup]
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:51.1100256Z [command]/usr/bin/git log -1 --format=%H
-native-linux-clean	Check out exact runner commit with complete history	2026-07-18T09:08:51.1127037Z 25bf5c5dd11da351c68c90da54e40b44e62120ce
-native-linux-clean	Run clean pinned-upstream provenance capture	﻿2026-07-18T09:08:51.1353455Z ##[group]Run bash reviews/probes/phase0-pinned-upstream-provenance-2026-07-18/runner/run-native.sh
-native-linux-clean	Run clean pinned-upstream provenance capture	2026-07-18T09:08:51.1356473Z [36;1mbash reviews/probes/phase0-pinned-upstream-provenance-2026-07-18/runner/run-native.sh[0m
-native-linux-clean	Run clean pinned-upstream provenance capture	2026-07-18T09:08:51.1442196Z shell: /usr/bin/bash -e {0}
-native-linux-clean	Run clean pinned-upstream provenance capture	2026-07-18T09:08:51.1443169Z ##[endgroup]
-native-linux-clean	Run clean pinned-upstream provenance capture	2026-07-18T09:08:52.8165486Z {"compilerOptionCount": 122, "compilerOptionDigest": "f2fb5da0cf33ea694a8bf4ccae909a1526e7978693c15ac1a6b10b3cdfbc9d9a", "evidenceEntries": 18, "evidenceManifestSha256": "2228b0ac40afe62d4d72c12919e7dae1a8d1c8a6921f507c6ea6790e56dfc28f", "negativeControls": 6, "runnerCommit": "25bf5c5dd11da351c68c90da54e40b44e62120ce", "status": "pass", "upstreamByteChecks": 7}
-native-linux-clean	Run clean pinned-upstream provenance capture	2026-07-18T09:08:53.3161354Z {"compilerOptionCount": 122, "compilerOptionDigest": "f2fb5da0cf33ea694a8bf4ccae909a1526e7978693c15ac1a6b10b3cdfbc9d9a", "evidenceEntries": 18, "evidenceManifestSha256": "2228b0ac40afe62d4d72c12919e7dae1a8d1c8a6921f507c6ea6790e56dfc28f", "negativeControls": 6, "runnerCommit": "25bf5c5dd11da351c68c90da54e40b44e62120ce", "status": "pass", "upstreamByteChecks": 7}
-native-linux-clean	Upload exact raw provenance evidence	﻿2026-07-18T09:08:53.3359790Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
-native-linux-clean	Upload exact raw provenance evidence	2026-07-18T09:08:53.3362047Z ##[group]Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-native-linux-clean	Upload exact raw provenance evidence	2026-07-18T09:08:53.3362507Z with:
-native-linux-clean	Upload exact raw provenance evidence	2026-07-18T09:08:53.3362942Z   name: phase0-pinned-upstream-provenance-25bf5c5dd11da351c68c90da54e40b44e62120ce
-native-linux-clean	Upload exact raw provenance evidence	2026-07-18T09:08:53.3363657Z   path: reviews/probes/phase0-pinned-upstream-provenance-2026-07-18/evidence/native-linux-clean
-native-linux-clean	Upload exact raw provenance evidence	2026-07-18T09:08:53.3364184Z   if-no-files-found: error
-native-linux-clean	Upload exact raw provenance evidence	2026-07-18T09:08:53.3364459Z   retention-days: 7
-native-linux-clean	Upload exact raw provenance evidence	2026-07-18T09:08:53.3364711Z   compression-level: 6
-native-linux-clean	Upload exact raw provenance evidence	2026-07-18T09:08:53.3364967Z   overwrite: false
-native-linux-clean	Upload exact raw provenance evidence	2026-07-18T09:08:53.3365224Z   include-hidden-files: false
-native-linux-clean	Upload exact raw provenance evidence	2026-07-18T09:08:53.3365507Z ##[endgroup]
-native-linux-clean	Upload exact raw provenance evidence	2026-07-18T09:08:53.4972729Z (node:2375) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
-native-linux-clean	Upload exact raw provenance evidence	2026-07-18T09:08:53.4974280Z (Use `node --trace-deprecation ...` to show where the warning was created)
-native-linux-clean	Upload exact raw provenance evidence	2026-07-18T09:08:53.5086541Z With the provided path, there will be 19 files uploaded
-native-linux-clean	Upload exact raw provenance evidence	2026-07-18T09:08:53.5093958Z Artifact name is valid!
-native-linux-clean	Upload exact raw provenance evidence	2026-07-18T09:08:53.5094568Z Root directory input is valid!
-native-linux-clean	Upload exact raw provenance evidence	2026-07-18T09:08:53.6480826Z Beginning upload of artifact content to blob storage
-native-linux-clean	Upload exact raw provenance evidence	2026-07-18T09:08:54.0763744Z (node:2375) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
-native-linux-clean	Upload exact raw provenance evidence	2026-07-18T09:08:54.3271838Z Uploaded bytes 6257113
-native-linux-clean	Upload exact raw provenance evidence	2026-07-18T09:08:54.3539235Z Finished uploading artifact content to blob storage!
-native-linux-clean	Upload exact raw provenance evidence	2026-07-18T09:08:54.3540172Z SHA256 digest of uploaded artifact zip is d5f25626b8c37808da2115483c41bc3facb14338a21cc68e310da332dde9009d
-native-linux-clean	Upload exact raw provenance evidence	2026-07-18T09:08:54.3542019Z Finalizing artifact upload
-native-linux-clean	Upload exact raw provenance evidence	2026-07-18T09:08:54.5004229Z Artifact phase0-pinned-upstream-provenance-25bf5c5dd11da351c68c90da54e40b44e62120ce.zip successfully finalized. Artifact ID 8427910952
-native-linux-clean	Upload exact raw provenance evidence	2026-07-18T09:08:54.5006828Z Artifact phase0-pinned-upstream-provenance-25bf5c5dd11da351c68c90da54e40b44e62120ce has been successfully uploaded! Final size is 6257113 bytes. Artifact ID is 8427910952
-native-linux-clean	Upload exact raw provenance evidence	2026-07-18T09:08:54.5011454Z Artifact download URL: https://github.com/annyeong844/lumin_Refactor/actions/runs/29638671368/artifacts/8427910952
-native-linux-clean	Post Check out exact runner commit with complete history	﻿2026-07-18T09:08:54.5301632Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
-native-linux-clean	Post Check out exact runner commit with complete history	2026-07-18T09:08:54.5302942Z Post job cleanup.
-native-linux-clean	Post Check out exact runner commit with complete history	2026-07-18T09:08:54.6164772Z [command]/usr/bin/git version
-native-linux-clean	Post Check out exact runner commit with complete history	2026-07-18T09:08:54.6208799Z git version 2.54.0
-native-linux-clean	Post Check out exact runner commit with complete history	2026-07-18T09:08:54.6285755Z Temporarily overriding HOME='/home/runner/work/_temp/ee5bdb67-0819-4742-91d5-ca4d0e138d19' before making global git config changes
-native-linux-clean	Post Check out exact runner commit with complete history	2026-07-18T09:08:54.6287497Z Adding repository directory to the temporary git global config as a safe directory
-native-linux-clean	Post Check out exact runner commit with complete history	2026-07-18T09:08:54.6292503Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/lumin_Refactor/lumin_Refactor
-native-linux-clean	Post Check out exact runner commit with complete history	2026-07-18T09:08:54.6337160Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
-native-linux-clean	Post Check out exact runner commit with complete history	2026-07-18T09:08:54.6379205Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
-native-linux-clean	Post Check out exact runner commit with complete history	2026-07-18T09:08:54.6640189Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
-native-linux-clean	Post Check out exact runner commit with complete history	2026-07-18T09:08:54.6671792Z http.https://github.com/.extraheader
-native-linux-clean	Post Check out exact runner commit with complete history	2026-07-18T09:08:54.6685808Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
-native-linux-clean	Post Check out exact runner commit with complete history	2026-07-18T09:08:54.6722669Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
-native-linux-clean	Complete job	﻿2026-07-18T09:08:54.7125285Z Cleaning up orphan processes
-native-linux-clean	Complete job	2026-07-18T09:08:54.7440676Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683, actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native-linux-clean	Set up job	﻿2026-07-18T11:19:18.2088596Z Current runner version: '2.335.1'
+native-linux-clean	Set up job	2026-07-18T11:19:18.2123599Z ##[group]Runner Image Provisioner
+native-linux-clean	Set up job	2026-07-18T11:19:18.2125161Z Hosted Compute Agent
+native-linux-clean	Set up job	2026-07-18T11:19:18.2126197Z Version: 20260707.563
+native-linux-clean	Set up job	2026-07-18T11:19:18.2127550Z Commit: 02667638d2b423fbc733a8e32a88b44996a3ba6e
+native-linux-clean	Set up job	2026-07-18T11:19:18.2128871Z Build Date: 2026-07-07T19:33:50Z
+native-linux-clean	Set up job	2026-07-18T11:19:18.2130003Z Worker ID: {dbe285da-8b62-4d8f-bfbe-892c12c663af}
+native-linux-clean	Set up job	2026-07-18T11:19:18.2131340Z Azure Region: eastus
+native-linux-clean	Set up job	2026-07-18T11:19:18.2132439Z ##[endgroup]
+native-linux-clean	Set up job	2026-07-18T11:19:18.2134561Z ##[group]Operating System
+native-linux-clean	Set up job	2026-07-18T11:19:18.2135627Z Ubuntu
+native-linux-clean	Set up job	2026-07-18T11:19:18.2136461Z 24.04.4
+native-linux-clean	Set up job	2026-07-18T11:19:18.2137616Z LTS
+native-linux-clean	Set up job	2026-07-18T11:19:18.2138545Z ##[endgroup]
+native-linux-clean	Set up job	2026-07-18T11:19:18.2139441Z ##[group]Runner Image
+native-linux-clean	Set up job	2026-07-18T11:19:18.2140562Z Image: ubuntu-24.04
+native-linux-clean	Set up job	2026-07-18T11:19:18.2141563Z Version: 20260714.240.1
+native-linux-clean	Set up job	2026-07-18T11:19:18.2144188Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20260714.240/images/ubuntu/Ubuntu2404-Readme.md
+native-linux-clean	Set up job	2026-07-18T11:19:18.2147160Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20260714.240
+native-linux-clean	Set up job	2026-07-18T11:19:18.2149235Z ##[endgroup]
+native-linux-clean	Set up job	2026-07-18T11:19:18.2151101Z ##[group]GITHUB_TOKEN Permissions
+native-linux-clean	Set up job	2026-07-18T11:19:18.2153708Z Contents: read
+native-linux-clean	Set up job	2026-07-18T11:19:18.2154706Z Metadata: read
+native-linux-clean	Set up job	2026-07-18T11:19:18.2155766Z ##[endgroup]
+native-linux-clean	Set up job	2026-07-18T11:19:18.2159017Z Secret source: Actions
+native-linux-clean	Set up job	2026-07-18T11:19:18.2160397Z Prepare workflow directory
+native-linux-clean	Set up job	2026-07-18T11:19:18.2644533Z Prepare all required actions
+native-linux-clean	Set up job	2026-07-18T11:19:18.2700965Z Getting action download info
+native-linux-clean	Set up job	2026-07-18T11:19:18.4433682Z Download action repository 'actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683' (SHA:11bd71901bbe5b1630ceea73d27597364c9af683)
+native-linux-clean	Set up job	2026-07-18T11:19:18.6054925Z Download action repository 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02' (SHA:ea165f8d65b6e75b540449e92b4886f43607fa02)
+native-linux-clean	Set up job	2026-07-18T11:19:18.8275407Z Complete job name: native-linux-clean
+native-linux-clean	Check out exact runner commit with complete history	﻿2026-07-18T11:19:18.9070135Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:18.9079542Z ##[group]Run actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:18.9080517Z with:
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:18.9081028Z   fetch-depth: 0
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:18.9081564Z   repository: annyeong844/lumin_Refactor
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:18.9085479Z   token: ***
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:18.9085936Z   ssh-strict: true
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:18.9086440Z   ssh-user: git
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:18.9086945Z   persist-credentials: true
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:18.9087617Z   clean: true
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:18.9088059Z   sparse-checkout-cone-mode: true
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:18.9088574Z   fetch-tags: false
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:18.9089011Z   show-progress: true
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:18.9089453Z   lfs: false
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:18.9089907Z   submodules: false
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:18.9090353Z   set-safe-directory: true
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:18.9091269Z ##[endgroup]
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.0104363Z Syncing repository: annyeong844/lumin_Refactor
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.0107029Z ##[group]Getting Git version info
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.0108555Z Working directory is '/home/runner/work/lumin_Refactor/lumin_Refactor'
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.0110362Z [command]/usr/bin/git version
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2261699Z git version 2.54.0
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2286569Z ##[endgroup]
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2303984Z Temporarily overriding HOME='/home/runner/work/_temp/9d9a1a32-f83d-4cd1-917d-0ebee289ace7' before making global git config changes
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2306621Z Adding repository directory to the temporary git global config as a safe directory
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2310713Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/lumin_Refactor/lumin_Refactor
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2380929Z Deleting the contents of '/home/runner/work/lumin_Refactor/lumin_Refactor'
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2383533Z ##[group]Initializing the repository
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2384897Z [command]/usr/bin/git init /home/runner/work/lumin_Refactor/lumin_Refactor
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2481600Z hint: Using 'master' as the name for the initial branch. This default branch name
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2483330Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2484659Z hint: to use in all of your new repositories, which will suppress this warning,
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2486105Z hint: call:
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2486755Z hint:
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2487559Z hint: 	git config --global init.defaultBranch <name>
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2488200Z hint:
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2488776Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2489993Z hint: 'development'. The just-created branch can be renamed via this command:
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2491310Z hint:
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2491791Z hint: 	git branch -m <name>
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2492308Z hint:
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2492934Z hint: Disable this message with "git config set advice.defaultBranchName false"
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2493986Z Initialized empty Git repository in /home/runner/work/lumin_Refactor/lumin_Refactor/.git/
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2498552Z [command]/usr/bin/git remote add origin https://github.com/annyeong844/lumin_Refactor
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2573806Z ##[endgroup]
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2575290Z ##[group]Disabling automatic garbage collection
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2576610Z [command]/usr/bin/git config --local gc.auto 0
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2590282Z ##[endgroup]
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2591383Z ##[group]Setting up auth
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2599138Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.2640681Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.3015783Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.3054218Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.3287726Z [command]/usr/bin/git config --local http.https://github.com/.extraheader AUTHORIZATION: basic ***
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.3329472Z ##[endgroup]
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.3330282Z ##[group]Fetching the repository
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.3340278Z [command]/usr/bin/git -c protocol.version=2 fetch --prune --no-recurse-submodules origin +refs/heads/*:refs/remotes/origin/* +refs/tags/*:refs/tags/*
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.9377717Z From https://github.com/annyeong844/lumin_Refactor
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.9379631Z  * [new branch]      main       -> origin/main
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.9381491Z  * [new branch]      phase0-pinned-provenance-20260718 -> origin/phase0-pinned-provenance-20260718
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.9384270Z  * [new branch]      phase0-provenance-binding-closure-20260718 -> origin/phase0-provenance-binding-closure-20260718
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.9387787Z  * [new branch]      phase0-static-packaging-binding-closure-20260718 -> origin/phase0-static-packaging-binding-closure-20260718
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.9390892Z  * [new branch]      phase0-static-packaging-probe-20260718 -> origin/phase0-static-packaging-probe-20260718
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.9425885Z [command]/usr/bin/git branch --list --remote origin/phase0-provenance-binding-closure-20260718
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.9459450Z   origin/phase0-provenance-binding-closure-20260718
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.9471709Z [command]/usr/bin/git rev-parse refs/remotes/origin/phase0-provenance-binding-closure-20260718
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.9502624Z 7e6ebd097cd69318669494fbd95acecbf627b5b4
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.9508616Z ##[endgroup]
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.9510493Z ##[group]Determining the checkout info
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.9512506Z ##[endgroup]
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.9515271Z [command]/usr/bin/git sparse-checkout disable
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.9569312Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.9607587Z ##[group]Checking out the ref
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:19.9613575Z [command]/usr/bin/git checkout --progress --force -B phase0-provenance-binding-closure-20260718 refs/remotes/origin/phase0-provenance-binding-closure-20260718
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:20.0030150Z Switched to a new branch 'phase0-provenance-binding-closure-20260718'
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:20.0032806Z branch 'phase0-provenance-binding-closure-20260718' set up to track 'origin/phase0-provenance-binding-closure-20260718'.
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:20.0043391Z ##[endgroup]
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:20.0092281Z [command]/usr/bin/git log -1 --format=%H
+native-linux-clean	Check out exact runner commit with complete history	2026-07-18T11:19:20.0121192Z 7e6ebd097cd69318669494fbd95acecbf627b5b4
+native-linux-clean	Run exact-bound clean provenance capture	﻿2026-07-18T11:19:20.0344324Z ##[group]Run bash reviews/probes/phase0-pinned-upstream-provenance-2026-07-18/runner/run-native.sh
+native-linux-clean	Run exact-bound clean provenance capture	2026-07-18T11:19:20.0347108Z [36;1mbash reviews/probes/phase0-pinned-upstream-provenance-2026-07-18/runner/run-native.sh[0m
+native-linux-clean	Run exact-bound clean provenance capture	2026-07-18T11:19:20.0431633Z shell: /usr/bin/bash -e {0}
+native-linux-clean	Run exact-bound clean provenance capture	2026-07-18T11:19:20.0432386Z ##[endgroup]
+native-linux-clean	Run exact-bound clean provenance capture	2026-07-18T11:19:22.4171233Z {"compilerOptionCount": 122, "compilerOptionDigest": "f2fb5da0cf33ea694a8bf4ccae909a1526e7978693c15ac1a6b10b3cdfbc9d9a", "evidenceEntries": 18, "evidenceManifestSha256": "439eff660625b3792c9c6438be6d063a94dce07f6a40802b2368a962e0509b68", "negativeControls": 9, "runnerCommit": "7e6ebd097cd69318669494fbd95acecbf627b5b4", "status": "pass", "upstreamByteChecks": 7, "workflowBinding": "capture-environment", "workflowRunId": 29642350675}
+native-linux-clean	Upload exact raw provenance evidence	﻿2026-07-18T11:19:22.4388921Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native-linux-clean	Upload exact raw provenance evidence	2026-07-18T11:19:22.4391361Z ##[group]Run actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+native-linux-clean	Upload exact raw provenance evidence	2026-07-18T11:19:22.4392043Z with:
+native-linux-clean	Upload exact raw provenance evidence	2026-07-18T11:19:22.4392665Z   name: phase0-pinned-upstream-provenance-7e6ebd097cd69318669494fbd95acecbf627b5b4
+native-linux-clean	Upload exact raw provenance evidence	2026-07-18T11:19:22.4393594Z   path: reviews/probes/phase0-pinned-upstream-provenance-2026-07-18/evidence/native-linux-clean
+native-linux-clean	Upload exact raw provenance evidence	2026-07-18T11:19:22.4394339Z   if-no-files-found: error
+native-linux-clean	Upload exact raw provenance evidence	2026-07-18T11:19:22.4394783Z   retention-days: 7
+native-linux-clean	Upload exact raw provenance evidence	2026-07-18T11:19:22.4395197Z   compression-level: 6
+native-linux-clean	Upload exact raw provenance evidence	2026-07-18T11:19:22.4395617Z   overwrite: false
+native-linux-clean	Upload exact raw provenance evidence	2026-07-18T11:19:22.4396037Z   include-hidden-files: false
+native-linux-clean	Upload exact raw provenance evidence	2026-07-18T11:19:22.4396490Z ##[endgroup]
+native-linux-clean	Upload exact raw provenance evidence	2026-07-18T11:19:22.6050219Z (node:2261) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+native-linux-clean	Upload exact raw provenance evidence	2026-07-18T11:19:22.6055496Z (Use `node --trace-deprecation ...` to show where the warning was created)
+native-linux-clean	Upload exact raw provenance evidence	2026-07-18T11:19:22.6164773Z With the provided path, there will be 19 files uploaded
+native-linux-clean	Upload exact raw provenance evidence	2026-07-18T11:19:22.6168258Z Artifact name is valid!
+native-linux-clean	Upload exact raw provenance evidence	2026-07-18T11:19:22.6169633Z Root directory input is valid!
+native-linux-clean	Upload exact raw provenance evidence	2026-07-18T11:19:22.7527863Z Beginning upload of artifact content to blob storage
+native-linux-clean	Upload exact raw provenance evidence	2026-07-18T11:19:23.1837504Z (node:2261) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+native-linux-clean	Upload exact raw provenance evidence	2026-07-18T11:19:23.2995857Z Uploaded bytes 6257298
+native-linux-clean	Upload exact raw provenance evidence	2026-07-18T11:19:23.3132523Z Finished uploading artifact content to blob storage!
+native-linux-clean	Upload exact raw provenance evidence	2026-07-18T11:19:23.3133849Z SHA256 digest of uploaded artifact zip is 4688a9a192349efe7114fc823474732797ee6ee1f3cf49301056a101dc6857c9
+native-linux-clean	Upload exact raw provenance evidence	2026-07-18T11:19:23.3135506Z Finalizing artifact upload
+native-linux-clean	Upload exact raw provenance evidence	2026-07-18T11:19:23.4603312Z Artifact phase0-pinned-upstream-provenance-7e6ebd097cd69318669494fbd95acecbf627b5b4.zip successfully finalized. Artifact ID 8428995583
+native-linux-clean	Upload exact raw provenance evidence	2026-07-18T11:19:23.4605268Z Artifact phase0-pinned-upstream-provenance-7e6ebd097cd69318669494fbd95acecbf627b5b4 has been successfully uploaded! Final size is 6257298 bytes. Artifact ID is 8428995583
+native-linux-clean	Upload exact raw provenance evidence	2026-07-18T11:19:23.4611050Z Artifact download URL: https://github.com/annyeong844/lumin_Refactor/actions/runs/29642350675/artifacts/8428995583
+native-linux-clean	Post Check out exact runner commit with complete history	﻿2026-07-18T11:19:23.4910765Z Node 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+native-linux-clean	Post Check out exact runner commit with complete history	2026-07-18T11:19:23.4912050Z Post job cleanup.
+native-linux-clean	Post Check out exact runner commit with complete history	2026-07-18T11:19:23.5761845Z [command]/usr/bin/git version
+native-linux-clean	Post Check out exact runner commit with complete history	2026-07-18T11:19:23.5808205Z git version 2.54.0
+native-linux-clean	Post Check out exact runner commit with complete history	2026-07-18T11:19:23.5854842Z Temporarily overriding HOME='/home/runner/work/_temp/aaf73f76-3b84-4dfc-838c-d07405928be5' before making global git config changes
+native-linux-clean	Post Check out exact runner commit with complete history	2026-07-18T11:19:23.5858710Z Adding repository directory to the temporary git global config as a safe directory
+native-linux-clean	Post Check out exact runner commit with complete history	2026-07-18T11:19:23.5862240Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/lumin_Refactor/lumin_Refactor
+native-linux-clean	Post Check out exact runner commit with complete history	2026-07-18T11:19:23.5905079Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+native-linux-clean	Post Check out exact runner commit with complete history	2026-07-18T11:19:23.5945607Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+native-linux-clean	Post Check out exact runner commit with complete history	2026-07-18T11:19:23.6236700Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+native-linux-clean	Post Check out exact runner commit with complete history	2026-07-18T11:19:23.6268057Z http.https://github.com/.extraheader
+native-linux-clean	Post Check out exact runner commit with complete history	2026-07-18T11:19:23.6285381Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+native-linux-clean	Post Check out exact runner commit with complete history	2026-07-18T11:19:23.6323816Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+native-linux-clean	Complete job	﻿2026-07-18T11:19:23.6735250Z Cleaning up orphan processes
+native-linux-clean	Complete job	2026-07-18T11:19:23.7066742Z ##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683, actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
