@@ -1,0 +1,1 @@
+[audit-repo] note: --output is outside --root; artifacts will be written to: C:\Users\endof\AppData\Local\Temp\lumin-numeric-baseline-35290\windows-cold-full-3\measured-artifacts

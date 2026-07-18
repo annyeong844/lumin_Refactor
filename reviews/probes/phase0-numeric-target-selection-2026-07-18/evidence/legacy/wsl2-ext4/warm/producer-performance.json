@@ -1,0 +1,1528 @@
+{
+  "schemaVersion": "producer-performance.v1",
+  "generated": "2026-07-18T16:09:07.054Z",
+  "root": "/home/endof/lumin-numeric-baseline-35290/repo",
+  "output": "/home/endof/lumin-numeric-baseline-35290/wsl-warm-full-2/measured-artifacts",
+  "profile": "full",
+  "scanRange": {
+    "includeTests": true,
+    "production": false,
+    "excludes": [],
+    "autoExcludes": []
+  },
+  "cache": {
+    "noIncremental": false,
+    "cacheRoot": "/home/endof/lumin-numeric-baseline-35290/wsl-warm-full-2/cache",
+    "clearIncrementalCache": false
+  },
+  "generatedArtifacts": {
+    "mode": "default"
+  },
+  "summary": {
+    "producerCount": 19,
+    "okCount": 19,
+    "failedCount": 0,
+    "skippedCount": 2,
+    "totalWallMs": 19429,
+    "artifactCount": 23,
+    "totalArtifactBytes": 13935376,
+    "artifactReadCount": 39,
+    "totalArtifactReadBytes": 30249597,
+    "totalJsonParseMs": 410,
+    "maxObservedOrchestratorRssBytes": 4063232,
+    "phaseSupportCount": 4
+  },
+  "memory": {
+    "measurement": "orchestrator-process-snapshots",
+    "childPeakRssAvailable": false,
+    "note": "Memory snapshots are measured in the audit-repo orchestrator before and after each child producer; they do not measure child process peak RSS."
+  },
+  "artifacts": {
+    "producedCount": 23,
+    "totalBytes": 13935376,
+    "largest": [
+      {
+        "name": "function-clones.json",
+        "bytes": 9548800
+      },
+      {
+        "name": "symbols.json",
+        "bytes": 1607011
+      },
+      {
+        "name": "fix-plan.json",
+        "bytes": 886831
+      },
+      {
+        "name": "call-graph.json",
+        "bytes": 518303
+      },
+      {
+        "name": "checklist-facts.json",
+        "bytes": 276971
+      },
+      {
+        "name": "topology.json",
+        "bytes": 237180
+      },
+      {
+        "name": "block-clones.json",
+        "bytes": 210779
+      },
+      {
+        "name": "staleness.json",
+        "bytes": 180750
+      },
+      {
+        "name": "source-inventory.json",
+        "bytes": 150969
+      },
+      {
+        "name": "dead-classify.json",
+        "bytes": 123414
+      }
+    ],
+    "byName": {
+      "audit-review-pack.latest.md": {
+        "bytes": 8136
+      },
+      "audit-summary.latest.md": {
+        "bytes": 5628
+      },
+      "barrels.json": {
+        "bytes": 318
+      },
+      "block-clones.json": {
+        "bytes": 210779
+      },
+      "call-graph.json": {
+        "bytes": 518303
+      },
+      "checklist-facts.json": {
+        "bytes": 276971
+      },
+      "dead-classify.json": {
+        "bytes": 123414
+      },
+      "discipline.json": {
+        "bytes": 17035
+      },
+      "entry-surface.json": {
+        "bytes": 18618
+      },
+      "fix-plan.json": {
+        "bytes": 886831
+      },
+      "framework-resource-surfaces.json": {
+        "bytes": 4172
+      },
+      "function-clones.json": {
+        "bytes": 9548800
+      },
+      "module-reachability.json": {
+        "bytes": 37780
+      },
+      "resolver-capabilities.json": {
+        "bytes": 7907
+      },
+      "resolver-diagnostics.json": {
+        "bytes": 65081
+      },
+      "shape-index.json": {
+        "bytes": 6299
+      },
+      "source-inventory.json": {
+        "bytes": 150969
+      },
+      "staleness.json": {
+        "bytes": 180750
+      },
+      "symbols.json": {
+        "bytes": 1607011
+      },
+      "topology.json": {
+        "bytes": 237180
+      },
+      "topology.mermaid.md": {
+        "bytes": 2799
+      },
+      "triage.json": {
+        "bytes": 11543
+      },
+      "unused-deps.json": {
+        "bytes": 9052
+      }
+    }
+  },
+  "artifactReads": {
+    "schemaVersion": "artifact-read-metrics.v1",
+    "measurement": "audit-repo-orchestrator-json-reads",
+    "totalReadCount": 39,
+    "totalReadBytes": 30249597,
+    "totalReadMs": 34,
+    "totalJsonParseMs": 410,
+    "parseFailureCount": 0,
+    "largestReads": [
+      {
+        "bytes": 19097600,
+        "name": "function-clones.json",
+        "readCount": 2
+      },
+      {
+        "bytes": 6428044,
+        "name": "symbols.json",
+        "readCount": 4
+      },
+      {
+        "bytes": 1773662,
+        "name": "fix-plan.json",
+        "readCount": 2
+      },
+      {
+        "bytes": 1036606,
+        "name": "call-graph.json",
+        "readCount": 2
+      },
+      {
+        "bytes": 553942,
+        "name": "checklist-facts.json",
+        "readCount": 2
+      },
+      {
+        "bytes": 421558,
+        "name": "block-clones.json",
+        "readCount": 2
+      },
+      {
+        "bytes": 370242,
+        "name": "dead-classify.json",
+        "readCount": 3
+      },
+      {
+        "bytes": 237180,
+        "name": "topology.json",
+        "readCount": 1
+      },
+      {
+        "bytes": 130162,
+        "name": "resolver-diagnostics.json",
+        "readCount": 2
+      },
+      {
+        "bytes": 37780,
+        "name": "module-reachability.json",
+        "readCount": 1
+      }
+    ],
+    "slowestJsonParses": [
+      {
+        "jsonParseMs": 207,
+        "name": "function-clones.json",
+        "readCount": 2
+      },
+      {
+        "jsonParseMs": 136,
+        "name": "symbols.json",
+        "readCount": 4
+      },
+      {
+        "jsonParseMs": 25,
+        "name": "fix-plan.json",
+        "readCount": 2
+      },
+      {
+        "jsonParseMs": 17,
+        "name": "call-graph.json",
+        "readCount": 2
+      },
+      {
+        "jsonParseMs": 9,
+        "name": "dead-classify.json",
+        "readCount": 3
+      },
+      {
+        "jsonParseMs": 7,
+        "name": "checklist-facts.json",
+        "readCount": 2
+      },
+      {
+        "jsonParseMs": 5,
+        "name": "block-clones.json",
+        "readCount": 2
+      },
+      {
+        "jsonParseMs": 4,
+        "name": "topology.json",
+        "readCount": 1
+      }
+    ],
+    "byName": {
+      ".producer-phases/build-block-clone-index.mjs.json": {
+        "parseFailureCount": 0,
+        "readCount": 1,
+        "totalBytes": 452,
+        "totalJsonParseMs": 0,
+        "totalReadMs": 0
+      },
+      ".producer-phases/build-call-graph.mjs.json": {
+        "parseFailureCount": 0,
+        "readCount": 1,
+        "totalBytes": 368,
+        "totalJsonParseMs": 0,
+        "totalReadMs": 0
+      },
+      ".producer-phases/build-symbol-graph.mjs.json": {
+        "parseFailureCount": 0,
+        "readCount": 1,
+        "totalBytes": 17999,
+        "totalJsonParseMs": 0,
+        "totalReadMs": 0
+      },
+      ".producer-phases/measure-topology.mjs.json": {
+        "parseFailureCount": 0,
+        "readCount": 1,
+        "totalBytes": 731,
+        "totalJsonParseMs": 0,
+        "totalReadMs": 0
+      },
+      "barrels.json": {
+        "parseFailureCount": 0,
+        "readCount": 1,
+        "totalBytes": 318,
+        "totalJsonParseMs": 0,
+        "totalReadMs": 0
+      },
+      "block-clones.json": {
+        "parseFailureCount": 0,
+        "readCount": 2,
+        "totalBytes": 421558,
+        "totalJsonParseMs": 5,
+        "totalReadMs": 0
+      },
+      "call-graph.json": {
+        "parseFailureCount": 0,
+        "readCount": 2,
+        "totalBytes": 1036606,
+        "totalJsonParseMs": 17,
+        "totalReadMs": 0
+      },
+      "checklist-facts.json": {
+        "parseFailureCount": 0,
+        "readCount": 2,
+        "totalBytes": 553942,
+        "totalJsonParseMs": 7,
+        "totalReadMs": 0
+      },
+      "dead-classify.json": {
+        "parseFailureCount": 0,
+        "readCount": 3,
+        "totalBytes": 370242,
+        "totalJsonParseMs": 9,
+        "totalReadMs": 0
+      },
+      "discipline.json": {
+        "parseFailureCount": 0,
+        "readCount": 2,
+        "totalBytes": 34070,
+        "totalJsonParseMs": 0,
+        "totalReadMs": 0
+      },
+      "entry-surface.json": {
+        "parseFailureCount": 0,
+        "readCount": 2,
+        "totalBytes": 37236,
+        "totalJsonParseMs": 0,
+        "totalReadMs": 0
+      },
+      "fix-plan.json": {
+        "parseFailureCount": 0,
+        "readCount": 2,
+        "totalBytes": 1773662,
+        "totalJsonParseMs": 25,
+        "totalReadMs": 1
+      },
+      "framework-resource-surfaces.json": {
+        "parseFailureCount": 0,
+        "readCount": 2,
+        "totalBytes": 8344,
+        "totalJsonParseMs": 0,
+        "totalReadMs": 0
+      },
+      "function-clones.json": {
+        "parseFailureCount": 0,
+        "readCount": 2,
+        "totalBytes": 19097600,
+        "totalJsonParseMs": 207,
+        "totalReadMs": 26
+      },
+      "module-reachability.json": {
+        "parseFailureCount": 0,
+        "readCount": 1,
+        "totalBytes": 37780,
+        "totalJsonParseMs": 0,
+        "totalReadMs": 0
+      },
+      "resolver-capabilities.json": {
+        "parseFailureCount": 0,
+        "readCount": 2,
+        "totalBytes": 15814,
+        "totalJsonParseMs": 0,
+        "totalReadMs": 0
+      },
+      "resolver-diagnostics.json": {
+        "parseFailureCount": 0,
+        "readCount": 2,
+        "totalBytes": 130162,
+        "totalJsonParseMs": 0,
+        "totalReadMs": 0
+      },
+      "shape-index.json": {
+        "parseFailureCount": 0,
+        "readCount": 1,
+        "totalBytes": 6299,
+        "totalJsonParseMs": 0,
+        "totalReadMs": 0
+      },
+      "symbols.json": {
+        "parseFailureCount": 0,
+        "readCount": 4,
+        "totalBytes": 6428044,
+        "totalJsonParseMs": 136,
+        "totalReadMs": 7
+      },
+      "topology.json": {
+        "parseFailureCount": 0,
+        "readCount": 1,
+        "totalBytes": 237180,
+        "totalJsonParseMs": 4,
+        "totalReadMs": 0
+      },
+      "triage.json": {
+        "parseFailureCount": 0,
+        "readCount": 2,
+        "totalBytes": 23086,
+        "totalJsonParseMs": 0,
+        "totalReadMs": 0
+      },
+      "unused-deps.json": {
+        "parseFailureCount": 0,
+        "readCount": 2,
+        "totalBytes": 18104,
+        "totalJsonParseMs": 0,
+        "totalReadMs": 0
+      }
+    }
+  },
+  "producers": [
+    {
+      "name": "triage-repo.mjs",
+      "status": "ok",
+      "wallMs": 574,
+      "memory": {
+        "before": {
+          "rssBytes": 2752512,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "after": {
+          "rssBytes": 3145728,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "delta": {
+          "rssBytes": 393216,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        }
+      }
+    },
+    {
+      "name": "build-framework-resource-surfaces.mjs",
+      "status": "ok",
+      "wallMs": 435,
+      "memory": {
+        "before": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "after": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "delta": {
+          "rssBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        }
+      }
+    },
+    {
+      "name": "measure-topology.mjs",
+      "status": "ok",
+      "wallMs": 689,
+      "phases": [
+        {
+          "name": "collect-files",
+          "wallMs": 53
+        },
+        {
+          "name": "process-changed-files",
+          "wallMs": 0
+        },
+        {
+          "name": "assemble-graph",
+          "wallMs": 79
+        },
+        {
+          "name": "write-artifact",
+          "wallMs": 5
+        }
+      ],
+      "counters": {
+        "changedFiles": 0,
+        "droppedFiles": 0,
+        "filesCollected": 705,
+        "oxcParseCalls": 0,
+        "oxcParseErrors": 0,
+        "resolverMemoHits": 0,
+        "resolverMemoMisses": 0,
+        "resolverMemoSize": 0,
+        "scannerAcceptedFiles": 0,
+        "scannerFallbackFiles": 0,
+        "scannerFilesAttempted": 0,
+        "scannerMs": 0,
+        "unchangedFiles": 705
+      },
+      "memory": {
+        "before": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "after": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "delta": {
+          "rssBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        }
+      },
+      "stderrSnippet": "[m2s1] scanning 705 files (python=skipped, 0 .py, go=skipped, 0 .go) ...\n[m2s1] incremental: 0 changed, 705 cached (100%), 0 dropped\n"
+    },
+    {
+      "name": "measure-discipline.mjs",
+      "status": "ok",
+      "wallMs": 595,
+      "memory": {
+        "before": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "after": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "delta": {
+          "rssBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        }
+      },
+      "stderrSnippet": "[discipline] scanning 705 files (0 .py, 0 .go) ...\n"
+    },
+    {
+      "name": "build-call-graph.mjs",
+      "status": "ok",
+      "wallMs": 2916,
+      "phases": [
+        {
+          "name": "collect-files",
+          "wallMs": 50
+        },
+        {
+          "name": "analyze-files",
+          "wallMs": 1963
+        },
+        {
+          "name": "assemble-call-graph",
+          "wallMs": 186
+        },
+        {
+          "name": "write-artifact",
+          "wallMs": 109
+        }
+      ],
+      "memory": {
+        "before": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "after": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "delta": {
+          "rssBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        }
+      }
+    },
+    {
+      "name": "check-barrel-discipline.mjs",
+      "status": "ok",
+      "wallMs": 95,
+      "memory": {
+        "before": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "after": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "delta": {
+          "rssBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        }
+      }
+    },
+    {
+      "name": "build-shape-index.mjs",
+      "status": "ok",
+      "wallMs": 444,
+      "memory": {
+        "before": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "after": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "delta": {
+          "rssBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        }
+      }
+    },
+    {
+      "name": "build-function-clone-index.mjs",
+      "status": "ok",
+      "wallMs": 1909,
+      "memory": {
+        "before": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "after": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "delta": {
+          "rssBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        }
+      }
+    },
+    {
+      "name": "build-block-clone-index.mjs",
+      "status": "ok",
+      "wallMs": 488,
+      "phases": [
+        {
+          "name": "collect-files",
+          "wallMs": 344
+        },
+        {
+          "name": "write-artifact",
+          "wallMs": 4
+        }
+      ],
+      "counters": {
+        "artifactTokenCount": 1243553,
+        "cacheReusedResult": 1,
+        "filesCollected": 705,
+        "mutedGroupCount": 100,
+        "reviewGroupCount": 100,
+        "tokenCount": 0,
+        "tokenizedFiles": 0
+      },
+      "memory": {
+        "before": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "after": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "delta": {
+          "rssBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        }
+      }
+    },
+    {
+      "name": "build-symbol-graph.mjs",
+      "status": "ok",
+      "wallMs": 2791,
+      "phases": [
+        {
+          "name": "snapshot",
+          "wallMs": 383
+        },
+        {
+          "name": "cache-classification",
+          "wallMs": 14
+        },
+        {
+          "name": "extract-python-batch",
+          "wallMs": 0
+        },
+        {
+          "name": "extract-go-batch",
+          "wallMs": 0
+        },
+        {
+          "name": "extract-rust-js-batch",
+          "wallMs": 0
+        },
+        {
+          "name": "extract-js-files",
+          "wallMs": 0
+        },
+        {
+          "name": "extract-mdx-files",
+          "wallMs": 0
+        },
+        {
+          "name": "extract-sfc-files",
+          "wallMs": 0
+        },
+        {
+          "name": "extract-python-shapes",
+          "wallMs": 0
+        },
+        {
+          "name": "extract-go-shapes",
+          "wallMs": 0
+        },
+        {
+          "name": "extract-changed-files",
+          "wallMs": 1
+        },
+        {
+          "name": "assemble-file-data",
+          "wallMs": 104
+        },
+        {
+          "name": "assemble-def-index",
+          "wallMs": 2
+        },
+        {
+          "name": "collect-sfc-file-facts",
+          "wallMs": 0
+        },
+        {
+          "name": "collect-sfc-global-component-registrations",
+          "wallMs": 0
+        },
+        {
+          "name": "collect-sfc-generated-component-manifests",
+          "wallMs": 1
+        },
+        {
+          "name": "collect-sfc-framework-convention-components",
+          "wallMs": 4
+        },
+        {
+          "name": "assemble-source-use-resolve",
+          "wallMs": 0
+        },
+        {
+          "name": "assemble-source-use-external",
+          "wallMs": 0
+        },
+        {
+          "name": "assemble-source-use-asset",
+          "wallMs": 0
+        },
+        {
+          "name": "assemble-source-use-unresolved",
+          "wallMs": 0
+        },
+        {
+          "name": "assemble-source-use-generated-virtual",
+          "wallMs": 0
+        },
+        {
+          "name": "assemble-source-use-namespace-reexport",
+          "wallMs": 0
+        },
+        {
+          "name": "assemble-source-use-resolved-internal",
+          "wallMs": 0
+        },
+        {
+          "name": "assemble-source-use-candidate-build",
+          "wallMs": 207
+        },
+        {
+          "name": "assemble-source-use-js-resolution",
+          "wallMs": 0
+        },
+        {
+          "name": "assemble-source-uses",
+          "wallMs": 211
+        },
+        {
+          "name": "source-use-out-of-band-rust-assembly",
+          "wallMs": 0
+        },
+        {
+          "name": "assemble-mdx-uses",
+          "wallMs": 1
+        },
+        {
+          "name": "assemble-sfc-script-uses",
+          "wallMs": 1
+        },
+        {
+          "name": "assemble-sfc-script-src-uses",
+          "wallMs": 1
+        },
+        {
+          "name": "sfc-component-source-use-rust-assembly",
+          "wallMs": 0
+        },
+        {
+          "name": "assemble-sfc-projection-inputs",
+          "wallMs": 0
+        },
+        {
+          "name": "assemble-dead-candidates",
+          "wallMs": 8
+        },
+        {
+          "name": "assemble-fan-in",
+          "wallMs": 6
+        },
+        {
+          "name": "assemble-symbol-graph",
+          "wallMs": 624
+        },
+        {
+          "name": "build-symbol-artifact-request",
+          "wallMs": 20
+        },
+        {
+          "name": "symbol-graph-finalizer-cache-identity",
+          "wallMs": 346
+        },
+        {
+          "name": "symbol-graph-finalizer-cache-lookup",
+          "wallMs": 88
+        },
+        {
+          "name": "symbol-graph-artifact-request-json",
+          "wallMs": 0
+        },
+        {
+          "name": "symbol-graph-artifact-request-write",
+          "wallMs": 0
+        },
+        {
+          "name": "symbol-graph-artifact-command",
+          "wallMs": 0
+        },
+        {
+          "name": "write-artifact",
+          "wallMs": 436
+        }
+      ],
+      "counters": {
+        "barrelFileCount": 0,
+        "changedFiles": 0,
+        "changedGoFiles": 0,
+        "changedJsFiles": 0,
+        "changedMdxFiles": 0,
+        "changedPythonFiles": 0,
+        "changedSfcFiles": 0,
+        "cjsRequireOpacityCount": 0,
+        "classMethodCount": 0,
+        "deadCandidateCount": 294,
+        "deadProductionCount": 267,
+        "deadTestCount": 6,
+        "definitionCount": 1051,
+        "droppedFiles": 0,
+        "dynamicImportOpacityCount": 27,
+        "externalUses": 3199,
+        "extractedFiles": 0,
+        "extractedGoFiles": 0,
+        "extractedJsFiles": 0,
+        "extractedMdxFiles": 0,
+        "extractedPythonFiles": 0,
+        "extractedSfcFiles": 0,
+        "fanInIdentityCount": 1051,
+        "fanInIdentitySpaceCount": 1051,
+        "fileDataFiles": 705,
+        "generatedConsumerBlindZoneCount": 0,
+        "globalComponentRegistrationCount": 0,
+        "invalidatedFiles": 0,
+        "localOperationCount": 0,
+        "mdxConsumerUses": 0,
+        "mdxImportConsumerCandidateCount": 0,
+        "mdxSourceUseRustAssemblyCandidateCount": 0,
+        "mdxSourceUseRustAssemblyEmbeddedCount": 0,
+        "namespaceShadowedDeadCount": 21,
+        "nonSourceAssetUses": 0,
+        "outOfBandSourceUseRustAssemblySkippedCount": 0,
+        "parseErrorCount": 0,
+        "reExportCount": 20,
+        "resolvedGeneratedVirtualUses": 0,
+        "resolvedInternalEdgeCount": 2077,
+        "resolvedInternalUses": 2077,
+        "reusedFiles": 705,
+        "rustJsExtractorBatchCount": 0,
+        "rustJsExtractorCandidateFiles": 0,
+        "rustJsExtractorCommandFailedFiles": 0,
+        "rustJsExtractorEligibleFiles": 0,
+        "rustJsExtractorExtractedFiles": 0,
+        "rustJsExtractorFallbackFiles": 0,
+        "rustJsExtractorInputBytes": 0,
+        "rustJsExtractorParseErrorFiles": 0,
+        "rustJsExtractorReadErrorFiles": 0,
+        "rustJsExtractorResolvedRelativeUses": 0,
+        "rustJsExtractorSourceBytes": 0,
+        "sfcComponentSourceUseRustAssemblyCandidateCount": 0,
+        "sfcComponentSourceUseRustAssemblyEmbeddedCount": 0,
+        "sfcComponentSourceUseRustAssemblySkippedCount": 0,
+        "sfcFrameworkConventionComponentCandidateCount": 0,
+        "sfcFrameworkConventionComponentCount": 0,
+        "sfcFrameworkConventionComponentUses": 0,
+        "sfcFrameworkSignalDetected": 0,
+        "sfcFrameworkSignalScanSkipped": 1,
+        "sfcGeneratedComponentManifestCandidateCount": 0,
+        "sfcGeneratedComponentManifestCount": 0,
+        "sfcGeneratedComponentManifestUses": 0,
+        "sfcGlobalComponentRegistrationCandidateCount": 0,
+        "sfcGlobalComponentRegistrationCount": 0,
+        "sfcGlobalComponentRegistrationScanSkipped": 1,
+        "sfcGlobalComponentRegistrationUses": 0,
+        "sfcScriptConsumerUses": 0,
+        "sfcScriptImportConsumerCandidateCount": 0,
+        "sfcScriptSourceUseRustAssemblyCandidateCount": 0,
+        "sfcScriptSourceUseRustAssemblyEmbeddedCount": 0,
+        "sfcScriptSrcCandidateCount": 0,
+        "sfcScriptSrcReachabilityUses": 0,
+        "sfcScriptSrcSourceUseRustAssemblyCandidateCount": 0,
+        "sfcScriptSrcSourceUseRustAssemblyEmbeddedCount": 0,
+        "sfcStyleAssetCandidateCount": 0,
+        "sfcStyleAssetReferenceCount": 0,
+        "sfcStyleAssetReferenceUses": 0,
+        "sfcTemplateComponentRefCandidateCount": 0,
+        "sfcTemplateComponentRefCount": 0,
+        "sfcTemplateComponentRefUses": 0,
+        "snapshotFiles": 705,
+        "snapshotGoFiles": 0,
+        "snapshotJsFiles": 705,
+        "snapshotMdxFiles": 0,
+        "snapshotPythonFiles": 0,
+        "snapshotReadableFiles": 705,
+        "snapshotSfcFiles": 0,
+        "snapshotUnreadableFiles": 0,
+        "sourceUseAssetBranchCount": 0,
+        "sourceUseAssetMs": 0,
+        "sourceUseBroadNamespaceBranchCount": 0,
+        "sourceUseCandidateBuildMs": 207,
+        "sourceUseDirectConsumerBranchCount": 0,
+        "sourceUseExternalBranchCount": 0,
+        "sourceUseExternalFastPathCacheHits": 4178,
+        "sourceUseExternalFastPathCacheMisses": 1738,
+        "sourceUseExternalFastPathCacheSize": 1738,
+        "sourceUseExternalMs": 0,
+        "sourceUseFilesProcessed": 705,
+        "sourceUseGeneratedVirtualBranchCount": 0,
+        "sourceUseGeneratedVirtualMs": 0,
+        "sourceUseGeneratedVirtualUnresolvedBranchCount": 0,
+        "sourceUseImportMetaGlobResolvedBranchCount": 0,
+        "sourceUseImportMetaGlobUnsupportedBranchCount": 0,
+        "sourceUseJsResolutionLoopMs": 0,
+        "sourceUseJsResolutionLoopOverheadMs": 0,
+        "sourceUseJsResolutionRequiredCount": 0,
+        "sourceUseNamespaceReExportBranchCount": 0,
+        "sourceUseNamespaceReExportEscapeBranchCount": 0,
+        "sourceUseNamespaceReExportMemberBranchCount": 0,
+        "sourceUseNamespaceReExportMissBranchCount": 0,
+        "sourceUseNamespaceReExportMs": 0,
+        "sourceUsePreHandledExternalCount": 5916,
+        "sourceUsePreHandledNamespaceReExportMissCount": 0,
+        "sourceUseReExportNamespaceSkipBranchCount": 0,
+        "sourceUseRecordsJsResolved": 0,
+        "sourceUseRecordsJsResolvedGo": 0,
+        "sourceUseRecordsJsResolvedJsTs": 0,
+        "sourceUseRecordsJsResolvedOther": 0,
+        "sourceUseRecordsJsResolvedPython": 0,
+        "sourceUseRecordsProcessed": 10221,
+        "sourceUseRelPathCacheHits": 13618,
+        "sourceUseRelPathCacheMisses": 6824,
+        "sourceUseRelPathCacheSize": 703,
+        "sourceUseResolveMs": 0,
+        "sourceUseResolvedInternalBranchCount": 0,
+        "sourceUseResolvedInternalMs": 0,
+        "sourceUseResolverCallCount": 0,
+        "sourceUseResolverCallCountFinal": 0,
+        "sourceUseResolverMemoHits": 0,
+        "sourceUseResolverMemoMisses": 0,
+        "sourceUseResolverMemoSize": 0,
+        "sourceUseResolverPostSourceUseCallCount": 0,
+        "sourceUseResolverPostSourceUseRawJsCallCount": 0,
+        "sourceUseResolverRawJsCallCount": 0,
+        "sourceUseResolverRawJsCallCountFinal": 0,
+        "sourceUseResolverStageCanonicalizeAttempts": 0,
+        "sourceUseResolverStageCanonicalizeCacheHits": 0,
+        "sourceUseResolverStageCanonicalizeCacheMisses": 0,
+        "sourceUseResolverStageCanonicalizeCount": 0,
+        "sourceUseResolverStageCanonicalizeFallbackHits": 0,
+        "sourceUseResolverStageCanonicalizeMs": 0,
+        "sourceUseResolverStageCanonicalizePatternMatches": 0,
+        "sourceUseResolverStageCanonicalizeProbeHits": 0,
+        "sourceUseResolverStageCanonicalizeProbeMisses": 0,
+        "sourceUseResolverStageCanonicalizeResults": 0,
+        "sourceUseResolverStageCanonicalizeUnresolvedInternalResults": 0,
+        "sourceUseResolverStageExactAliasAttempts": 0,
+        "sourceUseResolverStageExactAliasCacheHits": 0,
+        "sourceUseResolverStageExactAliasCacheMisses": 0,
+        "sourceUseResolverStageExactAliasCount": 0,
+        "sourceUseResolverStageExactAliasFallbackHits": 0,
+        "sourceUseResolverStageExactAliasMs": 0,
+        "sourceUseResolverStageExactAliasPatternMatches": 0,
+        "sourceUseResolverStageExactAliasProbeHits": 0,
+        "sourceUseResolverStageExactAliasProbeMisses": 0,
+        "sourceUseResolverStageExactAliasResults": 0,
+        "sourceUseResolverStageExactAliasUnresolvedInternalResults": 0,
+        "sourceUseResolverStageExternalAttempts": 0,
+        "sourceUseResolverStageExternalCacheHits": 0,
+        "sourceUseResolverStageExternalCacheMisses": 0,
+        "sourceUseResolverStageExternalCount": 0,
+        "sourceUseResolverStageExternalFallbackHits": 0,
+        "sourceUseResolverStageExternalMs": 0,
+        "sourceUseResolverStageExternalPatternMatches": 0,
+        "sourceUseResolverStageExternalProbeHits": 0,
+        "sourceUseResolverStageExternalProbeMisses": 0,
+        "sourceUseResolverStageExternalResults": 0,
+        "sourceUseResolverStageExternalUnresolvedInternalResults": 0,
+        "sourceUseResolverStageHashWildcardAttempts": 0,
+        "sourceUseResolverStageHashWildcardCacheHits": 0,
+        "sourceUseResolverStageHashWildcardCacheMisses": 0,
+        "sourceUseResolverStageHashWildcardCount": 0,
+        "sourceUseResolverStageHashWildcardFallbackHits": 0,
+        "sourceUseResolverStageHashWildcardMs": 0,
+        "sourceUseResolverStageHashWildcardPatternMatches": 0,
+        "sourceUseResolverStageHashWildcardProbeHits": 0,
+        "sourceUseResolverStageHashWildcardProbeMisses": 0,
+        "sourceUseResolverStageHashWildcardResults": 0,
+        "sourceUseResolverStageHashWildcardUnresolvedInternalResults": 0,
+        "sourceUseResolverStageInvalidAttempts": 0,
+        "sourceUseResolverStageInvalidCacheHits": 0,
+        "sourceUseResolverStageInvalidCacheMisses": 0,
+        "sourceUseResolverStageInvalidCount": 0,
+        "sourceUseResolverStageInvalidFallbackHits": 0,
+        "sourceUseResolverStageInvalidMs": 0,
+        "sourceUseResolverStageInvalidPatternMatches": 0,
+        "sourceUseResolverStageInvalidProbeHits": 0,
+        "sourceUseResolverStageInvalidProbeMisses": 0,
+        "sourceUseResolverStageInvalidResults": 0,
+        "sourceUseResolverStageInvalidUnresolvedInternalResults": 0,
+        "sourceUseResolverStageMemoHitAttempts": 0,
+        "sourceUseResolverStageMemoHitCacheHits": 0,
+        "sourceUseResolverStageMemoHitCacheMisses": 0,
+        "sourceUseResolverStageMemoHitCount": 0,
+        "sourceUseResolverStageMemoHitFallbackHits": 0,
+        "sourceUseResolverStageMemoHitMs": 0,
+        "sourceUseResolverStageMemoHitPatternMatches": 0,
+        "sourceUseResolverStageMemoHitProbeHits": 0,
+        "sourceUseResolverStageMemoHitProbeMisses": 0,
+        "sourceUseResolverStageMemoHitResults": 0,
+        "sourceUseResolverStageMemoHitUnresolvedInternalResults": 0,
+        "sourceUseResolverStageRelativeAttempts": 0,
+        "sourceUseResolverStageRelativeCacheHits": 0,
+        "sourceUseResolverStageRelativeCacheMisses": 0,
+        "sourceUseResolverStageRelativeCount": 0,
+        "sourceUseResolverStageRelativeFallbackHits": 0,
+        "sourceUseResolverStageRelativeMs": 0,
+        "sourceUseResolverStageRelativePatternMatches": 0,
+        "sourceUseResolverStageRelativeProbeHits": 0,
+        "sourceUseResolverStageRelativeProbeMisses": 0,
+        "sourceUseResolverStageRelativeResults": 0,
+        "sourceUseResolverStageRelativeUnresolvedInternalResults": 0,
+        "sourceUseResolverStageRootPrefixAttempts": 0,
+        "sourceUseResolverStageRootPrefixCacheHits": 0,
+        "sourceUseResolverStageRootPrefixCacheMisses": 0,
+        "sourceUseResolverStageRootPrefixCount": 0,
+        "sourceUseResolverStageRootPrefixFallbackHits": 0,
+        "sourceUseResolverStageRootPrefixMs": 0,
+        "sourceUseResolverStageRootPrefixPatternMatches": 0,
+        "sourceUseResolverStageRootPrefixProbeHits": 0,
+        "sourceUseResolverStageRootPrefixProbeMisses": 0,
+        "sourceUseResolverStageRootPrefixResults": 0,
+        "sourceUseResolverStageRootPrefixUnresolvedInternalResults": 0,
+        "sourceUseResolverStageScopedBaseUrlAttempts": 0,
+        "sourceUseResolverStageScopedBaseUrlCacheHits": 0,
+        "sourceUseResolverStageScopedBaseUrlCacheMisses": 0,
+        "sourceUseResolverStageScopedBaseUrlCount": 0,
+        "sourceUseResolverStageScopedBaseUrlFallbackHits": 0,
+        "sourceUseResolverStageScopedBaseUrlMs": 0,
+        "sourceUseResolverStageScopedBaseUrlPatternMatches": 0,
+        "sourceUseResolverStageScopedBaseUrlProbeHits": 0,
+        "sourceUseResolverStageScopedBaseUrlProbeMisses": 0,
+        "sourceUseResolverStageScopedBaseUrlResults": 0,
+        "sourceUseResolverStageScopedBaseUrlUnresolvedInternalResults": 0,
+        "sourceUseResolverStageScopedTsconfigAttempts": 0,
+        "sourceUseResolverStageScopedTsconfigCacheHits": 0,
+        "sourceUseResolverStageScopedTsconfigCacheMisses": 0,
+        "sourceUseResolverStageScopedTsconfigCount": 0,
+        "sourceUseResolverStageScopedTsconfigFallbackHits": 0,
+        "sourceUseResolverStageScopedTsconfigMs": 0,
+        "sourceUseResolverStageScopedTsconfigPatternMatches": 0,
+        "sourceUseResolverStageScopedTsconfigProbeHits": 0,
+        "sourceUseResolverStageScopedTsconfigProbeMisses": 0,
+        "sourceUseResolverStageScopedTsconfigResults": 0,
+        "sourceUseResolverStageScopedTsconfigUnresolvedInternalResults": 0,
+        "sourceUseResolverStageWildcardAliasAttempts": 0,
+        "sourceUseResolverStageWildcardAliasCacheHits": 0,
+        "sourceUseResolverStageWildcardAliasCacheMisses": 0,
+        "sourceUseResolverStageWildcardAliasCount": 0,
+        "sourceUseResolverStageWildcardAliasFallbackHits": 0,
+        "sourceUseResolverStageWildcardAliasMs": 0,
+        "sourceUseResolverStageWildcardAliasPatternMatches": 0,
+        "sourceUseResolverStageWildcardAliasProbeHits": 0,
+        "sourceUseResolverStageWildcardAliasProbeMisses": 0,
+        "sourceUseResolverStageWildcardAliasResults": 0,
+        "sourceUseResolverStageWildcardAliasUnresolvedInternalResults": 0,
+        "sourceUseRustAssemblyCandidateCount": 10221,
+        "sourceUseRustAssemblyCompactedRecordIdCount": 10221,
+        "sourceUseRustAssemblyConsumerSourceTableCount": 0,
+        "sourceUseRustAssemblyEmbeddedCount": 10221,
+        "sourceUseRustAssemblyEnumTableEnabled": 1,
+        "sourceUseRustAssemblyInputBytes": 376599,
+        "sourceUseRustAssemblyKindTableCount": 9,
+        "sourceUseRustAssemblyNameTableCount": 518,
+        "sourceUseRustAssemblyNameTableEnabled": 1,
+        "sourceUseRustAssemblyNamedReExportEntryCount": 0,
+        "sourceUseRustAssemblyNamespaceReExportCandidateCount": 2022,
+        "sourceUseRustAssemblyNamespaceReExportEntryCount": 0,
+        "sourceUseRustAssemblyPathTableCount": 705,
+        "sourceUseRustAssemblyPathTableEnabled": 1,
+        "sourceUseRustAssemblyRecordRowCount": 10221,
+        "sourceUseRustAssemblyRecordRowFieldCount": 9,
+        "sourceUseRustAssemblyRecordRowsEnabled": 1,
+        "sourceUseRustAssemblyResolvableRelativeCandidateCount": 206,
+        "sourceUseRustAssemblyResolvableRelativeDeferredCount": 206,
+        "sourceUseRustAssemblyResolvableRelativeSkippedCount": 0,
+        "sourceUseRustAssemblyResolverStageTableCount": 2,
+        "sourceUseRustAssemblySourceFileCount": 0,
+        "sourceUseRustAssemblySpecifierTableCount": 326,
+        "sourceUseRustAssemblySpecifierTableEnabled": 1,
+        "sourceUseRustAssemblyTotalEmbeddedCount": 10221,
+        "sourceUseRustAssemblyTypeOnlyStateEnabled": 1,
+        "sourceUseRustResolvedRelativeCount": 0,
+        "sourceUseSideEffectOnlyBranchCount": 0,
+        "sourceUseSkippedNamespaceAliasBranchCount": 0,
+        "sourceUseUnresolvedBranchCount": 0,
+        "sourceUseUnresolvedExplanationCacheHits": 0,
+        "sourceUseUnresolvedExplanationCacheMisses": 0,
+        "sourceUseUnresolvedExplanationCacheSize": 0,
+        "sourceUseUnresolvedMs": 0,
+        "symbolFanInCount": 0,
+        "symbolGraphArtifactLogicalRequestBytes": 626672,
+        "symbolGraphArtifactPathTableCount": 705,
+        "symbolGraphArtifactPathTableEnabled": 1,
+        "symbolGraphArtifactRequestBytes": 0,
+        "symbolGraphArtifactRequestDefIndexCount": 705,
+        "symbolGraphArtifactRequestFileCount": 705,
+        "symbolGraphArtifactRequestFileDataCount": 22,
+        "symbolGraphArtifactRequestParseErrorCacheEntryCount": 0,
+        "symbolGraphFinalizerCacheEnabled": 1,
+        "symbolGraphFinalizerCacheHit": 1,
+        "symbolGraphFinalizerCacheMiss": 0,
+        "symbolGraphFinalizerCacheRestoredBytes": 1607011,
+        "symbolResolverMemoHits": 0,
+        "symbolResolverMemoMisses": 0,
+        "symbolResolverMemoSize": 0,
+        "symbolsJsonBytes": 1607011,
+        "totalUses": 2077,
+        "trulyDeadCount": 273,
+        "typeEscapeCount": 3,
+        "unresolvedInternalSpecifierRecordCount": 82,
+        "unresolvedInternalUses": 82,
+        "unresolvedUses": 3281,
+        "useCount": 10221
+      },
+      "memory": {
+        "before": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "after": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "delta": {
+          "rssBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        }
+      },
+      "stderrSnippet": "[symbols] scanning 705 files (mdx=0, sfc=0, python=on, 0 .py, go=on, 0 .go)\n[symbols-incremental] changed=0 reused=705 dropped=0 invalidated=0\n"
+    },
+    {
+      "name": "build-unused-deps.mjs",
+      "status": "ok",
+      "wallMs": 324,
+      "memory": {
+        "before": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "after": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "delta": {
+          "rssBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        }
+      }
+    },
+    {
+      "name": "build-resolver-diagnostics.mjs",
+      "status": "ok",
+      "wallMs": 376,
+      "memory": {
+        "before": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "after": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "delta": {
+          "rssBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        }
+      }
+    },
+    {
+      "name": "build-entry-surface.mjs",
+      "status": "ok",
+      "wallMs": 1324,
+      "memory": {
+        "before": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "after": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "delta": {
+          "rssBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        }
+      }
+    },
+    {
+      "name": "build-module-reachability.mjs",
+      "status": "ok",
+      "wallMs": 227,
+      "memory": {
+        "before": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "after": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "delta": {
+          "rssBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        }
+      }
+    },
+    {
+      "name": "classify-dead-exports.mjs",
+      "status": "ok",
+      "wallMs": 1988,
+      "memory": {
+        "before": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "after": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "delta": {
+          "rssBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        }
+      }
+    },
+    {
+      "name": "export-action-safety.mjs",
+      "status": "ok",
+      "wallMs": 1712,
+      "memory": {
+        "before": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "after": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "delta": {
+          "rssBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        }
+      }
+    },
+    {
+      "name": "measure-staleness.mjs",
+      "status": "ok",
+      "wallMs": 274,
+      "memory": {
+        "before": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "after": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "delta": {
+          "rssBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        }
+      }
+    },
+    {
+      "name": "rank-fixes.mjs",
+      "status": "ok",
+      "wallMs": 840,
+      "memory": {
+        "before": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "after": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "delta": {
+          "rssBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        }
+      }
+    },
+    {
+      "name": "checklist-facts.mjs",
+      "status": "ok",
+      "wallMs": 1428,
+      "memory": {
+        "before": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "after": {
+          "rssBytes": 4063232,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        },
+        "delta": {
+          "rssBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "externalBytes": 0,
+          "arrayBuffersBytes": 0
+        }
+      }
+    }
+  ],
+  "skipped": [
+    {
+      "name": "merge-runtime-evidence.mjs",
+      "status": "skipped",
+      "reason": "no coverage-final.json in coverage/ or .nyc_output/"
+    },
+    {
+      "name": "emit-sarif.mjs",
+      "status": "skipped",
+      "reason": "not in --sarif mode"
+    }
+  ]
+}

@@ -1,0 +1,965 @@
+{
+  "artifactsProduced": [
+    "audit-review-pack.latest.md",
+    "audit-summary.latest.md",
+    "barrels.json",
+    "block-clones.json",
+    "call-graph.json",
+    "checklist-facts.json",
+    "dead-classify.json",
+    "discipline.json",
+    "entry-surface.json",
+    "fix-plan.json",
+    "framework-resource-surfaces.json",
+    "function-clones.json",
+    "module-reachability.json",
+    "producer-performance.json",
+    "resolver-capabilities.json",
+    "resolver-diagnostics.json",
+    "shape-index.json",
+    "source-inventory.json",
+    "staleness.json",
+    "symbols.json",
+    "topology.json",
+    "topology.mermaid.md",
+    "triage.json",
+    "unused-deps.json"
+  ],
+  "auditSummary": {
+    "format": "markdown",
+    "path": "C:\\Users\\endof\\AppData\\Local\\Temp\\lumin-numeric-baseline-35290\\windows-cold-full-3\\measured-artifacts\\audit-summary.latest.md"
+  },
+  "blindZones": [
+    {
+      "area": "rs",
+      "details": {
+        "files": 1333,
+        "reason": "rust-owned-analysis-not-registered-in-this-audit-run"
+      },
+      "effect": "Rust files were counted by triage, but the JS/TS symbol graph does not own Rust absence claims; read the lumin-rust-analyzer artifact before making Rust findings.",
+      "severity": "scan-gap"
+    }
+  ],
+  "blockClones": {
+    "artifact": "block-clones.json",
+    "candidateCapSaturated": true,
+    "fileCount": 701,
+    "groupCount": 200,
+    "instanceCount": 411,
+    "mutedByReason": {
+      "node-vitest-mirror-pair": 59,
+      "same-file-repeat": 19,
+      "test-scaffold-repeat": 22
+    },
+    "mutedCapSaturated": true,
+    "mutedGroupCount": 100,
+    "noisePolicyId": "block-clone-noise-policy-v1",
+    "normalizationMode": "alpha-identifier",
+    "normalizationPolicyId": "block-clone-normalization-v1",
+    "policyVersion": "block-clone-review-policy-v1",
+    "reviewCapSaturated": true,
+    "reviewGroupCount": 100,
+    "reviewOnly": true,
+    "schemaVersion": "block-clones.v1",
+    "skippedFileCount": 4,
+    "status": "confidence-limited",
+    "thresholdPolicyId": "block-clone-threshold-policy-v2",
+    "thresholds": {
+      "maxCandidateGroups": 1000,
+      "maxInstancesPerGroup": 20,
+      "maxMutedGroups": 100,
+      "maxReviewGroups": 100,
+      "maxTokensPerFile": 200000,
+      "minLines": 5,
+      "minOccurrences": 2,
+      "minTokens": 50
+    },
+    "tokenCount": 1243553,
+    "unavailableFileCount": 0
+  },
+  "commandsRun": [
+    {
+      "memory": {
+        "after": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5111808
+        },
+        "before": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 4677632
+        },
+        "delta": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 434176
+        }
+      },
+      "ms": 2634,
+      "status": "ok",
+      "step": "triage-repo.mjs"
+    },
+    {
+      "memory": {
+        "after": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5582848
+        },
+        "before": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5718016
+        },
+        "delta": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": -135168
+        }
+      },
+      "ms": 1844,
+      "status": "ok",
+      "step": "build-framework-resource-surfaces.mjs"
+    },
+    {
+      "memory": {
+        "after": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5586944
+        },
+        "before": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5582848
+        },
+        "delta": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 4096
+        }
+      },
+      "ms": 3317,
+      "status": "ok",
+      "stderr": "[m2s1] scanning 705 files (python=skipped, 0 .py, go=skipped, 0 .go) ...\n",
+      "step": "measure-topology.mjs"
+    },
+    {
+      "memory": {
+        "after": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5586944
+        },
+        "before": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5586944
+        },
+        "delta": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 0
+        }
+      },
+      "ms": 2129,
+      "status": "ok",
+      "stderr": "[discipline] scanning 705 files (0 .py, 0 .go) ...\n",
+      "step": "measure-discipline.mjs"
+    },
+    {
+      "memory": {
+        "after": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5586944
+        },
+        "before": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5586944
+        },
+        "delta": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 0
+        }
+      },
+      "ms": 4681,
+      "status": "ok",
+      "step": "build-call-graph.mjs"
+    },
+    {
+      "memory": {
+        "after": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5586944
+        },
+        "before": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5586944
+        },
+        "delta": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 0
+        }
+      },
+      "ms": 893,
+      "status": "ok",
+      "step": "check-barrel-discipline.mjs"
+    },
+    {
+      "memory": {
+        "after": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5599232
+        },
+        "before": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5586944
+        },
+        "delta": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 12288
+        }
+      },
+      "ms": 3134,
+      "status": "ok",
+      "step": "build-shape-index.mjs"
+    },
+    {
+      "memory": {
+        "after": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5611520
+        },
+        "before": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5599232
+        },
+        "delta": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 12288
+        }
+      },
+      "ms": 5683,
+      "status": "ok",
+      "step": "build-function-clone-index.mjs"
+    },
+    {
+      "memory": {
+        "after": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5566464
+        },
+        "before": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5611520
+        },
+        "delta": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": -45056
+        }
+      },
+      "ms": 23546,
+      "status": "ok",
+      "step": "build-block-clone-index.mjs"
+    },
+    {
+      "memory": {
+        "after": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5570560
+        },
+        "before": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5570560
+        },
+        "delta": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 0
+        }
+      },
+      "ms": 3507,
+      "status": "ok",
+      "stderr": "[symbols] scanning 705 files (mdx=0, sfc=0, python=on, 0 .py, go=on, 0 .go)\n",
+      "step": "build-symbol-graph.mjs"
+    },
+    {
+      "memory": {
+        "after": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5570560
+        },
+        "before": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5570560
+        },
+        "delta": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 0
+        }
+      },
+      "ms": 971,
+      "status": "ok",
+      "step": "build-unused-deps.mjs"
+    },
+    {
+      "memory": {
+        "after": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5578752
+        },
+        "before": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5574656
+        },
+        "delta": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 4096
+        }
+      },
+      "ms": 985,
+      "status": "ok",
+      "step": "build-resolver-diagnostics.mjs"
+    },
+    {
+      "memory": {
+        "after": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5591040
+        },
+        "before": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5578752
+        },
+        "delta": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 12288
+        }
+      },
+      "ms": 2192,
+      "status": "ok",
+      "step": "build-entry-surface.mjs"
+    },
+    {
+      "memory": {
+        "after": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5599232
+        },
+        "before": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5595136
+        },
+        "delta": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 4096
+        }
+      },
+      "ms": 1025,
+      "status": "ok",
+      "step": "build-module-reachability.mjs"
+    },
+    {
+      "memory": {
+        "after": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5668864
+        },
+        "before": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5599232
+        },
+        "delta": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 69632
+        }
+      },
+      "ms": 2919,
+      "status": "ok",
+      "step": "classify-dead-exports.mjs"
+    },
+    {
+      "memory": {
+        "after": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5668864
+        },
+        "before": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5668864
+        },
+        "delta": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 0
+        }
+      },
+      "ms": 2405,
+      "status": "ok",
+      "step": "export-action-safety.mjs"
+    },
+    {
+      "memory": {
+        "after": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5689344
+        },
+        "before": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5689344
+        },
+        "delta": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 0
+        }
+      },
+      "ms": 24183,
+      "status": "ok",
+      "step": "measure-staleness.mjs"
+    },
+    {
+      "memory": {
+        "after": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5689344
+        },
+        "before": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5689344
+        },
+        "delta": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 0
+        }
+      },
+      "ms": 1395,
+      "status": "ok",
+      "step": "rank-fixes.mjs"
+    },
+    {
+      "memory": {
+        "after": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5689344
+        },
+        "before": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 5689344
+        },
+        "delta": {
+          "arrayBuffersBytes": 0,
+          "externalBytes": 0,
+          "heapTotalBytes": 0,
+          "heapUsedBytes": 0,
+          "rssBytes": 0
+        }
+      },
+      "ms": 4592,
+      "status": "ok",
+      "step": "checklist-facts.mjs"
+    }
+  ],
+  "confidence": {
+    "externalImports": 3199,
+    "parseErrors": 0,
+    "resolvedInternal": 2077,
+    "unresolvedInternal": 82,
+    "unresolvedInternalRatio": 0.038
+  },
+  "frameworkResourceSurfaces": {
+    "artifact": "framework-resource-surfaces.json",
+    "byCapabilityPack": {
+      "surface.bundled-build-artifact": 4
+    },
+    "byConfidence": {
+      "generated-output-review": 4
+    },
+    "byFramework": {},
+    "byLane": {
+      "bundled-build-artifact": 4
+    },
+    "byReason": {
+      "emscripten-generated-header": 4
+    },
+    "policyVersion": "framework-resource-surface-policy-v1",
+    "schemaVersion": "framework-resource-surfaces.v1",
+    "topExamples": [
+      {
+        "capabilityPacks": [
+          "surface.bundled-build-artifact"
+        ],
+        "file": "tests/build-framework-resource-surfaces.test.mjs",
+        "lanes": [
+          "bundled-build-artifact"
+        ],
+        "reasons": [
+          "emscripten-generated-header"
+        ]
+      },
+      {
+        "capabilityPacks": [
+          "surface.bundled-build-artifact"
+        ],
+        "file": "tests/framework-resource-surfaces.test.mjs",
+        "lanes": [
+          "bundled-build-artifact"
+        ],
+        "reasons": [
+          "emscripten-generated-header"
+        ]
+      },
+      {
+        "capabilityPacks": [
+          "surface.bundled-build-artifact"
+        ],
+        "file": "tests/test-build-framework-resource-surfaces.mjs",
+        "lanes": [
+          "bundled-build-artifact"
+        ],
+        "reasons": [
+          "emscripten-generated-header"
+        ]
+      },
+      {
+        "capabilityPacks": [
+          "surface.bundled-build-artifact"
+        ],
+        "file": "tests/test-framework-resource-surfaces.mjs",
+        "lanes": [
+          "bundled-build-artifact"
+        ],
+        "reasons": [
+          "emscripten-generated-header"
+        ]
+      }
+    ],
+    "totalFilesWithSurfaces": 4,
+    "totalSurfaceLanes": 4
+  },
+  "generatedArtifacts": {
+    "executedGenerators": false,
+    "generatedArtifactPolicyVersion": "generated-artifact-policy-v1",
+    "generatedConsumerBlindZoneCount": 0,
+    "mode": "default",
+    "presentButOutOfScope": [],
+    "presentButOutOfScopeCount": 0,
+    "reasonSummary": {},
+    "supportedGenerators": [],
+    "topGeneratedConsumerBlindZones": [],
+    "topGeneratedMisses": []
+  },
+  "lifecycle": {
+    "canonDraft": {
+      "ran": false,
+      "requested": false,
+      "status": "not-requested"
+    },
+    "checkCanon": {
+      "ran": false,
+      "requested": false,
+      "status": "not-requested"
+    },
+    "executionOwner": "audit-repo.mjs",
+    "notRunCount": 0,
+    "postWrite": {
+      "ran": false,
+      "requested": false,
+      "status": "not-requested"
+    },
+    "preWrite": {
+      "ran": false,
+      "requested": false,
+      "status": "not-requested"
+    },
+    "ranCount": 0,
+    "requestedCount": 0,
+    "sourceStatus": "available",
+    "summaryOwner": "lumin-audit-core"
+  },
+  "livingAudit": {
+    "action": "create-only-on-explicit-tracking-request",
+    "existingDocs": [],
+    "preferredPath": "docs/current/audit/lumin-structural-audit.md"
+  },
+  "meta": {
+    "generated": "2026-07-18T15:59:36.884Z",
+    "output": "C:\\Users\\endof\\AppData\\Local\\Temp\\lumin-numeric-baseline-35290\\windows-cold-full-3\\measured-artifacts",
+    "profile": "full",
+    "root": "C:\\Users\\endof\\AppData\\Local\\Temp\\lumin-numeric-baseline-35290\\repo",
+    "tool": "audit-repo.mjs"
+  },
+  "orchestration": {
+    "artifact": "producer-performance.json",
+    "executedStepCount": 19,
+    "executionOwner": "audit-repo.mjs",
+    "failedOptionalCount": 0,
+    "failedOtherCount": 0,
+    "failedRequiredCount": 0,
+    "failedStepCount": 0,
+    "observedStatusCounts": {
+      "ok": 19
+    },
+    "okCount": 19,
+    "optionalFailureExamples": [],
+    "requiredFailureExamples": [],
+    "schemaVersion": "producer-performance.v1",
+    "skippedExamples": [
+      {
+        "name": "merge-runtime-evidence.mjs",
+        "reason": "no coverage-final.json in coverage/ or .nyc_output/",
+        "status": "skipped"
+      },
+      {
+        "name": "emit-sarif.mjs",
+        "reason": "not in --sarif mode",
+        "status": "skipped"
+      }
+    ],
+    "skippedStepCount": 2,
+    "sourceStatus": "available",
+    "status": "complete",
+    "summaryOwner": "lumin-audit-core"
+  },
+  "performance": {
+    "artifact": "producer-performance.json",
+    "artifactCount": 23,
+    "artifactReadCount": 39,
+    "failedCount": 0,
+    "largestArtifacts": [
+      {
+        "bytes": 9548767,
+        "name": "function-clones.json"
+      },
+      {
+        "bytes": 1607014,
+        "name": "symbols.json"
+      },
+      {
+        "bytes": 886896,
+        "name": "fix-plan.json"
+      },
+      {
+        "bytes": 518434,
+        "name": "call-graph.json"
+      },
+      {
+        "bytes": 276938,
+        "name": "checklist-facts.json"
+      },
+      {
+        "bytes": 238265,
+        "name": "topology.json"
+      },
+      {
+        "bytes": 210466,
+        "name": "block-clones.json"
+      },
+      {
+        "bytes": 180801,
+        "name": "staleness.json"
+      },
+      {
+        "bytes": 150998,
+        "name": "source-inventory.json"
+      },
+      {
+        "bytes": 123414,
+        "name": "dead-classify.json"
+      }
+    ],
+    "maxObservedOrchestratorRssBytes": 5718016,
+    "okCount": 19,
+    "phaseSupportCount": 4,
+    "producerCount": 19,
+    "schemaVersion": "producer-performance.v1",
+    "skippedCount": 2,
+    "totalArtifactBytes": 13936560,
+    "totalArtifactReadBytes": 30251038,
+    "totalJsonParseMs": 424,
+    "totalWallMs": 92035
+  },
+  "profile": "full",
+  "resolverDiagnostics": {
+    "blindZoneCount": 46,
+    "blockedCandidateHintCount": 0,
+    "blockedCandidateHintFamilyCounts": [],
+    "blockedCandidateHintReasonCounts": [],
+    "blockedCandidateHintSampleLimit": 10,
+    "blockedCandidateHints": [],
+    "candidateTargetCount": 0,
+    "resolverCapabilityArtifact": "resolver-capabilities.json",
+    "resolverDiagnosticsArtifact": "resolver-diagnostics.json",
+    "resolverVersion": "resolver-2026-05-v1",
+    "topAffectedPackageScopes": [],
+    "topFamilies": [
+      {
+        "count": 128,
+        "family": "relative-paths"
+      }
+    ],
+    "topSpecifierRoots": [
+      {
+        "count": 82,
+        "examples": [
+          {
+            "consumerFile": "tests/canonical-fact-model-drift.test.mjs",
+            "specifier": "../_lib/pre-write-intent.mjs"
+          },
+          {
+            "consumerFile": "tests/class-method-prewrite-surface.test.mjs",
+            "specifier": "../_lib/pre-write-lookup-name.mjs"
+          },
+          {
+            "consumerFile": "tests/file-delta-export.test.mjs",
+            "specifier": "../_lib/post-write-file-delta.mjs"
+          },
+          {
+            "consumerFile": "tests/mode-dispatch.test.mjs",
+            "specifier": "../_lib/mode-dispatch.mjs"
+          },
+          {
+            "consumerFile": "tests/post-write-artifact.test.mjs",
+            "specifier": "../_lib/post-write-artifact.mjs"
+          }
+        ],
+        "reasons": {
+          "relative-target-missing": 82
+        },
+        "specifierRoot": ".."
+      }
+    ],
+    "topUnresolvedReasons": [
+      {
+        "count": 82,
+        "reason": "relative-target-missing"
+      }
+    ],
+    "topUnresolvedSpecifiers": [],
+    "unresolvedInternal": 82,
+    "unresolvedInternalRatio": 0.038
+  },
+  "reviewPack": {
+    "format": "markdown",
+    "path": "C:\\Users\\endof\\AppData\\Local\\Temp\\lumin-numeric-baseline-35290\\windows-cold-full-3\\measured-artifacts\\audit-review-pack.latest.md",
+    "use": "main assistant reads lanes as artifact briefs; if using built-in reviewer subagents, translate lanes into focused codebase-reading tasks with file:line evidence; the engine never calls external APIs"
+  },
+  "rustAnalysis": {
+    "ran": false,
+    "requested": false,
+    "rustFiles": 0,
+    "status": "not-requested"
+  },
+  "scanRange": {
+    "autoExcludes": [],
+    "excludes": [],
+    "files": 2038,
+    "includeTests": true,
+    "languages": [
+      "mjs",
+      "rs",
+      "ts"
+    ],
+    "production": false,
+    "root": "C:\\Users\\endof\\AppData\\Local\\Temp\\lumin-numeric-baseline-35290\\repo"
+  },
+  "sfcEvidence": null,
+  "skipped": [
+    {
+      "reason": "no coverage-final.json in coverage/ or .nyc_output/",
+      "step": "merge-runtime-evidence.mjs"
+    },
+    {
+      "reason": "not in --sarif mode",
+      "step": "emit-sarif.mjs"
+    }
+  ],
+  "topologyMermaid": {
+    "format": "markdown",
+    "path": "C:\\Users\\endof\\AppData\\Local\\Temp\\lumin-numeric-baseline-35290\\windows-cold-full-3\\measured-artifacts\\topology.mermaid.md",
+    "source": "topology.json",
+    "use": "human visual companion; topology.json remains authoritative for exact citations"
+  },
+  "unusedDependencies": {
+    "artifact": "unused-deps.json",
+    "byReason": {
+      "external-import-consumer": 4,
+      "no-observed-consumer": 1,
+      "package-script-tool": 1
+    },
+    "confidenceLimitedCount": 0,
+    "declaredDependencyCount": 6,
+    "mutedCount": 1,
+    "packageCount": 1,
+    "policyVersion": "unused-deps-review-policy-v1",
+    "reviewUnusedCount": 1,
+    "schemaVersion": "unused-deps.v1",
+    "status": "complete",
+    "topReviewUnused": [
+      {
+        "confidence": "review",
+        "field": "dependencies",
+        "manifestPath": "package.json",
+        "name": "@vscode/tree-sitter-wasm",
+        "packageDir": ".",
+        "reason": "no-observed-consumer"
+      }
+    ],
+    "unavailableCount": 0,
+    "usedCount": 4
+  }
+}

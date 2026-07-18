@@ -1,0 +1,2831 @@
+{
+  "breakdown": {
+    "ReviewCandidate": 128,
+    "ReviewOnlyGenerated": 64,
+    "ReviewOnlyVendored": 64
+  },
+  "expectedFindings": [
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_000",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/authored-dead/dead-000.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_001",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/authored-dead/dead-001.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_002",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/authored-dead/dead-002.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_003",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/authored-dead/dead-003.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_004",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/authored-dead/dead-004.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_005",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/authored-dead/dead-005.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_006",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/authored-dead/dead-006.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_007",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/authored-dead/dead-007.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_008",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/authored-dead/dead-008.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_009",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/authored-dead/dead-009.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_010",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/authored-dead/dead-010.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_011",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/authored-dead/dead-011.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_012",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/authored-dead/dead-012.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_013",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/authored-dead/dead-013.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_014",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/authored-dead/dead-014.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_015",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/authored-dead/dead-015.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_000",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/generated-dead/dead-000.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_001",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/generated-dead/dead-001.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_002",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/generated-dead/dead-002.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_003",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/generated-dead/dead-003.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_004",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/generated-dead/dead-004.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_005",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/generated-dead/dead-005.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_006",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/generated-dead/dead-006.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_007",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/generated-dead/dead-007.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_000",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/vendor/dead-000.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_001",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/vendor/dead-001.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_002",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/vendor/dead-002.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_003",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/vendor/dead-003.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_004",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/vendor/dead-004.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_005",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/vendor/dead-005.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_006",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/vendor/dead-006.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_007",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-00",
+      "path": "packages/pkg-00/src/vendor/dead-007.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_000",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/authored-dead/dead-000.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_001",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/authored-dead/dead-001.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_002",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/authored-dead/dead-002.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_003",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/authored-dead/dead-003.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_004",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/authored-dead/dead-004.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_005",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/authored-dead/dead-005.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_006",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/authored-dead/dead-006.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_007",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/authored-dead/dead-007.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_008",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/authored-dead/dead-008.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_009",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/authored-dead/dead-009.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_010",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/authored-dead/dead-010.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_011",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/authored-dead/dead-011.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_012",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/authored-dead/dead-012.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_013",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/authored-dead/dead-013.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_014",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/authored-dead/dead-014.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_015",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/authored-dead/dead-015.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_000",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/generated-dead/dead-000.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_001",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/generated-dead/dead-001.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_002",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/generated-dead/dead-002.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_003",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/generated-dead/dead-003.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_004",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/generated-dead/dead-004.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_005",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/generated-dead/dead-005.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_006",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/generated-dead/dead-006.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_007",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/generated-dead/dead-007.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_000",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/vendor/dead-000.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_001",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/vendor/dead-001.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_002",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/vendor/dead-002.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_003",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/vendor/dead-003.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_004",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/vendor/dead-004.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_005",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/vendor/dead-005.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_006",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/vendor/dead-006.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_007",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-01",
+      "path": "packages/pkg-01/src/vendor/dead-007.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_000",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/authored-dead/dead-000.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_001",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/authored-dead/dead-001.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_002",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/authored-dead/dead-002.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_003",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/authored-dead/dead-003.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_004",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/authored-dead/dead-004.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_005",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/authored-dead/dead-005.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_006",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/authored-dead/dead-006.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_007",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/authored-dead/dead-007.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_008",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/authored-dead/dead-008.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_009",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/authored-dead/dead-009.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_010",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/authored-dead/dead-010.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_011",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/authored-dead/dead-011.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_012",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/authored-dead/dead-012.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_013",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/authored-dead/dead-013.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_014",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/authored-dead/dead-014.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_015",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/authored-dead/dead-015.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_000",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/generated-dead/dead-000.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_001",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/generated-dead/dead-001.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_002",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/generated-dead/dead-002.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_003",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/generated-dead/dead-003.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_004",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/generated-dead/dead-004.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_005",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/generated-dead/dead-005.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_006",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/generated-dead/dead-006.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_007",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/generated-dead/dead-007.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_000",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/vendor/dead-000.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_001",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/vendor/dead-001.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_002",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/vendor/dead-002.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_003",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/vendor/dead-003.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_004",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/vendor/dead-004.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_005",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/vendor/dead-005.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_006",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/vendor/dead-006.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_007",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-02",
+      "path": "packages/pkg-02/src/vendor/dead-007.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_000",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/authored-dead/dead-000.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_001",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/authored-dead/dead-001.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_002",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/authored-dead/dead-002.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_003",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/authored-dead/dead-003.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_004",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/authored-dead/dead-004.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_005",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/authored-dead/dead-005.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_006",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/authored-dead/dead-006.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_007",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/authored-dead/dead-007.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_008",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/authored-dead/dead-008.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_009",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/authored-dead/dead-009.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_010",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/authored-dead/dead-010.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_011",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/authored-dead/dead-011.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_012",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/authored-dead/dead-012.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_013",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/authored-dead/dead-013.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_014",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/authored-dead/dead-014.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_015",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/authored-dead/dead-015.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_000",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/generated-dead/dead-000.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_001",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/generated-dead/dead-001.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_002",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/generated-dead/dead-002.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_003",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/generated-dead/dead-003.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_004",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/generated-dead/dead-004.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_005",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/generated-dead/dead-005.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_006",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/generated-dead/dead-006.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_007",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/generated-dead/dead-007.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_000",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/vendor/dead-000.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_001",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/vendor/dead-001.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_002",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/vendor/dead-002.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_003",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/vendor/dead-003.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_004",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/vendor/dead-004.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_005",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/vendor/dead-005.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_006",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/vendor/dead-006.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_007",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-03",
+      "path": "packages/pkg-03/src/vendor/dead-007.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_000",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/authored-dead/dead-000.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_001",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/authored-dead/dead-001.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_002",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/authored-dead/dead-002.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_003",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/authored-dead/dead-003.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_004",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/authored-dead/dead-004.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_005",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/authored-dead/dead-005.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_006",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/authored-dead/dead-006.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_007",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/authored-dead/dead-007.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_008",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/authored-dead/dead-008.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_009",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/authored-dead/dead-009.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_010",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/authored-dead/dead-010.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_011",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/authored-dead/dead-011.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_012",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/authored-dead/dead-012.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_013",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/authored-dead/dead-013.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_014",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/authored-dead/dead-014.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_015",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/authored-dead/dead-015.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_000",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/generated-dead/dead-000.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_001",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/generated-dead/dead-001.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_002",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/generated-dead/dead-002.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_003",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/generated-dead/dead-003.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_004",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/generated-dead/dead-004.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_005",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/generated-dead/dead-005.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_006",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/generated-dead/dead-006.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_007",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/generated-dead/dead-007.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_000",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/vendor/dead-000.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_001",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/vendor/dead-001.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_002",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/vendor/dead-002.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_003",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/vendor/dead-003.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_004",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/vendor/dead-004.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_005",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/vendor/dead-005.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_006",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/vendor/dead-006.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_007",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-04",
+      "path": "packages/pkg-04/src/vendor/dead-007.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_000",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/authored-dead/dead-000.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_001",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/authored-dead/dead-001.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_002",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/authored-dead/dead-002.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_003",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/authored-dead/dead-003.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_004",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/authored-dead/dead-004.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_005",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/authored-dead/dead-005.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_006",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/authored-dead/dead-006.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_007",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/authored-dead/dead-007.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_008",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/authored-dead/dead-008.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_009",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/authored-dead/dead-009.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_010",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/authored-dead/dead-010.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_011",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/authored-dead/dead-011.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_012",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/authored-dead/dead-012.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_013",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/authored-dead/dead-013.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_014",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/authored-dead/dead-014.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_015",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/authored-dead/dead-015.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_000",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/generated-dead/dead-000.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_001",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/generated-dead/dead-001.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_002",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/generated-dead/dead-002.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_003",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/generated-dead/dead-003.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_004",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/generated-dead/dead-004.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_005",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/generated-dead/dead-005.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_006",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/generated-dead/dead-006.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_007",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/generated-dead/dead-007.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_000",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/vendor/dead-000.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_001",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/vendor/dead-001.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_002",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/vendor/dead-002.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_003",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/vendor/dead-003.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_004",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/vendor/dead-004.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_005",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/vendor/dead-005.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_006",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/vendor/dead-006.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_007",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-05",
+      "path": "packages/pkg-05/src/vendor/dead-007.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_000",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/authored-dead/dead-000.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_001",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/authored-dead/dead-001.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_002",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/authored-dead/dead-002.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_003",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/authored-dead/dead-003.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_004",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/authored-dead/dead-004.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_005",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/authored-dead/dead-005.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_006",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/authored-dead/dead-006.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_007",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/authored-dead/dead-007.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_008",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/authored-dead/dead-008.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_009",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/authored-dead/dead-009.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_010",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/authored-dead/dead-010.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_011",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/authored-dead/dead-011.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_012",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/authored-dead/dead-012.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_013",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/authored-dead/dead-013.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_014",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/authored-dead/dead-014.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_015",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/authored-dead/dead-015.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_000",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/generated-dead/dead-000.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_001",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/generated-dead/dead-001.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_002",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/generated-dead/dead-002.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_003",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/generated-dead/dead-003.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_004",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/generated-dead/dead-004.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_005",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/generated-dead/dead-005.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_006",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/generated-dead/dead-006.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_007",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/generated-dead/dead-007.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_000",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/vendor/dead-000.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_001",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/vendor/dead-001.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_002",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/vendor/dead-002.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_003",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/vendor/dead-003.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_004",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/vendor/dead-004.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_005",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/vendor/dead-005.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_006",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/vendor/dead-006.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_007",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-06",
+      "path": "packages/pkg-06/src/vendor/dead-007.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_000",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/authored-dead/dead-000.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_001",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/authored-dead/dead-001.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_002",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/authored-dead/dead-002.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_003",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/authored-dead/dead-003.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_004",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/authored-dead/dead-004.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_005",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/authored-dead/dead-005.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_006",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/authored-dead/dead-006.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_007",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/authored-dead/dead-007.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_008",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/authored-dead/dead-008.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_009",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/authored-dead/dead-009.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_010",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/authored-dead/dead-010.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_011",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/authored-dead/dead-011.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_012",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/authored-dead/dead-012.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_013",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/authored-dead/dead-013.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_014",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/authored-dead/dead-014.ts"
+    },
+    {
+      "disposition": "ReviewCandidate",
+      "dispositionReason": null,
+      "exportKind": "named-value",
+      "exportName": "dead_authored_dead_015",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/authored-dead/dead-015.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_000",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/generated-dead/dead-000.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_001",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/generated-dead/dead-001.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_002",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/generated-dead/dead-002.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_003",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/generated-dead/dead-003.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_004",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/generated-dead/dead-004.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_005",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/generated-dead/dead-005.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_006",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/generated-dead/dead-006.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "leading-comment-@generated-within-first-2KiB",
+        "classificationVersion": "source-classification.v1",
+        "role": "Generated"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_generated_dead_007",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/generated-dead/dead-007.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_000",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/vendor/dead-000.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_001",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/vendor/dead-001.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_002",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/vendor/dead-002.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_003",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/vendor/dead-003.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_004",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/vendor/dead-004.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_005",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/vendor/dead-005.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_006",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/vendor/dead-006.ts"
+    },
+    {
+      "disposition": "ReviewOnly",
+      "dispositionReason": {
+        "classificationReason": "explicit-vendor-role",
+        "classificationVersion": "source-classification.v1",
+        "role": "Vendored"
+      },
+      "exportKind": "named-value",
+      "exportName": "dead_vendor_007",
+      "findingClass": "grounded-zero-fan-in-export",
+      "packageName": "@lumin-scale/pkg-07",
+      "path": "packages/pkg-07/src/vendor/dead-007.ts"
+    }
+  ],
+  "filters": {},
+  "findingIdRule": "The Phase 1 product must assign one stable unique FindingId to each authored semantic tuple; cold, warm, jobs=1, and default-jobs runs must return the same IDs.",
+  "limitations": [],
+  "matchedTotal": 256,
+  "schemaVersion": "phase1-scale-findings.v1",
+  "scopeTotal": 256
+}

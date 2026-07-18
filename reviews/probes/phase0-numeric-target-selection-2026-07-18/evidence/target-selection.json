@@ -1,0 +1,124 @@
+{
+  "architecture": {
+    "falseNegativeBaselineCommit": "a1e07ed7b9e05181cd58bfba5f3846c1baab8a93",
+    "falseNegativeBaselineManifestSha256": "8b0d2ceddb930533e6967c48e06954f09f53abf8f7a688f4dfb0baeb050a6339",
+    "falseNegativeReviewSha256": "6593608d4508eecf92b5b1793ead13fa32d4e30e4a2258a60b4f921ef98ea799"
+  },
+  "claimBoundary": {
+    "achievedProductBudget": false,
+    "legacyOutputIsProductTruth": false,
+    "phase1MayStartBeforeIndependentPass": false,
+    "selectedNumbersOnly": true
+  },
+  "legacyBaselines": [
+    {
+      "artifactBytes": 13936560,
+      "elapsedMs": 95956,
+      "files": 2038,
+      "fixPlanCounts": {
+        "MUTED": 9,
+        "REVIEW_FIX": 23,
+        "SAFE_FIX": 241
+      },
+      "mode": "cold",
+      "peakRssBytes": 3227774976,
+      "platform": "windows-ntfs",
+      "producerWallMs": 92035
+    },
+    {
+      "artifactBytes": 13936340,
+      "elapsedMs": 42804,
+      "files": 2038,
+      "fixPlanCounts": {
+        "MUTED": 9,
+        "REVIEW_FIX": 23,
+        "SAFE_FIX": 241
+      },
+      "mode": "warm",
+      "peakRssBytes": 369569792,
+      "platform": "windows-ntfs",
+      "producerWallMs": 39113
+    },
+    {
+      "artifactBytes": 13935769,
+      "elapsedMs": 139600,
+      "files": 2038,
+      "fixPlanCounts": {
+        "MUTED": 9,
+        "REVIEW_FIX": 23,
+        "SAFE_FIX": 241
+      },
+      "mode": "cold",
+      "peakRssBytes": 2449657856,
+      "platform": "wsl2-ext4",
+      "producerWallMs": 136666
+    },
+    {
+      "artifactBytes": 13935376,
+      "elapsedMs": 20430,
+      "files": 2038,
+      "fixPlanCounts": {
+        "MUTED": 9,
+        "REVIEW_FIX": 23,
+        "SAFE_FIX": 241
+      },
+      "mode": "warm",
+      "peakRssBytes": 356212736,
+      "platform": "wsl2-ext4",
+      "producerWallMs": 19429
+    }
+  ],
+  "legacyCommit": "35290cb683a37e83bc8c915d1d0f9ca0f3f96fd0",
+  "legacyPackagedLifecycleBaseline": {
+    "cargoAvailable": false,
+    "coldPreWriteMs": 3460,
+    "fileCount": 564,
+    "postWriteMs": 2870,
+    "recordPath": "docs/lab/wsl-prewrite-discovery-measurement-2026-07-11.md",
+    "recordSha256": "c9f5519642c0d9742889fc9dde86b001def96af05e91574db50b72d6c14b5571",
+    "warmPreWriteMsRange": [
+      3070,
+      3620
+    ]
+  },
+  "probeInputs": {
+    "largestStaticPackagingProbeBytes": 1901280,
+    "oxcCorpusBytes": 7472776,
+    "oxcCorpusFiles": 709,
+    "oxcCorpusManifestSha256": "82baf59e6c3708e1f68c36d711bb47cbe081d468f3b554ac93cf7af36a85eb9b",
+    "oxcJobs1ToJobs8Ratios": {
+      "windows-ntfs": 0.464846,
+      "wsl2-ext4": 0.404739
+    },
+    "oxcMinimumPassingStackBytes": 1048576,
+    "selectedStackMargin": 4
+  },
+  "scaleCorpus": {
+    "contentManifestSha256": "9e51b070a934c027e6d2d9a4610fac764592ecb8f05bf41a2ab6f5eb46158d3e",
+    "fileCount": 780,
+    "findingBreakdown": {
+      "ReviewCandidate": 128,
+      "ReviewOnlyGenerated": 64,
+      "ReviewOnlyVendored": 64
+    },
+    "findingCount": 256,
+    "id": "phase1-scale-findings.v1",
+    "totalBytes": 7461511
+  },
+  "schemaVersion": "phase0-numeric-target-selection.v1",
+  "status": "candidate-awaiting-independent-review",
+  "targets": {
+    "binarySizeBytesMax": 12582912,
+    "coldFullAuditP50MsMax": 30000,
+    "coldPreWriteP50MsMax": 6000,
+    "defaultJobsFormula": "max(1,min(8,available_parallelism))",
+    "defaultJobsVsJobs1ColdFullP50RatioMax": 0.75,
+    "peakRssBytesMax": 536870912,
+    "postWrite32FilesP50MsMax": 8000,
+    "postWriteOneFileP50MsMax": 4000,
+    "repetitionsPerEnvironment": 3,
+    "warmPreWriteP50MsMax": 4000,
+    "warmUnchangedAuditP50MsMax": 8000,
+    "workerStackBytes": 4194304
+  }
+}

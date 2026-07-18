@@ -1,0 +1,8 @@
+{
+  "baselineCommit": "35290cb683a37e83bc8c915d1d0f9ca0f3f96fd0",
+  "elapsedMs": 139600,
+  "maxResidentSetBytes": 2449657856,
+  "mode": "cold",
+  "schemaVersion": "legacy-full-baseline.v1",
+  "timeOwner": "GNU time -v"
+}

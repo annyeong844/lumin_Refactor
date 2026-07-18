@@ -1,0 +1,22 @@
+[audit-repo] profile=full  root=/home/endof/lumin-numeric-baseline-35290/repo  output=/home/endof/lumin-numeric-baseline-35290/wsl-cold-full-2/measured-artifacts
+
+[audit-repo] wrote /home/endof/lumin-numeric-baseline-35290/wsl-cold-full-2/measured-artifacts/manifest.json
+[audit-repo] artifacts: 24 produced
+[audit-repo] summary: /home/endof/lumin-numeric-baseline-35290/wsl-cold-full-2/measured-artifacts/audit-summary.latest.md
+[audit-repo] review pack: /home/endof/lumin-numeric-baseline-35290/wsl-cold-full-2/measured-artifacts/audit-review-pack.latest.md
+
+[audit-repo] artifact brief preview:
+[audit-repo]   Read First:
+[audit-repo]     - Start with `manifest.json` for scan range, confidence, blind zones, and lifecycle command status.
+[audit-repo]     - Then read the raw artifact for the user question: symbols, topology, discipline, checklist, fix-plan, call-graph, barrels, shape-index, or function…
+[audit-repo]   Measured Cues:
+[audit-repo]     - Runtime cycles: 0. Read `topology.json.summary.sccCount` and `topology.json.sccs[]` before deciding whether a cycle matters.
+[audit-repo]     - Function size: gate fix, oversized 20, watch 20. Read `checklist-facts.json.A2_function_size` and screen test/script roles before proposing a split.
+[audit-repo]     - Catch handling: empty silent 0, non-empty anonymous 194, unused params 1. Read `checklist-facts.json.E2_silent_catch` before saying this lane is cl…
+[audit-repo]   Guardrails:
+[audit-repo]     - Raw artifacts are authoritative; this brief is only a map of where to look.
+[audit-repo]     - Gate values are triggers, not verdicts.
+[audit-repo] blindZones: 1 scan-gap
+             • rs (scan-gap) — Rust files were counted by triage, but the JS/TS symbol graph does not own Rust …
+
+Next: review manifest.blindZones before making absence/removal claims.

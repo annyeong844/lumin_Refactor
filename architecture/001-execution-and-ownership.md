@@ -4,7 +4,7 @@ Document role: concurrency and runtime architecture owner
 
 Status: draft
 
-Revision: 2026-07-16
+Revision: 2026-07-18
 
 Parent: ARCH-000
 
@@ -96,12 +96,12 @@ Required properties:
 - no use of Rayon's process-global pool;
 - no nested pool creation by capability crates;
 - explicit worker count;
-- explicit worker stack policy selected and documented through corpus measurement;
+- exact `4,194,304`-byte worker stacks, selected from the Phase 0 corpus matrix that failed at 256/512 KiB and passed at 1/2/4/8 MiB;
 - stable worker naming for diagnostics;
 - panic propagation converted into an internal hard-stop diagnostic;
 - the chosen worker count and stack policy recorded in run metrics.
 
-The CLI exposes `--jobs`. Its default is derived from the runtime's available parallelism and is artifact-visible. Hidden environment-specific thread caps are forbidden.
+The CLI exposes `--jobs`. The default is exactly `max(1, min(8, available_parallelism))` using Rust's quota-aware runtime observation. Requested and actual jobs, observed available parallelism, and the exact stack bytes are artifact-visible. Hidden environment-specific thread or stack caps are forbidden.
 
 Capability crates may use Rayon parallel iterators only while installed in the engine-owned pool. They do not own thread policy.
 

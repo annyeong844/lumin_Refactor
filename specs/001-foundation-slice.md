@@ -598,6 +598,26 @@ Targets use named hardware/corpora, legacy baselines, and Phase 0 probes. They a
 
 A timing or memory sample is invalid unless its unfiltered canonical semantic dump, `scopeTotal`, matched `total`, finding IDs, dispositions, and limitations match the independently authored corpus truth. No target may be met by muting, implicit filtering, source-scope reduction, sampling, early termination, result caps, arbitrary timeouts, or omission of a required capability. Legacy measurements remain timing baselines only; legacy `MUTED`/suppression output is not product truth.
 
+The exact Phase 0 selection record and independently generated benchmark truth are retained under [`phase0-numeric-target-selection-2026-07-18`](../reviews/probes/phase0-numeric-target-selection-2026-07-18/). The blocking `phase1-scale-findings.v1` corpus contains 780 files and 7,461,511 bytes with 256 authored grounded zero-fan-in export tuples: 128 `ReviewCandidate`, 64 generated `ReviewOnly`, and 64 vendored `ReviewOnly`. An unfiltered benchmark response must have `filters: {}`, `scopeTotal == total == 256`, no limitations, the authored source-role reasons, and identical stable finding IDs across cold, warm, `jobs=1`, and default-jobs runs. The authored truth owns semantic tuples rather than implementation-produced opaque ID bytes; validity requires a one-to-one tuple-to-ID mapping whose IDs remain equal across every compared run.
+
+The approved Phase 1 targets are:
+
+| Dimension | Target |
+| --- | ---: |
+| cold full audit p50 | `<= 30,000 ms` |
+| warm unchanged audit p50 | `<= 8,000 ms` |
+| cold pre-write p50 | `<= 6,000 ms` |
+| warm pre-write p50 | `<= 4,000 ms` |
+| post-write for one changed file p50 | `<= 4,000 ms` |
+| post-write for the exact 32-file wave | `<= 8,000 ms` |
+| peak product-process RSS | `<= 536,870,912 bytes` |
+| Rayon worker stack | exactly `4,194,304 bytes` |
+| default jobs | `max(1, min(8, available_parallelism))` |
+| default-jobs cold full-audit p50 on a host exposing at least four workers | `<= 75%` of `jobs=1` p50 |
+| each stripped, uncompressed release `lumin` executable | `<= 12,582,912 bytes` |
+
+Each time target is the median of three valid repetitions per blocking environment; RSS is the maximum across every valid measured mode and repetition. Cold means a fresh repository copy, `.lumin` namespace, and process, not an OS-cold page cache. Warm measurement follows an unmeasured seed in a new process. The one-file mutation changes `packages/pkg-00/src/live/live-000.ts`; the 32-file wave changes `live-000.ts` through `live-003.ts` in each package without changing imports, exports, roles, or expected findings. The product is invoked directly and any analysis child process invalidates the sample. Hardware, OS/kernel, filesystem, package/binary identity, OS cache state, observed available parallelism, requested/actual jobs, stack bytes, stage timings, and product RSS are retained for every repetition. Hosts exposing fewer than four workers still run absolute budgets and determinism but do not authorize the scaling-ratio row.
+
 **Phase 1 acceptance:** the completed public `lumin` binary is measured against every target below. A missed target is a slice failure or an explicitly reviewed contract revision; CI cannot invent or relax a number after seeing the result.
 
 **Phase boundary:** Phase 0 approves architecture feasibility and numeric targets only. Every criterion in Section 14, every traceability row in Section 15, and every implementation command in Section 17 is a Phase 1 exit condition unless it is separately and explicitly labeled as a Phase 0 standalone probe. None may block the start of Phase 1 after Phase 0 freezes, and no `lumin-xtask` implementation command is a Phase 0 freeze prerequisite.

@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "numeric-target-host.v1",
+  "platform": "windows-ntfs",
+  "os": "Microsoft Windows 11 Pro",
+  "osVersion": "10.0.26200",
+  "cpu": "Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz",
+  "physicalCores": 6,
+  "logicalProcessors": 12,
+  "memoryBytes": 17110286336,
+  "node": "v25.7.0",
+  "npm": "11.18.0",
+  "filesystem": "NTFS"
+}
