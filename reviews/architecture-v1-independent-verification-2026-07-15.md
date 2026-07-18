@@ -2,7 +2,7 @@
 
 Document role: current Architecture v1 freeze verification owner
 
-Status: independent document/design review passed for `65e6021`; backend-selection amendment and remaining execution gates pending
+Status: independent document/design review passed for `65e6021`; backend selection passed for `579c235`, NEW-EVIDENCE-01 closure and remaining execution gates pending
 
 Freeze decision: blocked
 
@@ -27,7 +27,8 @@ Freeze decision: blocked
 | Latest exact-Git externally reverified candidate | `d7e96b091d7c18118b839e61de2569247a9729c1`; all 16 files were bound to the exact Git tree, B-07 and all direct R3/R4 repairs passed, independent machine checks passed `151/151`, and NEW-H10-01/NEW-H11-01 reopened H-10/H-11 |
 | Current resolution candidate | `65e60216891bb3d826a4778f84cb8aaa377abe92`; exact independent document/design verification passed, execution evidence pending |
 | Superseded backend-selection amendment candidate | `58b10608eb2bb740e411281dbcc313d5ff23707c`; invalidated before external review because its exact checkout omitted 20 manifest-listed raw build logs hidden by the root `*.log` ignore rule; do not review this candidate |
-| Backend-selection amendment candidate | `579c2358f5e2245a977abdedcee7e06ba3f4e46e`; preserves those raw logs in Git, selects exact `redb 4.1.0`, records store/OXC evidence, and awaits exact external independent verification |
+| Externally reviewed backend-selection amendment candidate | `579c2358f5e2245a977abdedcee7e06ba3f4e46e`; B-07, the backend amendment, canonical 168-entry evidence, store correctness/comparison, OXC evidence boundary, and H/R regression review passed; the exact candidate was REOPENED only by NEW-EVIDENCE-01 |
+| Current evidence-closure candidate | `b8ff840b5a400d2404d693b290c0fb8d18e59062`; deletes the unreferenced stale Windows packet-wide seal while preserving all 16 candidate bytes and five canonical evidence manifests; exact independent closure review pending |
 | Verifier | external independent reviewer, report supplied by the user; not the architecture-authoring Codex session |
 | Earlier externally reverified input manifest/report | `2ff71a19ebd5fd2939f1aa6da77a2d3276c320791a19a1364670ab78d9c2210e` / `67a001b2cbfd6af36d3e60712d8dfa2bab6dfcc4a7756114f87b9d34d5530611` |
 | Prior externally reverified input manifest/report | `9d2366afa0fa360397fbf4ae7c0ad4205d34739f20f8f7acff70207b2152b6fd` / `07df439ded1101b3ddea1328880579be918db1cfbe8d7861d28c0ca1d18ad20a` |
@@ -42,9 +43,10 @@ Freeze decision: blocked
 | Current independent binding/finding evidence | Git binding `0f1c1814a73e27197ea5549d23eae19525d11a67150712e76ce1584467e36981`; finding matrix `86827ebb5f699e1ed2e664445b91cba07993f0c301ad9f2bd2debe5d86554873` |
 | Verification result | `65e6021` passed B-07, H-01 through H-12, all R3/R4 findings, NEW-H10-01/NEW-H11-01, every B/C/E/G predecessor, and the independent document/design review with no new finding or accepted risk; overall Phase 0 remains blocked only by execution and measurement evidence |
 | Superseded backend-selection candidate manifest | `8bbbc177f4aeb7ee648b5f3808dfbf3fb9e9dc18389802b0797af786e5e7c44c`; invalid because two committed packet manifests named 20 raw build logs absent from the exact Git tree |
-| Backend-selection candidate manifest/review | `b43b8b0ea9c3c0c8938363091aaf4de0e7a4a3b3babb225582a85b050a104375` / external report pending |
+| Backend-selection candidate manifest/review | `b43b8b0ea9c3c0c8938363091aaf4de0e7a4a3b3babb225582a85b050a104375` / `a2a46171ec93927bac5fb0edb34e6547f668dcc47b56e4a0020b6b404623963a` |
+| Evidence-closure candidate manifest/review | `b43b8b0ea9c3c0c8938363091aaf4de0e7a4a3b3babb225582a85b050a104375` / exact external closure report pending |
 
-The first report verified the exact first amended revision. Several later reports verified supplied byte manifests but could not bind loose uploads to their declared Git commits. Exact-tree reports subsequently passed B-07 for `491f478`, `d7e96b0`, and now `65e6021`, each only for its own named revision. The current independent freeze report excluded Author-Side Preflight from PASS evidence, reproduced all 16 Git-object bindings and the manifest, passed 239 machine checks, found no REOPEN/NEW item, and closed NEW-H10-01/NEW-H11-01. The later ledger blob is outside the 16-file architecture packet and does not retroactively change that candidate identity. The superseded `58b1060` backend amendment never reached external review: exact-checkout verification exposed its incomplete evidence tree, and `579c235` replaces it without rewriting that history.
+The first report verified the exact first amended revision. Several later reports verified supplied byte manifests but could not bind loose uploads to their declared Git commits. Exact-tree reports subsequently passed B-07 for `491f478`, `d7e96b0`, and `65e6021`, each only for its own named revision. The independent freeze report for `65e6021` excluded Author-Side Preflight from PASS evidence, reproduced all 16 Git-object bindings and the manifest, passed 239 machine checks, found no REOPEN/NEW item, and closed NEW-H10-01/NEW-H11-01. The superseded `58b1060` backend amendment never reached external review: exact-checkout verification exposed its incomplete evidence tree. The external report for replacement `579c235` passed its semantic amendment and canonical evidence but reopened that exact SHA for the separate stale-seal finding NEW-EVIDENCE-01. Candidate `b8ff840` removes that competing seal without changing the 16-file manifest; its closure remains external-review pending.
 
 ## Freeze Blocker Resolution Ledger
 
@@ -101,6 +103,7 @@ The first report verified the exact first amended revision. Several later report
 | R4-H11-05 valid pnpm `packageConfigs` forms | External PASS | Restricted YAML values include booleans and block/flow collections; exact mapping and array examples both reach `PnpmDependencySemanticsUnsupported`. |
 | NEW-H10-01 managed state-parent replacement binding | External PASS; execution fault proof pending | The exact four managed parents have durable directory/anchor/nonce bindings in marker/store, immutable cross-bound anchors, complete pre/post-mutation verification, initialization recovery, and a public child-process swap corpus. Cache payload descendants remain disposable without making the cache parent replaceable. |
 | NEW-H11-01 `tsconfig.extends` specifier selection | External PASS; public resolver corpus pending | The exact resolver artifact fixes slash normalization, malformed/rooted/relative/package dispatch, exact candidate then one `.json` fallback, exact workspace identity only, package-subpath/external no-probe outcomes, cycle/merge order, input identity, and golden vectors. |
+| NEW-EVIDENCE-01 stale Windows packet-wide seal | External REOPEN for `579c235`; closure candidate pending | Exact candidate `b8ff840` deletes the unreferenced `reviews/probes/phase0-store-backend-windows-x64-2026-07-17/PACKET-SHA256SUMS`. The canonical `evidence/SHA256SUMS` remains the sole current Windows evidence identity; exact external closure re-verification is still required. |
 
 Historical `Accept finding` entries record architecture-authoring decisions and were never treated as independent PASS evidence. The current PASS decisions above come from the exact-tree external report for `65e6021`.
 
@@ -204,10 +207,20 @@ committed. It also narrows the log-ignore exception to committed probe evidence 
 the 20 manifest-listed build logs. This ledger is a later commit and is not part of the
 16-file candidate.
 
-The amendment has author-side evidence but **no external PASS yet**. B-07 and the
-substantive selection/rationale must be independently reverified from this exact Git
-tree. The candidate manifest uses the same ordinal path, two-space, and LF rules. Its
-SHA-256 is:
+The exact-tree independent report for `579c235` passed B-07, the backend amendment,
+the canonical 168-entry evidence binding, store correctness and measured comparison,
+the OXC evidence boundary, and the H/R regression review. It reopened that exact SHA
+only because the unmarked packet-wide file
+`reviews/probes/phase0-store-backend-windows-x64-2026-07-17/PACKET-SHA256SUMS`
+claimed superseded Windows packet hashes alongside the current canonical manifest.
+The report SHA-256 is
+`a2a46171ec93927bac5fb0edb34e6547f668dcc47b56e4a0020b6b404623963a`.
+
+The evidence-closure candidate is Git commit
+`b8ff840b5a400d2404d693b290c0fb8d18e59062`, commit message
+`Remove stale Windows evidence packet seal`. It deletes that unreferenced competing
+seal. None of the 16 candidate paths changed, so the ordinal path, two-space, LF
+manifest remains:
 
 ```text
 b43b8b0ea9c3c0c8938363091aaf4de0e7a4a3b3babb225582a85b050a104375
@@ -232,17 +245,29 @@ ee686f81164ff40b281483afaae591793964cc576afaca0ce7b5b51a6798b4a6  specs/repo-pat
 2456a9b89bb8f24a76b63d674cd62f0dcb64038ecada488a7d523af1476a1f28  문서(한글)/SDD.ko.md
 ```
 
-Before this ledger update, a new detached checkout of `579c235` independently replayed
-all five committed packet manifests from Git: Windows store `12/12`, WSL2 store
-`37/37`, native Linux store `37/37`, OXC `80/80`, and backend selection `2/2`, for
-`168/168` byte checks with a clean worktree. This is author-side packet-integrity
-evidence, not an external independent PASS.
+The external report independently passed all five committed packet manifests for
+`579c235`: Windows store `12/12`, WSL2 store `37/37`, native Linux store `37/37`, OXC
+`80/80`, and backend selection `2/2`, for `168/168` canonical entries. It also verified
+all 20 newly preserved raw build logs. Author-side verification of `b8ff840` reproduced
+the same `168/168` entries, found no packet-wide competing seal, and confirmed that the
+stale path is absent. Those `b8ff840` checks are packaging preflight, not an external
+closure PASS.
 
 The selection packet manifest SHA-256 is
 `ce14aaab83942e83e6b874d972aef06d03aa03d64c68370cefebac3339287ea6`.
 The native runner is bound to GitHub Actions run `29584914108`, runner commit
 `0b5988c8176c73e9d6d8936cbcc90eebcac3c2a5`, and artifact SHA-256
 `9ffc3fd385c1d6b8af748eda20c26f623f4a18420a3e9a540cb91b6f0f7706e4`.
+
+### Backend-selection accepted risks
+
+| ID | Owner | Accepted scope and rationale | Expiry or reopen trigger |
+| --- | --- | --- | --- |
+| AR-BACKEND-01 | ARCH-002 / `lumin-store` | Select exact `redb 4.1.0` as the sole private production backend after both candidates passed the frozen correctness oracle. redb won durable-admission p50 and release-binary size in all five scopes and has the smaller native distribution/dependency surface; SQLite's query p50, peak RSS, and store-size advantages remain explicit counter-evidence. | Reopen backend selection if package, public behavior, clean upstream provenance, or numeric-budget evidence fails. |
+| AR-MEASURE-01 | Phase 0 numeric-budget owner | Use the captured measurements only for ordinal architecture selection. Warm reopen is not represented as OS-cold behavior, and one captured environment is not generalized into a product budget. | Close when clean pinned reproduction and approved time/RSS/stack/jobs/binary budgets are complete. |
+
+NEW-EVIDENCE-01 is not an accepted risk. Deleting the stale seal requires exact
+independent closure review; neither accepted risk passes any remaining product gate.
 
 Any repeat reviewer must report `PASS`, `REOPEN`, or a new finding for H-01 through H-12, every R3 finding, R4-H09-01, R4-H11-01 through R4-H11-05, NEW-H10-01, NEW-H11-01, their relevant B/G/E/C predecessors, the packaged-skill and process-reopen proofs, and B-07 exact revision binding. It must also check that:
 
@@ -281,13 +306,16 @@ Any repeat reviewer must report `PASS`, `REOPEN`, or a new finding for H-01 thro
 - default output, retention exclusions, skill probes, and process-reopen proof match the acceptance tables;
 - both canonical Korean files, all three exact machine artifacts, and every other manifest entry are read from the exact Git tree rather than omitted from a loose upload.
 
-The accepted report names the exact commit and manifest hash, states reviewer independence, preserves finding IDs and accepted risks, and publishes SHA-256 `f7f25de96436862e6650195ec9248a85585ad03a9feb588c4cddfca4c2effbeb`. Its document/design PASS cannot pass the measured backend, OXC, package, public-behavior, provenance, or performance gates below.
+The accepted `65e6021` report names the exact commit and manifest hash, states reviewer independence, preserves finding IDs and accepted risks, and publishes SHA-256 `f7f25de96436862e6650195ec9248a85585ad03a9feb588c4cddfca4c2effbeb`. Its document/design PASS did not itself pass later evidence gates. The separate `579c235` report passes the backend and bounded OXC evidence described below while leaving closure, package, public-behavior, provenance, and numeric-budget gates pending.
 
 ## Remaining Freeze Gates
 
-The exact-tree independent document/design review requirement passed for `65e6021`. The backend-selection amendment reopens exact binding and external review, and the remaining product blockers are execution or measurement evidence:
+The exact-tree independent document/design review requirement passed for `65e6021`.
+The backend-selection semantics and canonical evidence passed independently for
+`579c235`; exact closure verification of NEW-EVIDENCE-01 on `b8ff840` remains pending.
+The other product blockers are execution or measurement evidence:
 
-### Author-side store backend evidence and selection
+### Store backend evidence and selection
 
 The Windows x64/NTFS, WSL2 ext4 GNU/musl, and native non-WSL Linux ext4 GNU/musl
 packets are now complete for the frozen standalone harness. Their evidence-manifest
@@ -306,12 +334,12 @@ modes. The author-side decision packet at
 release-binary size in all five measured comparisons and carried fewer dependencies
 without bundled C; SQLite's query, RSS, and store-size advantages remain recorded.
 
-This evidence closes the author-side store correctness/comparison work. It does not
-self-certify the architecture amendment: the changed canonical bytes require a new
-exact Git identity and external independent verification before REVIEW-002 can mark
-the gate passed.
+The external report passed this store correctness/comparison evidence and the redb
+selection rationale for `579c235`, subject to AR-BACKEND-01 and AR-MEASURE-01. That
+PASS does not certify NEW-EVIDENCE-01 closure on `b8ff840` and does not approve product
+performance budgets.
 
-### Author-side OXC feasibility evidence
+### OXC feasibility evidence boundary
 
 The packet at
 `reviews/probes/phase0-oxc-memory-stack-windows-wsl2-x64-2026-07-17/` records exact
@@ -322,10 +350,10 @@ The named corpus passed at 1/2/4/8 MiB stacks and jobs 1/2/4/8/12; 256 and 512 K
 stacks overflowed as expected. This is feasibility evidence, not an approved product
 stack, worker count, or numeric budget.
 
-1. Bind the backend-selection architecture amendment and all evidence packets to a new exact Git commit, then obtain external independent verification.
+1. Independently verify exact candidate `b8ff840b5a400d2404d693b290c0fb8d18e59062` closes NEW-EVIDENCE-01, preserves the 16-file manifest and all five canonical manifests, and retains all 168 entries plus 20 raw logs.
 2. Run and record Windows NTFS, WSL ext4, and native Linux ext4/musl package feasibility, including Unix raw-byte and Windows WTF-16/UNC/volume-root round trips plus both packaged skill adapters using the same public binary/DTO contract.
 3. Run the public-behavior evidence for process-exit gate reopen, operation-result recovery, every collection's pagination, cold/warm equivalence, and `jobs=1` versus default-jobs deterministic semantic output.
 4. Reproduce every pinned upstream source/tarball/artifact SHA-256 in a clean `architecture-check`/probe environment.
 5. Approve numeric Phase 1 time, peak-RSS, worker-stack, default-jobs, and binary-size budgets from the named probe evidence, keeping the `/mnt/<drive>` diagnostic separate as specified.
 
-Every gate above must be `passed` or an explicitly reviewed accepted risk with rationale, owner, scope, and expiry. There are currently no accepted risks. Architecture v1 remains draft and Phase 1 implementation remains blocked.
+Every gate above must be `passed` or an explicitly reviewed accepted risk with rationale, owner, scope, and expiry. Only AR-BACKEND-01 and AR-MEASURE-01 are accepted within backend-selection scope; neither passes a remaining gate. No other accepted risk exists. Architecture v1 remains draft and Phase 1 implementation remains blocked.
