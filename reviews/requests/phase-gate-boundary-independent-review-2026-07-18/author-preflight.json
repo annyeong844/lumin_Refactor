@@ -1,0 +1,124 @@
+{
+  "candidate": "9a0dbe5c89463892c001e864c4f18eeab9e0eaed",
+  "candidate_manifest_sha256": "e2ca379a8a659f2febbc4e277c89db67bb02035a6b10467cf78a5663f21cd99a",
+  "candidate_parent": "085828ef09d5eb43621ae992001974ff637a3db2",
+  "checks": {
+    "fail": 0,
+    "pass": 22
+  },
+  "independence_boundary": "Author-side consistency output only; not independent review evidence.",
+  "results": [
+    {
+      "evidence": "C:\\Users\\endof\\Downloads\\lumin_lepo_Lens",
+      "name": "repository",
+      "status": "PASS"
+    },
+    {
+      "evidence": "9a0dbe5c89463892c001e864c4f18eeab9e0eaed",
+      "name": "candidate-object",
+      "status": "PASS"
+    },
+    {
+      "evidence": "085828ef09d5eb43621ae992001974ff637a3db2",
+      "name": "candidate-parent",
+      "status": "PASS"
+    },
+    {
+      "evidence": "Separate Phase 0 feasibility from Phase 1 acceptance",
+      "name": "candidate-subject",
+      "status": "PASS"
+    },
+    {
+      "evidence": "1cf2a20329dc400a198919bf3f4116193f38b6da",
+      "name": "candidate-tree",
+      "status": "PASS"
+    },
+    {
+      "evidence": "[('M', 'WORKBOARD.md'), ('M', 'specs/001-foundation-slice.md')]",
+      "name": "semantic-diff",
+      "status": "PASS"
+    },
+    {
+      "evidence": "e2ca379a8a659f2febbc4e277c89db67bb02035a6b10467cf78a5663f21cd99a",
+      "name": "manifest-digest",
+      "status": "PASS"
+    },
+    {
+      "evidence": "16",
+      "name": "manifest-cardinality",
+      "status": "PASS"
+    },
+    {
+      "evidence": "16/16 SHA-256 and Git blob identities",
+      "name": "manifest-members",
+      "status": "PASS"
+    },
+    {
+      "evidence": "14/14",
+      "name": "unchanged-owner-blobs",
+      "status": "PASS"
+    },
+    {
+      "evidence": "3/3 duplicate-key rejecting parses",
+      "name": "strict-machine-artifacts",
+      "status": "PASS"
+    },
+    {
+      "evidence": "Phase 0 non-product prerequisite and Phase 1 ownership clauses present",
+      "name": "workboard-boundary",
+      "status": "PASS"
+    },
+    {
+      "evidence": "all phase-owner clauses present",
+      "name": "slice-boundary",
+      "status": "PASS"
+    },
+    {
+      "evidence": "38/38 numbered criteria preserved",
+      "name": "acceptance-criteria",
+      "status": "PASS"
+    },
+    {
+      "evidence": "38/38 traceability rows preserved",
+      "name": "acceptance-traceability",
+      "status": "PASS"
+    },
+    {
+      "evidence": "Phase 1 command block unchanged",
+      "name": "verification-commands",
+      "status": "PASS"
+    },
+    {
+      "evidence": "6/6 distribution bullets preserved",
+      "name": "distribution-requirements",
+      "status": "PASS"
+    },
+    {
+      "evidence": "REVIEW-001 F-12 non-circular resolution present",
+      "name": "f12-predecessor",
+      "status": "PASS"
+    },
+    {
+      "evidence": "9b64d132768ffd9521bf623f974629ea61832f54",
+      "name": "ledger-object",
+      "status": "PASS"
+    },
+    {
+      "evidence": "['M\\treviews/architecture-v1-independent-verification-2026-07-15.md']",
+      "name": "ledger-is-later",
+      "status": "PASS"
+    },
+    {
+      "evidence": "candidate, manifest, finding, and pending independence recorded",
+      "name": "ledger-binding",
+      "status": "PASS"
+    },
+    {
+      "evidence": "request JSON matches exact identities",
+      "name": "request-binding",
+      "status": "PASS"
+    }
+  ],
+  "schema": "lumin-phase-gate-author-preflight-v1",
+  "status": "PASS"
+}

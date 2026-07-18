@@ -1,0 +1,36 @@
+{
+  "schema": "lumin-phase-gate-boundary-review-request-v1",
+  "repository": "annyeong844/lumin_Refactor",
+  "candidate": "9a0dbe5c89463892c001e864c4f18eeab9e0eaed",
+  "candidate_parent": "085828ef09d5eb43621ae992001974ff637a3db2",
+  "candidate_message": "Separate Phase 0 feasibility from Phase 1 acceptance",
+  "candidate_manifest_sha256": "e2ca379a8a659f2febbc4e277c89db67bb02035a6b10467cf78a5663f21cd99a",
+  "ledger_commit": "9b64d132768ffd9521bf623f974629ea61832f54",
+  "finding": {
+    "id": "NEW-PHASE-GATE-01",
+    "direct_predecessor": "F-12 performance ordering cycle",
+    "counterexample": "Phase 0 required product package, skill, DTO, and public-process evidence while Phase 0 probes were forbidden from creating or exposing the Phase 1 product needed to produce it.",
+    "resolution": "Keep standalone feasibility, clean provenance, numeric target approval, and independent review in Phase 0; keep actual package, skill, public behavior, native product round trips, corpus, and achieved-budget proof in Phase 1 acceptance."
+  },
+  "semantic_changed_paths": [
+    "WORKBOARD.md",
+    "specs/001-foundation-slice.md"
+  ],
+  "phase0_remaining_evidence_gates": [
+    "standalone Windows/Linux static-packaging feasibility",
+    "clean pinned-upstream provenance reproduction",
+    "numeric Phase 1 target approval from named Phase 0 evidence"
+  ],
+  "phase1_acceptance_not_freeze_gates": [
+    "actual Windows/Linux prebuilt lumin packages and runtime without Cargo",
+    "native path/root round trips through the product binary and canonical DTOs",
+    "packaged Codex and Claude adapters using one public contract",
+    "public process reopen, recovery, pagination, cold/warm, and jobs determinism",
+    "completed-product performance against approved targets"
+  ],
+  "accepted_risks": [
+    "AR-BACKEND-01",
+    "AR-MEASURE-01"
+  ],
+  "independence_boundary": "The verifier and author preflight are consistency aids only; an external reviewer must derive the exact-object and architectural verdict independently."
+}
