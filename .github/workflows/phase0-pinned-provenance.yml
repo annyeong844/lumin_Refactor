@@ -1,0 +1,30 @@
+name: Phase 0 clean pinned-upstream provenance closure
+
+on:
+  push:
+    branches:
+      - phase0-provenance-binding-closure-20260718
+
+permissions:
+  contents: read
+
+jobs:
+  native-linux-clean:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out exact runner commit with complete history
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Run exact-bound clean provenance capture
+        run: bash reviews/probes/phase0-pinned-upstream-provenance-2026-07-18/runner/run-native.sh
+
+      - name: Upload exact raw provenance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: phase0-pinned-upstream-provenance-${{ github.sha }}
+          path: reviews/probes/phase0-pinned-upstream-provenance-2026-07-18/evidence/native-linux-clean
+          if-no-files-found: error
+          retention-days: 7
