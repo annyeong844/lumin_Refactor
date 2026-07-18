@@ -1,0 +1,6 @@
+artifact-format-check: package_evidence.py parses PE signature, machine, and PE32+ magic
+artifact-path: C:\Users\endof\Downloads\lumin_lepo_Lens\reviews\probes\phase0-static-packaging-windows-wsl2-native-linux-x64-2026-07-18\source\target\x86_64-pc-windows-msvc\release\lumin-phase0-static-packaging-probe.exe
+artifact-bytes: 1411584
+artifact-sha256: 8fb4a84858e6e0118d29ab4c53de5b7d8f3275df1146dd6bdbbaafe57960051b
+rust-target: x86_64-pc-windows-msvc
+dumpbin: unavailable; independent PE parsing remains mandatory

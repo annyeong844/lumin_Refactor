@@ -1,0 +1,18 @@
+{
+  "arch": "x86_64",
+  "cargoVersion": "cargo 1.96.0 (30a34c682 2026-05-25)",
+  "ciRepository": null,
+  "ciRunAttempt": null,
+  "ciRunId": null,
+  "ciSha": null,
+  "filesystemDetail": "/      ext4   /dev/sdd",
+  "filesystemType": "ext4",
+  "hostKind": "wsl2",
+  "os": "linux",
+  "rustcVerbose": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.96.0\nLLVM version: 22.1.2",
+  "rustcVersion": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "schema": "lumin-phase0-static-packaging-host-v1",
+  "scope": "wsl2-ext4",
+  "sourcePath": "/home/endof/lumin-phase0-static-packaging-b2eb6a57/source",
+  "uname": "Linux MyPC 6.6.87.2-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Thu Jun  5 18:30:46 UTC 2025 x86_64 x86_64 x86_64 GNU/Linux"
+}

@@ -1,0 +1,14 @@
+{
+  "schema": "lumin-phase0-static-packaging-host-v1",
+  "scope": "windows-ntfs",
+  "hostKind": "windows",
+  "os": "windows",
+  "arch": "x86_64",
+  "filesystemType": "ntfs",
+  "filesystemDetail": "C:\\  Healthy",
+  "sourcePath": "C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-static-packaging-windows-wsl2-native-linux-x64-2026-07-18\\source",
+  "rustcVersion": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "rustcVerbose": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: x86_64-pc-windows-msvc\nrelease: 1.96.0\nLLVM version: 22.1.2",
+  "cargoVersion": "cargo 1.96.0 (30a34c682 2026-05-25)",
+  "windowsVersion": "Microsoft Windows NT 10.0.26200.0"
+}

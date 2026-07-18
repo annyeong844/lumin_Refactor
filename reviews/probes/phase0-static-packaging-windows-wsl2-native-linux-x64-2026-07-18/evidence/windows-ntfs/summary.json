@@ -1,0 +1,57 @@
+{
+  "architectureCandidate": "9a0dbe5c89463892c001e864c4f18eeab9e0eaed",
+  "architectureManifestSha256": "e2ca379a8a659f2febbc4e277c89db67bb02035a6b10467cf78a5663f21cd99a",
+  "artifacts": [
+    {
+      "format": "PE32+-x86_64",
+      "label": "windows-msvc",
+      "sha256": "8fb4a84858e6e0118d29ab4c53de5b7d8f3275df1146dd6bdbbaafe57960051b",
+      "sizeBytes": 1411584,
+      "static": false
+    }
+  ],
+  "cargoLinkDeclarations": [
+    "rayon-core@1.13.0:rayon-core"
+  ],
+  "cargoLinkInterpretation": {
+    "rayon-core@1.13.0:rayon-core": "non-native one-version uniqueness sentinel"
+  },
+  "claimBoundary": {
+    "achievedProductBudgets": false,
+    "nativePathRootDto": false,
+    "packagedSkills": false,
+    "productApiOrScaffold": false,
+    "publicProcessBehavior": false,
+    "staticPackagingFeasibilityOnly": true
+  },
+  "directDependencies": {
+    "anyhow": "1.0.103",
+    "oxc_allocator": "0.126.0",
+    "oxc_parser": "0.126.0",
+    "oxc_span": "0.126.0",
+    "rayon": "1.11.0",
+    "redb": "4.1.0",
+    "serde": "1.0.228",
+    "serde_json": "1.0.150"
+  },
+  "host": {
+    "arch": "x86_64",
+    "cargoVersion": "cargo 1.96.0 (30a34c682 2026-05-25)",
+    "filesystemDetail": "C:\\  Healthy",
+    "filesystemType": "ntfs",
+    "hostKind": "windows",
+    "os": "windows",
+    "rustcVerbose": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: x86_64-pc-windows-msvc\nrelease: 1.96.0\nLLVM version: 22.1.2",
+    "rustcVersion": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "schema": "lumin-phase0-static-packaging-host-v1",
+    "scope": "windows-ntfs",
+    "sourcePath": "C:\\Users\\endof\\Downloads\\lumin_lepo_Lens\\reviews\\probes\\phase0-static-packaging-windows-wsl2-native-linux-x64-2026-07-18\\source",
+    "windowsVersion": "Microsoft Windows NT 10.0.26200.0"
+  },
+  "schema": "lumin-phase0-static-packaging-summary-v1",
+  "scope": "windows-ntfs",
+  "sourceFileCount": 9,
+  "sourceManifestSha256": "dd30eeda67caf9e354838a9ec7974cdd3dc118a9136c2556fcfe56c9f441db45",
+  "status": "PASS",
+  "unexpectedCargoLinkDeclarations": []
+}
