@@ -768,7 +768,7 @@ def verify_evidence(repository_root: Path, evidence: Path) -> dict[str, Any]:
         oracle,
     )
 
-    extracted_rows, node_version = run_extractor(evidence / "objects/typescript.js")
+    extracted_rows, verifier_node_version = run_extractor(evidence / "objects/typescript.js")
     require(extracted_rows == authority["resolverRows"], "compiler-option-rows-mismatch", "rows")
     require(extracted_rows == actual_inventory["derived/compiler-options.tsv"], "derived-byte-mismatch", "compiler options")
     require(len(extracted_rows.splitlines()) == oracle["typeScript"]["compilerOptions"]["count"], "compiler-option-count", "rows")
@@ -789,6 +789,10 @@ def verify_evidence(repository_root: Path, evidence: Path) -> dict[str, Any]:
     require(fetch_metadata.get("schemaVersion") == "lumin-phase0-provenance-fetch.v1", "fetch-metadata-invalid", "schema")
     require(len(fetch_metadata.get("responses", [])) == 8, "fetch-metadata-invalid", "response count")
 
+    host = strict_json(actual_inventory["host.json"], "host.json")
+    require(isinstance(host, dict), "host-invalid", "root")
+    require(host.get("schemaVersion") == "lumin-phase0-provenance-host.v1", "host-invalid", "schema")
+
     result = strict_json(actual_inventory["result.json"], "result.json")
     require(isinstance(result, dict), "result-invalid", "root")
     require(result.get("schemaVersion") == SCHEMA and result.get("status") == "pass", "result-invalid", "status")
@@ -797,7 +801,14 @@ def verify_evidence(repository_root: Path, evidence: Path) -> dict[str, Any]:
     require(result.get("oracleSha256") == sha256_bytes(authority["oracleBytes"]), "result-invalid", "oracle")
     require(result.get("npmPackage") == package_identity, "result-invalid", "npm package")
     require(result.get("nodeTag") == node_tag, "result-invalid", "node tag")
-    require(result.get("compilerOptions", {}).get("nodeVersion") == node_version, "result-invalid", "node version")
+    recorded_node_version = result.get("compilerOptions", {}).get("nodeVersion")
+    require(
+        isinstance(recorded_node_version, str) and recorded_node_version.startswith("v"),
+        "result-invalid",
+        "recorded node version",
+    )
+    require(host.get("node") == recorded_node_version, "result-invalid", "host node version")
+    require(verifier_node_version.startswith("v"), "result-invalid", "verifier node version")
     require(len(result.get("upstreamByteChecks", [])) == 7, "result-invalid", "byte checks")
     require(result.get("negativeControlCount") == 6, "result-invalid", "negative controls")
     runner_commit = result.get("runnerCommit")
