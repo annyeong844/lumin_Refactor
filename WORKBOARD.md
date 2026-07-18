@@ -2,7 +2,7 @@
 
 Status: active architecture draft
 
-Revision: 2026-07-17
+Revision: 2026-07-18
 
 ## One-Line Purpose
 
@@ -23,7 +23,7 @@ Lumin is a native repository-audit engine and Codex/Claude Code skill that gives
 
 ## Active Work
 
-Bind and independently verify the redb backend-selection amendment, then close the remaining package, public-behavior, provenance, and numeric-budget gates owned by REVIEW-002.
+Independently verify the Phase 0/Phase 1 gate-boundary amendment, then close the remaining Phase 0-only static-packaging-feasibility, clean-provenance, and numeric-target gates owned by REVIEW-002. Product packages, packaged skill adapters, public behavior, native path/root product round trips, and achieved-budget proofs remain Phase 1 acceptance.
 
 ## Routing Rules
 
@@ -40,7 +40,7 @@ Bind and independently verify the redb backend-selection amendment, then close t
 
 | Phase | State | Exit condition |
 | --- | --- | --- |
-| Phase 0: architecture | active | The current review owner marks every remaining freeze gate passed or explicitly accepted risk. |
+| Phase 0: architecture | active | The current review owner marks every freeze gate that can be evidenced without a production scaffold passed or explicitly accepted risk. No product binary or Phase 1 behavior is a Phase 0 prerequisite. |
 | Phase 1: foundation slice | blocked by Phase 0 | SLICE-001 passes its complete acceptance corpus on Windows and Linux prebuilt binaries. |
 | Phase 2: capability growth | not started | New capabilities enter through the frozen DAG without creating a second engine. |
 | Phase 3: legacy retirement | not started | Required compatibility exports and corpus parity are complete; Node analysis paths are removed. |

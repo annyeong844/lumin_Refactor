@@ -4,7 +4,7 @@ Document role: first implementation specification
 
 Status: draft, blocked by Architecture v1 review
 
-Revision: 2026-07-17
+Revision: 2026-07-18
 
 Parents: PRODUCT-000, ARCH-000, ARCH-001, ARCH-002
 
@@ -553,6 +553,8 @@ Code is harvested from the legacy product only when a focused behavior test prov
 
 ## 11. Skills and Distribution
 
+Everything in this section is a Phase 1 product deliverable and acceptance surface. No prebuilt `lumin` binary, product DTO round trip, packaged skill execution, or package behavior in this section is Phase 0 freeze evidence.
+
 The slice ships:
 
 - Windows x64 prebuilt `lumin`;
@@ -570,7 +572,7 @@ Runtime execution with Cargo unavailable is part of package acceptance.
 
 Performance approval has two non-circular phases.
 
-**Phase 0 feasibility:** before this document becomes active, non-production harnesses measure store locking/backend behavior, OXC parser memory and stack needs, and Windows/Linux static packaging feasibility. They cannot expose product APIs or become a production scaffold. Reproducible probe source, lock/toolchain identity, fixture hashes, commands, expected invariants, and raw results remain under `reviews/probes/<probe-id>/` outside the production workspace; disposable binaries and build output are removed.
+**Phase 0 feasibility:** before this document becomes active, non-production harnesses measure store locking/backend behavior, OXC parser memory and stack needs, and Windows/Linux static packaging feasibility. Static packaging feasibility is limited to target toolchain, linker, artifact-format, dependency, and native-distribution viability in standalone harnesses. A Phase 0 harness cannot build, expose, invoke, or emulate public `lumin` APIs, DTOs, packaged skill adapters, gate/query/process behavior, or any other production scaffold. Product-native path/root round trips and packaged-adapter execution are Phase 1 acceptance. Reproducible probe source, lock/toolchain identity, fixture hashes, commands, expected invariants, and raw results remain under `reviews/probes/<probe-id>/` outside the production workspace; disposable binaries and build output are removed.
 
 Architecture review then approves target budgets for:
 
@@ -586,6 +588,8 @@ Architecture review then approves target budgets for:
 Targets use named hardware/corpora, legacy baselines, and Phase 0 probes. They are goals rather than claims that an unimplemented product already achieved them.
 
 **Phase 1 acceptance:** the completed public `lumin` binary is measured against every target below. A missed target is a slice failure or an explicitly reviewed contract revision; CI cannot invent or relax a number after seeing the result.
+
+**Phase boundary:** Phase 0 approves architecture feasibility and numeric targets only. Every criterion in Section 14, every traceability row in Section 15, and every implementation command in Section 17 is a Phase 1 exit condition unless it is separately and explicitly labeled as a Phase 0 standalone probe. None may block the start of Phase 1 after Phase 0 freezes, and no `lumin-xtask` implementation command is a Phase 0 freeze prerequisite.
 
 Blocking benchmark environments are:
 
@@ -614,6 +618,8 @@ SLICE-001 does not implement:
 These omissions must be visible through `lumin capabilities` and relevant overview limitations.
 
 ## 14. Acceptance Criteria
+
+These are Phase 1 exit criteria for the completed product. They are not Phase 0 freeze prerequisites and cannot require a production scaffold before Phase 1 begins.
 
 1. Every corpus row passes through the public `lumin` binary.
 2. The SFC boundary admits Vue, Svelte, and Astro through one stage contract: Vue and Next.js regressions complete without process abort, while unsupported dialects produce explicit per-dialect unavailable limitations and never inherit Vue completeness.
@@ -655,6 +661,8 @@ These omissions must be visible through `lumin capabilities` and relevant overvi
 38. Architecture v1 contains no scan lock; architecture-check proves that scheduler coordination is not used as repository safety authority.
 
 ## 15. Acceptance Traceability
+
+Every row in this table traces a Phase 1 acceptance criterion. The commands and fixtures become executable after Phase 1 implementation starts; their absence during Phase 0 is not a failed freeze gate.
 
 | AC | Behavior test | Corpus/fixture | Command | Expected proof |
 | --- | --- | --- | --- | --- |
@@ -726,7 +734,7 @@ These omissions must be visible through `lumin capabilities` and relevant overvi
 
 ## 17. Verification Commands
 
-The implementation must provide stable repository commands equivalent to:
+The Phase 1 implementation must provide stable repository commands equivalent to:
 
 ```text
 cargo fmt --all -- --check
