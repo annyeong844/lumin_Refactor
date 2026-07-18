@@ -56,6 +56,8 @@ Every absence claim must identify:
 
 Missing, stale, degraded, or failed evidence must never be rendered as zero findings.
 
+Grounded findings remain canonical evidence regardless of source role, framework convention, or remediation disposition. Policy may attach a stable `ReviewOnly` reason, but it cannot create a hidden `Muted` or `Suppressed` truth class, remove the finding from canonical counts or an unfiltered default finding query, alter its finding identity, or erase its gate signal. Only an explicit caller-supplied query filter may narrow a collection, and the normalized filter remains visible in that query's scope and continuation identity.
+
 ### 2.4 Failure Semantics
 
 Expected repository facts are data, not process failures. Examples include unresolved imports, external packages, non-source assets, generated virtual modules, unsupported framework syntax, and parse failures isolated to individual files.
@@ -83,7 +85,7 @@ The same repository snapshot, configuration, and Lumin version must produce the 
 
 ### 2.7 AI Consumption
 
-The default interaction is evidence pull, not artifact push. An agent starts from a small overview, retains its concrete run ID, requests findings pinned to that run, and drills into selected finding IDs. Every bounded response reports scope, total, returned count, truncation state, and continuation cursor.
+The default interaction is evidence pull, not artifact push. An agent starts from a small overview, retains its concrete run ID, requests findings pinned to that run, and drills into selected finding IDs. Every bounded response reports scope, normalized filters, the unfiltered scope total, matched total, returned count, truncation state, and continuation cursor.
 
 ### 2.8 Write Gate
 
@@ -138,9 +140,9 @@ Lumin v2 does not:
 4. A required capability failure is visible in the overview and cannot be interpreted as a clean result.
 5. Agents can complete audit, finding inspection, pre-write, and post-write without creating JSON files.
 6. A completed gate can be inspected by gate ID after the creating process exits and a new process opens the repository store.
-7. Query truncation is explicit, resumable, and pinned to one immutable scope or gate revision; every collection, including current-binary and run-scoped capabilities, exposes its continuation surface.
+7. Query filtering and truncation are explicit, resumable, and pinned to one immutable scope or gate revision; every collection reports its normalized filters and unfiltered scope total, and every collection, including current-binary and run-scoped capabilities, exposes its continuation surface.
 8. Framework-specific misses cannot abort unrelated language or repository analysis.
-9. A public re-export protects only the exported identity, not every sibling export in the same file.
+9. A public re-export protects only the exported identity, not every sibling export in the same file; source-role, framework, or remediation classification cannot hide a grounded finding from canonical totals or an unfiltered default finding query.
 10. Legacy JSON and SARIF are optional projections from canonical evidence, not independent truth owners.
 11. Codex and Claude Code skills invoke the same native product contract.
 12. Every accepted slice includes real corpus fixtures, platform verification, and measured performance evidence.

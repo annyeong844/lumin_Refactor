@@ -58,7 +58,7 @@ The Rust, clone, structure, and discipline analysis crates are not created in th
 | --- | --- |
 | Source extensions | Include `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.mts`, `.cts`, `.d.ts`, `.d.mts`, `.d.cts`, `.vue`, `.svelte`, and `.astro` under the canonical root. Vue is analyzable; Svelte and Astro are admitted SFC sources with explicit unavailable capability in this slice. |
 | Ignore policy | Apply the precedence below. Always exclude `.git`, the reserved `.lumin` state namespace by lexical and physical identity, and dependency-owned `node_modules`; do not prune an authored directory merely because its basename is `target`, `build`, or `coverage`. |
-| Generated/vendor | Apply versioned role rules below. In-scope uses may contribute liveness, but generated or vendored definitions are not default dead-removal candidates. |
+| Generated/vendor | Apply versioned role rules below. In-scope uses and definitions participate in liveness and canonical dead findings. A grounded generated or vendored finding receives `ReviewOnly` with its classification reason; it remains in default queries and canonical totals. |
 | Tests | Apply versioned test-role rules below. Full audit counts their fan-in separately; production liveness does not treat test-only consumers as production consumers. |
 | Declarations | Parse declaration files for type-space facts only. A declaration cannot satisfy a runtime value edge or become a value dead-removal candidate. |
 | Symlink/junction | Do not recursively traverse directory links by default. Every explicitly admitted root-contained lexical file path remains a distinct `LogicalSourceId`; physical directory identity prevents traversal cycles and physical file identity permits alias-conflict/payload-read reuse only. A gate write to one alias expands to every admitted alias under `PhysicalAliasWriteClosure`. An outside-root target is rejected and reported. |
@@ -117,7 +117,7 @@ Source roles are independent recorded facts, not one lossy enum. Invocation role
 
 - `TestLike`: a path segment exactly equal to `test`, `tests`, `__tests__`, or `__mocks__`, or a source basename ending in `.test` or `.spec` before its source extension;
 - `Generated`: an exact leading-comment `@generated` marker within the first 2 KiB, or an explicit generated role; generic directory names such as `build`, `dist`, `out`, or `target` do not imply this role;
-- `Vendored`: explicit role only; no authored path is muted merely because it resembles a vendor directory;
+- `Vendored`: explicit role only; no authored path is classified as vendored merely because it resembles a vendor directory;
 - `Declaration`: `.d.ts`, `.d.mts`, or `.d.cts`.
 
 The typed role vocabulary is exact: `test` adds `TestLike`; `production` clears it; `generated` adds `Generated`; `vendor` adds `Vendored`; and `authored` clears `Generated` and `Vendored`. Contradictory declarations for the same axis at one precedence tier are malformed configuration. Each classification stores role, rule version, reason, and configuration source. The scan profile and every exclusion are persisted. An omitted or unobservable path is a scope limitation, not evidence that the path contains no consumers.
@@ -236,7 +236,15 @@ Dead classification is export-identity based:
 - opaque dynamic or computed use limits absence claims with visible evidence;
 - production and test consumers remain distinguishable.
 
-The default query reports candidates, confidence, protection reasons, and limitations. It does not label every zero-fan-in symbol safe to delete.
+The default query reports every grounded candidate, including generated or vendored definitions, plus confidence, protection reasons, limitations, and one exact disposition:
+
+```text
+FindingDisposition =
+  ReviewCandidate
+  | ReviewOnly { reason }
+```
+
+`ReviewOnly` changes remediation eligibility only. It cannot remove a finding from canonical evidence, default queries, counts, finding IDs, lifecycle deltas, or gate signals, and there is no `Muted` or `Suppressed` finding variant. Disposition and reason remain in the canonical semantic dump; a disposition change is a directionless owner-payload change under Section 7, never a finding removal. The default query does not label every zero-fan-in symbol safe to delete; callers may narrow results only through an explicit filter that remains part of the query scope and cursor.
 
 ### 5.1 Entry, Public Surface, and Consumer Policy
 
@@ -249,7 +257,7 @@ The default query reports candidates, confidence, protection reasons, and limita
 | Private package | `private: true` disables external-public protection from package fields; explicit entries still affect reachability and real workspace consumers still contribute fan-in. |
 | Test consumer | Contributes test fan-in and protects `dead-in-test`, but leaves a production-zero identity eligible for `dead-in-production` review. |
 | Side-effect/broad consumer | Preserves module liveness or marks target identities broad/unknown without incrementing exact identity fan-in. |
-| Generated/vendor definition | May receive and contribute edges but is muted from default removal candidates with its classification reason. |
+| Generated/vendor definition | Receives and contributes edges normally. A grounded zero-fan-in identity remains a canonical/default-query finding with `ReviewOnly` and its exact source-role reason; it is not an automatic removal recommendation and is never muted or suppressed. |
 
 ### 5.2 Uncertainty Propagation
 
@@ -383,7 +391,7 @@ For post-write, each fact owner compares the immutable opening semantic baseline
 | dead export | stable symbol semantic identity and rule version |
 | opacity/limitation | source semantic identity, reason variant, stable construct identity |
 
-Targets, affected domain, confidence, grounding, and grounding-evidence identity are payload dimensions, not key fields. The owner then emits exactly one model-owned total classification:
+Targets, affected domain, confidence, grounding, grounding-evidence identity, and `FindingDisposition` plus its reason are payload dimensions, not key fields. A disposition/reason change has no invented safety order and therefore uses the directionless `OwnerPayloadChanged` dimension. The owner then emits exactly one model-owned total classification:
 
 ```text
 Introduced
@@ -450,6 +458,7 @@ Every corpus row, including retention and migration fault injection, drives the 
 | `ignore-precedence` | Hard excludes, explicit include/exclude, nested `.gitignore`, and unobserved machine-global rules follow Section 3.1 exactly. |
 | `scan-invocation-containment` | Audit/pre-write scan flags round-trip into the operation digest and `AnalysisInputId`; post-write rejects replacement flags; caller/config root escapes, later alias drift, and root-contained excluded entries produce their distinct Section 3.1 outcomes. |
 | `source-role-classification` | Test, production override, generated marker, authored override, vendor, and declaration roles persist version/reason/source without generic-directory muting. |
+| `source-role-findings-remain-visible` | Authored, generated-marker, explicitly vendored, and authored-override files contain the same grounded zero-fan-in export shape. All eligible identities remain in canonical totals and the unfiltered default query; generated/vendored rows are `ReviewOnly` with exact role reasons, authored rows are `ReviewCandidate`, and explicit filtering is the only permitted omission. |
 | `logical-source-physical-aliases` | Same-context symlink aliases, cross-package symlink aliases, cross-package hard links, case aliases, and two lexical imports of one physical payload retain separate `LogicalSourceId` package/config/role/resolver facts while compatible bytes/parse work are reused once and every alias remains one physical write-conflict group. |
 | `physical-alias-write-closure` | Declaring one cross-package symlink/hard-link alias expands the visible lease to every admitted logical alias; every context is reanalyzed after one payload write, while unleased alias topology changes, unbounded groups, and outside-root identities cannot authorize close. |
 | `repo-path-codec-golden-vectors` | Independent encoders/decoders reproduce every artifact relative/root hex and Base64 vector, `RepoPathDto`/`RepositoryRootDto` projection, native NUL round trip, rejection vector, and portable cross-platform equality; one changed tag, endian, WTF-8, DTO disagreement, or canonicality rule fails architecture-check. |
@@ -587,6 +596,8 @@ Architecture review then approves target budgets for:
 
 Targets use named hardware/corpora, legacy baselines, and Phase 0 probes. They are goals rather than claims that an unimplemented product already achieved them.
 
+A timing or memory sample is invalid unless its unfiltered canonical semantic dump, `scopeTotal`, matched `total`, finding IDs, dispositions, and limitations match the independently authored corpus truth. No target may be met by muting, implicit filtering, source-scope reduction, sampling, early termination, result caps, arbitrary timeouts, or omission of a required capability. Legacy measurements remain timing baselines only; legacy `MUTED`/suppression output is not product truth.
+
 **Phase 1 acceptance:** the completed public `lumin` binary is measured against every target below. A missed target is a slice failure or an explicitly reviewed contract revision; CI cannot invent or relax a number after seeing the result.
 
 **Phase boundary:** Phase 0 approves architecture feasibility and numeric targets only. Every criterion in Section 14, every traceability row in Section 15, and every implementation command in Section 17 is a Phase 1 exit condition unless it is separately and explicitly labeled as a Phase 0 standalone probe. None may block the start of Phase 1 after Phase 0 freezes, and no `lumin-xtask` implementation command is a Phase 0 freeze prerequisite.
@@ -624,7 +635,7 @@ These are Phase 1 exit criteria for the completed product. They are not Phase 0 
 1. Every corpus row passes through the public `lumin` binary.
 2. The SFC boundary admits Vue, Svelte, and Astro through one stage contract: Vue and Next.js regressions complete without process abort, while unsupported dialects produce explicit per-dialect unavailable limitations and never inherit Vue completeness.
 3. The 20-module public-re-export corpus reports all 60 dead siblings and protects all 20 public identities.
-4. A reachable file's unused export remains a candidate.
+4. A reachable file's unused export remains a candidate, and source-role or remediation classification cannot hide any grounded candidate from canonical totals or an unfiltered default query.
 5. `jobs=1` and repeated default-job runs produce identical canonical semantic dumps and finding IDs; runtime metrics and physical store bytes are excluded.
 6. Randomized worker completion tests preserve output identity.
 7. No analyzed source/config payload is read or parsed more than once for extraction in a cold run, including demand-closure continuation and cached-demand miss paths; the separate final hash-only freshness pass is measured and does not reparse.
@@ -669,7 +680,7 @@ Every row in this table traces a Phase 1 acceptance criterion. The commands and 
 | 1 | `foundation_corpus_contract` | all Section 9 rows | `lumin-xtask corpus foundation` | Every expected query value matches authored truth. |
 | 2 | `framework_failures_are_scoped` | SFC dialect, Vue, and route-group rows | `lumin-xtask corpus foundation` | `overview` reports per-dialect Vue completion or scoped unavailable dialect evidence, never aggregate SFC completeness, process abort, or framework policy outside `lumin-sfc`. |
 | 3 | `public_surface_is_identity_scoped` | 20-module re-export matrix | `lumin-xtask corpus foundation` | 60 candidates and 20 protected identities. |
-| 4 | `reachable_module_keeps_dead_exports` | `reachable-dead-sibling` | `lumin-xtask corpus foundation` | The unused sibling remains a candidate. |
+| 4 | `reachable_module_keeps_dead_exports` | `reachable-dead-sibling`, `source-role-findings-remain-visible` | `lumin-xtask corpus foundation` | Every grounded unused identity remains canonical and appears in the unfiltered query; generated/vendored roles change only `FindingDisposition`. |
 | 5 | `semantic_dump_is_worker_invariant` | full foundation corpus | `lumin-xtask corpus foundation --determinism` | Canonical semantic dump and finding IDs match. |
 | 6 | `scheduler_completion_order_is_irrelevant` | randomized stage-result fixture | `cargo test -p lumin-engine` | Repeated randomized completion yields one semantic dump. |
 | 7 | `source_payload_is_extracted_once` | read-counter, semantic-demand continuation/cache-miss, plus Vue external script | `lumin-xtask corpus foundation` | Every source/config payload is consumed once; owned continuation and cached-demand miss do not trigger a second parse, while final hash validation remains distinct. |
@@ -717,7 +728,7 @@ Every row in this table traces a Phase 1 acceptance criterion. The commands and 
 | 6 completed gate queryable | in scope | Slice AC 10 plus restart/reopen corpus. |
 | 7 resumable truncation | in scope | Slice AC 12/24 and nested, capabilities, collection-ordering, and retention-plan cursor corpus. |
 | 8 framework miss isolation | in scope | Slice AC 2. |
-| 9 identity-scoped public export | in scope | Slice AC 3-4. |
+| 9 identity-scoped public export and finding visibility | in scope | Slice AC 3-4 and the source-role visibility corpus. |
 | 10 projections are noncanonical | in scope | Slice AC 13 and projection checks. |
 | 11 one skill/binary contract | in scope | Slice AC 9 and explicit `package-check skills` proof. |
 | 12 corpus/platform/performance evidence | completion-gated | Slice AC 1, 9, and 16; remains unclaimed until all pass. |

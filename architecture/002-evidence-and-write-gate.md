@@ -187,13 +187,14 @@ Every finding has:
 - a stable finding ID derived from semantic identity, not output order;
 - one rule and owner capability;
 - severity and confidence as separate values;
+- one model-owned `FindingDisposition` that is `ReviewCandidate` or `ReviewOnly` with a stable reason and never controls finding existence;
 - a concise claim;
 - evidence references;
 - relevant scan scope and limitations;
 - source fingerprints for referenced spans;
 - optional remediation and verification hints.
 
-Counts are computed from canonical rows or owned canonical aggregate rows. A bounded top-N projection cannot become the count owner.
+Counts are computed from canonical rows or owned canonical aggregate rows. A bounded top-N projection or remediation disposition cannot become the count owner. Canonical evidence has no `Muted` or `Suppressed` finding class.
 
 ## 4. Query Protocol
 
@@ -217,7 +218,9 @@ Every collection response uses one envelope:
 ```json
 {
   "scope": {"kind": "run", "id": "run_..."},
+  "filters": {},
   "ordering": "findings.v1",
+  "scopeTotal": 812,
   "total": 812,
   "returned": 20,
   "truncated": true,
@@ -229,7 +232,8 @@ Every collection response uses one envelope:
 Rules:
 
 - no hidden `take(N)`;
-- `total`, `returned`, and `truncated` are mandatory;
+- normalized `filters`, unfiltered `scopeTotal`, matched `total`, `returned`, and `truncated` are mandatory;
+- an omitted CLI filter normalizes to `{}`; `lumin findings` and `lumin gate findings` with `{}` return every canonical finding, including `ReviewOnly`, with no implicit role, framework, severity, or remediation filter;
 - cursors are opaque and bound to protocol schema, immutable scope identity or gate revision, normalized filters, collection path, ordering ID/version, page-size policy, and last semantic key;
 - every collection uses its owner-defined ordering below; there is no backend-order or generic-finding-order fallback;
 - a current-worktree absence query reports `SnapshotStatus`; drift or unverifiable freshness cannot render a clean claim;
@@ -305,6 +309,7 @@ Projection rules:
 - all values come from canonical evidence;
 - every run-derived projection names one immutable run and cannot follow a moving latest pointer;
 - projection limits do not alter canonical totals;
+- finding disposition may change remediation wording but cannot omit a canonical finding, change its ordering key, or erase its gate signal; only an explicit caller filter may narrow a projection;
 - omitted data is counted and identified;
 - legacy exports are compatibility products with an explicit retirement status;
 - projection failures do not mutate canonical evidence;
@@ -792,7 +797,7 @@ Every migration crash point has one recovery rule:
 1. A complete default audit creates only the repository state marker, lifecycle lock/store, four immutable managed-parent anchors, small attempt/run envelopes, latest pointer, and canonical evidence store; the migration intent exists only while migration is live.
 2. An agent can answer a focused finding question without opening either file directly.
 3. Every bounded response, including binary- and run-scoped capabilities, supports explicit continuation.
-4. Projection limits cannot change canonical counts.
+4. Projection limits, source-role policy, and finding disposition cannot change canonical counts or hide a grounded finding from an unfiltered default query; only an explicit echoed caller filter may narrow a collection.
 5. A failed required capability is prominent in `overview`.
 6. Pre-write and post-write require no intent JSON or temporary transport file.
 7. Post-write needs only the explicit gate ID, a caller-retained operation ID, and repository context; it never resends intent or baseline.
