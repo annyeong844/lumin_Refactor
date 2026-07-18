@@ -1,0 +1,92 @@
+{
+  "authorityArtifacts": {
+    "inventory": {
+      "path": "specs/inventory-config-semantics.v1.json",
+      "sha256": "ebca37c3b33f8e4d92ea29e0bcdc51b7cd5ea04a453c4c469a89072f3d2fac02"
+    },
+    "resolver": {
+      "path": "specs/resolver-config-semantics.v1.json",
+      "sha256": "41ffa3dcc108e74dca351b4f3a5fa182090e1481ed6d8333235f38f0459a29a1"
+    }
+  },
+  "claim": "clean-pinned-upstream-provenance",
+  "claimBoundary": "frozen upstream identity only; no product implementation, package, behavior, or budget claim",
+  "compilerOptions": {
+    "count": 122,
+    "keyShapeSha256": "f2fb5da0cf33ea694a8bf4ccae909a1526e7978693c15ac1a6b10b3cdfbc9d9a",
+    "nodeVersion": "v22.23.1"
+  },
+  "frozenArchitecture": {
+    "commit": "9a0dbe5c89463892c001e864c4f18eeab9e0eaed",
+    "manifestSha256": "e2ca379a8a659f2febbc4e277c89db67bb02035a6b10467cf78a5663f21cd99a"
+  },
+  "negativeControlCount": 6,
+  "nodeTag": {
+    "commit": "d89bb1b482fa09245c4f2cbb3b5b6a70bea6deaf",
+    "tag": "v24.14.1",
+    "tagObjectSha": "c0195d34b719192fb6edcdb5d572d102cb8804a5"
+  },
+  "npmPackage": {
+    "gitHead": "5ccf24e9c4f7a66cbce23bdd0476fabb39945b9b",
+    "name": "typescript",
+    "repository": "https://github.com/microsoft/TypeScript.git",
+    "version": "6.0.0-beta"
+  },
+  "oracleSha256": "af6deaf54d399906e2f913d6119e36a0e1f57fc76a20aa3258587e23013f2040",
+  "runnerCommit": "25bf5c5dd11da351c68c90da54e40b44e62120ce",
+  "schemaVersion": "lumin-phase0-pinned-upstream-provenance-result.v1",
+  "sourceManifestEntries": 4,
+  "sourceManifestSha256": "0f39d6782d79e980e128a7a70ed316ac0cae314d9e2812bec8e6825422406b92",
+  "status": "pass",
+  "upstreamByteChecks": [
+    {
+      "id": "typescript-npm-tarball",
+      "path": "objects/typescript-6.0.0-beta.tgz",
+      "sha256": "ee496514d0fd52243efad620e6d2162d26811549a641bc124ea975322a85ea15",
+      "sizeBytes": 4502688,
+      "status": "pass"
+    },
+    {
+      "id": "typescript-js",
+      "path": "objects/typescript.js",
+      "sha256": "34aa78cac5065b7628a6124c8d82fe539c4b4efe67d638ab374d716615d72e74",
+      "sizeBytes": 9141513,
+      "status": "pass"
+    },
+    {
+      "id": "typescript-module-resolver",
+      "path": "objects/typescript-moduleNameResolver.ts",
+      "sha256": "b2c971b6674b3312e43cd198ee250dba86a55fea8b06b28388737e4db7b32c7f",
+      "sizeBytes": 181609,
+      "status": "pass"
+    },
+    {
+      "id": "typescript-config-parser",
+      "path": "objects/typescript-commandLineParser.ts",
+      "sha256": "e48e42605eef2b1880947b658187cf455b3c91aa4bcf32007ab7296b088009ab",
+      "sizeBytes": 183461,
+      "status": "pass"
+    },
+    {
+      "id": "node-packages-document",
+      "path": "objects/node-packages.md",
+      "sha256": "6f2c932d0f80a13fbd8bff8525b45b616f791fe35b82f9b2b281aa8104ef3ab9",
+      "sizeBytes": 40412,
+      "status": "pass"
+    },
+    {
+      "id": "node-esm-resolver",
+      "path": "objects/node-resolve.js",
+      "sha256": "91aab51b1276d7051fee3f9fcb71c2d2808ec78fd4a45f296950c154b62a537f",
+      "sizeBytes": 39202,
+      "status": "pass"
+    },
+    {
+      "id": "pnpm-workspace-document",
+      "path": "objects/pnpm-workspace_yaml.md",
+      "sha256": "54b8e99b8b1f284064f5b65277ac6793919f80cf39c21ff9f5ac59ba240d324f",
+      "sizeBytes": 1730,
+      "status": "pass"
+    }
+  ]
+}

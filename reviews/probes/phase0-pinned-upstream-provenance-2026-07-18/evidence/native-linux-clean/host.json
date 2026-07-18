@@ -1,0 +1,25 @@
+{
+  "capturedAtUtc": "2026-07-18T09:08:52.382066+00:00",
+  "environment": {
+    "GITHUB_ACTIONS": "true",
+    "GITHUB_JOB": "native-linux-clean",
+    "GITHUB_REF": "refs/heads/phase0-pinned-provenance-20260718",
+    "GITHUB_REPOSITORY": "annyeong844/lumin_Refactor",
+    "GITHUB_RUN_ATTEMPT": "1",
+    "GITHUB_RUN_ID": "29638671368",
+    "GITHUB_SHA": "25bf5c5dd11da351c68c90da54e40b44e62120ce",
+    "RUNNER_ARCH": "X64",
+    "RUNNER_OS": "Linux"
+  },
+  "machine": "x86_64",
+  "node": "v22.23.1",
+  "openssl": "OpenSSL 3.0.13 30 Jan 2024",
+  "platform": "Linux-6.17.0-1020-azure-x86_64-with-glibc2.39",
+  "python": "3.12.3 (main, Jun 19 2026, 12:46:00) [GCC 13.3.0]",
+  "pythonExecutable": "/usr/bin/python3",
+  "release": "6.17.0-1020-azure",
+  "repositoryHead": "25bf5c5dd11da351c68c90da54e40b44e62120ce",
+  "repositoryRoot": "/home/runner/work/lumin_Refactor/lumin_Refactor",
+  "schemaVersion": "lumin-phase0-provenance-host.v1",
+  "system": "Linux"
+}

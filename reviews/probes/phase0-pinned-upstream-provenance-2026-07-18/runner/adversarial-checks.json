@@ -1,0 +1,53 @@
+{
+  "baseline": {
+    "compilerOptionCount": 122,
+    "compilerOptionDigest": "f2fb5da0cf33ea694a8bf4ccae909a1526e7978693c15ac1a6b10b3cdfbc9d9a",
+    "evidenceEntries": 18,
+    "evidenceManifestSha256": "2228b0ac40afe62d4d72c12919e7dae1a8d1c8a6921f507c6ea6790e56dfc28f",
+    "negativeControls": 6,
+    "runnerCommit": "25bf5c5dd11da351c68c90da54e40b44e62120ce",
+    "status": "pass",
+    "upstreamByteChecks": 7
+  },
+  "scenarioCount": 6,
+  "scenarios": [
+    {
+      "actualReasonCode": "byte-sha256-mismatch",
+      "expectedReasonCode": "byte-sha256-mismatch",
+      "id": "source-byte-substitution-with-resealed-manifest",
+      "status": "pass"
+    },
+    {
+      "actualReasonCode": "derived-byte-mismatch",
+      "expectedReasonCode": "derived-byte-mismatch",
+      "id": "typescript-js-substitution-with-resealed-manifest",
+      "status": "pass"
+    },
+    {
+      "actualReasonCode": "evidence-oracle-mismatch",
+      "expectedReasonCode": "evidence-oracle-mismatch",
+      "id": "oracle-substitution-with-resealed-manifest",
+      "status": "pass"
+    },
+    {
+      "actualReasonCode": "negative-controls-invalid",
+      "expectedReasonCode": "negative-controls-invalid",
+      "id": "negative-control-status-forgery",
+      "status": "pass"
+    },
+    {
+      "actualReasonCode": "evidence-inventory-mismatch",
+      "expectedReasonCode": "evidence-inventory-mismatch",
+      "id": "extra-resealed-evidence-member",
+      "status": "pass"
+    },
+    {
+      "actualReasonCode": "stale-evidence",
+      "expectedReasonCode": "stale-evidence",
+      "id": "preexisting-evidence-capture",
+      "status": "pass"
+    }
+  ],
+  "schemaVersion": "lumin-phase0-provenance-adversarial-checks.v1",
+  "status": "pass"
+}
