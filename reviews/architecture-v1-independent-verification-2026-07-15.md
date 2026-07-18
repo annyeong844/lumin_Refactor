@@ -2,7 +2,7 @@
 
 Document role: current Architecture v1 freeze verification owner
 
-Status: false-negative amendment independently passed; numeric-target gate pending
+Status: numeric-target candidate authored; independent exact-tree review pending
 
 Freeze decision: blocked
 
@@ -35,6 +35,7 @@ Freeze decision: blocked
 | Externally reviewed clean-provenance evidence candidate | `e6147b1b2dfea45d223c87f3ba7ffec543e9f82d`; exact Git/architecture/34-entry packet/18-entry evidence binding and all seven upstream identities passed, while detached transport/runner authorization was REOPENED by NEW-PROVENANCE-01 |
 | Externally reviewed clean-provenance closure candidate | `658b5c7334fed8f0e42dd14b9910c9b719f3e55b`; B-07, exact candidate/packet/evidence binding, seven upstream identities, TypeScript/Node derivations, official workflow/artifact binding, and NEW-PROVENANCE-01 closure passed with no H/R regression or new finding |
 | Externally reviewed false-negative amendment candidate | `a1e07ed7b9e05181cd58bfba5f3846c1baab8a93`; B-07, canonical/default-query visibility, explicit filter/count/cursor semantics, disposition/delta/gate ownership, and unmuted performance-sample validity passed with no H/R regression or new finding; NEW-FALSE-NEGATIVE-01 is closed |
+| Numeric-target approval candidate awaiting external review | `a410605ff9f5512cadd1cb105d346444044398ce`; exact targets, validity rules, generated scale truth, and timing-only legacy/probe inputs are authored, but no independent PASS is claimed |
 | Verifier | external independent reviewer, report supplied by the user; not the architecture-authoring Codex session |
 | Earlier externally reverified input manifest/report | `2ff71a19ebd5fd2939f1aa6da77a2d3276c320791a19a1364670ab78d9c2210e` / `67a001b2cbfd6af36d3e60712d8dfa2bab6dfcc4a7756114f87b9d34d5530611` |
 | Prior externally reverified input manifest/report | `9d2366afa0fa360397fbf4ae7c0ad4205d34739f20f8f7acff70207b2152b6fd` / `07df439ded1101b3ddea1328880579be918db1cfbe8d7861d28c0ca1d18ad20a` |
@@ -69,6 +70,8 @@ Freeze decision: blocked
 | Clean-provenance closure independent checks | `437/437` machine checks and `11/11` required adversarial rejections passed; author `203/203` remained consistency-only. Resealed fetch, host, result-runner, retained-byte, workflow-head, source, oracle, inventory, and stale-capture mutations failed closed |
 | False-negative amendment manifest/review | `8b0d2ceddb930533e6967c48e06954f09f53abf8f7a688f4dfb0baeb050a6339` / `6593608d4508eecf92b5b1793ead13fa32d4e30e4a2258a60b4f921ef98ea799` |
 | False-negative amendment independent checks | `210/210` passed. The reviewer independently reproduced the legacy policy-exclusion false negative, tested generated/vendor, default-filter, projection, skill, delta, and benchmark bypass routes, found no H/R or prior-gate regression, and kept author `77/77` consistency checks outside PASS authority |
+| Numeric-target candidate manifests | B-07 `6b23f500e633f28611c27bedb9998fb7ff44a69af6682d58b8554e7b5b33d86c`; 42-entry packet `a749a5d80600295fe765edbccf8ed23be170a9211151186923e2f3040349c2f4`; generated 780-file corpus content `9e51b070a934c027e6d2d9a4610fac764592ecb8f05bf41a2ab6f5eb46158d3e` |
+| Numeric-target author consistency checks | `345/345` passed; result JSON `f152f92f389809930cd5c95d5b310301e40ee06ea14f52ec906f15aa15d6d065`; consistency-only and not independent PASS authority |
 
 The first report verified the exact first amended revision. Several later reports verified supplied byte manifests but could not bind loose uploads to their declared Git commits. Exact-tree reports subsequently passed B-07 for `491f478`, `d7e96b0`, and `65e6021`, each only for its own named revision. The independent freeze report for `65e6021` excluded Author-Side Preflight from PASS evidence, reproduced all 16 Git-object bindings and the manifest, passed 239 machine checks, found no REOPEN/NEW item, and closed NEW-H10-01/NEW-H11-01. The superseded `58b1060` backend amendment never reached external review: exact-checkout verification exposed its incomplete evidence tree. The external report for replacement `579c235` passed its semantic amendment and canonical evidence but reopened that exact SHA for the separate stale-seal finding NEW-EVIDENCE-01. Exact candidate `b8ff840` deletes only that competing seal; the independent closure report passed B-07, closed NEW-EVIDENCE-01, preserved the 16 owner blobs and all 168 path-addressed evidence bindings, and found no regression or new finding. The exact-tree report for `9a0dbe5` then passed B-07, closed NEW-PHASE-GATE-01 and its F-12 predecessor, preserved all 38 acceptance criteria, 38 traceability rows, 22 Product ACs, and six distribution requirements, and found no H/R regression or new finding. The static-packaging report for `e0a2810` passed exact Git and packet binding, the standalone boundary, and native Linux workflow provenance, but reproduced a false PASS by substituting dynamic `/bin/true` for both GNU and musl artifacts while retaining stale run/linkage evidence. It therefore reopened the Windows/WSL and detached-artifact portions under NEW-STATIC-PACKAGING-01 without reopening any H/R contract. Exact closure candidate `4315eb7` binds one artifact byte sequence through hashing, direct PE/ELF inspection, a fresh execution copy, run-v2 source/architecture identity, post-execution hashing, retained evidence, and detached verification. Its independent report passed all platform scopes, `202/202` checks and six concrete attacks, closed NEW-STATIC-PACKAGING-01 without accepted risk, and found no H/R regression or new finding. The clean-provenance report for `e6147b1` independently passed every retained upstream byte and derivation but resealed false `302`/redirect/gzip metadata and a forged clean-runner identity without rejection. It opened NEW-PROVENANCE-01 without reopening an H/R contract. The exact-tree closure report for `658b5c7` passed B-07, all packet/upstream/derivation/workflow bindings, `437/437` independent checks, and `11/11` attacks; it closed NEW-PROVENANCE-01 without a new finding, H/R regression, or accepted risk. The exact-tree report for `a1e07ed` then passed B-07 and `210/210` independent checks, reproduced the legacy false negative, rejected every reviewed hidden-mute route, closed NEW-FALSE-NEGATIVE-01, and found no H/R regression, prior-gate regression, accepted risk, or new finding.
 
@@ -435,8 +438,9 @@ and canonical evidence passed for `579c235`, NEW-EVIDENCE-01 closure passed for
 static-packaging closure candidate `4315eb7` passed all three required platform scopes
 and closed NEW-STATIC-PACKAGING-01. Exact clean-provenance closure candidate `658b5c7`
 passed and closed NEW-PROVENANCE-01. Exact false-negative amendment candidate `a1e07ed`
-also passed independent exact-tree review and closed NEW-FALSE-NEGATIVE-01. Phase 0 now
-has one blocker that can be closed without a production scaffold:
+also passed independent exact-tree review and closed NEW-FALSE-NEGATIVE-01. Exact
+numeric-target candidate `a410605` is authored and awaits independent exact-tree
+review. Phase 0 now has one blocker that can be closed without a production scaffold:
 
 1. Approve numeric Phase 1 targets against the independently passed unmuted contract.
 
@@ -477,10 +481,29 @@ stack, worker count, or numeric budget.
 
 ### Numeric-target approval
 
-With NEW-FALSE-NEGATIVE-01 independently passed, approve numeric Phase 1 target budgets for time,
-peak RSS, worker stack, default jobs, and binary size from the named Phase 0 probe
-evidence, keeping the `/mnt/<drive>` diagnostic separate as specified. These are targets,
-not achieved-product claims, and no muted or reduced-result legacy output is target truth.
+Candidate `a410605ff9f5512cadd1cb105d346444044398ce` selects the exact Phase 1 targets and
+measurement rules under
+`reviews/probes/phase0-numeric-target-selection-2026-07-18/`. The blocking generated
+corpus has 780 files, 7,461,511 bytes, and 256 authored grounded findings split into
+128 `ReviewCandidate`, 64 generated `ReviewOnly`, and 64 vendored `ReviewOnly` rows.
+Every measured run must return all authored tuples through `filters: {}` with
+`scopeTotal == total == 256`, no limitations, and stable one-to-one finding IDs.
+
+The candidate targets cold/warm full audit at 30/8 seconds p50, cold/warm pre-write at
+6/4 seconds p50, one-file and exact 32-file post-write at 4/8 seconds p50, product RSS
+at 512 MiB, Rayon worker stacks at exactly 4 MiB, default jobs at
+`max(1, min(8, available_parallelism))`, default-jobs cold p50 at no more than 75% of
+`jobs=1` on hosts exposing at least four workers, and each stripped uncompressed release
+binary at 12 MiB. Timing is the median of three valid repetitions per blocking
+environment; RSS is the maximum across every valid mode and repetition. Cold means a
+fresh repository copy, state namespace, and process, not an OS-cold page cache.
+
+The 42-entry packet manifest is
+`a749a5d80600295fe765edbccf8ed23be170a9211151186923e2f3040349c2f4`; author checks
+passed `345/345` but are consistency-only. Independent review must decide whether the
+numbers, corpus truth, validity rules, evidence boundary, and H/R preservation are
+sufficient. These are targets, not achieved-product claims, `/mnt/<drive>` remains
+report-only, and no muted or reduced-result legacy output is target truth.
 
 The following remain mandatory but are Phase 1 exit criteria, not Phase 0 freeze gates:
 
