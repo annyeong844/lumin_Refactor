@@ -1,0 +1,360 @@
+{
+  "artifactRootChecked": true,
+  "candidate": "4315eb7dee35fff3de40fb04e1dd3c4a3fc990e3",
+  "checks": {
+    "fail": 0,
+    "pass": 69
+  },
+  "independenceBoundary": "Author-side consistency output only; not independent review evidence.",
+  "packetManifestSha256": "ad2e746441ee778ecf8e8f51a12a331d3c6b3c78a1c995fb661970ab925b6764",
+  "results": [
+    {
+      "evidence": "4315eb7dee35fff3de40fb04e1dd3c4a3fc990e3",
+      "name": "candidate-object",
+      "status": "PASS"
+    },
+    {
+      "evidence": "bb79655cb94c59822a928ede1b861980e6358b6a",
+      "name": "candidate-parent",
+      "status": "PASS"
+    },
+    {
+      "evidence": "2cb4e5e055e8e9e82e26351af5ad3ddc2ca40a11",
+      "name": "candidate-tree",
+      "status": "PASS"
+    },
+    {
+      "evidence": "Regenerate exact-bound static packaging evidence",
+      "name": "candidate-subject",
+      "status": "PASS"
+    },
+    {
+      "evidence": "56f7e17c1e45d3538604336365105541db39ada3",
+      "name": "binding-commit",
+      "status": "PASS"
+    },
+    {
+      "evidence": "bb79655cb94c59822a928ede1b861980e6358b6a",
+      "name": "source-commit",
+      "status": "PASS"
+    },
+    {
+      "evidence": "44 probe-only paths",
+      "name": "candidate-path-scope",
+      "status": "PASS"
+    },
+    {
+      "evidence": "60 review/probe-only paths",
+      "name": "closure-range-scope",
+      "status": "PASS"
+    },
+    {
+      "evidence": "e2ca379a8a659f2febbc4e277c89db67bb02035a6b10467cf78a5663f21cd99a",
+      "name": "architecture-manifest-digest",
+      "status": "PASS"
+    },
+    {
+      "evidence": "16/16 exact candidate blobs",
+      "name": "architecture-binding",
+      "status": "PASS"
+    },
+    {
+      "evidence": "3/3 strict JSON",
+      "name": "architecture-machine-artifacts",
+      "status": "PASS"
+    },
+    {
+      "evidence": "73/73 exact Git blobs",
+      "name": "packet-manifest",
+      "status": "PASS"
+    },
+    {
+      "evidence": "ad2e746441ee778ecf8e8f51a12a331d3c6b3c78a1c995fb661970ab925b6764",
+      "name": "request-packet-manifest-copy",
+      "status": "PASS"
+    },
+    {
+      "evidence": "9/9 exact source blobs",
+      "name": "source-manifest",
+      "status": "PASS"
+    },
+    {
+      "evidence": "all packet JSON rejects duplicate keys",
+      "name": "packet-json-strict-parse",
+      "status": "PASS"
+    },
+    {
+      "evidence": "13",
+      "name": "evidence-manifest:windows-ntfs",
+      "status": "PASS"
+    },
+    {
+      "evidence": "('windows-msvc',)",
+      "name": "summary-binding:windows-ntfs",
+      "status": "PASS"
+    },
+    {
+      "evidence": "standalone feasibility only",
+      "name": "claim-boundary:windows-ntfs",
+      "status": "PASS"
+    },
+    {
+      "evidence": "exact direct versions",
+      "name": "dependencies:windows-ntfs",
+      "status": "PASS"
+    },
+    {
+      "evidence": "['rayon-core@1.13.0:rayon-core']",
+      "name": "cargo-links:windows-ntfs",
+      "status": "PASS"
+    },
+    {
+      "evidence": "four exact controls",
+      "name": "negative-controls:windows-ntfs",
+      "status": "PASS"
+    },
+    {
+      "evidence": "exact run contract",
+      "name": "run-v2:windows-ntfs/windows-msvc",
+      "status": "PASS"
+    },
+    {
+      "evidence": "dd7ba4cda6e5654f864c79c18e0aa0a9a96001b0591490e3038d416a11762d7a",
+      "name": "inspection-binding:windows-ntfs/windows-msvc",
+      "status": "PASS"
+    },
+    {
+      "evidence": "dd7ba4cda6e5654f864c79c18e0aa0a9a96001b0591490e3038d416a11762d7a",
+      "name": "execution-binding:windows-ntfs/windows-msvc",
+      "status": "PASS"
+    },
+    {
+      "evidence": "21",
+      "name": "evidence-manifest:wsl2-ext4",
+      "status": "PASS"
+    },
+    {
+      "evidence": "('linux-gnu', 'linux-musl')",
+      "name": "summary-binding:wsl2-ext4",
+      "status": "PASS"
+    },
+    {
+      "evidence": "standalone feasibility only",
+      "name": "claim-boundary:wsl2-ext4",
+      "status": "PASS"
+    },
+    {
+      "evidence": "exact direct versions",
+      "name": "dependencies:wsl2-ext4",
+      "status": "PASS"
+    },
+    {
+      "evidence": "['rayon-core@1.13.0:rayon-core']",
+      "name": "cargo-links:wsl2-ext4",
+      "status": "PASS"
+    },
+    {
+      "evidence": "four exact controls",
+      "name": "negative-controls:wsl2-ext4",
+      "status": "PASS"
+    },
+    {
+      "evidence": "exact run contract",
+      "name": "run-v2:wsl2-ext4/linux-gnu",
+      "status": "PASS"
+    },
+    {
+      "evidence": "6892e467d61fc2ffcc3c0fec73323a8d8c2d789e709cfd801d0ff94ffc50caf4",
+      "name": "inspection-binding:wsl2-ext4/linux-gnu",
+      "status": "PASS"
+    },
+    {
+      "evidence": "6892e467d61fc2ffcc3c0fec73323a8d8c2d789e709cfd801d0ff94ffc50caf4",
+      "name": "execution-binding:wsl2-ext4/linux-gnu",
+      "status": "PASS"
+    },
+    {
+      "evidence": "exact run contract",
+      "name": "run-v2:wsl2-ext4/linux-musl",
+      "status": "PASS"
+    },
+    {
+      "evidence": "ad9b7d8789111ede6c065805185d21cc07a87400555eedecad859952fb258a32",
+      "name": "inspection-binding:wsl2-ext4/linux-musl",
+      "status": "PASS"
+    },
+    {
+      "evidence": "ad9b7d8789111ede6c065805185d21cc07a87400555eedecad859952fb258a32",
+      "name": "execution-binding:wsl2-ext4/linux-musl",
+      "status": "PASS"
+    },
+    {
+      "evidence": "21",
+      "name": "evidence-manifest:native-linux-ext4",
+      "status": "PASS"
+    },
+    {
+      "evidence": "('linux-gnu', 'linux-musl')",
+      "name": "summary-binding:native-linux-ext4",
+      "status": "PASS"
+    },
+    {
+      "evidence": "standalone feasibility only",
+      "name": "claim-boundary:native-linux-ext4",
+      "status": "PASS"
+    },
+    {
+      "evidence": "exact direct versions",
+      "name": "dependencies:native-linux-ext4",
+      "status": "PASS"
+    },
+    {
+      "evidence": "['rayon-core@1.13.0:rayon-core']",
+      "name": "cargo-links:native-linux-ext4",
+      "status": "PASS"
+    },
+    {
+      "evidence": "four exact controls",
+      "name": "negative-controls:native-linux-ext4",
+      "status": "PASS"
+    },
+    {
+      "evidence": "exact run contract",
+      "name": "run-v2:native-linux-ext4/linux-gnu",
+      "status": "PASS"
+    },
+    {
+      "evidence": "07c708408353f15956ebaecc8e58b196f0ee7af70a9b1f974c9d2a0d4825d69f",
+      "name": "inspection-binding:native-linux-ext4/linux-gnu",
+      "status": "PASS"
+    },
+    {
+      "evidence": "07c708408353f15956ebaecc8e58b196f0ee7af70a9b1f974c9d2a0d4825d69f",
+      "name": "execution-binding:native-linux-ext4/linux-gnu",
+      "status": "PASS"
+    },
+    {
+      "evidence": "exact run contract",
+      "name": "run-v2:native-linux-ext4/linux-musl",
+      "status": "PASS"
+    },
+    {
+      "evidence": "6ca7bb97f794a631f6375848de2f74c5f2444a7ea27086e09a2b4fec67270563",
+      "name": "inspection-binding:native-linux-ext4/linux-musl",
+      "status": "PASS"
+    },
+    {
+      "evidence": "6ca7bb97f794a631f6375848de2f74c5f2444a7ea27086e09a2b4fec67270563",
+      "name": "execution-binding:native-linux-ext4/linux-musl",
+      "status": "PASS"
+    },
+    {
+      "evidence": "72/72 retained workflow-local checks",
+      "name": "native-workflow-record",
+      "status": "PASS"
+    },
+    {
+      "evidence": "exact closure identities",
+      "name": "request-binding",
+      "status": "PASS"
+    },
+    {
+      "evidence": "1659125 2f238899ccccbb43a1c345eab3746f68da56a86208ef0d46fa11e36853cbb971",
+      "name": "native-workflow-archive",
+      "status": "PASS"
+    },
+    {
+      "evidence": "21/21 Git-identical evidence members",
+      "name": "native-zip-evidence",
+      "status": "PASS"
+    },
+    {
+      "evidence": "1412608 dd7ba4cda6e5654f864c79c18e0aa0a9a96001b0591490e3038d416a11762d7a",
+      "name": "detached-identity:windows-msvc",
+      "status": "PASS"
+    },
+    {
+      "evidence": "PE32+-x86_64",
+      "name": "detached-inspection:windows-msvc",
+      "status": "PASS"
+    },
+    {
+      "evidence": "1794736 6892e467d61fc2ffcc3c0fec73323a8d8c2d789e709cfd801d0ff94ffc50caf4",
+      "name": "detached-identity:wsl2-linux-gnu",
+      "status": "PASS"
+    },
+    {
+      "evidence": "ELF64-x86_64",
+      "name": "detached-inspection:wsl2-linux-gnu",
+      "status": "PASS"
+    },
+    {
+      "evidence": "1897184 ad9b7d8789111ede6c065805185d21cc07a87400555eedecad859952fb258a32",
+      "name": "detached-identity:wsl2-linux-musl",
+      "status": "PASS"
+    },
+    {
+      "evidence": "ELF64-x86_64",
+      "name": "detached-inspection:wsl2-linux-musl",
+      "status": "PASS"
+    },
+    {
+      "evidence": "1794800 07c708408353f15956ebaecc8e58b196f0ee7af70a9b1f974c9d2a0d4825d69f",
+      "name": "detached-identity:native-linux-gnu",
+      "status": "PASS"
+    },
+    {
+      "evidence": "ELF64-x86_64",
+      "name": "detached-inspection:native-linux-gnu",
+      "status": "PASS"
+    },
+    {
+      "evidence": "1901280 6ca7bb97f794a631f6375848de2f74c5f2444a7ea27086e09a2b4fec67270563",
+      "name": "detached-identity:native-linux-musl",
+      "status": "PASS"
+    },
+    {
+      "evidence": "ELF64-x86_64",
+      "name": "detached-inspection:native-linux-musl",
+      "status": "PASS"
+    },
+    {
+      "evidence": "exact stdout",
+      "name": "fresh-run:wsl2-linux-gnu",
+      "status": "PASS"
+    },
+    {
+      "evidence": "exact stdout",
+      "name": "fresh-run:wsl2-linux-musl",
+      "status": "PASS"
+    },
+    {
+      "evidence": "exact stdout",
+      "name": "fresh-run:native-linux-gnu",
+      "status": "PASS"
+    },
+    {
+      "evidence": "exact stdout",
+      "name": "fresh-run:native-linux-musl",
+      "status": "PASS"
+    },
+    {
+      "evidence": "FAIL[run-json-invalid]: invalid JSON linux-gnu exact-artifact stdout: Expecting value: line 1 column 1 (char 0)",
+      "name": "negative-control:unrelated-gnu",
+      "status": "PASS"
+    },
+    {
+      "evidence": "FAIL[dynamic-musl-artifact]: musl artifact has an interpreter or dynamic dependency",
+      "name": "negative-control:dynamic-musl",
+      "status": "PASS"
+    },
+    {
+      "evidence": "FAIL[stale-generated-output]: refusing pre-existing generated evidence: ['SHA256SUMS', 'execution-linux-gnu.json', 'execution-linux-musl.json', 'inspection-linux-gnu.json', 'inspection-linux-musl.json', 'negative-controls.json', 'run-linux-gnu.json', 'run-linux-gnu.stderr.log', 'run-linux-musl.json', 'run-linux-musl.stderr.log', 'summary.json']",
+      "name": "negative-control:stale-generated-output",
+      "status": "PASS"
+    }
+  ],
+  "schema": "lumin-new-static-packaging-01-author-preflight-v1",
+  "sourceManifestSha256": "38c1a75d06edb12bb2798d93bc1ce788325ca33c6bc12dabd4ef10df943b677c",
+  "status": "PASS"
+}

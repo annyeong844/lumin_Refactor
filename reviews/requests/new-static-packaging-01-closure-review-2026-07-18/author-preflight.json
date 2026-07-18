@@ -1,0 +1,24 @@
+{
+  "schema": "lumin-new-static-packaging-01-author-preflight-index-v1",
+  "status": "PASS",
+  "candidate": "4315eb7dee35fff3de40fb04e1dd3c4a3fc990e3",
+  "checks": {
+    "windows": 63,
+    "wsl2": 69,
+    "combined": 132,
+    "fail": 0
+  },
+  "records": [
+    {
+      "environment": "windows",
+      "path": "author-preflight-windows.json",
+      "sha256": "53f37b2247e3e7c7c8422e214248b6931531ad2520f943ebfd49acf0768ce3a6"
+    },
+    {
+      "environment": "wsl2",
+      "path": "author-preflight-wsl.json",
+      "sha256": "4cfca1f119062770b5a969a2f422ff1d9c2e585a502d8ac87eeb1152c224c04e"
+    }
+  ],
+  "independenceBoundary": "Author-side consistency output only; not independent review evidence."
+}

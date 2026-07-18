@@ -1,0 +1,92 @@
+{
+  "schema": "lumin-new-static-packaging-01-closure-request-v1",
+  "repository": "annyeong844/lumin_Refactor",
+  "finding": "NEW-STATIC-PACKAGING-01",
+  "previous_candidate": "e0a2810b46f6091895b5e9f7dd4454e8854fee0e",
+  "previous_independent_report_sha256": "b26cee869f883ec6ba1b776a46f53d276ce3c39cb1333865a050c31490c27ac0",
+  "previous_review_evidence": {
+    "independent_checker_sha256": "7249d5faf98a9d025a4fa10c25923b6e9906bee55a7f54a078e45ab3108328b9",
+    "independent_checks_sha256": "59e6dcd79cc3f5506c410644b3c5efcd76ba7f0917d0c6793960d45fd0fac207",
+    "adversarial_substitution_sha256": "fe7dc2f027440ab2faf393c783483d88144a8a575c3bcf08c2a453f833135c2f"
+  },
+  "candidate": "4315eb7dee35fff3de40fb04e1dd3c4a3fc990e3",
+  "candidate_parent": "bb79655cb94c59822a928ede1b861980e6358b6a",
+  "candidate_message": "Regenerate exact-bound static packaging evidence",
+  "candidate_tree": "2cb4e5e055e8e9e82e26351af5ad3ddc2ca40a11",
+  "binding_source_commit": "56f7e17c1e45d3538604336365105541db39ada3",
+  "normalized_source_commit": "bb79655cb94c59822a928ede1b861980e6358b6a",
+  "packet_path": "reviews/probes/phase0-static-packaging-windows-wsl2-native-linux-x64-2026-07-18",
+  "packet_manifest": {
+    "entries": 73,
+    "sha256": "ad2e746441ee778ecf8e8f51a12a331d3c6b3c78a1c995fb661970ab925b6764"
+  },
+  "source_manifest": {
+    "entries": 9,
+    "sha256": "38c1a75d06edb12bb2798d93bc1ce788325ca33c6bc12dabd4ef10df943b677c"
+  },
+  "architecture_candidate": "9a0dbe5c89463892c001e864c4f18eeab9e0eaed",
+  "architecture_manifest_sha256": "e2ca379a8a659f2febbc4e277c89db67bb02035a6b10467cf78a5663f21cd99a",
+  "evidence_manifests": {
+    "windows-ntfs": {
+      "entries": 13,
+      "sha256": "bbbe8ac057f70f0993073d237a9d17715a92810f7635d58d47bca381a64e1b01"
+    },
+    "wsl2-ext4": {
+      "entries": 21,
+      "sha256": "fefc42bc6b06fce1f5dd7804559348b068e6f4fda52006326b65abbbc19ed1bc"
+    },
+    "native-linux-ext4": {
+      "entries": 21,
+      "sha256": "6c8c8f22b9aaa0e8104417a542de0bd2e02386173d3b54d8d2cccdd97e947339"
+    }
+  },
+  "detached_artifacts": {
+    "windows-msvc.exe": {
+      "sha256": "dd7ba4cda6e5654f864c79c18e0aa0a9a96001b0591490e3038d416a11762d7a",
+      "size_bytes": 1412608
+    },
+    "wsl2-linux-gnu": {
+      "sha256": "6892e467d61fc2ffcc3c0fec73323a8d8c2d789e709cfd801d0ff94ffc50caf4",
+      "size_bytes": 1794736
+    },
+    "wsl2-linux-musl": {
+      "sha256": "ad9b7d8789111ede6c065805185d21cc07a87400555eedecad859952fb258a32",
+      "size_bytes": 1897184
+    },
+    "native-workflow.zip": {
+      "sha256": "2f238899ccccbb43a1c345eab3746f68da56a86208ef0d46fa11e36853cbb971",
+      "size_bytes": 1659125
+    },
+    "native-linux-gnu": {
+      "sha256": "07c708408353f15956ebaecc8e58b196f0ee7af70a9b1f974c9d2a0d4825d69f",
+      "size_bytes": 1794800,
+      "container": "native-workflow.zip"
+    },
+    "native-linux-musl": {
+      "sha256": "6ca7bb97f794a631f6375848de2f74c5f2444a7ea27086e09a2b4fec67270563",
+      "size_bytes": 1901280,
+      "container": "native-workflow.zip"
+    }
+  },
+  "native_workflow": {
+    "run_id": "29634512936",
+    "runner_commit": "b7560b443d973540020bd2de984a99b69c35d14e",
+    "artifact_id": "8426637860"
+  },
+  "required_negative_controls": [
+    "unrelated GNU binary is rejected",
+    "dynamic binary labeled linux-musl is rejected",
+    "pre-existing generated run evidence is rejected",
+    "retained run output cannot be paired with changed artifact bytes",
+    "run output must report exact source and architecture identities"
+  ],
+  "accepted_risks": [
+    "AR-BACKEND-01",
+    "AR-MEASURE-01"
+  ],
+  "phase0_remaining_after_closure": [
+    "clean pinned-upstream provenance reproduction",
+    "numeric Phase 1 target approval from named Phase 0 evidence"
+  ],
+  "independence_boundary": "Author-side verifiers, preflight, summaries, and seal PASS records are consistency aids only. Derive the verdict independently from exact Git objects, detached artifact bytes, direct PE/ELF inspection, and adversarial substitution."
+}
