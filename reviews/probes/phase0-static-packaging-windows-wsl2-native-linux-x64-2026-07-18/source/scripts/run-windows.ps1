@@ -96,7 +96,7 @@ $hostIdentity = [ordered]@{
     sourceManifestSha256 = $SourceManifestSha256
     windowsVersion   = [Environment]::OSVersion.VersionString
 }
-$hostJson = $hostIdentity | ConvertTo-Json -Depth 4
+$hostJson = ($hostIdentity | ConvertTo-Json -Depth 4).Replace("`r`n", "`n")
 [IO.File]::WriteAllText(
     (Join-Path $EvidencePath 'host.json'),
     $hostJson + "`n",
