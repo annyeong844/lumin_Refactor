@@ -1,0 +1,68 @@
+{
+  "architectureCandidate": "9a0dbe5c89463892c001e864c4f18eeab9e0eaed",
+  "architectureManifestSha256": "e2ca379a8a659f2febbc4e277c89db67bb02035a6b10467cf78a5663f21cd99a",
+  "artifacts": [
+    {
+      "format": "ELF64-x86_64",
+      "label": "linux-gnu",
+      "sha256": "790a5afb5c73bb03098939c8bc00a1751398f66774367da2f1b16b423cd9b8c2",
+      "sizeBytes": 1795184,
+      "static": false
+    },
+    {
+      "format": "ELF64-x86_64",
+      "label": "linux-musl",
+      "sha256": "8704f655bd0f53456d7da3dae3dbecd13c7223083da5d8f516d8aca5046bb33e",
+      "sizeBytes": 1897184,
+      "static": true
+    }
+  ],
+  "cargoLinkDeclarations": [
+    "rayon-core@1.13.0:rayon-core"
+  ],
+  "cargoLinkInterpretation": {
+    "rayon-core@1.13.0:rayon-core": "non-native one-version uniqueness sentinel"
+  },
+  "claimBoundary": {
+    "achievedProductBudgets": false,
+    "nativePathRootDto": false,
+    "packagedSkills": false,
+    "productApiOrScaffold": false,
+    "publicProcessBehavior": false,
+    "staticPackagingFeasibilityOnly": true
+  },
+  "directDependencies": {
+    "anyhow": "1.0.103",
+    "oxc_allocator": "0.126.0",
+    "oxc_parser": "0.126.0",
+    "oxc_span": "0.126.0",
+    "rayon": "1.11.0",
+    "redb": "4.1.0",
+    "serde": "1.0.228",
+    "serde_json": "1.0.150"
+  },
+  "host": {
+    "arch": "x86_64",
+    "cargoVersion": "cargo 1.96.0 (30a34c682 2026-05-25)",
+    "ciRepository": "annyeong844/lumin_Refactor",
+    "ciRunAttempt": "1",
+    "ciRunId": "29629760482",
+    "ciSha": "721984d52e75d2385948767ce8ade6f190babaf2",
+    "filesystemDetail": "/      ext4   /dev/sda1",
+    "filesystemType": "ext4",
+    "hostKind": "native-linux",
+    "os": "linux",
+    "rustcVerbose": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.96.0\nLLVM version: 22.1.2",
+    "rustcVersion": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "schema": "lumin-phase0-static-packaging-host-v1",
+    "scope": "native-linux-ext4",
+    "sourcePath": "/home/runner/work/lumin_Refactor/lumin_Refactor/reviews/probes/phase0-static-packaging-windows-wsl2-native-linux-x64-2026-07-18/source",
+    "uname": "Linux runnervm3jd5f 6.17.0-1020-azure #20~24.04.1-Ubuntu SMP Fri Jun 19 20:09:14 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux"
+  },
+  "schema": "lumin-phase0-static-packaging-summary-v1",
+  "scope": "native-linux-ext4",
+  "sourceFileCount": 9,
+  "sourceManifestSha256": "dd30eeda67caf9e354838a9ec7974cdd3dc118a9136c2556fcfe56c9f441db45",
+  "status": "PASS",
+  "unexpectedCargoLinkDeclarations": []
+}

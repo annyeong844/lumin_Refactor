@@ -1,9 +1,12 @@
 # Phase 0 Standalone Static-Packaging Feasibility Probe
 
-Status: **Windows NTFS and WSL2 ext4 PASS; native Linux ext4 execution pending**
+Status: **execution evidence complete; independent adversarial review pending**
 
 Source manifest SHA-256:
 `dd30eeda67caf9e354838a9ec7974cdd3dc118a9136c2556fcfe56c9f441db45`
+
+The packet-level `SHA256SUMS` binds 65 files and excludes only itself to avoid a
+self-referential digest.
 
 ## Scope
 
@@ -45,7 +48,8 @@ hard stops.
 | Windows 11 x64 / NTFS | PE32+ MSVC, 1,411,584 bytes | **PASS** |
 | WSL2 Ubuntu 24.04 / ext4 | ELF64 GNU, 1,795,120 bytes | **PASS** |
 | WSL2 Ubuntu 24.04 / ext4 | static ELF64 musl, 1,897,184 bytes | **PASS** |
-| native Ubuntu 24.04 / ext4 | GNU and static musl | **PENDING** |
+| native Ubuntu 24.04 / ext4 | ELF64 GNU, 1,795,184 bytes | **PASS** |
+| native Ubuntu 24.04 / ext4 | static ELF64 musl, 1,897,184 bytes | **PASS** |
 
 Every completed artifact emitted OXC statement count `2`, Rayon sum `4950`, and redb
 value `42`. Cargo metadata contains exact direct dependency versions and one known
@@ -75,9 +79,21 @@ bash source/scripts/run-linux.sh \
   --evidence evidence-wsl2
 ```
 
-The checked-in `runner/workflow.yml` and `runner/run-native.sh` run the same source on
-GitHub's native `ubuntu-24.04` runner. They are copied to a temporary runner branch;
-the workflow and uploaded artifact are not product CI or a production package.
+The checked-in `runner/workflow.yml` and `runner/run-native.sh` ran the same source on
+GitHub's native `ubuntu-24.04` runner:
 
-Evidence is accepted only when all three environments execute the same source
-manifest. Until the native packet passes, this Phase 0 gate remains pending.
+- workflow run: `29629760482`;
+- exact runner commit: `721984d52e75d2385948767ce8ade6f190babaf2`;
+- artifact ID: `8425075747`;
+- artifact ZIP SHA-256:
+  `073ef5907944f8b79df8eab07d135826365f143c4d590ee3d59d7f57d5926454`.
+
+`runner/verify-native-download.py` independently rehashes the 18 manifest members and
+the two downloaded ELF artifacts, validates their format and run oracle, and rejects
+dynamic musl linkage. Its exact result is retained in
+`runner/native-independent-checks.json`. The workflow and artifact are Phase 0 probe
+infrastructure, not product CI or a production package.
+
+All three environments executed the same source manifest. The evidence packet is now
+complete but does not close the Phase 0 gate until an independent adversarial reviewer
+binds the exact candidate and reports PASS or an explicitly accepted risk.

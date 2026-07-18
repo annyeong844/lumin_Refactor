@@ -1,0 +1,150 @@
+lumin-phase0-static-packaging-probe v0.1.0 (/home/runner/work/lumin_Refactor/lumin_Refactor/reviews/probes/phase0-static-packaging-windows-wsl2-native-linux-x64-2026-07-18/source)
+├── anyhow v1.0.103
+├── oxc_allocator v0.126.0
+│   ├── allocator-api2 v0.2.21
+│   ├── hashbrown v0.17.1
+│   │   └── allocator-api2 v0.2.21
+│   ├── oxc_data_structures v0.126.0
+│   └── rustc-hash v2.1.3
+├── oxc_parser v0.126.0
+│   ├── bitflags v2.13.1
+│   ├── cow-utils v0.1.3
+│   ├── memchr v2.8.3
+│   ├── num-bigint v0.4.8
+│   │   ├── num-integer v0.1.46
+│   │   │   └── num-traits v0.2.19
+│   │   │       [build-dependencies]
+│   │   │       └── autocfg v1.5.1
+│   │   └── num-traits v0.2.19 (*)
+│   ├── num-traits v0.2.19 (*)
+│   ├── oxc_allocator v0.126.0 (*)
+│   ├── oxc_ast v0.126.0
+│   │   ├── bitflags v2.13.1
+│   │   ├── oxc_allocator v0.126.0 (*)
+│   │   ├── oxc_ast_macros v0.126.0 (proc-macro)
+│   │   │   ├── phf v0.13.1
+│   │   │   │   └── phf_shared v0.13.1
+│   │   │   │       └── siphasher v1.0.3
+│   │   │   ├── proc-macro2 v1.0.106
+│   │   │   │   └── unicode-ident v1.0.24
+│   │   │   ├── quote v1.0.46
+│   │   │   │   └── proc-macro2 v1.0.106 (*)
+│   │   │   └── syn v2.0.119
+│   │   │       ├── proc-macro2 v1.0.106 (*)
+│   │   │       ├── quote v1.0.46 (*)
+│   │   │       └── unicode-ident v1.0.24
+│   │   ├── oxc_data_structures v0.126.0
+│   │   ├── oxc_diagnostics v0.126.0
+│   │   │   ├── cow-utils v0.1.3
+│   │   │   ├── oxc-miette v2.7.1
+│   │   │   │   ├── cfg-if v1.0.4
+│   │   │   │   ├── owo-colors v4.3.0
+│   │   │   │   ├── oxc-miette-derive v2.7.1 (proc-macro)
+│   │   │   │   │   ├── proc-macro2 v1.0.106 (*)
+│   │   │   │   │   ├── quote v1.0.46 (*)
+│   │   │   │   │   └── syn v2.0.119 (*)
+│   │   │   │   ├── textwrap v0.16.2
+│   │   │   │   │   ├── smawk v0.3.3
+│   │   │   │   │   ├── unicode-linebreak v0.1.5
+│   │   │   │   │   └── unicode-width v0.2.2
+│   │   │   │   ├── thiserror v2.0.18
+│   │   │   │   │   └── thiserror-impl v2.0.18 (proc-macro)
+│   │   │   │   │       ├── proc-macro2 v1.0.106 (*)
+│   │   │   │   │       ├── quote v1.0.46 (*)
+│   │   │   │   │       └── syn v2.0.119 (*)
+│   │   │   │   ├── unicode-segmentation v1.13.3
+│   │   │   │   └── unicode-width v0.2.2
+│   │   │   └── percent-encoding v2.3.2
+│   │   ├── oxc_estree v0.126.0
+│   │   ├── oxc_regular_expression v0.126.0
+│   │   │   ├── bitflags v2.13.1
+│   │   │   ├── oxc_allocator v0.126.0 (*)
+│   │   │   ├── oxc_ast_macros v0.126.0 (proc-macro) (*)
+│   │   │   ├── oxc_diagnostics v0.126.0 (*)
+│   │   │   ├── oxc_span v0.126.0
+│   │   │   │   ├── compact_str v0.9.1
+│   │   │   │   │   ├── castaway v0.2.4
+│   │   │   │   │   │   └── rustversion v1.0.23 (proc-macro)
+│   │   │   │   │   ├── cfg-if v1.0.4
+│   │   │   │   │   ├── itoa v1.0.18
+│   │   │   │   │   ├── rustversion v1.0.23 (proc-macro)
+│   │   │   │   │   ├── ryu v1.0.23
+│   │   │   │   │   └── static_assertions v1.1.0
+│   │   │   │   ├── oxc-miette v2.7.1 (*)
+│   │   │   │   ├── oxc_allocator v0.126.0 (*)
+│   │   │   │   ├── oxc_ast_macros v0.126.0 (proc-macro) (*)
+│   │   │   │   ├── oxc_estree v0.126.0
+│   │   │   │   └── oxc_str v0.126.0
+│   │   │   │       ├── compact_str v0.9.1 (*)
+│   │   │   │       ├── hashbrown v0.17.1 (*)
+│   │   │   │       ├── oxc_allocator v0.126.0 (*)
+│   │   │   │       └── oxc_estree v0.126.0
+│   │   │   ├── oxc_str v0.126.0 (*)
+│   │   │   ├── phf v0.13.1
+│   │   │   │   ├── phf_macros v0.13.1 (proc-macro)
+│   │   │   │   │   ├── phf_generator v0.13.1
+│   │   │   │   │   │   ├── fastrand v2.4.1
+│   │   │   │   │   │   └── phf_shared v0.13.1 (*)
+│   │   │   │   │   ├── phf_shared v0.13.1 (*)
+│   │   │   │   │   ├── proc-macro2 v1.0.106 (*)
+│   │   │   │   │   ├── quote v1.0.46 (*)
+│   │   │   │   │   └── syn v2.0.119 (*)
+│   │   │   │   └── phf_shared v0.13.1
+│   │   │   │       └── siphasher v1.0.3
+│   │   │   ├── rustc-hash v2.1.3
+│   │   │   └── unicode-id-start v1.4.0
+│   │   ├── oxc_span v0.126.0 (*)
+│   │   ├── oxc_str v0.126.0 (*)
+│   │   └── oxc_syntax v0.126.0
+│   │       ├── bitflags v2.13.1
+│   │       ├── cow-utils v0.1.3
+│   │       ├── dragonbox_ecma v0.1.12
+│   │       ├── nonmax v0.5.5
+│   │       ├── oxc_allocator v0.126.0 (*)
+│   │       ├── oxc_ast_macros v0.126.0 (proc-macro) (*)
+│   │       ├── oxc_estree v0.126.0
+│   │       ├── oxc_index v4.1.0
+│   │       │   ├── nonmax v0.5.5
+│   │       │   └── serde v1.0.228
+│   │       │       ├── serde_core v1.0.228
+│   │       │       └── serde_derive v1.0.228 (proc-macro)
+│   │       │           ├── proc-macro2 v1.0.106 (*)
+│   │       │           ├── quote v1.0.46 (*)
+│   │       │           └── syn v2.0.119 (*)
+│   │       ├── oxc_span v0.126.0 (*)
+│   │       ├── oxc_str v0.126.0 (*)
+│   │       ├── phf v0.13.1 (*)
+│   │       └── unicode-id-start v1.4.0
+│   ├── oxc_data_structures v0.126.0
+│   ├── oxc_diagnostics v0.126.0 (*)
+│   ├── oxc_ecmascript v0.126.0
+│   │   ├── cow-utils v0.1.3
+│   │   ├── num-bigint v0.4.8 (*)
+│   │   ├── num-traits v0.2.19 (*)
+│   │   ├── oxc_allocator v0.126.0 (*)
+│   │   ├── oxc_ast v0.126.0 (*)
+│   │   ├── oxc_regular_expression v0.126.0 (*)
+│   │   ├── oxc_span v0.126.0 (*)
+│   │   └── oxc_syntax v0.126.0 (*)
+│   ├── oxc_regular_expression v0.126.0 (*)
+│   ├── oxc_span v0.126.0 (*)
+│   ├── oxc_str v0.126.0 (*)
+│   ├── oxc_syntax v0.126.0 (*)
+│   ├── rustc-hash v2.1.3
+│   └── seq-macro v0.3.6 (proc-macro)
+├── oxc_span v0.126.0 (*)
+├── rayon v1.11.0
+│   ├── either v1.16.0
+│   └── rayon-core v1.13.0
+│       ├── crossbeam-deque v0.8.7
+│       │   ├── crossbeam-epoch v0.9.20
+│       │   │   └── crossbeam-utils v0.8.22
+│       │   └── crossbeam-utils v0.8.22
+│       └── crossbeam-utils v0.8.22
+├── redb v4.1.0
+├── serde v1.0.228 (*)
+└── serde_json v1.0.150
+    ├── itoa v1.0.18
+    ├── memchr v2.8.3
+    ├── serde_core v1.0.228
+    └── zmij v1.0.23
