@@ -36,6 +36,44 @@ def mutate_byte(path: Path) -> None:
     path.write_bytes(data)
 
 
+def mutate_json(path: Path, mutation) -> None:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    mutation(value)
+    path.write_text(
+        json.dumps(value, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def forge_fetch_metadata(root: Path) -> None:
+    def mutation(value) -> None:
+        value["responses"][0].update(
+            {
+                "status": 302,
+                "finalUrl": "https://evil.invalid/substitute",
+                "contentEncoding": "gzip",
+            }
+        )
+
+    mutate_json(root / "fetch-metadata.json", mutation)
+
+
+def forge_host_identity(root: Path) -> None:
+    def mutation(value) -> None:
+        value["platform"] = "FAKE"
+        value["repositoryHead"] = "0" * 40
+        value["environment"]["GITHUB_SHA"] = "0" * 40
+
+    mutate_json(root / "host.json", mutation)
+
+
+def substitute_result_runner(root: Path) -> None:
+    mutate_json(
+        root / "result.json",
+        lambda value: value.update({"runnerCommit": "0" * 40}),
+    )
+
+
 def invoke(verifier: Path, repository: Path, evidence: Path, command: str = "verify"):
     completed = subprocess.run(
         [
@@ -101,10 +139,10 @@ def main() -> int:
             ).write_text(
                 json.dumps(
                     {
-                        "schemaVersion": "lumin-phase0-provenance-negative-controls.v1",
+                        "schemaVersion": "lumin-phase0-provenance-negative-controls.v2",
                         "controls": [
                             {"id": "forged", "status": "fail", "reasonCode": "none"}
-                            for _ in range(6)
+                            for _ in range(9)
                         ],
                     },
                     indent=2,
@@ -118,6 +156,21 @@ def main() -> int:
             "extra-resealed-evidence-member",
             "evidence-inventory-mismatch",
             lambda root: (root / "extra.bin").write_bytes(b"not-authorized"),
+        ),
+        (
+            "fetch-transport-metadata-forgery",
+            "fetch-metadata-invalid",
+            forge_fetch_metadata,
+        ),
+        (
+            "clean-runner-host-forgery",
+            "host-runner-mismatch",
+            forge_host_identity,
+        ),
+        (
+            "result-runner-substitution",
+            "host-runner-mismatch",
+            substitute_result_runner,
         ),
     ]
 
@@ -158,7 +211,7 @@ def main() -> int:
         raise RuntimeError(f"stale evidence scenario failed: {results[-1]}")
 
     output = {
-        "schemaVersion": "lumin-phase0-provenance-adversarial-checks.v1",
+        "schemaVersion": "lumin-phase0-provenance-adversarial-checks.v2",
         "status": "pass",
         "baseline": baseline_payload,
         "scenarioCount": len(results),

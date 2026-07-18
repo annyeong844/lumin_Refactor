@@ -34,8 +34,20 @@ extractor. Unique non-command-line-only option declarations are normalized to
 `name<TAB>shape<LF>`, sorted by UTF-8 byte order, and must reproduce exact count `122`
 and SHA-256 `f2fb5da0cf33ea694a8bf4ccae909a1526e7978693c15ac1a6b10b3cdfbc9d9a`.
 
-All HTTPS retrievals must return status 200 without a redirect or content encoding.
-Raw bytes, selected response metadata, derived compiler-option rows, host/tool versions,
+All eight HTTPS retrieval records have machine-derived IDs, URLs, and retained paths.
+Each must occur exactly once, return status 200 without a redirect or non-identity
+content encoding, and bind its content-length header, actual byte length, and SHA-256 to
+the retained bytes. The annotated-tag object URL is derived from the exact retained tag
+ref rather than trusted as free-form metadata.
+
+The clean-runner host record, `GITHUB_SHA`, result `runnerCommit`, and retained workflow
+`headSha` must name one exact source-bearing runner commit. The workflow run ID,
+repository, job, ref, OS, and architecture are bound through the host and result records.
+Capture-time verification may establish only the host/result half of this relation; the
+detached `verify` command requires the retained successful workflow record before it can
+authorize the packet.
+
+Raw bytes, verified response metadata, derived compiler-option rows, host/tool versions,
 negative controls, the exact oracle, the frozen architecture manifest, and the source
 manifest identity are retained under one `SHA256SUMS`.
 
@@ -48,14 +60,17 @@ The probe fails rather than degrading when:
 - the current owner artifacts differ from the frozen owner bytes;
 - the evidence directory already exists;
 - HTTPS status, URL, redirect, content encoding, length, or byte hash disagrees;
+- a fetch ID is missing, duplicated, reordered, or bound to a different retained path;
+- host, GitHub environment, result, or workflow runner identities disagree;
 - the npm SHA-512 integrity or package identity disagrees;
 - a tar member is duplicated, unsafe, non-regular, or a required member is absent;
 - extracted `typescript.js` differs from the retained derived object;
 - the Node tag does not resolve to the pinned commit;
 - Node extraction is unavailable or the option count/name/shape digest differs;
 - any manifest member is missing, extra, unsafe, duplicated, or hash-mismatched; or
-- a one-byte mutation, same-size substitution, malformed tar, oracle mutation, or stale
-  evidence input is accepted by the negative-control suite.
+- a one-byte mutation, same-size substitution, malformed tar, oracle mutation, stale
+  evidence input, redirected fetch record, forged host, or substituted result runner is
+  accepted by the negative-control suite.
 
 ## Non-Claims
 

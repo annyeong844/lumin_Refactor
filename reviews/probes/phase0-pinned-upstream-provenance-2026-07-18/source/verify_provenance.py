@@ -24,7 +24,10 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
 
-SCHEMA = "lumin-phase0-pinned-upstream-provenance-result.v1"
+SCHEMA = "lumin-phase0-pinned-upstream-provenance-result.v2"
+FETCH_SCHEMA = "lumin-phase0-provenance-fetch.v2"
+HOST_SCHEMA = "lumin-phase0-provenance-host.v2"
+NEGATIVE_CONTROLS_SCHEMA = "lumin-phase0-provenance-negative-controls.v2"
 ORACLE_SCHEMA = "lumin-phase0-pinned-upstream-provenance-oracle.v1"
 FROZEN_COMMIT = "9a0dbe5c89463892c001e864c4f18eeab9e0eaed"
 FROZEN_MANIFEST_SHA256 = (
@@ -54,6 +57,20 @@ RESOLVER_PATH = "specs/resolver-config-semantics.v1.json"
 RESOLVER_SHA256 = "41ffa3dcc108e74dca351b4f3a5fa182090e1481ed6d8333235f38f0459a29a1"
 MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 HEX_64 = re.compile(r"^[0-9a-f]{64}$")
+HEX_40 = re.compile(r"^[0-9a-f]{40}$")
+EXPECTED_GITHUB_REPOSITORY = "annyeong844/lumin_Refactor"
+EXPECTED_GITHUB_JOB = "native-linux-clean"
+EXPECTED_NEGATIVE_CONTROLS = (
+    ("one-byte-tarball-mutation", "byte-sha256-mismatch"),
+    ("same-size-source-substitution", "byte-sha256-mismatch"),
+    ("duplicate-tar-member", "tar-duplicate-member"),
+    ("unsafe-tar-member", "unsafe-path"),
+    ("oracle-mutation", "oracle-artifact-disagreement"),
+    ("stale-evidence-directory", "stale-evidence"),
+    ("redirected-fetch-metadata", "fetch-metadata-invalid"),
+    ("forged-clean-runner-host", "host-runner-mismatch"),
+    ("substituted-result-runner", "host-runner-mismatch"),
+)
 
 SOURCE_ROOT = Path(__file__).resolve().parent
 PACKET_ROOT = SOURCE_ROOT.parent
@@ -665,7 +682,7 @@ def host_record(repository_root: Path, head: str, node_version: str) -> dict[str
         if key in os.environ
     }
     return {
-        "schemaVersion": "lumin-phase0-provenance-host.v1",
+        "schemaVersion": HOST_SCHEMA,
         "capturedAtUtc": dt.datetime.now(dt.timezone.utc).isoformat(),
         "platform": platform.platform(),
         "system": platform.system(),
@@ -679,6 +696,268 @@ def host_record(repository_root: Path, head: str, node_version: str) -> dict[str
         "repositoryRoot": str(repository_root.resolve()),
         "environment": selected_environment,
     }
+
+
+def require_utc_timestamp(value: Any, code: str, detail: str) -> None:
+    require(isinstance(value, str), code, detail)
+    try:
+        parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        fail(code, detail)
+    require(parsed.utcoffset() == dt.timedelta(0), code, detail)
+
+
+def expected_fetch_responses(
+    oracle: dict[str, Any], node_tag: dict[str, str]
+) -> list[dict[str, str]]:
+    return [
+        {
+            "id": "typescript-npm-tarball",
+            "url": oracle["typeScript"]["npmTarball"],
+            "retainedPath": "objects/typescript-6.0.0-beta.tgz",
+        },
+        {
+            "id": "typescript-module-resolver",
+            "url": oracle["typeScript"]["moduleResolver"]["url"],
+            "retainedPath": "objects/typescript-moduleNameResolver.ts",
+        },
+        {
+            "id": "typescript-config-parser",
+            "url": oracle["typeScript"]["configParser"]["url"],
+            "retainedPath": "objects/typescript-commandLineParser.ts",
+        },
+        {
+            "id": "node-packages-document",
+            "url": oracle["node"]["packagesDocument"]["url"],
+            "retainedPath": "objects/node-packages.md",
+        },
+        {
+            "id": "node-esm-resolver",
+            "url": oracle["node"]["resolverSource"]["url"],
+            "retainedPath": "objects/node-resolve.js",
+        },
+        {
+            "id": "pnpm-workspace-document",
+            "url": oracle["pnpm"]["workspaceDocument"]["url"],
+            "retainedPath": "objects/pnpm-workspace_yaml.md",
+        },
+        {
+            "id": "node-tag-ref",
+            "url": oracle["node"]["tagRefApi"],
+            "retainedPath": "identity/node-tag-ref.json",
+        },
+        {
+            "id": "node-tag-object",
+            "url": "https://api.github.com/repos/nodejs/node/git/tags/"
+            + node_tag["tagObjectSha"],
+            "retainedPath": "identity/node-tag-object.json",
+        },
+    ]
+
+
+def validate_fetch_metadata(
+    fetch_metadata: Any,
+    oracle: dict[str, Any],
+    node_tag: dict[str, str],
+    retained: dict[str, bytes],
+) -> None:
+    require(isinstance(fetch_metadata, dict), "fetch-metadata-invalid", "root")
+    require(
+        fetch_metadata.get("schemaVersion") == FETCH_SCHEMA,
+        "fetch-metadata-invalid",
+        "schema",
+    )
+    responses = fetch_metadata.get("responses")
+    expected = expected_fetch_responses(oracle, node_tag)
+    require(isinstance(responses, list), "fetch-metadata-invalid", "responses")
+    require(len(responses) == len(expected), "fetch-metadata-invalid", "response count")
+    require(
+        [row.get("id") if isinstance(row, dict) else None for row in responses]
+        == [row["id"] for row in expected],
+        "fetch-metadata-invalid",
+        "response IDs or order",
+    )
+
+    for row, binding in zip(responses, expected, strict=True):
+        check_id = binding["id"]
+        require(isinstance(row, dict), "fetch-metadata-invalid", f"{check_id}: row")
+        expected_url = binding["url"]
+        expected_path = binding["retainedPath"]
+        require(expected_url.startswith("https://"), "fetch-metadata-invalid", f"{check_id}: URL")
+        require(row.get("url") == expected_url, "fetch-metadata-invalid", f"{check_id}: URL")
+        require(
+            row.get("finalUrl") == expected_url,
+            "fetch-metadata-invalid",
+            f"{check_id}: redirect",
+        )
+        require(
+            type(row.get("status")) is int and row["status"] == 200,
+            "fetch-metadata-invalid",
+            f"{check_id}: status",
+        )
+        require(
+            row.get("contentEncoding") in (None, "", "identity"),
+            "fetch-metadata-invalid",
+            f"{check_id}: content encoding",
+        )
+        require(
+            row.get("retainedPath") == expected_path,
+            "fetch-metadata-invalid",
+            f"{check_id}: retained path",
+        )
+        data = retained.get(expected_path)
+        require(isinstance(data, bytes), "fetch-metadata-invalid", f"{check_id}: retained bytes")
+        require(
+            type(row.get("sizeBytes")) is int and row["sizeBytes"] == len(data),
+            "fetch-metadata-invalid",
+            f"{check_id}: byte length",
+        )
+        require(
+            row.get("sha256") == sha256_bytes(data),
+            "fetch-metadata-invalid",
+            f"{check_id}: SHA-256",
+        )
+        content_length = row.get("contentLengthHeader")
+        require(
+            isinstance(content_length, str)
+            and content_length.isdigit()
+            and int(content_length) == len(data),
+            "fetch-metadata-invalid",
+            f"{check_id}: content length",
+        )
+        require_utc_timestamp(
+            row.get("retrievedAtUtc"),
+            "fetch-metadata-invalid",
+            f"{check_id}: retrieval time",
+        )
+
+
+def clean_runner_projection(host: dict[str, Any]) -> dict[str, Any]:
+    environment = host.get("environment")
+    expected_environment_keys = {
+        "GITHUB_ACTIONS",
+        "GITHUB_JOB",
+        "GITHUB_REF",
+        "GITHUB_REPOSITORY",
+        "GITHUB_RUN_ATTEMPT",
+        "GITHUB_RUN_ID",
+        "GITHUB_SHA",
+        "RUNNER_ARCH",
+        "RUNNER_OS",
+    }
+    require(isinstance(environment, dict), "host-invalid", "environment")
+    require(set(environment) == expected_environment_keys, "host-invalid", "environment keys")
+    require(environment.get("GITHUB_ACTIONS") == "true", "host-invalid", "GITHUB_ACTIONS")
+    require(environment.get("GITHUB_JOB") == EXPECTED_GITHUB_JOB, "host-invalid", "GITHUB_JOB")
+    require(
+        environment.get("GITHUB_REPOSITORY") == EXPECTED_GITHUB_REPOSITORY,
+        "host-invalid",
+        "GITHUB_REPOSITORY",
+    )
+    require(environment.get("RUNNER_OS") == "Linux", "host-invalid", "RUNNER_OS")
+    require(environment.get("RUNNER_ARCH") == "X64", "host-invalid", "RUNNER_ARCH")
+    require(
+        isinstance(environment.get("GITHUB_REF"), str)
+        and environment["GITHUB_REF"].startswith("refs/heads/"),
+        "host-invalid",
+        "GITHUB_REF",
+    )
+    for key in ("GITHUB_RUN_ATTEMPT", "GITHUB_RUN_ID"):
+        value = environment.get(key)
+        require(
+            isinstance(value, str) and value.isdigit() and int(value) > 0,
+            "host-invalid",
+            key,
+        )
+    return {
+        "repository": EXPECTED_GITHUB_REPOSITORY,
+        "workflowRunId": int(environment["GITHUB_RUN_ID"]),
+        "job": EXPECTED_GITHUB_JOB,
+        "ref": environment["GITHUB_REF"],
+        "runnerOs": "Linux",
+        "runnerArch": "X64",
+    }
+
+
+def validate_clean_runner_identity(
+    host: Any,
+    result: Any,
+    recorded_node_version: str,
+    workflow: Any | None,
+) -> str:
+    require(isinstance(host, dict), "host-invalid", "root")
+    require(host.get("schemaVersion") == HOST_SCHEMA, "host-invalid", "schema")
+    require(isinstance(result, dict), "result-invalid", "root")
+
+    runner_commit = result.get("runnerCommit")
+    require(
+        isinstance(runner_commit, str) and HEX_40.fullmatch(runner_commit) is not None,
+        "result-invalid",
+        "runner commit",
+    )
+    require(
+        host.get("repositoryHead") == runner_commit,
+        "host-runner-mismatch",
+        "repositoryHead",
+    )
+    require(host.get("node") == recorded_node_version, "host-runner-mismatch", "Node version")
+    require(host.get("system") == "Linux", "host-invalid", "system")
+    require(host.get("machine") == "x86_64", "host-invalid", "machine")
+    require(
+        isinstance(host.get("platform"), str) and host["platform"].startswith("Linux-"),
+        "host-invalid",
+        "platform",
+    )
+    require_utc_timestamp(host.get("capturedAtUtc"), "host-invalid", "capture time")
+
+    expected_clean_runner = clean_runner_projection(host)
+    environment = host["environment"]
+    require(
+        environment.get("GITHUB_SHA") == runner_commit,
+        "host-runner-mismatch",
+        "GITHUB_SHA",
+    )
+    require(
+        result.get("cleanRunner") == expected_clean_runner,
+        "host-runner-mismatch",
+        "result cleanRunner",
+    )
+
+    if workflow is not None:
+        require(isinstance(workflow, dict), "workflow-runner-mismatch", "root")
+        run_id = expected_clean_runner["workflowRunId"]
+        require(workflow.get("databaseId") == run_id, "workflow-runner-mismatch", "run ID")
+        require(workflow.get("headSha") == runner_commit, "workflow-runner-mismatch", "head SHA")
+        require(
+            workflow.get("status") == "completed" and workflow.get("conclusion") == "success",
+            "workflow-runner-mismatch",
+            "run status",
+        )
+        require(
+            workflow.get("url")
+            == f"https://github.com/{EXPECTED_GITHUB_REPOSITORY}/actions/runs/{run_id}",
+            "workflow-runner-mismatch",
+            "run URL",
+        )
+        jobs = workflow.get("jobs")
+        require(isinstance(jobs, list) and len(jobs) == 1, "workflow-runner-mismatch", "jobs")
+        job = jobs[0]
+        require(isinstance(job, dict), "workflow-runner-mismatch", "job")
+        require(job.get("name") == EXPECTED_GITHUB_JOB, "workflow-runner-mismatch", "job name")
+        require(
+            job.get("status") == "completed" and job.get("conclusion") == "success",
+            "workflow-runner-mismatch",
+            "job status",
+        )
+        job_id = job.get("databaseId")
+        require(type(job_id) is int and job_id > 0, "workflow-runner-mismatch", "job ID")
+        require(
+            job.get("url")
+            == f"https://github.com/{EXPECTED_GITHUB_REPOSITORY}/actions/runs/{run_id}/job/{job_id}",
+            "workflow-runner-mismatch",
+            "job URL",
+        )
+    return runner_commit
 
 
 def expected_evidence_paths() -> set[str]:
@@ -704,7 +983,12 @@ def expected_evidence_paths() -> set[str]:
     }
 
 
-def verify_evidence(repository_root: Path, evidence: Path) -> dict[str, Any]:
+def verify_evidence(
+    repository_root: Path,
+    evidence: Path,
+    *,
+    require_workflow_record: bool = True,
+) -> dict[str, Any]:
     source_manifest_bytes, source_entries = verify_source_manifest()
     authority = verify_frozen_authority(repository_root)
     oracle = authority["oracle"]
@@ -780,24 +1064,44 @@ def verify_evidence(repository_root: Path, evidence: Path) -> dict[str, Any]:
 
     negative = strict_json(actual_inventory["negative-controls.json"], "negative-controls.json")
     require(isinstance(negative, dict), "negative-controls-invalid", "root")
+    require(
+        negative.get("schemaVersion") == NEGATIVE_CONTROLS_SCHEMA,
+        "negative-controls-invalid",
+        "schema",
+    )
     controls = negative.get("controls")
-    require(isinstance(controls, list) and len(controls) == 6, "negative-controls-invalid", "count")
-    require(all(row.get("status") == "pass" for row in controls if isinstance(row, dict)), "negative-controls-invalid", "status")
+    require(
+        isinstance(controls, list) and len(controls) == len(EXPECTED_NEGATIVE_CONTROLS),
+        "negative-controls-invalid",
+        "count",
+    )
+    require(
+        [
+            (row.get("id"), row.get("reasonCode"), row.get("status"))
+            if isinstance(row, dict)
+            else None
+            for row in controls
+        ]
+        == [(control_id, reason, "pass") for control_id, reason in EXPECTED_NEGATIVE_CONTROLS],
+        "negative-controls-invalid",
+        "rows",
+    )
 
     fetch_metadata = strict_json(actual_inventory["fetch-metadata.json"], "fetch-metadata.json")
-    require(isinstance(fetch_metadata, dict), "fetch-metadata-invalid", "root")
-    require(fetch_metadata.get("schemaVersion") == "lumin-phase0-provenance-fetch.v1", "fetch-metadata-invalid", "schema")
-    require(len(fetch_metadata.get("responses", [])) == 8, "fetch-metadata-invalid", "response count")
+    validate_fetch_metadata(fetch_metadata, oracle, node_tag, actual_inventory)
 
     host = strict_json(actual_inventory["host.json"], "host.json")
-    require(isinstance(host, dict), "host-invalid", "root")
-    require(host.get("schemaVersion") == "lumin-phase0-provenance-host.v1", "host-invalid", "schema")
-
     result = strict_json(actual_inventory["result.json"], "result.json")
     require(isinstance(result, dict), "result-invalid", "root")
     require(result.get("schemaVersion") == SCHEMA and result.get("status") == "pass", "result-invalid", "status")
     require(result.get("frozenArchitecture", {}).get("commit") == FROZEN_COMMIT, "result-invalid", "architecture")
+    require(
+        result.get("frozenArchitecture", {}).get("manifestSha256") == FROZEN_MANIFEST_SHA256,
+        "result-invalid",
+        "architecture manifest",
+    )
     require(result.get("sourceManifestSha256") == sha256_bytes(source_manifest_bytes), "result-invalid", "source manifest")
+    require(result.get("sourceManifestEntries") == len(source_entries), "result-invalid", "source entries")
     require(result.get("oracleSha256") == sha256_bytes(authority["oracleBytes"]), "result-invalid", "oracle")
     require(result.get("npmPackage") == package_identity, "result-invalid", "npm package")
     require(result.get("nodeTag") == node_tag, "result-invalid", "node tag")
@@ -807,12 +1111,25 @@ def verify_evidence(repository_root: Path, evidence: Path) -> dict[str, Any]:
         "result-invalid",
         "recorded node version",
     )
-    require(host.get("node") == recorded_node_version, "result-invalid", "host node version")
     require(verifier_node_version.startswith("v"), "result-invalid", "verifier node version")
     require(len(result.get("upstreamByteChecks", [])) == 7, "result-invalid", "byte checks")
-    require(result.get("negativeControlCount") == 6, "result-invalid", "negative controls")
-    runner_commit = result.get("runnerCommit")
-    require(isinstance(runner_commit, str) and len(runner_commit) == 40, "result-invalid", "runner commit")
+    require(
+        result.get("negativeControlCount") == len(EXPECTED_NEGATIVE_CONTROLS),
+        "result-invalid",
+        "negative controls",
+    )
+
+    workflow = None
+    if require_workflow_record:
+        workflow_path = PACKET_ROOT / "runner/workflow-run.json"
+        require(workflow_path.is_file(), "workflow-record-missing", str(workflow_path))
+        workflow = strict_json(workflow_path.read_bytes(), "runner/workflow-run.json")
+    runner_commit = validate_clean_runner_identity(
+        host,
+        result,
+        recorded_node_version,
+        workflow,
+    )
     run_git(repository_root, ["cat-file", "-e", f"{runner_commit}^{{commit}}"])
     completed = subprocess.run(
         ["git", "merge-base", "--is-ancestor", runner_commit, "HEAD"], cwd=repository_root
@@ -827,10 +1144,12 @@ def verify_evidence(repository_root: Path, evidence: Path) -> dict[str, Any]:
         "evidenceManifestSha256": sha256_bytes(manifest_path.read_bytes()),
         "evidenceEntries": len(manifest),
         "upstreamByteChecks": 7,
-        "negativeControls": 6,
+        "negativeControls": len(EXPECTED_NEGATIVE_CONTROLS),
         "compilerOptionCount": len(extracted_rows.splitlines()),
         "compilerOptionDigest": sha256_bytes(extracted_rows),
         "runnerCommit": runner_commit,
+        "workflowRunId": result["cleanRunner"]["workflowRunId"],
+        "workflowBinding": "external-record" if workflow is not None else "capture-environment",
     }
 
 
@@ -940,28 +1259,6 @@ def capture(repository_root: Path, evidence: Path) -> dict[str, Any]:
         require_digest(extracted_rows, ts["compilerOptions"]["keyShapeSha256"], "compiler option digest")
         write_file(partial, "derived/compiler-options.tsv", extracted_rows)
 
-        write_file(
-            partial,
-            "negative-controls.json",
-            json_bytes(
-                {
-                    "schemaVersion": "lumin-phase0-provenance-negative-controls.v1",
-                    "controls": negative_controls,
-                }
-            ),
-        )
-        write_file(
-            partial,
-            "fetch-metadata.json",
-            json_bytes(
-                {
-                    "schemaVersion": "lumin-phase0-provenance-fetch.v1",
-                    "responses": responses,
-                }
-            ),
-        )
-        write_file(partial, "host.json", json_bytes(host_record(repository_root, authority["head"], node_version)))
-
         upstream_checks = [
             {
                 "id": check_id,
@@ -1000,12 +1297,15 @@ def capture(repository_root: Path, evidence: Path) -> dict[str, Any]:
                 ),
             )
         ]
+        host = host_record(repository_root, authority["head"], node_version)
+        clean_runner = clean_runner_projection(host)
         result = {
             "schemaVersion": SCHEMA,
             "status": "pass",
             "claim": "clean-pinned-upstream-provenance",
             "claimBoundary": "frozen upstream identity only; no product implementation, package, behavior, or budget claim",
             "runnerCommit": authority["head"],
+            "cleanRunner": clean_runner,
             "frozenArchitecture": {
                 "commit": FROZEN_COMMIT,
                 "manifestSha256": FROZEN_MANIFEST_SHA256,
@@ -1022,14 +1322,98 @@ def capture(repository_root: Path, evidence: Path) -> dict[str, Any]:
                 "nodeVersion": node_version,
             },
             "upstreamByteChecks": upstream_checks,
-            "negativeControlCount": len(negative_controls),
+            "negativeControlCount": len(EXPECTED_NEGATIVE_CONTROLS),
         }
+
+        fetch_record = {
+            "schemaVersion": FETCH_SCHEMA,
+            "responses": responses,
+        }
+        retained_fetch_objects = {
+            **objects,
+            "identity/node-tag-ref.json": ref_bytes,
+            "identity/node-tag-object.json": tag_bytes,
+        }
+        validate_fetch_metadata(fetch_record, oracle, node_tag, retained_fetch_objects)
+        validate_clean_runner_identity(host, result, node_version, None)
+
+        forged_fetch = copy.deepcopy(fetch_record)
+        forged_fetch["responses"][0].update(
+            {
+                "status": 302,
+                "finalUrl": "https://evil.invalid/substitute",
+                "contentEncoding": "gzip",
+            }
+        )
+        forged_host = copy.deepcopy(host)
+        forged_host["platform"] = "FAKE"
+        forged_host["repositoryHead"] = "0" * 40
+        forged_host["environment"]["GITHUB_SHA"] = "0" * 40
+        substituted_result = copy.deepcopy(result)
+        substituted_result["runnerCommit"] = "0" * 40
+        negative_controls.extend(
+            (
+                expected_failure(
+                    "redirected-fetch-metadata",
+                    "fetch-metadata-invalid",
+                    lambda: validate_fetch_metadata(
+                        forged_fetch,
+                        oracle,
+                        node_tag,
+                        retained_fetch_objects,
+                    ),
+                ),
+                expected_failure(
+                    "forged-clean-runner-host",
+                    "host-runner-mismatch",
+                    lambda: validate_clean_runner_identity(
+                        forged_host,
+                        result,
+                        node_version,
+                        None,
+                    ),
+                ),
+                expected_failure(
+                    "substituted-result-runner",
+                    "host-runner-mismatch",
+                    lambda: validate_clean_runner_identity(
+                        host,
+                        substituted_result,
+                        node_version,
+                        None,
+                    ),
+                ),
+            )
+        )
+        require(
+            [(row["id"], row["reasonCode"]) for row in negative_controls]
+            == list(EXPECTED_NEGATIVE_CONTROLS),
+            "negative-controls-invalid",
+            "capture rows",
+        )
+
+        write_file(
+            partial,
+            "negative-controls.json",
+            json_bytes(
+                {
+                    "schemaVersion": NEGATIVE_CONTROLS_SCHEMA,
+                    "controls": negative_controls,
+                }
+            ),
+        )
+        write_file(partial, "fetch-metadata.json", json_bytes(fetch_record))
+        write_file(partial, "host.json", json_bytes(host))
         write_file(partial, "result.json", json_bytes(result))
         manifest_bytes = render_manifest(evidence_inventory(partial))
         require(set(parse_manifest(manifest_bytes, "generated evidence manifest")) == expected_evidence_paths(), "evidence-inventory-mismatch", "generated")
         (partial / "SHA256SUMS").write_bytes(manifest_bytes)
 
-        verification = verify_evidence(repository_root, partial)
+        verification = verify_evidence(
+            repository_root,
+            partial,
+            require_workflow_record=False,
+        )
         os.replace(partial, evidence)
         return verification
     except Exception:

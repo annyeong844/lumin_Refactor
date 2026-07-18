@@ -23,8 +23,3 @@ python3 "$packet_root/source/verify_provenance.py" \
   capture \
   --repository-root "$repository_root" \
   --evidence "$evidence"
-
-python3 "$packet_root/source/verify_provenance.py" \
-  verify \
-  --repository-root "$repository_root" \
-  --evidence "$evidence"
