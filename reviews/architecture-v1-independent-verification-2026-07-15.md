@@ -2,7 +2,7 @@
 
 Document role: current Architecture v1 freeze verification owner
 
-Status: clean provenance passed; numeric-target gate pending
+Status: false-negative amendment awaiting independent review; numeric-target gate pending
 
 Freeze decision: blocked
 
@@ -34,6 +34,7 @@ Freeze decision: blocked
 | Externally reviewed static-packaging closure candidate | `4315eb7dee35fff3de40fb04e1dd3c4a3fc990e3`; B-07, exact candidate/73-entry packet/9-entry source binding, all three platform scopes, detached artifacts, and NEW-STATIC-PACKAGING-01 closure passed with no H/R regression or new finding |
 | Externally reviewed clean-provenance evidence candidate | `e6147b1b2dfea45d223c87f3ba7ffec543e9f82d`; exact Git/architecture/34-entry packet/18-entry evidence binding and all seven upstream identities passed, while detached transport/runner authorization was REOPENED by NEW-PROVENANCE-01 |
 | Externally reviewed clean-provenance closure candidate | `658b5c7334fed8f0e42dd14b9910c9b719f3e55b`; B-07, exact candidate/packet/evidence binding, seven upstream identities, TypeScript/Node derivations, official workflow/artifact binding, and NEW-PROVENANCE-01 closure passed with no H/R regression or new finding |
+| Current false-negative amendment candidate | `a1e07ed7b9e05181cd58bfba5f3846c1baab8a93`; author-side candidate only, independently unverified. It removes canonical/default-query finding suppression, adds `FindingDisposition`, and makes unmuted corpus identity a performance-sample precondition under NEW-FALSE-NEGATIVE-01 |
 | Verifier | external independent reviewer, report supplied by the user; not the architecture-authoring Codex session |
 | Earlier externally reverified input manifest/report | `2ff71a19ebd5fd2939f1aa6da77a2d3276c320791a19a1364670ab78d9c2210e` / `67a001b2cbfd6af36d3e60712d8dfa2bab6dfcc4a7756114f87b9d34d5530611` |
 | Prior externally reverified input manifest/report | `9d2366afa0fa360397fbf4ae7c0ad4205d34739f20f8f7acff70207b2152b6fd` / `07df439ded1101b3ddea1328880579be918db1cfbe8d7861d28c0ca1d18ad20a` |
@@ -128,8 +129,9 @@ The first report verified the exact first amended revision. Several later report
 | NEW-PHASE-GATE-01 Phase 0/Phase 1 evidence circularity | External PASS — CLOSED for `9a0dbe5` | REVIEW-002 had required actual product packages, skill adapters, native product DTO round trips, and public process behavior before Phase 1 could start, while SLICE-001 forbids Phase 0 probes from exposing product APIs or becoming a production scaffold. Candidate `9a0dbe5` restores Phase 0 to standalone feasibility, clean provenance, and numeric-target approval; all product package/skill/public-behavior and achieved-budget proofs remain mandatory Phase 1 exit criteria. The exact-tree review passed the F-12 ordering, found no weakened requirement, and found no H/R regression or new finding. |
 | NEW-STATIC-PACKAGING-01 detached artifact/run/source binding | External PASS — CLOSED for `4315eb7` | One boundary now binds supplied artifact bytes through SHA-256/size, direct PE/ELF inspection, a fresh seal-owned copy, pre-execution hash, exact-copy execution, run-v2 source/architecture validation, post-execution hash, retained execution/inspection/run evidence, and detached re-verification. The independent reviewer rejected `/bin/true` as GNU and dynamic musl, a one-byte-changed artifact despite identical smoke output, changed artifact plus retained run evidence, stale pre-seal run JSON, and an embedded source-identity mutation. Windows, WSL2 GNU/musl, and native Linux GNU/musl passed; no accepted risk, H/R regression, or new finding was introduced. |
 | NEW-PROVENANCE-01 detached fetch/runner semantic binding | External PASS — CLOSED for `658b5c7` | The independent reviewer reproduced the original resealing attacks and verified that malformed fetch transport, forged host/repository/GITHUB_SHA, substituted result runner, changed retained bytes, and mismatched workflow head fail closed. Official Actions API/job/artifact identity and a fresh artifact download matched the retained run. The review passed `437/437` checks and `11/11` attacks with no H/R regression, new finding, or accepted risk. |
+| NEW-FALSE-NEGATIVE-01 canonical finding suppression | Author amendment candidate `a1e07ed`; independent review pending | The prior Slice allowed grounded generated/vendored zero-fan-in identities to be muted from default removal candidates. That permits an implementation to retain a hidden row while omitting a real finding from the default query, projections, and agent workflow. The candidate makes every grounded row canonical/default-query evidence, limits `FindingDisposition` to `ReviewCandidate` or visible `ReviewOnly`, exposes normalized filters plus unfiltered `scopeTotal`, adds an authored source-role visibility corpus, and invalidates any performance sample obtained through muting, implicit filters, scope reduction, caps, or early termination. |
 
-Historical `Accept finding` entries record architecture-authoring decisions and were never treated as independent PASS evidence. Document/design findings above come from the exact-tree report for `65e6021`; backend, evidence-closure, phase-boundary, static-packaging, and clean-provenance decisions additionally come from the exact-tree reports for `579c235`, `b8ff840`, `9a0dbe5`, `4315eb7`, and `658b5c7`. NEW-PROVENANCE-01 is closed.
+Historical `Accept finding` entries record architecture-authoring decisions and were never treated as independent PASS evidence. Document/design findings above come from the exact-tree report for `65e6021`; backend, evidence-closure, phase-boundary, static-packaging, and clean-provenance decisions additionally come from the exact-tree reports for `579c235`, `b8ff840`, `9a0dbe5`, `4315eb7`, and `658b5c7`. NEW-PROVENANCE-01 is closed. NEW-FALSE-NEGATIVE-01 remains open until an external exact-tree review passes candidate `a1e07ed`.
 
 ### GitHub provenance trust boundary
 
@@ -382,7 +384,7 @@ full corpus, and achieved-budget measurements remain mandatory Phase 1 acceptanc
 The independent review passed this boundary. Phase 1 stays blocked until the three
 remaining Phase 0 evidence gates pass.
 
-Any repeat reviewer must report `PASS`, `REOPEN`, or a new finding for H-01 through H-12, every R3 finding, R4-H09-01, R4-H11-01 through R4-H11-05, NEW-H10-01, NEW-H11-01, NEW-PHASE-GATE-01 and its F-12 predecessor, their relevant B/G/E/C predecessors, the preservation of packaged-skill and process-reopen proofs as Phase 1 acceptance, and B-07 exact revision binding. It must also check that:
+Any repeat reviewer must report `PASS`, `REOPEN`, or a new finding for H-01 through H-12, every R3 finding, R4-H09-01, R4-H11-01 through R4-H11-05, NEW-H10-01, NEW-H11-01, NEW-PHASE-GATE-01 and its F-12 predecessor, NEW-FALSE-NEGATIVE-01, their relevant B/G/E/C predecessors, the preservation of packaged-skill and process-reopen proofs as Phase 1 acceptance, and B-07 exact revision binding. It must also check that:
 
 - one implementable Cargo edge exists for every gate signal/effect owner, including compiled-profile unavailability, owner diagnostics, confidence/grounding ranks, and delta dimensions;
 - every new semantic input is demanded without consumption, reserved before capture, and supplied through an owned continuation or prerequisite-keyed cache step;
@@ -416,20 +418,27 @@ Any repeat reviewer must report `PASS`, `REOPEN`, or a new finding for H-01 thro
 - every bad package/pnpm field shape emits its inventory/resolver semantic-family limitation; both pinned valid pnpm `packageConfigs` forms and booleans reach `PnpmDependencySemanticsUnsupported`; invalid/duplicate package names never select a winner;
 - exact-first exports selection, overlapping one-star keys, Node `patternKeyCompare`, and artifact-owned `package-target-path.v1` match the vectors; percent, query, fragment, backslash, invalid component, and containment cases fail before probing;
 - no undefined scan lock supplies safety; snapshot freshness, reservations, durable leases, and lifecycle transactions remain the only normative coordination authorities;
+- every grounded finding remains in canonical totals and the unfiltered default query; `FindingDisposition` affects remediation only, normalized filters and `scopeTotal` are explicit, and neither projections nor skills recreate a hidden mute policy;
+- performance evidence is rejected when muting, implicit filters, reduced scan scope, sampling, caps, timeout, early termination, or omitted capabilities change the authored semantic result;
 - default output, retention exclusions, skill probes, and process-reopen proof remain complete Phase 1 acceptance and are not misrepresented as Phase 0 evidence;
 - both canonical Korean files, all three exact machine artifacts, and every other manifest entry are read from the exact Git tree rather than omitted from a loose upload.
 
-The accepted `65e6021` report names the exact commit and manifest hash, states reviewer independence, preserves finding IDs and accepted risks, and publishes SHA-256 `f7f25de96436862e6650195ec9248a85585ad03a9feb588c4cddfca4c2effbeb`. Its document/design PASS did not itself pass later evidence gates. The separate `579c235` report passes the backend and bounded OXC evidence described below, while the `b8ff840` report closes NEW-EVIDENCE-01 with report SHA-256 `60f94114a2a20111953355b5c3b056a8994a6e763c404290af5d0bd330f33224`. The `e0a2810` static-packaging report publishes SHA-256 `b26cee869f883ec6ba1b776a46f53d276ce3c39cb1333865a050c31490c27ac0` and reopens the Windows/WSL and detached-artifact evidence under NEW-STATIC-PACKAGING-01. The exact `4315eb7` closure report publishes SHA-256 `db4648ab8749e96755644033c297236b8ecabcac8b68958fc2b65a768753ef58`, closes that finding, and passes Phase 0 static-packaging feasibility without a new risk. The `e6147b1` clean-provenance report publishes SHA-256 `6826af8f1d578f3a423ae3725be1c3fb254a00e373ff2db4df7e2d4fc9537aaa` and opens NEW-PROVENANCE-01. The exact `658b5c7` closure report publishes SHA-256 `4894a45bbd4ea6b54447fb206e889b8f34e69e7a7fb737506cdce2cb0bcc3526`, closes that finding, and passes clean pinned-upstream provenance without a new risk. Only numeric-target approval remains in Phase 0; package, skill-adapter, public-behavior, native-path product round trips, and achieved-budget proof remain Phase 1 acceptance.
+The accepted `65e6021` report names the exact commit and manifest hash, states reviewer independence, preserves finding IDs and accepted risks, and publishes SHA-256 `f7f25de96436862e6650195ec9248a85585ad03a9feb588c4cddfca4c2effbeb`. Its document/design PASS did not itself pass later evidence gates. The separate `579c235` report passes the backend and bounded OXC evidence described below, while the `b8ff840` report closes NEW-EVIDENCE-01 with report SHA-256 `60f94114a2a20111953355b5c3b056a8994a6e763c404290af5d0bd330f33224`. The `e0a2810` static-packaging report publishes SHA-256 `b26cee869f883ec6ba1b776a46f53d276ce3c39cb1333865a050c31490c27ac0` and reopens the Windows/WSL and detached-artifact evidence under NEW-STATIC-PACKAGING-01. The exact `4315eb7` closure report publishes SHA-256 `db4648ab8749e96755644033c297236b8ecabcac8b68958fc2b65a768753ef58`, closes that finding, and passes Phase 0 static-packaging feasibility without a new risk. The `e6147b1` clean-provenance report publishes SHA-256 `6826af8f1d578f3a423ae3725be1c3fb254a00e373ff2db4df7e2d4fc9537aaa` and opens NEW-PROVENANCE-01. The exact `658b5c7` closure report publishes SHA-256 `4894a45bbd4ea6b54447fb206e889b8f34e69e7a7fb737506cdce2cb0bcc3526`, closes that finding, and passes clean pinned-upstream provenance without a new risk. Candidate `a1e07ed` now requires exact independent review for NEW-FALSE-NEGATIVE-01 before numeric-target approval can close Phase 0; package, skill-adapter, public-behavior, native-path product round trips, and achieved-budget proof remain Phase 1 acceptance.
 
-## Remaining Freeze Gate
+## Remaining Freeze Gates
 
 The exact-tree document/design review passed for `65e6021`, backend-selection semantics
 and canonical evidence passed for `579c235`, NEW-EVIDENCE-01 closure passed for
 `b8ff840`, the exact-tree phase-boundary review passed for `9a0dbe5`, and exact
 static-packaging closure candidate `4315eb7` passed all three required platform scopes
 and closed NEW-STATIC-PACKAGING-01. Exact clean-provenance closure candidate `658b5c7`
-passed and closed NEW-PROVENANCE-01. The only remaining Phase 0 blocker is numeric target
-evidence that can exist without a production scaffold:
+passed and closed NEW-PROVENANCE-01. Phase 0 now has two ordered blockers that can be
+closed without a production scaffold:
+
+1. Independently bind and review exact candidate `a1e07ed`; close NEW-FALSE-NEGATIVE-01
+   only if canonical/default-query finding preservation, explicit filters, source-role
+   corpus truth, and unmuted performance-sample validity are complete with no regression.
+2. Approve numeric Phase 1 targets only against that passed unmuted contract.
 
 ### Store backend evidence and selection
 
@@ -466,7 +475,12 @@ The named corpus passed at 1/2/4/8 MiB stacks and jobs 1/2/4/8/12; 256 and 512 K
 stacks overflowed as expected. This is feasibility evidence, not an approved product
 stack, worker count, or numeric budget.
 
-1. Approve numeric Phase 1 target budgets for time, peak RSS, worker stack, default jobs, and binary size from the named Phase 0 probe evidence, keeping the `/mnt/<drive>` diagnostic separate as specified. These are targets, not achieved-product claims.
+### Numeric-target approval
+
+After NEW-FALSE-NEGATIVE-01 passes, approve numeric Phase 1 target budgets for time,
+peak RSS, worker stack, default jobs, and binary size from the named Phase 0 probe
+evidence, keeping the `/mnt/<drive>` diagnostic separate as specified. These are targets,
+not achieved-product claims, and no muted or reduced-result legacy output is target truth.
 
 The following remain mandatory but are Phase 1 exit criteria, not Phase 0 freeze gates:
 
