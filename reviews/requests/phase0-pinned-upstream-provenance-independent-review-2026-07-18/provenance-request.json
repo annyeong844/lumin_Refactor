@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "lumin-phase0-pinned-upstream-provenance-review-request.v1",
+  "repository": "annyeong844/lumin_Refactor",
+  "gate": "clean-pinned-upstream-provenance-reproduction",
+  "gateBase": "d65f8a49250bf94a6a05903ee4d8d2a07e64f197",
+  "candidate": "e6147b1b2dfea45d223c87f3ba7ffec543e9f82d",
+  "candidateParent": "e2a451e31ab648e17d8ae478b2578c1ccdef0fee",
+  "candidateTree": "448005cbb75869a680849332a1d6efe23cf088ba",
+  "candidateMessage": "Bind clean upstream provenance evidence",
+  "candidateManifest": {
+    "entries": 16,
+    "sha256": "ca46f77997c696f8eeefc2feabdb9c1031a6e58e36fcb6f2a7ed4ad1bca84fcd"
+  },
+  "packet": {
+    "path": "reviews/probes/phase0-pinned-upstream-provenance-2026-07-18",
+    "entries": 34,
+    "manifestSha256": "77f9790453b7ebad9ba4ba5856f8d6de40bf971f43ec40c899d19fa272762482"
+  },
+  "source": {
+    "entries": 4,
+    "manifestSha256": "0f39d6782d79e980e128a7a70ed316ac0cae314d9e2812bec8e6825422406b92"
+  },
+  "cleanEvidence": {
+    "entries": 18,
+    "manifestSha256": "2228b0ac40afe62d4d72c12919e7dae1a8d1c8a6921f507c6ea6790e56dfc28f"
+  },
+  "frozenArchitecture": {
+    "candidate": "9a0dbe5c89463892c001e864c4f18eeab9e0eaed",
+    "manifestSha256": "e2ca379a8a659f2febbc4e277c89db67bb02035a6b10467cf78a5663f21cd99a"
+  },
+  "cleanRunner": {
+    "commit": "25bf5c5dd11da351c68c90da54e40b44e62120ce",
+    "workflowRunId": 29638671368,
+    "jobId": 88065321460,
+    "artifactId": 8427910952,
+    "artifactArchiveSha256": "d5f25626b8c37808da2115483c41bc3facb14338a21cc68e310da332dde9009d"
+  },
+  "expectedChecks": {
+    "upstreamByteIdentities": 7,
+    "compilerOptionCount": 122,
+    "compilerOptionKeyShapeSha256": "f2fb5da0cf33ea694a8bf4ccae909a1526e7978693c15ac1a6b10b3cdfbc9d9a",
+    "captureNegativeControls": 6,
+    "resealedAdversarialScenarios": 6
+  },
+  "acceptedRisksToPreserveUnlessReopenedByEvidence": [
+    "AR-BACKEND-01",
+    "AR-MEASURE-01"
+  ],
+  "phase0RemainingAfterPass": [
+    "approved Phase 1 time, RSS, worker-stack, default-jobs, and binary-size targets"
+  ],
+  "independenceBoundary": "Author verifiers, workflow summaries, and author adversarial checks are consistency aids only. Derive the verdict independently from exact Git objects, fresh upstream bytes, the detached GitHub artifact, and independently reproduced mutations."
+}

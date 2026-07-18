@@ -1,0 +1,391 @@
+{
+  "candidate": "e6147b1b2dfea45d223c87f3ba7ffec543e9f82d",
+  "checkCount": 93,
+  "checks": [
+    {
+      "name": "candidate object",
+      "status": "pass"
+    },
+    {
+      "name": "candidate SHA",
+      "status": "pass"
+    },
+    {
+      "name": "candidate parent",
+      "status": "pass"
+    },
+    {
+      "name": "candidate tree",
+      "status": "pass"
+    },
+    {
+      "name": "candidate subject",
+      "status": "pass"
+    },
+    {
+      "name": "request candidate",
+      "status": "pass"
+    },
+    {
+      "name": "request tree",
+      "status": "pass"
+    },
+    {
+      "name": "request artifact",
+      "status": "pass"
+    },
+    {
+      "name": "candidate manifest digest",
+      "status": "pass"
+    },
+    {
+      "name": "candidate manifest cardinality",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: .gitattributes",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: .gitignore",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: AGENTS.md",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: README.md",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: SDD.md",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: WORKBOARD.md",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: architecture/000-system-blueprint.md",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: architecture/001-execution-and-ownership.md",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: architecture/002-evidence-and-write-gate.md",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: specs/000-product-contract.md",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: specs/001-foundation-slice.md",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: specs/inventory-config-semantics.v1.json",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: specs/repo-path-semantics.v1.json",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: specs/resolver-config-semantics.v1.json",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: \ubb38\uc11c(\ud55c\uae00)/AGENTS.ko.md",
+      "status": "pass"
+    },
+    {
+      "name": "candidate blob: \ubb38\uc11c(\ud55c\uae00)/SDD.ko.md",
+      "status": "pass"
+    },
+    {
+      "name": "packet manifest digest",
+      "status": "pass"
+    },
+    {
+      "name": "packet manifest cardinality",
+      "status": "pass"
+    },
+    {
+      "name": "request packet copy",
+      "status": "pass"
+    },
+    {
+      "name": "packet exact inventory",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: README.md",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/SHA256SUMS",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/architecture-manifest.txt",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/derived/compiler-options.tsv",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/derived/typescript-package.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/fetch-metadata.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/host.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/identity/node-tag-object.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/identity/node-tag-ref.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/negative-controls.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/objects/node-packages.md",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/objects/node-resolve.js",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/objects/pnpm-workspace_yaml.md",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/objects/typescript-6.0.0-beta.tgz",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/objects/typescript-commandLineParser.ts",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/objects/typescript-moduleNameResolver.ts",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/objects/typescript.js",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/oracle.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/result.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: evidence/native-linux-clean/source-manifest.txt",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: runner/adversarial-checks.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: runner/adversarial_check.py",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: runner/artifact-download-verification.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: runner/run-native.sh",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: runner/verify_packet.py",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: runner/workflow-artifacts.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: runner/workflow-log.txt",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: runner/workflow-run.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: runner/workflow.yml",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: source/PROBE-CONTRACT.md",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: source/SHA256SUMS",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: source/extract_compiler_options.cjs",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: source/oracle.json",
+      "status": "pass"
+    },
+    {
+      "name": "packet blob: source/verify_provenance.py",
+      "status": "pass"
+    },
+    {
+      "name": "source manifest digest",
+      "status": "pass"
+    },
+    {
+      "name": "source manifest cardinality",
+      "status": "pass"
+    },
+    {
+      "name": "evidence manifest digest",
+      "status": "pass"
+    },
+    {
+      "name": "evidence manifest cardinality",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: evidence/native-linux-clean/derived/typescript-package.json",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: evidence/native-linux-clean/fetch-metadata.json",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: evidence/native-linux-clean/host.json",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: evidence/native-linux-clean/identity/node-tag-object.json",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: evidence/native-linux-clean/identity/node-tag-ref.json",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: evidence/native-linux-clean/negative-controls.json",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: evidence/native-linux-clean/oracle.json",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: evidence/native-linux-clean/result.json",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: runner/adversarial-checks.json",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: runner/artifact-download-verification.json",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: runner/workflow-artifacts.json",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: runner/workflow-run.json",
+      "status": "pass"
+    },
+    {
+      "name": "strict JSON: source/oracle.json",
+      "status": "pass"
+    },
+    {
+      "name": "seven upstream checks",
+      "status": "pass"
+    },
+    {
+      "name": "compiler option count",
+      "status": "pass"
+    },
+    {
+      "name": "compiler option digest",
+      "status": "pass"
+    },
+    {
+      "name": "runner binding",
+      "status": "pass"
+    },
+    {
+      "name": "one artifact",
+      "status": "pass"
+    },
+    {
+      "name": "artifact ID",
+      "status": "pass"
+    },
+    {
+      "name": "artifact digest",
+      "status": "pass"
+    },
+    {
+      "name": "gate range is probe-only",
+      "status": "pass"
+    },
+    {
+      "name": "temporary workflow absent",
+      "status": "pass"
+    },
+    {
+      "name": "runner commit ancestry",
+      "status": "pass"
+    },
+    {
+      "name": "runner workflow exact copy",
+      "status": "pass"
+    },
+    {
+      "name": "packet verifier consistency",
+      "status": "pass"
+    }
+  ],
+  "independenceBoundary": "Author preflight is not independent PASS evidence.",
+  "packetVerifier": {
+    "artifactArchiveSha256": "d5f25626b8c37808da2115483c41bc3facb14338a21cc68e310da332dde9009d",
+    "checks": 62,
+    "evidenceEntries": 18,
+    "evidenceManifestSha256": "2228b0ac40afe62d4d72c12919e7dae1a8d1c8a6921f507c6ea6790e56dfc28f",
+    "packetEntries": 34,
+    "packetManifestSha256": "77f9790453b7ebad9ba4ba5856f8d6de40bf971f43ec40c899d19fa272762482",
+    "runnerCommit": "25bf5c5dd11da351c68c90da54e40b44e62120ce",
+    "status": "pass"
+  },
+  "schemaVersion": "lumin-phase0-provenance-author-preflight.v1",
+  "status": "pass"
+}
