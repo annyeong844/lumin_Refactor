@@ -60,6 +60,7 @@ impl ConfigValue {
 pub enum ConfigSyntax {
     StrictJson,
     Jsonc,
+    RestrictedYaml,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -129,6 +130,51 @@ pub struct WorkspaceFact {
     pub root: RepoPath,
     pub source: WorkspaceSource,
     pub members: Vec<RepoPath>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum PackageSurfaceLane {
+    BundlerImport,
+    LegacyNode,
+    NodeImport,
+    NodeRequire,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum PackageSurfaceSource {
+    Exports {
+        key: String,
+        condition: Option<String>,
+        lane: PackageSurfaceLane,
+    },
+    Module {
+        lane: PackageSurfaceLane,
+    },
+    Main {
+        lane: PackageSurfaceLane,
+    },
+    Typings {
+        lane: PackageSurfaceLane,
+    },
+    Types {
+        lane: PackageSurfaceLane,
+    },
+    DeclarationCompanion {
+        lane: PackageSurfaceLane,
+    },
+    DirectoryIndex {
+        lane: PackageSurfaceLane,
+    },
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct PackageSurfaceDeclaration {
+    pub package_root: RepoPath,
+    pub manifest_path: RepoPath,
+    pub request: String,
+    pub namespace: crate::SymbolNamespace,
+    pub source: PackageSurfaceSource,
+    pub target: LogicalSourceId,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

@@ -1,15 +1,16 @@
 mod config;
+mod package_surface;
 
 use std::collections::BTreeMap;
 
 use lumin_model::{
-    ConfigSyntax, FileFacts, Limitation, LogicalSourceId, PackageIdentityState, RepoPath,
+    ConfigSyntax, FileFacts, Limitation, LogicalSourceId, PackageSurfaceDeclaration, RepoPath,
     ResolutionOutcome, ResolutionProfile, ResolvedSourceUse, SelectedResolutionProfile,
     SemanticConfigSnapshot, SourceSnapshot, SourceUseFact, SymbolNamespace,
 };
 use thiserror::Error;
 
-pub const RESOLVER_VERSION: &str = "config-profile-resolution.v1";
+pub const RESOLVER_VERSION: &str = "config-package-resolution.v1";
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ConfigDemand {
@@ -20,6 +21,7 @@ pub struct ConfigDemand {
 #[derive(Clone, Debug)]
 pub struct ResolverOutput {
     pub resolved: Vec<ResolvedSourceUse>,
+    pub package_surfaces: Vec<PackageSurfaceDeclaration>,
     pub profiles: Vec<SelectedResolutionProfile>,
     pub limitations: Vec<Limitation>,
     pub demands: Vec<ConfigDemand>,
@@ -43,6 +45,7 @@ pub fn resolve_all(
     if !selection.demands.is_empty() {
         return Ok(ResolverOutput {
             resolved: Vec::new(),
+            package_surfaces: Vec::new(),
             profiles: selection.profiles,
             limitations: selection.limitations,
             demands: selection.demands,
@@ -57,6 +60,10 @@ pub fn resolve_all(
         .map(|source| (source.id.clone(), source.path.clone()))
         .collect::<BTreeMap<_, _>>();
 
+    let public_surfaces =
+        package_surface::collect_public_surfaces(sources, &source_by_path, semantic_config);
+    let mut package_surfaces = public_surfaces.declarations;
+    selection.limitations.extend(public_surfaces.limitations);
     let mut resolved = Vec::new();
     for file in facts {
         let Some(importer_path) = path_by_source.get(&file.source_id) else {
@@ -66,7 +73,7 @@ pub fn resolve_all(
             continue;
         };
         for source_use in &file.uses {
-            let (outcome, limitation) = resolve_one(
+            let (outcome, limitation, declaration) = resolve_one(
                 importer_path,
                 source_use,
                 &source_by_path,
@@ -75,6 +82,9 @@ pub fn resolve_all(
             );
             if let Some(limitation) = limitation {
                 selection.limitations.push(limitation);
+            }
+            if let Some(declaration) = declaration {
+                package_surfaces.push(declaration);
             }
             resolved.push(ResolvedSourceUse {
                 source_use: source_use.clone(),
@@ -89,8 +99,11 @@ pub fn resolve_all(
             .then_with(|| left.source_use.span.start.cmp(&right.source_use.span.start))
             .then_with(|| left.source_use.specifier.cmp(&right.source_use.specifier))
     });
+    package_surfaces.sort();
+    package_surfaces.dedup();
     Ok(ResolverOutput {
         resolved,
+        package_surfaces,
         profiles: selection.profiles,
         limitations: selection.limitations,
         demands: Vec::new(),
@@ -103,7 +116,11 @@ fn resolve_one(
     sources: &BTreeMap<RepoPath, LogicalSourceId>,
     settings: &config::ImporterSettings,
     semantic_config: &SemanticConfigSnapshot,
-) -> (ResolutionOutcome, Option<Limitation>) {
+) -> (
+    ResolutionOutcome,
+    Option<Limitation>,
+    Option<PackageSurfaceDeclaration>,
+) {
     let specifier = source_use.specifier.as_str();
     if settings.blocked {
         return (
@@ -111,6 +128,7 @@ fn resolve_one(
                 specifier: specifier.to_owned(),
                 reason: "the importer's semantic configuration is incomplete".to_owned(),
             },
+            None,
             None,
         );
     }
@@ -132,15 +150,26 @@ fn resolve_bare_specifier(
     sources: &BTreeMap<RepoPath, LogicalSourceId>,
     settings: &config::ImporterSettings,
     semantic_config: &SemanticConfigSnapshot,
-) -> (ResolutionOutcome, Option<Limitation>) {
+) -> (
+    ResolutionOutcome,
+    Option<Limitation>,
+    Option<PackageSurfaceDeclaration>,
+) {
     if specifier.starts_with('#') {
-        return unsupported_with_unknown_limitation(
-            source_use,
-            "package imports are unsupported".to_owned(),
-        );
+        if settings.profile == ResolutionProfile::Node {
+            return (
+                ResolutionOutcome::External {
+                    package: specifier.to_owned(),
+                },
+                None,
+                None,
+            );
+        }
+        let result = package_surface::package_imports_unsupported(source_use, semantic_config);
+        return (result.outcome, result.limitation, result.declaration);
     }
     if let Some(outcome) = resolve_paths(specifier, source_use, sources, settings) {
-        return (outcome, None);
+        return (outcome, None, None);
     }
     if let Some(base_url) = &settings.base_url
         && let Some(base) = config::normalize_from(base_url, specifier)
@@ -152,35 +181,19 @@ fn resolve_bare_specifier(
                     target: target.clone(),
                 },
                 None,
+                None,
             );
         }
     }
-    let bare_identity = package_name(specifier);
-    if let Some(package) = semantic_config.packages.iter().find(|package| {
-        package.workspace_root.is_some()
-            && matches!(
-                &package.identity,
-                PackageIdentityState::Valid(identity) if identity.as_str() == bare_identity
-            )
-    }) {
-        return (
-            ResolutionOutcome::Unsupported {
-                specifier: specifier.to_owned(),
-                reason: "workspace package public entry resolution is not implemented yet"
-                    .to_owned(),
-            },
-            Some(Limitation::PublicSurfaceUnsupported {
-                path: package.manifest_path.display_escaped(),
-                detail: format!(
-                    "workspace package import {specifier} requires package entry semantics"
-                ),
-            }),
-        );
+    if let Some(result) = package_surface::resolve(source_use, sources, settings, semantic_config) {
+        return (result.outcome, result.limitation, result.declaration);
     }
+    let bare_identity = package_name(specifier);
     (
         ResolutionOutcome::External {
             package: bare_identity,
         },
+        None,
         None,
     )
 }
@@ -191,7 +204,11 @@ fn resolve_relative_specifier(
     importer_path: &RepoPath,
     sources: &BTreeMap<RepoPath, LogicalSourceId>,
     settings: &config::ImporterSettings,
-) -> (ResolutionOutcome, Option<Limitation>) {
+) -> (
+    ResolutionOutcome,
+    Option<Limitation>,
+    Option<PackageSurfaceDeclaration>,
+) {
     let Some(base) = normalize_relative(importer_path, specifier) else {
         return unsupported_with_unknown_limitation(
             source_use,
@@ -219,6 +236,7 @@ fn resolve_relative_specifier(
                     target: target.clone(),
                 },
                 None,
+                None,
             );
         }
     }
@@ -229,6 +247,7 @@ fn resolve_relative_specifier(
                 specifier: specifier.to_owned(),
             },
             None,
+            None,
         );
     }
 
@@ -238,13 +257,18 @@ fn resolve_relative_specifier(
             candidates: candidates.iter().map(RepoPath::display_escaped).collect(),
         },
         None,
+        None,
     )
 }
 
 fn unsupported_with_unknown_limitation(
     source_use: &SourceUseFact,
     reason: String,
-) -> (ResolutionOutcome, Option<Limitation>) {
+) -> (
+    ResolutionOutcome,
+    Option<Limitation>,
+    Option<PackageSurfaceDeclaration>,
+) {
     let specifier = source_use.specifier.clone();
     let detail = format!("unsupported specifier {specifier}: {reason}");
     (
@@ -253,6 +277,7 @@ fn unsupported_with_unknown_limitation(
             source_id: source_use.importer.clone(),
             detail,
         }),
+        None,
     )
 }
 
@@ -268,7 +293,7 @@ fn normalize_relative(importer: &RepoPath, specifier: &str) -> Option<RepoPath> 
     Some(current)
 }
 
-fn candidates(
+pub(crate) fn candidates(
     base: &RepoPath,
     namespace: SymbolNamespace,
     allow_extensionless: bool,
@@ -434,7 +459,8 @@ fn package_name(specifier: &str) -> String {
 #[cfg(test)]
 mod tests {
     use lumin_model::{
-        ImportKind, SourceKind, SourceRoles, SourceSpan, SourceUseFact, SymbolNamespace,
+        ImportKind, ModuleRequestKind, SourceKind, SourceRoles, SourceSpan, SourceUseFact,
+        SymbolNamespace,
     };
 
     use super::*;
@@ -459,17 +485,19 @@ mod tests {
             imported_name: Some("used".to_owned()),
             namespace: SymbolNamespace::Value,
             kind: ImportKind::Named,
+            request_kind: ModuleRequestKind::StaticImport,
             span: SourceSpan { start: 0, end: 10 },
         };
         let config = SemanticConfigSnapshot::default();
         let settings = config::ImporterSettings {
             profile: ResolutionProfile::Bundler,
             allow_extensionless: true,
+            static_condition: config::PackageConditionMode::Import,
             base_url: None,
             paths: None,
             blocked: false,
         };
-        let (outcome, limitation) = resolve_one(
+        let (outcome, limitation, declaration) = resolve_one(
             &importer.path,
             &source_use,
             &[(target.path.clone(), target.id.clone())]
@@ -479,6 +507,7 @@ mod tests {
             &config,
         );
         assert!(limitation.is_none());
+        assert!(declaration.is_none());
         assert_eq!(outcome, ResolutionOutcome::Internal { target: target.id });
         Ok(())
     }

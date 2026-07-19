@@ -127,6 +127,14 @@ pub enum ImportKind {
     DynamicBroad,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ModuleRequestKind {
+    StaticImport,
+    DynamicImport,
+    Require,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceSpan {
@@ -152,6 +160,7 @@ pub struct SourceUseFact {
     pub imported_name: Option<String>,
     pub namespace: SymbolNamespace,
     pub kind: ImportKind,
+    pub request_kind: ModuleRequestKind,
     pub span: SourceSpan,
 }
 
@@ -208,6 +217,14 @@ pub enum Limitation {
         importer: LogicalSourceId,
         specifier: String,
         candidates: Vec<String>,
+    },
+    PackageImportsUnsupported {
+        path: String,
+        detail: String,
+    },
+    ImporterFormatUnsupported {
+        path: String,
+        detail: String,
     },
     PublicSurfaceUnsupported {
         path: String,

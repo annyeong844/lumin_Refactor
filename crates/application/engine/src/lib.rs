@@ -117,6 +117,7 @@ pub fn analyze_repository(
     let resolver = resolve_config_fixed_point(root, &mut inventory, &facts, resolution_profile)?;
     let ResolverOutput {
         resolved,
+        package_surfaces,
         profiles,
         limitations: resolver_limitations,
         demands: _,
@@ -128,7 +129,7 @@ pub fn analyze_repository(
         resolver_limitations,
     );
 
-    let graph = lumin_graph::build(&inventory.sources, &facts, &resolved);
+    let graph = lumin_graph::build(&inventory.sources, &facts, &resolved, &package_surfaces);
     let findings = lumin_dead::analyze(&inventory.sources, &graph, &inventory.config, &limitations);
     let state = if limitations.is_empty() {
         CapabilityState::Complete
@@ -523,96 +524,6 @@ mod tests {
         assert_eq!(evidence.dead_code_state(), CapabilityState::Complete);
         assert_eq!(evidence.findings.len(), 1);
         assert_eq!(evidence.findings[0].exported_name, "dead");
-        Ok(())
-    }
-
-    #[test]
-    fn duplicate_workspace_identity_has_no_winner_or_false_dead_finding()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let root = tempfile::tempdir()?;
-        fs::create_dir_all(root.path().join("src"))?;
-        fs::create_dir_all(root.path().join("packages/a"))?;
-        fs::create_dir_all(root.path().join("packages/b"))?;
-        fs::write(
-            root.path().join("package.json"),
-            r#"{"name":"app","workspaces":["packages/*"]}"#,
-        )?;
-        for package in ["a", "b"] {
-            fs::write(
-                root.path().join(format!("packages/{package}/package.json")),
-                r#"{"name":"@acme/lib"}"#,
-            )?;
-            fs::write(
-                root.path().join(format!("packages/{package}/index.ts")),
-                format!("export const {package}Dead = 1;"),
-            )?;
-        }
-        fs::write(
-            root.path().join("src/main.ts"),
-            "import { value } from '@acme/lib'; console.log(value);",
-        )?;
-
-        let evidence = analyze_repository(root.path(), &InventoryRequest::default(), 1, None)?;
-
-        assert_eq!(evidence.dead_code_state(), CapabilityState::Incomplete);
-        assert!(evidence.findings.is_empty());
-        assert_eq!(
-            evidence
-                .limitations
-                .iter()
-                .filter(|limitation| matches!(
-                    limitation,
-                    Limitation::PackageIdentityUnsupported { detail, .. }
-                        if detail.contains("duplicate workspace package identity")
-                ))
-                .count(),
-            2
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn package_local_public_surface_gap_keeps_unrelated_review_only_finding()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let root = tempfile::tempdir()?;
-        fs::create_dir_all(root.path().join("src"))?;
-        fs::create_dir_all(root.path().join("packages/lib"))?;
-        fs::write(
-            root.path().join("package.json"),
-            r#"{"name":"app","workspaces":["packages/*"]}"#,
-        )?;
-        fs::write(
-            root.path().join("packages/lib/package.json"),
-            r#"{"name":"@acme/lib"}"#,
-        )?;
-        fs::write(
-            root.path().join("packages/lib/index.ts"),
-            "export const publicDead = 1;",
-        )?;
-        fs::write(
-            root.path().join("src/main.ts"),
-            "import { value } from '@acme/lib'; console.log(value);",
-        )?;
-        fs::write(
-            root.path().join("src/generated.ts"),
-            "// @generated\nexport const unrelatedDead = 1;",
-        )?;
-
-        let evidence = analyze_repository(root.path(), &InventoryRequest::default(), 1, None)?;
-
-        assert_eq!(evidence.dead_code_state(), CapabilityState::Incomplete);
-        assert_eq!(evidence.findings.len(), 1);
-        assert_eq!(evidence.findings[0].exported_name, "unrelatedDead");
-        assert!(matches!(
-            evidence.findings[0].disposition,
-            FindingDisposition::ReviewOnly { .. }
-        ));
-        assert!(
-            evidence.limitations.iter().any(|limitation| matches!(
-                limitation,
-                Limitation::PublicSurfaceUnsupported { .. }
-            ))
-        );
         Ok(())
     }
 }

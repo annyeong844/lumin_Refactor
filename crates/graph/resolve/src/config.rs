@@ -21,9 +21,16 @@ static RESOLVER_POLICY: LazyLock<Result<Value, String>> = LazyLock::new(|| {
 pub(crate) struct ImporterSettings {
     pub profile: ResolutionProfile,
     pub allow_extensionless: bool,
+    pub static_condition: PackageConditionMode,
     pub base_url: Option<RepoPath>,
     pub paths: Option<PathMappings>,
     pub blocked: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PackageConditionMode {
+    Import,
+    Require,
 }
 
 #[derive(Clone, Debug)]
@@ -130,14 +137,16 @@ fn select_importer(
                 ),
             });
     }
-    let allow_extensionless = match profile {
-        ResolutionProfile::Bundler | ResolutionProfile::Node => true,
+    let (allow_extensionless, static_condition) = match profile {
+        ResolutionProfile::Bundler => (true, PackageConditionMode::Import),
+        ResolutionProfile::Node => (true, PackageConditionMode::Require),
         ResolutionProfile::Node16 | ResolutionProfile::NodeNext => {
             match importer_is_esm(source, config, &mut selection.limitations) {
-                Ok(esm) => !esm,
+                Ok(true) => (false, PackageConditionMode::Import),
+                Ok(false) => (true, PackageConditionMode::Require),
                 Err(()) => {
                     blocked = true;
-                    false
+                    (false, PackageConditionMode::Import)
                 }
             }
         }
@@ -152,6 +161,7 @@ fn select_importer(
         ImporterSettings {
             profile,
             allow_extensionless,
+            static_condition,
             base_url: effective.base_url,
             paths: effective.paths,
             blocked,
@@ -775,7 +785,7 @@ fn importer_is_esm(
         Some(ConfigValue::String(value)) if value == "module" => Ok(true),
         Some(ConfigValue::String(value)) if value == "commonjs" => Ok(false),
         Some(_) => {
-            limitations.push(Limitation::PublicSurfaceUnsupported {
+            limitations.push(Limitation::ImporterFormatUnsupported {
                 path: package.manifest_path.display_escaped(),
                 detail: "package type must be module or commonjs for Node profiles".to_owned(),
             });

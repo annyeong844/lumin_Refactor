@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use lumin_model::{
-    ExportFact, FileFacts, ImportKind, LogicalSourceId, ResolutionOutcome, ResolvedSourceUse,
-    SourceRoles, SourceSnapshot, SymbolNamespace,
+    ExportFact, FileFacts, ImportKind, LogicalSourceId, PackageSurfaceDeclaration,
+    ResolutionOutcome, ResolvedSourceUse, SourceRoles, SourceSnapshot, SymbolNamespace,
 };
 
 pub const GRAPH_VERSION: &str = "symbol-graph.v1";
@@ -22,6 +22,7 @@ pub struct GraphExport {
     pub test_exact_fan_in: u64,
     pub production_broad_fan_in: u64,
     pub test_broad_fan_in: u64,
+    pub public_surface_count: u64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -33,6 +34,7 @@ pub fn build(
     sources: &[SourceSnapshot],
     file_facts: &[FileFacts],
     resolved_uses: &[ResolvedSourceUse],
+    package_surfaces: &[PackageSurfaceDeclaration],
 ) -> SymbolGraph {
     let roles = sources
         .iter()
@@ -58,6 +60,7 @@ pub fn build(
                     test_exact_fan_in: 0,
                     production_broad_fan_in: 0,
                     test_broad_fan_in: 0,
+                    public_surface_count: 0,
                 });
         }
     }
@@ -101,6 +104,14 @@ pub fn build(
                 }
             }
             ImportKind::SideEffect => {}
+        }
+    }
+
+    for surface in package_surfaces {
+        for (identity, export) in &mut graph.exports {
+            if identity.source_id == surface.target && identity.namespace == surface.namespace {
+                export.public_surface_count += 1;
+            }
         }
     }
 

@@ -1,7 +1,8 @@
 mod config_document;
 mod package_semantics;
+mod pnpm_workspace;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
@@ -89,7 +90,6 @@ struct PatternSet {
 struct CollectedFiles {
     sources: BTreeMap<RepoPath, SourceSnapshot>,
     config_observations: BTreeMap<RepoPath, ConfigObservation>,
-    pnpm_roots: BTreeSet<RepoPath>,
     limitations: Vec<Limitation>,
     consulted_config_paths: Vec<RepoPath>,
 }
@@ -110,7 +110,6 @@ pub fn scan(root: &Path, request: &InventoryRequest) -> Result<InventorySnapshot
     let config = package_semantics::build(
         collected.config_observations,
         &sources,
-        &collected.pnpm_roots,
         &mut collected.limitations,
     )
     .map_err(InventoryError::MalformedConfiguration)?;
@@ -200,6 +199,10 @@ impl CollectedFiles {
                             path: path.display_escaped(),
                             detail: "controlling config could not be read".to_owned(),
                         },
+                        ConfigSyntax::RestrictedYaml => Limitation::WorkspaceOwnershipUnsupported {
+                            path: path.display_escaped(),
+                            detail: "pnpm workspace configuration could not be read".to_owned(),
+                        },
                     };
                     self.limitations.push(limitation);
                     self.config_observations.insert(path, observation);
@@ -208,18 +211,6 @@ impl CollectedFiles {
                     self.config_observations.insert(path, observation);
                 }
             }
-            return Ok(());
-        }
-        if relative.file_name() == Some(OsStr::new("pnpm-workspace.yaml")) {
-            self.consulted_config_paths.push(path.clone());
-            self.pnpm_roots
-                .insert(path.parent().unwrap_or_else(RepoPath::empty));
-            self.limitations
-                .push(Limitation::WorkspaceOwnershipUnsupported {
-                path: path.display_escaped(),
-                detail: "restricted pnpm workspace parsing is not implemented yet; package workspaces are not used as fallback"
-                    .to_owned(),
-            });
             return Ok(());
         }
         if !patterns.admits(relative) {
@@ -277,7 +268,13 @@ pub fn observe_config(
             });
         }
     };
-    let document = config_document::parse(path.clone(), &bytes, syntax).map_err(|error| {
+    let parsed = match syntax {
+        ConfigSyntax::StrictJson | ConfigSyntax::Jsonc => {
+            config_document::parse(path.clone(), &bytes, syntax)
+        }
+        ConfigSyntax::RestrictedYaml => pnpm_workspace::parse(path.clone(), &bytes),
+    };
+    let document = parsed.map_err(|error| {
         InventoryError::MalformedConfiguration(format!("{}: {error}", path.display_escaped()))
     })?;
     Ok(ConfigObservation::Present(document))
@@ -287,6 +284,7 @@ fn config_syntax(path: &Path) -> Option<ConfigSyntax> {
     match path.file_name().and_then(OsStr::to_str) {
         Some("package.json") => Some(ConfigSyntax::StrictJson),
         Some("tsconfig.json" | "jsconfig.json") => Some(ConfigSyntax::Jsonc),
+        Some("pnpm-workspace.yaml") => Some(ConfigSyntax::RestrictedYaml),
         _ => None,
     }
 }
@@ -645,21 +643,31 @@ mod tests {
     }
 
     #[test]
-    fn pnpm_presence_disables_package_workspace_fallback() -> Result<(), Box<dyn std::error::Error>>
-    {
+    fn pnpm_membership_replaces_package_workspaces_and_applies_exclusions()
+    -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
         fs::create_dir_all(root.path().join("packages/a"))?;
+        fs::create_dir_all(root.path().join("tools/included"))?;
+        fs::create_dir_all(root.path().join("tools/excluded"))?;
         fs::write(
             root.path().join("package.json"),
             r#"{"name":"root","workspaces":["packages/*"]}"#,
         )?;
         fs::write(
             root.path().join("pnpm-workspace.yaml"),
-            "packages:\n  - packages/*\n",
+            "packages:\n  - '!tools/excluded'\n  - tools/**\n",
         )?;
         fs::write(
             root.path().join("packages/a/package.json"),
             r#"{"name":"package-a"}"#,
+        )?;
+        fs::write(
+            root.path().join("tools/included/package.json"),
+            r#"{"name":"included"}"#,
+        )?;
+        fs::write(
+            root.path().join("tools/excluded/package.json"),
+            r#"{"name":"excluded"}"#,
         )?;
 
         let inventory = scan(root.path(), &InventoryRequest::default())?;
@@ -669,13 +677,99 @@ mod tests {
             .iter()
             .find(|package| package.root.display_escaped() == "packages/a")
             .ok_or("package-a missing")?;
+        let included = inventory
+            .config
+            .packages
+            .iter()
+            .find(|package| package.root.display_escaped() == "tools/included")
+            .ok_or("included package missing")?;
+        let excluded = inventory
+            .config
+            .packages
+            .iter()
+            .find(|package| package.root.display_escaped() == "tools/excluded")
+            .ok_or("excluded package missing")?;
 
         assert!(package_a.workspace_root.is_none());
-        assert!(inventory.limitations.iter().any(|limitation| matches!(
-            limitation,
-            Limitation::WorkspaceOwnershipUnsupported { path, .. }
-                if path == "pnpm-workspace.yaml"
-        )));
+        assert_eq!(
+            included
+                .workspace_root
+                .as_ref()
+                .map(RepoPath::display_escaped),
+            Some(String::new())
+        );
+        assert!(excluded.workspace_root.is_none());
+        assert!(inventory.limitations.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn pnpm_missing_packages_keeps_only_the_root_member() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = tempfile::tempdir()?;
+        fs::create_dir_all(root.path().join("packages/a"))?;
+        fs::write(root.path().join("package.json"), r#"{"name":"root"}"#)?;
+        fs::write(root.path().join("pnpm-workspace.yaml"), "{}\n")?;
+        fs::write(
+            root.path().join("packages/a/package.json"),
+            r#"{"name":"package-a"}"#,
+        )?;
+
+        let inventory = scan(root.path(), &InventoryRequest::default())?;
+        let workspace = inventory
+            .config
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.source == lumin_model::WorkspaceSource::PnpmWorkspace)
+            .ok_or("pnpm workspace missing")?;
+        assert_eq!(workspace.members, vec![RepoPath::empty()]);
+        Ok(())
+    }
+
+    #[test]
+    fn pnpm_package_configs_forms_are_visible_typed_limitations()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for yaml in [
+            "packageConfigs:\n  project-1:\n    saveExact: true\n",
+            "packageConfigs:\n  - match: [project-1, project-2]\n    saveExact: true\n",
+        ] {
+            let root = tempfile::tempdir()?;
+            fs::write(root.path().join("package.json"), r#"{"name":"root"}"#)?;
+            fs::write(root.path().join("pnpm-workspace.yaml"), yaml)?;
+
+            let inventory = scan(root.path(), &InventoryRequest::default())?;
+            assert!(inventory.limitations.iter().any(|limitation| matches!(
+                limitation,
+                Limitation::PnpmDependencySemanticsUnsupported { path, .. }
+                    if path == "pnpm-workspace.yaml"
+            )));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_pnpm_is_a_hard_stop_without_package_workspace_fallback()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        fs::create_dir_all(root.path().join("packages/a"))?;
+        fs::write(
+            root.path().join("package.json"),
+            r#"{"name":"root","workspaces":["packages/*"]}"#,
+        )?;
+        fs::write(
+            root.path().join("pnpm-workspace.yaml"),
+            "packages: []\npackages: [packages/*]\n",
+        )?;
+        fs::write(
+            root.path().join("packages/a/package.json"),
+            r#"{"name":"package-a"}"#,
+        )?;
+
+        let result = scan(root.path(), &InventoryRequest::default());
+        assert!(matches!(
+            result,
+            Err(InventoryError::MalformedConfiguration(_))
+        ));
         Ok(())
     }
 }

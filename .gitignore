@@ -1,4 +1,5 @@
 .lumin/
+.audit/
 target/
 **/target/
 *.tmp

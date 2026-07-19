@@ -1,6 +1,6 @@
 use lumin_model::{
-    ExportFact, FileFacts, ImportKind, Limitation, SourceKind, SourceSnapshot, SourceSpan,
-    SourceUseFact, SymbolNamespace,
+    ExportFact, FileFacts, ImportKind, Limitation, ModuleRequestKind, SourceKind, SourceSnapshot,
+    SourceSpan, SourceUseFact, SymbolNamespace,
 };
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
@@ -142,6 +142,7 @@ fn lower_import(
             imported_name: None,
             namespace: declaration_namespace,
             kind: ImportKind::SideEffect,
+            request_kind: ModuleRequestKind::StaticImport,
             span: span(declaration.span),
         });
         return;
@@ -162,6 +163,7 @@ fn lower_import(
                         SymbolNamespace::Value
                     },
                     kind: ImportKind::Named,
+                    request_kind: ModuleRequestKind::StaticImport,
                     span: span(import.span),
                 });
             }
@@ -172,6 +174,7 @@ fn lower_import(
                     imported_name: Some("default".to_owned()),
                     namespace: declaration_namespace,
                     kind: ImportKind::Default,
+                    request_kind: ModuleRequestKind::StaticImport,
                     span: span(import.span),
                 });
             }
@@ -182,6 +185,7 @@ fn lower_import(
                     imported_name: None,
                     namespace: declaration_namespace,
                     kind: ImportKind::Namespace,
+                    request_kind: ModuleRequestKind::StaticImport,
                     span: span(import.span),
                 });
             }
@@ -222,6 +226,7 @@ fn lower_named_export(
                 imported_name: Some(local_name),
                 namespace,
                 kind: ImportKind::ReExportNamed,
+                request_kind: ModuleRequestKind::StaticImport,
                 span: span(export.span),
             });
         }
@@ -343,6 +348,7 @@ impl<'a> Visit<'a> for DynamicUseDetector<'_> {
                     imported_name: None,
                     namespace: SymbolNamespace::Value,
                     kind: ImportKind::DynamicBroad,
+                    request_kind: ModuleRequestKind::DynamicImport,
                     span: span(expression.span),
                 });
             }
@@ -361,6 +367,7 @@ impl<'a> Visit<'a> for DynamicUseDetector<'_> {
                 imported_name: None,
                 namespace: SymbolNamespace::Value,
                 kind: ImportKind::DynamicBroad,
+                request_kind: ModuleRequestKind::Require,
                 span: span(expression.span),
             });
         } else if expression.callee.is_specific_id("require") {

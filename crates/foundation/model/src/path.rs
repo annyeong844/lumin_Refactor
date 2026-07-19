@@ -91,17 +91,14 @@ impl RepoPath {
     }
 
     pub fn portable(&self) -> Option<String> {
-        self.components
-            .iter()
-            .map(|component| match component {
-                RepoPathComponent::PortableUtf8(value) => Some(value.as_str()),
-                #[cfg(unix)]
-                RepoPathComponent::UnixBytes(_) => None,
-                #[cfg(windows)]
-                RepoPathComponent::WindowsWtf16(_) => None,
-            })
-            .collect::<Option<Vec<_>>>()
-            .map(|parts| parts.join("/"))
+        portable_components(&self.components)
+    }
+
+    pub fn portable_relative_to(&self, ancestor: &Self) -> Option<String> {
+        let relative = self
+            .components
+            .strip_prefix(ancestor.components.as_slice())?;
+        portable_components(relative)
     }
 
     pub fn display_escaped(&self) -> String {
@@ -173,6 +170,20 @@ impl RepoPath {
             canonical,
         })
     }
+}
+
+fn portable_components(components: &[RepoPathComponent]) -> Option<String> {
+    components
+        .iter()
+        .map(|component| match component {
+            RepoPathComponent::PortableUtf8(value) => Some(value.as_str()),
+            #[cfg(unix)]
+            RepoPathComponent::UnixBytes(_) => None,
+            #[cfg(windows)]
+            RepoPathComponent::WindowsWtf16(_) => None,
+        })
+        .collect::<Option<Vec<_>>>()
+        .map(|parts| parts.join("/"))
 }
 
 impl Ord for RepoPath {
@@ -313,6 +324,21 @@ mod tests {
             path.canonical_bytes(),
             b"LUMRPATH\x00\x01\x00\x00\x00\x02\x01\x00\x00\x00\x03src\x01\x00\x00\x00\x07main.ts"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn portable_relative_path_uses_component_identity() -> Result<(), RepoPathError> {
+        let root = RepoPath::from_portable("packages/core")?;
+        let child = RepoPath::from_portable("packages/core/src/lib.ts")?;
+        let sibling = RepoPath::from_portable("packages/core-extra/src/lib.ts")?;
+
+        assert_eq!(
+            child.portable_relative_to(&root).as_deref(),
+            Some("src/lib.ts")
+        );
+        assert_eq!(root.portable_relative_to(&root).as_deref(), Some(""));
+        assert_eq!(sibling.portable_relative_to(&root), None);
         Ok(())
     }
 

@@ -17,6 +17,9 @@ pub(crate) fn parse(
             normalized = normalize_jsonc(bytes)?;
             normalized.as_slice()
         }
+        ConfigSyntax::RestrictedYaml => {
+            return Err("restricted YAML must be parsed by the pnpm workspace owner".to_owned());
+        }
     };
     let parsed: ParsedValue = serde_json::from_slice(input).map_err(|error| error.to_string())?;
     Ok(ConfigDocument {

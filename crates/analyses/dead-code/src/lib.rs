@@ -28,6 +28,7 @@ pub fn analyze(
         if export.roles.declaration
             || export.production_exact_fan_in > 0
             || export.production_broad_fan_in > 0
+            || export.public_surface_count > 0
         {
             continue;
         }
@@ -98,6 +99,8 @@ fn blocked_absence_scope(
             | Limitation::PackageIdentityUnsupported { .. }
             | Limitation::SfcDialectUnavailable { .. } => workspace_blocked = true,
             Limitation::PublicSurfaceUnsupported { path, .. }
+            | Limitation::PackageImportsUnsupported { path, .. }
+            | Limitation::ImporterFormatUnsupported { path, .. }
             | Limitation::PackageDependencySemanticsUnsupported { path, .. }
             | Limitation::PackagePrivacyUnsupported { path, .. }
             | Limitation::DependencyOwnerAmbiguous { path, .. } => {

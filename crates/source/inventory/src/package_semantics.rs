@@ -9,10 +9,10 @@ use lumin_model::{
 pub(crate) fn build(
     observations: BTreeMap<RepoPath, ConfigObservation>,
     sources: &[SourceSnapshot],
-    pnpm_roots: &BTreeSet<RepoPath>,
     limitations: &mut Vec<Limitation>,
 ) -> Result<SemanticConfigSnapshot, String> {
     let manifests = package_manifests(&observations);
+    let pnpm_workspaces = pnpm_workspace_documents(&observations);
     let mut packages = manifests
         .iter()
         .map(|manifest| package_fact(manifest, limitations))
@@ -23,7 +23,7 @@ pub(crate) fn build(
         .iter()
         .map(|package| package.root.clone())
         .collect::<Vec<_>>();
-    let workspaces = build_workspaces(&manifests, &package_roots, pnpm_roots, limitations);
+    let workspaces = build_workspaces(&manifests, &pnpm_workspaces, &package_roots, limitations);
     assign_workspace_roots(&mut packages, &workspaces);
     reject_duplicate_identities(&mut packages, limitations);
     let source_packages = map_source_packages(sources, &packages);
@@ -34,6 +34,22 @@ pub(crate) fn build(
         workspaces,
         source_packages,
     })
+}
+
+fn pnpm_workspace_documents(
+    observations: &BTreeMap<RepoPath, ConfigObservation>,
+) -> Vec<&ConfigDocument> {
+    observations
+        .values()
+        .filter_map(|observation| match observation {
+            ConfigObservation::Present(document)
+                if document.path.file_name_portable() == Some("pnpm-workspace.yaml") =>
+            {
+                Some(document)
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 fn package_manifests(observations: &BTreeMap<RepoPath, ConfigObservation>) -> Vec<&ConfigDocument> {
@@ -52,19 +68,26 @@ fn package_manifests(observations: &BTreeMap<RepoPath, ConfigObservation>) -> Ve
 
 fn build_workspaces(
     manifests: &[&ConfigDocument],
+    pnpm_documents: &[&ConfigDocument],
     package_roots: &[RepoPath],
-    pnpm_roots: &BTreeSet<RepoPath>,
     limitations: &mut Vec<Limitation>,
 ) -> Vec<WorkspaceFact> {
     let mut workspaces = Vec::new();
+    let pnpm_roots = pnpm_documents
+        .iter()
+        .map(|document| document.path.parent().unwrap_or_else(RepoPath::empty))
+        .collect::<BTreeSet<_>>();
+    for document in pnpm_documents {
+        let root = document.path.parent().unwrap_or_else(RepoPath::empty);
+        workspaces.push(WorkspaceFact {
+            members: pnpm_workspace_members(document, &root, package_roots, limitations),
+            root,
+            source: WorkspaceSource::PnpmWorkspace,
+        });
+    }
     for &manifest in manifests {
         let root = manifest.path.parent().unwrap_or_else(RepoPath::empty);
         if pnpm_roots.contains(&root) {
-            workspaces.push(WorkspaceFact {
-                root: root.clone(),
-                source: WorkspaceSource::PnpmWorkspace,
-                members: vec![root],
-            });
             continue;
         }
         let Some(workspaces_value) = manifest.root.get("workspaces") else {
@@ -90,7 +113,7 @@ fn build_workspaces(
             if package_root == &root || !package_root.is_within(&root) {
                 continue;
             }
-            let Some(relative) = portable_relative(package_root, &root) else {
+            let Some(relative) = package_root.portable_relative_to(&root) else {
                 continue;
             };
             if patterns
@@ -110,6 +133,105 @@ fn build_workspaces(
     }
     workspaces.sort_by(|left, right| left.root.cmp(&right.root));
     workspaces
+}
+
+fn pnpm_workspace_members(
+    document: &ConfigDocument,
+    root: &RepoPath,
+    package_roots: &[RepoPath],
+    limitations: &mut Vec<Limitation>,
+) -> Vec<RepoPath> {
+    let Some(entries) = document.root.as_object() else {
+        return vec![root.clone()];
+    };
+    let mut patterns = None;
+    for entry in entries {
+        match entry.key.as_str() {
+            "packages" => match pnpm_workspace_patterns(&entry.value) {
+                Ok(value) => patterns = Some(value),
+                Err(detail) => limitations.push(Limitation::WorkspaceOwnershipUnsupported {
+                    path: document.path.display_escaped(),
+                    detail,
+                }),
+            },
+            "catalog" | "catalogs" => {
+                let detail = if entry.value.as_object().is_some() {
+                    format!("pnpm {} semantics are unsupported", entry.key)
+                } else {
+                    format!("pnpm {} field must be an object", entry.key)
+                };
+                limitations.push(Limitation::PnpmDependencySemanticsUnsupported {
+                    path: document.path.display_escaped(),
+                    detail,
+                });
+            }
+            "packageConfigs" => {
+                limitations.push(Limitation::PnpmDependencySemanticsUnsupported {
+                    path: document.path.display_escaped(),
+                    detail: "pnpm packageConfigs semantics are unsupported".to_owned(),
+                });
+            }
+            _ => limitations.push(Limitation::WorkspaceOwnershipUnsupported {
+                path: document.path.display_escaped(),
+                detail: format!("unknown pnpm workspace field {}", entry.key),
+            }),
+        }
+    }
+
+    let mut members = vec![root.clone()];
+    let Some(patterns) = patterns else {
+        return members;
+    };
+    for package_root in package_roots {
+        if package_root == root || !package_root.is_within(root) {
+            continue;
+        }
+        let Some(relative) = package_root.portable_relative_to(root) else {
+            continue;
+        };
+        let included = patterns
+            .iter()
+            .filter(|pattern| !pattern.exclusion)
+            .any(|pattern| workspace_pattern_matches(&pattern.value, &relative));
+        let excluded = patterns
+            .iter()
+            .filter(|pattern| pattern.exclusion)
+            .any(|pattern| workspace_pattern_matches(&pattern.value, &relative));
+        if included && !excluded {
+            members.push(package_root.clone());
+        }
+    }
+    members.sort();
+    members.dedup();
+    members
+}
+
+struct PnpmWorkspacePattern {
+    value: String,
+    exclusion: bool,
+}
+
+fn pnpm_workspace_patterns(value: &ConfigValue) -> Result<Vec<PnpmWorkspacePattern>, String> {
+    let values = value
+        .as_array()
+        .ok_or_else(|| "pnpm packages field must be array<string>".to_owned())?;
+    let mut patterns = Vec::new();
+    for value in values {
+        let raw = value
+            .as_str()
+            .ok_or_else(|| "pnpm workspace patterns must be strings".to_owned())?;
+        let (exclusion, pattern) = match raw.strip_prefix('!') {
+            Some(pattern) if !pattern.starts_with('!') => (true, pattern),
+            Some(_) => return Err(format!("unsupported workspace pattern {raw}")),
+            None => (false, raw),
+        };
+        validate_workspace_pattern(pattern)?;
+        patterns.push(PnpmWorkspacePattern {
+            value: pattern.to_owned(),
+            exclusion,
+        });
+    }
+    Ok(patterns)
 }
 
 fn assign_workspace_roots(packages: &mut [PackageFact], workspaces: &[WorkspaceFact]) {
@@ -277,6 +399,9 @@ fn workspace_patterns(value: &ConfigValue) -> Result<Vec<String>, String> {
         let pattern = value
             .as_str()
             .ok_or_else(|| "workspace patterns must be strings".to_owned())?;
+        if pattern.starts_with('!') {
+            return Err(format!("unsupported workspace pattern {pattern}"));
+        }
         validate_workspace_pattern(pattern)?;
         patterns.push(pattern.to_owned());
     }
@@ -285,7 +410,6 @@ fn workspace_patterns(value: &ConfigValue) -> Result<Vec<String>, String> {
 
 fn validate_workspace_pattern(pattern: &str) -> Result<(), String> {
     if pattern.is_empty()
-        || pattern.starts_with('!')
         || pattern.starts_with('/')
         || pattern.ends_with('/')
         || pattern.contains(['\\', '?', '[', ']', '{', '}', '(', ')'])
@@ -302,18 +426,6 @@ fn validate_workspace_pattern(pattern: &str) -> Result<(), String> {
         }
     }
     Ok(())
-}
-
-fn portable_relative(path: &RepoPath, root: &RepoPath) -> Option<String> {
-    let path = path.portable()?;
-    let root = root.portable()?;
-    if root.is_empty() {
-        Some(path)
-    } else if path == root {
-        Some(String::new())
-    } else {
-        path.strip_prefix(&(root + "/")).map(str::to_owned)
-    }
 }
 
 fn workspace_pattern_matches(pattern: &str, path: &str) -> bool {
