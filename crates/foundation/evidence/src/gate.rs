@@ -183,6 +183,10 @@ pub enum GateSignal {
         paths: Vec<RepoPathProjection>,
         gate_ids: Vec<GateId>,
     },
+    SemanticInputConflict {
+        paths: Vec<RepoPathProjection>,
+        gate_ids: Vec<GateId>,
+    },
     ProtectedInputChanged {
         paths: Vec<RepoPathProjection>,
     },
@@ -241,6 +245,7 @@ pub struct GateRevision {
     pub signals: Vec<GateSignal>,
     pub changed_paths: Vec<RepoPathProjection>,
     pub snapshot: Option<AnalysisSnapshot>,
+    pub protected_semantic_inputs: Vec<SemanticInputRecord>,
     #[serde(default)]
     pub alias_closures: Vec<PhysicalAliasClosureRecord>,
     #[serde(default)]
@@ -265,6 +270,7 @@ pub struct GateRecord {
     pub transition_refs: Vec<u64>,
     pub analysis_options: GateAnalysisOptions,
     pub baseline: Option<GateBaseline>,
+    pub protected_semantic_inputs: Vec<SemanticInputRecord>,
     pub revisions: Vec<GateRevision>,
 }
 
@@ -313,6 +319,7 @@ pub struct OperationRecord {
     pub declared_write_set: Vec<RepoPathProjection>,
     #[serde(default)]
     pub leased_write_set: Vec<WriteLease>,
+    pub semantic_read_reservations: Vec<RepoPathProjection>,
     pub analysis_options: Option<GateAnalysisOptions>,
     pub result: Option<GateOperationResult>,
 }
@@ -400,6 +407,7 @@ pub mod gate_policy {
         current: &AnalysisSnapshot,
         protected_semantic_inputs: &[SemanticInputRecord],
         leased_write_set: &[WriteLease],
+        newly_demanded_inputs: &[RepoPathProjection],
     ) -> (
         Vec<GateSignal>,
         Vec<RepoPathProjection>,
@@ -419,6 +427,10 @@ pub mod gate_policy {
             .iter()
             .map(|input| (input.path.canonical.as_slice(), input))
             .collect::<BTreeMap<_, _>>();
+        let newly_demanded_set = newly_demanded_inputs
+            .iter()
+            .map(|path| path.canonical.as_slice())
+            .collect::<BTreeSet<_>>();
         let mut changed = Vec::new();
         let mut protected = Vec::new();
         let mut unplanned = Vec::new();
@@ -442,6 +454,13 @@ pub mod gate_policy {
         }
         for (path, current_input) in &current_by_path {
             if !baseline_by_path.contains_key(path) {
+                let demanded_read_only = newly_demanded_set.contains(path)
+                    && !leased_write_set
+                        .iter()
+                        .any(|lease| lease.covers(&current_input.path));
+                if demanded_read_only {
+                    continue;
+                }
                 changed.push(current_input.path.clone());
                 if !leased_write_set
                     .iter()
@@ -510,6 +529,7 @@ pub mod gate_policy {
             | GateSignal::AnalysisFailed { .. }
             | GateSignal::DeclaredPathUnsupported { .. }
             | GateSignal::WriteConflict { .. }
+            | GateSignal::SemanticInputConflict { .. }
             | GateSignal::ActiveTransitionPending { .. }
             | GateSignal::OpacityIntroduced { .. }
             | GateSignal::OpacityRegressed { .. }

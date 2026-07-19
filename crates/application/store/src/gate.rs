@@ -36,6 +36,7 @@ pub struct PreWriteFinish {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PostWriteFinish {
     pub snapshot: Option<AnalysisSnapshot>,
+    pub protected_semantic_inputs: Vec<SemanticInputRecord>,
     pub reconciled_baseline: Option<AnalysisSnapshot>,
     pub changed_paths: Vec<RepoPathProjection>,
     pub alias_closures: Vec<PhysicalAliasClosureRecord>,
@@ -65,6 +66,17 @@ pub enum PostWriteStart {
         transitions: Vec<WorktreeTransition>,
         active_gates: Vec<ActiveGateLease>,
     },
+    Committed(GateOperationResult),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SemanticReadReservation {
+    Reserved,
+    Conflict {
+        paths: Vec<RepoPathProjection>,
+        gate_ids: Vec<GateId>,
+    },
+    TransitionCatalogChanged,
     Committed(GateOperationResult),
 }
 
@@ -112,6 +124,7 @@ impl RepositoryStore {
                 transition_sequence,
                 declared_write_set: declared_write_set.to_vec(),
                 leased_write_set: initial_leases.to_vec(),
+                semantic_read_reservations: Vec::new(),
                 analysis_options: Some(analysis_options.clone()),
                 result: None,
             };
@@ -256,6 +269,7 @@ impl RepositoryStore {
                 transition_sequence: current_transition_sequence(&write)?,
                 declared_write_set: Vec::new(),
                 leased_write_set: gate.leased_write_set.clone(),
+                semantic_read_reservations: Vec::new(),
                 analysis_options: None,
                 result: None,
             };
@@ -276,6 +290,56 @@ impl RepositoryStore {
         })
     }
 
+    pub fn reserve_post_write_semantic_inputs(
+        &self,
+        operation_id: &OperationId,
+        request_digest: &str,
+        gate_id: &GateId,
+        demanded_paths: &[RepoPathProjection],
+    ) -> Result<SemanticReadReservation, StoreError> {
+        let mut demanded_paths = demanded_paths.to_vec();
+        demanded_paths.sort();
+        demanded_paths.dedup();
+        self.with_exclusive_lock(|| {
+            let database = open_lifecycle_database(&self.state_dir)?;
+            let write = database.begin_write().map_err(backend_error)?;
+            let mut operation = load_operation_for_finish(
+                &write,
+                operation_id,
+                GateOperationKind::PostWrite,
+                request_digest,
+                Some(gate_id),
+                "post-write semantic-read reservation",
+            )?;
+            if let Some(result) = operation.result {
+                return Ok(SemanticReadReservation::Committed(result));
+            }
+            load_active_gate_for_post_write(&write, gate_id, &operation)?;
+            if current_transition_sequence(&write)? != operation.transition_sequence {
+                return Ok(SemanticReadReservation::TransitionCatalogChanged);
+            }
+            let conflicts =
+                semantic_read_conflicts(&write, operation_id, gate_id, &demanded_paths)?;
+            if !conflicts.paths.is_empty() {
+                return Ok(SemanticReadReservation::Conflict {
+                    paths: conflicts.paths,
+                    gate_ids: conflicts.gate_ids,
+                });
+            }
+            operation.semantic_read_reservations.extend(demanded_paths);
+            operation.semantic_read_reservations.sort();
+            operation.semantic_read_reservations.dedup();
+            write_record(
+                &write,
+                OPERATIONS,
+                operation.operation_id.as_str(),
+                &operation,
+            )?;
+            write.commit().map_err(backend_error)?;
+            Ok(SemanticReadReservation::Reserved)
+        })
+    }
+
     pub fn finish_post_write(
         &self,
         operation_id: &OperationId,
@@ -285,6 +349,7 @@ impl RepositoryStore {
     ) -> Result<GateOperationResult, StoreError> {
         let PostWriteFinish {
             snapshot,
+            protected_semantic_inputs,
             reconciled_baseline,
             changed_paths,
             alias_closures,
@@ -331,6 +396,9 @@ impl RepositoryStore {
                     &alias_closures,
                 )?;
             }
+            if snapshot_can_protect_current_reads(snapshot.as_ref(), &signals) {
+                gate.protected_semantic_inputs = protected_semantic_inputs.clone();
+            }
             gate.current_revision = revision;
             let result = GateOperationResult {
                 operation_id: operation_id.clone(),
@@ -350,6 +418,7 @@ impl RepositoryStore {
                 signals: signals.clone(),
                 changed_paths,
                 snapshot,
+                protected_semantic_inputs,
                 alias_closures,
                 reconciled_transition_sequences,
                 deltas,
@@ -424,7 +493,9 @@ fn validate_pre_write_context(
             "pre-write baseline used the wrong transition sequence".to_owned(),
         ));
     }
-    if current_transition_sequence(write)? != operation.transition_sequence {
+    if current_transition_sequence(write)? != operation.transition_sequence
+        && !signals.contains(&GateSignal::TransitionCatalogChanged)
+    {
         signals.push(GateSignal::TransitionCatalogChanged);
     }
     let semantic_inputs = baseline.map_or(&[][..], |baseline| {
@@ -475,6 +546,9 @@ fn completed_pre_write_records(
     let analysis_options = operation.analysis_options.clone().ok_or_else(|| {
         StoreError::Integrity("pre-write operation omitted analysis options".to_owned())
     })?;
+    let protected_semantic_inputs = baseline.as_ref().map_or_else(Vec::new, |baseline| {
+        baseline.protected_semantic_inputs.clone()
+    });
     let gate = GateRecord {
         schema_version: "lumin-gate.v1".to_owned(),
         gate_id: operation.gate_id.clone(),
@@ -486,6 +560,7 @@ fn completed_pre_write_records(
         transition_refs: Vec::new(),
         analysis_options,
         baseline,
+        protected_semantic_inputs: protected_semantic_inputs.clone(),
         revisions: vec![GateRevision {
             revision: 0,
             operation_id: operation.operation_id.clone(),
@@ -493,6 +568,7 @@ fn completed_pre_write_records(
             signals,
             changed_paths: Vec::new(),
             snapshot: None,
+            protected_semantic_inputs,
             alias_closures,
             reconciled_transition_sequences: Vec::new(),
             deltas: Vec::new(),
@@ -528,12 +604,16 @@ fn validate_post_write_context(
     reconciled_transition_sequences: &[u64],
     signals: &mut Vec<GateSignal>,
 ) -> Result<(), StoreError> {
-    if current_transition_sequence(write)? != operation.transition_sequence {
+    if current_transition_sequence(write)? != operation.transition_sequence
+        && !signals.contains(&GateSignal::TransitionCatalogChanged)
+    {
         signals.push(GateSignal::TransitionCatalogChanged);
     }
     let expected_sequences =
         transition_sequences_for_gate(write, gate, operation.transition_sequence)?;
-    if expected_sequences != reconciled_transition_sequences {
+    if expected_sequences != reconciled_transition_sequences
+        && !signals.contains(&GateSignal::TransitionCatalogChanged)
+    {
         signals.push(GateSignal::TransitionCatalogChanged);
     }
     if let Some(conflicts) = active_write_conflicts(write, &gate.gate_id, changed_paths)? {
@@ -542,7 +622,42 @@ fn validate_post_write_context(
             gate_ids: conflicts.gate_ids,
         });
     }
+    if !operation.semantic_read_reservations.is_empty() {
+        let conflicts = semantic_read_conflicts(
+            write,
+            &operation.operation_id,
+            &gate.gate_id,
+            &operation.semantic_read_reservations,
+        )?;
+        if !conflicts.paths.is_empty() {
+            signals.push(GateSignal::SemanticInputConflict {
+                paths: conflicts.paths,
+                gate_ids: conflicts.gate_ids,
+            });
+        }
+    }
     Ok(())
+}
+
+fn snapshot_can_protect_current_reads(
+    snapshot: Option<&AnalysisSnapshot>,
+    signals: &[GateSignal],
+) -> bool {
+    snapshot.is_some()
+        && !signals.iter().any(|signal| {
+            matches!(
+                signal,
+                GateSignal::AnalysisFailed { .. }
+                    | GateSignal::DeclaredPathUnsupported { .. }
+                    | GateSignal::WriteConflict { .. }
+                    | GateSignal::SemanticInputConflict { .. }
+                    | GateSignal::ProtectedInputChanged { .. }
+                    | GateSignal::AnalysisContractChanged
+                    | GateSignal::ActiveTransitionPending { .. }
+                    | GateSignal::TransitionChainBroken { .. }
+                    | GateSignal::TransitionCatalogChanged
+            )
+        })
 }
 
 fn publish_authorized_transition(
@@ -621,6 +736,9 @@ fn rejected_gate(
     baseline: Option<GateBaseline>,
 ) -> GateRecord {
     let decision = gate_policy::decision(signals);
+    let protected_semantic_inputs = baseline.as_ref().map_or_else(Vec::new, |baseline| {
+        baseline.protected_semantic_inputs.clone()
+    });
     GateRecord {
         schema_version: "lumin-gate.v1".to_owned(),
         gate_id: operation.gate_id.clone(),
@@ -632,6 +750,7 @@ fn rejected_gate(
         transition_refs: Vec::new(),
         analysis_options,
         baseline,
+        protected_semantic_inputs: protected_semantic_inputs.clone(),
         revisions: vec![GateRevision {
             revision: 0,
             operation_id: operation.operation_id.clone(),
@@ -639,6 +758,7 @@ fn rejected_gate(
             signals: signals.to_vec(),
             changed_paths: Vec::new(),
             snapshot: None,
+            protected_semantic_inputs,
             alias_closures: Vec::new(),
             reconciled_transition_sequences: Vec::new(),
             deltas: Vec::new(),
@@ -675,15 +795,23 @@ fn conflicts(
     for operation in read_records::<OperationRecord>(write, OPERATIONS)? {
         if operation.operation_id == *own_operation_id
             || operation.status != GateOperationStatus::Pending
-            || operation.kind != GateOperationKind::PreWrite
         {
             continue;
         }
-        collect_conflicts(
+        if operation.kind == GateOperationKind::PreWrite {
+            collect_conflicts(
+                leased_write_set,
+                semantic_inputs,
+                &operation.leased_write_set,
+                &[],
+                &operation.gate_id,
+                &mut paths,
+                &mut gate_ids,
+            );
+        }
+        collect_lease_covered_paths(
+            &operation.semantic_read_reservations,
             leased_write_set,
-            semantic_inputs,
-            &operation.leased_write_set,
-            &[],
             &operation.gate_id,
             &mut paths,
             &mut gate_ids,
@@ -695,14 +823,11 @@ fn conflicts(
         {
             continue;
         }
-        let protected_inputs = gate.baseline.as_ref().map_or(&[][..], |baseline| {
-            baseline.protected_semantic_inputs.as_slice()
-        });
         collect_conflicts(
             leased_write_set,
             semantic_inputs,
             &gate.leased_write_set,
-            protected_inputs,
+            &gate.protected_semantic_inputs,
             &gate.gate_id,
             &mut paths,
             &mut gate_ids,
@@ -713,6 +838,21 @@ fn conflicts(
     gate_ids.sort();
     gate_ids.dedup();
     Ok((paths, gate_ids))
+}
+
+fn collect_lease_covered_paths(
+    paths_to_check: &[RepoPathProjection],
+    leases: &[WriteLease],
+    existing_gate_id: &GateId,
+    paths: &mut Vec<RepoPathProjection>,
+    gate_ids: &mut Vec<GateId>,
+) {
+    for path in paths_to_check {
+        if leases.iter().any(|lease| lease.covers(path)) {
+            paths.push(path.clone());
+            gate_ids.push(existing_gate_id.clone());
+        }
+    }
 }
 
 fn collect_conflicts(
@@ -854,6 +994,48 @@ fn active_write_conflicts(
     }
 }
 
+fn semantic_read_conflicts(
+    write: &WriteTransaction,
+    own_operation_id: &OperationId,
+    own_gate_id: &GateId,
+    demanded_paths: &[RepoPathProjection],
+) -> Result<ConflictSet, StoreError> {
+    let mut paths = Vec::new();
+    let mut gate_ids = Vec::new();
+    for operation in read_records::<OperationRecord>(write, OPERATIONS)? {
+        if operation.operation_id == *own_operation_id
+            || operation.status != GateOperationStatus::Pending
+            || operation.kind != GateOperationKind::PreWrite
+        {
+            continue;
+        }
+        collect_lease_covered_paths(
+            demanded_paths,
+            &operation.leased_write_set,
+            &operation.gate_id,
+            &mut paths,
+            &mut gate_ids,
+        );
+    }
+    for gate in read_records::<GateRecord>(write, GATES)? {
+        if gate.lifecycle != GateLifecycle::Active || gate.gate_id == *own_gate_id {
+            continue;
+        }
+        collect_lease_covered_paths(
+            demanded_paths,
+            &gate.leased_write_set,
+            &gate.gate_id,
+            &mut paths,
+            &mut gate_ids,
+        );
+    }
+    paths.sort();
+    paths.dedup();
+    gate_ids.sort();
+    gate_ids.dedup();
+    Ok(ConflictSet { paths, gate_ids })
+}
+
 fn attach_transition_references(
     write: &WriteTransaction,
     originating_gate_id: &GateId,
@@ -982,4 +1164,131 @@ fn write_record<T: Serialize>(
     let mut table = write.open_table(definition).map_err(backend_error)?;
     table.insert(key, bytes.as_slice()).map_err(backend_error)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use lumin_evidence::{
+        CapabilityRecord, DEAD_CODE_CAPABILITY_ID, RunEvidence, seal_analysis_snapshot,
+    };
+    use lumin_model::{CapabilityState, RepoPath};
+
+    use super::*;
+
+    #[test]
+    fn semantic_read_reservation_blocks_later_write_admission()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let store = RepositoryStore::open(root.path())?;
+        let opening_operation = OperationId::from_string("op-open".to_owned());
+        let source = path("src/a.ts")?;
+        let source_lease = lease(source.clone());
+        let options = GateAnalysisOptions {
+            jobs: 1,
+            resolution_profile: None,
+        };
+        let (gate_id, transition_sequence) = match store.reserve_pre_write(
+            &opening_operation,
+            "open-digest",
+            std::slice::from_ref(&source),
+            std::slice::from_ref(&source_lease),
+            &options,
+        )? {
+            PreWriteStart::Analyze {
+                gate_id,
+                transition_sequence,
+            } => (gate_id, transition_sequence),
+            PreWriteStart::Committed(_) => {
+                return Err("the first gate was unexpectedly committed".into());
+            }
+        };
+        let baseline = GateBaseline {
+            analysis_contract: "test-contract".to_owned(),
+            snapshot: empty_snapshot(),
+            protected_semantic_inputs: Vec::new(),
+            transition_sequence,
+        };
+        let opened = store.finish_pre_write(
+            &opening_operation,
+            "open-digest",
+            &gate_id,
+            PreWriteFinish {
+                baseline: Some(baseline),
+                leased_write_set: vec![source_lease],
+                alias_closures: Vec::new(),
+                signals: Vec::new(),
+            },
+        )?;
+        assert!(opened.decision.authorizes());
+
+        let close_operation = OperationId::from_string("op-close".to_owned());
+        assert!(matches!(
+            store.begin_post_write(&close_operation, "close-digest", &gate_id)?,
+            PostWriteStart::Analyze { .. }
+        ));
+        let demanded = path("config/base.json")?;
+        assert_eq!(
+            store.reserve_post_write_semantic_inputs(
+                &close_operation,
+                "close-digest",
+                &gate_id,
+                std::slice::from_ref(&demanded),
+            )?,
+            SemanticReadReservation::Reserved
+        );
+
+        let writer_operation = OperationId::from_string("op-writer".to_owned());
+        let rejected = match store.reserve_pre_write(
+            &writer_operation,
+            "writer-digest",
+            std::slice::from_ref(&demanded),
+            &[lease(demanded.clone())],
+            &options,
+        )? {
+            PreWriteStart::Committed(result) => result,
+            PreWriteStart::Analyze { .. } => {
+                return Err("a writer crossed a live semantic-read reservation".into());
+            }
+        };
+        assert_eq!(rejected.decision, lumin_evidence::GateDecision::Incomplete);
+        assert!(rejected.signals.iter().any(|signal| {
+            matches!(
+                signal,
+                GateSignal::WriteConflict { paths, gate_ids }
+                    if paths == std::slice::from_ref(&demanded)
+                        && gate_ids == std::slice::from_ref(&gate_id)
+            )
+        }));
+        Ok(())
+    }
+
+    fn path(value: &str) -> Result<RepoPathProjection, Box<dyn std::error::Error>> {
+        Ok(RepoPathProjection::from(&RepoPath::from_portable(value)?))
+    }
+
+    fn lease(path: RepoPathProjection) -> WriteLease {
+        WriteLease {
+            path,
+            kind: lumin_evidence::WriteLeaseKind::ExistingFile,
+            physical_identity: None,
+            nearest_existing_parent: None,
+            prefix_identities: Vec::new(),
+        }
+    }
+
+    fn empty_snapshot() -> AnalysisSnapshot {
+        seal_analysis_snapshot(
+            Vec::new(),
+            RunEvidence {
+                schema_version: "lumin-evidence.v1".to_owned(),
+                capabilities: vec![CapabilityRecord {
+                    capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
+                    state: CapabilityState::Complete,
+                }],
+                resolution_profiles: Vec::new(),
+                findings: Vec::new(),
+                limitations: Vec::new(),
+            },
+        )
+    }
 }

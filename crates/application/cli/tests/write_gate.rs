@@ -500,6 +500,31 @@ fn directory_lease_covers_new_descendants_and_conflicts_with_them()
 }
 
 #[test]
+fn empty_directory_gate_protects_all_opening_sources() -> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    fs::create_dir(root.path().join("src/empty-feature"))?;
+    let gate_id = open_gate(root.path(), "op-dir-protected-open", "src/empty-feature")?;
+
+    fs::write(
+        root.path().join("src/lib.ts"),
+        "export const used = 2; export const dead = 2;\n",
+    )?;
+    let post = run(
+        root.path(),
+        &[
+            "post-write",
+            &gate_id,
+            "--operation-id",
+            "op-dir-protected-close",
+        ],
+    )?;
+    assert_status(&post, 5);
+    assert_eq!(field(&post.stdout, "decision")?, "stale");
+    assert_has_signal(&post.stdout, "protected-input-changed")?;
+    Ok(())
+}
+
+#[test]
 fn physical_alias_closure_is_visible_and_rejects_a_late_unleased_alias()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = alias_fixture()?;
@@ -643,6 +668,111 @@ fn disjoint_gates_reconcile_a_terminal_transition_on_retry()
     Ok(())
 }
 
+#[test]
+fn close_reserves_new_semantic_demands_before_capture_and_retries_after_writer_terminal()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = semantic_read_closure_fixture()?;
+    let gate_a = open_gate(root.path(), "op-a-open", "src")?;
+    let gate_b = open_gate(root.path(), "op-b-open", "config")?;
+
+    fs::write(
+        root.path().join("src/tsconfig.json"),
+        "{\"extends\":\"../config/base.json\"}\n",
+    )?;
+    let pending_a = run(
+        root.path(),
+        &[
+            "post-write",
+            &gate_a,
+            "--operation-id",
+            "op-a-demand-pending",
+        ],
+    )?;
+    assert_status(&pending_a, 4);
+    assert_eq!(field(&pending_a.stdout, "decision")?, "incomplete");
+    let pending_json: Value = serde_json::from_str(&pending_a.stdout)?;
+    let conflict = pending_json
+        .get("signals")
+        .and_then(Value::as_array)
+        .and_then(|signals| {
+            signals.iter().find(|signal| {
+                signal.get("kind").and_then(Value::as_str) == Some("semantic-input-conflict")
+            })
+        })
+        .ok_or_else(|| std::io::Error::other("semantic input conflict is missing"))?;
+    assert_eq!(
+        conflict.pointer("/paths/0/display").and_then(Value::as_str),
+        Some("config/base.json")
+    );
+    assert_eq!(
+        conflict.pointer("/gateIds/0").and_then(Value::as_str),
+        Some(gate_b.as_str())
+    );
+
+    fs::remove_file(root.path().join("src/tsconfig.json"))?;
+    let close_b = run(
+        root.path(),
+        &["post-write", &gate_b, "--operation-id", "op-b-close"],
+    )?;
+    assert_status(&close_b, 0);
+    assert_eq!(field(&close_b.stdout, "decision")?, "allow");
+
+    fs::write(
+        root.path().join("src/tsconfig.json"),
+        "{\"extends\":\"../config/base.json\"}\n",
+    )?;
+    let close_a = run(
+        root.path(),
+        &["post-write", &gate_a, "--operation-id", "op-a-close"],
+    )?;
+    assert_status(&close_a, 0);
+    assert_eq!(field(&close_a.stdout, "decision")?, "allow");
+
+    let operation = run(root.path(), &["operation", "show", "op-a-close"])?;
+    assert_status(&operation, 0);
+    let operation_json: Value = serde_json::from_str(&operation.stdout)?;
+    let reservation_paths = operation_json
+        .get("semanticReadReservations")
+        .and_then(Value::as_array)
+        .and_then(|paths| {
+            paths
+                .iter()
+                .map(|path| path.get("display").and_then(Value::as_str))
+                .collect::<Option<Vec<_>>>()
+        })
+        .ok_or_else(|| std::io::Error::other("semantic read reservations are missing"))?;
+    assert_eq!(
+        reservation_paths,
+        vec!["config/base.json", "shared/root", "shared/root.json"]
+    );
+
+    let shown = run(root.path(), &["gate", "show", &gate_a])?;
+    assert_status(&shown, 0);
+    let shown_json: Value = serde_json::from_str(&shown.stdout)?;
+    let baseline_count = shown_json
+        .pointer("/baseline/protectedSemanticInputCount")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| std::io::Error::other("baseline protected input count is missing"))?;
+    let current_count = shown_json
+        .get("protectedSemanticInputCount")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| std::io::Error::other("current protected input count is missing"))?;
+    assert!(current_count > baseline_count);
+    assert_eq!(
+        shown_json
+            .pointer("/revisions/1/protectedSemanticInputCount")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        shown_json
+            .pointer("/revisions/2/protectedSemanticInputCount")
+            .and_then(Value::as_u64),
+        Some(current_count)
+    );
+    Ok(())
+}
+
 fn open_gate(
     root: &Path,
     operation_id: &str,
@@ -758,6 +888,27 @@ fn disjoint_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
     fs::create_dir(root.path().join("src"))?;
     fs::write(root.path().join("src/a.ts"), "console.log('a');\n")?;
     fs::write(root.path().join("src/b.ts"), "console.log('b');\n")?;
+    Ok(root)
+}
+
+fn semantic_read_closure_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir(root.path().join("src"))?;
+    fs::create_dir(root.path().join("config"))?;
+    fs::create_dir(root.path().join("shared"))?;
+    fs::write(root.path().join("src/a.ts"), "console.log('a');\n")?;
+    fs::write(
+        root.path().join("config/helper.ts"),
+        "console.log('helper');\n",
+    )?;
+    fs::write(
+        root.path().join("config/base.json"),
+        "{\"extends\":\"../shared/root\",\"compilerOptions\":{}}\n",
+    )?;
+    fs::write(
+        root.path().join("shared/root.json"),
+        "{\"compilerOptions\":{}}\n",
+    )?;
     Ok(root)
 }
 

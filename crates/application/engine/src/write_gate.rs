@@ -16,10 +16,13 @@ use lumin_model::{
 };
 use lumin_store::{
     ActiveGateLease, PostWriteFinish, PostWriteStart, PreWriteFinish, PreWriteStart,
-    RepositoryStore,
+    RepositoryStore, SemanticReadReservation,
 };
 
-use super::{EngineError, RepositoryCapture, capture_repository};
+use super::{
+    EngineError, RepositoryAnalysisSession, RepositoryAnalysisStep, RepositoryCapture,
+    capture_repository,
+};
 
 const ANALYSIS_CONTRACT: &str = "lumin-analysis-contract.phase1-foundation.v1";
 
@@ -126,8 +129,7 @@ fn analyze_pre_write(
     };
     let (leased_write_set, alias_closures, mut signals) =
         expand_write_domain(&request.root, observations, initial_leases, &capture);
-    let protected_semantic_inputs =
-        protected_semantic_inputs(&capture, &leased_write_set, observations);
+    let protected_semantic_inputs = protected_semantic_inputs(&capture, &leased_write_set);
     signals.extend(gate_policy::opening_signals(&capture.snapshot.evidence));
     let baseline = GateBaseline {
         analysis_contract: ANALYSIS_CONTRACT.to_owned(),
@@ -163,28 +165,38 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         );
     }
 
-    let capture = match capture_repository(
-        &request.root,
-        &InventoryRequest::default(),
-        gate.analysis_options.jobs,
-        gate.analysis_options.resolution_profile,
-    ) {
-        Ok(capture) => capture,
-        Err(error) => {
-            return finish_failed_close(
-                &store,
-                request,
-                &request_digest,
-                vec![GateSignal::AnalysisFailed {
-                    detail: error.to_string(),
-                }],
-            );
-        }
-    };
+    let (capture, newly_demanded_inputs) =
+        match capture_close_repository(&store, request, &request_digest, &gate.analysis_options) {
+            Ok(CloseCapture::Finished {
+                capture,
+                newly_demanded_inputs,
+            }) => (capture, newly_demanded_inputs),
+            Ok(CloseCapture::Blocked(signal)) => {
+                return finish_failed_close(&store, request, &request_digest, vec![signal]);
+            }
+            Ok(CloseCapture::Committed(result)) => return Ok(result),
+            Err(EngineError::Store(error)) => return Err(EngineError::Store(error)),
+            Err(error) => {
+                return finish_failed_close(
+                    &store,
+                    request,
+                    &request_digest,
+                    vec![GateSignal::AnalysisFailed {
+                        detail: error.to_string(),
+                    }],
+                );
+            }
+        };
 
     let (reconciled_baseline, reconciled_sequences, mut signals) =
         reconcile_transitions(&gate, baseline, &transitions);
-    let changed_paths = changed_paths(&reconciled_baseline, &capture.snapshot);
+    let protected_semantic_inputs = protected_semantic_inputs(&capture, &gate.leased_write_set);
+    let changed_paths = changed_paths(
+        &reconciled_baseline,
+        &capture.snapshot,
+        &newly_demanded_inputs,
+        &gate.leased_write_set,
+    );
     signals.extend(active_transition_signals(&changed_paths, &active_gates));
     let mut deltas = Vec::<GateDeltaRecord>::new();
     if !signals
@@ -196,6 +208,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
             &capture.snapshot,
             &baseline.protected_semantic_inputs,
             &gate.leased_write_set,
+            &newly_demanded_inputs,
         );
         signals.extend(closing_signals);
         deltas = closing_deltas;
@@ -211,6 +224,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
             &request.gate_id,
             PostWriteFinish {
                 snapshot: Some(capture.snapshot),
+                protected_semantic_inputs,
                 reconciled_baseline: Some(reconciled_baseline),
                 changed_paths,
                 alias_closures,
@@ -235,6 +249,7 @@ fn finish_failed_close(
             &request.gate_id,
             PostWriteFinish {
                 snapshot: None,
+                protected_semantic_inputs: Vec::new(),
                 reconciled_baseline: None,
                 changed_paths: Vec::new(),
                 alias_closures: Vec::new(),
@@ -244,6 +259,70 @@ fn finish_failed_close(
             },
         )
         .map_err(Into::into)
+}
+
+enum CloseCapture {
+    Finished {
+        capture: RepositoryCapture,
+        newly_demanded_inputs: Vec<RepoPathProjection>,
+    },
+    Blocked(GateSignal),
+    Committed(GateOperationResult),
+}
+
+fn capture_close_repository(
+    store: &RepositoryStore,
+    request: &PostWriteRequest,
+    request_digest: &str,
+    options: &GateAnalysisOptions,
+) -> Result<CloseCapture, EngineError> {
+    let mut session = RepositoryAnalysisSession::start(
+        &request.root,
+        &InventoryRequest::default(),
+        options.jobs,
+    )?;
+    let mut newly_demanded_inputs = BTreeSet::new();
+    loop {
+        match session.next_step(options.resolution_profile)? {
+            RepositoryAnalysisStep::NeedsInputs(demands) => {
+                let paths = demands
+                    .iter()
+                    .map(|demand| RepoPathProjection::from(&demand.path))
+                    .collect::<Vec<_>>();
+                match store.reserve_post_write_semantic_inputs(
+                    &request.operation_id,
+                    request_digest,
+                    &request.gate_id,
+                    &paths,
+                )? {
+                    SemanticReadReservation::Reserved => {
+                        newly_demanded_inputs.extend(paths);
+                        session.capture_demands(&request.root, demands)?;
+                    }
+                    SemanticReadReservation::Conflict { paths, gate_ids } => {
+                        return Ok(CloseCapture::Blocked(GateSignal::SemanticInputConflict {
+                            paths,
+                            gate_ids,
+                        }));
+                    }
+                    SemanticReadReservation::TransitionCatalogChanged => {
+                        return Ok(CloseCapture::Blocked(GateSignal::TransitionCatalogChanged));
+                    }
+                    SemanticReadReservation::Committed(result) => {
+                        return Ok(CloseCapture::Committed(result));
+                    }
+                }
+            }
+            RepositoryAnalysisStep::Finished(resolver) => {
+                return session.finish(&request.root, resolver).map(|capture| {
+                    CloseCapture::Finished {
+                        capture,
+                        newly_demanded_inputs: newly_demanded_inputs.into_iter().collect(),
+                    }
+                });
+            }
+        }
+    }
 }
 
 pub fn load_gate(root: &Path, gate_id: &GateId) -> Result<GateRecord, EngineError> {
@@ -443,7 +522,6 @@ fn alias_closure_records(
 fn protected_semantic_inputs(
     capture: &RepositoryCapture,
     leases: &[WriteLease],
-    observations: &[WriteTargetObservation],
 ) -> Vec<SemanticInputRecord> {
     let source_paths = capture
         .snapshot
@@ -452,12 +530,12 @@ fn protected_semantic_inputs(
         .filter(|input| input.state == SemanticInputState::Source)
         .map(|input| input.path.canonical.as_slice())
         .collect::<BTreeSet<_>>();
-    let protect_all_sources = observations
+    let protect_all_sources = leases
         .iter()
-        .any(|observation| observation.kind == WriteTargetKind::NewFile)
-        || (observations
+        .any(|lease| lease.kind == WriteLeaseKind::NewFile)
+        || (leases
             .iter()
-            .any(|observation| observation.kind == WriteTargetKind::ExistingDirectory)
+            .any(|lease| lease.kind == WriteLeaseKind::Directory)
             && !leases
                 .iter()
                 .any(|lease| lease.kind == WriteLeaseKind::ExistingFile));
@@ -561,6 +639,10 @@ fn reconcile_transitions(
 }
 
 fn apply_transition(adjusted: &mut AnalysisSnapshot, transition: &WorktreeTransition) -> bool {
+    if *adjusted == transition.capsule.before_snapshot {
+        *adjusted = transition.capsule.after_snapshot.clone();
+        return true;
+    }
     if adjusted.evidence != transition.capsule.before_snapshot.evidence {
         return false;
     }
@@ -610,6 +692,8 @@ fn apply_transition(adjusted: &mut AnalysisSnapshot, transition: &WorktreeTransi
 fn changed_paths(
     baseline: &AnalysisSnapshot,
     current: &AnalysisSnapshot,
+    newly_demanded_inputs: &[RepoPathProjection],
+    leased_write_set: &[WriteLease],
 ) -> Vec<RepoPathProjection> {
     let baseline_by_path = baseline
         .inputs
@@ -621,6 +705,10 @@ fn changed_paths(
         .iter()
         .map(|input| (input.path.canonical.as_slice(), input))
         .collect::<BTreeMap<_, _>>();
+    let newly_demanded_set = newly_demanded_inputs
+        .iter()
+        .map(|path| path.canonical.as_slice())
+        .collect::<BTreeSet<_>>();
     let mut changed = baseline
         .inputs
         .iter()
@@ -636,7 +724,14 @@ fn changed_paths(
         current
             .inputs
             .iter()
-            .filter(|input| !baseline_by_path.contains_key(input.path.canonical.as_slice()))
+            .filter(|input| {
+                let path = input.path.canonical.as_slice();
+                !baseline_by_path.contains_key(path)
+                    && (!newly_demanded_set.contains(path)
+                        || leased_write_set
+                            .iter()
+                            .any(|lease| lease.covers(&input.path)))
+            })
             .map(|input| input.path.clone()),
     );
     changed.sort();

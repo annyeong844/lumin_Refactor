@@ -128,6 +128,7 @@ pub struct GateShowResponseDto {
     pub declared_write_set: Vec<RepoPathDto>,
     pub leased_write_set: Vec<WriteLeaseDto>,
     pub transition_refs: Vec<u64>,
+    pub protected_semantic_input_count: usize,
     pub baseline: Option<GateBaselineSummaryDto>,
     pub revisions: Vec<GateRevisionSummaryDto>,
 }
@@ -153,6 +154,7 @@ pub struct GateRevisionSummaryDto {
     pub signals: Vec<GateSignalDto>,
     pub changed_paths: Vec<RepoPathDto>,
     pub analysis_input_id: Option<AnalysisInputId>,
+    pub protected_semantic_input_count: usize,
     pub alias_group_count: usize,
     pub reconciled_transition_sequences: Vec<u64>,
     pub deltas: Vec<GateDeltaRecord>,
@@ -171,6 +173,7 @@ pub struct OperationShowResponseDto {
     pub transition_sequence: u64,
     pub declared_write_set: Vec<RepoPathDto>,
     pub leased_write_set: Vec<WriteLeaseDto>,
+    pub semantic_read_reservations: Vec<RepoPathDto>,
     pub result: Option<GateMutationResponseDto>,
 }
 
@@ -347,6 +350,7 @@ pub fn gate_show_response(gate: &GateRecord) -> GateShowResponseDto {
             .map(WriteLeaseDto::from)
             .collect(),
         transition_refs: gate.transition_refs.clone(),
+        protected_semantic_input_count: gate.protected_semantic_inputs.len(),
         baseline: gate
             .baseline
             .as_ref()
@@ -376,6 +380,7 @@ pub fn gate_show_response(gate: &GateRecord) -> GateShowResponseDto {
                     .snapshot
                     .as_ref()
                     .map(|snapshot| snapshot.analysis_input_id.clone()),
+                protected_semantic_input_count: revision.protected_semantic_inputs.len(),
                 alias_group_count: revision.alias_closures.len(),
                 reconciled_transition_sequences: revision.reconciled_transition_sequences.clone(),
                 deltas: revision.deltas.clone(),
@@ -403,6 +408,11 @@ pub fn operation_show_response(operation: &OperationRecord) -> OperationShowResp
             .leased_write_set
             .iter()
             .map(WriteLeaseDto::from)
+            .collect(),
+        semantic_read_reservations: operation
+            .semantic_read_reservations
+            .iter()
+            .map(RepoPathDto::from)
             .collect(),
         result: operation.result.as_ref().map(gate_mutation_response),
     }
@@ -479,7 +489,8 @@ impl From<&GateSignal> for GateSignalDto {
                 dto.paths.push(RepoPathDto::from(path));
                 dto.reason = Some(*reason);
             }
-            GateSignal::WriteConflict { paths, gate_ids } => {
+            GateSignal::WriteConflict { paths, gate_ids }
+            | GateSignal::SemanticInputConflict { paths, gate_ids } => {
                 dto.paths = paths.iter().map(RepoPathDto::from).collect();
                 dto.gate_ids = gate_ids.clone();
             }
@@ -505,6 +516,7 @@ fn signal_kind(signal: &GateSignal) -> &'static str {
         GateSignal::AnalysisFailed { .. } => "analysis-failed",
         GateSignal::DeclaredPathUnsupported { .. } => "declared-path-unsupported",
         GateSignal::WriteConflict { .. } => "write-conflict",
+        GateSignal::SemanticInputConflict { .. } => "semantic-input-conflict",
         GateSignal::ProtectedInputChanged { .. } => "protected-input-changed",
         GateSignal::AnalysisContractChanged => "analysis-contract-changed",
         GateSignal::UnplannedWrite { .. } => "unplanned-write",
