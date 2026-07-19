@@ -26,6 +26,9 @@ string_id!(EmbeddedSourceUnitId);
 string_id!(FindingId);
 string_id!(RunId);
 string_id!(AttemptId);
+string_id!(GateId);
+string_id!(OperationId);
+string_id!(AnalysisInputId);
 
 impl LogicalSourceId {
     pub fn from_path(path: &RepoPath) -> Self {
@@ -41,10 +44,10 @@ impl EmbeddedSourceUnitId {
         payload_sha256: &str,
     ) -> Self {
         let mut bytes = Vec::new();
-        append_field(&mut bytes, parent.as_str().as_bytes());
+        append_length_prefixed(&mut bytes, parent.as_str().as_bytes());
         bytes.extend_from_slice(&start.to_be_bytes());
         bytes.extend_from_slice(&end.to_be_bytes());
-        append_field(&mut bytes, payload_sha256.as_bytes());
+        append_length_prefixed(&mut bytes, payload_sha256.as_bytes());
         Self(format!("embedded_{}", digest_hex(&bytes)))
     }
 }
@@ -57,10 +60,10 @@ impl FindingId {
         export_name: &str,
     ) -> Self {
         let mut bytes = Vec::new();
-        append_field(&mut bytes, rule_id.as_bytes());
-        append_field(&mut bytes, source_id.as_str().as_bytes());
+        append_length_prefixed(&mut bytes, rule_id.as_bytes());
+        append_length_prefixed(&mut bytes, source_id.as_str().as_bytes());
         bytes.push(namespace.tag());
-        append_field(&mut bytes, export_name.as_bytes());
+        append_length_prefixed(&mut bytes, export_name.as_bytes());
         Self(format!("finding_{}", digest_hex(&bytes)))
     }
 }
@@ -75,7 +78,7 @@ pub fn digest_hex(bytes: &[u8]) -> String {
     output
 }
 
-fn append_field(output: &mut Vec<u8>, value: &[u8]) {
+pub fn append_length_prefixed(output: &mut Vec<u8>, value: &[u8]) {
     output.extend_from_slice(&(value.len() as u64).to_be_bytes());
     output.extend_from_slice(value);
 }

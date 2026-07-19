@@ -2,10 +2,14 @@ use std::collections::BTreeMap;
 
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
-use lumin_evidence::{FindingRecord, RunEvidence};
+use lumin_evidence::{
+    DeclaredPathUnsupportedReason, FindingRecord, GateDecision, GateLifecycle, GateOperationKind,
+    GateOperationResult, GateOperationStatus, GateRecord, GateSignal, OperationRecord,
+    RepoPathProjection, RunEvidence,
+};
 use lumin_model::{
-    AttemptId, CapabilityState, FindingDisposition, FindingId, Limitation, RunId, SourceSpan,
-    SymbolNamespace,
+    AnalysisInputId, AttemptId, CapabilityState, FindingDisposition, FindingId, GateId, Limitation,
+    OperationId, RunId, SourceSpan, SymbolNamespace,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -90,6 +94,82 @@ pub struct RepoPathDto {
     pub schema_version: &'static str,
     pub canonical_base64: String,
     pub display: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GateMutationResponseDto {
+    pub schema_version: &'static str,
+    pub operation_id: OperationId,
+    pub request_digest: String,
+    pub gate_id: GateId,
+    pub revision: u64,
+    pub lifecycle: GateLifecycle,
+    pub decision: GateDecision,
+    pub signals: Vec<GateSignalDto>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GateShowResponseDto {
+    pub schema_version: &'static str,
+    pub gate_id: GateId,
+    pub lifecycle: GateLifecycle,
+    pub current_revision: u64,
+    pub declared_write_set: Vec<RepoPathDto>,
+    pub baseline: Option<GateBaselineSummaryDto>,
+    pub revisions: Vec<GateRevisionSummaryDto>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GateBaselineSummaryDto {
+    pub analysis_contract: String,
+    pub analysis_input_id: AnalysisInputId,
+    pub semantic_input_count: usize,
+    pub finding_count: usize,
+    pub limitation_count: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GateRevisionSummaryDto {
+    pub revision: u64,
+    pub operation_id: OperationId,
+    pub decision: GateDecision,
+    pub signals: Vec<GateSignalDto>,
+    pub changed_paths: Vec<RepoPathDto>,
+    pub analysis_input_id: Option<AnalysisInputId>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OperationShowResponseDto {
+    pub schema_version: &'static str,
+    pub operation_id: OperationId,
+    pub kind: GateOperationKind,
+    pub request_digest: String,
+    pub status: GateOperationStatus,
+    pub gate_id: GateId,
+    pub target_revision: u64,
+    pub declared_write_set: Vec<RepoPathDto>,
+    pub result: Option<GateMutationResponseDto>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GateSignalDto {
+    pub kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<DeclaredPathUnsupportedReason>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<RepoPathDto>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub gate_ids: Vec<GateId>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -211,6 +291,80 @@ pub fn findings_response(
     })
 }
 
+pub fn gate_mutation_response(result: &GateOperationResult) -> GateMutationResponseDto {
+    GateMutationResponseDto {
+        schema_version: "lumin.gate-mutation.v1",
+        operation_id: result.operation_id.clone(),
+        request_digest: result.request_digest.clone(),
+        gate_id: result.gate_id.clone(),
+        revision: result.revision,
+        lifecycle: result.lifecycle,
+        decision: result.decision,
+        signals: result.signals.iter().map(GateSignalDto::from).collect(),
+    }
+}
+
+pub fn gate_show_response(gate: &GateRecord) -> GateShowResponseDto {
+    GateShowResponseDto {
+        schema_version: "lumin.gate.v1",
+        gate_id: gate.gate_id.clone(),
+        lifecycle: gate.lifecycle,
+        current_revision: gate.current_revision,
+        declared_write_set: gate
+            .declared_write_set
+            .iter()
+            .map(RepoPathDto::from)
+            .collect(),
+        baseline: gate
+            .baseline
+            .as_ref()
+            .map(|baseline| GateBaselineSummaryDto {
+                analysis_contract: baseline.analysis_contract.clone(),
+                analysis_input_id: baseline.snapshot.analysis_input_id.clone(),
+                semantic_input_count: baseline.snapshot.inputs.len(),
+                finding_count: baseline.snapshot.evidence.findings.len(),
+                limitation_count: baseline.snapshot.evidence.limitations.len(),
+            }),
+        revisions: gate
+            .revisions
+            .iter()
+            .map(|revision| GateRevisionSummaryDto {
+                revision: revision.revision,
+                operation_id: revision.operation_id.clone(),
+                decision: revision.decision,
+                signals: revision.signals.iter().map(GateSignalDto::from).collect(),
+                changed_paths: revision
+                    .changed_paths
+                    .iter()
+                    .map(RepoPathDto::from)
+                    .collect(),
+                analysis_input_id: revision
+                    .snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.analysis_input_id.clone()),
+            })
+            .collect(),
+    }
+}
+
+pub fn operation_show_response(operation: &OperationRecord) -> OperationShowResponseDto {
+    OperationShowResponseDto {
+        schema_version: "lumin.operation.v1",
+        operation_id: operation.operation_id.clone(),
+        kind: operation.kind,
+        request_digest: operation.request_digest.clone(),
+        status: operation.status,
+        gate_id: operation.gate_id.clone(),
+        target_revision: operation.target_revision,
+        declared_write_set: operation
+            .declared_write_set
+            .iter()
+            .map(RepoPathDto::from)
+            .collect(),
+        result: operation.result.as_ref().map(gate_mutation_response),
+    }
+}
+
 pub fn to_json(value: &impl Serialize) -> Result<String, ProtocolError> {
     serde_json::to_string(value).map_err(|error| ProtocolError::Serialization(error.to_string()))
 }
@@ -226,15 +380,68 @@ impl From<&FindingRecord> for FindingDto {
             disposition: finding.disposition.clone(),
             claim: finding.claim.clone(),
             source_id: finding.source_id.as_str().to_owned(),
-            path: RepoPathDto {
-                schema_version: "repo-path.v1",
-                canonical_base64: STANDARD.encode(&finding.path.canonical),
-                display: finding.path.display.clone(),
-            },
+            path: RepoPathDto::from(&finding.path),
             span: finding.span.clone(),
             exported_name: finding.exported_name.clone(),
             namespace: finding.namespace,
         }
+    }
+}
+
+impl From<&RepoPathProjection> for RepoPathDto {
+    fn from(path: &RepoPathProjection) -> Self {
+        Self {
+            schema_version: "repo-path.v1",
+            canonical_base64: STANDARD.encode(&path.canonical),
+            display: path.display.clone(),
+        }
+    }
+}
+
+impl From<&GateSignal> for GateSignalDto {
+    fn from(signal: &GateSignal) -> Self {
+        let mut dto = Self {
+            kind: signal_kind(signal),
+            count: None,
+            detail: None,
+            reason: None,
+            paths: Vec::new(),
+            gate_ids: Vec::new(),
+        };
+        match signal {
+            GateSignal::FindingWarnings { count }
+            | GateSignal::RequiredEvidenceIncomplete {
+                limitation_count: count,
+            } => dto.count = Some(*count),
+            GateSignal::AnalysisFailed { detail } => dto.detail = Some(detail.clone()),
+            GateSignal::DeclaredPathUnsupported { path, reason } => {
+                dto.paths.push(RepoPathDto::from(path));
+                dto.reason = Some(*reason);
+            }
+            GateSignal::WriteConflict { paths, gate_ids } => {
+                dto.paths = paths.iter().map(RepoPathDto::from).collect();
+                dto.gate_ids = gate_ids.clone();
+            }
+            GateSignal::ProtectedInputChanged { paths } | GateSignal::UnplannedWrite { paths } => {
+                dto.paths = paths.iter().map(RepoPathDto::from).collect();
+            }
+            GateSignal::AnalysisContractChanged | GateSignal::SemanticDeltaUnsupported => {}
+        }
+        dto
+    }
+}
+
+fn signal_kind(signal: &GateSignal) -> &'static str {
+    match signal {
+        GateSignal::FindingWarnings { .. } => "finding-warnings",
+        GateSignal::RequiredEvidenceIncomplete { .. } => "required-evidence-incomplete",
+        GateSignal::AnalysisFailed { .. } => "analysis-failed",
+        GateSignal::DeclaredPathUnsupported { .. } => "declared-path-unsupported",
+        GateSignal::WriteConflict { .. } => "write-conflict",
+        GateSignal::ProtectedInputChanged { .. } => "protected-input-changed",
+        GateSignal::AnalysisContractChanged => "analysis-contract-changed",
+        GateSignal::UnplannedWrite { .. } => "unplanned-write",
+        GateSignal::SemanticDeltaUnsupported => "semantic-delta-unsupported",
     }
 }
 

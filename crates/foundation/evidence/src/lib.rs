@@ -1,3 +1,7 @@
+mod gate;
+
+pub use gate::*;
+
 use lumin_model::{
     CapabilityState, FindingDisposition, FindingId, Limitation, LogicalSourceId, RepoPath,
     SelectedResolutionProfile, SourceSpan, SymbolNamespace,
@@ -58,7 +62,7 @@ impl FindingRecord {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoPathProjection {
     pub canonical: Vec<u8>,

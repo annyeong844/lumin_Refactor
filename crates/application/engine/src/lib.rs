@@ -1,11 +1,22 @@
+mod write_gate;
+
+pub use lumin_evidence::{GateDecision, GateOperationResult};
+pub use write_gate::{
+    PostWriteRequest, PreWriteRequest, close_write_gate, load_gate, load_operation, open_write_gate,
+};
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use lumin_evidence::{CapabilityRecord, DEAD_CODE_CAPABILITY_ID, RunEvidence};
+use lumin_evidence::{
+    AnalysisSnapshot, CapabilityRecord, DEAD_CODE_CAPABILITY_ID, RepoPathProjection, RunEvidence,
+    SemanticInputRecord, SemanticInputState, seal_analysis_snapshot,
+};
 use lumin_inventory::{InventoryError, InventoryRequest, InventorySnapshot};
 use lumin_model::{
-    CapabilityState, FileFacts, Limitation, ResolutionOutcome, ResolutionProfile,
-    ResolvedSourceUse, RoleOverride, RunId, SfcDialect, SourceSnapshot,
+    CapabilityState, ConfigObservation, FileFacts, Limitation, ResolutionOutcome,
+    ResolutionProfile, ResolvedSourceUse, RoleOverride, RunId, SfcDialect, SourceSnapshot,
+    digest_hex,
 };
 use lumin_resolve::{ResolverError, ResolverOutput};
 use lumin_store::{PublishedRun, RepositoryStore, RunCatalogRecord, StoreError};
@@ -46,6 +57,10 @@ pub enum EngineError {
     Sfc(#[from] lumin_sfc::SfcError),
     #[error("resolver requested semantic inputs that were already captured: {0}")]
     ResolverDemandStalled(String),
+    #[error("pre-write requires at least one declared path")]
+    NoDeclaredPaths,
+    #[error("active gate omitted its sealed opening baseline: {0}")]
+    GateBaselineMissing(String),
     #[error(
         "analysis failed ({analysis}) and its attempt failure could not persist ({persistence})"
     )]
@@ -60,6 +75,22 @@ pub enum EngineError {
         publication: String,
         persistence: String,
     },
+}
+
+impl EngineError {
+    pub fn lifecycle_exit_code(&self) -> i32 {
+        match self {
+            Self::NoDeclaredPaths
+            | Self::Store(
+                StoreError::OperationConflict(_)
+                | StoreError::OperationNotFound(_)
+                | StoreError::GateNotFound(_)
+                | StoreError::GateNotActive(_),
+            ) => 2,
+            Self::Store(StoreError::GateRevisionBusy(_)) => 4,
+            _ => 1,
+        }
+    }
 }
 
 pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
@@ -114,6 +145,21 @@ pub fn analyze_repository(
     jobs: usize,
     resolution_profile: Option<ResolutionProfile>,
 ) -> Result<RunEvidence, EngineError> {
+    capture_repository(root, request, jobs, resolution_profile)
+        .map(|capture| capture.snapshot.evidence)
+}
+
+struct RepositoryCapture {
+    snapshot: AnalysisSnapshot,
+    source_paths: Vec<lumin_model::RepoPath>,
+}
+
+fn capture_repository(
+    root: &Path,
+    request: &InventoryRequest,
+    jobs: usize,
+    resolution_profile: Option<ResolutionProfile>,
+) -> Result<RepositoryCapture, EngineError> {
     if jobs == 0 {
         return Err(EngineError::InvalidWorkerCount(0));
     }
@@ -147,13 +193,54 @@ pub fn analyze_repository(
         state,
     }];
     capabilities.extend(sfc_capability_records(&extraction.sfc_states));
-    Ok(RunEvidence {
+    let evidence = RunEvidence {
         schema_version: "lumin-evidence.v1".to_owned(),
         capabilities,
         resolution_profiles: profiles,
         findings,
         limitations,
+    };
+    let source_paths = inventory
+        .sources
+        .iter()
+        .map(|source| source.path.clone())
+        .collect();
+    Ok(RepositoryCapture {
+        snapshot: seal_analysis_snapshot(semantic_input_records(&inventory), evidence),
+        source_paths,
     })
+}
+
+fn semantic_input_records(inventory: &InventorySnapshot) -> Vec<SemanticInputRecord> {
+    let mut inputs = inventory
+        .sources
+        .iter()
+        .map(|source| SemanticInputRecord {
+            path: RepoPathProjection::from(&source.path),
+            state: SemanticInputState::Source,
+            payload_sha256: Some(source.payload_sha256.clone()),
+        })
+        .collect::<Vec<_>>();
+    inputs.extend(inventory.config.observations.values().map(|observation| {
+        let (state, payload_sha256) = match observation {
+            ConfigObservation::Present(document) => (
+                SemanticInputState::ConfigPresent,
+                Some(document.payload_sha256.clone()),
+            ),
+            ConfigObservation::Missing { .. } => (SemanticInputState::Missing, None),
+            ConfigObservation::NonRegular { .. } => (SemanticInputState::NonRegular, None),
+            ConfigObservation::Unreadable { detail, .. } => (
+                SemanticInputState::Unreadable,
+                Some(digest_hex(detail.as_bytes())),
+            ),
+        };
+        SemanticInputRecord {
+            path: RepoPathProjection::from(observation.path()),
+            state,
+            payload_sha256,
+        }
+    }));
+    inputs
 }
 
 struct ExtractionOutput {

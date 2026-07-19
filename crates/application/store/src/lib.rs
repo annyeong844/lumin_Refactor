@@ -1,3 +1,7 @@
+mod gate;
+
+pub use gate::{PostWriteStart, PreWriteStart};
+
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -79,6 +83,16 @@ pub enum StoreError {
     Serialization(String),
     #[error("run does not exist: {0}")]
     RunNotFound(String),
+    #[error("operation ID was reused with a different request: {0}")]
+    OperationConflict(String),
+    #[error("operation does not exist: {0}")]
+    OperationNotFound(String),
+    #[error("gate does not exist: {0}")]
+    GateNotFound(String),
+    #[error("gate is not active: {0}")]
+    GateNotActive(String),
+    #[error("gate revision already has a live close operation: {0}")]
+    GateRevisionBusy(String),
 }
 
 impl RepositoryStore {

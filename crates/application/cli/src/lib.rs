@@ -1,8 +1,12 @@
 use std::ffi::OsString;
 use std::path::Path;
 
-use lumin_engine::{AuditRequest, EngineError};
-use lumin_model::{ResolutionProfile, RoleOverride, RunId, ScanRole};
+use lumin_engine::{
+    AuditRequest, EngineError, GateDecision, GateOperationResult, PostWriteRequest, PreWriteRequest,
+};
+use lumin_model::{
+    GateId, OperationId, RepoPath, ResolutionProfile, RoleOverride, RunId, ScanRole,
+};
 use lumin_protocol::ProtocolError;
 use thiserror::Error;
 
@@ -37,6 +41,10 @@ enum CliError {
     InvalidArea,
     #[error("no completed run exists for this repository")]
     NoCompletedRun,
+    #[error("identifier must not be empty: {0}")]
+    EmptyIdentifier(String),
+    #[error("invalid repository path: {0}")]
+    InvalidRepoPath(String),
     #[error(transparent)]
     Engine(#[from] EngineError),
     #[error(transparent)]
@@ -45,11 +53,7 @@ enum CliError {
 
 pub fn execute(root: &Path, arguments: Vec<OsString>) -> CommandOutput {
     match execute_inner(root, arguments) {
-        Ok(stdout) => CommandOutput {
-            exit_code: 0,
-            stdout,
-            stderr: String::new(),
-        },
+        Ok(output) => output,
         Err(error) => CommandOutput {
             exit_code: error_exit_code(&error),
             stdout: String::new(),
@@ -58,17 +62,44 @@ pub fn execute(root: &Path, arguments: Vec<OsString>) -> CommandOutput {
     }
 }
 
-fn execute_inner(root: &Path, arguments: Vec<OsString>) -> Result<String, CliError> {
+struct CommandSuccess {
+    exit_code: i32,
+    stdout: String,
+}
+
+impl From<CommandSuccess> for CommandOutput {
+    fn from(success: CommandSuccess) -> Self {
+        Self {
+            exit_code: success.exit_code,
+            stdout: success.stdout,
+            stderr: String::new(),
+        }
+    }
+}
+
+fn execute_inner(root: &Path, arguments: Vec<OsString>) -> Result<CommandOutput, CliError> {
     let mut arguments = Arguments::new(arguments);
     let command = arguments
         .next_utf8("command")?
         .ok_or(CliError::MissingCommand)?;
     match command.as_str() {
-        "audit" => audit(root, &mut arguments),
-        "overview" => overview(root, &mut arguments),
-        "findings" => findings(root, &mut arguments),
+        "audit" => audit(root, &mut arguments).map(success),
+        "overview" => overview(root, &mut arguments).map(success),
+        "findings" => findings(root, &mut arguments).map(success),
+        "pre-write" => pre_write(root, &mut arguments),
+        "post-write" => post_write(root, &mut arguments),
+        "gate" => gate(root, &mut arguments),
+        "operation" => operation(root, &mut arguments),
         _ => Err(CliError::UnknownArgument(command)),
     }
+}
+
+fn success(stdout: String) -> CommandOutput {
+    CommandSuccess {
+        exit_code: 0,
+        stdout,
+    }
+    .into()
 }
 
 fn audit(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> {
@@ -177,6 +208,162 @@ fn findings(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> 
     lumin_protocol::to_json(&response).map_err(Into::into)
 }
 
+fn pre_write(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {
+    let mut operation_id = None;
+    let mut paths = Vec::new();
+    let mut jobs = std::thread::available_parallelism().map_or(1, usize::from);
+    let mut resolution_profile = None;
+    let mut format = "json".to_owned();
+    while let Some(argument) = arguments.next_utf8("pre-write argument")? {
+        match argument.as_str() {
+            "--operation-id" => {
+                operation_id = Some(parse_operation_id(
+                    arguments.required_utf8("--operation-id")?,
+                )?);
+            }
+            "--path" => {
+                let value = arguments.required_utf8("--path")?;
+                paths.push(
+                    RepoPath::from_portable(&value)
+                        .map_err(|error| CliError::InvalidRepoPath(error.to_string()))?,
+                );
+            }
+            "--jobs" => {
+                let value = arguments.required_utf8("--jobs")?;
+                jobs = value
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|jobs| *jobs > 0)
+                    .ok_or_else(|| CliError::InvalidJobs(value.clone()))?;
+            }
+            "--resolution-profile" => {
+                resolution_profile = Some(parse_resolution_profile(
+                    &arguments.required_utf8("--resolution-profile")?,
+                )?);
+            }
+            "--format" => format = arguments.required_utf8("--format")?,
+            _ => return Err(CliError::UnknownArgument(argument)),
+        }
+    }
+    require_json(&format)?;
+    let operation_id =
+        operation_id.ok_or_else(|| CliError::MissingValue("--operation-id".into()))?;
+    let result = lumin_engine::open_write_gate(&PreWriteRequest {
+        root: root.to_path_buf(),
+        operation_id,
+        paths,
+        jobs,
+        resolution_profile,
+    })?;
+    gate_command_output(&result)
+}
+
+fn post_write(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {
+    let gate_id = parse_gate_id(arguments.required_utf8("gate-id")?)?;
+    let mut operation_id = None;
+    let mut format = "json".to_owned();
+    while let Some(argument) = arguments.next_utf8("post-write argument")? {
+        match argument.as_str() {
+            "--operation-id" => {
+                operation_id = Some(parse_operation_id(
+                    arguments.required_utf8("--operation-id")?,
+                )?);
+            }
+            "--format" => format = arguments.required_utf8("--format")?,
+            _ => return Err(CliError::UnknownArgument(argument)),
+        }
+    }
+    require_json(&format)?;
+    let operation_id =
+        operation_id.ok_or_else(|| CliError::MissingValue("--operation-id".into()))?;
+    let result = lumin_engine::close_write_gate(&PostWriteRequest {
+        root: root.to_path_buf(),
+        gate_id,
+        operation_id,
+    })?;
+    gate_command_output(&result)
+}
+
+fn gate(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {
+    let subcommand = arguments
+        .next_utf8("gate subcommand")?
+        .ok_or(CliError::MissingCommand)?;
+    if subcommand != "show" {
+        return Err(CliError::UnknownArgument(subcommand));
+    }
+    let gate_id = parse_gate_id(arguments.required_utf8("gate-id")?)?;
+    let format = parse_read_format(arguments, "gate show argument")?;
+    require_json(&format)?;
+    let gate = lumin_engine::load_gate(root, &gate_id)?;
+    let response = lumin_protocol::gate_show_response(&gate);
+    lumin_protocol::to_json(&response)
+        .map(success)
+        .map_err(Into::into)
+}
+
+fn operation(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {
+    let subcommand = arguments
+        .next_utf8("operation subcommand")?
+        .ok_or(CliError::MissingCommand)?;
+    if subcommand != "show" {
+        return Err(CliError::UnknownArgument(subcommand));
+    }
+    let operation_id = parse_operation_id(arguments.required_utf8("operation-id")?)?;
+    let format = parse_read_format(arguments, "operation show argument")?;
+    require_json(&format)?;
+    let operation = lumin_engine::load_operation(root, &operation_id)?;
+    let response = lumin_protocol::operation_show_response(&operation);
+    lumin_protocol::to_json(&response)
+        .map(success)
+        .map_err(Into::into)
+}
+
+fn gate_command_output(result: &GateOperationResult) -> Result<CommandOutput, CliError> {
+    let response = lumin_protocol::gate_mutation_response(result);
+    let stdout = lumin_protocol::to_json(&response)?;
+    Ok(CommandSuccess {
+        exit_code: decision_exit_code(result.decision),
+        stdout,
+    }
+    .into())
+}
+
+fn parse_read_format(arguments: &mut Arguments, name: &str) -> Result<String, CliError> {
+    let mut format = "json".to_owned();
+    while let Some(argument) = arguments.next_utf8(name)? {
+        match argument.as_str() {
+            "--format" => format = arguments.required_utf8("--format")?,
+            _ => return Err(CliError::UnknownArgument(argument)),
+        }
+    }
+    Ok(format)
+}
+
+fn parse_operation_id(value: String) -> Result<OperationId, CliError> {
+    if value.is_empty() {
+        Err(CliError::EmptyIdentifier("operation-id".to_owned()))
+    } else {
+        Ok(OperationId::from_string(value))
+    }
+}
+
+fn parse_gate_id(value: String) -> Result<GateId, CliError> {
+    if value.is_empty() {
+        Err(CliError::EmptyIdentifier("gate-id".to_owned()))
+    } else {
+        Ok(GateId::from_string(value))
+    }
+}
+
+fn decision_exit_code(decision: GateDecision) -> i32 {
+    match decision {
+        GateDecision::Allow | GateDecision::AllowWithWarnings => 0,
+        GateDecision::Deny => 3,
+        GateDecision::Incomplete => 4,
+        GateDecision::Stale => 5,
+    }
+}
+
 fn parse_role(value: &str) -> Result<ScanRole, CliError> {
     match value {
         "test" => Ok(ScanRole::Test),
@@ -219,8 +406,10 @@ fn error_exit_code(error: &CliError) -> i32 {
         | CliError::RunRequired
         | CliError::InvalidArea
         | CliError::NoCompletedRun
+        | CliError::EmptyIdentifier(_)
+        | CliError::InvalidRepoPath(_)
         | CliError::Protocol(_) => 2,
-        CliError::Engine(_) => 1,
+        CliError::Engine(error) => error.lifecycle_exit_code(),
     }
 }
 

@@ -49,6 +49,8 @@ pub enum InventoryError {
     },
     #[error("failed to inspect repository root: {0}")]
     RootIo(String),
+    #[error("failed to establish physical source identity: {0}")]
+    PhysicalIdentity(String),
 }
 
 #[derive(Debug, Deserialize)]
@@ -120,6 +122,26 @@ pub fn scan(root: &Path, request: &InventoryRequest) -> Result<InventorySnapshot
         consulted_config_paths: collected.consulted_config_paths,
         config,
     })
+}
+
+pub fn admitted_physical_aliases(
+    root: &Path,
+    target: &RepoPath,
+    source_paths: &[RepoPath],
+) -> Result<Vec<RepoPath>, InventoryError> {
+    let target_handle = same_file::Handle::from_path(root.join(target.to_native_relative()))
+        .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
+    let mut aliases = Vec::new();
+    for source_path in source_paths {
+        let handle = same_file::Handle::from_path(root.join(source_path.to_native_relative()))
+            .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
+        if handle == target_handle {
+            aliases.push(source_path.clone());
+        }
+    }
+    aliases.sort();
+    aliases.dedup();
+    Ok(aliases)
 }
 
 fn collect_repository_files(
