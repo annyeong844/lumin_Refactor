@@ -3,6 +3,7 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 const MAGIC: &[u8; 8] = b"LUMRPATH";
@@ -35,6 +36,43 @@ pub enum RepoPathError {
     NonCanonicalPortablePath,
     #[error("repository path has too many or oversized components")]
     EncodingOverflow,
+    #[error("repository path canonical bytes are malformed or noncanonical")]
+    InvalidCanonicalEncoding,
+}
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(tag = "platform", rename_all = "kebab-case")]
+pub enum PhysicalFileIdentity {
+    Unix { device: u64, inode: u64 },
+    Windows { volume_serial: u32, file_index: u64 },
+}
+
+impl PhysicalFileIdentity {
+    pub fn canonical_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(17);
+        match self {
+            Self::Unix { device, inode } => {
+                bytes.push(1);
+                bytes.extend_from_slice(&device.to_be_bytes());
+                bytes.extend_from_slice(&inode.to_be_bytes());
+            }
+            Self::Windows {
+                volume_serial,
+                file_index,
+            } => {
+                bytes.push(2);
+                bytes.extend_from_slice(&volume_serial.to_be_bytes());
+                bytes.extend_from_slice(&file_index.to_be_bytes());
+            }
+        }
+        bytes
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PhysicalAliasWriteClosure {
+    pub physical_identity: PhysicalFileIdentity,
+    pub members: Vec<RepoPath>,
 }
 
 impl RepoPath {
@@ -86,8 +124,51 @@ impl RepoPath {
         Self::from_components(components)
     }
 
+    pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, RepoPathError> {
+        let mut cursor = 0;
+        if take_bytes(bytes, &mut cursor, MAGIC.len())? != MAGIC {
+            return Err(RepoPathError::InvalidCanonicalEncoding);
+        }
+        if read_u16(bytes, &mut cursor)? != VERSION {
+            return Err(RepoPathError::InvalidCanonicalEncoding);
+        }
+        let component_count = usize::try_from(read_u32(bytes, &mut cursor)?)
+            .map_err(|_| RepoPathError::InvalidCanonicalEncoding)?;
+        let mut components = Vec::with_capacity(component_count);
+        for _ in 0..component_count {
+            let tag = *take_bytes(bytes, &mut cursor, 1)?
+                .first()
+                .ok_or(RepoPathError::InvalidCanonicalEncoding)?;
+            let payload_len = usize::try_from(read_u32(bytes, &mut cursor)?)
+                .map_err(|_| RepoPathError::InvalidCanonicalEncoding)?;
+            let payload = take_bytes(bytes, &mut cursor, payload_len)?;
+            components.push(decode_component(tag, payload)?);
+        }
+        if cursor != bytes.len() {
+            return Err(RepoPathError::InvalidCanonicalEncoding);
+        }
+        let path = Self::from_components(components)?;
+        if path.canonical != bytes {
+            return Err(RepoPathError::InvalidCanonicalEncoding);
+        }
+        Ok(path)
+    }
+
     pub fn canonical_bytes(&self) -> &[u8] {
         &self.canonical
+    }
+
+    pub fn component_keys(&self) -> Vec<Vec<u8>> {
+        self.components
+            .iter()
+            .map(|component| {
+                let (tag, payload) = component_payload(component);
+                let mut key = Vec::with_capacity(payload.len() + 1);
+                key.push(tag);
+                key.extend_from_slice(&payload);
+                key
+            })
+            .collect()
     }
 
     pub fn portable(&self) -> Option<String> {
@@ -184,6 +265,71 @@ impl RepoPath {
             components,
             canonical,
         })
+    }
+}
+
+fn take_bytes<'a>(
+    bytes: &'a [u8],
+    cursor: &mut usize,
+    length: usize,
+) -> Result<&'a [u8], RepoPathError> {
+    let end = cursor
+        .checked_add(length)
+        .ok_or(RepoPathError::InvalidCanonicalEncoding)?;
+    let value = bytes
+        .get(*cursor..end)
+        .ok_or(RepoPathError::InvalidCanonicalEncoding)?;
+    *cursor = end;
+    Ok(value)
+}
+
+fn read_u16(bytes: &[u8], cursor: &mut usize) -> Result<u16, RepoPathError> {
+    let payload = take_bytes(bytes, cursor, 2)?;
+    Ok(u16::from_be_bytes([payload[0], payload[1]]))
+}
+
+fn read_u32(bytes: &[u8], cursor: &mut usize) -> Result<u32, RepoPathError> {
+    let payload = take_bytes(bytes, cursor, 4)?;
+    Ok(u32::from_be_bytes([
+        payload[0], payload[1], payload[2], payload[3],
+    ]))
+}
+
+fn decode_component(tag: u8, payload: &[u8]) -> Result<RepoPathComponent, RepoPathError> {
+    match tag {
+        1 => {
+            let value = std::str::from_utf8(payload)
+                .map_err(|_| RepoPathError::InvalidCanonicalEncoding)?;
+            validate_scalar_component(value)?;
+            Ok(RepoPathComponent::PortableUtf8(value.to_owned()))
+        }
+        #[cfg(unix)]
+        2 => {
+            use std::os::unix::ffi::OsStrExt;
+
+            match native_component(OsStr::from_bytes(payload))? {
+                component @ RepoPathComponent::UnixBytes(_) => Ok(component),
+                RepoPathComponent::PortableUtf8(_) => Err(RepoPathError::InvalidCanonicalEncoding),
+            }
+        }
+        #[cfg(windows)]
+        3 => {
+            use std::os::windows::ffi::OsStringExt;
+
+            if !payload.len().is_multiple_of(2) {
+                return Err(RepoPathError::InvalidCanonicalEncoding);
+            }
+            let units = payload
+                .chunks_exact(2)
+                .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
+                .collect::<Vec<_>>();
+            let value = OsString::from_wide(&units);
+            match native_component(&value)? {
+                component @ RepoPathComponent::WindowsWtf16(_) => Ok(component),
+                RepoPathComponent::PortableUtf8(_) => Err(RepoPathError::InvalidCanonicalEncoding),
+            }
+        }
+        _ => Err(RepoPathError::InvalidCanonicalEncoding),
     }
 }
 
@@ -339,6 +485,21 @@ mod tests {
             path.canonical_bytes(),
             b"LUMRPATH\x00\x01\x00\x00\x00\x02\x01\x00\x00\x00\x03src\x01\x00\x00\x00\x07main.ts"
         );
+        assert_eq!(
+            RepoPath::from_canonical_bytes(path.canonical_bytes())?,
+            path
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_decoder_rejects_alternate_or_trailing_framing() -> Result<(), RepoPathError> {
+        let portable_as_unix = b"LUMRPATH\x00\x01\x00\x00\x00\x01\x02\x00\x00\x00\x03src";
+        assert!(RepoPath::from_canonical_bytes(portable_as_unix).is_err());
+
+        let mut trailing = RepoPath::from_portable("src")?.canonical_bytes().to_vec();
+        trailing.push(0);
+        assert!(RepoPath::from_canonical_bytes(&trailing).is_err());
         Ok(())
     }
 

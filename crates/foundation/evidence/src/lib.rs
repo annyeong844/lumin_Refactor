@@ -66,6 +66,8 @@ impl FindingRecord {
 #[serde(rename_all = "camelCase")]
 pub struct RepoPathProjection {
     pub canonical: Vec<u8>,
+    #[serde(default)]
+    pub components: Vec<Vec<u8>>,
     pub display: String,
 }
 
@@ -73,6 +75,7 @@ impl From<&RepoPath> for RepoPathProjection {
     fn from(path: &RepoPath) -> Self {
         Self {
             canonical: path.canonical_bytes().to_vec(),
+            components: path.component_keys(),
             display: path.display_escaped(),
         }
     }

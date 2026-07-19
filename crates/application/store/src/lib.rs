@@ -1,6 +1,6 @@
 mod gate;
 
-pub use gate::{PostWriteStart, PreWriteStart};
+pub use gate::{ActiveGateLease, PostWriteFinish, PostWriteStart, PreWriteFinish, PreWriteStart};
 
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;

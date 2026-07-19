@@ -5,7 +5,7 @@ pub use write_gate::{
     PostWriteRequest, PreWriteRequest, close_write_gate, load_gate, load_operation, open_write_gate,
 };
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use lumin_evidence::{
@@ -152,6 +152,7 @@ pub fn analyze_repository(
 struct RepositoryCapture {
     snapshot: AnalysisSnapshot,
     source_paths: Vec<lumin_model::RepoPath>,
+    source_adjacency: BTreeMap<lumin_model::RepoPath, BTreeSet<lumin_model::RepoPath>>,
 }
 
 fn capture_repository(
@@ -181,6 +182,7 @@ fn capture_repository(
         resolver_limitations,
     );
 
+    let source_adjacency = source_adjacency(&inventory.sources, &resolved);
     let graph = lumin_graph::build(&inventory.sources, &facts, &resolved, &package_surfaces);
     let findings = lumin_dead::analyze(&inventory.sources, &graph, &inventory.config, &limitations);
     let state = if limitations.is_empty() {
@@ -206,22 +208,28 @@ fn capture_repository(
         .map(|source| source.path.clone())
         .collect();
     Ok(RepositoryCapture {
-        snapshot: seal_analysis_snapshot(semantic_input_records(&inventory), evidence),
+        snapshot: seal_analysis_snapshot(semantic_input_records(root, &inventory)?, evidence),
         source_paths,
+        source_adjacency,
     })
 }
 
-fn semantic_input_records(inventory: &InventorySnapshot) -> Vec<SemanticInputRecord> {
-    let mut inputs = inventory
-        .sources
-        .iter()
-        .map(|source| SemanticInputRecord {
+fn semantic_input_records(
+    root: &Path,
+    inventory: &InventorySnapshot,
+) -> Result<Vec<SemanticInputRecord>, EngineError> {
+    let mut inputs = Vec::new();
+    for source in &inventory.sources {
+        inputs.push(SemanticInputRecord {
             path: RepoPathProjection::from(&source.path),
             state: SemanticInputState::Source,
             payload_sha256: Some(source.payload_sha256.clone()),
-        })
-        .collect::<Vec<_>>();
-    inputs.extend(inventory.config.observations.values().map(|observation| {
+            physical_identity: Some(lumin_inventory::physical_file_identity(
+                &root.join(source.path.to_native_relative()),
+            )?),
+        });
+    }
+    for observation in inventory.config.observations.values() {
         let (state, payload_sha256) = match observation {
             ConfigObservation::Present(document) => (
                 SemanticInputState::ConfigPresent,
@@ -234,13 +242,55 @@ fn semantic_input_records(inventory: &InventorySnapshot) -> Vec<SemanticInputRec
                 Some(digest_hex(detail.as_bytes())),
             ),
         };
-        SemanticInputRecord {
+        let physical_identity = if state == SemanticInputState::Missing {
+            None
+        } else {
+            Some(lumin_inventory::physical_file_identity(
+                &root.join(observation.path().to_native_relative()),
+            )?)
+        };
+        inputs.push(SemanticInputRecord {
             path: RepoPathProjection::from(observation.path()),
             state,
             payload_sha256,
-        }
-    }));
-    inputs
+            physical_identity,
+        });
+    }
+    Ok(inputs)
+}
+
+fn source_adjacency(
+    sources: &[SourceSnapshot],
+    resolved: &[ResolvedSourceUse],
+) -> BTreeMap<lumin_model::RepoPath, BTreeSet<lumin_model::RepoPath>> {
+    let paths_by_id = sources
+        .iter()
+        .map(|source| (source.id.clone(), source.path.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let mut adjacency = sources
+        .iter()
+        .map(|source| (source.path.clone(), BTreeSet::new()))
+        .collect::<BTreeMap<_, _>>();
+    for resolution in resolved {
+        let ResolutionOutcome::Internal { target } = &resolution.outcome else {
+            continue;
+        };
+        let Some(importer) = paths_by_id.get(&resolution.source_use.importer) else {
+            continue;
+        };
+        let Some(target) = paths_by_id.get(target) else {
+            continue;
+        };
+        adjacency
+            .entry(importer.clone())
+            .or_default()
+            .insert(target.clone());
+        adjacency
+            .entry(target.clone())
+            .or_default()
+            .insert(importer.clone());
+    }
+    adjacency
 }
 
 struct ExtractionOutput {
