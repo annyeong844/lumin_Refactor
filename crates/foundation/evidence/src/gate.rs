@@ -1,12 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_model::{
-    AnalysisInputId, GateId, OperationId, PhysicalFileIdentity, ResolutionProfile,
-    append_length_prefixed, digest_hex,
+    AnalysisInputId, DeltaDimensionChange, DeltaFactFamily, GateDeltaClassification,
+    GateDeltaRecord, GateId, OperationId, PhysicalFileIdentity, ResolutionProfile,
+    append_length_prefixed, classify_lifecycle_deltas, digest_hex,
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{RepoPathProjection, RunEvidence};
+use crate::{RepoPathProjection, RunEvidence, delta::lifecycle_delta_input};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -22,6 +23,15 @@ impl GateDecision {
     pub fn authorizes(self) -> bool {
         matches!(self, Self::Allow | Self::AllowWithWarnings)
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum GateEffect {
+    Warn,
+    Incomplete,
+    Block,
+    Stale,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -156,6 +166,9 @@ pub enum GateSignal {
     FindingWarnings {
         count: usize,
     },
+    PreExistingAdverseFacts {
+        count: usize,
+    },
     RequiredEvidenceIncomplete {
         limitation_count: usize,
     },
@@ -185,7 +198,27 @@ pub enum GateSignal {
         sequence: u64,
     },
     TransitionCatalogChanged,
-    SemanticDeltaUnsupported,
+    AdverseFactIntroduced {
+        count: usize,
+    },
+    AdverseFactRegressed {
+        count: usize,
+    },
+    OpacityIntroduced {
+        count: usize,
+    },
+    OpacityRegressed {
+        count: usize,
+    },
+    LifecycleEvidenceRegressed {
+        count: usize,
+    },
+    LifecycleDeltaIncomparable {
+        count: usize,
+    },
+    LifecycleBaselineUnavailable {
+        count: usize,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -212,6 +245,8 @@ pub struct GateRevision {
     pub alias_closures: Vec<PhysicalAliasClosureRecord>,
     #[serde(default)]
     pub reconciled_transition_sequences: Vec<u64>,
+    #[serde(default)]
+    pub deltas: Vec<GateDeltaRecord>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -259,6 +294,8 @@ pub struct GateOperationResult {
     pub signals: Vec<GateSignal>,
     #[serde(default)]
     pub leased_write_set: Vec<WriteLease>,
+    #[serde(default)]
+    pub deltas: Vec<GateDeltaRecord>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -338,17 +375,21 @@ pub mod gate_policy {
     use super::*;
 
     pub fn opening_signals(evidence: &RunEvidence) -> Vec<GateSignal> {
+        let delta_input = lifecycle_delta_input(evidence);
         let mut signals = Vec::new();
-        if evidence.dead_code_state() != lumin_model::CapabilityState::Complete
-            || !evidence.limitations.is_empty()
-        {
+        if requires_complete_evidence(evidence, delta_input.required_evidence_gap_count) {
             signals.push(GateSignal::RequiredEvidenceIncomplete {
-                limitation_count: evidence.limitations.len(),
+                limitation_count: delta_input.required_evidence_gap_count,
             });
         }
         if !evidence.findings.is_empty() {
             signals.push(GateSignal::FindingWarnings {
                 count: evidence.findings.len(),
+            });
+        }
+        if delta_input.advisory_limitation_count > 0 {
+            signals.push(GateSignal::PreExistingAdverseFacts {
+                count: delta_input.advisory_limitation_count,
             });
         }
         signals
@@ -359,7 +400,11 @@ pub mod gate_policy {
         current: &AnalysisSnapshot,
         protected_semantic_inputs: &[SemanticInputRecord],
         leased_write_set: &[WriteLease],
-    ) -> (Vec<GateSignal>, Vec<RepoPathProjection>) {
+    ) -> (
+        Vec<GateSignal>,
+        Vec<RepoPathProjection>,
+        Vec<GateDeltaRecord>,
+    ) {
         let protected_set = protected_semantic_inputs
             .iter()
             .map(|input| input.path.canonical.as_slice())
@@ -410,58 +455,197 @@ pub mod gate_policy {
         sort_paths(&mut protected);
         sort_paths(&mut unplanned);
 
-        let mut signals = opening_signals(&current.evidence);
+        let baseline_delta_input = lifecycle_delta_input(&baseline.evidence);
+        let current_delta_input = lifecycle_delta_input(&current.evidence);
+        let deltas = classify_lifecycle_deltas(
+            Some(&baseline_delta_input.facts),
+            &current_delta_input.facts,
+        );
+        let mut signals = lifecycle_delta_signals(&deltas);
+        if requires_complete_evidence(
+            &current.evidence,
+            current_delta_input.required_evidence_gap_count,
+        ) {
+            signals.push(GateSignal::RequiredEvidenceIncomplete {
+                limitation_count: current_delta_input.required_evidence_gap_count,
+            });
+        }
         if !protected.is_empty() {
             signals.push(GateSignal::ProtectedInputChanged { paths: protected });
         }
         if !unplanned.is_empty() {
             signals.push(GateSignal::UnplannedWrite { paths: unplanned });
         }
-        if baseline.evidence != current.evidence {
-            signals.push(GateSignal::SemanticDeltaUnsupported);
-        }
-        (signals, changed)
+        (signals, changed, deltas)
+    }
+
+    fn requires_complete_evidence(evidence: &RunEvidence, required_gap_count: usize) -> bool {
+        required_gap_count > 0
+            || matches!(
+                evidence.dead_code_state(),
+                lumin_model::CapabilityState::Unavailable | lumin_model::CapabilityState::Failed
+            )
     }
 
     pub fn decision(signals: &[GateSignal]) -> GateDecision {
-        if signals.iter().any(|signal| {
-            matches!(
-                signal,
-                GateSignal::ProtectedInputChanged { .. }
-                    | GateSignal::AnalysisContractChanged
-                    | GateSignal::TransitionCatalogChanged
-            )
-        }) {
-            return GateDecision::Stale;
+        match signals.iter().filter_map(effect).max() {
+            Some(GateEffect::Stale) => GateDecision::Stale,
+            Some(GateEffect::Block) => GateDecision::Deny,
+            Some(GateEffect::Incomplete) => GateDecision::Incomplete,
+            Some(GateEffect::Warn) => GateDecision::AllowWithWarnings,
+            None => GateDecision::Allow,
         }
-        if signals.iter().any(|signal| {
-            matches!(
-                signal,
-                GateSignal::UnplannedWrite { .. } | GateSignal::TransitionChainBroken { .. }
-            )
-        }) {
-            return GateDecision::Deny;
+    }
+
+    pub fn effect(signal: &GateSignal) -> Option<GateEffect> {
+        match signal {
+            GateSignal::ProtectedInputChanged { .. }
+            | GateSignal::AnalysisContractChanged
+            | GateSignal::TransitionCatalogChanged => Some(GateEffect::Stale),
+            GateSignal::UnplannedWrite { .. }
+            | GateSignal::TransitionChainBroken { .. }
+            | GateSignal::AdverseFactIntroduced { .. }
+            | GateSignal::AdverseFactRegressed { .. } => Some(GateEffect::Block),
+            GateSignal::RequiredEvidenceIncomplete { .. }
+            | GateSignal::AnalysisFailed { .. }
+            | GateSignal::DeclaredPathUnsupported { .. }
+            | GateSignal::WriteConflict { .. }
+            | GateSignal::ActiveTransitionPending { .. }
+            | GateSignal::OpacityIntroduced { .. }
+            | GateSignal::OpacityRegressed { .. }
+            | GateSignal::LifecycleEvidenceRegressed { .. }
+            | GateSignal::LifecycleDeltaIncomparable { .. }
+            | GateSignal::LifecycleBaselineUnavailable { .. } => Some(GateEffect::Incomplete),
+            GateSignal::FindingWarnings { .. } | GateSignal::PreExistingAdverseFacts { .. } => {
+                Some(GateEffect::Warn)
+            }
         }
-        if signals.iter().any(|signal| {
-            matches!(
-                signal,
-                GateSignal::RequiredEvidenceIncomplete { .. }
-                    | GateSignal::AnalysisFailed { .. }
-                    | GateSignal::DeclaredPathUnsupported { .. }
-                    | GateSignal::WriteConflict { .. }
-                    | GateSignal::ActiveTransitionPending { .. }
-                    | GateSignal::SemanticDeltaUnsupported
-            )
-        }) {
-            return GateDecision::Incomplete;
+    }
+
+    fn lifecycle_delta_signals(deltas: &[GateDeltaRecord]) -> Vec<GateSignal> {
+        let mut counts = DeltaSignalCounts::default();
+        for delta in deltas {
+            match &delta.classification {
+                GateDeltaClassification::Introduced => {
+                    if delta.key.family.blocks_when_adverse() {
+                        counts.adverse_introduced += 1;
+                    } else {
+                        counts.opacity_introduced += 1;
+                    }
+                }
+                GateDeltaClassification::Unchanged => {
+                    counts.unchanged_facts += 1;
+                }
+                GateDeltaClassification::Regressed { changes } => {
+                    classify_regressions(delta.key.family, changes, &mut counts);
+                }
+                GateDeltaClassification::ChangedIncomparable {
+                    regressions,
+                    incomparable_changes,
+                    ..
+                } => {
+                    classify_regressions(delta.key.family, regressions, &mut counts);
+                    if !incomparable_changes.is_empty() {
+                        counts.incomparable += 1;
+                    }
+                }
+                GateDeltaClassification::BaselineUnavailable => {
+                    counts.baseline_unavailable += 1;
+                }
+                GateDeltaClassification::Improved { .. } | GateDeltaClassification::Resolved => {}
+            }
         }
-        if signals
-            .iter()
-            .any(|signal| matches!(signal, GateSignal::FindingWarnings { .. }))
-        {
-            return GateDecision::AllowWithWarnings;
+        counts.into_signals()
+    }
+
+    fn classify_regressions(
+        family: DeltaFactFamily,
+        changes: &[DeltaDimensionChange],
+        counts: &mut DeltaSignalCounts,
+    ) {
+        let mut adverse = false;
+        let mut opacity = false;
+        let mut evidence = false;
+        let mut unexpected = false;
+        for change in changes {
+            match change {
+                DeltaDimensionChange::TargetAdded { .. }
+                | DeltaDimensionChange::AffectedIdentityAdded { .. }
+                | DeltaDimensionChange::OwnerPayloadRegressed { .. } => {
+                    if family.blocks_when_adverse() {
+                        adverse = true;
+                    } else {
+                        opacity = true;
+                    }
+                }
+                DeltaDimensionChange::ConfidenceLowered { .. }
+                | DeltaDimensionChange::GroundingLowered { .. } => evidence = true,
+                DeltaDimensionChange::TargetRemoved { .. }
+                | DeltaDimensionChange::AffectedIdentityRemoved { .. }
+                | DeltaDimensionChange::ConfidenceRaised { .. }
+                | DeltaDimensionChange::GroundingRaised { .. }
+                | DeltaDimensionChange::EvidenceIdentityChanged { .. }
+                | DeltaDimensionChange::OwnerPayloadImproved { .. }
+                | DeltaDimensionChange::OwnerPayloadChanged { .. } => unexpected = true,
+            }
         }
-        GateDecision::Allow
+        counts.adverse_regressed += usize::from(adverse);
+        counts.opacity_regressed += usize::from(opacity);
+        counts.evidence_regressed += usize::from(evidence);
+        counts.incomparable += usize::from(unexpected);
+    }
+}
+
+#[derive(Default)]
+struct DeltaSignalCounts {
+    unchanged_facts: usize,
+    adverse_introduced: usize,
+    adverse_regressed: usize,
+    opacity_introduced: usize,
+    opacity_regressed: usize,
+    evidence_regressed: usize,
+    incomparable: usize,
+    baseline_unavailable: usize,
+}
+
+impl DeltaSignalCounts {
+    fn into_signals(self) -> Vec<GateSignal> {
+        let mut signals = Vec::new();
+        push_count(&mut signals, self.unchanged_facts, |count| {
+            GateSignal::PreExistingAdverseFacts { count }
+        });
+        push_count(&mut signals, self.adverse_introduced, |count| {
+            GateSignal::AdverseFactIntroduced { count }
+        });
+        push_count(&mut signals, self.adverse_regressed, |count| {
+            GateSignal::AdverseFactRegressed { count }
+        });
+        push_count(&mut signals, self.opacity_introduced, |count| {
+            GateSignal::OpacityIntroduced { count }
+        });
+        push_count(&mut signals, self.opacity_regressed, |count| {
+            GateSignal::OpacityRegressed { count }
+        });
+        push_count(&mut signals, self.evidence_regressed, |count| {
+            GateSignal::LifecycleEvidenceRegressed { count }
+        });
+        push_count(&mut signals, self.incomparable, |count| {
+            GateSignal::LifecycleDeltaIncomparable { count }
+        });
+        push_count(&mut signals, self.baseline_unavailable, |count| {
+            GateSignal::LifecycleBaselineUnavailable { count }
+        });
+        signals
+    }
+}
+
+fn push_count(
+    signals: &mut Vec<GateSignal>,
+    count: usize,
+    signal: impl FnOnce(usize) -> GateSignal,
+) {
+    if count > 0 {
+        signals.push(signal(count));
     }
 }
 

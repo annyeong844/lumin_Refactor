@@ -1,3 +1,4 @@
+mod delta;
 mod gate;
 
 pub use gate::*;

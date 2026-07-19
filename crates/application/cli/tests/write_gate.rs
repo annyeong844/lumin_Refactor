@@ -154,7 +154,7 @@ fn overlapping_gate_is_rejected_and_operation_reuse_is_malformed()
 }
 
 #[test]
-fn changed_semantic_evidence_is_incomplete_until_delta_policy_exists()
+fn introduced_grounded_finding_denies_and_records_its_delta()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = fixture()?;
     let gate_id = open_gate(root.path(), "op-open", "src/lib.ts")?;
@@ -163,13 +163,127 @@ fn changed_semantic_evidence_is_incomplete_until_delta_policy_exists()
         "export const renamed = 1;\n",
     )?;
 
-    assert_active_close(
+    let post = assert_active_close(root.path(), &gate_id, 3, "deny", "adverse-fact-introduced")?;
+    assert_delta(&post, "dead-export", "introduced")?;
+    Ok(())
+}
+
+#[test]
+fn resolved_grounded_finding_authorizes_and_remains_queryable()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = dead_finding_fixture()?;
+    let gate_id = open_gate(root.path(), "op-resolve-open", "src/lib.ts")?;
+    fs::write(root.path().join("src/lib.ts"), "console.log('resolved');\n")?;
+
+    let post = run(
         root.path(),
-        &gate_id,
-        4,
-        "incomplete",
-        "semantic-delta-unsupported",
+        &["post-write", &gate_id, "--operation-id", "op-resolve-close"],
     )?;
+    assert_status(&post, 0);
+    assert_eq!(field(&post.stdout, "decision")?, "allow");
+    assert_eq!(field(&post.stdout, "lifecycle")?, "closed");
+    assert_delta(&post.stdout, "dead-export", "resolved")?;
+
+    let shown = run(root.path(), &["gate", "show", &gate_id])?;
+    assert_status(&shown, 0);
+    let shown_json: Value = serde_json::from_str(&shown.stdout)?;
+    let persisted = shown_json
+        .pointer("/revisions/1/deltas/0")
+        .ok_or_else(|| std::io::Error::other("resolved delta was not persisted"))?;
+    assert_eq!(
+        persisted.pointer("/key/family").and_then(Value::as_str),
+        Some("dead-export")
+    );
+    assert_eq!(
+        persisted
+            .pointer("/classification/kind")
+            .and_then(Value::as_str),
+        Some("resolved")
+    );
+    Ok(())
+}
+
+#[test]
+fn unchanged_grounded_finding_remains_an_advisory_warning() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = dead_finding_fixture()?;
+    let gate_id = open_gate(root.path(), "op-unchanged-open", "src/lib.ts")?;
+
+    let post = run(
+        root.path(),
+        &[
+            "post-write",
+            &gate_id,
+            "--operation-id",
+            "op-unchanged-close",
+        ],
+    )?;
+    assert_status(&post, 0);
+    assert_eq!(field(&post.stdout, "decision")?, "allow-with-warnings");
+    assert_eq!(field(&post.stdout, "lifecycle")?, "closed");
+    assert_delta(&post.stdout, "dead-export", "unchanged")?;
+    Ok(())
+}
+
+#[test]
+fn bounded_unresolved_edge_is_advisory_and_comparable() -> Result<(), Box<dyn std::error::Error>> {
+    let root = unresolved_edge_fixture()?;
+    let pre = run(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-unresolved-open",
+            "--path",
+            "src/lib.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&pre, 0);
+    assert_eq!(field(&pre.stdout, "decision")?, "allow-with-warnings");
+    assert_has_signal(&pre.stdout, "pre-existing-adverse-facts")?;
+    let gate_id = field(&pre.stdout, "gateId")?;
+
+    let post = run(
+        root.path(),
+        &[
+            "post-write",
+            &gate_id,
+            "--operation-id",
+            "op-unresolved-close",
+        ],
+    )?;
+    assert_status(&post, 0);
+    assert_eq!(field(&post.stdout, "decision")?, "allow-with-warnings");
+    assert_has_signal(&post.stdout, "pre-existing-adverse-facts")?;
+    assert_delta(&post.stdout, "unresolved-internal-edge", "unchanged")?;
+    Ok(())
+}
+
+#[test]
+fn unsupported_config_remains_a_required_evidence_gap() -> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    fs::write(
+        root.path().join("tsconfig.json"),
+        "{\"compilerOptions\":{\"unknownLuminOption\":true}}\n",
+    )?;
+    let pre = run(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-gap-open",
+            "--path",
+            "src/lib.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&pre, 4);
+    assert_eq!(field(&pre.stdout, "decision")?, "incomplete");
+    assert_has_signal(&pre.stdout, "required-evidence-incomplete")?;
+    assert_empty_deltas(&pre.stdout)?;
     Ok(())
 }
 
@@ -324,9 +438,10 @@ fn new_source_path_is_admitted_before_it_exists() -> Result<(), Box<dyn std::err
         root.path(),
         &["post-write", &gate_id, "--operation-id", "op-new-close"],
     )?;
-    assert_status(&post, 4);
-    assert_eq!(field(&post.stdout, "decision")?, "incomplete");
-    assert_only_semantic_delta_blocks(&post.stdout)?;
+    assert_status(&post, 0);
+    assert_eq!(field(&post.stdout, "decision")?, "allow");
+    assert_eq!(field(&post.stdout, "lifecycle")?, "closed");
+    assert_empty_deltas(&post.stdout)?;
     Ok(())
 }
 
@@ -377,9 +492,10 @@ fn directory_lease_covers_new_descendants_and_conflicts_with_them()
         root.path(),
         &["post-write", &gate_id, "--operation-id", "op-dir-close"],
     )?;
-    assert_status(&post, 4);
-    assert_eq!(field(&post.stdout, "decision")?, "incomplete");
-    assert_only_semantic_delta_blocks(&post.stdout)?;
+    assert_status(&post, 0);
+    assert_eq!(field(&post.stdout, "decision")?, "allow");
+    assert_eq!(field(&post.stdout, "lifecycle")?, "closed");
+    assert_empty_deltas(&post.stdout)?;
     Ok(())
 }
 
@@ -548,16 +664,49 @@ fn open_gate(
     field(&pre.stdout, "gateId")
 }
 
-fn assert_only_semantic_delta_blocks(stdout: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn assert_delta(
+    stdout: &str,
+    expected_family: &str,
+    expected_classification: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let value: Value = serde_json::from_str(stdout)?;
-    let signal_kinds = value
-        .get("signals")
+    let deltas = value
+        .get("deltas")
         .and_then(Value::as_array)
-        .ok_or_else(|| std::io::Error::other("signals are missing"))?
-        .iter()
-        .filter_map(|signal| signal.get("kind").and_then(Value::as_str))
-        .collect::<Vec<_>>();
-    assert_eq!(signal_kinds, ["semantic-delta-unsupported"]);
+        .ok_or_else(|| std::io::Error::other("deltas are missing"))?;
+    assert_eq!(deltas.len(), 1);
+    assert_eq!(
+        deltas[0].pointer("/key/family").and_then(Value::as_str),
+        Some(expected_family)
+    );
+    assert_eq!(
+        deltas[0]
+            .pointer("/classification/kind")
+            .and_then(Value::as_str),
+        Some(expected_classification)
+    );
+    Ok(())
+}
+
+fn assert_empty_deltas(stdout: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let value: Value = serde_json::from_str(stdout)?;
+    assert_eq!(
+        value.get("deltas").and_then(Value::as_array).map(Vec::len),
+        Some(0)
+    );
+    Ok(())
+}
+
+fn assert_has_signal(stdout: &str, expected_kind: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let value: Value = serde_json::from_str(stdout)?;
+    assert!(
+        value
+            .get("signals")
+            .and_then(Value::as_array)
+            .is_some_and(|signals| signals.iter().any(|signal| {
+                signal.get("kind").and_then(Value::as_str) == Some(expected_kind)
+            }))
+    );
     Ok(())
 }
 
@@ -567,7 +716,7 @@ fn assert_active_close(
     expected_status: i32,
     expected_decision: &str,
     expected_signal: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<String, Box<dyn std::error::Error>> {
     let post = run(root, &["post-write", gate_id, "--operation-id", "op-close"])?;
     assert_status(&post, expected_status);
     let value: Value = serde_json::from_str(&post.stdout)?;
@@ -587,7 +736,7 @@ fn assert_active_close(
                 signal.get("kind").and_then(Value::as_str) == Some(expected_signal)
             }))
     );
-    Ok(())
+    Ok(post.stdout)
 }
 
 fn alias_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
@@ -613,13 +762,31 @@ fn disjoint_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
 }
 
 fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+    source_fixture(
+        "export const used = 1;\n",
+        "import { used } from './lib'; console.log(used);\n",
+    )
+}
+
+fn dead_finding_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+    source_fixture("export const unused = 1;\n", "console.log('main');\n")
+}
+
+fn unresolved_edge_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+    source_fixture(
+        "console.log('lib');\n",
+        "import { missing } from './missing'; console.log(missing);\n",
+    )
+}
+
+fn source_fixture(
+    lib_source: &str,
+    main_source: &str,
+) -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     fs::create_dir(root.path().join("src"))?;
-    fs::write(root.path().join("src/lib.ts"), "export const used = 1;\n")?;
-    fs::write(
-        root.path().join("src/main.ts"),
-        "import { used } from './lib'; console.log(used);\n",
-    )?;
+    fs::write(root.path().join("src/lib.ts"), lib_source)?;
+    fs::write(root.path().join("src/main.ts"), main_source)?;
     Ok(root)
 }
 

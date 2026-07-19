@@ -11,8 +11,8 @@ use lumin_inventory::{
     InventoryRequest, WriteTargetError, WriteTargetKind, WriteTargetObservation,
 };
 use lumin_model::{
-    GateId, OperationId, PhysicalFileIdentity, RepoPath, ResolutionProfile, append_length_prefixed,
-    digest_hex,
+    GateDeltaRecord, GateId, OperationId, PhysicalFileIdentity, RepoPath, ResolutionProfile,
+    append_length_prefixed, digest_hex,
 };
 use lumin_store::{
     ActiveGateLease, PostWriteFinish, PostWriteStart, PreWriteFinish, PreWriteStart,
@@ -186,17 +186,19 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         reconcile_transitions(&gate, baseline, &transitions);
     let changed_paths = changed_paths(&reconciled_baseline, &capture.snapshot);
     signals.extend(active_transition_signals(&changed_paths, &active_gates));
+    let mut deltas = Vec::<GateDeltaRecord>::new();
     if !signals
         .iter()
         .any(|signal| matches!(signal, GateSignal::ActiveTransitionPending { .. }))
     {
-        let (closing_signals, _) = gate_policy::closing_signals(
+        let (closing_signals, _, closing_deltas) = gate_policy::closing_signals(
             &reconciled_baseline,
             &capture.snapshot,
             &baseline.protected_semantic_inputs,
             &gate.leased_write_set,
         );
         signals.extend(closing_signals);
+        deltas = closing_deltas;
     }
     let (alias_closures, topology_signals) =
         close_alias_topology(&request.root, &gate, &capture.source_paths);
@@ -214,6 +216,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                 alias_closures,
                 reconciled_transition_sequences: reconciled_sequences,
                 signals,
+                deltas,
             },
         )
         .map_err(Into::into)
@@ -237,6 +240,7 @@ fn finish_failed_close(
                 alias_closures: Vec::new(),
                 reconciled_transition_sequences: Vec::new(),
                 signals,
+                deltas: Vec::new(),
             },
         )
         .map_err(Into::into)

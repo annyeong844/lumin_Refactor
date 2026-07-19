@@ -8,8 +8,8 @@ use lumin_evidence::{
     RepoPathProjection, RunEvidence, WriteLease, WriteLeaseKind,
 };
 use lumin_model::{
-    AnalysisInputId, AttemptId, CapabilityState, FindingDisposition, FindingId, GateId, Limitation,
-    OperationId, RunId, SourceSpan, SymbolNamespace,
+    AnalysisInputId, AttemptId, CapabilityState, FindingDisposition, FindingId, GateDeltaRecord,
+    GateId, Limitation, OperationId, RunId, SourceSpan, SymbolNamespace,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -108,6 +108,7 @@ pub struct GateMutationResponseDto {
     pub decision: GateDecision,
     pub signals: Vec<GateSignalDto>,
     pub leased_write_set: Vec<WriteLeaseDto>,
+    pub deltas: Vec<GateDeltaRecord>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -154,6 +155,7 @@ pub struct GateRevisionSummaryDto {
     pub analysis_input_id: Option<AnalysisInputId>,
     pub alias_group_count: usize,
     pub reconciled_transition_sequences: Vec<u64>,
+    pub deltas: Vec<GateDeltaRecord>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -324,6 +326,7 @@ pub fn gate_mutation_response(result: &GateOperationResult) -> GateMutationRespo
             .iter()
             .map(WriteLeaseDto::from)
             .collect(),
+        deltas: result.deltas.clone(),
     }
 }
 
@@ -375,6 +378,7 @@ pub fn gate_show_response(gate: &GateRecord) -> GateShowResponseDto {
                     .map(|snapshot| snapshot.analysis_input_id.clone()),
                 alias_group_count: revision.alias_closures.len(),
                 reconciled_transition_sequences: revision.reconciled_transition_sequences.clone(),
+                deltas: revision.deltas.clone(),
             })
             .collect(),
     }
@@ -459,9 +463,17 @@ impl From<&GateSignal> for GateSignalDto {
         };
         match signal {
             GateSignal::FindingWarnings { count }
+            | GateSignal::PreExistingAdverseFacts { count }
             | GateSignal::RequiredEvidenceIncomplete {
                 limitation_count: count,
-            } => dto.count = Some(*count),
+            }
+            | GateSignal::AdverseFactIntroduced { count }
+            | GateSignal::AdverseFactRegressed { count }
+            | GateSignal::OpacityIntroduced { count }
+            | GateSignal::OpacityRegressed { count }
+            | GateSignal::LifecycleEvidenceRegressed { count }
+            | GateSignal::LifecycleDeltaIncomparable { count }
+            | GateSignal::LifecycleBaselineUnavailable { count } => dto.count = Some(*count),
             GateSignal::AnalysisFailed { detail } => dto.detail = Some(detail.clone()),
             GateSignal::DeclaredPathUnsupported { path, reason } => {
                 dto.paths.push(RepoPathDto::from(path));
@@ -479,9 +491,7 @@ impl From<&GateSignal> for GateSignalDto {
                 dto.gate_ids = gate_ids.clone();
             }
             GateSignal::TransitionChainBroken { sequence } => dto.sequence = Some(*sequence),
-            GateSignal::AnalysisContractChanged
-            | GateSignal::TransitionCatalogChanged
-            | GateSignal::SemanticDeltaUnsupported => {}
+            GateSignal::AnalysisContractChanged | GateSignal::TransitionCatalogChanged => {}
         }
         dto
     }
@@ -490,6 +500,7 @@ impl From<&GateSignal> for GateSignalDto {
 fn signal_kind(signal: &GateSignal) -> &'static str {
     match signal {
         GateSignal::FindingWarnings { .. } => "finding-warnings",
+        GateSignal::PreExistingAdverseFacts { .. } => "pre-existing-adverse-facts",
         GateSignal::RequiredEvidenceIncomplete { .. } => "required-evidence-incomplete",
         GateSignal::AnalysisFailed { .. } => "analysis-failed",
         GateSignal::DeclaredPathUnsupported { .. } => "declared-path-unsupported",
@@ -500,7 +511,13 @@ fn signal_kind(signal: &GateSignal) -> &'static str {
         GateSignal::ActiveTransitionPending { .. } => "active-transition-pending",
         GateSignal::TransitionChainBroken { .. } => "transition-chain-broken",
         GateSignal::TransitionCatalogChanged => "transition-catalog-changed",
-        GateSignal::SemanticDeltaUnsupported => "semantic-delta-unsupported",
+        GateSignal::AdverseFactIntroduced { .. } => "adverse-fact-introduced",
+        GateSignal::AdverseFactRegressed { .. } => "adverse-fact-regressed",
+        GateSignal::OpacityIntroduced { .. } => "opacity-introduced",
+        GateSignal::OpacityRegressed { .. } => "opacity-regressed",
+        GateSignal::LifecycleEvidenceRegressed { .. } => "lifecycle-evidence-regressed",
+        GateSignal::LifecycleDeltaIncomparable { .. } => "lifecycle-delta-incomparable",
+        GateSignal::LifecycleBaselineUnavailable { .. } => "lifecycle-baseline-unavailable",
     }
 }
 

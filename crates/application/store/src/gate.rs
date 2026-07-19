@@ -4,7 +4,7 @@ use lumin_evidence::{
     OperationRecord, PhysicalAliasClosureRecord, RepoPathProjection, SemanticInputRecord,
     TransitionCapsule, WorktreeTransition, WriteLease, gate_policy,
 };
-use lumin_model::{GateId, OperationId};
+use lumin_model::{GateDeltaRecord, GateId, OperationId};
 use redb::{
     Database, ReadableDatabase, ReadableTable, TableDefinition, TableError, WriteTransaction,
 };
@@ -41,6 +41,7 @@ pub struct PostWriteFinish {
     pub alias_closures: Vec<PhysicalAliasClosureRecord>,
     pub reconciled_transition_sequences: Vec<u64>,
     pub signals: Vec<GateSignal>,
+    pub deltas: Vec<GateDeltaRecord>,
 }
 
 struct ConflictSet {
@@ -289,6 +290,7 @@ impl RepositoryStore {
             alias_closures,
             reconciled_transition_sequences,
             mut signals,
+            deltas,
         } = finish;
         self.with_exclusive_lock(|| {
             let database = open_lifecycle_database(&self.state_dir)?;
@@ -339,6 +341,7 @@ impl RepositoryStore {
                 decision,
                 signals: signals.clone(),
                 leased_write_set: gate.leased_write_set.clone(),
+                deltas: deltas.clone(),
             };
             gate.revisions.push(GateRevision {
                 revision,
@@ -349,6 +352,7 @@ impl RepositoryStore {
                 snapshot,
                 alias_closures,
                 reconciled_transition_sequences,
+                deltas,
             });
             persist_operation_result(&write, &gate, &mut operation, &result)?;
             write.commit().map_err(backend_error)?;
@@ -466,6 +470,7 @@ fn completed_pre_write_records(
         decision,
         signals: signals.clone(),
         leased_write_set: leased_write_set.clone(),
+        deltas: Vec::new(),
     };
     let analysis_options = operation.analysis_options.clone().ok_or_else(|| {
         StoreError::Integrity("pre-write operation omitted analysis options".to_owned())
@@ -490,6 +495,7 @@ fn completed_pre_write_records(
             snapshot: None,
             alias_closures,
             reconciled_transition_sequences: Vec::new(),
+            deltas: Vec::new(),
         }],
     };
     Ok((gate, result))
@@ -604,6 +610,7 @@ fn rejected_open_result(
         decision: gate_policy::decision(signals),
         signals: signals.to_vec(),
         leased_write_set: operation.leased_write_set.clone(),
+        deltas: Vec::new(),
     }
 }
 
@@ -634,6 +641,7 @@ fn rejected_gate(
             snapshot: None,
             alias_closures: Vec::new(),
             reconciled_transition_sequences: Vec::new(),
+            deltas: Vec::new(),
         }],
     }
 }
