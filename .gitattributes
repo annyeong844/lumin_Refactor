@@ -1,2 +1,4 @@
 * text=auto eol=lf
+# Review packets and retained probes are evidence, not product implementation.
+reviews/** linguist-detectable=false
 reviews/probes/**/evidence/** -text
