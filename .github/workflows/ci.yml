@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  formatting:
+    name: Formatting
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Install exact Rust toolchain
+        run: rustup toolchain install 1.96.0 --profile minimal --component rustfmt --no-self-update
+
+      - name: Verify formatting
+        run: cargo fmt --all --check
+
+  platform:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-24.04
+          - name: Windows
+            os: windows-2022
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Install exact Rust toolchain
+        run: rustup toolchain install 1.96.0 --profile minimal --component clippy,rustfmt --no-self-update
+
+      - name: Record toolchain
+        run: |
+          rustc --version --verbose
+          cargo --version
+
+      - name: Lint all targets
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Test all targets
+        run: cargo test --workspace --all-targets --locked
+
+      - name: Test documentation
+        run: cargo test --workspace --doc --locked
+
+      - name: Build release binary
+        run: cargo build -p lumin-cli --release --locked
+
+  required:
+    name: Required
+    if: ${{ always() }}
+    needs:
+      - formatting
+      - platform
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Enforce required jobs
+        env:
+          FORMATTING_RESULT: ${{ needs.formatting.result }}
+          PLATFORM_RESULT: ${{ needs.platform.result }}
+        run: |
+          test "$FORMATTING_RESULT" = success
+          test "$PLATFORM_RESULT" = success
