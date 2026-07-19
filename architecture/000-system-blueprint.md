@@ -2,9 +2,9 @@
 
 Document role: final architecture blueprint and review packet
 
-Status: draft
+Status: frozen
 
-Revision: 2026-07-17
+Revision: 2026-07-19
 
 Parent: PRODUCT-000
 

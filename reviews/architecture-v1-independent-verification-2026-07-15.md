@@ -2,9 +2,9 @@
 
 Document role: current Architecture v1 freeze verification owner
 
-Status: numeric-target candidate authored; independent exact-tree review pending
+Status: Phase 0 owner-frozen; external numeric-target audit remains non-blocking
 
-Freeze decision: blocked
+Freeze decision: passed by owner on 2026-07-19 after required independent design review and standalone evidence gates
 
 ## Revision and Independence Record
 
@@ -36,6 +36,7 @@ Freeze decision: blocked
 | Externally reviewed clean-provenance closure candidate | `658b5c7334fed8f0e42dd14b9910c9b719f3e55b`; B-07, exact candidate/packet/evidence binding, seven upstream identities, TypeScript/Node derivations, official workflow/artifact binding, and NEW-PROVENANCE-01 closure passed with no H/R regression or new finding |
 | Externally reviewed false-negative amendment candidate | `a1e07ed7b9e05181cd58bfba5f3846c1baab8a93`; B-07, canonical/default-query visibility, explicit filter/count/cursor semantics, disposition/delta/gate ownership, and unmuted performance-sample validity passed with no H/R regression or new finding; NEW-FALSE-NEGATIVE-01 is closed |
 | Numeric-target approval candidate awaiting external review | `a410605ff9f5512cadd1cb105d346444044398ce`; exact targets, validity rules, generated scale truth, and timing-only legacy/probe inputs are authored, but no independent PASS is claimed |
+| Phase 0 owner freeze decision | 2026-07-19; the exact numeric targets are approved as Phase 1 budgets, their external audit is advisory, and only a concrete counterexample may reopen the frozen contract |
 | Verifier | external independent reviewer, report supplied by the user; not the architecture-authoring Codex session |
 | Earlier externally reverified input manifest/report | `2ff71a19ebd5fd2939f1aa6da77a2d3276c320791a19a1364670ab78d9c2210e` / `67a001b2cbfd6af36d3e60712d8dfa2bab6dfcc4a7756114f87b9d34d5530611` |
 | Prior externally reverified input manifest/report | `9d2366afa0fa360397fbf4ae7c0ad4205d34739f20f8f7acff70207b2152b6fd` / `07df439ded1101b3ddea1328880579be918db1cfbe8d7861d28c0ca1d18ad20a` |
@@ -359,17 +360,18 @@ The native runner is bound to GitHub Actions run `29584914108`, runner commit
 `0b5988c8176c73e9d6d8936cbcc90eebcac3c2a5`, and artifact SHA-256
 `9ffc3fd385c1d6b8af748eda20c26f623f4a18420a3e9a540cb91b6f0f7706e4`.
 
-### Backend-selection accepted risks
+### Backend-selection accepted risk and closed measurement record
 
 | ID | Owner | Accepted scope and rationale | Expiry or reopen trigger |
 | --- | --- | --- | --- |
 | AR-BACKEND-01 | ARCH-002 / `lumin-store` | Select exact `redb 4.1.0` as the sole private production backend after both candidates passed the frozen correctness oracle. redb won durable-admission p50 and release-binary size in all five scopes and has the smaller native distribution/dependency surface; SQLite's query p50, peak RSS, and store-size advantages remain explicit counter-evidence. | Reopen backend selection if Phase 0 clean-provenance/target evidence or later Phase 1 package, public-behavior, or achieved-budget acceptance fails. |
-| AR-MEASURE-01 | Phase 0 numeric-budget owner | Use the captured measurements only for ordinal architecture selection. Warm reopen is not represented as OS-cold behavior, and one captured environment is not generalized into a product budget. | Close when clean pinned reproduction and approved time/RSS/stack/jobs/binary budgets are complete. |
+| AR-MEASURE-01 | Phase 0 numeric-budget owner | **CLOSED 2026-07-19.** Captured measurements remain ordinal selection evidence only; the owner separately approved exact Phase 1 time/RSS/stack/jobs/binary targets without representing warm reopen as OS-cold behavior or captured hosts as achieved product budgets. | Reopen only if a concrete target-selection counterexample shows that the approved budget is unmeasurable, internally contradictory, or unsupported by the named evidence. |
 
 NEW-EVIDENCE-01 was not accepted as risk; exact candidate `b8ff840` removed its cause
 and the independent report closed it. NEW-PHASE-GATE-01 and NEW-FALSE-NEGATIVE-01 were
 likewise closed by exact contract amendments and independent review rather than accepted
-as risk. Neither accepted risk passes a Phase 0 gate or a Phase 1 acceptance criterion.
+as risk. AR-BACKEND-01 is the only remaining accepted risk; it does not pass a Phase 1
+acceptance criterion.
 
 ### NEW-PHASE-GATE-01 author-side counterexample and resolution candidate
 
@@ -386,8 +388,8 @@ feasibility and selection, static target/linker/artifact/dependency packaging
 feasibility, clean pinned-upstream provenance, and numeric target approval. The real
 prebuilt binaries, DTO/native-path round trips, skill adapters, public process behavior,
 full corpus, and achieved-budget measurements remain mandatory Phase 1 acceptance.
-The independent review passed this boundary. Phase 1 stays blocked until the three
-remaining Phase 0 evidence gates pass.
+The independent review passed this boundary. The three standalone Phase 0 evidence
+gates subsequently passed or were owner-approved, so Phase 1 is active.
 
 Any repeat reviewer must report `PASS`, `REOPEN`, or a new finding for H-01 through H-12, every R3 finding, R4-H09-01, R4-H11-01 through R4-H11-05, NEW-H10-01, NEW-H11-01, NEW-PHASE-GATE-01 and its F-12 predecessor, NEW-FALSE-NEGATIVE-01, their relevant B/G/E/C predecessors, the preservation of packaged-skill and process-reopen proofs as Phase 1 acceptance, and B-07 exact revision binding. It must also check that:
 
@@ -430,7 +432,7 @@ Any repeat reviewer must report `PASS`, `REOPEN`, or a new finding for H-01 thro
 
 The accepted `65e6021` report names the exact commit and manifest hash, states reviewer independence, preserves finding IDs and accepted risks, and publishes SHA-256 `f7f25de96436862e6650195ec9248a85585ad03a9feb588c4cddfca4c2effbeb`. Its document/design PASS did not itself pass later evidence gates. The separate `579c235` report passes the backend and bounded OXC evidence described below, while the `b8ff840` report closes NEW-EVIDENCE-01 with report SHA-256 `60f94114a2a20111953355b5c3b056a8994a6e763c404290af5d0bd330f33224`. The `e0a2810` static-packaging report publishes SHA-256 `b26cee869f883ec6ba1b776a46f53d276ce3c39cb1333865a050c31490c27ac0` and reopens the Windows/WSL and detached-artifact evidence under NEW-STATIC-PACKAGING-01. The exact `4315eb7` closure report publishes SHA-256 `db4648ab8749e96755644033c297236b8ecabcac8b68958fc2b65a768753ef58`, closes that finding, and passes Phase 0 static-packaging feasibility without a new risk. The `e6147b1` clean-provenance report publishes SHA-256 `6826af8f1d578f3a423ae3725be1c3fb254a00e373ff2db4df7e2d4fc9537aaa` and opens NEW-PROVENANCE-01. The exact `658b5c7` closure report publishes SHA-256 `4894a45bbd4ea6b54447fb206e889b8f34e69e7a7fb737506cdce2cb0bcc3526`, closes that finding, and passes clean pinned-upstream provenance without a new risk. The exact `a1e07ed` false-negative report publishes SHA-256 `6593608d4508eecf92b5b1793ead13fa32d4e30e4a2258a60b4f921ef98ea799`, passes B-07 and `210/210` checks, closes NEW-FALSE-NEGATIVE-01, and leaves numeric-target approval as the sole Phase 0 gate. Package, skill-adapter, public-behavior, native-path product round trips, and achieved-budget proof remain Phase 1 acceptance.
 
-## Remaining Freeze Gates
+## Phase 0 Closure and Phase 1 Obligations
 
 The exact-tree document/design review passed for `65e6021`, backend-selection semantics
 and canonical evidence passed for `579c235`, NEW-EVIDENCE-01 closure passed for
@@ -439,10 +441,9 @@ static-packaging closure candidate `4315eb7` passed all three required platform 
 and closed NEW-STATIC-PACKAGING-01. Exact clean-provenance closure candidate `658b5c7`
 passed and closed NEW-PROVENANCE-01. Exact false-negative amendment candidate `a1e07ed`
 also passed independent exact-tree review and closed NEW-FALSE-NEGATIVE-01. Exact
-numeric-target candidate `a410605` is authored and awaits independent exact-tree
-review. Phase 0 now has one blocker that can be closed without a production scaffold:
-
-1. Approve numeric Phase 1 targets against the independently passed unmuted contract.
+numeric-target candidate `a410605` was approved by the Phase 0 owner on 2026-07-19.
+There is no remaining Phase 0 blocker. Its external exact-tree audit remains available
+as a non-blocking review and may reopen the contract only with a concrete counterexample.
 
 ### Store backend evidence and selection
 
@@ -464,9 +465,10 @@ release-binary size in all five measured comparisons and carried fewer dependenc
 without bundled C; SQLite's query, RSS, and store-size advantages remain recorded.
 
 The external report passed this store correctness/comparison evidence and the redb
-selection rationale for `579c235`, subject to AR-BACKEND-01 and AR-MEASURE-01. The
-separate `b8ff840` closure report preserved that PASS without regression. Neither report
-approves product performance budgets.
+selection rationale for `579c235`, subject at that time to AR-BACKEND-01 and
+AR-MEASURE-01. The separate `b8ff840` closure report preserved that PASS without
+regression. AR-MEASURE-01 later closed when clean provenance and exact numeric targets
+were approved; achieved product performance remains Phase 1 acceptance.
 
 ### OXC feasibility evidence boundary
 
@@ -476,12 +478,12 @@ OXC `0.126.0` allocator-lifetime, stack, jobs-scaling, semantic-determinism, and
 peak-RSS evidence on Windows NTFS and WSL2 ext4. Its strict evidence-manifest SHA-256
 is `bfba3524182822ebb9e7ec35c37ae08a1b03380fa0f961675499eef5031790be`.
 The named corpus passed at 1/2/4/8 MiB stacks and jobs 1/2/4/8/12; 256 and 512 KiB
-stacks overflowed as expected. This is feasibility evidence, not an approved product
-stack, worker count, or numeric budget.
+stacks overflowed as expected. This is the feasibility input for the approved 4 MiB
+stack and bounded default-jobs target, not achieved-product evidence.
 
 ### Numeric-target approval
 
-Candidate `a410605ff9f5512cadd1cb105d346444044398ce` selects the exact Phase 1 targets and
+Candidate `a410605ff9f5512cadd1cb105d346444044398ce` owns the exact Phase 1 targets and
 measurement rules under
 `reviews/probes/phase0-numeric-target-selection-2026-07-18/`. The blocking generated
 corpus has 780 files, 7,461,511 bytes, and 256 authored grounded findings split into
@@ -500,10 +502,11 @@ fresh repository copy, state namespace, and process, not an OS-cold page cache.
 
 The 42-entry packet manifest is
 `a749a5d80600295fe765edbccf8ed23be170a9211151186923e2f3040349c2f4`; author checks
-passed `345/345` but are consistency-only. Independent review must decide whether the
-numbers, corpus truth, validity rules, evidence boundary, and H/R preservation are
-sufficient. These are targets, not achieved-product claims, `/mnt/<drive>` remains
-report-only, and no muted or reduced-result legacy output is target truth.
+passed `345/345` but are consistency-only. The Phase 0 owner approved the numbers,
+corpus truth, validity rules, and evidence boundary on 2026-07-19. External review is
+advisory rather than an implementation barrier. These are targets, not achieved-product
+claims, `/mnt/<drive>` remains report-only, and no muted or reduced-result legacy output
+is target truth.
 
 The following remain mandatory but are Phase 1 exit criteria, not Phase 0 freeze gates:
 
@@ -513,4 +516,8 @@ The following remain mandatory but are Phase 1 exit criteria, not Phase 0 freeze
 - process-exit gate reopen, operation-result recovery, pagination, cold/warm equivalence, and jobs determinism through public commands;
 - completed-product performance against the approved target budgets.
 
-Every Phase 0 gate above must be `passed` or an explicitly reviewed accepted risk with rationale, owner, scope, and expiry. Only AR-BACKEND-01 and AR-MEASURE-01 are accepted within backend-selection scope; neither passes a remaining gate. No other accepted risk exists. Architecture v1 remains draft and Phase 1 implementation remains blocked until the amended Phase 0 gate set passes.
+Every Phase 0 gate is passed or covered by the explicit AR-BACKEND-01 scope. AR-MEASURE-01
+is closed and no other accepted risk exists. Architecture v1 is frozen and Phase 1
+implementation is active. Product package, public behavior, native-path, skill-adapter,
+full-corpus, determinism, and achieved-budget proof remain mandatory Phase 1 exit
+criteria.

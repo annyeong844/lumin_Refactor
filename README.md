@@ -2,7 +2,7 @@
 
 Lumin v2 is an architecture-first rewrite of the Lumin repository-audit and write-gate product. It remains a native CLI and Codex/Claude Code skill, but replaces the legacy multi-producer artifact pipeline with one deterministic Rust engine, queryable canonical evidence, and durable pre-write/post-write transactions.
 
-Status: Phase 0 architecture draft. This line is a projection of `WORKBOARD.md`; no implementation scaffold has been accepted.
+Status: Phase 1 foundation implementation active. This line is a projection of `WORKBOARD.md`; implementation proceeds only through production behavior owned by SLICE-001.
 
 ## Read the Blueprint
 
@@ -22,6 +22,6 @@ The current freeze ledger is [`REVIEW-002`](reviews/architecture-v1-independent-
 
 ## Current Decision
 
-The destination architecture is designed as a whole. Implementation will then proceed through a narrow production-grade slice covering native JS/TS analysis, a dialect-extensible SFC pipeline with Vue as the first production dialect, resolution, export-level dead evidence, bounded queries, write-gate transactions, and prebuilt Windows/Linux delivery.
+The destination architecture is frozen. Implementation proceeds through a narrow production-grade slice covering native JS/TS analysis, a dialect-extensible SFC pipeline with Vue as the first production dialect, resolution, export-level dead evidence, bounded queries, write-gate transactions, and prebuilt Windows/Linux delivery.
 
 Legacy Lumin remains a compatibility and defect corpus. Its internal boundaries are not migration targets.

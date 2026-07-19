@@ -2,9 +2,9 @@
 
 Document role: evidence delivery and lifecycle architecture owner
 
-Status: draft
+Status: frozen
 
-Revision: 2026-07-17
+Revision: 2026-07-19
 
 Parent: ARCH-000
 

@@ -2,9 +2,9 @@
 
 Document role: product source of truth
 
-Status: draft
+Status: frozen
 
-Revision: 2026-07-17
+Revision: 2026-07-19
 
 Scope: final Lumin v2 product, independent of implementation phase
 

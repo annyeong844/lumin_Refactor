@@ -1,8 +1,8 @@
 # Lumin v2 Workboard
 
-Status: active architecture draft
+Status: Phase 1 foundation implementation active
 
-Revision: 2026-07-18
+Revision: 2026-07-19
 
 ## One-Line Purpose
 
@@ -13,17 +13,17 @@ Lumin is a native repository-audit engine and Codex/Claude Code skill that gives
 | ID | Status | Document | One-line role |
 | --- | --- | --- | --- |
 | METHOD-000 | active | `문서(한글)/SDD.ko.md` (canonical; `SDD.md` English translation) | Defines the permanent Spec-Driven Development workflow for every change. |
-| PRODUCT-000 | draft | `specs/000-product-contract.md` | Defines what Lumin v2 must guarantee and what it is not. |
-| ARCH-000 | draft | `architecture/000-system-blueprint.md` | Owns the final system shape, crate boundaries, and dependency direction. |
-| ARCH-001 | draft | `architecture/001-execution-and-ownership.md` | Owns the Kahn/Rayon execution model, determinism, and memory ownership. |
-| ARCH-002 | draft | `architecture/002-evidence-and-write-gate.md` | Owns the evidence store, bounded query protocol, and pre/post transaction. |
-| SLICE-001 | draft | `specs/001-foundation-slice.md` | Defines the JS/TS/SFC foundation, with Vue as the first production dialect. |
+| PRODUCT-000 | frozen | `specs/000-product-contract.md` | Defines what Lumin v2 must guarantee and what it is not. |
+| ARCH-000 | frozen | `architecture/000-system-blueprint.md` | Owns the final system shape, crate boundaries, and dependency direction. |
+| ARCH-001 | frozen | `architecture/001-execution-and-ownership.md` | Owns the Kahn/Rayon execution model, determinism, and memory ownership. |
+| ARCH-002 | frozen | `architecture/002-evidence-and-write-gate.md` | Owns the evidence store, bounded query protocol, and pre/post transaction. |
+| SLICE-001 | active | `specs/001-foundation-slice.md` | Defines the JS/TS/SFC foundation, with Vue as the first production dialect. |
 | REVIEW-001 | superseded | `reviews/architecture-v1-adversarial-2026-07-15.md` | Records the first adversarial findings and first amendment decisions. |
-| REVIEW-002 | verifying | `reviews/architecture-v1-independent-verification-2026-07-15.md` | Owns the exact independent verification, current resolutions, and remaining freeze gates. |
+| REVIEW-002 | complete, monitoring | `reviews/architecture-v1-independent-verification-2026-07-15.md` | Preserves the exact independent verification and may reopen only on a concrete regression or counterexample. |
 
 ## Active Work
 
-The Phase 0 numeric-target candidate is authored under `reviews/probes/phase0-numeric-target-selection-2026-07-18/` against the independently passed unmuted finding contract. Independent adversarial review of that exact candidate is the sole remaining Phase 0 gate; Phase 1 remains blocked until it passes. Product packages, packaged skill adapters, public behavior, native path/root product round trips, and achieved-budget proofs remain Phase 1 acceptance.
+Implement the first production Rust vertical path from native repository admission through JS/TS inventory, OXC lowering, deterministic graph construction, canonical zero-fan-in findings, and machine output. The numeric targets under `reviews/probes/phase0-numeric-target-selection-2026-07-18/` are approved Phase 1 budgets, not achieved-product claims. Their external audit is non-blocking and may reopen the contract only with a concrete counterexample. Product packages, packaged skill adapters, public behavior, native path/root product round trips, and achieved-budget proofs remain Phase 1 acceptance.
 
 ## Routing Rules
 
@@ -40,7 +40,7 @@ The Phase 0 numeric-target candidate is authored under `reviews/probes/phase0-nu
 
 | Phase | State | Exit condition |
 | --- | --- | --- |
-| Phase 0: architecture | active | The current review owner marks every freeze gate that can be evidenced without a production scaffold passed or explicitly accepted risk. No product binary or Phase 1 behavior is a Phase 0 prerequisite. |
-| Phase 1: foundation slice | blocked by Phase 0 | SLICE-001 passes its complete acceptance corpus on Windows and Linux prebuilt binaries. |
+| Phase 0: architecture | frozen | Independent document/design review, standalone feasibility, clean provenance, the unmuted finding amendment, and owner-approved numeric targets are complete. External target audit is advisory unless it supplies a concrete counterexample. |
+| Phase 1: foundation slice | active | SLICE-001 passes its complete acceptance corpus on Windows and Linux prebuilt binaries. |
 | Phase 2: capability growth | not started | New capabilities enter through the frozen DAG without creating a second engine. |
 | Phase 3: legacy retirement | not started | Required compatibility exports and corpus parity are complete; Node analysis paths are removed. |

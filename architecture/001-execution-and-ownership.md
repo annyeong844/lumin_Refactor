@@ -2,9 +2,9 @@
 
 Document role: concurrency and runtime architecture owner
 
-Status: draft
+Status: frozen
 
-Revision: 2026-07-18
+Revision: 2026-07-19
 
 Parent: ARCH-000
 

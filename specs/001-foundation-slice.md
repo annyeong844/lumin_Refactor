@@ -2,9 +2,9 @@
 
 Document role: first implementation specification
 
-Status: draft, blocked by Architecture v1 review
+Status: active implementation against frozen Architecture v1
 
-Revision: 2026-07-18
+Revision: 2026-07-19
 
 Parents: PRODUCT-000, ARCH-000, ARCH-001, ARCH-002
 
