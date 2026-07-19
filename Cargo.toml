@@ -5,6 +5,7 @@ members = [
   "crates/foundation/evidence",
   "crates/source/inventory",
   "crates/languages/js",
+  "crates/languages/sfc",
   "crates/graph/resolve",
   "crates/graph/symbols",
   "crates/analyses/dead-code",

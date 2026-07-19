@@ -1,10 +1,11 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use lumin_evidence::{CapabilityRecord, DEAD_CODE_CAPABILITY_ID, RunEvidence};
 use lumin_inventory::{InventoryError, InventoryRequest, InventorySnapshot};
 use lumin_model::{
     CapabilityState, FileFacts, Limitation, ResolutionOutcome, ResolutionProfile,
-    ResolvedSourceUse, RoleOverride, RunId, SourceSnapshot,
+    ResolvedSourceUse, RoleOverride, RunId, SfcDialect, SourceSnapshot,
 };
 use lumin_resolve::{ResolverError, ResolverOutput};
 use lumin_store::{PublishedRun, RepositoryStore, RunCatalogRecord, StoreError};
@@ -39,6 +40,10 @@ pub enum EngineError {
     InvalidWorkerCount(usize),
     #[error("failed to build the local worker pool: {0}")]
     Scheduler(String),
+    #[error(transparent)]
+    Js(#[from] lumin_js::JsExtractError),
+    #[error(transparent)]
+    Sfc(#[from] lumin_sfc::SfcError),
     #[error("resolver requested semantic inputs that were already captured: {0}")]
     ResolverDemandStalled(String),
     #[error(
@@ -113,7 +118,8 @@ pub fn analyze_repository(
         return Err(EngineError::InvalidWorkerCount(0));
     }
     let mut inventory = lumin_inventory::scan(root, request)?;
-    let facts = extract_facts(&inventory.sources, jobs)?;
+    let extraction = extract_facts(&inventory.sources, jobs)?;
+    let facts = extraction.facts;
     let resolver = resolve_config_fixed_point(root, &mut inventory, &facts, resolution_profile)?;
     let ResolverOutput {
         resolved,
@@ -136,32 +142,127 @@ pub fn analyze_repository(
     } else {
         CapabilityState::Incomplete
     };
+    let mut capabilities = vec![CapabilityRecord {
+        capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
+        state,
+    }];
+    capabilities.extend(sfc_capability_records(&extraction.sfc_states));
     Ok(RunEvidence {
         schema_version: "lumin-evidence.v1".to_owned(),
-        capabilities: vec![CapabilityRecord {
-            capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
-            state,
-        }],
+        capabilities,
         resolution_profiles: profiles,
         findings,
         limitations,
     })
 }
 
-fn extract_facts(sources: &[SourceSnapshot], jobs: usize) -> Result<Vec<FileFacts>, EngineError> {
+struct ExtractionOutput {
+    facts: Vec<FileFacts>,
+    sfc_states: BTreeMap<SfcDialect, CapabilityState>,
+}
+
+fn extract_facts(sources: &[SourceSnapshot], jobs: usize) -> Result<ExtractionOutput, EngineError> {
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(jobs)
         .thread_name(|index| format!("lumin-worker-{index}"))
         .build()
         .map_err(|error| EngineError::Scheduler(error.to_string()))?;
-    let mut facts = pool.install(|| {
-        sources
+    let source_index = lumin_sfc::source_index(sources);
+    pool.install(|| {
+        let mut physical_facts = sources
             .par_iter()
+            .filter(|source| source.kind.is_js_family())
             .map(lumin_js::extract)
-            .collect::<Vec<_>>()
-    });
-    facts.sort_by(|left, right| left.source_id.cmp(&right.source_id));
-    Ok(facts)
+            .collect::<Result<Vec<_>, _>>()?;
+        physical_facts.sort_by(|left, right| left.source_id.cmp(&right.source_id));
+
+        let mut decompositions = sources
+            .par_iter()
+            .filter(|source| !source.kind.is_js_family())
+            .map(|source| lumin_sfc::decompose(source, &source_index))
+            .collect::<Result<Vec<_>, _>>()?;
+        decompositions.sort_by(|left, right| left.source_id.cmp(&right.source_id));
+
+        let mut embedded_by_parent = BTreeMap::<_, Vec<FileFacts>>::new();
+        let mut embedded = decompositions
+            .par_iter()
+            .flat_map_iter(|decomposition| {
+                decomposition
+                    .inline_scripts
+                    .iter()
+                    .map(move |unit| (&decomposition.source_id, unit))
+            })
+            .map(|(parent, unit)| {
+                lumin_js::extract_embedded(unit).map(|facts| (parent.clone(), facts))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        embedded.sort_by(|left, right| {
+            left.0
+                .cmp(&right.0)
+                .then_with(|| left.1.source_unit.cmp(&right.1.source_unit))
+        });
+        for (parent, facts) in embedded {
+            embedded_by_parent.entry(parent).or_default().push(facts);
+        }
+
+        let mut sfc_states = BTreeMap::from([
+            (SfcDialect::Vue, CapabilityState::Complete),
+            (SfcDialect::Svelte, CapabilityState::Unavailable),
+            (SfcDialect::Astro, CapabilityState::Unavailable),
+        ]);
+        let mut sfc_facts = Vec::new();
+        for decomposition in decompositions {
+            let parent = decomposition.source_id.clone();
+            let analysis = lumin_sfc::finalize(
+                decomposition,
+                embedded_by_parent.remove(&parent).unwrap_or_default(),
+                &physical_facts,
+            )?;
+            sfc_states
+                .entry(analysis.dialect)
+                .and_modify(|state| *state = less_complete(*state, analysis.state))
+                .or_insert(analysis.state);
+            sfc_facts.extend(analysis.file_facts);
+        }
+
+        let mut facts = physical_facts;
+        facts.extend(sfc_facts);
+        facts.sort_by(|left, right| {
+            left.source_id
+                .cmp(&right.source_id)
+                .then_with(|| left.source_unit.cmp(&right.source_unit))
+        });
+        Ok(ExtractionOutput { facts, sfc_states })
+    })
+}
+
+fn sfc_capability_records(states: &BTreeMap<SfcDialect, CapabilityState>) -> Vec<CapabilityRecord> {
+    [SfcDialect::Vue, SfcDialect::Svelte, SfcDialect::Astro]
+        .into_iter()
+        .map(|dialect| CapabilityRecord {
+            capability_id: lumin_sfc::capability_id(dialect).to_owned(),
+            state: states
+                .get(&dialect)
+                .copied()
+                .unwrap_or(CapabilityState::Unavailable),
+        })
+        .collect()
+}
+
+fn less_complete(left: CapabilityState, right: CapabilityState) -> CapabilityState {
+    fn rank(state: CapabilityState) -> u8 {
+        match state {
+            CapabilityState::Complete => 0,
+            CapabilityState::Incomplete => 1,
+            CapabilityState::Unavailable => 2,
+            CapabilityState::Failed => 3,
+        }
+    }
+    if rank(left) >= rank(right) {
+        left
+    } else {
+        right
+    }
 }
 
 fn resolve_config_fixed_point(

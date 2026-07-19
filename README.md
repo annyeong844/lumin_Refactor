@@ -28,7 +28,7 @@ Legacy Lumin remains a compatibility and defect corpus. Its internal boundaries 
 
 ## Runnable Checkpoint
 
-The native Rust vertical path is executable. The current binary scans JS/TS, lowers static ESM facts with OXC, admits strict `package.json` and restricted `pnpm-workspace.yaml` workspace facts plus JSONC tsconfig/jsconfig inputs, resolves relative imports, supported `baseUrl`/`paths` mappings, and workspace package public surfaces under an explicit resolution profile, produces deterministic zero-production-fan-in findings, persists the run under `.lumin`, and reopens it through `overview` and `findings`.
+The native Rust vertical path is executable. The current binary scans JS/TS and Vue SFCs, routes inline Vue scripts through OXC while preserving embedded-source identity, attaches exact external scripts without copying their logical source, admits strict `package.json` and restricted `pnpm-workspace.yaml` workspace facts plus JSONC tsconfig/jsconfig inputs, resolves relative imports, supported `baseUrl`/`paths` mappings, and workspace package public surfaces under an explicit resolution profile, produces deterministic zero-production-fan-in findings, persists the run under `.lumin`, and reopens it through `overview` and `findings`.
 
 ```text
 lumin audit --format json
@@ -37,6 +37,6 @@ lumin overview --run <run-id> --format json
 lumin findings --run <run-id> --area dead-code --format json
 ```
 
-Generated and vendored findings remain in canonical output with a `review-only` disposition. Parse, configuration, and resolution uncertainty is emitted as visible incomplete evidence; it is never converted into a clean zero.
+Generated and vendored findings remain in canonical output with a `review-only` disposition. Vue template opacity, malformed decomposition, external-script conflicts, parse failures, unsupported Svelte/Astro dialects, configuration uncertainty, and resolution uncertainty are emitted as visible incomplete or unavailable evidence; they are never converted into a clean zero.
 
-This checkpoint is not the completed foundation slice. SFC/Vue analysis, the durable pre-write/post-write gate, complete state-directory physical-identity and crash recovery, packaged skills, platform packages, and achieved-budget evidence remain active Phase 1 work.
+This checkpoint is not the completed foundation slice. The durable pre-write/post-write gate, complete state-directory physical-identity and crash recovery, remaining corpus behavior, packaged skills, platform packages, and achieved-budget evidence remain active Phase 1 work.

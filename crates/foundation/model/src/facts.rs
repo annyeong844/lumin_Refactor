@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{LogicalSourceId, RepoPath, digest_hex};
+use crate::{EmbeddedSourceUnitId, LogicalSourceId, RepoPath, digest_hex};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -32,6 +32,14 @@ impl SourceKind {
     pub fn is_js_family(self) -> bool {
         !matches!(self, Self::Vue | Self::Svelte | Self::Astro)
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SfcDialect {
+    Vue,
+    Svelte,
+    Astro,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
@@ -99,6 +107,94 @@ impl SourceSnapshot {
     }
 }
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "id", rename_all = "kebab-case")]
+pub enum SourceUnitId {
+    Logical(LogicalSourceId),
+    Embedded(EmbeddedSourceUnitId),
+}
+
+#[derive(Clone, Debug)]
+pub struct EmbeddedSourceUnit {
+    pub id: EmbeddedSourceUnitId,
+    pub parent_source_id: LogicalSourceId,
+    pub parent_span: SourceSpan,
+    pub kind: SourceKind,
+    pub payload_sha256: String,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExternalEmbeddedSourceRef {
+    pub parent_source_id: LogicalSourceId,
+    pub target_source_id: LogicalSourceId,
+    pub target_kind: SourceKind,
+    pub specifier: String,
+    pub parent_span: SourceSpan,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SfcTemplateUseKind {
+    Static,
+    Dynamic,
+    Namespace,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SfcTemplateUse {
+    pub tag_name: String,
+    pub binding_name: String,
+    pub kind: SfcTemplateUseKind,
+    pub span: SourceSpan,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SfcResourceUse {
+    pub specifier: String,
+    pub span: SourceSpan,
+}
+
+#[derive(Clone, Debug)]
+pub struct SfcDecomposition {
+    pub source_id: LogicalSourceId,
+    pub dialect: SfcDialect,
+    pub state: CapabilityState,
+    pub module_export_known: bool,
+    pub inline_scripts: Vec<EmbeddedSourceUnit>,
+    pub external_scripts: Vec<ExternalEmbeddedSourceRef>,
+    pub template_uses: Vec<SfcTemplateUse>,
+    pub resource_uses: Vec<SfcResourceUse>,
+    pub limitations: Vec<Limitation>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SfcScriptAttachment {
+    pub parent_source_id: LogicalSourceId,
+    pub target_source_id: LogicalSourceId,
+    pub parent_span: SourceSpan,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SfcComponentUse {
+    pub parent_source_id: LogicalSourceId,
+    pub tag_name: String,
+    pub binding_name: String,
+    pub source_use: SourceUseFact,
+    pub template_span: SourceSpan,
+}
+
+#[derive(Clone, Debug)]
+pub struct SfcAnalysis {
+    pub source_id: LogicalSourceId,
+    pub dialect: SfcDialect,
+    pub state: CapabilityState,
+    pub file_facts: Vec<FileFacts>,
+    pub script_attachments: Vec<SfcScriptAttachment>,
+    pub component_uses: Vec<SfcComponentUse>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SymbolNamespace {
@@ -158,6 +254,7 @@ pub struct SourceUseFact {
     pub importer: LogicalSourceId,
     pub specifier: String,
     pub imported_name: Option<String>,
+    pub local_name: Option<String>,
     pub namespace: SymbolNamespace,
     pub kind: ImportKind,
     pub request_kind: ModuleRequestKind,
@@ -168,9 +265,32 @@ pub struct SourceUseFact {
 #[serde(rename_all = "camelCase")]
 pub struct FileFacts {
     pub source_id: LogicalSourceId,
+    pub source_unit: SourceUnitId,
     pub exports: Vec<ExportFact>,
     pub uses: Vec<SourceUseFact>,
     pub limitations: Vec<Limitation>,
+}
+
+impl FileFacts {
+    pub fn physical(source_id: LogicalSourceId) -> Self {
+        Self {
+            source_unit: SourceUnitId::Logical(source_id.clone()),
+            source_id,
+            exports: Vec::new(),
+            uses: Vec::new(),
+            limitations: Vec::new(),
+        }
+    }
+
+    pub fn embedded(parent_source_id: LogicalSourceId, unit_id: EmbeddedSourceUnitId) -> Self {
+        Self {
+            source_id: parent_source_id,
+            source_unit: SourceUnitId::Embedded(unit_id),
+            exports: Vec::new(),
+            uses: Vec::new(),
+            limitations: Vec::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -269,6 +389,24 @@ pub enum Limitation {
     SfcDialectUnavailable {
         source_id: LogicalSourceId,
         dialect: String,
+    },
+    SfcDecompositionUnknown {
+        source_id: LogicalSourceId,
+        detail: String,
+    },
+    SfcExternalScriptUnresolved {
+        source_id: LogicalSourceId,
+        specifier: String,
+    },
+    VueExternalScriptModeConflict {
+        source_id: LogicalSourceId,
+        target_source_id: LogicalSourceId,
+        declared: String,
+        actual: String,
+    },
+    VueTemplateOpaque {
+        source_id: LogicalSourceId,
+        detail: String,
     },
 }
 

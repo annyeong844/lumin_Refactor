@@ -302,6 +302,7 @@ dependencies = [
  "lumin-js",
  "lumin-model",
  "lumin-resolve",
+ "lumin-sfc",
  "lumin-store",
  "rayon",
  "tempfile",
@@ -375,6 +376,14 @@ version = "0.1.0"
 dependencies = [
  "lumin-model",
  "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "lumin-sfc"
+version = "0.1.0"
+dependencies = [
+ "lumin-model",
  "thiserror",
 ]
 

@@ -209,7 +209,7 @@ fn resolve_relative_specifier(
     Option<Limitation>,
     Option<PackageSurfaceDeclaration>,
 ) {
-    let Some(base) = normalize_relative(importer_path, specifier) else {
+    let Some(base) = importer_path.resolve_portable_relative(specifier) else {
         return unsupported_with_unknown_limitation(
             source_use,
             "relative specifier escapes the canonical root".to_owned(),
@@ -279,18 +279,6 @@ fn unsupported_with_unknown_limitation(
         }),
         None,
     )
-}
-
-fn normalize_relative(importer: &RepoPath, specifier: &str) -> Option<RepoPath> {
-    let mut current = importer.parent()?;
-    for component in specifier.split('/') {
-        match component {
-            "" | "." => {}
-            ".." => current = current.parent()?,
-            value => current = current.join_portable(value).ok()?,
-        }
-    }
-    Some(current)
 }
 
 pub(crate) fn candidates(
@@ -483,6 +471,7 @@ mod tests {
             importer: importer.id.clone(),
             specifier: "./lib.js".to_owned(),
             imported_name: Some("used".to_owned()),
+            local_name: Some("used".to_owned()),
             namespace: SymbolNamespace::Value,
             kind: ImportKind::Named,
             request_kind: ModuleRequestKind::StaticImport,

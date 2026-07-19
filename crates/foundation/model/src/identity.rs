@@ -22,6 +22,7 @@ macro_rules! string_id {
 }
 
 string_id!(LogicalSourceId);
+string_id!(EmbeddedSourceUnitId);
 string_id!(FindingId);
 string_id!(RunId);
 string_id!(AttemptId);
@@ -29,6 +30,22 @@ string_id!(AttemptId);
 impl LogicalSourceId {
     pub fn from_path(path: &RepoPath) -> Self {
         Self(format!("source_{}", digest_hex(path.canonical_bytes())))
+    }
+}
+
+impl EmbeddedSourceUnitId {
+    pub fn for_parent_span(
+        parent: &LogicalSourceId,
+        start: u32,
+        end: u32,
+        payload_sha256: &str,
+    ) -> Self {
+        let mut bytes = Vec::new();
+        append_field(&mut bytes, parent.as_str().as_bytes());
+        bytes.extend_from_slice(&start.to_be_bytes());
+        bytes.extend_from_slice(&end.to_be_bytes());
+        append_field(&mut bytes, payload_sha256.as_bytes());
+        Self(format!("embedded_{}", digest_hex(&bytes)))
     }
 }
 

@@ -13,6 +13,7 @@ lumin-graph = { path = "../../graph/symbols" }
 lumin-inventory = { path = "../../source/inventory" }
 lumin-js = { path = "../../languages/js" }
 lumin-model = { path = "../../foundation/model" }
+lumin-sfc = { path = "../../languages/sfc" }
 lumin-resolve = { path = "../../graph/resolve" }
 lumin-store = { path = "../store" }
 rayon.workspace = true

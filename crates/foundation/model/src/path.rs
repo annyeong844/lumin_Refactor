@@ -133,6 +133,21 @@ impl RepoPath {
         Self::from_components(components)
     }
 
+    pub fn resolve_portable_relative(&self, specifier: &str) -> Option<Self> {
+        if specifier.starts_with('/') || specifier.starts_with('\\') || specifier.contains('\\') {
+            return None;
+        }
+        let mut current = self.parent()?;
+        for component in specifier.split('/') {
+            match component {
+                "" | "." => {}
+                ".." => current = current.parent()?,
+                value => current = current.join_portable(value).ok()?,
+            }
+        }
+        Some(current)
+    }
+
     pub fn components_len(&self) -> usize {
         self.components.len()
     }
@@ -339,6 +354,29 @@ mod tests {
         );
         assert_eq!(root.portable_relative_to(&root).as_deref(), Some(""));
         assert_eq!(sibling.portable_relative_to(&root), None);
+        Ok(())
+    }
+
+    #[test]
+    fn resolves_relative_specifiers_without_crossing_the_root() -> Result<(), RepoPathError> {
+        let importer = RepoPath::from_portable("packages/app/src/App.vue")?;
+        assert_eq!(
+            importer
+                .resolve_portable_relative("../shared/card.ts")
+                .map(|path| path.display_escaped())
+                .as_deref(),
+            Some("packages/app/shared/card.ts")
+        );
+        assert!(
+            RepoPath::from_portable("App.vue")?
+                .resolve_portable_relative("../outside.ts")
+                .is_none()
+        );
+        assert!(
+            importer
+                .resolve_portable_relative(".\\outside.ts")
+                .is_none()
+        );
         Ok(())
     }
 

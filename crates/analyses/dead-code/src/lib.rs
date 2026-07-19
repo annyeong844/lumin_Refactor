@@ -97,7 +97,27 @@ fn blocked_absence_scope(
             Limitation::JsModuleUseUnknown { .. }
             | Limitation::SourcePayloadUnavailable { .. }
             | Limitation::PackageIdentityUnsupported { .. }
-            | Limitation::SfcDialectUnavailable { .. } => workspace_blocked = true,
+            | Limitation::SfcDialectUnavailable { .. }
+            | Limitation::SfcDecompositionUnknown { .. } => workspace_blocked = true,
+            Limitation::SfcExternalScriptUnresolved { source_id, .. }
+            | Limitation::VueTemplateOpaque { source_id, .. } => {
+                if !block_source_owner(source_id, sources, config, &mut blocked_paths) {
+                    workspace_blocked = true;
+                }
+            }
+            Limitation::VueExternalScriptModeConflict {
+                source_id,
+                target_source_id,
+                ..
+            } => {
+                let parent_known =
+                    block_source_owner(source_id, sources, config, &mut blocked_paths);
+                let target_known =
+                    block_source_owner(target_source_id, sources, config, &mut blocked_paths);
+                if !parent_known || !target_known {
+                    workspace_blocked = true;
+                }
+            }
             Limitation::PublicSurfaceUnsupported { path, .. }
             | Limitation::PackageImportsUnsupported { path, .. }
             | Limitation::ImporterFormatUnsupported { path, .. }
@@ -130,6 +150,19 @@ fn blocked_absence_scope(
     blocked_paths.sort();
     blocked_paths.dedup();
     (workspace_blocked, blocked_paths)
+}
+
+fn block_source_owner(
+    source_id: &LogicalSourceId,
+    sources: &[SourceSnapshot],
+    config: &SemanticConfigSnapshot,
+    blocked_paths: &mut Vec<String>,
+) -> bool {
+    let Some(package_root) = config.source_packages.get(source_id) else {
+        return false;
+    };
+    block_sources_under(package_root, sources, blocked_paths);
+    true
 }
 
 fn block_owned_package(
