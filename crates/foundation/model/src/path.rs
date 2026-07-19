@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 use thiserror::Error;
 
@@ -140,6 +140,18 @@ impl RepoPath {
         self.components.len()
     }
 
+    pub fn is_within(&self, ancestor: &Self) -> bool {
+        self.components.starts_with(&ancestor.components)
+    }
+
+    pub fn to_native_relative(&self) -> PathBuf {
+        let mut path = PathBuf::new();
+        for component in &self.components {
+            path.push(native_os_string(component));
+        }
+        path
+    }
+
     fn from_components(components: Vec<RepoPathComponent>) -> Result<Self, RepoPathError> {
         let count = u32::try_from(components.len()).map_err(|_| RepoPathError::EncodingOverflow)?;
         let mut canonical = Vec::new();
@@ -241,6 +253,22 @@ fn component_payload(component: &RepoPathComponent) -> (u8, Vec<u8>) {
                 bytes.extend_from_slice(&unit.to_be_bytes());
             }
             (3, bytes)
+        }
+    }
+}
+
+fn native_os_string(component: &RepoPathComponent) -> OsString {
+    match component {
+        RepoPathComponent::PortableUtf8(value) => OsString::from(value),
+        #[cfg(unix)]
+        RepoPathComponent::UnixBytes(value) => {
+            use std::os::unix::ffi::OsStringExt;
+            OsString::from_vec(value.clone())
+        }
+        #[cfg(windows)]
+        RepoPathComponent::WindowsWtf16(value) => {
+            use std::os::windows::ffi::OsStringExt;
+            OsString::from_wide(value)
         }
     }
 }

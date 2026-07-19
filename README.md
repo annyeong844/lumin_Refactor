@@ -28,14 +28,15 @@ Legacy Lumin remains a compatibility and defect corpus. Its internal boundaries 
 
 ## Runnable Checkpoint
 
-The first native Rust vertical path is executable. From a package-free JS/TS repository, the current binary can scan source files, lower static ESM facts with OXC, resolve root-contained relative imports, produce deterministic zero-production-fan-in findings, persist the run under `.lumin`, and reopen it through `overview` and `findings`.
+The native Rust vertical path is executable. The current binary scans JS/TS, lowers static ESM facts with OXC, admits strict `package.json` workspace facts and JSONC tsconfig/jsconfig inputs, resolves relative imports plus supported `baseUrl`/`paths` mappings under an explicit resolution profile, produces deterministic zero-production-fan-in findings, persists the run under `.lumin`, and reopens it through `overview` and `findings`.
 
 ```text
 lumin audit --format json
+lumin audit --resolution-profile <bundler|node|node10|node16|nodenext> --format json
 lumin overview --run <run-id> --format json
 lumin findings --run <run-id> --area dead-code --format json
 ```
 
 Generated and vendored findings remain in canonical output with a `review-only` disposition. Parse, configuration, and resolution uncertainty is emitted as visible incomplete evidence; it is never converted into a clean zero.
 
-This checkpoint is not the completed foundation slice. Package/workspace and tsconfig semantics, SFC/Vue analysis, the durable pre-write/post-write gate, complete state-directory physical-identity and crash recovery, packaged skills, platform packages, and achieved-budget evidence remain active Phase 1 work.
+This checkpoint is not the completed foundation slice. Restricted pnpm workspace YAML, package public entry/`exports`/`imports` semantics, SFC/Vue analysis, the durable pre-write/post-write gate, complete state-directory physical-identity and crash recovery, packaged skills, platform packages, and achieved-budget evidence remain active Phase 1 work.

@@ -27,12 +27,13 @@ Implement the first production Rust vertical path from native repository admissi
 
 Current implementation checkpoint:
 
-- A real eleven-crate Rust path now owns repository inventory, OXC fact lowering, package-free relative resolution, deterministic graph reduction, canonical dead-export evidence, JSON protocol output, and persisted audit/overview/findings commands.
+- A real eleven-crate Rust path now owns repository inventory, OXC fact lowering, package.json package/workspace facts, JSONC config admission, config-owned resolution profiles, relative plus `baseUrl`/`paths` resolution, deterministic graph reduction, canonical dead-export evidence, JSON protocol output, and persisted audit/overview/findings commands.
 - `jobs=1` and multi-worker analysis produce identical semantic evidence in the checked behavior tests.
-- Generated and vendored findings remain canonical `ReviewOnly` rows. Parse and unresolved-input uncertainty remains visible as typed incomplete evidence rather than a muted clean result.
+- Generated and vendored findings remain canonical `ReviewOnly` rows. Parse, duplicate package identity, unsupported config, and unresolved-input uncertainty remains visible as typed incomplete evidence rather than a muted clean result. Package-local public-surface uncertainty does not erase unrelated `ReviewOnly` findings.
+- Resolver semantic inputs follow demand -> inventory capture -> resume. Relative `extends` uses exact then one `.json` candidate, invocation profiles replace only config profile selection, and selected profiles are persisted in run overview evidence.
 - The store currently supports persisted audit/query round trips and basic real-file/real-directory hard stops. It does not yet claim the complete ARCH-002 parent physical-identity, generation-fencing, fault-recovery, retention, or write-gate contract.
 
-Next implementation order: close inventory package/workspace and resolver/tsconfig semantics from the checked machine artifacts, then add Vue SFC ownership. Do not expand dead-code claims across those inputs until their limitation scopes are executable and tested.
+Next implementation order: add the restricted pnpm workspace parser and package public entry/`exports`/`imports` resolution from the checked machine artifacts, then add Vue SFC ownership. Keep every unsupported branch typed and scope-limited; never recover coverage by a simplified fallback or policy mute.
 
 ## Routing Rules
 

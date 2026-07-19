@@ -1,6 +1,6 @@
 use lumin_model::{
     CapabilityState, FindingDisposition, FindingId, Limitation, LogicalSourceId, RepoPath,
-    SourceSpan, SymbolNamespace,
+    SelectedResolutionProfile, SourceSpan, SymbolNamespace,
 };
 use serde::{Deserialize, Serialize};
 
@@ -86,6 +86,7 @@ pub struct CapabilityRecord {
 pub struct RunEvidence {
     pub schema_version: String,
     pub capabilities: Vec<CapabilityRecord>,
+    pub resolution_profiles: Vec<SelectedResolutionProfile>,
     pub findings: Vec<FindingRecord>,
     pub limitations: Vec<Limitation>,
 }

@@ -221,6 +221,34 @@ pub enum Limitation {
         path: String,
         detail: String,
     },
+    PackageIdentityUnsupported {
+        path: String,
+        detail: String,
+    },
+    PackageMetadataUnobservable {
+        path: String,
+        detail: String,
+    },
+    PackagePrivacyUnsupported {
+        path: String,
+        detail: String,
+    },
+    DependencyOwnerAmbiguous {
+        path: String,
+        detail: String,
+    },
+    WorkspaceOwnershipUnsupported {
+        path: String,
+        detail: String,
+    },
+    PnpmDependencySemanticsUnsupported {
+        path: String,
+        detail: String,
+    },
+    TsconfigPayloadUnavailable {
+        path: String,
+        detail: String,
+    },
     SfcDialectUnavailable {
         source_id: LogicalSourceId,
         dialect: String,

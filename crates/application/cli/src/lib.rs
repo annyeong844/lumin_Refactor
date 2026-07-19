@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use lumin_engine::{AuditRequest, EngineError};
-use lumin_model::{RoleOverride, RunId, ScanRole};
+use lumin_model::{ResolutionProfile, RoleOverride, RunId, ScanRole};
 use lumin_protocol::ProtocolError;
 use thiserror::Error;
 
@@ -29,6 +29,8 @@ enum CliError {
     UnsupportedFormat(String),
     #[error("unknown source role: {0}")]
     UnknownRole(String),
+    #[error("unknown resolution profile: {0}")]
+    UnknownResolutionProfile(String),
     #[error("--run is required")]
     RunRequired,
     #[error("only --area dead-code is available in this slice")]
@@ -74,6 +76,7 @@ fn audit(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> {
     let mut excludes = Vec::new();
     let mut role_overrides = Vec::new();
     let mut jobs = std::thread::available_parallelism().map_or(1, usize::from);
+    let mut resolution_profile = None;
     let mut format = "json".to_owned();
 
     while let Some(argument) = arguments.next_utf8("audit argument")? {
@@ -94,6 +97,11 @@ fn audit(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> {
                     .ok_or_else(|| CliError::InvalidJobs(value.clone()))?;
             }
             "--format" => format = arguments.required_utf8("--format")?,
+            "--resolution-profile" => {
+                resolution_profile = Some(parse_resolution_profile(
+                    &arguments.required_utf8("--resolution-profile")?,
+                )?);
+            }
             _ => return Err(CliError::UnknownArgument(argument)),
         }
     }
@@ -105,6 +113,7 @@ fn audit(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> {
         excludes,
         role_overrides,
         jobs,
+        resolution_profile,
     })?;
     let response = lumin_protocol::audit_response(
         result.published.attempt_id,
@@ -179,6 +188,16 @@ fn parse_role(value: &str) -> Result<ScanRole, CliError> {
     }
 }
 
+fn parse_resolution_profile(value: &str) -> Result<ResolutionProfile, CliError> {
+    match value {
+        "bundler" => Ok(ResolutionProfile::Bundler),
+        "node" | "node10" => Ok(ResolutionProfile::Node),
+        "node16" => Ok(ResolutionProfile::Node16),
+        "nodenext" => Ok(ResolutionProfile::NodeNext),
+        _ => Err(CliError::UnknownResolutionProfile(value.to_owned())),
+    }
+}
+
 fn require_json(value: &str) -> Result<(), CliError> {
     if value == "json" {
         Ok(())
@@ -196,6 +215,7 @@ fn error_exit_code(error: &CliError) -> i32 {
         | CliError::InvalidJobs(_)
         | CliError::UnsupportedFormat(_)
         | CliError::UnknownRole(_)
+        | CliError::UnknownResolutionProfile(_)
         | CliError::RunRequired
         | CliError::InvalidArea
         | CliError::NoCompletedRun
@@ -355,6 +375,74 @@ mod tests {
                 .and_then(Value::as_u64)
                 .is_some_and(|count| count > 0)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn resolution_profile_override_is_validated_and_persisted()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        fs::create_dir_all(root.path().join("src"))?;
+        fs::write(
+            root.path().join("package.json"),
+            r#"{"name":"app","type":"module"}"#,
+        )?;
+        fs::write(
+            root.path().join("tsconfig.json"),
+            r#"{"compilerOptions":{"moduleResolution":"node16"}}"#,
+        )?;
+        fs::write(root.path().join("src/lib.ts"), "export const used = 1;")?;
+        fs::write(
+            root.path().join("src/main.ts"),
+            "import { used } from './lib'; console.log(used);",
+        )?;
+
+        let invalid = execute(
+            root.path(),
+            vec![
+                "audit".into(),
+                "--resolution-profile".into(),
+                "browser".into(),
+            ],
+        );
+        assert_eq!(invalid.exit_code, 2);
+        assert!(
+            invalid
+                .stderr
+                .contains("unknown resolution profile: browser")
+        );
+
+        let audit = execute(
+            root.path(),
+            vec![
+                "audit".into(),
+                "--jobs".into(),
+                "1".into(),
+                "--resolution-profile".into(),
+                "node10".into(),
+            ],
+        );
+        assert_eq!(audit.exit_code, 0, "{}", audit.stderr);
+        let audit_json: Value = serde_json::from_str(&audit.stdout)?;
+        let run_id = audit_json
+            .get("runId")
+            .and_then(Value::as_str)
+            .ok_or("audit response omitted runId")?;
+        let overview = execute(
+            root.path(),
+            vec!["overview".into(), "--run".into(), run_id.into()],
+        );
+        assert_eq!(overview.exit_code, 0, "{}", overview.stderr);
+        let overview_json: Value = serde_json::from_str(&overview.stdout)?;
+        let profiles = overview_json
+            .get("resolutionProfiles")
+            .and_then(Value::as_array)
+            .ok_or("overview omitted resolutionProfiles")?;
+        assert!(!profiles.is_empty());
+        assert!(profiles.iter().all(|profile| {
+            profile.get("profile").and_then(Value::as_str) == Some("node")
+                && profile.pointer("/source/kind").and_then(Value::as_str) == Some("invocation")
+        }));
         Ok(())
     }
 }

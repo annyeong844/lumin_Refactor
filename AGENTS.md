@@ -28,3 +28,14 @@ Start at [WORKBOARD.md](WORKBOARD.md) and read only the owner documents routed f
 - **Documentation only:** Check links, formatting/whitespace, and architecture consistency locally; public CI repeats document checks from a clean checkout.
 - **One crate or corpus case:** Run `cargo fmt`, scoped Clippy/tests, and affected corpus and boundary checks locally; public CI checks the full workspace, corpus, determinism, and dependency policy.
 - **Shared core or packaging:** Run the full affected workspace and package smoke locally, using the full local matrix only for diagnosis; public CI runs locked Windows/Linux builds and behavioral package probes.
+
+## Lumin Task Closeout Workflow
+
+1. Before Rust source work, run the external legacy Lumin lab's Rust `pre-write` and preserve the invocation-specific advisory. Stream generated intent through stdin; never write it inside this repository.
+2. After implementation and focused tests, run matching `post-write` before broad Cargo checks. A missing advisory or scan-range mismatch is not clean evidence.
+3. After the entire current TODO is complete, pass locked Cargo tests, Clippy, and fmt, then run the external lab with `full --rust-analyzer`. Keep audit output outside this repository.
+4. Read `manifest.rustAnalysis.status`, scan scope, parse/skipped files, and `rust-analyzer-health.latest.json.summary.syntaxReviewOpaqueSurfaces` first. Then inspect `checklist-facts.json`, `fix-plan.json`, Rust clone/shape/unused-definition evidence, and the built-in Rust checklist. Never use JS/TS artifacts as Rust absence evidence.
+5. Fix grounded errors, duplication, dead definitions, and boundary violations only after reading the cited source. Never reinterpret `unknown`/`degraded` as clean, hide `ReviewOnly` findings, or merge clone groups without semantic review.
+6. If the full audit causes edits, open a new pre/post transaction and rerun affected tests and the full Rust audit. Close the task only when no grounded merge-blocking or required-fix item remains.
+
+Legacy Lumin is an external observation and review tool in this workflow, not the product contract or a code owner for the rewrite.

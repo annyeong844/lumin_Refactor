@@ -1,4 +1,7 @@
-use std::collections::BTreeMap;
+mod config_document;
+mod package_semantics;
+
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
@@ -6,8 +9,8 @@ use std::path::Path;
 use ignore::WalkBuilder;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use lumin_model::{
-    Limitation, RepoPath, RepoPathError, RoleOverride, ScanRole, SourceKind, SourceRoleReason,
-    SourceRoles, SourceSnapshot,
+    ConfigObservation, ConfigSyntax, Limitation, RepoPath, RepoPathError, RoleOverride, ScanRole,
+    SemanticConfigSnapshot, SourceKind, SourceRoleReason, SourceRoles, SourceSnapshot,
 };
 use serde::Deserialize;
 use thiserror::Error;
@@ -24,6 +27,7 @@ pub struct InventorySnapshot {
     pub sources: Vec<SourceSnapshot>,
     pub limitations: Vec<Limitation>,
     pub consulted_config_paths: Vec<RepoPath>,
+    pub config: SemanticConfigSnapshot,
 }
 
 #[derive(Debug, Error)]
@@ -81,13 +85,49 @@ struct PatternSet {
     invocation_roles: Vec<(Gitignore, ScanRole)>,
 }
 
+#[derive(Default)]
+struct CollectedFiles {
+    sources: BTreeMap<RepoPath, SourceSnapshot>,
+    config_observations: BTreeMap<RepoPath, ConfigObservation>,
+    pnpm_roots: BTreeSet<RepoPath>,
+    limitations: Vec<Limitation>,
+    consulted_config_paths: Vec<RepoPath>,
+}
+
 pub fn scan(root: &Path, request: &InventoryRequest) -> Result<InventorySnapshot, InventoryError> {
     validate_root(root)?;
     let (config, config_path) = read_root_config(root)?;
     let patterns = PatternSet::compile(root, config.as_ref(), request)?;
+    let mut collected = collect_repository_files(root, &patterns)?;
 
-    let mut sources = BTreeMap::<RepoPath, SourceSnapshot>::new();
-    let mut limitations = Vec::new();
+    if let Some(path) = config_path {
+        collected.consulted_config_paths.push(path);
+    }
+    collected.consulted_config_paths.sort();
+    collected.consulted_config_paths.dedup();
+
+    let sources = collected.sources.into_values().collect::<Vec<_>>();
+    let config = package_semantics::build(
+        collected.config_observations,
+        &sources,
+        &collected.pnpm_roots,
+        &mut collected.limitations,
+    )
+    .map_err(InventoryError::MalformedConfiguration)?;
+
+    Ok(InventorySnapshot {
+        sources,
+        limitations: collected.limitations,
+        consulted_config_paths: collected.consulted_config_paths,
+        config,
+    })
+}
+
+fn collect_repository_files(
+    root: &Path,
+    patterns: &PatternSet,
+) -> Result<CollectedFiles, InventoryError> {
+    let mut collected = CollectedFiles::default();
     let mut builder = WalkBuilder::new(root);
     builder
         .hidden(false)
@@ -102,10 +142,12 @@ pub fn scan(root: &Path, request: &InventoryRequest) -> Result<InventorySnapshot
         let entry = match result {
             Ok(entry) => entry,
             Err(error) => {
-                limitations.push(Limitation::SourcePayloadUnavailable {
-                    path: root.display().to_string(),
-                    detail: error.to_string(),
-                });
+                collected
+                    .limitations
+                    .push(Limitation::SourcePayloadUnavailable {
+                        path: root.display().to_string(),
+                        detail: error.to_string(),
+                    });
                 continue;
             }
         };
@@ -122,72 +164,131 @@ pub fn scan(root: &Path, request: &InventoryRequest) -> Result<InventorySnapshot
                 entry.path().display()
             )));
         };
-        if !patterns.admits(relative) {
-            continue;
-        }
-        if let Some(limitation) = unsupported_semantic_config(relative) {
-            limitations.push(limitation);
-            continue;
-        }
-        let Some(kind) = source_kind(relative) else {
-            continue;
-        };
-
         let path = RepoPath::from_native_relative(relative).map_err(|source| {
             InventoryError::InvalidRepoPath {
                 path: relative.display().to_string(),
                 source,
             }
         })?;
-        let bytes = match fs::read(entry.path()) {
+        collected.observe_file(root, entry.path(), relative, path, patterns)?;
+    }
+    Ok(collected)
+}
+
+impl CollectedFiles {
+    fn observe_file(
+        &mut self,
+        root: &Path,
+        native_path: &Path,
+        relative: &Path,
+        path: RepoPath,
+        patterns: &PatternSet,
+    ) -> Result<(), InventoryError> {
+        if let Some(syntax) = config_syntax(relative) {
+            self.consulted_config_paths.push(path.clone());
+            match observe_config(root, &path, syntax)? {
+                observation @ ConfigObservation::Present(_) => {
+                    self.config_observations.insert(path, observation);
+                }
+                observation @ ConfigObservation::Unreadable { .. } => {
+                    let limitation = match syntax {
+                        ConfigSyntax::StrictJson => Limitation::PackageMetadataUnobservable {
+                            path: path.display_escaped(),
+                            detail: "package manifest could not be read".to_owned(),
+                        },
+                        ConfigSyntax::Jsonc => Limitation::TsconfigPayloadUnavailable {
+                            path: path.display_escaped(),
+                            detail: "controlling config could not be read".to_owned(),
+                        },
+                    };
+                    self.limitations.push(limitation);
+                    self.config_observations.insert(path, observation);
+                }
+                observation => {
+                    self.config_observations.insert(path, observation);
+                }
+            }
+            return Ok(());
+        }
+        if relative.file_name() == Some(OsStr::new("pnpm-workspace.yaml")) {
+            self.consulted_config_paths.push(path.clone());
+            self.pnpm_roots
+                .insert(path.parent().unwrap_or_else(RepoPath::empty));
+            self.limitations
+                .push(Limitation::WorkspaceOwnershipUnsupported {
+                path: path.display_escaped(),
+                detail: "restricted pnpm workspace parsing is not implemented yet; package workspaces are not used as fallback"
+                    .to_owned(),
+            });
+            return Ok(());
+        }
+        if !patterns.admits(relative) {
+            return Ok(());
+        }
+        let Some(kind) = source_kind(relative) else {
+            return Ok(());
+        };
+
+        let bytes = match fs::read(native_path) {
             Ok(bytes) => bytes,
             Err(error) => {
-                limitations.push(Limitation::SourcePayloadUnavailable {
+                self.limitations.push(Limitation::SourcePayloadUnavailable {
                     path: path.display_escaped(),
                     detail: error.to_string(),
                 });
-                continue;
+                return Ok(());
             }
         };
-        let roles = classify_roles(relative, kind, &bytes, &patterns);
-        sources.insert(path.clone(), SourceSnapshot::new(path, kind, roles, bytes));
+        let roles = classify_roles(relative, kind, &bytes, patterns);
+        self.sources
+            .insert(path.clone(), SourceSnapshot::new(path, kind, roles, bytes));
+        Ok(())
     }
-
-    let mut consulted_config_paths = Vec::new();
-    if let Some(path) = config_path {
-        consulted_config_paths.push(path);
-    }
-
-    Ok(InventorySnapshot {
-        sources: sources.into_values().collect(),
-        limitations,
-        consulted_config_paths,
-    })
 }
 
-fn unsupported_semantic_config(path: &Path) -> Option<Limitation> {
-    let name = path.file_name()?;
-    if name == "package.json" {
-        return Some(Limitation::PublicSurfaceUnsupported {
-            path: path.display().to_string(),
-            detail: "package semantics are not implemented in the first audit increment".to_owned(),
-        });
+pub fn observe_config(
+    root: &Path,
+    path: &RepoPath,
+    syntax: ConfigSyntax,
+) -> Result<ConfigObservation, InventoryError> {
+    validate_root(root)?;
+    let native = root.join(path.to_native_relative());
+    let metadata = match fs::symlink_metadata(&native) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ConfigObservation::Missing { path: path.clone() });
+        }
+        Err(error) => {
+            return Ok(ConfigObservation::Unreadable {
+                path: path.clone(),
+                detail: error.to_string(),
+            });
+        }
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Ok(ConfigObservation::NonRegular { path: path.clone() });
     }
-    if name == "tsconfig.json" || name == "jsconfig.json" {
-        return Some(Limitation::TsconfigSemanticsUnsupported {
-            path: path.display().to_string(),
-            detail: "tsconfig semantics are not implemented in the first audit increment"
-                .to_owned(),
-        });
+    let bytes = match fs::read(&native) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            return Ok(ConfigObservation::Unreadable {
+                path: path.clone(),
+                detail: error.to_string(),
+            });
+        }
+    };
+    let document = config_document::parse(path.clone(), &bytes, syntax).map_err(|error| {
+        InventoryError::MalformedConfiguration(format!("{}: {error}", path.display_escaped()))
+    })?;
+    Ok(ConfigObservation::Present(document))
+}
+
+fn config_syntax(path: &Path) -> Option<ConfigSyntax> {
+    match path.file_name().and_then(OsStr::to_str) {
+        Some("package.json") => Some(ConfigSyntax::StrictJson),
+        Some("tsconfig.json" | "jsconfig.json") => Some(ConfigSyntax::Jsonc),
+        _ => None,
     }
-    if name == "pnpm-workspace.yaml" {
-        return Some(Limitation::PackageDependencySemanticsUnsupported {
-            path: path.display().to_string(),
-            detail: "workspace semantics are not implemented in the first audit increment"
-                .to_owned(),
-        });
-    }
-    None
 }
 
 fn validate_root(root: &Path) -> Result<(), InventoryError> {
@@ -496,6 +597,85 @@ mod tests {
                 .count(),
             1
         );
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_object_form_selects_only_matching_package_roots()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        fs::create_dir_all(root.path().join("packages/a"))?;
+        fs::create_dir_all(root.path().join("tools/b"))?;
+        fs::write(
+            root.path().join("package.json"),
+            r#"{"name":"root","workspaces":{"packages":["packages/*"]}}"#,
+        )?;
+        fs::write(
+            root.path().join("packages/a/package.json"),
+            r#"{"name":"package-a"}"#,
+        )?;
+        fs::write(
+            root.path().join("tools/b/package.json"),
+            r#"{"name":"tool-b"}"#,
+        )?;
+
+        let inventory = scan(root.path(), &InventoryRequest::default())?;
+        let package_a = inventory
+            .config
+            .packages
+            .iter()
+            .find(|package| package.root.display_escaped() == "packages/a")
+            .ok_or("package-a missing")?;
+        let tool_b = inventory
+            .config
+            .packages
+            .iter()
+            .find(|package| package.root.display_escaped() == "tools/b")
+            .ok_or("tool-b missing")?;
+
+        assert_eq!(
+            package_a
+                .workspace_root
+                .as_ref()
+                .map(RepoPath::display_escaped),
+            Some(String::new())
+        );
+        assert!(tool_b.workspace_root.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn pnpm_presence_disables_package_workspace_fallback() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = tempfile::tempdir()?;
+        fs::create_dir_all(root.path().join("packages/a"))?;
+        fs::write(
+            root.path().join("package.json"),
+            r#"{"name":"root","workspaces":["packages/*"]}"#,
+        )?;
+        fs::write(
+            root.path().join("pnpm-workspace.yaml"),
+            "packages:\n  - packages/*\n",
+        )?;
+        fs::write(
+            root.path().join("packages/a/package.json"),
+            r#"{"name":"package-a"}"#,
+        )?;
+
+        let inventory = scan(root.path(), &InventoryRequest::default())?;
+        let package_a = inventory
+            .config
+            .packages
+            .iter()
+            .find(|package| package.root.display_escaped() == "packages/a")
+            .ok_or("package-a missing")?;
+
+        assert!(package_a.workspace_root.is_none());
+        assert!(inventory.limitations.iter().any(|limitation| matches!(
+            limitation,
+            Limitation::WorkspaceOwnershipUnsupported { path, .. }
+                if path == "pnpm-workspace.yaml"
+        )));
         Ok(())
     }
 }

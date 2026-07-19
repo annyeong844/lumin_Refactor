@@ -33,6 +33,7 @@ pub struct OverviewResponseDto {
     pub attempt_id: AttemptId,
     pub sequence: u64,
     pub capability_states: Vec<CapabilityStateDto>,
+    pub resolution_profiles: Vec<lumin_model::SelectedResolutionProfile>,
     pub finding_count: usize,
     pub limitation_count: usize,
     pub limitations: Vec<Limitation>,
@@ -151,6 +152,7 @@ pub fn overview_response(
                 state: capability.state,
             })
             .collect(),
+        resolution_profiles: evidence.resolution_profiles.clone(),
         finding_count: evidence.findings.len(),
         limitation_count: evidence.limitations.len(),
         limitations: evidence.limitations.clone(),
@@ -342,6 +344,7 @@ mod tests {
         Ok(RunEvidence {
             schema_version: "lumin-evidence.v1".to_owned(),
             capabilities: Vec::new(),
+            resolution_profiles: Vec::new(),
             findings,
             limitations: Vec::new(),
         })

@@ -8,6 +8,8 @@ publish.workspace = true
 
 [dependencies]
 lumin-model = { path = "../../foundation/model" }
+serde_json.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

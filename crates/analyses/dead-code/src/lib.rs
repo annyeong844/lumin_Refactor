@@ -7,7 +7,7 @@ use lumin_evidence::{
 use lumin_graph::SymbolGraph;
 use lumin_model::{
     FindingDisposition, FindingId, Limitation, LogicalSourceId, RepoPath, ReviewOnlyReason,
-    SourceSnapshot,
+    SemanticConfigSnapshot, SourceSnapshot,
 };
 
 pub const DEAD_ANALYSIS_VERSION: &str = "zero-exact-fan-in.v1";
@@ -15,13 +15,14 @@ pub const DEAD_ANALYSIS_VERSION: &str = "zero-exact-fan-in.v1";
 pub fn analyze(
     sources: &[SourceSnapshot],
     graph: &SymbolGraph,
+    config: &SemanticConfigSnapshot,
     limitations: &[Limitation],
 ) -> Vec<FindingRecord> {
     let paths = sources
         .iter()
         .map(|source| (source.id.clone(), source.path.clone()))
         .collect::<BTreeMap<LogicalSourceId, RepoPath>>();
-    let (workspace_blocked, blocked_paths) = blocked_absence_scope(limitations);
+    let (workspace_blocked, blocked_paths) = blocked_absence_scope(sources, config, limitations);
     let mut findings = Vec::new();
     for export in graph.exports.values() {
         if export.roles.declaration
@@ -80,7 +81,11 @@ pub fn analyze(
     findings
 }
 
-fn blocked_absence_scope(limitations: &[Limitation]) -> (bool, Vec<String>) {
+fn blocked_absence_scope(
+    sources: &[SourceSnapshot],
+    config: &SemanticConfigSnapshot,
+    limitations: &[Limitation],
+) -> (bool, Vec<String>) {
     let mut workspace_blocked = false;
     let mut blocked_paths = Vec::new();
     for limitation in limitations {
@@ -90,15 +95,137 @@ fn blocked_absence_scope(limitations: &[Limitation]) -> (bool, Vec<String>) {
             }
             Limitation::JsModuleUseUnknown { .. }
             | Limitation::SourcePayloadUnavailable { .. }
-            | Limitation::PublicSurfaceUnsupported { .. }
-            | Limitation::TsconfigSemanticsUnsupported { .. }
-            | Limitation::PackageDependencySemanticsUnsupported { .. }
+            | Limitation::PackageIdentityUnsupported { .. }
             | Limitation::SfcDialectUnavailable { .. } => workspace_blocked = true,
+            Limitation::PublicSurfaceUnsupported { path, .. }
+            | Limitation::PackageDependencySemanticsUnsupported { path, .. }
+            | Limitation::PackagePrivacyUnsupported { path, .. }
+            | Limitation::DependencyOwnerAmbiguous { path, .. } => {
+                if !block_owned_package(path, sources, config, &mut blocked_paths) {
+                    workspace_blocked = true;
+                }
+            }
+            Limitation::PackageMetadataUnobservable { path, .. } => {
+                if !block_manifest_parent(path, sources, config, &mut blocked_paths) {
+                    workspace_blocked = true;
+                }
+            }
+            Limitation::TsconfigSemanticsUnsupported { path, .. }
+            | Limitation::TsconfigPayloadUnavailable { path, .. } => {
+                if !block_config_package(path, sources, config, &mut blocked_paths) {
+                    workspace_blocked = true;
+                }
+            }
+            Limitation::WorkspaceOwnershipUnsupported { path, .. }
+            | Limitation::PnpmDependencySemanticsUnsupported { path, .. } => {
+                if !block_workspace(path, sources, config, &mut blocked_paths) {
+                    workspace_blocked = true;
+                }
+            }
         }
     }
     blocked_paths.sort();
     blocked_paths.dedup();
     (workspace_blocked, blocked_paths)
+}
+
+fn block_owned_package(
+    manifest_path: &str,
+    sources: &[SourceSnapshot],
+    config: &SemanticConfigSnapshot,
+    blocked_paths: &mut Vec<String>,
+) -> bool {
+    let Some(package) = config
+        .packages
+        .iter()
+        .find(|package| package.manifest_path.display_escaped() == manifest_path)
+    else {
+        return false;
+    };
+    for source in sources {
+        if config.source_packages.get(&source.id) == Some(&package.root) {
+            blocked_paths.push(source.path.display_escaped());
+        }
+    }
+    true
+}
+
+fn block_manifest_parent(
+    manifest_path: &str,
+    sources: &[SourceSnapshot],
+    config: &SemanticConfigSnapshot,
+    blocked_paths: &mut Vec<String>,
+) -> bool {
+    let Some(root) = config
+        .observations
+        .keys()
+        .find(|path| path.display_escaped() == manifest_path)
+        .and_then(RepoPath::parent)
+    else {
+        return false;
+    };
+    block_sources_under(&root, sources, blocked_paths);
+    true
+}
+
+fn block_config_package(
+    config_path: &str,
+    sources: &[SourceSnapshot],
+    config: &SemanticConfigSnapshot,
+    blocked_paths: &mut Vec<String>,
+) -> bool {
+    let Some(path) = config
+        .observations
+        .keys()
+        .find(|path| path.display_escaped() == config_path)
+    else {
+        return false;
+    };
+    let Some(package) = config
+        .packages
+        .iter()
+        .filter(|package| path.is_within(&package.root))
+        .max_by_key(|package| package.root.components_len())
+    else {
+        return false;
+    };
+    block_sources_under(&package.root, sources, blocked_paths);
+    true
+}
+
+fn block_workspace(
+    limitation_path: &str,
+    sources: &[SourceSnapshot],
+    config: &SemanticConfigSnapshot,
+    blocked_paths: &mut Vec<String>,
+) -> bool {
+    let package_root = config
+        .packages
+        .iter()
+        .find(|package| package.manifest_path.display_escaped() == limitation_path)
+        .map(|package| package.root.clone());
+    let pnpm_root = config.workspaces.iter().find_map(|workspace| {
+        let path = workspace.root.join_portable("pnpm-workspace.yaml").ok()?;
+        (path.display_escaped() == limitation_path).then(|| workspace.root.clone())
+    });
+    let Some(root) = package_root.or(pnpm_root) else {
+        return false;
+    };
+    block_sources_under(&root, sources, blocked_paths);
+    true
+}
+
+fn block_sources_under(
+    root: &RepoPath,
+    sources: &[SourceSnapshot],
+    blocked_paths: &mut Vec<String>,
+) {
+    blocked_paths.extend(
+        sources
+            .iter()
+            .filter(|source| source.path.is_within(root))
+            .map(|source| source.path.display_escaped()),
+    );
 }
 
 fn disposition(generated: bool, vendored: bool) -> FindingDisposition {
