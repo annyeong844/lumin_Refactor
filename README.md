@@ -25,3 +25,17 @@ The current freeze ledger is [`REVIEW-002`](reviews/architecture-v1-independent-
 The destination architecture is frozen. Implementation proceeds through a narrow production-grade slice covering native JS/TS analysis, a dialect-extensible SFC pipeline with Vue as the first production dialect, resolution, export-level dead evidence, bounded queries, write-gate transactions, and prebuilt Windows/Linux delivery.
 
 Legacy Lumin remains a compatibility and defect corpus. Its internal boundaries are not migration targets.
+
+## Runnable Checkpoint
+
+The first native Rust vertical path is executable. From a package-free JS/TS repository, the current binary can scan source files, lower static ESM facts with OXC, resolve root-contained relative imports, produce deterministic zero-production-fan-in findings, persist the run under `.lumin`, and reopen it through `overview` and `findings`.
+
+```text
+lumin audit --format json
+lumin overview --run <run-id> --format json
+lumin findings --run <run-id> --area dead-code --format json
+```
+
+Generated and vendored findings remain in canonical output with a `review-only` disposition. Parse, configuration, and resolution uncertainty is emitted as visible incomplete evidence; it is never converted into a clean zero.
+
+This checkpoint is not the completed foundation slice. Package/workspace and tsconfig semantics, SFC/Vue analysis, the durable pre-write/post-write gate, complete state-directory physical-identity and crash recovery, packaged skills, platform packages, and achieved-budget evidence remain active Phase 1 work.

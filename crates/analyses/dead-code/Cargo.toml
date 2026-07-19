@@ -1,0 +1,15 @@
+[package]
+name = "lumin-dead"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+lumin-evidence = { path = "../../foundation/evidence" }
+lumin-graph = { path = "../../graph/symbols" }
+lumin-model = { path = "../../foundation/model" }
+
+[lints]
+workspace = true

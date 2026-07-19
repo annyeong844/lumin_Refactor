@@ -1,0 +1,18 @@
+[package]
+name = "lumin-js"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+lumin-model = { path = "../../foundation/model" }
+oxc_allocator.workspace = true
+oxc_ast.workspace = true
+oxc_ast_visit.workspace = true
+oxc_parser.workspace = true
+oxc_span.workspace = true
+
+[lints]
+workspace = true

@@ -25,6 +25,15 @@ Lumin is a native repository-audit engine and Codex/Claude Code skill that gives
 
 Implement the first production Rust vertical path from native repository admission through JS/TS inventory, OXC lowering, deterministic graph construction, canonical zero-fan-in findings, and machine output. The numeric targets under `reviews/probes/phase0-numeric-target-selection-2026-07-18/` are approved Phase 1 budgets, not achieved-product claims. Their external audit is non-blocking and may reopen the contract only with a concrete counterexample. Product packages, packaged skill adapters, public behavior, native path/root product round trips, and achieved-budget proofs remain Phase 1 acceptance.
 
+Current implementation checkpoint:
+
+- A real eleven-crate Rust path now owns repository inventory, OXC fact lowering, package-free relative resolution, deterministic graph reduction, canonical dead-export evidence, JSON protocol output, and persisted audit/overview/findings commands.
+- `jobs=1` and multi-worker analysis produce identical semantic evidence in the checked behavior tests.
+- Generated and vendored findings remain canonical `ReviewOnly` rows. Parse and unresolved-input uncertainty remains visible as typed incomplete evidence rather than a muted clean result.
+- The store currently supports persisted audit/query round trips and basic real-file/real-directory hard stops. It does not yet claim the complete ARCH-002 parent physical-identity, generation-fencing, fault-recovery, retention, or write-gate contract.
+
+Next implementation order: close inventory package/workspace and resolver/tsconfig semantics from the checked machine artifacts, then add Vue SFC ownership. Do not expand dead-code claims across those inputs until their limitation scopes are executable and tested.
+
 ## Routing Rules
 
 - Starting any implementation, refactor, review, or specification change: read METHOD-000.

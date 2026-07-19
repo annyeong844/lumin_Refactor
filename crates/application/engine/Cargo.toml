@@ -1,0 +1,25 @@
+[package]
+name = "lumin-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+lumin-dead = { path = "../../analyses/dead-code" }
+lumin-evidence = { path = "../../foundation/evidence" }
+lumin-graph = { path = "../../graph/symbols" }
+lumin-inventory = { path = "../../source/inventory" }
+lumin-js = { path = "../../languages/js" }
+lumin-model = { path = "../../foundation/model" }
+lumin-resolve = { path = "../../graph/resolve" }
+lumin-store = { path = "../store" }
+rayon.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,56 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/foundation/model",
+  "crates/foundation/evidence",
+  "crates/source/inventory",
+  "crates/languages/js",
+  "crates/graph/resolve",
+  "crates/graph/symbols",
+  "crates/analyses/dead-code",
+  "crates/application/store",
+  "crates/application/engine",
+  "crates/application/protocol",
+  "crates/application/cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+base64 = "=0.22.1"
+fs2 = "=0.4.3"
+getrandom = "=0.4.3"
+ignore = "=0.4.26"
+oxc_allocator = "=0.126.0"
+oxc_ast = "=0.126.0"
+oxc_ast_visit = "=0.126.0"
+oxc_parser = "=0.126.0"
+oxc_span = "=0.126.0"
+rayon = "=1.11.0"
+redb = "=4.1.0"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.150"
+sha2 = "=0.10.9"
+tempfile = "=3.27.0"
+thiserror = "=2.0.18"
+
+[workspace.lints.clippy]
+await_holding_lock = "deny"
+expect_used = "deny"
+panic = "deny"
+undocumented_unsafe_blocks = "deny"
+unwrap_used = "deny"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"
+strip = "symbols"
