@@ -1,11 +1,11 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use lumin_model::{
     AnalysisInputId, DeltaDimensionChange, DeltaFactFamily, GateDeltaClassification,
     GateDeltaRecord, GateId, OperationId, PhysicalFileIdentity, ResolutionProfile,
     append_length_prefixed, classify_lifecycle_deltas, digest_hex,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{RepoPathProjection, RunEvidence, delta::lifecycle_delta_input};
 
@@ -132,11 +132,22 @@ impl WriteLease {
         same_physical || self.covers(&other.path) || other.covers(&self.path)
     }
 
-    pub fn conflicts_with_input(&self, input: &SemanticInputRecord) -> bool {
-        self.covers(&input.path)
-            || (self.physical_identity.is_some()
-                && self.physical_identity == input.physical_identity)
+    pub fn conflicts_with_semantic_read(
+        &self,
+        path: &RepoPathProjection,
+        physical_identity: Option<&PhysicalFileIdentity>,
+    ) -> bool {
+        self.covers(path)
+            || (physical_identity.is_some() && self.physical_identity.as_ref() == physical_identity)
     }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticReadReservationBinding {
+    pub path: RepoPathProjection,
+    #[serde(default)]
+    pub physical_identity: Option<PhysicalFileIdentity>,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -245,6 +256,7 @@ pub struct GateRevision {
     pub signals: Vec<GateSignal>,
     pub changed_paths: Vec<RepoPathProjection>,
     pub snapshot: Option<AnalysisSnapshot>,
+    #[serde(default)]
     pub protected_semantic_inputs: Vec<SemanticInputRecord>,
     #[serde(default)]
     pub alias_closures: Vec<PhysicalAliasClosureRecord>,
@@ -254,7 +266,7 @@ pub struct GateRevision {
     pub deltas: Vec<GateDeltaRecord>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GateRecord {
     pub schema_version: String,
@@ -272,6 +284,55 @@ pub struct GateRecord {
     pub baseline: Option<GateBaseline>,
     pub protected_semantic_inputs: Vec<SemanticInputRecord>,
     pub revisions: Vec<GateRevision>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GateRecordWire {
+    schema_version: String,
+    gate_id: GateId,
+    lifecycle: GateLifecycle,
+    current_revision: u64,
+    declared_write_set: Vec<RepoPathProjection>,
+    #[serde(default)]
+    leased_write_set: Vec<WriteLease>,
+    #[serde(default)]
+    alias_closures: Vec<PhysicalAliasClosureRecord>,
+    #[serde(default)]
+    transition_refs: Vec<u64>,
+    analysis_options: GateAnalysisOptions,
+    baseline: Option<GateBaseline>,
+    #[serde(default)]
+    protected_semantic_inputs: Option<Vec<SemanticInputRecord>>,
+    revisions: Vec<GateRevision>,
+}
+
+impl<'de> Deserialize<'de> for GateRecord {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = GateRecordWire::deserialize(deserializer)?;
+        let protected_semantic_inputs = wire.protected_semantic_inputs.unwrap_or_else(|| {
+            wire.baseline.as_ref().map_or_else(Vec::new, |baseline| {
+                baseline.protected_semantic_inputs.clone()
+            })
+        });
+        Ok(Self {
+            schema_version: wire.schema_version,
+            gate_id: wire.gate_id,
+            lifecycle: wire.lifecycle,
+            current_revision: wire.current_revision,
+            declared_write_set: wire.declared_write_set,
+            leased_write_set: wire.leased_write_set,
+            alias_closures: wire.alias_closures,
+            transition_refs: wire.transition_refs,
+            analysis_options: wire.analysis_options,
+            baseline: wire.baseline,
+            protected_semantic_inputs,
+            revisions: wire.revisions,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -319,7 +380,10 @@ pub struct OperationRecord {
     pub declared_write_set: Vec<RepoPathProjection>,
     #[serde(default)]
     pub leased_write_set: Vec<WriteLease>,
+    #[serde(default)]
     pub semantic_read_reservations: Vec<RepoPathProjection>,
+    #[serde(default)]
+    pub semantic_read_reservation_bindings: Vec<SemanticReadReservationBinding>,
     pub analysis_options: Option<GateAnalysisOptions>,
     pub result: Option<GateOperationResult>,
 }
@@ -407,16 +471,15 @@ pub mod gate_policy {
         current: &AnalysisSnapshot,
         protected_semantic_inputs: &[SemanticInputRecord],
         leased_write_set: &[WriteLease],
-        newly_demanded_inputs: &[RepoPathProjection],
     ) -> (
         Vec<GateSignal>,
         Vec<RepoPathProjection>,
         Vec<GateDeltaRecord>,
     ) {
-        let protected_set = protected_semantic_inputs
+        let protected_by_path = protected_semantic_inputs
             .iter()
-            .map(|input| input.path.canonical.as_slice())
-            .collect::<BTreeSet<_>>();
+            .map(|input| (input.path.canonical.as_slice(), input))
+            .collect::<BTreeMap<_, _>>();
         let baseline_by_path = baseline
             .inputs
             .iter()
@@ -427,10 +490,6 @@ pub mod gate_policy {
             .iter()
             .map(|input| (input.path.canonical.as_slice(), input))
             .collect::<BTreeMap<_, _>>();
-        let newly_demanded_set = newly_demanded_inputs
-            .iter()
-            .map(|path| path.canonical.as_slice())
-            .collect::<BTreeSet<_>>();
         let mut changed = Vec::new();
         let mut protected = Vec::new();
         let mut unplanned = Vec::new();
@@ -441,31 +500,29 @@ pub mod gate_policy {
                 if !leased_write_set
                     .iter()
                     .any(|lease| lease.covers(&baseline_input.path))
-                    && protected_set.contains(path)
                 {
-                    protected.push(baseline_input.path.clone());
-                } else if !leased_write_set
-                    .iter()
-                    .any(|lease| lease.covers(&baseline_input.path))
-                {
-                    unplanned.push(baseline_input.path.clone());
+                    if let Some(reference) = protected_by_path.get(path) {
+                        if current_by_path.get(path).copied() != Some(*reference) {
+                            protected.push(baseline_input.path.clone());
+                        }
+                    } else {
+                        unplanned.push(baseline_input.path.clone());
+                    }
                 }
             }
         }
         for (path, current_input) in &current_by_path {
             if !baseline_by_path.contains_key(path) {
-                let demanded_read_only = newly_demanded_set.contains(path)
-                    && !leased_write_set
-                        .iter()
-                        .any(|lease| lease.covers(&current_input.path));
-                if demanded_read_only {
+                let leased = leased_write_set
+                    .iter()
+                    .any(|lease| lease.covers(&current_input.path));
+                if protected_by_path.get(path).copied() == Some(*current_input) {
                     continue;
                 }
                 changed.push(current_input.path.clone());
-                if !leased_write_set
-                    .iter()
-                    .any(|lease| lease.covers(&current_input.path))
-                {
+                if !leased && protected_by_path.contains_key(path) {
+                    protected.push(current_input.path.clone());
+                } else if !leased {
                     unplanned.push(current_input.path.clone());
                 }
             }
@@ -672,4 +729,85 @@ fn push_count(
 fn sort_paths(paths: &mut Vec<RepoPathProjection>) {
     paths.sort();
     paths.dedup();
+}
+
+#[cfg(test)]
+mod tests {
+    use lumin_model::{CapabilityState, RepoPath};
+
+    use super::*;
+    use crate::{CapabilityRecord, DEAD_CODE_CAPABILITY_ID};
+
+    #[test]
+    fn retry_revalidates_a_previously_protected_new_demand()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let baseline = snapshot(Vec::new());
+        let protected = input("config/base.json", "before")?;
+        let current = snapshot(vec![input("config/base.json", "after")?]);
+
+        let (signals, changed, _) = gate_policy::closing_signals(
+            &baseline,
+            &current,
+            std::slice::from_ref(&protected),
+            &[],
+        );
+
+        assert_eq!(changed, vec![protected.path.clone()]);
+        assert!(matches!(
+            signals.as_slice(),
+            [GateSignal::ProtectedInputChanged { paths }] if paths == std::slice::from_ref(&protected.path)
+        ));
+        assert_eq!(gate_policy::decision(&signals), GateDecision::Stale);
+        Ok(())
+    }
+
+    #[test]
+    fn first_seen_input_outside_the_lease_is_not_assumed_read_only()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let baseline = snapshot(Vec::new());
+        let current_input = input("config/base.json", "current")?;
+        let current = snapshot(vec![current_input.clone()]);
+
+        let (signals, changed, _) = gate_policy::closing_signals(&baseline, &current, &[], &[]);
+
+        assert_eq!(changed, vec![current_input.path.clone()]);
+        assert!(matches!(
+            signals.as_slice(),
+            [GateSignal::UnplannedWrite { paths }] if paths == std::slice::from_ref(&current_input.path)
+        ));
+        assert_eq!(gate_policy::decision(&signals), GateDecision::Deny);
+        Ok(())
+    }
+
+    fn snapshot(inputs: Vec<SemanticInputRecord>) -> AnalysisSnapshot {
+        seal_analysis_snapshot(
+            inputs,
+            RunEvidence {
+                schema_version: "lumin-evidence.v1".to_owned(),
+                capabilities: vec![CapabilityRecord {
+                    capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
+                    state: CapabilityState::Complete,
+                }],
+                resolution_profiles: Vec::new(),
+                findings: Vec::new(),
+                limitations: Vec::new(),
+            },
+        )
+    }
+
+    fn input(
+        value: &str,
+        payload_sha256: &str,
+    ) -> Result<SemanticInputRecord, Box<dyn std::error::Error>> {
+        Ok(SemanticInputRecord {
+            path: path(value)?,
+            state: SemanticInputState::ConfigPresent,
+            payload_sha256: Some(payload_sha256.to_owned()),
+            physical_identity: None,
+        })
+    }
+
+    fn path(value: &str) -> Result<RepoPathProjection, Box<dyn std::error::Error>> {
+        Ok(RepoPathProjection::from(&RepoPath::from_portable(value)?))
+    }
 }

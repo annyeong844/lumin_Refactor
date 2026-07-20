@@ -2,7 +2,7 @@ use lumin_evidence::{
     AnalysisSnapshot, GateAnalysisOptions, GateBaseline, GateLifecycle, GateOperationKind,
     GateOperationResult, GateOperationStatus, GateRecord, GateRevision, GateSignal,
     OperationRecord, PhysicalAliasClosureRecord, RepoPathProjection, SemanticInputRecord,
-    TransitionCapsule, WorktreeTransition, WriteLease, gate_policy,
+    SemanticReadReservationBinding, TransitionCapsule, WorktreeTransition, WriteLease, gate_policy,
 };
 use lumin_model::{GateDeltaRecord, GateId, OperationId};
 use redb::{
@@ -125,6 +125,7 @@ impl RepositoryStore {
                 declared_write_set: declared_write_set.to_vec(),
                 leased_write_set: initial_leases.to_vec(),
                 semantic_read_reservations: Vec::new(),
+                semantic_read_reservation_bindings: Vec::new(),
                 analysis_options: Some(analysis_options.clone()),
                 result: None,
             };
@@ -270,6 +271,7 @@ impl RepositoryStore {
                 declared_write_set: Vec::new(),
                 leased_write_set: gate.leased_write_set.clone(),
                 semantic_read_reservations: Vec::new(),
+                semantic_read_reservation_bindings: Vec::new(),
                 analysis_options: None,
                 result: None,
             };
@@ -295,13 +297,13 @@ impl RepositoryStore {
         operation_id: &OperationId,
         request_digest: &str,
         gate_id: &GateId,
-        demanded_paths: &[RepoPathProjection],
+        demanded_inputs: &[SemanticReadReservationBinding],
     ) -> Result<SemanticReadReservation, StoreError> {
         self.reserve_semantic_inputs(
             operation_id,
             request_digest,
             gate_id,
-            demanded_paths,
+            demanded_inputs,
             GateOperationKind::PostWrite,
             "post-write semantic-read reservation",
         )
@@ -312,13 +314,13 @@ impl RepositoryStore {
         operation_id: &OperationId,
         request_digest: &str,
         gate_id: &GateId,
-        demanded_paths: &[RepoPathProjection],
+        demanded_inputs: &[SemanticReadReservationBinding],
     ) -> Result<SemanticReadReservation, StoreError> {
         self.reserve_semantic_inputs(
             operation_id,
             request_digest,
             gate_id,
-            demanded_paths,
+            demanded_inputs,
             GateOperationKind::PreWrite,
             "pre-write semantic-read reservation",
         )
@@ -329,11 +331,25 @@ impl RepositoryStore {
         operation_id: &OperationId,
         request_digest: &str,
         gate_id: &GateId,
-        demanded_paths: &[RepoPathProjection],
+        demanded_inputs: &[SemanticReadReservationBinding],
         kind: GateOperationKind,
         phase: &str,
     ) -> Result<SemanticReadReservation, StoreError> {
-        let mut demanded_paths = demanded_paths.to_vec();
+        let mut demanded_inputs = demanded_inputs.to_vec();
+        demanded_inputs.sort();
+        for pair in demanded_inputs.windows(2) {
+            if pair[0].path == pair[1].path && pair[0] != pair[1] {
+                return Err(StoreError::Integrity(format!(
+                    "semantic-read demand has conflicting physical identities: {}",
+                    pair[0].path.display
+                )));
+            }
+        }
+        demanded_inputs.dedup();
+        let mut demanded_paths = demanded_inputs
+            .iter()
+            .map(|input| input.path.clone())
+            .collect::<Vec<_>>();
         demanded_paths.sort();
         demanded_paths.dedup();
         self.with_exclusive_lock(|| {
@@ -357,16 +373,35 @@ impl RepositoryStore {
                 return Ok(SemanticReadReservation::TransitionCatalogChanged);
             }
             let conflicts =
-                semantic_read_conflicts(&write, operation_id, gate_id, &demanded_paths)?;
+                semantic_read_conflicts(&write, operation_id, gate_id, &demanded_inputs)?;
             if !conflicts.paths.is_empty() {
                 return Ok(SemanticReadReservation::Conflict {
                     paths: conflicts.paths,
                     gate_ids: conflicts.gate_ids,
                 });
             }
+            for demanded in &demanded_inputs {
+                if let Some(existing) = operation
+                    .semantic_read_reservation_bindings
+                    .iter()
+                    .find(|existing| existing.path == demanded.path)
+                    && existing != demanded
+                {
+                    return Err(StoreError::Integrity(format!(
+                        "semantic-read reservation identity changed before capture: {}",
+                        demanded.path.display
+                    )));
+                }
+            }
             operation.semantic_read_reservations.extend(demanded_paths);
             operation.semantic_read_reservations.sort();
             operation.semantic_read_reservations.dedup();
+            operation
+                .semantic_read_reservation_bindings
+                .extend(demanded_inputs);
+            operation.semantic_read_reservation_bindings.sort();
+            operation.semantic_read_reservation_bindings.dedup();
+            validate_reservation_binding_set(&operation)?;
             write_record(
                 &write,
                 OPERATIONS,
@@ -410,6 +445,13 @@ impl RepositoryStore {
                 return Ok(result);
             }
             let mut gate = load_active_gate_for_post_write(&write, gate_id, &operation)?;
+            if let Some(snapshot) = snapshot.as_ref() {
+                validate_captured_reservations(
+                    &operation,
+                    &snapshot.inputs,
+                    "post-write snapshot",
+                )?;
+            }
             validate_post_write_context(
                 &write,
                 &gate,
@@ -554,6 +596,11 @@ fn validate_pre_write_context(
                 omitted_reservations.join(", ")
             )));
         }
+        validate_captured_reservations(
+            operation,
+            &baseline.protected_semantic_inputs,
+            "pre-write baseline",
+        )?;
     }
     let semantic_inputs = baseline.map_or(&[][..], |baseline| {
         baseline.protected_semantic_inputs.as_slice()
@@ -679,12 +726,12 @@ fn validate_post_write_context(
             gate_ids: conflicts.gate_ids,
         });
     }
-    if !operation.semantic_read_reservations.is_empty() {
+    if !operation.semantic_read_reservation_bindings.is_empty() {
         let conflicts = semantic_read_conflicts(
             write,
             &operation.operation_id,
             &gate.gate_id,
-            &operation.semantic_read_reservations,
+            &operation.semantic_read_reservation_bindings,
         )?;
         if !conflicts.paths.is_empty() {
             signals.push(GateSignal::SemanticInputConflict {
@@ -709,6 +756,7 @@ fn snapshot_can_protect_current_reads(
                     | GateSignal::WriteConflict { .. }
                     | GateSignal::SemanticInputConflict { .. }
                     | GateSignal::ProtectedInputChanged { .. }
+                    | GateSignal::UnplannedWrite { .. }
                     | GateSignal::AnalysisContractChanged
                     | GateSignal::ActiveTransitionPending { .. }
                     | GateSignal::TransitionChainBroken { .. }
@@ -837,6 +885,64 @@ fn validate_operation(
             operation.operation_id.as_str().to_owned(),
         ));
     }
+    validate_reservation_binding_set(operation)?;
+    Ok(())
+}
+
+fn validate_reservation_binding_set(operation: &OperationRecord) -> Result<(), StoreError> {
+    if operation.status == GateOperationStatus::Committed
+        && operation.semantic_read_reservation_bindings.is_empty()
+    {
+        return Ok(());
+    }
+    let mut bindings = operation.semantic_read_reservation_bindings.clone();
+    bindings.sort();
+    for pair in bindings.windows(2) {
+        if pair[0].path == pair[1].path && pair[0] != pair[1] {
+            return Err(StoreError::Integrity(format!(
+                "semantic-read reservation has conflicting physical identities: {}",
+                pair[0].path.display
+            )));
+        }
+    }
+    let mut bound_paths = operation
+        .semantic_read_reservation_bindings
+        .iter()
+        .map(|binding| binding.path.clone())
+        .collect::<Vec<_>>();
+    bound_paths.sort();
+    bound_paths.dedup();
+    if bound_paths != operation.semantic_read_reservations {
+        return Err(StoreError::Integrity(format!(
+            "pending semantic-read reservation bindings disagree with paths: {}",
+            operation.operation_id.as_str()
+        )));
+    }
+    Ok(())
+}
+
+fn validate_captured_reservations(
+    operation: &OperationRecord,
+    inputs: &[SemanticInputRecord],
+    phase: &str,
+) -> Result<(), StoreError> {
+    for binding in &operation.semantic_read_reservation_bindings {
+        let captured = inputs
+            .iter()
+            .find(|input| input.path == binding.path)
+            .ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "{phase} omitted reserved semantic input: {}",
+                    binding.path.display
+                ))
+            })?;
+        if captured.physical_identity != binding.physical_identity {
+            return Err(StoreError::Integrity(format!(
+                "{phase} physical identity disagrees with reservation: {}",
+                binding.path.display
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -855,6 +961,7 @@ fn conflicts(
         {
             continue;
         }
+        validate_reservation_binding_set(&operation)?;
         if operation.kind == GateOperationKind::PreWrite {
             collect_conflicts(
                 leased_write_set,
@@ -866,8 +973,8 @@ fn conflicts(
                 &mut gate_ids,
             );
         }
-        collect_lease_covered_paths(
-            &operation.semantic_read_reservations,
+        collect_reservation_conflicts(
+            &operation.semantic_read_reservation_bindings,
             leased_write_set,
             &operation.gate_id,
             &mut paths,
@@ -897,16 +1004,21 @@ fn conflicts(
     Ok((paths, gate_ids))
 }
 
-fn collect_lease_covered_paths(
-    paths_to_check: &[RepoPathProjection],
+fn collect_reservation_conflicts(
+    reservations: &[SemanticReadReservationBinding],
     leases: &[WriteLease],
     existing_gate_id: &GateId,
     paths: &mut Vec<RepoPathProjection>,
     gate_ids: &mut Vec<GateId>,
 ) {
-    for path in paths_to_check {
-        if leases.iter().any(|lease| lease.covers(path)) {
-            paths.push(path.clone());
+    for reservation in reservations {
+        if leases.iter().any(|lease| {
+            lease.conflicts_with_semantic_read(
+                &reservation.path,
+                reservation.physical_identity.as_ref(),
+            )
+        }) {
+            paths.push(reservation.path.clone());
             gate_ids.push(existing_gate_id.clone());
         }
     }
@@ -925,19 +1037,18 @@ fn collect_conflicts(
         if existing_leases
             .iter()
             .any(|existing| lease.conflicts_with(existing))
-            || existing_inputs
-                .iter()
-                .any(|input| lease.conflicts_with_input(input))
+            || existing_inputs.iter().any(|input| {
+                lease.conflicts_with_semantic_read(&input.path, input.physical_identity.as_ref())
+            })
         {
             paths.push(lease.path.clone());
             gate_ids.push(existing_gate_id.clone());
         }
     }
     for input in candidate_inputs {
-        if existing_leases
-            .iter()
-            .any(|lease| lease.conflicts_with_input(input))
-        {
+        if existing_leases.iter().any(|lease| {
+            lease.conflicts_with_semantic_read(&input.path, input.physical_identity.as_ref())
+        }) {
             paths.push(input.path.clone());
             gate_ids.push(existing_gate_id.clone());
         }
@@ -1055,7 +1166,7 @@ fn semantic_read_conflicts(
     write: &WriteTransaction,
     own_operation_id: &OperationId,
     own_gate_id: &GateId,
-    demanded_paths: &[RepoPathProjection],
+    demanded_inputs: &[SemanticReadReservationBinding],
 ) -> Result<ConflictSet, StoreError> {
     let mut paths = Vec::new();
     let mut gate_ids = Vec::new();
@@ -1066,8 +1177,9 @@ fn semantic_read_conflicts(
         {
             continue;
         }
-        collect_lease_covered_paths(
-            demanded_paths,
+        validate_reservation_binding_set(&operation)?;
+        collect_reservation_conflicts(
+            demanded_inputs,
             &operation.leased_write_set,
             &operation.gate_id,
             &mut paths,
@@ -1078,8 +1190,8 @@ fn semantic_read_conflicts(
         if gate.lifecycle != GateLifecycle::Active || gate.gate_id == *own_gate_id {
             continue;
         }
-        collect_lease_covered_paths(
-            demanded_paths,
+        collect_reservation_conflicts(
+            demanded_inputs,
             &gate.leased_write_set,
             &gate.gate_id,
             &mut paths,
@@ -1226,11 +1338,158 @@ fn write_record<T: Serialize>(
 #[cfg(test)]
 mod tests {
     use lumin_evidence::{
-        CapabilityRecord, DEAD_CODE_CAPABILITY_ID, RunEvidence, seal_analysis_snapshot,
+        CapabilityRecord, DEAD_CODE_CAPABILITY_ID, RunEvidence, SemanticInputState,
+        seal_analysis_snapshot,
     };
     use lumin_model::{CapabilityState, RepoPath};
 
     use super::*;
+
+    #[test]
+    fn persisted_v1_gate_additions_default_when_absent() -> Result<(), Box<dyn std::error::Error>> {
+        let operation_id = OperationId::from_string("operation-1".to_owned());
+        let gate_id = GateId::from_string("gate-1".to_owned());
+        let protected = SemanticInputRecord {
+            path: path("config/base.json")?,
+            state: SemanticInputState::ConfigPresent,
+            payload_sha256: Some("baseline".to_owned()),
+            physical_identity: None,
+        };
+        let baseline = GateBaseline {
+            analysis_contract: "contract".to_owned(),
+            snapshot: empty_snapshot(),
+            protected_semantic_inputs: vec![protected.clone()],
+            transition_sequence: 0,
+        };
+        let revision = GateRevision {
+            revision: 0,
+            operation_id: operation_id.clone(),
+            decision: lumin_evidence::GateDecision::Allow,
+            signals: Vec::new(),
+            changed_paths: Vec::new(),
+            snapshot: None,
+            protected_semantic_inputs: vec![protected.clone()],
+            alias_closures: Vec::new(),
+            reconciled_transition_sequences: Vec::new(),
+            deltas: Vec::new(),
+        };
+        let gate = GateRecord {
+            schema_version: "lumin-gate.v1".to_owned(),
+            gate_id: gate_id.clone(),
+            lifecycle: GateLifecycle::Active,
+            current_revision: 0,
+            declared_write_set: Vec::new(),
+            leased_write_set: Vec::new(),
+            alias_closures: Vec::new(),
+            transition_refs: Vec::new(),
+            analysis_options: GateAnalysisOptions {
+                jobs: 1,
+                resolution_profile: None,
+            },
+            baseline: Some(baseline),
+            protected_semantic_inputs: vec![protected],
+            revisions: vec![revision],
+        };
+        let mut gate_json = serde_json::to_value(gate)?;
+        gate_json
+            .as_object_mut()
+            .ok_or("gate JSON is not an object")?
+            .remove("protectedSemanticInputs");
+        gate_json
+            .pointer_mut("/revisions/0")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or("gate revision JSON is not an object")?
+            .remove("protectedSemanticInputs");
+        let loaded_gate: GateRecord = serde_json::from_value(gate_json)?;
+        assert_eq!(
+            loaded_gate.protected_semantic_inputs,
+            loaded_gate
+                .baseline
+                .as_ref()
+                .ok_or("loaded gate baseline is missing")?
+                .protected_semantic_inputs
+        );
+        assert!(
+            loaded_gate.revisions[0]
+                .protected_semantic_inputs
+                .is_empty()
+        );
+
+        let operation = OperationRecord {
+            schema_version: "lumin-operation.v1".to_owned(),
+            operation_id,
+            kind: GateOperationKind::PostWrite,
+            request_digest: "digest".to_owned(),
+            status: GateOperationStatus::Pending,
+            gate_id,
+            target_revision: 0,
+            transition_sequence: 0,
+            declared_write_set: Vec::new(),
+            leased_write_set: Vec::new(),
+            semantic_read_reservations: vec![path("config/base.json")?],
+            semantic_read_reservation_bindings: Vec::new(),
+            analysis_options: None,
+            result: None,
+        };
+        let mut operation_json = serde_json::to_value(operation)?;
+        let operation_object = operation_json
+            .as_object_mut()
+            .ok_or("operation JSON is not an object")?;
+        operation_object.remove("semanticReadReservations");
+        operation_object.remove("semanticReadReservationBindings");
+        let loaded_operation: OperationRecord = serde_json::from_value(operation_json)?;
+        assert!(loaded_operation.semantic_read_reservations.is_empty());
+        assert!(
+            loaded_operation
+                .semantic_read_reservation_bindings
+                .is_empty()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_reservation_rejects_conflicting_physical_identities()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let reserved_path = path("config/base.json")?;
+        let operation = OperationRecord {
+            schema_version: "lumin-operation.v1".to_owned(),
+            operation_id: OperationId::from_string("operation-conflicting-binding".to_owned()),
+            kind: GateOperationKind::PostWrite,
+            request_digest: "digest".to_owned(),
+            status: GateOperationStatus::Pending,
+            gate_id: GateId::from_string("gate-conflicting-binding".to_owned()),
+            target_revision: 1,
+            transition_sequence: 0,
+            declared_write_set: Vec::new(),
+            leased_write_set: Vec::new(),
+            semantic_read_reservations: vec![reserved_path.clone()],
+            semantic_read_reservation_bindings: vec![
+                reservation(
+                    reserved_path.clone(),
+                    Some(lumin_model::PhysicalFileIdentity::Unix {
+                        device: 7,
+                        inode: 11,
+                    }),
+                ),
+                reservation(
+                    reserved_path,
+                    Some(lumin_model::PhysicalFileIdentity::Unix {
+                        device: 7,
+                        inode: 12,
+                    }),
+                ),
+            ],
+            analysis_options: None,
+            result: None,
+        };
+
+        assert!(matches!(
+            validate_reservation_binding_set(&operation),
+            Err(StoreError::Integrity(detail))
+                if detail.contains("conflicting physical identities")
+        ));
+        Ok(())
+    }
 
     #[test]
     fn pre_write_semantic_read_reservation_blocks_later_write_admission()
@@ -1261,7 +1520,7 @@ mod tests {
                 &reader_operation,
                 "reader-digest",
                 &reader_gate,
-                std::slice::from_ref(&demanded),
+                std::slice::from_ref(&reservation(demanded.clone(), None)),
             )?,
             SemanticReadReservation::Reserved
         );
@@ -1330,7 +1589,7 @@ mod tests {
                 &operation_id,
                 "open-digest",
                 &gate_id,
-                std::slice::from_ref(&demanded),
+                std::slice::from_ref(&reservation(demanded.clone(), None)),
             )?,
             SemanticReadReservation::Reserved
         );
@@ -1420,7 +1679,7 @@ mod tests {
                 &close_operation,
                 "close-digest",
                 &gate_id,
-                std::slice::from_ref(&demanded),
+                std::slice::from_ref(&reservation(demanded.clone(), None)),
             )?,
             SemanticReadReservation::Reserved
         );
@@ -1450,6 +1709,73 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn physical_alias_writer_cannot_cross_a_pending_semantic_read_reservation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let store = RepositoryStore::open(root.path())?;
+        let options = GateAnalysisOptions {
+            jobs: 1,
+            resolution_profile: None,
+        };
+        let reader_operation = OperationId::from_string("op-alias-reader".to_owned());
+        let reader_source = path("src/new.ts")?;
+        let reader_gate = match store.reserve_pre_write(
+            &reader_operation,
+            "reader-digest",
+            std::slice::from_ref(&reader_source),
+            &[lease(reader_source.clone())],
+            &options,
+        )? {
+            PreWriteStart::Analyze { gate_id, .. } => gate_id,
+            PreWriteStart::Committed(_) => {
+                return Err("the alias reader was unexpectedly committed".into());
+            }
+        };
+        let read_alias = path("config/read-alias.json")?;
+        let physical_identity = lumin_model::PhysicalFileIdentity::Unix {
+            device: 7,
+            inode: 11,
+        };
+        assert_eq!(
+            store.reserve_pre_write_semantic_inputs(
+                &reader_operation,
+                "reader-digest",
+                &reader_gate,
+                std::slice::from_ref(&reservation(
+                    read_alias.clone(),
+                    Some(physical_identity.clone()),
+                )),
+            )?,
+            SemanticReadReservation::Reserved
+        );
+
+        let write_alias = path("config/write-alias.json")?;
+        let writer_operation = OperationId::from_string("op-alias-writer".to_owned());
+        let rejected = match store.reserve_pre_write(
+            &writer_operation,
+            "writer-digest",
+            std::slice::from_ref(&write_alias),
+            &[lease_with_identity(write_alias.clone(), physical_identity)],
+            &options,
+        )? {
+            PreWriteStart::Committed(result) => result,
+            PreWriteStart::Analyze { .. } => {
+                return Err("a physical alias crossed the semantic-read reservation".into());
+            }
+        };
+        assert_eq!(rejected.decision, lumin_evidence::GateDecision::Incomplete);
+        assert!(rejected.signals.iter().any(|signal| {
+            matches!(
+                signal,
+                GateSignal::WriteConflict { paths, gate_ids }
+                    if paths == std::slice::from_ref(&read_alias)
+                        && gate_ids == std::slice::from_ref(&reader_gate)
+            )
+        }));
+        Ok(())
+    }
+
     fn path(value: &str) -> Result<RepoPathProjection, Box<dyn std::error::Error>> {
         Ok(RepoPathProjection::from(&RepoPath::from_portable(value)?))
     }
@@ -1461,6 +1787,26 @@ mod tests {
             physical_identity: None,
             nearest_existing_parent: None,
             prefix_identities: Vec::new(),
+        }
+    }
+
+    fn lease_with_identity(
+        path: RepoPathProjection,
+        physical_identity: lumin_model::PhysicalFileIdentity,
+    ) -> WriteLease {
+        WriteLease {
+            physical_identity: Some(physical_identity),
+            ..lease(path)
+        }
+    }
+
+    fn reservation(
+        path: RepoPathProjection,
+        physical_identity: Option<lumin_model::PhysicalFileIdentity>,
+    ) -> SemanticReadReservationBinding {
+        SemanticReadReservationBinding {
+            path,
+            physical_identity,
         }
     }
 

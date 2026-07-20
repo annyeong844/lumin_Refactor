@@ -342,6 +342,19 @@ pub fn physical_file_identity(path: &Path) -> Result<PhysicalFileIdentity, Inven
     }
 }
 
+pub fn observe_config_physical_identity(
+    root: &Path,
+    path: &RepoPath,
+) -> Result<Option<PhysicalFileIdentity>, InventoryError> {
+    validate_root(root)?;
+    let native = root.join(path.to_native_relative());
+    match fs::symlink_metadata(&native) {
+        Ok(_) => physical_file_identity(&native).map(Some),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(InventoryError::PhysicalIdentity(error.to_string())),
+    }
+}
+
 pub fn directory_physical_identity(
     root: &Path,
     path: &RepoPath,
@@ -859,6 +872,26 @@ mod tests {
             b" /* tool @generated output */\nexport const value = 1;"
         ));
         assert!(!generated_marker(b"const text = '@generated';"));
+    }
+
+    #[test]
+    fn config_identity_observation_preserves_hard_link_alias_identity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        fs::create_dir(root.path().join("config"))?;
+        fs::write(root.path().join("config/base.json"), "{}\n")?;
+        fs::hard_link(
+            root.path().join("config/base.json"),
+            root.path().join("config/alias.json"),
+        )?;
+        let base = RepoPath::from_portable("config/base.json")?;
+        let alias = RepoPath::from_portable("config/alias.json")?;
+
+        assert_eq!(
+            observe_config_physical_identity(root.path(), &base)?,
+            observe_config_physical_identity(root.path(), &alias)?
+        );
+        Ok(())
     }
 
     #[test]

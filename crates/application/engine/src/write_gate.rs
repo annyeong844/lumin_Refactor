@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use lumin_evidence::{
     AnalysisSnapshot, GateAnalysisOptions, GateBaseline, GateOperationResult, GateRecord,
     GateSignal, OperationRecord, PathPrefixIdentity, PhysicalAliasClosureRecord,
-    RepoPathProjection, SemanticInputRecord, SemanticInputState, WorktreeTransition, WriteLease,
-    WriteLeaseKind, gate_policy, seal_analysis_snapshot,
+    RepoPathProjection, SemanticInputRecord, SemanticInputState, SemanticReadReservationBinding,
+    WorktreeTransition, WriteLease, WriteLeaseKind, gate_policy, seal_analysis_snapshot,
 };
 use lumin_inventory::{
     InventoryRequest, WriteTargetError, WriteTargetKind, WriteTargetObservation,
@@ -196,7 +196,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         );
     }
 
-    let (capture, newly_demanded_inputs) =
+    let capture =
         match capture_reserved_repository(&request.root, &gate.analysis_options, |paths| {
             store
                 .reserve_post_write_semantic_inputs(
@@ -207,10 +207,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                 )
                 .map_err(Into::into)
         }) {
-            Ok(ReservedCapture::Finished {
-                capture,
-                demanded_inputs,
-            }) => (capture, demanded_inputs),
+            Ok(ReservedCapture::Finished { capture }) => capture,
             Ok(ReservedCapture::Blocked(signal)) => {
                 return finish_failed_close(&store, request, &request_digest, vec![signal]);
             }
@@ -234,8 +231,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
     let changed_paths = changed_paths(
         &reconciled_baseline,
         &capture.snapshot,
-        &newly_demanded_inputs,
-        &gate.leased_write_set,
+        &gate.protected_semantic_inputs,
     );
     signals.extend(active_transition_signals(&changed_paths, &active_gates));
     let mut deltas = Vec::<GateDeltaRecord>::new();
@@ -246,9 +242,8 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         let (closing_signals, _, closing_deltas) = gate_policy::closing_signals(
             &reconciled_baseline,
             &capture.snapshot,
-            &baseline.protected_semantic_inputs,
+            &gate.protected_semantic_inputs,
             &gate.leased_write_set,
-            &newly_demanded_inputs,
         );
         signals.extend(closing_signals);
         deltas = closing_deltas;
@@ -302,10 +297,7 @@ fn finish_failed_close(
 }
 
 enum ReservedCapture {
-    Finished {
-        capture: RepositoryCapture,
-        demanded_inputs: Vec<RepoPathProjection>,
-    },
+    Finished { capture: RepositoryCapture },
     Blocked(GateSignal),
     Committed(GateOperationResult),
 }
@@ -313,21 +305,29 @@ enum ReservedCapture {
 fn capture_reserved_repository(
     root: &Path,
     options: &GateAnalysisOptions,
-    mut reserve: impl FnMut(&[RepoPathProjection]) -> Result<SemanticReadReservation, EngineError>,
+    mut reserve: impl FnMut(
+        &[SemanticReadReservationBinding],
+    ) -> Result<SemanticReadReservation, EngineError>,
 ) -> Result<ReservedCapture, EngineError> {
     let mut session =
         RepositoryAnalysisSession::start(root, &InventoryRequest::default(), options.jobs)?;
-    let mut demanded_inputs = BTreeSet::new();
     loop {
         match session.next_step(options.resolution_profile)? {
             RepositoryAnalysisStep::NeedsInputs(demands) => {
-                let paths = demands
+                let reservations = demands
                     .iter()
-                    .map(|demand| RepoPathProjection::from(&demand.path))
-                    .collect::<Vec<_>>();
-                match reserve(&paths)? {
+                    .map(|demand| {
+                        Ok(SemanticReadReservationBinding {
+                            path: RepoPathProjection::from(&demand.path),
+                            physical_identity: lumin_inventory::observe_config_physical_identity(
+                                root,
+                                &demand.path,
+                            )?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, EngineError>>()?;
+                match reserve(&reservations)? {
                     SemanticReadReservation::Reserved => {
-                        demanded_inputs.extend(paths);
                         session.capture_demands(root, demands)?;
                     }
                     SemanticReadReservation::Conflict { paths, gate_ids } => {
@@ -348,10 +348,7 @@ fn capture_reserved_repository(
             RepositoryAnalysisStep::Finished(resolver) => {
                 return session
                     .finish(root, resolver)
-                    .map(|capture| ReservedCapture::Finished {
-                        capture,
-                        demanded_inputs: demanded_inputs.into_iter().collect(),
-                    });
+                    .map(|capture| ReservedCapture::Finished { capture });
             }
         }
     }
@@ -565,12 +562,9 @@ fn protected_semantic_inputs(
     let protect_all_sources = leases
         .iter()
         .any(|lease| lease.kind == WriteLeaseKind::NewFile)
-        || (leases
+        || leases
             .iter()
-            .any(|lease| lease.kind == WriteLeaseKind::Directory)
-            && !leases
-                .iter()
-                .any(|lease| lease.kind == WriteLeaseKind::ExistingFile));
+            .any(|lease| lease.kind == WriteLeaseKind::Directory);
     let mut selected = if protect_all_sources {
         capture
             .source_paths
@@ -724,8 +718,7 @@ fn apply_transition(adjusted: &mut AnalysisSnapshot, transition: &WorktreeTransi
 fn changed_paths(
     baseline: &AnalysisSnapshot,
     current: &AnalysisSnapshot,
-    newly_demanded_inputs: &[RepoPathProjection],
-    leased_write_set: &[WriteLease],
+    protected_semantic_inputs: &[SemanticInputRecord],
 ) -> Vec<RepoPathProjection> {
     let baseline_by_path = baseline
         .inputs
@@ -737,10 +730,10 @@ fn changed_paths(
         .iter()
         .map(|input| (input.path.canonical.as_slice(), input))
         .collect::<BTreeMap<_, _>>();
-    let newly_demanded_set = newly_demanded_inputs
+    let protected_by_path = protected_semantic_inputs
         .iter()
-        .map(|path| path.canonical.as_slice())
-        .collect::<BTreeSet<_>>();
+        .map(|input| (input.path.canonical.as_slice(), input))
+        .collect::<BTreeMap<_, _>>();
     let mut changed = baseline
         .inputs
         .iter()
@@ -759,10 +752,7 @@ fn changed_paths(
             .filter(|input| {
                 let path = input.path.canonical.as_slice();
                 !baseline_by_path.contains_key(path)
-                    && (!newly_demanded_set.contains(path)
-                        || leased_write_set
-                            .iter()
-                            .any(|lease| lease.covers(&input.path)))
+                    && protected_by_path.get(path).copied() != Some(*input)
             })
             .map(|input| input.path.clone()),
     );

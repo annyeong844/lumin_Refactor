@@ -60,6 +60,10 @@ fn finding_delta_fact(finding: &FindingRecord) -> DeltaFact {
     ]));
     let owner_payload = BTreeMap::from([
         (
+            "claim".to_owned(),
+            DeltaOwnerPayloadValue::unordered(DeltaValue::text(&finding.claim)),
+        ),
+        (
             "disposition".to_owned(),
             DeltaOwnerPayloadValue::unordered(DeltaValue::bytes(disposition_bytes(
                 &finding.disposition,
@@ -99,10 +103,11 @@ fn limitation_delta(limitation: &Limitation) -> LimitationDelta {
             specifier,
             candidates,
         } if !candidates.is_empty() => {
+            let normalized_specifier = normalized_unresolved_specifier(specifier);
             let semantic_identity = frame([
                 importer.as_str().as_bytes(),
                 b"module-request",
-                specifier.as_bytes(),
+                normalized_specifier.as_bytes(),
             ]);
             LimitationDelta::Fact(DeltaFact {
                 key: DeltaKey {
@@ -141,6 +146,16 @@ fn limitation_delta(limitation: &Limitation) -> LimitationDelta {
         | Limitation::SfcExternalScriptUnresolved { .. }
         | Limitation::VueExternalScriptModeConflict { .. }
         | Limitation::VueTemplateOpaque { .. } => LimitationDelta::RequiredEvidenceGap,
+    }
+}
+
+fn normalized_unresolved_specifier(specifier: &str) -> &str {
+    if (specifier.starts_with("./") || specifier.starts_with("../"))
+        && let Some(stem) = specifier.strip_suffix(".js")
+    {
+        stem
+    } else {
+        specifier
     }
 }
 
@@ -188,7 +203,10 @@ fn severity_name(severity: Severity) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use lumin_model::{FindingId, SourceSpan, SymbolNamespace};
+    use lumin_model::{
+        DeltaDimensionChange, FindingId, GateDeltaClassification, SourceSpan, SymbolNamespace,
+        classify_lifecycle_deltas,
+    };
 
     use super::*;
     use crate::{DEAD_CODE_CAPABILITY_ID, DEAD_EXPORT_RULE_ID, RepoPathProjection};
@@ -224,6 +242,31 @@ mod tests {
     }
 
     #[test]
+    fn finding_claim_change_is_an_incomparable_payload_delta() {
+        let baseline = finding("no exact production fan-in");
+        let current = finding("consumed only from test-like sources");
+        let baseline_fact = finding_delta_fact(&baseline);
+        let current_fact = finding_delta_fact(&current);
+
+        assert_eq!(baseline_fact.key, current_fact.key);
+        assert!(matches!(
+            &classify_lifecycle_deltas(
+                Some(std::slice::from_ref(&baseline_fact)),
+                std::slice::from_ref(&current_fact),
+            )[0]
+                .classification,
+            GateDeltaClassification::ChangedIncomparable {
+                incomparable_changes,
+                ..
+            } if matches!(
+                incomparable_changes.as_slice(),
+                [DeltaDimensionChange::OwnerPayloadChanged { field_id, .. }]
+                    if field_id == "claim"
+            )
+        ));
+    }
+
+    #[test]
     fn bounded_unresolved_targets_are_comparable_adverse_facts() -> Result<(), &'static str> {
         let delta = limitation_delta(&Limitation::InternalSpecifierUnresolved {
             importer: LogicalSourceId::from_string("source-1".to_owned()),
@@ -239,6 +282,25 @@ mod tests {
         assert_eq!(fact.key.family, DeltaFactFamily::UnresolvedInternalEdge);
         assert!(fact.key.family.blocks_when_adverse());
         assert_eq!(fact.targets.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn equivalent_extensionless_and_js_requests_share_one_delta_key() -> Result<(), &'static str> {
+        let extensionless = bounded_unresolved_fact("./missing")?;
+        let explicit_js = bounded_unresolved_fact("./missing.js")?;
+        let explicit_mjs = bounded_unresolved_fact("./missing.mjs")?;
+
+        assert_eq!(extensionless.key, explicit_js.key);
+        assert_ne!(extensionless.key, explicit_mjs.key);
+        assert_eq!(
+            classify_lifecycle_deltas(
+                Some(std::slice::from_ref(&extensionless)),
+                std::slice::from_ref(&explicit_js),
+            )[0]
+            .classification,
+            GateDeltaClassification::Unchanged
+        );
         Ok(())
     }
 
@@ -259,5 +321,42 @@ mod tests {
             }),
             LimitationDelta::RequiredEvidenceGap
         ));
+    }
+
+    fn finding(claim: &str) -> FindingRecord {
+        FindingRecord {
+            finding_id: FindingId::from_string("finding-1".to_owned()),
+            rule_id: DEAD_EXPORT_RULE_ID.to_owned(),
+            owner_capability: DEAD_CODE_CAPABILITY_ID.to_owned(),
+            severity: Severity::Warning,
+            confidence: Confidence::Grounded,
+            disposition: FindingDisposition::ReviewCandidate,
+            claim: claim.to_owned(),
+            source_id: LogicalSourceId::from_string("source-1".to_owned()),
+            path: RepoPathProjection {
+                canonical: b"path".to_vec(),
+                components: vec![b"path".to_vec()],
+                display: "path".to_owned(),
+            },
+            span: SourceSpan { start: 1, end: 2 },
+            exported_name: "dead".to_owned(),
+            namespace: SymbolNamespace::Value,
+        }
+    }
+
+    fn bounded_unresolved_fact(specifier: &str) -> Result<DeltaFact, &'static str> {
+        match limitation_delta(&Limitation::InternalSpecifierUnresolved {
+            importer: LogicalSourceId::from_string("source-1".to_owned()),
+            specifier: specifier.to_owned(),
+            candidates: vec![
+                "src/missing.ts".to_owned(),
+                "src/missing.tsx".to_owned(),
+                "src/missing.js".to_owned(),
+                "src/missing.jsx".to_owned(),
+            ],
+        }) {
+            LimitationDelta::Fact(fact) => Ok(fact),
+            LimitationDelta::RequiredEvidenceGap => Err("bounded unresolved edge was not a fact"),
+        }
     }
 }
