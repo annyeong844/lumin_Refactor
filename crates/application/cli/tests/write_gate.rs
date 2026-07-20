@@ -669,6 +669,113 @@ fn disjoint_gates_reconcile_a_terminal_transition_on_retry()
 }
 
 #[test]
+fn pre_write_reserves_semantic_demands_before_capture_and_retries_after_writer_terminal()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = semantic_read_closure_fixture()?;
+    fs::write(
+        root.path().join("src/tsconfig.json"),
+        "{\"extends\":\"../config/base.json\"}\n",
+    )?;
+    let gate_b = open_gate(root.path(), "op-b-open", "config")?;
+
+    fs::write(root.path().join("config/base.json"), "{malformed\n")?;
+    let pending_a = run(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-a-demand-pending",
+            "--path",
+            "src/new.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&pending_a, 4);
+    assert_eq!(field(&pending_a.stdout, "decision")?, "incomplete");
+    assert_eq!(field(&pending_a.stdout, "lifecycle")?, "rejected");
+    let pending_json: Value = serde_json::from_str(&pending_a.stdout)?;
+    let signals = pending_json
+        .get("signals")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("pre-write signals are missing"))?;
+    let conflict = signals
+        .iter()
+        .find(|signal| {
+            signal.get("kind").and_then(Value::as_str) == Some("semantic-input-conflict")
+        })
+        .ok_or_else(|| std::io::Error::other("semantic input conflict is missing"))?;
+    assert_eq!(
+        conflict.pointer("/paths/0/display").and_then(Value::as_str),
+        Some("config/base.json")
+    );
+    assert_eq!(
+        conflict.pointer("/gateIds/0").and_then(Value::as_str),
+        Some(gate_b.as_str())
+    );
+    assert!(
+        !signals.iter().any(|signal| {
+            signal.get("kind").and_then(Value::as_str) == Some("analysis-failed")
+        })
+    );
+
+    let blocked_operation = run(root.path(), &["operation", "show", "op-a-demand-pending"])?;
+    assert_status(&blocked_operation, 0);
+    assert_eq!(
+        serde_json::from_str::<Value>(&blocked_operation.stdout)?
+            .get("semanticReadReservations")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(0)
+    );
+
+    fs::write(
+        root.path().join("config/base.json"),
+        "{\"extends\":\"../shared/root\",\"compilerOptions\":{}}\n",
+    )?;
+    let close_b = run(
+        root.path(),
+        &["post-write", &gate_b, "--operation-id", "op-b-close"],
+    )?;
+    assert_status(&close_b, 0);
+    assert_eq!(field(&close_b.stdout, "decision")?, "allow");
+
+    let opened_a = run(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-a-open",
+            "--path",
+            "src/new.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&opened_a, 0);
+    assert_eq!(field(&opened_a.stdout, "decision")?, "allow");
+
+    let operation = run(root.path(), &["operation", "show", "op-a-open"])?;
+    assert_status(&operation, 0);
+    let operation_json: Value = serde_json::from_str(&operation.stdout)?;
+    let reservation_paths = operation_json
+        .get("semanticReadReservations")
+        .and_then(Value::as_array)
+        .and_then(|paths| {
+            paths
+                .iter()
+                .map(|path| path.get("display").and_then(Value::as_str))
+                .collect::<Option<Vec<_>>>()
+        })
+        .ok_or_else(|| std::io::Error::other("semantic read reservations are missing"))?;
+    assert_eq!(
+        reservation_paths,
+        vec!["config/base.json", "shared/root", "shared/root.json"]
+    );
+    Ok(())
+}
+
+#[test]
 fn close_reserves_new_semantic_demands_before_capture_and_retries_after_writer_terminal()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = semantic_read_closure_fixture()?;

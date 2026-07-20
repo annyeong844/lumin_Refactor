@@ -297,6 +297,42 @@ impl RepositoryStore {
         gate_id: &GateId,
         demanded_paths: &[RepoPathProjection],
     ) -> Result<SemanticReadReservation, StoreError> {
+        self.reserve_semantic_inputs(
+            operation_id,
+            request_digest,
+            gate_id,
+            demanded_paths,
+            GateOperationKind::PostWrite,
+            "post-write semantic-read reservation",
+        )
+    }
+
+    pub fn reserve_pre_write_semantic_inputs(
+        &self,
+        operation_id: &OperationId,
+        request_digest: &str,
+        gate_id: &GateId,
+        demanded_paths: &[RepoPathProjection],
+    ) -> Result<SemanticReadReservation, StoreError> {
+        self.reserve_semantic_inputs(
+            operation_id,
+            request_digest,
+            gate_id,
+            demanded_paths,
+            GateOperationKind::PreWrite,
+            "pre-write semantic-read reservation",
+        )
+    }
+
+    fn reserve_semantic_inputs(
+        &self,
+        operation_id: &OperationId,
+        request_digest: &str,
+        gate_id: &GateId,
+        demanded_paths: &[RepoPathProjection],
+        kind: GateOperationKind,
+        phase: &str,
+    ) -> Result<SemanticReadReservation, StoreError> {
         let mut demanded_paths = demanded_paths.to_vec();
         demanded_paths.sort();
         demanded_paths.dedup();
@@ -306,15 +342,17 @@ impl RepositoryStore {
             let mut operation = load_operation_for_finish(
                 &write,
                 operation_id,
-                GateOperationKind::PostWrite,
+                kind,
                 request_digest,
                 Some(gate_id),
-                "post-write semantic-read reservation",
+                phase,
             )?;
             if let Some(result) = operation.result {
                 return Ok(SemanticReadReservation::Committed(result));
             }
-            load_active_gate_for_post_write(&write, gate_id, &operation)?;
+            if kind == GateOperationKind::PostWrite {
+                load_active_gate_for_post_write(&write, gate_id, &operation)?;
+            }
             if current_transition_sequence(&write)? != operation.transition_sequence {
                 return Ok(SemanticReadReservation::TransitionCatalogChanged);
             }
@@ -497,6 +535,25 @@ fn validate_pre_write_context(
         && !signals.contains(&GateSignal::TransitionCatalogChanged)
     {
         signals.push(GateSignal::TransitionCatalogChanged);
+    }
+    if let Some(baseline) = baseline {
+        let omitted_reservations = operation
+            .semantic_read_reservations
+            .iter()
+            .filter(|reserved| {
+                !baseline
+                    .protected_semantic_inputs
+                    .iter()
+                    .any(|input| input.path == **reserved)
+            })
+            .map(|path| path.display.clone())
+            .collect::<Vec<_>>();
+        if !omitted_reservations.is_empty() {
+            return Err(StoreError::Integrity(format!(
+                "pre-write baseline omitted reserved semantic inputs: {}",
+                omitted_reservations.join(", ")
+            )));
+        }
     }
     let semantic_inputs = baseline.map_or(&[][..], |baseline| {
         baseline.protected_semantic_inputs.as_slice()
@@ -1174,6 +1231,137 @@ mod tests {
     use lumin_model::{CapabilityState, RepoPath};
 
     use super::*;
+
+    #[test]
+    fn pre_write_semantic_read_reservation_blocks_later_write_admission()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let store = RepositoryStore::open(root.path())?;
+        let reader_operation = OperationId::from_string("op-reader".to_owned());
+        let reader_path = path("src/new.ts")?;
+        let options = GateAnalysisOptions {
+            jobs: 1,
+            resolution_profile: None,
+        };
+        let reader_gate = match store.reserve_pre_write(
+            &reader_operation,
+            "reader-digest",
+            std::slice::from_ref(&reader_path),
+            &[lease(reader_path.clone())],
+            &options,
+        )? {
+            PreWriteStart::Analyze { gate_id, .. } => gate_id,
+            PreWriteStart::Committed(_) => {
+                return Err("the reader operation was unexpectedly committed".into());
+            }
+        };
+        let demanded = path("config/base.json")?;
+        assert_eq!(
+            store.reserve_pre_write_semantic_inputs(
+                &reader_operation,
+                "reader-digest",
+                &reader_gate,
+                std::slice::from_ref(&demanded),
+            )?,
+            SemanticReadReservation::Reserved
+        );
+
+        let writer_operation = OperationId::from_string("op-writer".to_owned());
+        let rejected = match store.reserve_pre_write(
+            &writer_operation,
+            "writer-digest",
+            std::slice::from_ref(&demanded),
+            &[lease(demanded.clone())],
+            &options,
+        )? {
+            PreWriteStart::Committed(result) => result,
+            PreWriteStart::Analyze { .. } => {
+                return Err("a writer crossed a provisional semantic-read reservation".into());
+            }
+        };
+        assert_eq!(rejected.decision, lumin_evidence::GateDecision::Incomplete);
+        assert!(rejected.signals.iter().any(|signal| {
+            matches!(
+                signal,
+                GateSignal::WriteConflict { paths, gate_ids }
+                    if paths == std::slice::from_ref(&demanded)
+                        && gate_ids == std::slice::from_ref(&reader_gate)
+            )
+        }));
+        assert_eq!(
+            store
+                .load_operation(&reader_operation)?
+                .semantic_read_reservations,
+            vec![demanded]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn pre_write_finish_rejects_a_baseline_that_omits_a_reserved_input()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let store = RepositoryStore::open(root.path())?;
+        let operation_id = OperationId::from_string("op-open".to_owned());
+        let source = path("src/new.ts")?;
+        let source_lease = lease(source.clone());
+        let options = GateAnalysisOptions {
+            jobs: 1,
+            resolution_profile: None,
+        };
+        let (gate_id, transition_sequence) = match store.reserve_pre_write(
+            &operation_id,
+            "open-digest",
+            std::slice::from_ref(&source),
+            std::slice::from_ref(&source_lease),
+            &options,
+        )? {
+            PreWriteStart::Analyze {
+                gate_id,
+                transition_sequence,
+            } => (gate_id, transition_sequence),
+            PreWriteStart::Committed(_) => {
+                return Err("the opening operation was unexpectedly committed".into());
+            }
+        };
+        let demanded = path("config/base.json")?;
+        assert_eq!(
+            store.reserve_pre_write_semantic_inputs(
+                &operation_id,
+                "open-digest",
+                &gate_id,
+                std::slice::from_ref(&demanded),
+            )?,
+            SemanticReadReservation::Reserved
+        );
+
+        let error = match store.finish_pre_write(
+            &operation_id,
+            "open-digest",
+            &gate_id,
+            PreWriteFinish {
+                baseline: Some(GateBaseline {
+                    analysis_contract: "test-contract".to_owned(),
+                    snapshot: empty_snapshot(),
+                    protected_semantic_inputs: Vec::new(),
+                    transition_sequence,
+                }),
+                leased_write_set: vec![source_lease],
+                alias_closures: Vec::new(),
+                signals: Vec::new(),
+            },
+        ) {
+            Ok(_) => return Err("an unbound semantic-read reservation was accepted".into()),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            StoreError::Integrity(detail)
+                if detail.contains("pre-write baseline omitted reserved semantic inputs")
+                    && detail.contains("config/base.json")
+        ));
+        Ok(())
+    }
 
     #[test]
     fn semantic_read_reservation_blocks_later_write_admission()

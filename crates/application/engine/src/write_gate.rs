@@ -19,10 +19,7 @@ use lumin_store::{
     RepositoryStore, SemanticReadReservation,
 };
 
-use super::{
-    EngineError, RepositoryAnalysisSession, RepositoryAnalysisStep, RepositoryCapture,
-    capture_repository,
-};
+use super::{EngineError, RepositoryAnalysisSession, RepositoryAnalysisStep, RepositoryCapture};
 
 const ANALYSIS_CONTRACT: &str = "lumin-analysis-contract.phase1-foundation.v1";
 
@@ -78,53 +75,82 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         } => (gate_id, transition_sequence),
     };
 
-    let (baseline, leased_write_set, alias_closures, signals) = if inspection_signals.is_empty() {
-        analyze_pre_write(request, &observations, initial_leases, transition_sequence)
-    } else {
-        (None, initial_leases, Vec::new(), inspection_signals)
-    };
-    store
-        .finish_pre_write(
-            &request.operation_id,
+    let finish = if inspection_signals.is_empty() {
+        match analyze_pre_write(
+            &store,
+            request,
+            &observations,
+            initial_leases,
+            transition_sequence,
             &request_digest,
             &gate_id,
-            PreWriteFinish {
-                baseline,
-                leased_write_set,
-                alias_closures,
-                signals,
-            },
-        )
+        )? {
+            PreWriteAnalysis::Finished(finish) => finish,
+            PreWriteAnalysis::Committed(result) => return Ok(result),
+        }
+    } else {
+        PreWriteFinish {
+            baseline: None,
+            leased_write_set: initial_leases,
+            alias_closures: Vec::new(),
+            signals: inspection_signals,
+        }
+    };
+    store
+        .finish_pre_write(&request.operation_id, &request_digest, &gate_id, finish)
         .map_err(Into::into)
 }
 
+enum PreWriteAnalysis {
+    Finished(PreWriteFinish),
+    Committed(GateOperationResult),
+}
+
 fn analyze_pre_write(
+    store: &RepositoryStore,
     request: &PreWriteRequest,
     observations: &[WriteTargetObservation],
     initial_leases: Vec<WriteLease>,
     transition_sequence: u64,
-) -> (
-    Option<GateBaseline>,
-    Vec<WriteLease>,
-    Vec<PhysicalAliasClosureRecord>,
-    Vec<GateSignal>,
-) {
-    let capture = match capture_repository(
-        &request.root,
-        &InventoryRequest::default(),
-        request.jobs,
-        request.resolution_profile,
-    ) {
-        Ok(capture) => capture,
+    request_digest: &str,
+    gate_id: &GateId,
+) -> Result<PreWriteAnalysis, EngineError> {
+    let options = GateAnalysisOptions {
+        jobs: request.jobs,
+        resolution_profile: request.resolution_profile,
+    };
+    let capture = match capture_reserved_repository(&request.root, &options, |paths| {
+        store
+            .reserve_pre_write_semantic_inputs(
+                &request.operation_id,
+                request_digest,
+                gate_id,
+                paths,
+            )
+            .map_err(Into::into)
+    }) {
+        Ok(ReservedCapture::Finished { capture, .. }) => capture,
+        Ok(ReservedCapture::Blocked(signal)) => {
+            return Ok(PreWriteAnalysis::Finished(PreWriteFinish {
+                baseline: None,
+                leased_write_set: initial_leases,
+                alias_closures: Vec::new(),
+                signals: vec![signal],
+            }));
+        }
+        Ok(ReservedCapture::Committed(result)) => {
+            return Ok(PreWriteAnalysis::Committed(result));
+        }
+        Err(EngineError::Store(error)) => return Err(EngineError::Store(error)),
         Err(error) => {
-            return (
-                None,
-                initial_leases,
-                Vec::new(),
-                vec![GateSignal::AnalysisFailed {
+            return Ok(PreWriteAnalysis::Finished(PreWriteFinish {
+                baseline: None,
+                leased_write_set: initial_leases,
+                alias_closures: Vec::new(),
+                signals: vec![GateSignal::AnalysisFailed {
                     detail: error.to_string(),
                 }],
-            );
+            }));
         }
     };
     let (leased_write_set, alias_closures, mut signals) =
@@ -137,7 +163,12 @@ fn analyze_pre_write(
         protected_semantic_inputs,
         transition_sequence,
     };
-    (Some(baseline), leased_write_set, alias_closures, signals)
+    Ok(PreWriteAnalysis::Finished(PreWriteFinish {
+        baseline: Some(baseline),
+        leased_write_set,
+        alias_closures,
+        signals,
+    }))
 }
 
 pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResult, EngineError> {
@@ -166,15 +197,24 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
     }
 
     let (capture, newly_demanded_inputs) =
-        match capture_close_repository(&store, request, &request_digest, &gate.analysis_options) {
-            Ok(CloseCapture::Finished {
+        match capture_reserved_repository(&request.root, &gate.analysis_options, |paths| {
+            store
+                .reserve_post_write_semantic_inputs(
+                    &request.operation_id,
+                    &request_digest,
+                    &request.gate_id,
+                    paths,
+                )
+                .map_err(Into::into)
+        }) {
+            Ok(ReservedCapture::Finished {
                 capture,
-                newly_demanded_inputs,
-            }) => (capture, newly_demanded_inputs),
-            Ok(CloseCapture::Blocked(signal)) => {
+                demanded_inputs,
+            }) => (capture, demanded_inputs),
+            Ok(ReservedCapture::Blocked(signal)) => {
                 return finish_failed_close(&store, request, &request_digest, vec![signal]);
             }
-            Ok(CloseCapture::Committed(result)) => return Ok(result),
+            Ok(ReservedCapture::Committed(result)) => return Ok(result),
             Err(EngineError::Store(error)) => return Err(EngineError::Store(error)),
             Err(error) => {
                 return finish_failed_close(
@@ -261,27 +301,23 @@ fn finish_failed_close(
         .map_err(Into::into)
 }
 
-enum CloseCapture {
+enum ReservedCapture {
     Finished {
         capture: RepositoryCapture,
-        newly_demanded_inputs: Vec<RepoPathProjection>,
+        demanded_inputs: Vec<RepoPathProjection>,
     },
     Blocked(GateSignal),
     Committed(GateOperationResult),
 }
 
-fn capture_close_repository(
-    store: &RepositoryStore,
-    request: &PostWriteRequest,
-    request_digest: &str,
+fn capture_reserved_repository(
+    root: &Path,
     options: &GateAnalysisOptions,
-) -> Result<CloseCapture, EngineError> {
-    let mut session = RepositoryAnalysisSession::start(
-        &request.root,
-        &InventoryRequest::default(),
-        options.jobs,
-    )?;
-    let mut newly_demanded_inputs = BTreeSet::new();
+    mut reserve: impl FnMut(&[RepoPathProjection]) -> Result<SemanticReadReservation, EngineError>,
+) -> Result<ReservedCapture, EngineError> {
+    let mut session =
+        RepositoryAnalysisSession::start(root, &InventoryRequest::default(), options.jobs)?;
+    let mut demanded_inputs = BTreeSet::new();
     loop {
         match session.next_step(options.resolution_profile)? {
             RepositoryAnalysisStep::NeedsInputs(demands) => {
@@ -289,37 +325,33 @@ fn capture_close_repository(
                     .iter()
                     .map(|demand| RepoPathProjection::from(&demand.path))
                     .collect::<Vec<_>>();
-                match store.reserve_post_write_semantic_inputs(
-                    &request.operation_id,
-                    request_digest,
-                    &request.gate_id,
-                    &paths,
-                )? {
+                match reserve(&paths)? {
                     SemanticReadReservation::Reserved => {
-                        newly_demanded_inputs.extend(paths);
-                        session.capture_demands(&request.root, demands)?;
+                        demanded_inputs.extend(paths);
+                        session.capture_demands(root, demands)?;
                     }
                     SemanticReadReservation::Conflict { paths, gate_ids } => {
-                        return Ok(CloseCapture::Blocked(GateSignal::SemanticInputConflict {
-                            paths,
-                            gate_ids,
-                        }));
+                        return Ok(ReservedCapture::Blocked(
+                            GateSignal::SemanticInputConflict { paths, gate_ids },
+                        ));
                     }
                     SemanticReadReservation::TransitionCatalogChanged => {
-                        return Ok(CloseCapture::Blocked(GateSignal::TransitionCatalogChanged));
+                        return Ok(ReservedCapture::Blocked(
+                            GateSignal::TransitionCatalogChanged,
+                        ));
                     }
                     SemanticReadReservation::Committed(result) => {
-                        return Ok(CloseCapture::Committed(result));
+                        return Ok(ReservedCapture::Committed(result));
                     }
                 }
             }
             RepositoryAnalysisStep::Finished(resolver) => {
-                return session.finish(&request.root, resolver).map(|capture| {
-                    CloseCapture::Finished {
+                return session
+                    .finish(root, resolver)
+                    .map(|capture| ReservedCapture::Finished {
                         capture,
-                        newly_demanded_inputs: newly_demanded_inputs.into_iter().collect(),
-                    }
-                });
+                        demanded_inputs: demanded_inputs.into_iter().collect(),
+                    });
             }
         }
     }
