@@ -25,6 +25,7 @@ publish = false
 [workspace.dependencies]
 base64 = "=0.22.1"
 fs2 = "=0.4.3"
+file-id = "=0.2.3"
 getrandom = "=0.4.3"
 ignore = "=0.4.26"
 oxc_allocator = "=0.126.0"

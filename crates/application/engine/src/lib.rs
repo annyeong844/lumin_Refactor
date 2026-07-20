@@ -14,7 +14,7 @@ use lumin_evidence::{
     AnalysisSnapshot, CapabilityRecord, DEAD_CODE_CAPABILITY_ID, RepoPathProjection, RunEvidence,
     SemanticInputRecord, SemanticInputState, seal_analysis_snapshot,
 };
-use lumin_inventory::{InventoryError, InventoryRequest, InventorySnapshot};
+use lumin_inventory::{InventoryError, InventoryRequest, InventorySnapshot, repository_admission};
 use lumin_model::{
     CapabilityState, ConfigObservation, FileFacts, Limitation, ResolutionOutcome,
     ResolutionProfile, ResolvedSourceUse, RoleOverride, RunId, SfcDialect, SourceSnapshot,
@@ -100,7 +100,8 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
     if request.jobs == 0 {
         return Err(EngineError::InvalidWorkerCount(0));
     }
-    let store = RepositoryStore::open(&request.root)?;
+    let context = open_repository_context(&request.root)?;
+    let store = &context.store;
     let attempt = store.begin_attempt()?;
     let inventory_request = InventoryRequest {
         includes: request.includes.clone(),
@@ -108,7 +109,7 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
         role_overrides: request.role_overrides.clone(),
     };
     let evidence = match analyze_repository(
-        &request.root,
+        &context.root,
         &inventory_request,
         request.jobs,
         request.resolution_profile,
@@ -148,8 +149,23 @@ pub fn analyze_repository(
     jobs: usize,
     resolution_profile: Option<ResolutionProfile>,
 ) -> Result<RunEvidence, EngineError> {
-    capture_repository(root, request, jobs, resolution_profile)
+    let context = open_repository_context(root)?;
+    capture_repository(&context.root, request, jobs, resolution_profile)
         .map(|capture| capture.snapshot.evidence)
+}
+
+struct RepositoryContext {
+    root: PathBuf,
+    store: RepositoryStore,
+}
+
+fn open_repository_context(root: &Path) -> Result<RepositoryContext, EngineError> {
+    let admission = repository_admission(root)?;
+    let store = RepositoryStore::open(&admission.canonical_root, &admission.binding)?;
+    Ok(RepositoryContext {
+        root: admission.canonical_root,
+        store,
+    })
 }
 
 struct RepositoryCapture {
@@ -545,7 +561,8 @@ pub fn load_run(
     root: &Path,
     run_id: &RunId,
 ) -> Result<(RunCatalogRecord, RunEvidence), EngineError> {
-    RepositoryStore::open(root)?
+    open_repository_context(root)?
+        .store
         .load_run(run_id)
         .map_err(Into::into)
 }
@@ -553,7 +570,7 @@ pub fn load_run(
 pub fn load_latest_run(
     root: &Path,
 ) -> Result<Option<(RunCatalogRecord, RunEvidence)>, EngineError> {
-    let store = RepositoryStore::open(root)?;
+    let store = open_repository_context(root)?.store;
     let Some(run_id) = store.latest_run_id()? else {
         return Ok(None);
     };

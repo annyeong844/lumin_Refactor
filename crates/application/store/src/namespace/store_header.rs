@@ -107,7 +107,7 @@ fn verify_store_header_bytes(bytes: &[u8], binding: &NamespaceBinding) -> Result
 
 fn store_header_bytes(binding: &NamespaceBinding) -> Result<Vec<u8>, StoreError> {
     serde_json::to_vec(&LifecycleStoreHeader {
-        schema_version: "lumin-lifecycle-store-header.v1".to_owned(),
+        schema_version: "lumin-lifecycle-store-header.v2".to_owned(),
         binding: binding.clone(),
     })
     .map_err(serialization_error)

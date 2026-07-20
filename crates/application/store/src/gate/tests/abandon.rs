@@ -4,7 +4,7 @@ use super::*;
 fn abandon_is_atomic_idempotent_and_creates_one_terminal_revision()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
-    let store = RepositoryStore::open(root.path())?;
+    let store = open_store(root.path())?;
     let gate_id = open_active_gate(
         &store,
         "op-abandon-open",
@@ -76,7 +76,7 @@ fn abandon_is_atomic_idempotent_and_creates_one_terminal_revision()
 #[test]
 fn abandon_rejects_stale_revision_and_a_live_close() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
-    let store = RepositoryStore::open(root.path())?;
+    let store = open_store(root.path())?;
     let gate_id = open_active_gate(&store, "op-busy-open", "busy-open-digest", "src/busy.ts")?;
 
     let stale_id = OperationId::from_string("op-stale-abandon".to_owned());

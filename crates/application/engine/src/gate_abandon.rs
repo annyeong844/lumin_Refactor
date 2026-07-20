@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use lumin_evidence::GateOperationResult;
 use lumin_model::{GateId, OperationId, append_length_prefixed, digest_hex};
-use lumin_store::{RepositoryStore, StoreError};
+use lumin_store::StoreError;
 
-use super::EngineError;
+use super::{EngineError, open_repository_context};
 
 #[derive(Clone, Debug)]
 pub struct AbandonGateRequest {
@@ -15,7 +15,7 @@ pub struct AbandonGateRequest {
 }
 
 pub fn abandon_gate(request: &AbandonGateRequest) -> Result<GateOperationResult, EngineError> {
-    let store = RepositoryStore::open(&request.root)?;
+    let store = open_repository_context(&request.root)?.store;
     let target_revision = match store.load_operation(&request.operation_id) {
         Ok(operation) => operation.target_revision,
         Err(StoreError::OperationNotFound(_)) => {

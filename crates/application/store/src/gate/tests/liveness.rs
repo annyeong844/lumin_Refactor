@@ -5,7 +5,7 @@ fn process_death_releases_pre_write_reservations_and_allows_same_operation_retry
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     run_death_fixture("pre-write", root.path(), None)?;
-    let store = RepositoryStore::open(root.path())?;
+    let store = open_store(root.path())?;
     let operation_id = OperationId::from_string("op-dead-pre-write".to_owned());
 
     let interrupted = store.load_operation(&operation_id)?;
@@ -68,7 +68,7 @@ fn process_death_releases_pre_write_reservations_and_allows_same_operation_retry
 fn process_death_releases_post_write_revision_without_mutating_the_gate()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
-    let store = RepositoryStore::open(root.path())?;
+    let store = open_store(root.path())?;
     let gate_id = open_active_gate(
         &store,
         "op-active-gate",
@@ -103,7 +103,7 @@ fn process_death_releases_post_write_revision_without_mutating_the_gate()
 #[test]
 fn a_live_operation_session_cannot_be_duplicated() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
-    let store = RepositoryStore::open(root.path())?;
+    let store = open_store(root.path())?;
     let operation_id = OperationId::from_string("op-live-session".to_owned());
     let _live = store.begin_operation(&operation_id)?;
     assert!(matches!(
@@ -119,7 +119,7 @@ fn process_death_pre_write_fixture() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     let root = std::path::PathBuf::from(std::env::var("LUMIN_GATE_DEATH_ROOT")?);
-    let store = RepositoryStore::open(&root)?;
+    let store = open_store(&root)?;
     let operation_id = OperationId::from_string("op-dead-pre-write".to_owned());
     let session = store.begin_operation(&operation_id)?;
     let source = path("src/dead-reader.ts")?;
@@ -151,7 +151,7 @@ fn process_death_post_write_fixture() -> Result<(), Box<dyn std::error::Error>> 
     }
     let root = std::path::PathBuf::from(std::env::var("LUMIN_GATE_DEATH_ROOT")?);
     let gate_id = GateId::from_string(std::env::var("LUMIN_GATE_DEATH_GATE")?);
-    let store = RepositoryStore::open(&root)?;
+    let store = open_store(&root)?;
     let operation_id = OperationId::from_string("op-dead-post-write".to_owned());
     let session = store.begin_operation(&operation_id)?;
     assert!(matches!(

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::RepoPath;
+use crate::{RepoPath, RepositoryRootIdentity};
 
 macro_rules! string_id {
     ($name:ident) => {
@@ -29,6 +29,16 @@ string_id!(AttemptId);
 string_id!(GateId);
 string_id!(OperationId);
 string_id!(AnalysisInputId);
+string_id!(RepositoryId);
+
+impl RepositoryId {
+    pub fn for_root(root: &RepositoryRootIdentity) -> Self {
+        let mut bytes = Vec::new();
+        append_length_prefixed(&mut bytes, b"lumin-repository-id.v1");
+        append_length_prefixed(&mut bytes, root.canonical_bytes());
+        Self(format!("repository_{}", digest_hex(&bytes)))
+    }
+}
 
 impl LogicalSourceId {
     pub fn from_path(path: &RepoPath) -> Self {

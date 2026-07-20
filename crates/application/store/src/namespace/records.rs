@@ -1,7 +1,9 @@
 use std::io::Write;
 use std::path::Path;
 
-use lumin_model::PhysicalFileIdentity;
+use lumin_model::{
+    PhysicalFileIdentity, RepositoryId, RepositoryRootIdentity, RepositoryRootPhysicalIdentity,
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tempfile::NamedTempFile;
 
@@ -16,6 +18,9 @@ pub(super) const MANAGED_KINDS: [ManagedStateParentKind; 4] = [
     ManagedStateParentKind::Trash,
     ManagedStateParentKind::Cache,
 ];
+pub(super) const REPOSITORY_SCHEMA: &str = "lumin-repository.v3";
+pub(super) const LOCK_SCHEMA: &str = "lumin-lifecycle-lock.v2";
+pub(super) const ANCHOR_SCHEMA: &str = "lumin-managed-parent-anchor.v2";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -40,6 +45,9 @@ impl ManagedStateParentKind {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct GlobalNamespaceBinding {
+    pub(super) repository_id: RepositoryId,
+    pub(super) repository_root_canonical: Vec<u8>,
+    pub(super) repository_root_physical_identity: RepositoryRootPhysicalIdentity,
     pub(super) state_directory_identity: PhysicalFileIdentity,
     pub(super) lifecycle_lock_identity: PhysicalFileIdentity,
     pub(super) namespace_nonce: String,
@@ -139,7 +147,7 @@ pub(super) fn write_new_canonical(path: &Path, value: &impl Serialize) -> Result
 
 pub(super) fn verify_marker(state: &NamespaceState) -> Result<(), StoreError> {
     let expected = RepositoryMarker {
-        schema_version: "lumin-repository.v2".to_owned(),
+        schema_version: REPOSITORY_SCHEMA.to_owned(),
         binding: state.binding.clone(),
     };
     let entry = HeldEntry::open(
@@ -159,7 +167,7 @@ pub(super) fn verify_lock_header(
     verify_canonical_entry(
         lock,
         &LifecycleLockHeader {
-            schema_version: "lumin-lifecycle-lock.v1".to_owned(),
+            schema_version: LOCK_SCHEMA.to_owned(),
             global: global.clone(),
         },
         "lifecycle.lock",
@@ -167,11 +175,12 @@ pub(super) fn verify_lock_header(
 }
 
 pub(super) fn validate_marker(marker: &RepositoryMarker) -> Result<(), StoreError> {
-    if marker.schema_version != "lumin-repository.v2" {
+    if marker.schema_version != REPOSITORY_SCHEMA {
         return Err(StoreError::Integrity(
             "repository marker schema is unsupported".to_owned(),
         ));
     }
+    validate_global_binding(&marker.binding.global)?;
     for (expected, binding) in MANAGED_KINDS
         .iter()
         .zip(marker.binding.managed_parents.iter())
@@ -181,6 +190,21 @@ pub(super) fn validate_marker(marker: &RepositoryMarker) -> Result<(), StoreErro
                 "repository marker managed-parent set is not exact kind order".to_owned(),
             ));
         }
+    }
+    Ok(())
+}
+
+pub(super) fn validate_global_binding(global: &GlobalNamespaceBinding) -> Result<(), StoreError> {
+    let root = RepositoryRootIdentity::from_canonical_bytes(&global.repository_root_canonical)
+        .map_err(|error| {
+            StoreError::Integrity(format!("repository root identity is invalid: {error}"))
+        })?;
+    if root.physical_identity() != &global.repository_root_physical_identity
+        || RepositoryId::for_root(&root) != global.repository_id
+    {
+        return Err(StoreError::Integrity(
+            "repository ID and canonical root binding disagree".to_owned(),
+        ));
     }
     Ok(())
 }

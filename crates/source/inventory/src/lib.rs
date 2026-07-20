@@ -1,6 +1,7 @@
 mod config_document;
 mod package_semantics;
 mod pnpm_workspace;
+mod root;
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
@@ -16,6 +17,8 @@ use lumin_model::{
 };
 use serde::Deserialize;
 use thiserror::Error;
+
+pub use root::{RepositoryAdmission, repository_admission};
 
 #[derive(Clone, Debug, Default)]
 pub struct InventoryRequest {
@@ -52,6 +55,8 @@ pub enum InventoryError {
     RootIo(String),
     #[error("failed to establish physical source identity: {0}")]
     PhysicalIdentity(String),
+    #[error("failed to establish canonical repository identity: {0}")]
+    RepositoryIdentity(String),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

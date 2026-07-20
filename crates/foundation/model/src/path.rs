@@ -6,6 +6,8 @@ use std::path::{Component, Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::codec::{CanonicalReadError, CanonicalReader};
+
 const MAGIC: &[u8; 8] = b"LUMRPATH";
 const VERSION: u16 = 1;
 
@@ -38,6 +40,12 @@ pub enum RepoPathError {
     EncodingOverflow,
     #[error("repository path canonical bytes are malformed or noncanonical")]
     InvalidCanonicalEncoding,
+}
+
+impl From<CanonicalReadError> for RepoPathError {
+    fn from(_: CanonicalReadError) -> Self {
+        Self::InvalidCanonicalEncoding
+    }
 }
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -125,26 +133,24 @@ impl RepoPath {
     }
 
     pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, RepoPathError> {
-        let mut cursor = 0;
-        if take_bytes(bytes, &mut cursor, MAGIC.len())? != MAGIC {
+        let mut reader = CanonicalReader::new(bytes);
+        if reader.take(MAGIC.len())? != MAGIC {
             return Err(RepoPathError::InvalidCanonicalEncoding);
         }
-        if read_u16(bytes, &mut cursor)? != VERSION {
+        if reader.read_u16()? != VERSION {
             return Err(RepoPathError::InvalidCanonicalEncoding);
         }
-        let component_count = usize::try_from(read_u32(bytes, &mut cursor)?)
+        let component_count = usize::try_from(reader.read_u32()?)
             .map_err(|_| RepoPathError::InvalidCanonicalEncoding)?;
         let mut components = Vec::with_capacity(component_count);
         for _ in 0..component_count {
-            let tag = *take_bytes(bytes, &mut cursor, 1)?
-                .first()
-                .ok_or(RepoPathError::InvalidCanonicalEncoding)?;
-            let payload_len = usize::try_from(read_u32(bytes, &mut cursor)?)
+            let tag = reader.read_u8()?;
+            let payload_len = usize::try_from(reader.read_u32()?)
                 .map_err(|_| RepoPathError::InvalidCanonicalEncoding)?;
-            let payload = take_bytes(bytes, &mut cursor, payload_len)?;
+            let payload = reader.take(payload_len)?;
             components.push(decode_component(tag, payload)?);
         }
-        if cursor != bytes.len() {
+        if !reader.is_finished() {
             return Err(RepoPathError::InvalidCanonicalEncoding);
         }
         let path = Self::from_components(components)?;
@@ -266,33 +272,6 @@ impl RepoPath {
             canonical,
         })
     }
-}
-
-fn take_bytes<'a>(
-    bytes: &'a [u8],
-    cursor: &mut usize,
-    length: usize,
-) -> Result<&'a [u8], RepoPathError> {
-    let end = cursor
-        .checked_add(length)
-        .ok_or(RepoPathError::InvalidCanonicalEncoding)?;
-    let value = bytes
-        .get(*cursor..end)
-        .ok_or(RepoPathError::InvalidCanonicalEncoding)?;
-    *cursor = end;
-    Ok(value)
-}
-
-fn read_u16(bytes: &[u8], cursor: &mut usize) -> Result<u16, RepoPathError> {
-    let payload = take_bytes(bytes, cursor, 2)?;
-    Ok(u16::from_be_bytes([payload[0], payload[1]]))
-}
-
-fn read_u32(bytes: &[u8], cursor: &mut usize) -> Result<u32, RepoPathError> {
-    let payload = take_bytes(bytes, cursor, 4)?;
-    Ok(u32::from_be_bytes([
-        payload[0], payload[1], payload[2], payload[3],
-    ]))
 }
 
 fn decode_component(tag: u8, payload: &[u8]) -> Result<RepoPathComponent, RepoPathError> {

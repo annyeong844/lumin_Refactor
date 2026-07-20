@@ -8,22 +8,34 @@ use crate::{StoreError, io_error, nonce_hex};
 
 use super::platform::{EntryAccess, EntryKind, HeldEntry};
 use super::{
-    GlobalNamespaceBinding, LifecycleLockHeader, MANAGED_KINDS, ManagedParentAnchorHeader,
-    ManagedStateParentBinding, ManagedStateParentKind, NamespaceBinding, NamespaceGuard,
-    NamespaceState, RepositoryMarker, create_or_verify_store, entry_exists, read_canonical_path,
-    require_state_volume, validate_marker, write_canonical_entry, write_new_canonical,
+    ANCHOR_SCHEMA, GlobalNamespaceBinding, HeldRepository, LOCK_SCHEMA, LifecycleLockHeader,
+    MANAGED_KINDS, ManagedParentAnchorHeader, ManagedStateParentBinding, ManagedStateParentKind,
+    NamespaceBinding, NamespaceGuard, NamespaceState, REPOSITORY_SCHEMA, RepositoryMarker,
+    create_or_verify_store, entry_exists, read_canonical_path, require_state_volume,
+    validate_global_binding, validate_marker, verify_repository_binding, write_canonical_entry,
+    write_new_canonical,
 };
 
 pub(super) fn bootstrap_namespace(
+    repository: HeldRepository,
     state_dir: PathBuf,
     state_directory: HeldEntry,
+    state_directory_created: bool,
 ) -> Result<NamespaceState, StoreError> {
+    if !state_directory_created {
+        return resume_bootstrap(repository, state_dir, state_directory);
+    }
     if fs::read_dir(&state_dir).map_err(io_error)?.next().is_some() {
-        return resume_bootstrap(state_dir, state_directory);
+        return Err(StoreError::Integrity(
+            "new state directory changed during bootstrap admission".to_owned(),
+        ));
     }
     let lock = HeldEntry::create_new(&state_dir.join("lifecycle.lock"), "lifecycle.lock")?;
     FileExt::lock_exclusive(lock.file()).map_err(io_error)?;
     let global = GlobalNamespaceBinding {
+        repository_id: repository.binding.repository_id().clone(),
+        repository_root_canonical: repository.binding.root().canonical_bytes().to_vec(),
+        repository_root_physical_identity: repository.binding.root().physical_identity().clone(),
         state_directory_identity: state_directory.identity().clone(),
         lifecycle_lock_identity: lock.identity().clone(),
         namespace_nonce: nonce_hex()?,
@@ -31,17 +43,23 @@ pub(super) fn bootstrap_namespace(
     write_canonical_entry(
         &lock,
         &LifecycleLockHeader {
-            schema_version: "lumin-lifecycle-lock.v1".to_owned(),
+            schema_version: LOCK_SCHEMA.to_owned(),
             global: global.clone(),
         },
     )?;
-    finish_bootstrap(state_dir, state_directory, lock, global)
+    finish_bootstrap(repository, state_dir, state_directory, lock, global)
 }
 
 fn resume_bootstrap(
+    repository: HeldRepository,
     state_dir: PathBuf,
     state_directory: HeldEntry,
 ) -> Result<NamespaceState, StoreError> {
+    if fs::read_dir(&state_dir).map_err(io_error)?.next().is_none() {
+        return Err(StoreError::Integrity(
+            "preexisting state directory has no bound bootstrap state".to_owned(),
+        ));
+    }
     reject_unbound_bootstrap_entries(&state_dir)?;
     let lock_path = state_dir.join("lifecycle.lock");
     let lock = HeldEntry::open(
@@ -52,7 +70,7 @@ fn resume_bootstrap(
         "lifecycle.lock",
     )?;
     let header: LifecycleLockHeader = read_canonical_path(&lock_path, "lifecycle.lock")?;
-    validate_bootstrap_lock(&header, &state_directory, &lock)?;
+    validate_bootstrap_lock(&header, &repository, &state_directory, &lock)?;
     FileExt::lock_exclusive(lock.file()).map_err(io_error)?;
 
     let marker_path = state_dir.join("repository.json");
@@ -60,7 +78,9 @@ fn resume_bootstrap(
         FileExt::unlock(lock.file()).map_err(io_error)?;
         let marker: RepositoryMarker = read_canonical_path(&marker_path, "repository marker")?;
         validate_marker(&marker)?;
+        verify_repository_binding(&marker.binding.global, &repository.binding)?;
         let state = NamespaceState {
+            repository,
             state_dir,
             binding: marker.binding,
         };
@@ -73,10 +93,11 @@ fn resume_bootstrap(
         ));
     }
     verify_canonical_bootstrap_lock(&lock, &header)?;
-    finish_bootstrap(state_dir, state_directory, lock, header.global)
+    finish_bootstrap(repository, state_dir, state_directory, lock, header.global)
 }
 
 fn finish_bootstrap(
+    repository: HeldRepository,
     state_dir: PathBuf,
     state_directory: HeldEntry,
     lock: HeldEntry,
@@ -101,13 +122,17 @@ fn finish_bootstrap(
     write_new_canonical(
         &state_dir.join("repository.json"),
         &RepositoryMarker {
-            schema_version: "lumin-repository.v2".to_owned(),
+            schema_version: REPOSITORY_SCHEMA.to_owned(),
             binding: binding.clone(),
         },
     )?;
     state_directory.sync_directory()?;
 
-    let state = NamespaceState { state_dir, binding };
+    let state = NamespaceState {
+        repository,
+        state_dir,
+        binding,
+    };
     let guard = NamespaceGuard::acquire_without_store(state.clone(), lock)?;
     create_or_verify_store(&guard)?;
     guard.validate_complete()?;
@@ -139,7 +164,7 @@ fn create_managed_parent(
     write_canonical_entry(
         &anchor,
         &ManagedParentAnchorHeader {
-            schema_version: "lumin-managed-parent-anchor.v1".to_owned(),
+            schema_version: ANCHOR_SCHEMA.to_owned(),
             global: global.clone(),
             binding: binding.clone(),
         },
@@ -169,7 +194,7 @@ fn load_existing_parent(
     )?;
     let header: ManagedParentAnchorHeader =
         read_canonical_path(&anchor_path, &format!("managed state anchor {name}"))?;
-    if header.schema_version != "lumin-managed-parent-anchor.v1"
+    if header.schema_version != ANCHOR_SCHEMA
         || &header.global != global
         || header.binding.kind != kind
         || header.binding.directory_physical_identity != *directory.identity()
@@ -185,10 +210,13 @@ fn load_existing_parent(
 
 fn validate_bootstrap_lock(
     header: &LifecycleLockHeader,
+    repository: &HeldRepository,
     state_directory: &HeldEntry,
     lock: &HeldEntry,
 ) -> Result<(), StoreError> {
-    if header.schema_version != "lumin-lifecycle-lock.v1"
+    if header.schema_version != LOCK_SCHEMA
+        || validate_global_binding(&header.global).is_err()
+        || verify_repository_binding(&header.global, &repository.binding).is_err()
         || header.global.state_directory_identity != *state_directory.identity()
         || header.global.lifecycle_lock_identity != *lock.identity()
         || !valid_nonce(&header.global.namespace_nonce)

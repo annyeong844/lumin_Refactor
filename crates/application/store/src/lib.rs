@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use lumin_evidence::RunEvidence;
-use lumin_model::{AttemptId, RunId, digest_hex};
+use lumin_model::{AttemptId, RepositoryBinding, RunId, digest_hex};
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
@@ -104,8 +104,8 @@ pub enum StoreError {
 }
 
 impl RepositoryStore {
-    pub fn open(root: &Path) -> Result<Self, StoreError> {
-        let namespace = namespace::NamespaceState::open(root)?;
+    pub fn open(root: &Path, binding: &RepositoryBinding) -> Result<Self, StoreError> {
+        let namespace = namespace::NamespaceState::open(root, binding)?;
         let state_dir = namespace.state_dir().to_path_buf();
         Ok(Self {
             state_dir,

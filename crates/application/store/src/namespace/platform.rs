@@ -2,7 +2,8 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
-use lumin_model::PhysicalFileIdentity;
+use file_id::FileId;
+use lumin_model::{PhysicalFileIdentity, RepositoryRootPhysicalIdentity};
 
 use crate::{StoreError, io_error};
 
@@ -156,6 +157,48 @@ pub(super) fn same_volume(left: &PhysicalFileIdentity, right: &PhysicalFileIdent
             },
         ) => left == right,
         _ => false,
+    }
+}
+
+pub(super) fn repository_root_physical_identity(
+    path: &Path,
+) -> Result<RepositoryRootPhysicalIdentity, StoreError> {
+    #[cfg(unix)]
+    {
+        match file_id::get_file_id(path).map_err(io_error)? {
+            FileId::Inode {
+                device_id,
+                inode_number,
+            } => Ok(RepositoryRootPhysicalIdentity::Unix {
+                device: device_id,
+                inode: inode_number,
+            }),
+            _ => Err(StoreError::Integrity(
+                "Unix repository root omitted its device/inode identity".to_owned(),
+            )),
+        }
+    }
+    #[cfg(windows)]
+    {
+        match file_id::get_high_res_file_id(path).map_err(io_error)? {
+            FileId::HighRes {
+                volume_serial_number,
+                file_id,
+            } => Ok(RepositoryRootPhysicalIdentity::Windows {
+                volume_serial: volume_serial_number,
+                file_id: file_id.to_le_bytes(),
+            }),
+            _ => Err(StoreError::Integrity(
+                "Windows repository root omitted FILE_ID_128".to_owned(),
+            )),
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = path;
+        Err(StoreError::Integrity(
+            "repository root identity supports Windows and Unix".to_owned(),
+        ))
     }
 }
 

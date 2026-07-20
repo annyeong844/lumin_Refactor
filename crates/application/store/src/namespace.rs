@@ -8,20 +8,30 @@ mod tests;
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use fs2::FileExt;
+use lumin_model::RepositoryBinding;
 use redb::{Database, WriteTransaction};
 
 use crate::{StoreError, backend_error, io_error};
 use bootstrap::bootstrap_namespace;
-use platform::{EntryAccess, EntryKind, HeldEntry, same_volume};
+use platform::{EntryAccess, EntryKind, HeldEntry, repository_root_physical_identity, same_volume};
 use records::*;
 use store_header::*;
 
 #[derive(Clone, Debug)]
 pub(super) struct NamespaceState {
+    repository: HeldRepository,
     state_dir: PathBuf,
     binding: NamespaceBinding,
+}
+
+#[derive(Clone, Debug)]
+struct HeldRepository {
+    path: PathBuf,
+    directory: Arc<HeldEntry>,
+    binding: RepositoryBinding,
 }
 
 pub(super) struct NamespaceGuard {
@@ -38,9 +48,10 @@ struct HeldManagedParent {
 }
 
 impl NamespaceState {
-    pub(super) fn open(root: &Path) -> Result<Self, StoreError> {
-        let state_dir = root.join(".lumin");
-        ensure_state_directory(&state_dir)?;
+    pub(super) fn open(root: &Path, binding: &RepositoryBinding) -> Result<Self, StoreError> {
+        let repository = HeldRepository::open(root, binding.clone())?;
+        let state_dir = repository.path.join(".lumin");
+        let state_directory_created = ensure_state_directory(&state_dir)?;
         let state_directory = HeldEntry::open(
             &state_dir,
             EntryKind::Directory,
@@ -50,17 +61,24 @@ impl NamespaceState {
         )?;
         let marker_path = state_dir.join("repository.json");
         if !entry_exists(&marker_path)? {
-            return bootstrap_namespace(state_dir, state_directory);
+            return bootstrap_namespace(
+                repository,
+                state_dir,
+                state_directory,
+                state_directory_created,
+            );
         }
 
         let marker: RepositoryMarker = read_canonical_path(&marker_path, "repository marker")?;
         validate_marker(&marker)?;
+        verify_repository_binding(&marker.binding.global, &repository.binding)?;
         if marker.binding.global.state_directory_identity != *state_directory.identity() {
             return Err(StoreError::Integrity(
                 "state directory identity disagrees with repository marker".to_owned(),
             ));
         }
         let state = Self {
+            repository,
             state_dir,
             binding: marker.binding,
         };
@@ -106,6 +124,7 @@ impl NamespaceState {
     }
 
     fn validate_global_entries(&self) -> Result<(), StoreError> {
+        self.repository.validate()?;
         let state = HeldEntry::open(
             &self.state_dir,
             EntryKind::Directory,
@@ -147,6 +166,42 @@ impl NamespaceState {
         let final_validation = result.and_then(|()| guard.validate_complete());
         let unlock = FileExt::unlock(guard.lock.file()).map_err(io_error);
         combine_lock_results(final_validation, Ok(()), unlock)
+    }
+}
+
+impl HeldRepository {
+    fn open(path: &Path, binding: RepositoryBinding) -> Result<Self, StoreError> {
+        let directory = Arc::new(HeldEntry::open(
+            path,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            "repository root",
+        )?);
+        let held = Self {
+            path: path.to_path_buf(),
+            directory,
+            binding,
+        };
+        held.validate()?;
+        Ok(held)
+    }
+
+    fn validate(&self) -> Result<(), StoreError> {
+        self.directory.validate_path(
+            &self.path,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            "repository root",
+        )?;
+        let observed = repository_root_physical_identity(&self.path)?;
+        if &observed != self.binding.root().physical_identity() {
+            return Err(StoreError::Integrity(
+                "repository root physical identity changed".to_owned(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -321,7 +376,7 @@ fn validate_managed_parent(
     verify_canonical_entry(
         &held.anchor,
         &ManagedParentAnchorHeader {
-            schema_version: "lumin-managed-parent-anchor.v1".to_owned(),
+            schema_version: ANCHOR_SCHEMA.to_owned(),
             global: state.binding.global.clone(),
             binding: held.binding.clone(),
         },
@@ -329,14 +384,30 @@ fn validate_managed_parent(
     )
 }
 
-fn ensure_state_directory(path: &Path) -> Result<(), StoreError> {
+fn verify_repository_binding(
+    global: &GlobalNamespaceBinding,
+    repository: &RepositoryBinding,
+) -> Result<(), StoreError> {
+    if &global.repository_id != repository.repository_id()
+        || global.repository_root_canonical != repository.root().canonical_bytes()
+        || &global.repository_root_physical_identity != repository.root().physical_identity()
+    {
+        return Err(StoreError::Integrity(
+            "repository marker belongs to a different canonical root".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_state_directory(path: &Path) -> Result<bool, StoreError> {
     match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_dir() => Ok(()),
+        Ok(metadata) if metadata.file_type().is_dir() => Ok(false),
         Ok(_) => Err(StoreError::Integrity(
             ".lumin must be a real directory".to_owned(),
         )),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            fs::create_dir(path).map_err(io_error)
+            fs::create_dir(path).map_err(io_error)?;
+            Ok(true)
         }
         Err(error) => Err(io_error(error)),
     }

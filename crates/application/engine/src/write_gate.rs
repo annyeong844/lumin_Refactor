@@ -16,10 +16,13 @@ use lumin_model::{
 };
 use lumin_store::{
     OperationSession, PostWriteFinish, PostWriteStart, PreWriteFinish, PreWriteStart,
-    RepositoryStore, SemanticReadReservation,
+    SemanticReadReservation,
 };
 
-use super::{EngineError, RepositoryAnalysisSession, RepositoryAnalysisStep, RepositoryCapture};
+use super::{
+    EngineError, RepositoryAnalysisSession, RepositoryAnalysisStep, RepositoryCapture,
+    open_repository_context,
+};
 
 mod transitions;
 
@@ -62,14 +65,13 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         resolution_profile: request.resolution_profile,
     };
     let request_digest = pre_write_digest(&paths, &analysis_options);
-    let (observations, initial_leases, inspection_signals) =
-        inspect_declared_paths(&request.root, &paths);
-    let store = RepositoryStore::open(&request.root)?;
-    let operation = store.begin_operation(&request.operation_id)?;
+    let context = open_repository_context(&request.root)?;
+    let inspection = inspect_declared_paths(&context.root, &paths);
+    let operation = context.store.begin_operation(&request.operation_id)?;
     let (gate_id, transition_sequence) = match operation.reserve_pre_write(
         &request_digest,
         &declared_write_set,
-        &initial_leases,
+        &inspection.leases,
         &analysis_options,
     )? {
         PreWriteStart::Committed(result) => return Ok(result),
@@ -79,12 +81,12 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         } => (gate_id, transition_sequence),
     };
 
-    let finish = if inspection_signals.is_empty() {
+    let finish = if inspection.signals.is_empty() {
         match analyze_pre_write(
             &operation,
+            &context.root,
             request,
-            &observations,
-            initial_leases,
+            inspection,
             transition_sequence,
             &request_digest,
             &gate_id,
@@ -95,9 +97,9 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
     } else {
         PreWriteFinish {
             baseline: None,
-            leased_write_set: initial_leases,
+            leased_write_set: inspection.leases,
             alias_closures: Vec::new(),
-            signals: inspection_signals,
+            signals: inspection.signals,
         }
     };
     operation
@@ -112,9 +114,9 @@ enum PreWriteAnalysis {
 
 fn analyze_pre_write(
     operation: &OperationSession<'_>,
+    root: &Path,
     request: &PreWriteRequest,
-    observations: &[WriteTargetObservation],
-    initial_leases: Vec<WriteLease>,
+    inspection: DeclaredPathInspection,
     transition_sequence: u64,
     request_digest: &str,
     gate_id: &GateId,
@@ -123,7 +125,7 @@ fn analyze_pre_write(
         jobs: request.jobs,
         resolution_profile: request.resolution_profile,
     };
-    let capture = match capture_reserved_repository(&request.root, &options, |paths| {
+    let capture = match capture_reserved_repository(root, &options, |paths| {
         operation
             .reserve_pre_write_semantic_inputs(request_digest, gate_id, paths)
             .map_err(Into::into)
@@ -132,7 +134,7 @@ fn analyze_pre_write(
         Ok(ReservedCapture::Blocked(signal)) => {
             return Ok(PreWriteAnalysis::Finished(PreWriteFinish {
                 baseline: None,
-                leased_write_set: initial_leases,
+                leased_write_set: inspection.leases,
                 alias_closures: Vec::new(),
                 signals: vec![signal],
             }));
@@ -144,7 +146,7 @@ fn analyze_pre_write(
         Err(error) => {
             return Ok(PreWriteAnalysis::Finished(PreWriteFinish {
                 baseline: None,
-                leased_write_set: initial_leases,
+                leased_write_set: inspection.leases,
                 alias_closures: Vec::new(),
                 signals: vec![GateSignal::AnalysisFailed {
                     detail: error.to_string(),
@@ -153,7 +155,7 @@ fn analyze_pre_write(
         }
     };
     let (leased_write_set, alias_closures, mut signals) =
-        expand_write_domain(&request.root, observations, initial_leases, &capture);
+        expand_write_domain(root, &inspection.observations, inspection.leases, &capture);
     let protected_semantic_inputs = protected_semantic_inputs(&capture, &leased_write_set);
     signals.extend(gate_policy::opening_signals(&capture.snapshot.evidence));
     let baseline = GateBaseline {
@@ -172,8 +174,8 @@ fn analyze_pre_write(
 
 pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResult, EngineError> {
     let request_digest = post_write_digest(&request.gate_id);
-    let store = RepositoryStore::open(&request.root)?;
-    let operation = store.begin_operation(&request.operation_id)?;
+    let context = open_repository_context(&request.root)?;
+    let operation = context.store.begin_operation(&request.operation_id)?;
     let (gate, transitions, active_gates) =
         match operation.begin_post_write(&request_digest, &request.gate_id)? {
             PostWriteStart::Committed(result) => return Ok(result),
@@ -197,7 +199,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
     }
 
     let capture =
-        match capture_reserved_repository(&request.root, &gate.analysis_options, |paths| {
+        match capture_reserved_repository(&context.root, &gate.analysis_options, |paths| {
             operation
                 .reserve_post_write_semantic_inputs(&request_digest, &request.gate_id, paths)
                 .map_err(Into::into)
@@ -244,7 +246,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         deltas = closing_deltas;
     }
     let (alias_closures, topology_signals) =
-        close_alias_topology(&request.root, &gate, &capture.source_paths);
+        close_alias_topology(&context.root, &gate, &capture.source_paths);
     signals.extend(topology_signals);
 
     operation
@@ -348,7 +350,8 @@ fn capture_reserved_repository(
 }
 
 pub fn load_gate(root: &Path, gate_id: &GateId) -> Result<GateRecord, EngineError> {
-    RepositoryStore::open(root)?
+    open_repository_context(root)?
+        .store
         .load_gate(gate_id)
         .map_err(Into::into)
 }
@@ -357,19 +360,19 @@ pub fn load_operation(
     root: &Path,
     operation_id: &OperationId,
 ) -> Result<OperationRecord, EngineError> {
-    RepositoryStore::open(root)?
+    open_repository_context(root)?
+        .store
         .load_operation(operation_id)
         .map_err(Into::into)
 }
 
-fn inspect_declared_paths(
-    root: &Path,
-    paths: &[RepoPath],
-) -> (
-    Vec<WriteTargetObservation>,
-    Vec<WriteLease>,
-    Vec<GateSignal>,
-) {
+struct DeclaredPathInspection {
+    observations: Vec<WriteTargetObservation>,
+    leases: Vec<WriteLease>,
+    signals: Vec<GateSignal>,
+}
+
+fn inspect_declared_paths(root: &Path, paths: &[RepoPath]) -> DeclaredPathInspection {
     let mut observations = Vec::new();
     let mut leases = Vec::new();
     let mut signals = Vec::new();
@@ -408,7 +411,11 @@ fn inspect_declared_paths(
     }
     leases.sort();
     leases.dedup();
-    (observations, leases, signals)
+    DeclaredPathInspection {
+        observations,
+        leases,
+        signals,
+    }
 }
 
 fn write_lease(observation: &WriteTargetObservation) -> WriteLease {

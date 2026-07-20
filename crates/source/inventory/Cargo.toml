@@ -7,6 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+file-id.workspace = true
 ignore.workspace = true
 lumin-model = { path = "../../foundation/model" }
 same-file.workspace = true

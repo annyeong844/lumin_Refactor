@@ -9,6 +9,12 @@ use super::*;
 mod abandon;
 mod liveness;
 
+fn open_store(root: &std::path::Path) -> Result<RepositoryStore, StoreError> {
+    let admission = lumin_inventory::repository_admission(root)
+        .map_err(|error| StoreError::Integrity(error.to_string()))?;
+    RepositoryStore::open(&admission.canonical_root, &admission.binding)
+}
+
 #[test]
 fn persisted_v1_gate_additions_default_when_absent() -> Result<(), Box<dyn std::error::Error>> {
     let operation_id = OperationId::from_string("operation-1".to_owned());
@@ -172,7 +178,7 @@ fn persisted_reservation_rejects_conflicting_physical_identities()
 fn pre_write_semantic_read_reservation_blocks_later_write_admission()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
-    let store = RepositoryStore::open(root.path())?;
+    let store = open_store(root.path())?;
     let reader_operation = OperationId::from_string("op-reader".to_owned());
     let reader_path = path("src/new.ts")?;
     let options = GateAnalysisOptions {
@@ -236,7 +242,7 @@ fn pre_write_semantic_read_reservation_blocks_later_write_admission()
 fn pre_write_finish_rejects_a_baseline_that_omits_a_reserved_input()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
-    let store = RepositoryStore::open(root.path())?;
+    let store = open_store(root.path())?;
     let operation_id = OperationId::from_string("op-open".to_owned());
     let source = path("src/new.ts")?;
     let source_lease = lease(source.clone());
@@ -300,7 +306,7 @@ fn pre_write_finish_rejects_a_baseline_that_omits_a_reserved_input()
 fn semantic_read_reservation_blocks_later_write_admission() -> Result<(), Box<dyn std::error::Error>>
 {
     let root = tempfile::tempdir()?;
-    let store = RepositoryStore::open(root.path())?;
+    let store = open_store(root.path())?;
     let opening_operation = OperationId::from_string("op-open".to_owned());
     let source = path("src/a.ts")?;
     let source_lease = lease(source.clone());
@@ -386,7 +392,7 @@ fn semantic_read_reservation_blocks_later_write_admission() -> Result<(), Box<dy
 fn physical_alias_writer_cannot_cross_a_pending_semantic_read_reservation()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
-    let store = RepositoryStore::open(root.path())?;
+    let store = open_store(root.path())?;
     let options = GateAnalysisOptions {
         jobs: 1,
         resolution_profile: None,
