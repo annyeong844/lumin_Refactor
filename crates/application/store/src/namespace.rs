@@ -331,7 +331,10 @@ fn validate_managed_parent(
 
 fn ensure_state_directory(path: &Path) -> Result<(), StoreError> {
     match fs::symlink_metadata(path) {
-        Ok(_) => Ok(()),
+        Ok(metadata) if metadata.file_type().is_dir() => Ok(()),
+        Ok(_) => Err(StoreError::Integrity(
+            ".lumin must be a real directory".to_owned(),
+        )),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             fs::create_dir(path).map_err(io_error)
         }

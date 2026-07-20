@@ -52,8 +52,10 @@ fn rejects_byte_identical_anchor_replacement() -> Result<(), Box<dyn std::error:
     drop(RepositoryStore::open(root.path())?);
     let anchor = root.path().join(".lumin/runs/namespace.anchor");
     let bytes = fs::read(&anchor)?;
+    let replacement = root.path().join(".lumin/runs/replacement.anchor");
+    fs::write(&replacement, bytes)?;
     fs::remove_file(&anchor)?;
-    fs::write(&anchor, bytes)?;
+    fs::rename(replacement, &anchor)?;
 
     require_integrity_failure(RepositoryStore::open(root.path()))
 }
