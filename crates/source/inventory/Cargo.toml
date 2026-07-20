@@ -7,7 +7,6 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-file-id.workspace = true
 ignore.workspace = true
 lumin-model = { path = "../../foundation/model" }
 same-file.workspace = true
@@ -18,6 +17,7 @@ thiserror.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 winapi-util.workspace = true
+windows-sys.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

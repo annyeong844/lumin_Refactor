@@ -195,7 +195,7 @@ impl HeldRepository {
             false,
             "repository root",
         )?;
-        let observed = repository_root_physical_identity(&self.path)?;
+        let observed = repository_root_physical_identity(self.directory.file())?;
         if &observed != self.binding.root().physical_identity() {
             return Err(StoreError::Integrity(
                 "repository root physical identity changed".to_owned(),

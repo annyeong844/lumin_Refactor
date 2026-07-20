@@ -2,7 +2,6 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
-use file_id::FileId;
 use lumin_model::{PhysicalFileIdentity, RepositoryRootPhysicalIdentity};
 
 use crate::{StoreError, io_error};
@@ -160,42 +159,60 @@ pub(super) fn same_volume(left: &PhysicalFileIdentity, right: &PhysicalFileIdent
     }
 }
 
+#[cfg_attr(
+    windows,
+    allow(
+        unsafe_code,
+        reason = "Windows FILE_ID_128 requires GetFileInformationByHandleEx"
+    )
+)]
 pub(super) fn repository_root_physical_identity(
-    path: &Path,
+    root: &File,
 ) -> Result<RepositoryRootPhysicalIdentity, StoreError> {
     #[cfg(unix)]
     {
-        match file_id::get_file_id(path).map_err(io_error)? {
-            FileId::Inode {
-                device_id,
-                inode_number,
-            } => Ok(RepositoryRootPhysicalIdentity::Unix {
-                device: device_id,
-                inode: inode_number,
-            }),
-            _ => Err(StoreError::Integrity(
-                "Unix repository root omitted its device/inode identity".to_owned(),
-            )),
-        }
+        use std::os::unix::fs::MetadataExt;
+
+        let metadata = root.metadata().map_err(io_error)?;
+        Ok(RepositoryRootPhysicalIdentity::Unix {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })
     }
     #[cfg(windows)]
     {
-        match file_id::get_high_res_file_id(path).map_err(io_error)? {
-            FileId::HighRes {
-                volume_serial_number,
-                file_id,
-            } => Ok(RepositoryRootPhysicalIdentity::Windows {
-                volume_serial: volume_serial_number,
-                file_id: file_id.to_le_bytes(),
-            }),
-            _ => Err(StoreError::Integrity(
-                "Windows repository root omitted FILE_ID_128".to_owned(),
-            )),
+        use std::mem::size_of;
+        use std::os::windows::io::AsRawHandle;
+
+        use windows_sys::Win32::Foundation::HANDLE;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_ID_INFO, FileIdInfo, GetFileInformationByHandleEx,
+        };
+
+        let mut information = FILE_ID_INFO::default();
+        let buffer_size = u32::try_from(size_of::<FILE_ID_INFO>())
+            .map_err(|_| StoreError::Integrity("FILE_ID_INFO size exceeds u32".to_owned()))?;
+        // SAFETY: `root` owns a valid handle for the duration of the call,
+        // and `information` is an aligned, writable FILE_ID_INFO buffer.
+        let succeeded = unsafe {
+            GetFileInformationByHandleEx(
+                root.as_raw_handle() as HANDLE,
+                FileIdInfo,
+                std::ptr::from_mut(&mut information).cast(),
+                buffer_size,
+            )
+        };
+        if succeeded == 0 {
+            return Err(io_error(std::io::Error::last_os_error()));
         }
+        Ok(RepositoryRootPhysicalIdentity::Windows {
+            volume_serial: information.VolumeSerialNumber,
+            file_id: information.FileId.Identifier,
+        })
     }
     #[cfg(not(any(unix, windows)))]
     {
-        let _ = path;
+        let _ = root;
         Err(StoreError::Integrity(
             "repository root identity supports Windows and Unix".to_owned(),
         ))
