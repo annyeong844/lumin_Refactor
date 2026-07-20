@@ -87,7 +87,7 @@ impl EngineError {
                 | StoreError::GateNotFound(_)
                 | StoreError::GateNotActive(_),
             ) => 2,
-            Self::Store(StoreError::GateRevisionBusy(_)) => 4,
+            Self::Store(StoreError::GateRevisionBusy(_) | StoreError::OperationBusy(_)) => 4,
             _ => 1,
         }
     }

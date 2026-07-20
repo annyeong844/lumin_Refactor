@@ -6,6 +6,8 @@ use lumin_model::{CapabilityState, RepoPath};
 
 use super::*;
 
+mod liveness;
+
 #[test]
 fn persisted_v1_gate_additions_default_when_absent() -> Result<(), Box<dyn std::error::Error>> {
     let operation_id = OperationId::from_string("operation-1".to_owned());
@@ -89,6 +91,8 @@ fn persisted_v1_gate_additions_default_when_absent() -> Result<(), Box<dyn std::
         leased_write_set: Vec::new(),
         semantic_read_reservations: vec![path("config/base.json")?],
         semantic_read_reservation_bindings: Vec::new(),
+        interruption_count: 0,
+        operation_liveness: None,
         analysis_options: None,
         result: None,
     };
@@ -98,6 +102,8 @@ fn persisted_v1_gate_additions_default_when_absent() -> Result<(), Box<dyn std::
         .ok_or("operation JSON is not an object")?;
     operation_object.remove("semanticReadReservations");
     operation_object.remove("semanticReadReservationBindings");
+    operation_object.remove("interruptionCount");
+    operation_object.remove("operationLiveness");
     let loaded_operation: OperationRecord = serde_json::from_value(operation_json)?;
     assert!(loaded_operation.semantic_read_reservations.is_empty());
     assert!(
@@ -105,6 +111,8 @@ fn persisted_v1_gate_additions_default_when_absent() -> Result<(), Box<dyn std::
             .semantic_read_reservation_bindings
             .is_empty()
     );
+    assert_eq!(loaded_operation.interruption_count, 0);
+    assert!(loaded_operation.operation_liveness.is_none());
     Ok(())
 }
 
@@ -140,6 +148,8 @@ fn persisted_reservation_rejects_conflicting_physical_identities()
                 }),
             ),
         ],
+        interruption_count: 0,
+        operation_liveness: None,
         analysis_options: None,
         result: None,
     };
@@ -163,8 +173,8 @@ fn pre_write_semantic_read_reservation_blocks_later_write_admission()
         jobs: 1,
         resolution_profile: None,
     };
-    let reader_gate = match store.reserve_pre_write(
-        &reader_operation,
+    let reader = store.begin_operation(&reader_operation)?;
+    let reader_gate = match reader.reserve_pre_write(
         "reader-digest",
         std::slice::from_ref(&reader_path),
         &[lease(reader_path.clone())],
@@ -177,8 +187,7 @@ fn pre_write_semantic_read_reservation_blocks_later_write_admission()
     };
     let demanded = path("config/base.json")?;
     assert_eq!(
-        store.reserve_pre_write_semantic_inputs(
-            &reader_operation,
+        reader.reserve_pre_write_semantic_inputs(
             "reader-digest",
             &reader_gate,
             std::slice::from_ref(&reservation(demanded.clone(), None)),
@@ -187,8 +196,8 @@ fn pre_write_semantic_read_reservation_blocks_later_write_admission()
     );
 
     let writer_operation = OperationId::from_string("op-writer".to_owned());
-    let rejected = match store.reserve_pre_write(
-        &writer_operation,
+    let writer = store.begin_operation(&writer_operation)?;
+    let rejected = match writer.reserve_pre_write(
         "writer-digest",
         std::slice::from_ref(&demanded),
         &[lease(demanded.clone())],
@@ -229,8 +238,8 @@ fn pre_write_finish_rejects_a_baseline_that_omits_a_reserved_input()
         jobs: 1,
         resolution_profile: None,
     };
-    let (gate_id, transition_sequence) = match store.reserve_pre_write(
-        &operation_id,
+    let operation = store.begin_operation(&operation_id)?;
+    let (gate_id, transition_sequence) = match operation.reserve_pre_write(
         "open-digest",
         std::slice::from_ref(&source),
         std::slice::from_ref(&source_lease),
@@ -246,8 +255,7 @@ fn pre_write_finish_rejects_a_baseline_that_omits_a_reserved_input()
     };
     let demanded = path("config/base.json")?;
     assert_eq!(
-        store.reserve_pre_write_semantic_inputs(
-            &operation_id,
+        operation.reserve_pre_write_semantic_inputs(
             "open-digest",
             &gate_id,
             std::slice::from_ref(&reservation(demanded, None)),
@@ -255,8 +263,7 @@ fn pre_write_finish_rejects_a_baseline_that_omits_a_reserved_input()
         SemanticReadReservation::Reserved
     );
 
-    let error = match store.finish_pre_write(
-        &operation_id,
+    let error = match operation.finish_pre_write(
         "open-digest",
         &gate_id,
         PreWriteFinish {
@@ -295,8 +302,8 @@ fn semantic_read_reservation_blocks_later_write_admission() -> Result<(), Box<dy
         jobs: 1,
         resolution_profile: None,
     };
-    let (gate_id, transition_sequence) = match store.reserve_pre_write(
-        &opening_operation,
+    let opening = store.begin_operation(&opening_operation)?;
+    let (gate_id, transition_sequence) = match opening.reserve_pre_write(
         "open-digest",
         std::slice::from_ref(&source),
         std::slice::from_ref(&source_lease),
@@ -316,8 +323,7 @@ fn semantic_read_reservation_blocks_later_write_admission() -> Result<(), Box<dy
         protected_semantic_inputs: Vec::new(),
         transition_sequence,
     };
-    let opened = store.finish_pre_write(
-        &opening_operation,
+    let opened = opening.finish_pre_write(
         "open-digest",
         &gate_id,
         PreWriteFinish {
@@ -330,14 +336,14 @@ fn semantic_read_reservation_blocks_later_write_admission() -> Result<(), Box<dy
     assert!(opened.decision.authorizes());
 
     let close_operation = OperationId::from_string("op-close".to_owned());
+    let closing = store.begin_operation(&close_operation)?;
     assert!(matches!(
-        store.begin_post_write(&close_operation, "close-digest", &gate_id)?,
+        closing.begin_post_write("close-digest", &gate_id)?,
         PostWriteStart::Analyze { .. }
     ));
     let demanded = path("config/base.json")?;
     assert_eq!(
-        store.reserve_post_write_semantic_inputs(
-            &close_operation,
+        closing.reserve_post_write_semantic_inputs(
             "close-digest",
             &gate_id,
             std::slice::from_ref(&reservation(demanded.clone(), None)),
@@ -346,8 +352,8 @@ fn semantic_read_reservation_blocks_later_write_admission() -> Result<(), Box<dy
     );
 
     let writer_operation = OperationId::from_string("op-writer".to_owned());
-    let rejected = match store.reserve_pre_write(
-        &writer_operation,
+    let writer = store.begin_operation(&writer_operation)?;
+    let rejected = match writer.reserve_pre_write(
         "writer-digest",
         std::slice::from_ref(&demanded),
         &[lease(demanded.clone())],
@@ -381,8 +387,8 @@ fn physical_alias_writer_cannot_cross_a_pending_semantic_read_reservation()
     };
     let reader_operation = OperationId::from_string("op-alias-reader".to_owned());
     let reader_source = path("src/new.ts")?;
-    let reader_gate = match store.reserve_pre_write(
-        &reader_operation,
+    let reader = store.begin_operation(&reader_operation)?;
+    let reader_gate = match reader.reserve_pre_write(
         "reader-digest",
         std::slice::from_ref(&reader_source),
         &[lease(reader_source.clone())],
@@ -399,8 +405,7 @@ fn physical_alias_writer_cannot_cross_a_pending_semantic_read_reservation()
         inode: 11,
     };
     assert_eq!(
-        store.reserve_pre_write_semantic_inputs(
-            &reader_operation,
+        reader.reserve_pre_write_semantic_inputs(
             "reader-digest",
             &reader_gate,
             std::slice::from_ref(&reservation(
@@ -413,8 +418,8 @@ fn physical_alias_writer_cannot_cross_a_pending_semantic_read_reservation()
 
     let write_alias = path("config/write-alias.json")?;
     let writer_operation = OperationId::from_string("op-alias-writer".to_owned());
-    let rejected = match store.reserve_pre_write(
-        &writer_operation,
+    let writer = store.begin_operation(&writer_operation)?;
+    let rejected = match writer.reserve_pre_write(
         "writer-digest",
         std::slice::from_ref(&write_alias),
         &[lease_with_identity(write_alias.clone(), physical_identity)],
@@ -435,6 +440,13 @@ fn physical_alias_writer_cannot_cross_a_pending_semantic_read_reservation()
         )
     }));
     Ok(())
+}
+
+fn options() -> GateAnalysisOptions {
+    GateAnalysisOptions {
+        jobs: 1,
+        resolution_profile: None,
+    }
 }
 
 fn path(value: &str) -> Result<RepoPathProjection, Box<dyn std::error::Error>> {

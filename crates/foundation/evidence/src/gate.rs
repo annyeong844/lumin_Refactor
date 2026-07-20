@@ -346,7 +346,15 @@ pub enum GateOperationKind {
 #[serde(rename_all = "kebab-case")]
 pub enum GateOperationStatus {
     Pending,
+    Interrupted,
     Committed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OperationLivenessLease {
+    pub lease_nonce: String,
+    pub owner_process_id: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -384,6 +392,10 @@ pub struct OperationRecord {
     pub semantic_read_reservations: Vec<RepoPathProjection>,
     #[serde(default)]
     pub semantic_read_reservation_bindings: Vec<SemanticReadReservationBinding>,
+    #[serde(default)]
+    pub interruption_count: u64,
+    #[serde(default)]
+    pub operation_liveness: Option<OperationLivenessLease>,
     pub analysis_options: Option<GateAnalysisOptions>,
     pub result: Option<GateOperationResult>,
 }

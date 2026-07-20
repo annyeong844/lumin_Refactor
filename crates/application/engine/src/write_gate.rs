@@ -15,8 +15,8 @@ use lumin_model::{
     append_length_prefixed, digest_hex,
 };
 use lumin_store::{
-    PostWriteFinish, PostWriteStart, PreWriteFinish, PreWriteStart, RepositoryStore,
-    SemanticReadReservation,
+    OperationSession, PostWriteFinish, PostWriteStart, PreWriteFinish, PreWriteStart,
+    RepositoryStore, SemanticReadReservation,
 };
 
 use super::{EngineError, RepositoryAnalysisSession, RepositoryAnalysisStep, RepositoryCapture};
@@ -65,8 +65,8 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
     let (observations, initial_leases, inspection_signals) =
         inspect_declared_paths(&request.root, &paths);
     let store = RepositoryStore::open(&request.root)?;
-    let (gate_id, transition_sequence) = match store.reserve_pre_write(
-        &request.operation_id,
+    let operation = store.begin_operation(&request.operation_id)?;
+    let (gate_id, transition_sequence) = match operation.reserve_pre_write(
         &request_digest,
         &declared_write_set,
         &initial_leases,
@@ -81,7 +81,7 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
 
     let finish = if inspection_signals.is_empty() {
         match analyze_pre_write(
-            &store,
+            &operation,
             request,
             &observations,
             initial_leases,
@@ -100,8 +100,8 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
             signals: inspection_signals,
         }
     };
-    store
-        .finish_pre_write(&request.operation_id, &request_digest, &gate_id, finish)
+    operation
+        .finish_pre_write(&request_digest, &gate_id, finish)
         .map_err(Into::into)
 }
 
@@ -111,7 +111,7 @@ enum PreWriteAnalysis {
 }
 
 fn analyze_pre_write(
-    store: &RepositoryStore,
+    operation: &OperationSession<'_>,
     request: &PreWriteRequest,
     observations: &[WriteTargetObservation],
     initial_leases: Vec<WriteLease>,
@@ -124,13 +124,8 @@ fn analyze_pre_write(
         resolution_profile: request.resolution_profile,
     };
     let capture = match capture_reserved_repository(&request.root, &options, |paths| {
-        store
-            .reserve_pre_write_semantic_inputs(
-                &request.operation_id,
-                request_digest,
-                gate_id,
-                paths,
-            )
+        operation
+            .reserve_pre_write_semantic_inputs(request_digest, gate_id, paths)
             .map_err(Into::into)
     }) {
         Ok(ReservedCapture::Finished { capture, .. }) => capture,
@@ -178,8 +173,9 @@ fn analyze_pre_write(
 pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResult, EngineError> {
     let request_digest = post_write_digest(&request.gate_id);
     let store = RepositoryStore::open(&request.root)?;
+    let operation = store.begin_operation(&request.operation_id)?;
     let (gate, transitions, active_gates) =
-        match store.begin_post_write(&request.operation_id, &request_digest, &request.gate_id)? {
+        match operation.begin_post_write(&request_digest, &request.gate_id)? {
             PostWriteStart::Committed(result) => return Ok(result),
             PostWriteStart::Analyze {
                 gate,
@@ -193,7 +189,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         .ok_or_else(|| EngineError::GateBaselineMissing(request.gate_id.as_str().to_owned()))?;
     if baseline.analysis_contract != ANALYSIS_CONTRACT {
         return finish_failed_close(
-            &store,
+            &operation,
             request,
             &request_digest,
             vec![GateSignal::AnalysisContractChanged],
@@ -202,24 +198,19 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
 
     let capture =
         match capture_reserved_repository(&request.root, &gate.analysis_options, |paths| {
-            store
-                .reserve_post_write_semantic_inputs(
-                    &request.operation_id,
-                    &request_digest,
-                    &request.gate_id,
-                    paths,
-                )
+            operation
+                .reserve_post_write_semantic_inputs(&request_digest, &request.gate_id, paths)
                 .map_err(Into::into)
         }) {
             Ok(ReservedCapture::Finished { capture }) => capture,
             Ok(ReservedCapture::Blocked(signal)) => {
-                return finish_failed_close(&store, request, &request_digest, vec![signal]);
+                return finish_failed_close(&operation, request, &request_digest, vec![signal]);
             }
             Ok(ReservedCapture::Committed(result)) => return Ok(result),
             Err(EngineError::Store(error)) => return Err(EngineError::Store(error)),
             Err(error) => {
                 return finish_failed_close(
-                    &store,
+                    &operation,
                     request,
                     &request_digest,
                     vec![GateSignal::AnalysisFailed {
@@ -256,9 +247,8 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         close_alias_topology(&request.root, &gate, &capture.source_paths);
     signals.extend(topology_signals);
 
-    store
+    operation
         .finish_post_write(
-            &request.operation_id,
             &request_digest,
             &request.gate_id,
             PostWriteFinish {
@@ -276,14 +266,13 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
 }
 
 fn finish_failed_close(
-    store: &RepositoryStore,
+    operation: &OperationSession<'_>,
     request: &PostWriteRequest,
     request_digest: &str,
     signals: Vec<GateSignal>,
 ) -> Result<GateOperationResult, EngineError> {
-    store
+    operation
         .finish_post_write(
-            &request.operation_id,
             request_digest,
             &request.gate_id,
             PostWriteFinish {

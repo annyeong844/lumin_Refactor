@@ -1,8 +1,8 @@
 mod gate;
 
 pub use gate::{
-    ActiveGateLease, PostWriteFinish, PostWriteStart, PreWriteFinish, PreWriteStart,
-    SemanticReadReservation,
+    ActiveGateLease, OperationSession, PostWriteFinish, PostWriteStart, PreWriteFinish,
+    PreWriteStart, SemanticReadReservation,
 };
 
 use std::fs::{self, File, OpenOptions};
@@ -88,6 +88,8 @@ pub enum StoreError {
     RunNotFound(String),
     #[error("operation ID was reused with a different request: {0}")]
     OperationConflict(String),
+    #[error("operation is already live in another session: {0}")]
+    OperationBusy(String),
     #[error("operation does not exist: {0}")]
     OperationNotFound(String),
     #[error("gate does not exist: {0}")]

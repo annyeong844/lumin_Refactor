@@ -2,7 +2,7 @@
 
 Status: Phase 1 foundation implementation active
 
-Revision: 2026-07-19
+Revision: 2026-07-20
 
 ## One-Line Purpose
 
@@ -37,9 +37,10 @@ Current implementation checkpoint:
 - Successful closes append an immutable monotonic worktree transition and references from every earlier active gate in the same store transaction. A disjoint gate stays `Incomplete` while another writer is active, then reconciles that writer's exact terminal before/after chain on retry. Broken chains deny, protected-read transitions are stale, and only authorizing closes release leases and transition references.
 - Existing grounded dead-export findings and bounded unresolved-edge facts now lower into model-owned `DeltaKey` facts and one deterministic total lifecycle relation over identity, target/domain sets, confidence, grounding, evidence identity, and owner payload. Introduced adverse facts deny, unchanged adverse facts warn, improvements/resolutions authorize without an adverse signal, and every classification is persisted on the gate revision and public operation/gate response. Unsupported or unbounded owner semantics remain typed required-evidence gaps; they are not fabricated into comparable facts until their exact target and affected domain can be represented.
 - Pre-write and close-time resolver analysis now retain one owned extraction session across `NeedsInputs` steps. Each new config path and its observed physical identity are transactionally recorded on the pending operation before inventory captures it; active/provisional writers, including physical aliases, make the attempt typed `Incomplete`, and a later writer cannot cross a live reservation. Pre-write promotion rejects a baseline that omits or physically disagrees with any reserved demand. Successful closure persists the exact finished protected read set on the revision and gate. Until an exact actual-write set is implemented, a first-seen close-time input outside the lease remains a fail-closed `UnplannedWrite`; a failed attempt cannot launder it into an authorizing retry.
-- The store still does not claim the complete ARCH-002 managed-state parent binding, generation fencing, process-death reservation recovery, abandon, retention, or migration contract. New sources and directory-created descendants are admitted to the write domain and may authorize when their complete current evidence has no adverse lifecycle delta.
+- Every pending pre-write or post-write operation now owns an operation-specific OS file lock for its full analysis lifetime. Process death releases that lock without a timeout; the next operation or `operation show` atomically marks the dead record `Interrupted`, increments its interruption count, clears only its provisional write/semantic-read reservations and liveness binding, and leaves the gate revision unchanged. The same operation ID and digest may then reacquire current reservations, while a live duplicate session is a typed busy failure and a different close cannot duplicate one live gate revision. Terminal commits clear operation-scoped reservations and liveness in the same transaction while preserving the active gate's durable leases and protected reads.
+- The store still does not claim the complete ARCH-002 managed-state parent binding, generation fencing, abandon, retention, or migration contract. New sources and directory-created descendants are admitted to the write domain and may authorize when their complete current evidence has no adverse lifecycle delta.
 
-Next implementation order: recover interrupted pending gate operations and their provisional write/semantic-read reservations after process death without lease expiry, silent deletion, or duplicate authorization. Preserve the fixed-point, alias-topology, transition-chain, and total-delta checks; keep every unsupported branch typed and scope-limited.
+Next implementation order: add the explicit idempotent `gate abandon` operation. It must bind the exact active gate revision and reason, atomically commit `Abandoned`, release the gate's durable leases and transition references, recover one committed result by operation ID, and refuse a second terminal revision. Preserve process-death recovery, fixed-point reservations, alias topology, transition chains, and total-delta evidence.
 
 ## Routing Rules
 

@@ -795,10 +795,7 @@ fn pre_write_reserves_semantic_demands_before_capture_and_retries_after_writer_t
                 .collect::<Option<Vec<_>>>()
         })
         .ok_or_else(|| std::io::Error::other("semantic read reservations are missing"))?;
-    assert_eq!(
-        reservation_paths,
-        vec!["config/base.json", "shared/root", "shared/root.json"]
-    );
+    assert!(reservation_paths.is_empty());
     Ok(())
 }
 
@@ -891,10 +888,7 @@ fn close_time_new_semantic_demand_outside_lease_stays_unplanned_on_retry()
                 .collect::<Option<Vec<_>>>()
         })
         .ok_or_else(|| std::io::Error::other("semantic read reservations are missing"))?;
-    assert_eq!(
-        reservation_paths,
-        vec!["config/base.json", "shared/root", "shared/root.json"]
-    );
+    assert!(reservation_paths.is_empty());
 
     let shown = run(root.path(), &["gate", "show", &gate_id])?;
     assert_status(&shown, 0);

@@ -171,6 +171,7 @@ pub struct OperationShowResponseDto {
     pub gate_id: GateId,
     pub target_revision: u64,
     pub transition_sequence: u64,
+    pub interruption_count: u64,
     pub declared_write_set: Vec<RepoPathDto>,
     pub leased_write_set: Vec<WriteLeaseDto>,
     pub semantic_read_reservations: Vec<RepoPathDto>,
@@ -399,6 +400,7 @@ pub fn operation_show_response(operation: &OperationRecord) -> OperationShowResp
         gate_id: operation.gate_id.clone(),
         target_revision: operation.target_revision,
         transition_sequence: operation.transition_sequence,
+        interruption_count: operation.interruption_count,
         declared_write_set: operation
             .declared_write_set
             .iter()
