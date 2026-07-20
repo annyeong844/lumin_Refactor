@@ -1,4 +1,5 @@
 mod bootstrap;
+pub(crate) mod database;
 mod platform;
 mod records;
 mod store_header;
@@ -12,10 +13,10 @@ use std::sync::Arc;
 
 use fs2::FileExt;
 use lumin_model::RepositoryBinding;
-use redb::{Database, WriteTransaction};
 
-use crate::{StoreError, backend_error, io_error};
+use crate::{StoreError, io_error};
 use bootstrap::bootstrap_namespace;
+pub(crate) use database::StoreDatabase;
 use platform::{EntryAccess, EntryKind, HeldEntry, repository_root_physical_identity, same_volume};
 use records::*;
 use store_header::*;
@@ -234,37 +235,6 @@ impl NamespaceGuard {
         Ok(guard)
     }
 
-    pub(super) fn open_database(&self) -> Result<Database, StoreError> {
-        self.validate_bound_entries()?;
-        let entry = HeldEntry::open(
-            &self.state.state_dir.join("lifecycle.store"),
-            EntryKind::RegularFile,
-            EntryAccess::ReadWrite,
-            true,
-            "lifecycle.store",
-        )?;
-        require_state_volume(&entry, &self.state_directory, "lifecycle.store")?;
-        let database = Database::builder()
-            .create_file(entry.file().try_clone().map_err(io_error)?)
-            .map_err(backend_error)?;
-        verify_store_header(&database, &self.state.binding)?;
-        self.validate_bound_entries()?;
-        Ok(database)
-    }
-
-    pub(super) fn commit(
-        &self,
-        database: &Database,
-        write: WriteTransaction,
-    ) -> Result<(), StoreError> {
-        self.validate_bound_entries()?;
-        verify_store_header_write(&write, &self.state.binding)?;
-        write.commit().map_err(backend_error)?;
-        self.validate_bound_entries()?;
-        verify_store_header(database, &self.state.binding)?;
-        self.validate_bound_entries()
-    }
-
     pub(super) fn mutate<T>(
         &self,
         mutation: impl FnOnce() -> Result<T, StoreError>,
@@ -281,7 +251,6 @@ impl NamespaceGuard {
     fn validate_complete(&self) -> Result<(), StoreError> {
         self.validate_bound_entries()?;
         let database = self.open_database()?;
-        verify_store_header(&database, &self.state.binding)?;
         drop(database);
         self.validate_bound_entries()
     }

@@ -1,10 +1,12 @@
 mod gate;
+mod generation;
 mod namespace;
 
 pub use gate::{
     ActiveGateLease, OperationSession, PostWriteFinish, PostWriteStart, PreWriteFinish,
     PreWriteStart, SemanticReadReservation,
 };
+pub use generation::StoreGeneration;
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -29,11 +31,11 @@ pub struct RepositoryStore {
     namespace: namespace::NamespaceState,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug)]
 pub struct AttemptHandle {
-    pub attempt_id: AttemptId,
-    pub sequence: u64,
+    attempt_id: AttemptId,
+    sequence: u64,
+    generation: StoreGeneration,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -101,6 +103,13 @@ pub enum StoreError {
     GateRevisionBusy(String),
     #[error("gate revision changed before lifecycle mutation: {0}")]
     GateRevisionChanged(String),
+    #[error(
+        "lifecycle store generation changed before mutation: expected {expected}, observed {observed}"
+    )]
+    StoreGenerationChanged {
+        expected: StoreGeneration,
+        observed: StoreGeneration,
+    },
 }
 
 impl RepositoryStore {
@@ -116,10 +125,12 @@ impl RepositoryStore {
     pub fn begin_attempt(&self) -> Result<AttemptHandle, StoreError> {
         self.with_exclusive_lock(|guard| {
             let database = guard.open_database()?;
+            let generation = database.generation();
             let sequence = next_attempt_sequence(guard, &database)?;
             let attempt = AttemptHandle {
                 attempt_id: AttemptId::from_string(format!("attempt_{sequence:016x}")),
                 sequence,
+                generation,
             };
             let envelope = AttemptEnvelope {
                 schema_version: "lumin-attempt.v1".to_owned(),
@@ -136,11 +147,11 @@ impl RepositoryStore {
                 .join("attempts")
                 .join(attempt.attempt_id.as_str());
             drop(database);
-            guard.mutate(|| {
+            guard.mutate_for_generation(generation, || {
                 fs::create_dir(&directory).map_err(io_error)?;
                 write_json(&directory.join("attempt.json"), &envelope)
             })?;
-            let database = guard.open_database()?;
+            let database = guard.open_database_for_generation(generation)?;
             set_pointer(
                 guard,
                 &database,
@@ -153,6 +164,8 @@ impl RepositoryStore {
 
     pub fn fail_attempt(&self, attempt: &AttemptHandle, failure: &str) -> Result<(), StoreError> {
         self.with_exclusive_lock(|guard| {
+            let database = guard.open_database_for_generation(attempt.generation)?;
+            drop(database);
             let path = self
                 .state_dir
                 .join("attempts")
@@ -162,7 +175,7 @@ impl RepositoryStore {
             envelope.state = AttemptState::Failed;
             envelope.finished_unix_millis = Some(unix_millis()?);
             envelope.failure = Some(failure.to_owned());
-            guard.mutate(|| write_json(&path, &envelope))
+            guard.mutate_for_generation(attempt.generation, || write_json(&path, &envelope))
         })
     }
 
@@ -172,6 +185,8 @@ impl RepositoryStore {
         evidence: &RunEvidence,
     ) -> Result<PublishedRun, StoreError> {
         self.with_exclusive_lock(|guard| {
+            let database = guard.open_database_for_generation(attempt.generation)?;
+            drop(database);
             let run_id = RunId::from_string(format!("run_{:016x}", attempt.sequence));
             let staging = self
                 .state_dir
@@ -184,7 +199,7 @@ impl RepositoryStore {
                     run_id.as_str()
                 )));
             }
-            let record = guard.mutate(|| {
+            let record = guard.mutate_for_generation(attempt.generation, || {
                 fs::create_dir(&staging).map_err(io_error)?;
                 let evidence_path = staging.join("evidence.store");
                 write_evidence_store(&evidence_path, evidence)?;
@@ -199,9 +214,11 @@ impl RepositoryStore {
                 write_json(&staging.join("run.json"), &record)?;
                 Ok(record)
             })?;
-            guard.mutate(|| fs::rename(&staging, &run_dir).map_err(io_error))?;
+            guard.mutate_for_generation(attempt.generation, || {
+                fs::rename(&staging, &run_dir).map_err(io_error)
+            })?;
 
-            let database = guard.open_database()?;
+            let database = guard.open_database_for_generation(attempt.generation)?;
             insert_catalog_record(guard, &database, &record)?;
             set_pointer(
                 guard,
@@ -220,7 +237,9 @@ impl RepositoryStore {
             envelope.state = AttemptState::Completed;
             envelope.finished_unix_millis = Some(unix_millis()?);
             envelope.run_id = Some(run_id.clone());
-            guard.mutate(|| write_json(&attempt_path, &envelope))?;
+            guard.mutate_for_generation(attempt.generation, || {
+                write_json(&attempt_path, &envelope)
+            })?;
 
             Ok(PublishedRun {
                 attempt_id: attempt.attempt_id.clone(),
@@ -256,7 +275,7 @@ impl RepositoryStore {
     pub fn latest_run_id(&self) -> Result<Option<RunId>, StoreError> {
         self.with_shared_lock(|guard| {
             let database = guard.open_database()?;
-            let read = database.begin_read().map_err(backend_error)?;
+            let read = database.begin_read()?;
             let table = read.open_table(POINTERS).map_err(backend_error)?;
             let value = table.get("latest-completed").map_err(backend_error)?;
             let Some(value) = value else {
@@ -302,9 +321,9 @@ fn ensure_real_file(
 
 fn next_attempt_sequence(
     guard: &namespace::NamespaceGuard,
-    database: &Database,
+    database: &namespace::StoreDatabase<'_>,
 ) -> Result<u64, StoreError> {
-    let write = database.begin_write().map_err(backend_error)?;
+    let write = database.begin_write()?;
     let next = {
         let mut table = write.open_table(SEQUENCES).map_err(backend_error)?;
         let current = table
@@ -317,31 +336,31 @@ fn next_attempt_sequence(
         table.insert("attempt", next).map_err(backend_error)?;
         next
     };
-    guard.commit(database, write)?;
+    guard.commit(write)?;
     Ok(next)
 }
 
 fn insert_catalog_record(
     guard: &namespace::NamespaceGuard,
-    database: &Database,
+    database: &namespace::StoreDatabase<'_>,
     record: &RunCatalogRecord,
 ) -> Result<(), StoreError> {
     let bytes = serde_json::to_vec(record).map_err(serialization_error)?;
-    let write = database.begin_write().map_err(backend_error)?;
+    let write = database.begin_write()?;
     {
         let mut table = write.open_table(RUN_CATALOG).map_err(backend_error)?;
         table
             .insert(record.run_id.as_str(), bytes.as_slice())
             .map_err(backend_error)?;
     }
-    guard.commit(database, write)
+    guard.commit(write)
 }
 
 fn read_catalog_record(
-    database: &Database,
+    database: &namespace::StoreDatabase<'_>,
     run_id: &RunId,
 ) -> Result<RunCatalogRecord, StoreError> {
-    let read = database.begin_read().map_err(backend_error)?;
+    let read = database.begin_read()?;
     let table = read.open_table(RUN_CATALOG).map_err(backend_error)?;
     let value = table
         .get(run_id.as_str())
@@ -352,16 +371,16 @@ fn read_catalog_record(
 
 fn set_pointer(
     guard: &namespace::NamespaceGuard,
-    database: &Database,
+    database: &namespace::StoreDatabase<'_>,
     key: &str,
     value: &[u8],
 ) -> Result<(), StoreError> {
-    let write = database.begin_write().map_err(backend_error)?;
+    let write = database.begin_write()?;
     {
         let mut table = write.open_table(POINTERS).map_err(backend_error)?;
         table.insert(key, value).map_err(backend_error)?;
     }
-    guard.commit(database, write)
+    guard.commit(write)
 }
 
 fn write_evidence_store(path: &Path, evidence: &RunEvidence) -> Result<(), StoreError> {

@@ -1,10 +1,12 @@
 use std::fs;
 
-use redb::{ReadableDatabase, TableError};
+use redb::TableError;
 
 use crate::{RepositoryStore, SEQUENCES, StoreError, backend_error, io_error};
 
 use super::{LifecycleLockHeader, MANAGED_KINDS, RepositoryMarker, read_canonical_path};
+
+mod generation;
 
 fn open_store(root: &std::path::Path) -> Result<RepositoryStore, StoreError> {
     let admission = lumin_inventory::repository_admission(root)
@@ -259,7 +261,7 @@ fn parent_swap_cannot_cross_a_guarded_store_commit() -> Result<(), Box<dyn std::
     let state = root.path().join(".lumin");
     let protected = store.with_exclusive_lock(|guard| {
         let database = guard.open_database()?;
-        let write = database.begin_write().map_err(backend_error)?;
+        let write = database.begin_write()?;
         {
             let mut table = write.open_table(SEQUENCES).map_err(backend_error)?;
             table
@@ -270,7 +272,7 @@ fn parent_swap_cannot_cross_a_guarded_store_commit() -> Result<(), Box<dyn std::
         if !swapped {
             return Ok(true);
         }
-        let commit = guard.commit(&database, write);
+        let commit = guard.commit(write);
         restore_parent(&state, "runs")?;
         Ok(matches!(commit, Err(StoreError::Integrity(_))))
     })?;
@@ -278,7 +280,7 @@ fn parent_swap_cannot_cross_a_guarded_store_commit() -> Result<(), Box<dyn std::
 
     let committed = store.with_shared_lock(|guard| {
         let database = guard.open_database()?;
-        let read = database.begin_read().map_err(backend_error)?;
+        let read = database.begin_read()?;
         let table = match read.open_table(SEQUENCES) {
             Ok(table) => table,
             Err(TableError::TableDoesNotExist(_)) => return Ok(false),
@@ -301,7 +303,7 @@ fn lock_swap_cannot_cross_a_guarded_store_commit() -> Result<(), Box<dyn std::er
     let lock_bytes = fs::read(state.join("lifecycle.lock"))?;
     let protected = store.with_exclusive_lock(|guard| {
         let database = guard.open_database()?;
-        let write = database.begin_write().map_err(backend_error)?;
+        let write = database.begin_write()?;
         {
             let mut table = write.open_table(SEQUENCES).map_err(backend_error)?;
             table.insert("lock-swap-probe", 1).map_err(backend_error)?;
@@ -310,7 +312,7 @@ fn lock_swap_cannot_cross_a_guarded_store_commit() -> Result<(), Box<dyn std::er
         if !swapped {
             return Ok(true);
         }
-        let commit = guard.commit(&database, write);
+        let commit = guard.commit(write);
         restore_lock(&state)?;
         Ok(matches!(commit, Err(StoreError::Integrity(_))))
     })?;
@@ -318,7 +320,7 @@ fn lock_swap_cannot_cross_a_guarded_store_commit() -> Result<(), Box<dyn std::er
 
     let committed = store.with_shared_lock(|guard| {
         let database = guard.open_database()?;
-        let read = database.begin_read().map_err(backend_error)?;
+        let read = database.begin_read()?;
         let table = match read.open_table(SEQUENCES) {
             Ok(table) => table,
             Err(TableError::TableDoesNotExist(_)) => return Ok(false),
@@ -340,7 +342,7 @@ fn state_directory_swap_cannot_cross_a_guarded_store_commit()
     let store = open_store(root.path())?;
     let protected = store.with_exclusive_lock(|guard| {
         let database = guard.open_database()?;
-        let write = database.begin_write().map_err(backend_error)?;
+        let write = database.begin_write()?;
         {
             let mut table = write.open_table(SEQUENCES).map_err(backend_error)?;
             table.insert("state-swap-probe", 1).map_err(backend_error)?;
@@ -349,7 +351,7 @@ fn state_directory_swap_cannot_cross_a_guarded_store_commit()
         if !swapped {
             return Ok(true);
         }
-        let commit = guard.commit(&database, write);
+        let commit = guard.commit(write);
         restore_state_directory(root.path())?;
         Ok(matches!(commit, Err(StoreError::Integrity(_))))
     })?;
@@ -357,7 +359,7 @@ fn state_directory_swap_cannot_cross_a_guarded_store_commit()
 
     let committed = store.with_shared_lock(|guard| {
         let database = guard.open_database()?;
-        let read = database.begin_read().map_err(backend_error)?;
+        let read = database.begin_read()?;
         let table = match read.open_table(SEQUENCES) {
             Ok(table) => table,
             Err(TableError::TableDoesNotExist(_)) => return Ok(false),

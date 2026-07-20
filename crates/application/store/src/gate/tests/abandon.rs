@@ -117,7 +117,7 @@ fn abandon_rejects_stale_revision_and_a_live_close() -> Result<(), Box<dyn std::
 fn seed_releasable_gate_state(store: &RepositoryStore, gate_id: &GateId) -> Result<(), StoreError> {
     store.with_exclusive_lock(|guard| {
         let database = guard.open_database()?;
-        let write = database.begin_write().map_err(backend_error)?;
+        let write = database.begin_write()?;
         let mut gate = read_record::<GateRecord>(&write, GATES, gate_id.as_str())?
             .ok_or_else(|| StoreError::GateNotFound(gate_id.as_str().to_owned()))?;
         gate.transition_refs = vec![7, 9];
@@ -139,6 +139,6 @@ fn seed_releasable_gate_state(store: &RepositoryStore, gate_id: &GateId) -> Resu
             ],
         }];
         write_record(&write, GATES, gate_id.as_str(), &gate)?;
-        guard.commit(&database, write)
+        guard.commit(write)
     })
 }

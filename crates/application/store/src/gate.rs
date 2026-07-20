@@ -7,7 +7,7 @@ use lumin_evidence::{
 use lumin_model::{GateDeltaRecord, GateId, OperationId};
 use redb::{TableDefinition, WriteTransaction};
 
-use super::{RepositoryStore, StoreError, backend_error};
+use super::{RepositoryStore, StoreError};
 
 mod abandon;
 mod coordination;

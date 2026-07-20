@@ -114,6 +114,47 @@ fn a_live_operation_session_cannot_be_duplicated() -> Result<(), Box<dyn std::er
 }
 
 #[test]
+fn old_generation_operation_reopens_before_any_late_mutation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("op-generation-change".to_owned());
+    let stale = store.begin_operation(&operation_id)?;
+    let observed = store.namespace.replace_store_generation_for_test()?;
+    let source = path("src/generation.ts")?;
+
+    assert!(matches!(
+        stale.reserve_pre_write(
+            "generation-digest",
+            std::slice::from_ref(&source),
+            &[lease(source.clone())],
+            &options(),
+        ),
+        Err(StoreError::StoreGenerationChanged {
+            expected,
+            observed: actual,
+        }) if expected == crate::StoreGeneration::INITIAL && actual == observed
+    ));
+    assert!(matches!(
+        store.load_operation(&operation_id),
+        Err(StoreError::OperationNotFound(_))
+    ));
+
+    drop(stale);
+    let reopened = store.begin_operation(&operation_id)?;
+    assert!(matches!(
+        reopened.reserve_pre_write(
+            "generation-digest",
+            std::slice::from_ref(&source),
+            &[lease(source.clone())],
+            &options(),
+        )?,
+        PreWriteStart::Analyze { .. }
+    ));
+    Ok(())
+}
+
+#[test]
 fn process_death_pre_write_fixture() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::var("LUMIN_GATE_DEATH_FIXTURE").as_deref() != Ok("pre-write") {
         return Ok(());

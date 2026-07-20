@@ -1,10 +1,8 @@
 use lumin_model::GateId;
-use redb::{
-    Database, ReadableDatabase, ReadableTable, TableDefinition, TableError, WriteTransaction,
-};
+use redb::{ReadableTable, TableDefinition, TableError, WriteTransaction};
 use serde::{Serialize, de::DeserializeOwned};
 
-use crate::{SEQUENCES, StoreError, backend_error, serialization_error};
+use crate::{SEQUENCES, StoreError, backend_error, namespace::StoreDatabase, serialization_error};
 
 pub(super) fn current_transition_sequence(write: &WriteTransaction) -> Result<u64, StoreError> {
     let table = write.open_table(SEQUENCES).map_err(backend_error)?;
@@ -48,11 +46,11 @@ pub(super) fn next_gate_id(write: &WriteTransaction) -> Result<GateId, StoreErro
 }
 
 pub(super) fn load_record<T: DeserializeOwned>(
-    database: &Database,
+    database: &StoreDatabase<'_>,
     definition: TableDefinition<'static, &str, &[u8]>,
     key: &str,
 ) -> Result<Option<T>, StoreError> {
-    let read = database.begin_read().map_err(backend_error)?;
+    let read = database.begin_read()?;
     let table = match read.open_table(definition) {
         Ok(table) => table,
         Err(TableError::TableDoesNotExist(_)) => return Ok(None),

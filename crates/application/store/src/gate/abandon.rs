@@ -12,8 +12,8 @@ impl OperationSession<'_> {
     ) -> Result<GateOperationResult, StoreError> {
         let operation_id = &self.operation_id;
         self.store.with_exclusive_lock(|guard| {
-            let database = guard.open_database()?;
-            let write = database.begin_write().map_err(backend_error)?;
+            let database = self.open_database(guard)?;
+            let write = database.begin_write()?;
             let mut operation = load_or_create_abandon_operation(
                 &write,
                 operation_id,
@@ -36,7 +36,7 @@ impl OperationSession<'_> {
 
             let result = apply_abandon(&mut gate, &operation, reason)?;
             persist_operation_result(&write, &gate, &mut operation, &result)?;
-            guard.commit(&database, write)?;
+            guard.commit(write)?;
             Ok(result)
         })
     }

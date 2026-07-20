@@ -6,7 +6,9 @@ use fs2::FileExt;
 use lumin_evidence::{GateOperationStatus, OperationLivenessLease, OperationRecord};
 use lumin_model::{OperationId, digest_hex};
 
-use crate::{RepositoryStore, StoreError, backend_error, ensure_real_file, io_error, nonce_hex};
+use crate::{
+    RepositoryStore, StoreError, StoreGeneration, ensure_real_file, io_error, namespace, nonce_hex,
+};
 
 use super::records::{read_records, write_record};
 use super::{OPERATIONS, validate_reservation_binding_set};
@@ -15,6 +17,7 @@ pub struct OperationSession<'store> {
     pub(super) store: &'store RepositoryStore,
     pub(super) operation_id: OperationId,
     pub(super) liveness: OperationLivenessLease,
+    generation: StoreGeneration,
     _lock_file: File,
 }
 
@@ -33,17 +36,18 @@ impl RepositoryStore {
             Err(error) => return Err(io_error(error)),
         }
         verify_operation_lock_file(&lock_file, operation_id)?;
-        let session = OperationSession {
+        self.recover_interrupted_operations(Some(operation_id))?;
+        let generation = self.current_store_generation()?;
+        Ok(OperationSession {
             store: self,
             operation_id: operation_id.clone(),
             liveness: OperationLivenessLease {
                 lease_nonce: nonce_hex()?,
                 owner_process_id: std::process::id(),
             },
+            generation,
             _lock_file: lock_file,
-        };
-        self.recover_interrupted_operations(Some(operation_id))?;
-        Ok(session)
+        })
     }
 
     pub(super) fn recover_interrupted_operations(
@@ -52,7 +56,7 @@ impl RepositoryStore {
     ) -> Result<(), StoreError> {
         self.with_exclusive_lock(|guard| {
             let database = guard.open_database()?;
-            let write = database.begin_write().map_err(backend_error)?;
+            let write = database.begin_write()?;
             let mut recovered_locks = Vec::new();
             for mut operation in read_records::<OperationRecord>(&write, OPERATIONS)? {
                 if operation.status != GateOperationStatus::Pending {
@@ -102,7 +106,7 @@ impl RepositoryStore {
                     )?;
                 }
             }
-            guard.commit(&database, write)?;
+            guard.commit(write)?;
             drop(recovered_locks);
             Ok(())
         })
@@ -122,9 +126,20 @@ impl RepositoryStore {
             Ok(path)
         })
     }
+
+    fn current_store_generation(&self) -> Result<StoreGeneration, StoreError> {
+        self.with_shared_lock(|guard| Ok(guard.open_database()?.generation()))
+    }
 }
 
 impl OperationSession<'_> {
+    pub(super) fn open_database<'guard>(
+        &self,
+        guard: &'guard namespace::NamespaceGuard,
+    ) -> Result<namespace::StoreDatabase<'guard>, StoreError> {
+        guard.open_database_for_generation(self.generation)
+    }
+
     pub(super) fn bind_pending_operation(
         &self,
         operation: &mut OperationRecord,
