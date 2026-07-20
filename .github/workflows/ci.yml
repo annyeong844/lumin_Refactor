@@ -32,6 +32,30 @@ jobs:
       - name: Verify formatting
         run: cargo fmt --all --check
 
+  dependency-policy:
+    name: Dependency policy
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Install exact Rust toolchain
+        run: rustup toolchain install 1.96.0 --profile minimal --no-self-update
+
+      - name: Install dependency policy tools
+        uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b # v2.83.4
+        with:
+          tool: |
+            cargo-audit@0.22.2
+            cargo-deny@0.20.2
+          fallback: none
+
+      - name: Audit RustSec advisories
+        run: cargo audit --deny warnings
+
+      - name: Enforce dependency policy
+        run: cargo deny --locked check bans licenses sources
+
   platform:
     name: ${{ matrix.name }}
     strategy:
@@ -72,13 +96,16 @@ jobs:
     if: ${{ always() }}
     needs:
       - formatting
+      - dependency-policy
       - platform
     runs-on: ubuntu-24.04
     steps:
       - name: Enforce required jobs
         env:
           FORMATTING_RESULT: ${{ needs.formatting.result }}
+          DEPENDENCY_POLICY_RESULT: ${{ needs.dependency-policy.result }}
           PLATFORM_RESULT: ${{ needs.platform.result }}
         run: |
           test "$FORMATTING_RESULT" = success
+          test "$DEPENDENCY_POLICY_RESULT" = success
           test "$PLATFORM_RESULT" = success
