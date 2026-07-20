@@ -1,14 +1,11 @@
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 use serde_json::Value;
 
-struct ProcessResult {
-    status: i32,
-    stdout: String,
-    stderr: String,
-}
+mod support;
+
+use support::{assert_status, field, run};
 
 #[test]
 fn pre_and_post_survive_process_reopen() -> Result<(), Box<dyn std::error::Error>> {
@@ -1072,33 +1069,4 @@ fn source_fixture(
     fs::write(root.path().join("src/lib.ts"), lib_source)?;
     fs::write(root.path().join("src/main.ts"), main_source)?;
     Ok(root)
-}
-
-fn run(root: &Path, arguments: &[&str]) -> Result<ProcessResult, Box<dyn std::error::Error>> {
-    let output = Command::new(env!("CARGO_BIN_EXE_lumin"))
-        .current_dir(root)
-        .args(arguments)
-        .output()?;
-    Ok(ProcessResult {
-        status: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8(output.stdout)?,
-        stderr: String::from_utf8(output.stderr)?,
-    })
-}
-
-fn assert_status(result: &ProcessResult, expected: i32) {
-    assert_eq!(
-        result.status, expected,
-        "stdout={}\nstderr={}",
-        result.stdout, result.stderr
-    );
-}
-
-fn field(json: &str, name: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let value: Value = serde_json::from_str(json)?;
-    value
-        .get(name)
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .ok_or_else(|| std::io::Error::other(format!("missing string field {name}")).into())
 }

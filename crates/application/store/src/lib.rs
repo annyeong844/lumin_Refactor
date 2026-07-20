@@ -98,6 +98,8 @@ pub enum StoreError {
     GateNotActive(String),
     #[error("gate revision already has a live close operation: {0}")]
     GateRevisionBusy(String),
+    #[error("gate revision changed before lifecycle mutation: {0}")]
+    GateRevisionChanged(String),
 }
 
 impl RepositoryStore {

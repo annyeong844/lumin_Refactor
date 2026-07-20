@@ -2,7 +2,8 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use lumin_engine::{
-    AuditRequest, EngineError, GateDecision, GateOperationResult, PostWriteRequest, PreWriteRequest,
+    AbandonGateRequest, AuditRequest, EngineError, GateDecision, GateOperationResult,
+    PostWriteRequest, PreWriteRequest,
 };
 use lumin_model::{
     GateId, OperationId, RepoPath, ResolutionProfile, RoleOverride, RunId, ScanRole,
@@ -43,6 +44,8 @@ enum CliError {
     NoCompletedRun,
     #[error("identifier must not be empty: {0}")]
     EmptyIdentifier(String),
+    #[error("abandon reason must not be empty")]
+    EmptyReason,
     #[error("invalid repository path: {0}")]
     InvalidRepoPath(String),
     #[error(transparent)]
@@ -288,9 +291,14 @@ fn gate(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliErro
     let subcommand = arguments
         .next_utf8("gate subcommand")?
         .ok_or(CliError::MissingCommand)?;
-    if subcommand != "show" {
-        return Err(CliError::UnknownArgument(subcommand));
+    match subcommand.as_str() {
+        "show" => gate_show(root, arguments),
+        "abandon" => gate_abandon(root, arguments),
+        _ => Err(CliError::UnknownArgument(subcommand)),
     }
+}
+
+fn gate_show(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {
     let gate_id = parse_gate_id(arguments.required_utf8("gate-id")?)?;
     let format = parse_read_format(arguments, "gate show argument")?;
     require_json(&format)?;
@@ -299,6 +307,39 @@ fn gate(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliErro
     lumin_protocol::to_json(&response)
         .map(success)
         .map_err(Into::into)
+}
+
+fn gate_abandon(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {
+    let gate_id = parse_gate_id(arguments.required_utf8("gate-id")?)?;
+    let mut operation_id = None;
+    let mut reason = None;
+    let mut format = "json".to_owned();
+    while let Some(argument) = arguments.next_utf8("gate abandon argument")? {
+        match argument.as_str() {
+            "--operation-id" => {
+                operation_id = Some(parse_operation_id(
+                    arguments.required_utf8("--operation-id")?,
+                )?);
+            }
+            "--reason" => reason = Some(arguments.required_utf8("--reason")?),
+            "--format" => format = arguments.required_utf8("--format")?,
+            _ => return Err(CliError::UnknownArgument(argument)),
+        }
+    }
+    require_json(&format)?;
+    let operation_id =
+        operation_id.ok_or_else(|| CliError::MissingValue("--operation-id".into()))?;
+    let reason = reason.ok_or_else(|| CliError::MissingValue("--reason".into()))?;
+    if reason.is_empty() {
+        return Err(CliError::EmptyReason);
+    }
+    let result = lumin_engine::abandon_gate(&AbandonGateRequest {
+        root: root.to_path_buf(),
+        gate_id,
+        operation_id,
+        reason,
+    })?;
+    gate_command_output(&result)
 }
 
 fn operation(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {
@@ -407,6 +448,7 @@ fn error_exit_code(error: &CliError) -> i32 {
         | CliError::InvalidArea
         | CliError::NoCompletedRun
         | CliError::EmptyIdentifier(_)
+        | CliError::EmptyReason
         | CliError::InvalidRepoPath(_)
         | CliError::Protocol(_) => 2,
         CliError::Engine(error) => error.lifecycle_exit_code(),

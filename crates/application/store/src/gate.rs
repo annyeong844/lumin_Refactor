@@ -9,6 +9,7 @@ use redb::{TableDefinition, WriteTransaction};
 
 use super::{RepositoryStore, StoreError, backend_error, open_lifecycle_database};
 
+mod abandon;
 mod coordination;
 mod liveness;
 mod operations;
@@ -227,6 +228,7 @@ fn completed_pre_write_records(
         revision: 0,
         lifecycle,
         decision,
+        reason: None,
         signals: signals.clone(),
         leased_write_set: leased_write_set.clone(),
         deltas: Vec::new(),
@@ -253,6 +255,7 @@ fn completed_pre_write_records(
             revision: 0,
             operation_id: operation.operation_id.clone(),
             decision,
+            reason: None,
             signals,
             changed_paths: Vec::new(),
             snapshot: None,
@@ -449,6 +452,7 @@ fn rejected_open_result(
         revision: 0,
         lifecycle: GateLifecycle::Rejected,
         decision: gate_policy::decision(signals),
+        reason: None,
         signals: signals.to_vec(),
         leased_write_set: operation.leased_write_set.clone(),
         deltas: Vec::new(),
@@ -481,6 +485,7 @@ fn rejected_gate(
             revision: 0,
             operation_id: operation.operation_id.clone(),
             decision,
+            reason: None,
             signals: signals.to_vec(),
             changed_paths: Vec::new(),
             snapshot: None,

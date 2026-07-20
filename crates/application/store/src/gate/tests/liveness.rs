@@ -69,7 +69,12 @@ fn process_death_releases_post_write_revision_without_mutating_the_gate()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     let store = RepositoryStore::open(root.path())?;
-    let gate_id = open_active_gate(&store)?;
+    let gate_id = open_active_gate(
+        &store,
+        "op-active-gate",
+        "active-gate-digest",
+        "src/active.ts",
+    )?;
     run_death_fixture("post-write", root.path(), Some(&gate_id))?;
 
     let dead_operation = OperationId::from_string("op-dead-post-write".to_owned());
@@ -189,39 +194,4 @@ fn run_death_fixture(
         return Err(format!("process-death fixture exited with {status}").into());
     }
     Ok(())
-}
-
-fn open_active_gate(store: &RepositoryStore) -> Result<GateId, Box<dyn std::error::Error>> {
-    let operation_id = OperationId::from_string("op-active-gate".to_owned());
-    let session = store.begin_operation(&operation_id)?;
-    let source = path("src/active.ts")?;
-    let source_lease = lease(source.clone());
-    let (gate_id, transition_sequence) = match session.reserve_pre_write(
-        "active-gate-digest",
-        std::slice::from_ref(&source),
-        std::slice::from_ref(&source_lease),
-        &options(),
-    )? {
-        PreWriteStart::Analyze {
-            gate_id,
-            transition_sequence,
-        } => (gate_id, transition_sequence),
-        PreWriteStart::Committed(_) => return Err("active gate fixture was rejected".into()),
-    };
-    session.finish_pre_write(
-        "active-gate-digest",
-        &gate_id,
-        PreWriteFinish {
-            baseline: Some(GateBaseline {
-                analysis_contract: "test-contract".to_owned(),
-                snapshot: empty_snapshot(),
-                protected_semantic_inputs: Vec::new(),
-                transition_sequence,
-            }),
-            leased_write_set: vec![source_lease],
-            alias_closures: Vec::new(),
-            signals: Vec::new(),
-        },
-    )?;
-    Ok(gate_id)
 }

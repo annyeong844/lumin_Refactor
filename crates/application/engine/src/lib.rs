@@ -1,5 +1,7 @@
+mod gate_abandon;
 mod write_gate;
 
+pub use gate_abandon::{AbandonGateRequest, abandon_gate};
 pub use lumin_evidence::{GateDecision, GateOperationResult};
 pub use write_gate::{
     PostWriteRequest, PreWriteRequest, close_write_gate, load_gate, load_operation, open_write_gate,
@@ -88,6 +90,7 @@ impl EngineError {
                 | StoreError::GateNotActive(_),
             ) => 2,
             Self::Store(StoreError::GateRevisionBusy(_) | StoreError::OperationBusy(_)) => 4,
+            Self::Store(StoreError::GateRevisionChanged(_)) => 5,
             _ => 1,
         }
     }

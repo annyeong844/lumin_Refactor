@@ -253,6 +253,8 @@ pub struct GateRevision {
     pub revision: u64,
     pub operation_id: OperationId,
     pub decision: GateDecision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
     pub signals: Vec<GateSignal>,
     pub changed_paths: Vec<RepoPathProjection>,
     pub snapshot: Option<AnalysisSnapshot>,
@@ -340,6 +342,7 @@ impl<'de> Deserialize<'de> for GateRecord {
 pub enum GateOperationKind {
     PreWrite,
     PostWrite,
+    GateAbandon,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -366,6 +369,8 @@ pub struct GateOperationResult {
     pub revision: u64,
     pub lifecycle: GateLifecycle,
     pub decision: GateDecision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
     pub signals: Vec<GateSignal>,
     #[serde(default)]
     pub leased_write_set: Vec<WriteLease>,
@@ -383,6 +388,8 @@ pub struct OperationRecord {
     pub status: GateOperationStatus,
     pub gate_id: GateId,
     pub target_revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
     #[serde(default)]
     pub transition_sequence: u64,
     pub declared_write_set: Vec<RepoPathProjection>,

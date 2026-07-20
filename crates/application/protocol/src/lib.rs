@@ -106,6 +106,8 @@ pub struct GateMutationResponseDto {
     pub revision: u64,
     pub lifecycle: GateLifecycle,
     pub decision: GateDecision,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
     pub signals: Vec<GateSignalDto>,
     pub leased_write_set: Vec<WriteLeaseDto>,
     pub deltas: Vec<GateDeltaRecord>,
@@ -151,6 +153,8 @@ pub struct GateRevisionSummaryDto {
     pub revision: u64,
     pub operation_id: OperationId,
     pub decision: GateDecision,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
     pub signals: Vec<GateSignalDto>,
     pub changed_paths: Vec<RepoPathDto>,
     pub analysis_input_id: Option<AnalysisInputId>,
@@ -170,6 +174,8 @@ pub struct OperationShowResponseDto {
     pub status: GateOperationStatus,
     pub gate_id: GateId,
     pub target_revision: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
     pub transition_sequence: u64,
     pub interruption_count: u64,
     pub declared_write_set: Vec<RepoPathDto>,
@@ -324,6 +330,7 @@ pub fn gate_mutation_response(result: &GateOperationResult) -> GateMutationRespo
         revision: result.revision,
         lifecycle: result.lifecycle,
         decision: result.decision,
+        reason: result.reason.clone(),
         signals: result.signals.iter().map(GateSignalDto::from).collect(),
         leased_write_set: result
             .leased_write_set
@@ -371,6 +378,7 @@ pub fn gate_show_response(gate: &GateRecord) -> GateShowResponseDto {
                 revision: revision.revision,
                 operation_id: revision.operation_id.clone(),
                 decision: revision.decision,
+                reason: revision.reason.clone(),
                 signals: revision.signals.iter().map(GateSignalDto::from).collect(),
                 changed_paths: revision
                     .changed_paths
@@ -399,6 +407,7 @@ pub fn operation_show_response(operation: &OperationRecord) -> OperationShowResp
         status: operation.status,
         gate_id: operation.gate_id.clone(),
         target_revision: operation.target_revision,
+        reason: operation.reason.clone(),
         transition_sequence: operation.transition_sequence,
         interruption_count: operation.interruption_count,
         declared_write_set: operation

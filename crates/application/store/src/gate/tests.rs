@@ -6,6 +6,7 @@ use lumin_model::{CapabilityState, RepoPath};
 
 use super::*;
 
+mod abandon;
 mod liveness;
 
 #[test]
@@ -28,6 +29,7 @@ fn persisted_v1_gate_additions_default_when_absent() -> Result<(), Box<dyn std::
         revision: 0,
         operation_id: operation_id.clone(),
         decision: lumin_evidence::GateDecision::Allow,
+        reason: None,
         signals: Vec::new(),
         changed_paths: Vec::new(),
         snapshot: None,
@@ -77,6 +79,7 @@ fn persisted_v1_gate_additions_default_when_absent() -> Result<(), Box<dyn std::
             .protected_semantic_inputs
             .is_empty()
     );
+    assert!(loaded_gate.revisions[0].reason.is_none());
 
     let operation = OperationRecord {
         schema_version: "lumin-operation.v1".to_owned(),
@@ -86,6 +89,7 @@ fn persisted_v1_gate_additions_default_when_absent() -> Result<(), Box<dyn std::
         status: GateOperationStatus::Pending,
         gate_id,
         target_revision: 0,
+        reason: None,
         transition_sequence: 0,
         declared_write_set: Vec::new(),
         leased_write_set: Vec::new(),
@@ -113,6 +117,7 @@ fn persisted_v1_gate_additions_default_when_absent() -> Result<(), Box<dyn std::
     );
     assert_eq!(loaded_operation.interruption_count, 0);
     assert!(loaded_operation.operation_liveness.is_none());
+    assert!(loaded_operation.reason.is_none());
     Ok(())
 }
 
@@ -128,6 +133,7 @@ fn persisted_reservation_rejects_conflicting_physical_identities()
         status: GateOperationStatus::Pending,
         gate_id: GateId::from_string("gate-conflicting-binding".to_owned()),
         target_revision: 1,
+        reason: None,
         transition_sequence: 0,
         declared_write_set: Vec::new(),
         leased_write_set: Vec::new(),
@@ -497,4 +503,44 @@ fn empty_snapshot() -> AnalysisSnapshot {
             limitations: Vec::new(),
         },
     )
+}
+
+fn open_active_gate(
+    store: &RepositoryStore,
+    operation_id: &str,
+    request_digest: &str,
+    source: &str,
+) -> Result<GateId, Box<dyn std::error::Error>> {
+    let operation_id = OperationId::from_string(operation_id.to_owned());
+    let session = store.begin_operation(&operation_id)?;
+    let source = path(source)?;
+    let source_lease = lease(source.clone());
+    let (gate_id, transition_sequence) = match session.reserve_pre_write(
+        request_digest,
+        std::slice::from_ref(&source),
+        std::slice::from_ref(&source_lease),
+        &options(),
+    )? {
+        PreWriteStart::Analyze {
+            gate_id,
+            transition_sequence,
+        } => (gate_id, transition_sequence),
+        PreWriteStart::Committed(_) => return Err("active gate fixture was rejected".into()),
+    };
+    session.finish_pre_write(
+        request_digest,
+        &gate_id,
+        PreWriteFinish {
+            baseline: Some(GateBaseline {
+                analysis_contract: "test-contract".to_owned(),
+                snapshot: empty_snapshot(),
+                protected_semantic_inputs: Vec::new(),
+                transition_sequence,
+            }),
+            leased_write_set: vec![source_lease],
+            alias_closures: Vec::new(),
+            signals: Vec::new(),
+        },
+    )?;
+    Ok(gate_id)
 }
