@@ -10,8 +10,6 @@ use lumin_model::{
     SemanticConfigSnapshot, SourceSnapshot,
 };
 
-pub const DEAD_ANALYSIS_VERSION: &str = "zero-exact-fan-in.v1";
-
 pub fn analyze(
     sources: &[SourceSnapshot],
     graph: &SymbolGraph,

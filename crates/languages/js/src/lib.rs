@@ -12,8 +12,6 @@ use oxc_ast_visit::{Visit, walk};
 use oxc_parser::Parser;
 use oxc_span::{SourceType, Span};
 
-pub const JS_EXTRACTOR_VERSION: &str = "js-module-facts.v1";
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct JsExtractError {
     kind: SourceKind,

@@ -5,8 +5,6 @@ use lumin_model::{
     ResolutionOutcome, ResolvedSourceUse, SourceRoles, SourceSnapshot, SymbolNamespace,
 };
 
-pub const GRAPH_VERSION: &str = "symbol-graph.v1";
-
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ExportIdentity {
     pub source_id: LogicalSourceId,

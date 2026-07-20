@@ -233,73 +233,160 @@ fn classify_pair(
         return GateDeltaClassification::Unchanged;
     }
 
-    let mut regressions = Vec::new();
-    let mut improvements = Vec::new();
-    let mut incomparable = Vec::new();
+    classify_changed_pair(baseline, current)
+}
 
+#[derive(Default)]
+struct ClassifiedChanges {
+    regressions: Vec<DeltaDimensionChange>,
+    improvements: Vec<DeltaDimensionChange>,
+    incomparable: Vec<DeltaDimensionChange>,
+}
+
+impl ClassifiedChanges {
+    fn finish(self) -> GateDeltaClassification {
+        match (
+            self.regressions.is_empty(),
+            self.improvements.is_empty(),
+            self.incomparable.is_empty(),
+        ) {
+            (true, true, true) => GateDeltaClassification::Unchanged,
+            (false, true, true) => GateDeltaClassification::Regressed {
+                changes: self.regressions,
+            },
+            (true, false, true) => GateDeltaClassification::Improved {
+                changes: self.improvements,
+            },
+            _ => GateDeltaClassification::ChangedIncomparable {
+                regressions: self.regressions,
+                improvements: self.improvements,
+                incomparable_changes: self.incomparable,
+            },
+        }
+    }
+}
+
+fn classify_changed_pair(baseline: &DeltaFact, current: &DeltaFact) -> GateDeltaClassification {
+    let mut changes = ClassifiedChanges::default();
+    collect_target_changes(baseline, current, &mut changes);
+    collect_affected_identity_changes(baseline, current, &mut changes);
+    collect_rank_changes(baseline, current, &mut changes);
+    collect_evidence_change(baseline, current, &mut changes);
+    collect_owner_payload_changes(baseline, current, &mut changes);
+    changes.finish()
+}
+
+fn collect_target_changes(
+    baseline: &DeltaFact,
+    current: &DeltaFact,
+    changes: &mut ClassifiedChanges,
+) {
     for identity in current.targets.difference(&baseline.targets) {
-        regressions.push(DeltaDimensionChange::TargetAdded {
+        changes.regressions.push(DeltaDimensionChange::TargetAdded {
             identity: identity.clone(),
         });
     }
     for identity in baseline.targets.difference(&current.targets) {
-        improvements.push(DeltaDimensionChange::TargetRemoved {
-            identity: identity.clone(),
-        });
+        changes
+            .improvements
+            .push(DeltaDimensionChange::TargetRemoved {
+                identity: identity.clone(),
+            });
     }
+}
+
+fn collect_affected_identity_changes(
+    baseline: &DeltaFact,
+    current: &DeltaFact,
+    changes: &mut ClassifiedChanges,
+) {
     for identity in current
         .affected_identities
         .difference(&baseline.affected_identities)
     {
-        regressions.push(DeltaDimensionChange::AffectedIdentityAdded {
-            identity: identity.clone(),
-        });
+        changes
+            .regressions
+            .push(DeltaDimensionChange::AffectedIdentityAdded {
+                identity: identity.clone(),
+            });
     }
     for identity in baseline
         .affected_identities
         .difference(&current.affected_identities)
     {
-        improvements.push(DeltaDimensionChange::AffectedIdentityRemoved {
-            identity: identity.clone(),
-        });
+        changes
+            .improvements
+            .push(DeltaDimensionChange::AffectedIdentityRemoved {
+                identity: identity.clone(),
+            });
     }
+}
+
+fn collect_rank_changes(
+    baseline: &DeltaFact,
+    current: &DeltaFact,
+    changes: &mut ClassifiedChanges,
+) {
     match current.confidence.cmp(&baseline.confidence) {
         std::cmp::Ordering::Less => {
-            regressions.push(DeltaDimensionChange::ConfidenceLowered {
-                from: baseline.confidence,
-                to: current.confidence,
-            });
+            changes
+                .regressions
+                .push(DeltaDimensionChange::ConfidenceLowered {
+                    from: baseline.confidence,
+                    to: current.confidence,
+                });
         }
         std::cmp::Ordering::Greater => {
-            improvements.push(DeltaDimensionChange::ConfidenceRaised {
-                from: baseline.confidence,
-                to: current.confidence,
-            });
+            changes
+                .improvements
+                .push(DeltaDimensionChange::ConfidenceRaised {
+                    from: baseline.confidence,
+                    to: current.confidence,
+                });
         }
         std::cmp::Ordering::Equal => {}
     }
     match current.grounding.cmp(&baseline.grounding) {
         std::cmp::Ordering::Less => {
-            regressions.push(DeltaDimensionChange::GroundingLowered {
-                from: baseline.grounding,
-                to: current.grounding,
-            });
+            changes
+                .regressions
+                .push(DeltaDimensionChange::GroundingLowered {
+                    from: baseline.grounding,
+                    to: current.grounding,
+                });
         }
         std::cmp::Ordering::Greater => {
-            improvements.push(DeltaDimensionChange::GroundingRaised {
-                from: baseline.grounding,
-                to: current.grounding,
-            });
+            changes
+                .improvements
+                .push(DeltaDimensionChange::GroundingRaised {
+                    from: baseline.grounding,
+                    to: current.grounding,
+                });
         }
         std::cmp::Ordering::Equal => {}
     }
-    if baseline.evidence_identity != current.evidence_identity {
-        incomparable.push(DeltaDimensionChange::EvidenceIdentityChanged {
-            from: baseline.evidence_identity.clone(),
-            to: current.evidence_identity.clone(),
-        });
-    }
+}
 
+fn collect_evidence_change(
+    baseline: &DeltaFact,
+    current: &DeltaFact,
+    changes: &mut ClassifiedChanges,
+) {
+    if baseline.evidence_identity != current.evidence_identity {
+        changes
+            .incomparable
+            .push(DeltaDimensionChange::EvidenceIdentityChanged {
+                from: baseline.evidence_identity.clone(),
+                to: current.evidence_identity.clone(),
+            });
+    }
+}
+
+fn collect_owner_payload_changes(
+    baseline: &DeltaFact,
+    current: &DeltaFact,
+    changes: &mut ClassifiedChanges,
+) {
     let payload_fields = baseline
         .owner_payload
         .keys()
@@ -322,42 +409,19 @@ fn classify_pair(
         }
         match (from.rank, to.rank) {
             (Some(from_rank), Some(to_rank)) if to_rank < from_rank => {
-                regressions.push(DeltaDimensionChange::OwnerPayloadRegressed {
-                    field_id,
-                    from,
-                    to,
-                });
+                changes
+                    .regressions
+                    .push(DeltaDimensionChange::OwnerPayloadRegressed { field_id, from, to });
             }
             (Some(from_rank), Some(to_rank)) if to_rank > from_rank => {
-                improvements.push(DeltaDimensionChange::OwnerPayloadImproved {
-                    field_id,
-                    from,
-                    to,
-                });
+                changes
+                    .improvements
+                    .push(DeltaDimensionChange::OwnerPayloadImproved { field_id, from, to });
             }
-            _ => {
-                incomparable.push(DeltaDimensionChange::OwnerPayloadChanged { field_id, from, to })
-            }
+            _ => changes
+                .incomparable
+                .push(DeltaDimensionChange::OwnerPayloadChanged { field_id, from, to }),
         }
-    }
-
-    match (
-        regressions.is_empty(),
-        improvements.is_empty(),
-        incomparable.is_empty(),
-    ) {
-        (true, true, true) => GateDeltaClassification::Unchanged,
-        (false, true, true) => GateDeltaClassification::Regressed {
-            changes: regressions,
-        },
-        (true, false, true) => GateDeltaClassification::Improved {
-            changes: improvements,
-        },
-        _ => GateDeltaClassification::ChangedIncomparable {
-            regressions,
-            improvements,
-            incomparable_changes: incomparable,
-        },
     }
 }
 
