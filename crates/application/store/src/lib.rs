@@ -1,16 +1,16 @@
 mod gate;
+mod namespace;
 
 pub use gate::{
     ActiveGateLease, OperationSession, PostWriteFinish, PostWriteStart, PreWriteFinish,
     PreWriteStart, SemanticReadReservation,
 };
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use fs2::FileExt;
 use lumin_evidence::RunEvidence;
 use lumin_model::{AttemptId, RunId, digest_hex};
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
@@ -26,6 +26,7 @@ const EVIDENCE: TableDefinition<&str, &[u8]> = TableDefinition::new("evidence");
 #[derive(Clone, Debug)]
 pub struct RepositoryStore {
     state_dir: PathBuf,
+    namespace: namespace::NamespaceState,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -104,15 +105,18 @@ pub enum StoreError {
 
 impl RepositoryStore {
     pub fn open(root: &Path) -> Result<Self, StoreError> {
-        let state_dir = root.join(".lumin");
-        initialize_namespace(&state_dir)?;
-        Ok(Self { state_dir })
+        let namespace = namespace::NamespaceState::open(root)?;
+        let state_dir = namespace.state_dir().to_path_buf();
+        Ok(Self {
+            state_dir,
+            namespace,
+        })
     }
 
     pub fn begin_attempt(&self) -> Result<AttemptHandle, StoreError> {
-        self.with_exclusive_lock(|| {
-            let database = open_lifecycle_database(&self.state_dir)?;
-            let sequence = next_attempt_sequence(&database)?;
+        self.with_exclusive_lock(|guard| {
+            let database = guard.open_database()?;
+            let sequence = next_attempt_sequence(guard, &database)?;
             let attempt = AttemptHandle {
                 attempt_id: AttemptId::from_string(format!("attempt_{sequence:016x}")),
                 sequence,
@@ -131,9 +135,14 @@ impl RepositoryStore {
                 .state_dir
                 .join("attempts")
                 .join(attempt.attempt_id.as_str());
-            fs::create_dir(&directory).map_err(io_error)?;
-            write_json(&directory.join("attempt.json"), &envelope)?;
+            drop(database);
+            guard.mutate(|| {
+                fs::create_dir(&directory).map_err(io_error)?;
+                write_json(&directory.join("attempt.json"), &envelope)
+            })?;
+            let database = guard.open_database()?;
             set_pointer(
+                guard,
                 &database,
                 "latest-attempt",
                 attempt.attempt_id.as_str().as_bytes(),
@@ -143,7 +152,7 @@ impl RepositoryStore {
     }
 
     pub fn fail_attempt(&self, attempt: &AttemptHandle, failure: &str) -> Result<(), StoreError> {
-        self.with_exclusive_lock(|| {
+        self.with_exclusive_lock(|guard| {
             let path = self
                 .state_dir
                 .join("attempts")
@@ -153,7 +162,7 @@ impl RepositoryStore {
             envelope.state = AttemptState::Failed;
             envelope.finished_unix_millis = Some(unix_millis()?);
             envelope.failure = Some(failure.to_owned());
-            write_json(&path, &envelope)
+            guard.mutate(|| write_json(&path, &envelope))
         })
     }
 
@@ -162,7 +171,7 @@ impl RepositoryStore {
         attempt: &AttemptHandle,
         evidence: &RunEvidence,
     ) -> Result<PublishedRun, StoreError> {
-        self.with_exclusive_lock(|| {
+        self.with_exclusive_lock(|guard| {
             let run_id = RunId::from_string(format!("run_{:016x}", attempt.sequence));
             let staging = self
                 .state_dir
@@ -175,24 +184,32 @@ impl RepositoryStore {
                     run_id.as_str()
                 )));
             }
-            fs::create_dir(&staging).map_err(io_error)?;
+            let record = guard.mutate(|| {
+                fs::create_dir(&staging).map_err(io_error)?;
+                let evidence_path = staging.join("evidence.store");
+                write_evidence_store(&evidence_path, evidence)?;
+                let evidence_bytes = fs::read(&evidence_path).map_err(io_error)?;
+                let record = RunCatalogRecord {
+                    attempt_id: attempt.attempt_id.clone(),
+                    run_id: run_id.clone(),
+                    sequence: attempt.sequence,
+                    evidence_store_sha256: digest_hex(&evidence_bytes),
+                    evidence_store_size: evidence_bytes.len() as u64,
+                };
+                write_json(&staging.join("run.json"), &record)?;
+                Ok(record)
+            })?;
+            guard.mutate(|| fs::rename(&staging, &run_dir).map_err(io_error))?;
 
-            let evidence_path = staging.join("evidence.store");
-            write_evidence_store(&evidence_path, evidence)?;
-            let evidence_bytes = fs::read(&evidence_path).map_err(io_error)?;
-            let record = RunCatalogRecord {
-                attempt_id: attempt.attempt_id.clone(),
-                run_id: run_id.clone(),
-                sequence: attempt.sequence,
-                evidence_store_sha256: digest_hex(&evidence_bytes),
-                evidence_store_size: evidence_bytes.len() as u64,
-            };
-            write_json(&staging.join("run.json"), &record)?;
-            fs::rename(&staging, &run_dir).map_err(io_error)?;
-
-            let database = open_lifecycle_database(&self.state_dir)?;
-            insert_catalog_record(&database, &record)?;
-            set_pointer(&database, "latest-completed", run_id.as_str().as_bytes())?;
+            let database = guard.open_database()?;
+            insert_catalog_record(guard, &database, &record)?;
+            set_pointer(
+                guard,
+                &database,
+                "latest-completed",
+                run_id.as_str().as_bytes(),
+            )?;
+            drop(database);
 
             let attempt_path = self
                 .state_dir
@@ -203,7 +220,7 @@ impl RepositoryStore {
             envelope.state = AttemptState::Completed;
             envelope.finished_unix_millis = Some(unix_millis()?);
             envelope.run_id = Some(run_id.clone());
-            write_json(&attempt_path, &envelope)?;
+            guard.mutate(|| write_json(&attempt_path, &envelope))?;
 
             Ok(PublishedRun {
                 attempt_id: attempt.attempt_id.clone(),
@@ -214,8 +231,8 @@ impl RepositoryStore {
     }
 
     pub fn load_run(&self, run_id: &RunId) -> Result<(RunCatalogRecord, RunEvidence), StoreError> {
-        self.with_shared_lock(|| {
-            let database = open_lifecycle_database(&self.state_dir)?;
+        self.with_shared_lock(|guard| {
+            let database = guard.open_database()?;
             let record = read_catalog_record(&database, run_id)?;
             let path = self
                 .state_dir
@@ -237,8 +254,8 @@ impl RepositoryStore {
     }
 
     pub fn latest_run_id(&self) -> Result<Option<RunId>, StoreError> {
-        self.with_shared_lock(|| {
-            let database = open_lifecycle_database(&self.state_dir)?;
+        self.with_shared_lock(|guard| {
+            let database = guard.open_database()?;
             let read = database.begin_read().map_err(backend_error)?;
             let table = read.open_table(POINTERS).map_err(backend_error)?;
             let value = table.get("latest-completed").map_err(backend_error)?;
@@ -253,68 +270,16 @@ impl RepositoryStore {
 
     fn with_exclusive_lock<T>(
         &self,
-        operation: impl FnOnce() -> Result<T, StoreError>,
+        operation: impl FnOnce(&namespace::NamespaceGuard) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
-        let lock = open_lock(&self.state_dir)?;
-        FileExt::lock_exclusive(&lock).map_err(io_error)?;
-        let result = operation();
-        FileExt::unlock(&lock).map_err(io_error)?;
-        result
+        self.namespace.with_exclusive_lock(operation)
     }
 
     fn with_shared_lock<T>(
         &self,
-        operation: impl FnOnce() -> Result<T, StoreError>,
+        operation: impl FnOnce(&namespace::NamespaceGuard) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
-        let lock = open_lock(&self.state_dir)?;
-        FileExt::lock_shared(&lock).map_err(io_error)?;
-        let result = operation();
-        FileExt::unlock(&lock).map_err(io_error)?;
-        result
-    }
-}
-
-fn initialize_namespace(state_dir: &Path) -> Result<(), StoreError> {
-    ensure_real_directory(state_dir, ".lumin")?;
-
-    for name in ["attempts", "runs", "trash", "cache"] {
-        let parent = state_dir.join(name);
-        ensure_real_directory(&parent, &format!("managed state parent {name}"))?;
-        let anchor = parent.join("namespace.anchor");
-        ensure_real_file(&anchor, &format!("managed state anchor {name}"), || {
-            nonce_hex().map(|nonce| nonce.into_bytes())
-        })?;
-    }
-
-    let lock = state_dir.join("lifecycle.lock");
-    ensure_real_file(&lock, "lifecycle.lock", || {
-        nonce_hex().map(|nonce| nonce.into_bytes())
-    })?;
-
-    let marker = state_dir.join("repository.json");
-    ensure_real_file(&marker, "repository marker", || {
-        let value = serde_json::json!({
-            "schemaVersion": "lumin-repository.v1",
-            "namespaceNonce": nonce_hex()?,
-        });
-        let mut bytes = serde_json::to_vec_pretty(&value).map_err(serialization_error)?;
-        bytes.push(b'\n');
-        Ok(bytes)
-    })?;
-    let _database = open_lifecycle_database(state_dir)?;
-    Ok(())
-}
-
-fn ensure_real_directory(path: &Path, label: &str) -> Result<(), StoreError> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if !metadata.file_type().is_symlink() && metadata.is_dir() => Ok(()),
-        Ok(_) => Err(StoreError::Integrity(format!(
-            "{label} must be a real directory"
-        ))),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            fs::create_dir(path).map_err(io_error)
-        }
-        Err(error) => Err(io_error(error)),
+        self.namespace.with_shared_lock(operation)
     }
 }
 
@@ -335,31 +300,10 @@ fn ensure_real_file(
     }
 }
 
-fn open_lock(state_dir: &Path) -> Result<File, StoreError> {
-    OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(state_dir.join("lifecycle.lock"))
-        .map_err(io_error)
-}
-
-fn open_lifecycle_database(state_dir: &Path) -> Result<Database, StoreError> {
-    let path = state_dir.join("lifecycle.store");
-    match fs::symlink_metadata(&path) {
-        Ok(metadata) if !metadata.file_type().is_symlink() && metadata.is_file() => {
-            Database::open(path).map_err(backend_error)
-        }
-        Ok(_) => Err(StoreError::Integrity(
-            "lifecycle.store must be a real file".to_owned(),
-        )),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Database::create(path).map_err(backend_error)
-        }
-        Err(error) => Err(io_error(error)),
-    }
-}
-
-fn next_attempt_sequence(database: &Database) -> Result<u64, StoreError> {
+fn next_attempt_sequence(
+    guard: &namespace::NamespaceGuard,
+    database: &Database,
+) -> Result<u64, StoreError> {
     let write = database.begin_write().map_err(backend_error)?;
     let next = {
         let mut table = write.open_table(SEQUENCES).map_err(backend_error)?;
@@ -373,11 +317,15 @@ fn next_attempt_sequence(database: &Database) -> Result<u64, StoreError> {
         table.insert("attempt", next).map_err(backend_error)?;
         next
     };
-    write.commit().map_err(backend_error)?;
+    guard.commit(database, write)?;
     Ok(next)
 }
 
-fn insert_catalog_record(database: &Database, record: &RunCatalogRecord) -> Result<(), StoreError> {
+fn insert_catalog_record(
+    guard: &namespace::NamespaceGuard,
+    database: &Database,
+    record: &RunCatalogRecord,
+) -> Result<(), StoreError> {
     let bytes = serde_json::to_vec(record).map_err(serialization_error)?;
     let write = database.begin_write().map_err(backend_error)?;
     {
@@ -386,7 +334,7 @@ fn insert_catalog_record(database: &Database, record: &RunCatalogRecord) -> Resu
             .insert(record.run_id.as_str(), bytes.as_slice())
             .map_err(backend_error)?;
     }
-    write.commit().map_err(backend_error)
+    guard.commit(database, write)
 }
 
 fn read_catalog_record(
@@ -402,13 +350,18 @@ fn read_catalog_record(
     serde_json::from_slice(value.value()).map_err(serialization_error)
 }
 
-fn set_pointer(database: &Database, key: &str, value: &[u8]) -> Result<(), StoreError> {
+fn set_pointer(
+    guard: &namespace::NamespaceGuard,
+    database: &Database,
+    key: &str,
+    value: &[u8],
+) -> Result<(), StoreError> {
     let write = database.begin_write().map_err(backend_error)?;
     {
         let mut table = write.open_table(POINTERS).map_err(backend_error)?;
         table.insert(key, value).map_err(backend_error)?;
     }
-    write.commit().map_err(backend_error)
+    guard.commit(database, write)
 }
 
 fn write_evidence_store(path: &Path, evidence: &RunEvidence) -> Result<(), StoreError> {
@@ -493,63 +446,4 @@ fn backend_error(error: impl std::fmt::Display) -> StoreError {
 
 fn serialization_error(error: serde_json::Error) -> StoreError {
     StoreError::Serialization(error.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn require_integrity_failure(
-        result: Result<RepositoryStore, StoreError>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        match result {
-            Err(StoreError::Integrity(_)) => Ok(()),
-            Err(error) => Err(Box::new(error)),
-            Ok(_) => Err(Box::new(std::io::Error::other(
-                "state replacement was accepted",
-            ))),
-        }
-    }
-
-    #[test]
-    fn rejects_state_namespace_file() -> Result<(), Box<dyn std::error::Error>> {
-        let root = tempfile::tempdir()?;
-        fs::write(root.path().join(".lumin"), b"not a directory")?;
-
-        require_integrity_failure(RepositoryStore::open(root.path()))
-    }
-
-    #[test]
-    fn rejects_managed_parent_replacement() -> Result<(), Box<dyn std::error::Error>> {
-        let root = tempfile::tempdir()?;
-        RepositoryStore::open(root.path())?;
-        let runs = root.path().join(".lumin/runs");
-        fs::remove_file(runs.join("namespace.anchor"))?;
-        fs::remove_dir(&runs)?;
-        fs::write(&runs, b"not a directory")?;
-
-        require_integrity_failure(RepositoryStore::open(root.path()))
-    }
-
-    #[test]
-    fn rejects_managed_parent_anchor_replacement() -> Result<(), Box<dyn std::error::Error>> {
-        let root = tempfile::tempdir()?;
-        RepositoryStore::open(root.path())?;
-        let anchor = root.path().join(".lumin/runs/namespace.anchor");
-        fs::remove_file(&anchor)?;
-        fs::create_dir(&anchor)?;
-
-        require_integrity_failure(RepositoryStore::open(root.path()))
-    }
-
-    #[test]
-    fn rejects_repository_marker_replacement() -> Result<(), Box<dyn std::error::Error>> {
-        let root = tempfile::tempdir()?;
-        RepositoryStore::open(root.path())?;
-        let marker = root.path().join(".lumin/repository.json");
-        fs::remove_file(&marker)?;
-        fs::create_dir(&marker)?;
-
-        require_integrity_failure(RepositoryStore::open(root.path()))
-    }
 }

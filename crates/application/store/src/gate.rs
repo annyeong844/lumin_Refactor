@@ -7,7 +7,7 @@ use lumin_evidence::{
 use lumin_model::{GateDeltaRecord, GateId, OperationId};
 use redb::{TableDefinition, WriteTransaction};
 
-use super::{RepositoryStore, StoreError, backend_error, open_lifecycle_database};
+use super::{RepositoryStore, StoreError, backend_error};
 
 mod abandon;
 mod coordination;
@@ -94,8 +94,8 @@ pub enum SemanticReadReservation {
 
 impl RepositoryStore {
     pub fn load_gate(&self, gate_id: &GateId) -> Result<GateRecord, StoreError> {
-        self.with_shared_lock(|| {
-            let database = open_lifecycle_database(&self.state_dir)?;
+        self.with_shared_lock(|guard| {
+            let database = guard.open_database()?;
             load_record::<GateRecord>(&database, GATES, gate_id.as_str())?
                 .ok_or_else(|| StoreError::GateNotFound(gate_id.as_str().to_owned()))
         })
@@ -106,8 +106,8 @@ impl RepositoryStore {
         operation_id: &OperationId,
     ) -> Result<OperationRecord, StoreError> {
         self.recover_interrupted_operations(None)?;
-        self.with_shared_lock(|| {
-            let database = open_lifecycle_database(&self.state_dir)?;
+        self.with_shared_lock(|guard| {
+            let database = guard.open_database()?;
             load_record::<OperationRecord>(&database, OPERATIONS, operation_id.as_str())?
                 .ok_or_else(|| StoreError::OperationNotFound(operation_id.as_str().to_owned()))
         })

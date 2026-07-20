@@ -6,10 +6,7 @@ use fs2::FileExt;
 use lumin_evidence::{GateOperationStatus, OperationLivenessLease, OperationRecord};
 use lumin_model::{OperationId, digest_hex};
 
-use crate::{
-    RepositoryStore, StoreError, backend_error, ensure_real_file, io_error, nonce_hex,
-    open_lifecycle_database,
-};
+use crate::{RepositoryStore, StoreError, backend_error, ensure_real_file, io_error, nonce_hex};
 
 use super::records::{read_records, write_record};
 use super::{OPERATIONS, validate_reservation_binding_set};
@@ -53,8 +50,8 @@ impl RepositoryStore {
         &self,
         current_operation_id: Option<&OperationId>,
     ) -> Result<(), StoreError> {
-        self.with_exclusive_lock(|| {
-            let database = open_lifecycle_database(&self.state_dir)?;
+        self.with_exclusive_lock(|guard| {
+            let database = guard.open_database()?;
             let write = database.begin_write().map_err(backend_error)?;
             let mut recovered_locks = Vec::new();
             for mut operation in read_records::<OperationRecord>(&write, OPERATIONS)? {
@@ -105,7 +102,7 @@ impl RepositoryStore {
                     )?;
                 }
             }
-            write.commit().map_err(backend_error)?;
+            guard.commit(&database, write)?;
             drop(recovered_locks);
             Ok(())
         })
@@ -115,10 +112,12 @@ impl RepositoryStore {
         &self,
         operation_id: &OperationId,
     ) -> Result<PathBuf, StoreError> {
-        self.with_exclusive_lock(|| {
+        self.with_exclusive_lock(|guard| {
             let path = operation_lock_path(&self.state_dir, operation_id);
-            ensure_real_file(&path, "operation liveness lock", || {
-                Ok(operation_id.as_str().as_bytes().to_vec())
+            guard.mutate(|| {
+                ensure_real_file(&path, "operation liveness lock", || {
+                    Ok(operation_id.as_str().as_bytes().to_vec())
+                })
             })?;
             Ok(path)
         })

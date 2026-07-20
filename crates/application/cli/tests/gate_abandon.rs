@@ -176,6 +176,83 @@ fn abandon_requires_a_nonempty_reason() -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
+#[test]
+fn copied_managed_parent_hard_stops_before_public_gate_mutation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    let opened = run(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-parent-swap-open",
+            "--path",
+            "src/lib.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&opened, 0);
+    let gate_id = field(&opened.stdout, "gateId")?;
+
+    let state_dir = root.path().join(".lumin");
+    let runs = state_dir.join("runs");
+    let original = state_dir.join("runs.displaced");
+    fs::rename(&runs, &original)?;
+    copy_directory(&original, &runs)?;
+
+    let rejected = run(
+        root.path(),
+        &[
+            "gate",
+            "abandon",
+            gate_id.as_str(),
+            "--operation-id",
+            "op-parent-swap",
+            "--reason",
+            "must not reach the copied parent",
+        ],
+    )?;
+    assert_status(&rejected, 1);
+    assert!(rejected.stdout.is_empty());
+    assert!(
+        rejected
+            .stderr
+            .contains("state namespace integrity failure")
+    );
+
+    fs::remove_dir_all(&runs)?;
+    fs::rename(&original, &runs)?;
+    let gate = run(root.path(), &["gate", "show", gate_id.as_str()])?;
+    assert_status(&gate, 0);
+    let gate_json: Value = serde_json::from_str(&gate.stdout)?;
+    assert_eq!(
+        gate_json.get("lifecycle").and_then(Value::as_str),
+        Some("active")
+    );
+    assert_eq!(
+        gate_json.get("currentRevision").and_then(Value::as_u64),
+        Some(0)
+    );
+    let operation = run(root.path(), &["operation", "show", "op-parent-swap"])?;
+    assert_status(&operation, 2);
+    Ok(())
+}
+
+fn copy_directory(source: &Path, destination: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    fs::create_dir(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let target = destination.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_directory(&entry.path(), &target)?;
+        } else {
+            fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
+
 fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     fs::create_dir(root.path().join("src"))?;

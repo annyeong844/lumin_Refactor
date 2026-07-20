@@ -9,8 +9,8 @@ impl OperationSession<'_> {
         analysis_options: &GateAnalysisOptions,
     ) -> Result<PreWriteStart, StoreError> {
         let operation_id = &self.operation_id;
-        self.store.with_exclusive_lock(|| {
-            let database = open_lifecycle_database(&self.store.state_dir)?;
+        self.store.with_exclusive_lock(|guard| {
+            let database = guard.open_database()?;
             let write = database.begin_write().map_err(backend_error)?;
             let mut operation = if let Some(mut operation) =
                 read_record::<OperationRecord>(&write, OPERATIONS, operation_id.as_str())?
@@ -81,7 +81,7 @@ impl OperationSession<'_> {
                     operation.operation_id.as_str(),
                     &operation,
                 )?;
-                write.commit().map_err(backend_error)?;
+                guard.commit(&database, write)?;
                 return Ok(PreWriteStart::Committed(result));
             }
 
@@ -91,7 +91,7 @@ impl OperationSession<'_> {
                 operation.operation_id.as_str(),
                 &operation,
             )?;
-            write.commit().map_err(backend_error)?;
+            guard.commit(&database, write)?;
             Ok(PreWriteStart::Analyze {
                 gate_id,
                 transition_sequence,
@@ -112,8 +112,8 @@ impl OperationSession<'_> {
             mut signals,
         } = finish;
         let operation_id = &self.operation_id;
-        self.store.with_exclusive_lock(|| {
-            let database = open_lifecycle_database(&self.store.state_dir)?;
+        self.store.with_exclusive_lock(|guard| {
+            let database = guard.open_database()?;
             let write = database.begin_write().map_err(backend_error)?;
             let mut operation = load_operation_for_finish(
                 &write,
@@ -143,7 +143,7 @@ impl OperationSession<'_> {
             )?;
             operation.leased_write_set = result.leased_write_set.clone();
             persist_operation_result(&write, &gate, &mut operation, &result)?;
-            write.commit().map_err(backend_error)?;
+            guard.commit(&database, write)?;
             Ok(result)
         })
     }
@@ -154,8 +154,8 @@ impl OperationSession<'_> {
         gate_id: &GateId,
     ) -> Result<PostWriteStart, StoreError> {
         let operation_id = &self.operation_id;
-        self.store.with_exclusive_lock(|| {
-            let database = open_lifecycle_database(&self.store.state_dir)?;
+        self.store.with_exclusive_lock(|guard| {
+            let database = guard.open_database()?;
             let write = database.begin_write().map_err(backend_error)?;
             if let Some(mut operation) =
                 read_record::<OperationRecord>(&write, OPERATIONS, operation_id.as_str())?
@@ -197,7 +197,7 @@ impl OperationSession<'_> {
                     operation.operation_id.as_str(),
                     &operation,
                 )?;
-                write.commit().map_err(backend_error)?;
+                guard.commit(&database, write)?;
                 return Ok(PostWriteStart::Analyze {
                     gate: Box::new(gate),
                     transitions,
@@ -235,7 +235,7 @@ impl OperationSession<'_> {
                 operation.operation_id.as_str(),
                 &operation,
             )?;
-            write.commit().map_err(backend_error)?;
+            guard.commit(&database, write)?;
             Ok(PostWriteStart::Analyze {
                 gate: Box::new(gate),
                 transitions,
@@ -300,8 +300,8 @@ impl OperationSession<'_> {
         demanded_paths.sort();
         demanded_paths.dedup();
         let operation_id = &self.operation_id;
-        self.store.with_exclusive_lock(|| {
-            let database = open_lifecycle_database(&self.store.state_dir)?;
+        self.store.with_exclusive_lock(|guard| {
+            let database = guard.open_database()?;
             let write = database.begin_write().map_err(backend_error)?;
             let mut operation = load_operation_for_finish(
                 &write,
@@ -357,7 +357,7 @@ impl OperationSession<'_> {
                 operation.operation_id.as_str(),
                 &operation,
             )?;
-            write.commit().map_err(backend_error)?;
+            guard.commit(&database, write)?;
             Ok(SemanticReadReservation::Reserved)
         })
     }
@@ -379,8 +379,8 @@ impl OperationSession<'_> {
             deltas,
         } = finish;
         let operation_id = &self.operation_id;
-        self.store.with_exclusive_lock(|| {
-            let database = open_lifecycle_database(&self.store.state_dir)?;
+        self.store.with_exclusive_lock(|guard| {
+            let database = guard.open_database()?;
             let write = database.begin_write().map_err(backend_error)?;
             let mut operation = load_operation_for_finish(
                 &write,
@@ -456,7 +456,7 @@ impl OperationSession<'_> {
                 deltas,
             });
             persist_operation_result(&write, &gate, &mut operation, &result)?;
-            write.commit().map_err(backend_error)?;
+            guard.commit(&database, write)?;
             Ok(result)
         })
     }
