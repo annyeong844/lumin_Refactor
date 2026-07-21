@@ -224,7 +224,7 @@ pub(super) fn reclaim_state(
             &path,
             EntryKind::Directory,
             EntryAccess::ReadOnly,
-            true,
+            false,
             "anchorless retention trash plan directory",
         )?;
         return Ok(TrashReclaimState::AnchorRemoved { path, directory });
