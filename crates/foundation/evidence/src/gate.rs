@@ -358,6 +358,8 @@ pub enum GateOperationStatus {
 pub struct OperationLivenessLease {
     pub lease_nonce: String,
     pub owner_process_id: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lock_physical_identity: Option<PhysicalFileIdentity>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

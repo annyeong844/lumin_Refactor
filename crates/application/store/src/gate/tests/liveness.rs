@@ -114,6 +114,42 @@ fn a_live_operation_session_cannot_be_duplicated() -> Result<(), Box<dyn std::er
 }
 
 #[test]
+fn replacing_a_pending_operation_lock_cannot_authorize_interruption()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    run_death_fixture("pre-write", root.path(), None)?;
+    let operation_id = OperationId::from_string("op-dead-pre-write".to_owned());
+
+    let lock_path = root.path().join(".lumin").join(format!(
+        "operation-liveness-{}.lock",
+        lumin_model::digest_hex(operation_id.as_str().as_bytes())
+    ));
+    let displaced_path = lock_path.with_extension("lock.displaced");
+    std::fs::rename(&lock_path, &displaced_path)?;
+    std::fs::copy(&displaced_path, &lock_path)?;
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.begin_operation(&operation_id),
+        Err(StoreError::Integrity(detail))
+            if detail.contains("operation liveness lock physical identity changed")
+    ));
+    assert!(matches!(
+        store.load_operation(&operation_id),
+        Err(StoreError::Integrity(detail))
+            if detail.contains("operation liveness lock physical identity changed")
+    ));
+
+    std::fs::remove_file(&lock_path)?;
+    std::fs::rename(&displaced_path, &lock_path)?;
+    let _retry = store.begin_operation(&operation_id)?;
+    let interrupted = store.load_operation(&operation_id)?;
+    assert_eq!(interrupted.status, GateOperationStatus::Interrupted);
+    assert_eq!(interrupted.interruption_count, 1);
+    Ok(())
+}
+
+#[test]
 fn old_generation_operation_reopens_before_any_late_mutation()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;

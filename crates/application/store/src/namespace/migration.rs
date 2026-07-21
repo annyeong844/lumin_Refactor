@@ -7,8 +7,8 @@ use crate::{StoreError, StoreGeneration};
 
 pub use self::artifacts::MigrationIntent;
 use self::artifacts::{
-    MigrationPaths, publish_intent, read_intent, remove_intent, remove_private_file,
-    validate_intent,
+    MigrationPaths, cleanup_unpublished_intent, publish_intent, read_intent, remove_intent,
+    remove_private_file, validate_intent,
 };
 use self::snapshot::{LogicalStoreSnapshot, create_private, read_canonical, read_private};
 use super::platform::replace_file_atomic;
@@ -17,6 +17,9 @@ use super::{NamespaceGuard, NamespaceState, entry_exists};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum MigrationCrashPoint {
+    PendingIntentCreated,
+    IntentPrepared,
+    IntentRenamed,
     IntentPublished,
     CopiesValidated,
     CanonicalReplaced,
@@ -45,6 +48,7 @@ pub(super) fn require_idle(guard: &NamespaceGuard) -> Result<(), StoreError> {
 }
 
 pub(super) fn recover_on_open(guard: &NamespaceGuard) -> Result<(), StoreError> {
+    cleanup_unpublished_intent(guard)?;
     if let Some(intent) = read_intent(guard)? {
         recover_intent(guard, &intent, &mut |_| Ok(()))?;
         return Ok(());
@@ -57,6 +61,7 @@ pub(super) fn migrate_with_hook(
     guard: &NamespaceGuard,
     hook: &mut impl FnMut(MigrationCrashPoint) -> Result<(), StoreError>,
 ) -> Result<StoreGeneration, StoreError> {
+    cleanup_unpublished_intent(guard)?;
     if let Some(intent) = read_intent(guard)? {
         recover_intent(guard, &intent, hook)?;
         return Ok(intent.to_generation);
@@ -79,8 +84,7 @@ pub(super) fn migrate_with_hook(
         source_schema: STORE_HEADER_SCHEMA.to_owned(),
         target_schema: STORE_HEADER_SCHEMA.to_owned(),
     };
-    publish_intent(guard, &intent)?;
-    hook(MigrationCrashPoint::IntentPublished)?;
+    publish_intent(guard, &intent, hook)?;
     recover_intent(guard, &intent, hook)?;
     Ok(to_generation)
 }
@@ -121,7 +125,7 @@ fn recover_from_source_generation(
     hook: &mut impl FnMut(MigrationCrashPoint) -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
     let source = read_canonical(guard, intent.from_generation)?;
-    source.validate_external_references(&guard.state.state_dir)?;
+    source.validate_external_references(guard)?;
     ensure_private_snapshot(guard, &paths.source, intent.from_generation, &source)?;
     ensure_private_snapshot(guard, &paths.target, intent.to_generation, &source)?;
     hook(MigrationCrashPoint::CopiesValidated)?;
@@ -133,7 +137,7 @@ fn recover_from_source_generation(
             "validated lifecycle migration copies disagree before replacement".to_owned(),
         ));
     }
-    retained_source.validate_external_references(&guard.state.state_dir)?;
+    retained_source.validate_external_references(guard)?;
     guard.validate_bound_entries()?;
     replace_file_atomic(&paths.canonical, &paths.target)?;
     hook(MigrationCrashPoint::CanonicalReplaced)?;
@@ -146,7 +150,7 @@ fn recover_from_source_generation(
             "replaced lifecycle.store changed the canonical logical snapshot".to_owned(),
         ));
     }
-    current.validate_external_references(&guard.state.state_dir)?;
+    current.validate_external_references(guard)?;
     finish_migration(guard, intent, paths, hook)
 }
 
@@ -173,7 +177,7 @@ fn recover_from_target_generation(
             "canonical target generation disagrees with the retained source snapshot".to_owned(),
         ));
     }
-    current.validate_external_references(&guard.state.state_dir)?;
+    current.validate_external_references(guard)?;
     guard.state_directory.sync_directory()?;
     hook(MigrationCrashPoint::ParentFlushed)?;
     finish_migration(guard, intent, paths, hook)

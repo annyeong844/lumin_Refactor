@@ -101,7 +101,10 @@ pub(super) fn create_private(
 }
 
 impl LogicalStoreSnapshot {
-    pub(super) fn validate_external_references(&self, state_dir: &Path) -> Result<(), StoreError> {
-        validation::validate_external_references(self, state_dir)
+    pub(super) fn validate_external_references(
+        &self,
+        guard: &NamespaceGuard,
+    ) -> Result<(), StoreError> {
+        validation::validate_external_references(self, guard)
     }
 }

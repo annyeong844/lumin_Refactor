@@ -1,14 +1,11 @@
-use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom};
+use std::fs;
 use std::path::PathBuf;
 
 use fs2::FileExt;
 use lumin_evidence::{GateOperationStatus, OperationLivenessLease, OperationRecord};
-use lumin_model::{OperationId, digest_hex};
+use lumin_model::{OperationId, PhysicalFileIdentity, digest_hex};
 
-use crate::{
-    RepositoryStore, StoreError, StoreGeneration, ensure_real_file, io_error, namespace, nonce_hex,
-};
+use crate::{RepositoryStore, StoreError, StoreGeneration, io_error, namespace, nonce_hex};
 
 use super::records::{read_records, write_record};
 use super::{OPERATIONS, validate_reservation_binding_set};
@@ -18,7 +15,7 @@ pub struct OperationSession<'store> {
     pub(super) operation_id: OperationId,
     pub(super) liveness: OperationLivenessLease,
     generation: StoreGeneration,
-    _lock_file: File,
+    lock_file: namespace::HeldEntry,
 }
 
 impl RepositoryStore {
@@ -26,17 +23,16 @@ impl RepositoryStore {
         &self,
         operation_id: &OperationId,
     ) -> Result<OperationSession<'_>, StoreError> {
-        let lock_path = self.ensure_operation_lock_file(operation_id)?;
-        let lock_file = open_operation_lock_file(&lock_path, operation_id)?;
-        match lock_file.try_lock_exclusive() {
+        let (lock_path, lock_file) = self.ensure_operation_lock_file(operation_id)?;
+        match lock_file.file().try_lock_exclusive() {
             Ok(()) => {}
             Err(error) if lock_contended(&error) => {
                 return Err(StoreError::OperationBusy(operation_id.as_str().to_owned()));
             }
             Err(error) => return Err(io_error(error)),
         }
-        verify_operation_lock_file(&lock_file, operation_id)?;
-        self.recover_interrupted_operations(Some(operation_id))?;
+        validate_operation_lock_file(&lock_file, &lock_path, operation_id)?;
+        self.recover_interrupted_operations(Some((operation_id, &lock_file)))?;
         let generation = self.current_store_generation()?;
         Ok(OperationSession {
             store: self,
@@ -44,15 +40,16 @@ impl RepositoryStore {
             liveness: OperationLivenessLease {
                 lease_nonce: nonce_hex()?,
                 owner_process_id: std::process::id(),
+                lock_physical_identity: Some(lock_file.identity().clone()),
             },
             generation,
-            _lock_file: lock_file,
+            lock_file,
         })
     }
 
     pub(super) fn recover_interrupted_operations(
         &self,
-        current_operation_id: Option<&OperationId>,
+        current_operation: Option<(&OperationId, &namespace::HeldEntry)>,
     ) -> Result<(), StoreError> {
         self.with_exclusive_lock(|guard| {
             let database = guard.open_database()?;
@@ -63,48 +60,29 @@ impl RepositoryStore {
                     continue;
                 }
                 validate_reservation_binding_set(&operation)?;
-                if operation.operation_liveness.is_none() {
-                    return Err(StoreError::Integrity(format!(
-                        "pending operation omitted its liveness binding: {}",
-                        operation.operation_id.as_str()
-                    )));
+                if !operation_lock_is_interrupted(
+                    guard,
+                    &operation,
+                    current_operation,
+                    &mut recovered_locks,
+                )? {
+                    continue;
                 }
-                let interrupted = if current_operation_id
-                    .is_some_and(|operation_id| operation.operation_id == *operation_id)
-                {
-                    true
-                } else {
-                    let lock_path = operation_lock_path(&self.state_dir, &operation.operation_id);
-                    let file = open_operation_lock_file(&lock_path, &operation.operation_id)?;
-                    match file.try_lock_exclusive() {
-                        Ok(()) => {
-                            verify_operation_lock_file(&file, &operation.operation_id)?;
-                            recovered_locks.push(file);
-                            true
-                        }
-                        Err(error) if lock_contended(&error) => false,
-                        Err(error) => return Err(io_error(error)),
-                    }
-                };
-                if interrupted {
-                    operation.status = GateOperationStatus::Interrupted;
-                    operation.interruption_count =
-                        operation.interruption_count.checked_add(1).ok_or_else(|| {
-                            StoreError::Integrity(
-                                "operation interruption count overflow".to_owned(),
-                            )
-                        })?;
-                    operation.leased_write_set.clear();
-                    operation.semantic_read_reservations.clear();
-                    operation.semantic_read_reservation_bindings.clear();
-                    operation.operation_liveness = None;
-                    write_record(
-                        &write,
-                        OPERATIONS,
-                        operation.operation_id.as_str(),
-                        &operation,
-                    )?;
-                }
+                operation.status = GateOperationStatus::Interrupted;
+                operation.interruption_count =
+                    operation.interruption_count.checked_add(1).ok_or_else(|| {
+                        StoreError::Integrity("operation interruption count overflow".to_owned())
+                    })?;
+                operation.leased_write_set.clear();
+                operation.semantic_read_reservations.clear();
+                operation.semantic_read_reservation_bindings.clear();
+                operation.operation_liveness = None;
+                write_record(
+                    &write,
+                    OPERATIONS,
+                    operation.operation_id.as_str(),
+                    &operation,
+                )?;
             }
             guard.commit(write)?;
             drop(recovered_locks);
@@ -115,15 +93,16 @@ impl RepositoryStore {
     fn ensure_operation_lock_file(
         &self,
         operation_id: &OperationId,
-    ) -> Result<PathBuf, StoreError> {
+    ) -> Result<(PathBuf, namespace::HeldEntry), StoreError> {
         self.with_exclusive_lock(|guard| {
-            let path = operation_lock_path(&self.state_dir, operation_id);
-            guard.mutate(|| {
-                ensure_real_file(&path, "operation liveness lock", || {
-                    Ok(operation_id.as_str().as_bytes().to_vec())
-                })
-            })?;
-            Ok(path)
+            let name = operation_lock_name(operation_id);
+            let path = self.state_dir.join(&name);
+            let file = guard.open_or_create_state_file(
+                &name,
+                "operation liveness lock",
+                operation_id.as_str().as_bytes(),
+            )?;
+            Ok((path, file))
         })
     }
 
@@ -144,6 +123,7 @@ impl OperationSession<'_> {
         &self,
         operation: &mut OperationRecord,
     ) -> Result<(), StoreError> {
+        self.validate_live_lock()?;
         if operation.operation_id != self.operation_id {
             return Err(StoreError::Integrity(format!(
                 "operation session identity mismatch: {}",
@@ -165,6 +145,7 @@ impl OperationSession<'_> {
         &self,
         operation: &OperationRecord,
     ) -> Result<(), StoreError> {
+        self.validate_live_lock()?;
         if operation.status != GateOperationStatus::Pending
             || operation.operation_liveness.as_ref() != Some(&self.liveness)
         {
@@ -175,39 +156,140 @@ impl OperationSession<'_> {
         }
         Ok(())
     }
+
+    fn validate_live_lock(&self) -> Result<(), StoreError> {
+        let path = operation_lock_path(self.store.state_dir.as_path(), &self.operation_id);
+        validate_operation_lock_file(&self.lock_file, &path, &self.operation_id)?;
+        if self.liveness.lock_physical_identity.as_ref() != Some(self.lock_file.identity()) {
+            return Err(StoreError::Integrity(format!(
+                "operation liveness lock binding changed: {}",
+                self.operation_id.as_str()
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn operation_lock_is_interrupted(
+    guard: &namespace::NamespaceGuard,
+    operation: &OperationRecord,
+    current_operation: Option<(&OperationId, &namespace::HeldEntry)>,
+    recovered_locks: &mut Vec<namespace::HeldEntry>,
+) -> Result<bool, StoreError> {
+    let expected_identity = operation
+        .operation_liveness
+        .as_ref()
+        .and_then(|liveness| liveness.lock_physical_identity.as_ref())
+        .ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "pending operation omitted its lock identity binding: {}",
+                operation.operation_id.as_str()
+            ))
+        })?;
+    let lock_name = operation_lock_name(&operation.operation_id);
+    if let Some((operation_id, file)) = current_operation
+        && operation.operation_id == *operation_id
+    {
+        validate_locked_operation_lock(
+            guard,
+            file,
+            &lock_name,
+            &operation.operation_id,
+            expected_identity,
+        )?;
+        return Ok(true);
+    }
+
+    let file = guard.open_state_file(&lock_name, "operation liveness lock")?;
+    validate_operation_lock_identity(
+        guard,
+        &file,
+        &lock_name,
+        &operation.operation_id,
+        expected_identity,
+    )?;
+    match file.file().try_lock_exclusive() {
+        Ok(()) => {
+            validate_locked_operation_lock(
+                guard,
+                &file,
+                &lock_name,
+                &operation.operation_id,
+                expected_identity,
+            )?;
+            recovered_locks.push(file);
+            Ok(true)
+        }
+        Err(error) if lock_contended(&error) => Ok(false),
+        Err(error) => Err(io_error(error)),
+    }
+}
+
+fn operation_lock_name(operation_id: &OperationId) -> String {
+    format!(
+        "operation-liveness-{}.lock",
+        digest_hex(operation_id.as_str().as_bytes())
+    )
 }
 
 fn operation_lock_path(state_dir: &std::path::Path, operation_id: &OperationId) -> PathBuf {
-    state_dir.join(format!(
-        "operation-liveness-{}.lock",
-        digest_hex(operation_id.as_str().as_bytes())
-    ))
+    state_dir.join(operation_lock_name(operation_id))
 }
 
-fn open_operation_lock_file(
+fn validate_operation_lock_identity(
+    guard: &namespace::NamespaceGuard,
+    file: &namespace::HeldEntry,
+    lock_name: &str,
+    operation_id: &OperationId,
+    expected_identity: &PhysicalFileIdentity,
+) -> Result<(), StoreError> {
+    guard.validate_state_file(file, lock_name, "operation liveness lock")?;
+    if file.identity() != expected_identity {
+        return Err(StoreError::Integrity(format!(
+            "operation liveness lock physical identity changed: {}",
+            operation_id.as_str()
+        )));
+    }
+    Ok(())
+}
+
+fn validate_locked_operation_lock(
+    guard: &namespace::NamespaceGuard,
+    file: &namespace::HeldEntry,
+    lock_name: &str,
+    operation_id: &OperationId,
+    expected_identity: &PhysicalFileIdentity,
+) -> Result<(), StoreError> {
+    validate_operation_lock_identity(guard, file, lock_name, operation_id, expected_identity)?;
+    verify_operation_lock_file(file, operation_id)
+}
+
+fn validate_operation_lock_file(
+    file: &namespace::HeldEntry,
     path: &std::path::Path,
-    _operation_id: &OperationId,
-) -> Result<File, StoreError> {
+    operation_id: &OperationId,
+) -> Result<(), StoreError> {
     let metadata = fs::symlink_metadata(path).map_err(io_error)?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(StoreError::Integrity(
             "operation liveness lock must be a real file".to_owned(),
         ));
     }
-    OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(path)
-        .map_err(io_error)
+    file.validate_path(
+        path,
+        namespace::EntryKind::RegularFile,
+        namespace::EntryAccess::ReadOnly,
+        true,
+        "operation liveness lock",
+    )?;
+    verify_operation_lock_file(file, operation_id)
 }
 
 fn verify_operation_lock_file(
-    mut file: &File,
+    file: &namespace::HeldEntry,
     operation_id: &OperationId,
 ) -> Result<(), StoreError> {
-    file.seek(SeekFrom::Start(0)).map_err(io_error)?;
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes).map_err(io_error)?;
+    let bytes = file.read_all()?;
     if bytes != operation_id.as_str().as_bytes() {
         return Err(StoreError::Integrity(format!(
             "operation liveness lock identity mismatch: {}",

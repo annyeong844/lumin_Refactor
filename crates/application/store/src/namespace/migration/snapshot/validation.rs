@@ -1,6 +1,6 @@
+mod external;
+
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
-use std::path::Path;
 
 use lumin_evidence::{
     GateOperationKind, GateOperationStatus, GateRecord, OperationRecord, WorktreeTransition,
@@ -8,55 +8,16 @@ use lumin_evidence::{
 use serde::de::DeserializeOwned;
 
 use crate::gate::transition_key;
-use crate::{AttemptEnvelope, RunCatalogRecord, StoreError, digest_hex, io_error, read_json};
+use crate::{RunCatalogRecord, StoreError};
 
+use super::super::super::NamespaceGuard;
 use super::LogicalStoreSnapshot;
 
 pub(super) fn validate_external_references(
     snapshot: &LogicalStoreSnapshot,
-    state_dir: &Path,
+    guard: &NamespaceGuard,
 ) -> Result<(), StoreError> {
-    if let Some(attempt_id) = snapshot.pointers.get("latest-attempt") {
-        let attempt_id = std::str::from_utf8(attempt_id).map_err(|error| {
-            StoreError::Integrity(format!("latest-attempt pointer is not UTF-8: {error}"))
-        })?;
-        let envelope: AttemptEnvelope = read_json(
-            &state_dir
-                .join("attempts")
-                .join(attempt_id)
-                .join("attempt.json"),
-        )?;
-        if envelope.attempt_id.as_str() != attempt_id {
-            return Err(StoreError::Integrity(
-                "latest-attempt pointer disagrees with its envelope".to_owned(),
-            ));
-        }
-    }
-
-    for (key, bytes) in &snapshot.run_catalog {
-        let record = parse_record::<RunCatalogRecord>("run-catalog", key, bytes)?;
-        let run_dir = state_dir.join("runs").join(record.run_id.as_str());
-        let envelope = read_json::<RunCatalogRecord>(&run_dir.join("run.json"))?;
-        if envelope.run_id != record.run_id
-            || envelope.attempt_id != record.attempt_id
-            || envelope.sequence != record.sequence
-            || envelope.evidence_store_sha256 != record.evidence_store_sha256
-            || envelope.evidence_store_size != record.evidence_store_size
-        {
-            return Err(StoreError::Integrity(format!(
-                "run catalog entry {key} disagrees with its durable run envelope"
-            )));
-        }
-        let evidence = fs::read(run_dir.join("evidence.store")).map_err(io_error)?;
-        if evidence.len() as u64 != record.evidence_store_size
-            || digest_hex(&evidence) != record.evidence_store_sha256
-        {
-            return Err(StoreError::Integrity(format!(
-                "run catalog entry {key} disagrees with its evidence store"
-            )));
-        }
-    }
-    Ok(())
+    external::validate_external_references(snapshot, guard)
 }
 
 pub(super) fn validate_referential_closure(
@@ -137,11 +98,12 @@ fn validate_gate_history(
         )));
     }
     for (index, revision) in gate.revisions.iter().enumerate() {
+        let operation = operations.get(revision.operation_id.as_str());
         if revision.revision != index as u64
-            || !operations.contains_key(revision.operation_id.as_str())
+            || operation.is_none_or(|operation| operation.gate_id != gate.gate_id)
         {
             return Err(StoreError::Integrity(format!(
-                "gate {key} revision history is not referentially closed"
+                "gate {key} revision history is not owned by that gate"
             )));
         }
         if revision

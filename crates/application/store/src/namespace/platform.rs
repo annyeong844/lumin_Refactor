@@ -7,19 +7,19 @@ use lumin_model::{PhysicalFileIdentity, RepositoryRootPhysicalIdentity};
 use crate::{StoreError, io_error};
 
 #[derive(Clone, Copy)]
-pub(super) enum EntryKind {
+pub(crate) enum EntryKind {
     Directory,
     RegularFile,
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum EntryAccess {
+pub(crate) enum EntryAccess {
     ReadOnly,
     ReadWrite,
 }
 
 #[derive(Debug)]
-pub(super) struct HeldEntry {
+pub(crate) struct HeldEntry {
     file: File,
     identity: PhysicalFileIdentity,
     links: u64,
@@ -74,15 +74,15 @@ impl HeldEntry {
         })
     }
 
-    pub(super) fn file(&self) -> &File {
+    pub(crate) fn file(&self) -> &File {
         &self.file
     }
 
-    pub(super) fn identity(&self) -> &PhysicalFileIdentity {
+    pub(crate) fn identity(&self) -> &PhysicalFileIdentity {
         &self.identity
     }
 
-    pub(super) fn validate_path(
+    pub(crate) fn validate_path(
         &self,
         path: &Path,
         kind: EntryKind,
@@ -99,7 +99,7 @@ impl HeldEntry {
         Ok(())
     }
 
-    pub(super) fn read_all(&self) -> Result<Vec<u8>, StoreError> {
+    pub(crate) fn read_all(&self) -> Result<Vec<u8>, StoreError> {
         let mut reader = self.file();
         reader.seek(SeekFrom::Start(0)).map_err(io_error)?;
         let mut bytes = Vec::new();
@@ -164,45 +164,17 @@ pub(super) fn replace_file_atomic(replaced: &Path, replacement: &Path) -> Result
     std::fs::rename(replacement, replaced).map_err(io_error)
 }
 
-#[cfg_attr(
-    windows,
-    allow(
-        unsafe_code,
-        reason = "Windows atomic replacement requires ReplaceFileW"
-    )
-)]
 #[cfg(windows)]
 pub(super) fn replace_file_atomic(replaced: &Path, replacement: &Path) -> Result<(), StoreError> {
-    use std::os::windows::ffi::OsStrExt;
-
-    use windows_sys::Win32::Storage::FileSystem::{REPLACEFILE_WRITE_THROUGH, ReplaceFileW};
-
-    let replaced = replaced
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    let replacement = replacement
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    // SAFETY: both vectors are NUL-terminated and remain alive for the call;
-    // backup and reserved arguments are intentionally null.
-    let replaced_ok = unsafe {
-        ReplaceFileW(
-            replaced.as_ptr(),
-            replacement.as_ptr(),
-            std::ptr::null(),
-            REPLACEFILE_WRITE_THROUGH,
-            std::ptr::null(),
-            std::ptr::null(),
-        )
+    use windows_sys::Win32::Storage::FileSystem::{
+        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
     };
-    if replaced_ok == 0 {
-        return Err(io_error(std::io::Error::last_os_error()));
-    }
-    Ok(())
+
+    move_file_atomic(
+        replacement,
+        replaced,
+        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+    )
 }
 
 #[cfg(not(any(target_os = "linux", windows)))]
@@ -210,6 +182,56 @@ pub(super) fn replace_file_atomic(_replaced: &Path, _replacement: &Path) -> Resu
     Err(StoreError::Integrity(
         "lifecycle store replacement supports Windows and Linux".to_owned(),
     ))
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn publish_file_atomic(published: &Path, pending: &Path) -> Result<(), StoreError> {
+    std::fs::rename(pending, published).map_err(io_error)
+}
+
+#[cfg(windows)]
+pub(super) fn publish_file_atomic(published: &Path, pending: &Path) -> Result<(), StoreError> {
+    use windows_sys::Win32::Storage::FileSystem::MOVEFILE_WRITE_THROUGH;
+
+    move_file_atomic(pending, published, MOVEFILE_WRITE_THROUGH)
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+pub(super) fn publish_file_atomic(_published: &Path, _pending: &Path) -> Result<(), StoreError> {
+    Err(StoreError::Integrity(
+        "lifecycle intent publication supports Windows and Linux".to_owned(),
+    ))
+}
+
+#[cfg_attr(
+    windows,
+    allow(
+        unsafe_code,
+        reason = "durable Windows publication and replacement require MoveFileExW"
+    )
+)]
+#[cfg(windows)]
+fn move_file_atomic(source: &Path, destination: &Path, flags: u32) -> Result<(), StoreError> {
+    use std::os::windows::ffi::OsStrExt;
+
+    use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
+
+    let source = source
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let destination = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    // SAFETY: both vectors are NUL-terminated and remain alive for the call.
+    let moved = unsafe { MoveFileExW(source.as_ptr(), destination.as_ptr(), flags) };
+    if moved == 0 {
+        return Err(io_error(std::io::Error::last_os_error()));
+    }
+    Ok(())
 }
 
 #[cfg_attr(

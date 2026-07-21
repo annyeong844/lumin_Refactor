@@ -108,12 +108,14 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
         excludes: request.excludes.clone(),
         role_overrides: request.role_overrides.clone(),
     };
-    let evidence = match analyze_repository(
+    let evidence = match capture_repository(
         &context.root,
         &inventory_request,
         request.jobs,
         request.resolution_profile,
-    ) {
+    )
+    .map(|capture| capture.snapshot.evidence)
+    {
         Ok(evidence) => evidence,
         Err(error) => {
             if let Err(persistence) = store.fail_attempt(&attempt, &error.to_string()) {
@@ -149,8 +151,8 @@ pub fn analyze_repository(
     jobs: usize,
     resolution_profile: Option<ResolutionProfile>,
 ) -> Result<RunEvidence, EngineError> {
-    let context = open_repository_context(root)?;
-    capture_repository(&context.root, request, jobs, resolution_profile)
+    let admission = repository_admission(root)?;
+    capture_repository(&admission.canonical_root, request, jobs, resolution_profile)
         .map(|capture| capture.snapshot.evidence)
 }
 
@@ -606,6 +608,20 @@ mod tests {
         let many = analyze_repository(root.path(), &request, 4, None)?;
         assert_eq!(one, many);
         assert_eq!(one.findings.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn analysis_only_does_not_initialize_lifecycle_state() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = tempfile::tempdir()?;
+        fs::create_dir_all(root.path().join("src"))?;
+        fs::write(root.path().join("src/main.ts"), "export const value = 1;")?;
+
+        let evidence = analyze_repository(root.path(), &InventoryRequest::default(), 1, None)?;
+
+        assert_eq!(evidence.schema_version, "lumin-evidence.v1");
+        assert!(!root.path().join(".lumin").exists());
         Ok(())
     }
 

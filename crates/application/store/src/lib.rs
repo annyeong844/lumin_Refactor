@@ -9,7 +9,7 @@ pub use gate::{
 pub use generation::StoreGeneration;
 pub use namespace::MigrationIntent;
 
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -316,23 +316,6 @@ impl RepositoryStore {
     }
 }
 
-fn ensure_real_file(
-    path: &Path,
-    label: &str,
-    initial_bytes: impl FnOnce() -> Result<Vec<u8>, StoreError>,
-) -> Result<(), StoreError> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if !metadata.file_type().is_symlink() && metadata.is_file() => Ok(()),
-        Ok(_) => Err(StoreError::Integrity(format!(
-            "{label} must be a real file"
-        ))),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            write_new_file(path, &initial_bytes()?)
-        }
-        Err(error) => Err(io_error(error)),
-    }
-}
-
 fn next_attempt_sequence(
     guard: &namespace::NamespaceGuard,
     database: &namespace::StoreDatabase<'_>,
@@ -432,16 +415,6 @@ fn write_json(path: &Path, value: &impl Serialize) -> Result<(), StoreError> {
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, StoreError> {
     let bytes = fs::read(path).map_err(io_error)?;
     serde_json::from_slice(&bytes).map_err(serialization_error)
-}
-
-fn write_new_file(path: &Path, bytes: &[u8]) -> Result<(), StoreError> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(io_error)?;
-    file.write_all(bytes).map_err(io_error)?;
-    file.sync_all().map_err(io_error)
 }
 
 fn write_replace(path: &Path, bytes: &[u8]) -> Result<(), StoreError> {

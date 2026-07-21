@@ -1,3 +1,5 @@
+mod integrity;
+
 use std::fs;
 
 use lumin_evidence::{
@@ -11,7 +13,10 @@ use crate::{PreWriteFinish, PreWriteStart, RepositoryStore, StoreError, StoreGen
 use super::super::migration::{MigrationCrashPoint, migrate_with_hook};
 use super::open_store;
 
-const CRASH_POINTS: [MigrationCrashPoint; 5] = [
+const CRASH_POINTS: [MigrationCrashPoint; 8] = [
+    MigrationCrashPoint::PendingIntentCreated,
+    MigrationCrashPoint::IntentPrepared,
+    MigrationCrashPoint::IntentRenamed,
     MigrationCrashPoint::IntentPublished,
     MigrationCrashPoint::CopiesValidated,
     MigrationCrashPoint::CanonicalReplaced,
@@ -76,7 +81,13 @@ fn every_migration_process_death_boundary_recovers_on_reopen()
         run_death_fixture(root.path(), point)?;
 
         let recovered = open_store(root.path())?;
-        assert_eq!(current_generation(&recovered)?, next_generation()?);
+        let expected_generation = match point {
+            MigrationCrashPoint::PendingIntentCreated | MigrationCrashPoint::IntentPrepared => {
+                StoreGeneration::INITIAL
+            }
+            _ => next_generation()?,
+        };
+        assert_eq!(current_generation(&recovered)?, expected_generation);
         assert_eq!(recovered.latest_run_id()?, Some(published.run_id.clone()));
         assert_eq!(recovered.load_run(&published.run_id)?.1, evidence);
         assert_migration_paths_absent(root.path())?;
@@ -236,6 +247,9 @@ fn run_death_fixture(
 
 fn crash_point_label(point: MigrationCrashPoint) -> &'static str {
     match point {
+        MigrationCrashPoint::PendingIntentCreated => "after-pending-intent-create",
+        MigrationCrashPoint::IntentPrepared => "after-pending-intent-sync",
+        MigrationCrashPoint::IntentRenamed => "after-intent-rename",
         MigrationCrashPoint::IntentPublished => "after-intent",
         MigrationCrashPoint::CopiesValidated => "after-validated-replacement",
         MigrationCrashPoint::CanonicalReplaced => "after-replace",
@@ -246,6 +260,9 @@ fn crash_point_label(point: MigrationCrashPoint) -> &'static str {
 
 fn crash_point(label: &str) -> Result<MigrationCrashPoint, Box<dyn std::error::Error>> {
     match label {
+        "after-pending-intent-create" => Ok(MigrationCrashPoint::PendingIntentCreated),
+        "after-pending-intent-sync" => Ok(MigrationCrashPoint::IntentPrepared),
+        "after-intent-rename" => Ok(MigrationCrashPoint::IntentRenamed),
         "after-intent" => Ok(MigrationCrashPoint::IntentPublished),
         "after-validated-replacement" => Ok(MigrationCrashPoint::CopiesValidated),
         "after-replace" => Ok(MigrationCrashPoint::CanonicalReplaced),
@@ -300,9 +317,17 @@ fn lease(path: RepoPathProjection) -> WriteLease {
 }
 
 fn open_active_gate(store: &RepositoryStore) -> Result<GateId, Box<dyn std::error::Error>> {
-    let operation_id = OperationId::from_string("op-migrate-gate".to_owned());
+    open_active_gate_for(store, "op-migrate-gate", "src/active.ts")
+}
+
+fn open_active_gate_for(
+    store: &RepositoryStore,
+    operation: &str,
+    source: &str,
+) -> Result<GateId, Box<dyn std::error::Error>> {
+    let operation_id = OperationId::from_string(operation.to_owned());
     let session = store.begin_operation(&operation_id)?;
-    let source = path("src/active.ts")?;
+    let source = path(source)?;
     let source_lease = lease(source.clone());
     let (gate_id, transition_sequence) = match session.reserve_pre_write(
         "migrate-gate-digest",

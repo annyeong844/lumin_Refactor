@@ -9,7 +9,7 @@ mod store_header;
 mod tests;
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use fs2::FileExt;
@@ -19,7 +19,8 @@ use crate::{StoreError, io_error};
 use bootstrap::bootstrap_namespace;
 pub(crate) use database::StoreDatabase;
 pub use migration::MigrationIntent;
-use platform::{EntryAccess, EntryKind, HeldEntry, repository_root_physical_identity, same_volume};
+pub(crate) use platform::{EntryAccess, EntryKind, HeldEntry};
+use platform::{repository_root_physical_identity, same_volume};
 use records::*;
 use store_header::*;
 
@@ -267,6 +268,88 @@ impl NamespaceGuard {
             (_, Err(error)) => Err(error),
             (result, Ok(())) => result,
         }
+    }
+
+    pub(crate) fn open_or_create_state_file(
+        &self,
+        name: &str,
+        label: &str,
+        initial_bytes: &[u8],
+    ) -> Result<HeldEntry, StoreError> {
+        let path = self.direct_state_file_path(name)?;
+        self.mutate(|| {
+            let entry = match fs::symlink_metadata(&path) {
+                Ok(_) => HeldEntry::open(
+                    &path,
+                    EntryKind::RegularFile,
+                    EntryAccess::ReadWrite,
+                    true,
+                    label,
+                )?,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    let entry = HeldEntry::create_new(&path, label)?;
+                    entry.replace_contents(initial_bytes)?;
+                    self.state_directory.sync_directory()?;
+                    entry
+                }
+                Err(error) => return Err(io_error(error)),
+            };
+            require_state_volume(&entry, &self.state_directory, label)?;
+            entry.validate_path(
+                &path,
+                EntryKind::RegularFile,
+                EntryAccess::ReadWrite,
+                true,
+                label,
+            )?;
+            Ok(entry)
+        })
+    }
+
+    pub(crate) fn open_state_file(&self, name: &str, label: &str) -> Result<HeldEntry, StoreError> {
+        let path = self.direct_state_file_path(name)?;
+        let entry = match fs::symlink_metadata(&path) {
+            Ok(_) => HeldEntry::open(
+                &path,
+                EntryKind::RegularFile,
+                EntryAccess::ReadWrite,
+                true,
+                label,
+            )?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(StoreError::Integrity(format!("{label} is missing")));
+            }
+            Err(error) => return Err(io_error(error)),
+        };
+        require_state_volume(&entry, &self.state_directory, label)?;
+        Ok(entry)
+    }
+
+    pub(crate) fn validate_state_file(
+        &self,
+        entry: &HeldEntry,
+        name: &str,
+        label: &str,
+    ) -> Result<(), StoreError> {
+        let path = self.direct_state_file_path(name)?;
+        entry.validate_path(
+            &path,
+            EntryKind::RegularFile,
+            EntryAccess::ReadOnly,
+            true,
+            label,
+        )?;
+        require_state_volume(entry, &self.state_directory, label)
+    }
+
+    fn direct_state_file_path(&self, name: &str) -> Result<PathBuf, StoreError> {
+        let mut components = Path::new(name).components();
+        if !matches!(components.next(), Some(Component::Normal(_))) || components.next().is_some() {
+            return Err(StoreError::Integrity(
+                "state file name must be one direct normal component".to_owned(),
+            ));
+        }
+        Ok(self.state.state_dir.join(name))
     }
 
     fn validate_complete(&self) -> Result<(), StoreError> {
