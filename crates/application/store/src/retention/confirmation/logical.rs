@@ -40,12 +40,48 @@ pub(super) fn commit_pruned(
     let mut operation = read_retention_operation(&write, operation_id)?.ok_or_else(|| {
         StoreError::Integrity("retention confirmation operation disappeared".to_owned())
     })?;
-    operation.status = RetentionOperationStatus::Committed;
-    operation.result = RetentionOperationResult::Retention {
-        result: super::super::records::pruned_result(&plan.record)?,
-    };
-    write_retention_operation(&write, &operation)?;
+    if operation.status != RetentionOperationStatus::Pruning {
+        return Err(StoreError::Integrity(
+            "retention confirmation operation is not pruning".to_owned(),
+        ));
+    }
+    if !plan.record.physical_reclamation_pending {
+        write_committed_result(&write, &mut operation, &plan)?;
+    }
     next_sequence(&write, "retention-catalog")?;
+    guard.commit(write)?;
+    Ok(plan)
+}
+
+pub(super) fn commit_reclamation_pending(
+    guard: &crate::namespace::NamespaceGuard,
+    plan_id: &RetentionPlanId,
+    operation_id: &OperationId,
+) -> Result<StoredRetentionPlan, StoreError> {
+    let database = guard.open_database()?;
+    let write = database.begin_write()?;
+    let plan = read_plan(&write, plan_id)?;
+    require_confirmation_owner(&plan, operation_id)?;
+    if plan.record.state != RetentionPlanState::Pruned || !plan.record.physical_reclamation_pending
+    {
+        return Err(StoreError::RetentionPlanState(plan_id.as_str().to_owned()));
+    }
+    let mut operation = read_retention_operation(&write, operation_id)?.ok_or_else(|| {
+        StoreError::Integrity("retention confirmation operation disappeared".to_owned())
+    })?;
+    match operation.status {
+        RetentionOperationStatus::Pruning => {
+            write_committed_result(&write, &mut operation, &plan)?;
+        }
+        RetentionOperationStatus::Committed => {
+            ensure_committed_pending_result(&operation, plan_id)?;
+        }
+        RetentionOperationStatus::Stale => {
+            return Err(StoreError::Integrity(
+                "stale retention confirmation owns a pruned plan".to_owned(),
+            ));
+        }
+    }
     guard.commit(write)?;
     Ok(plan)
 }
@@ -68,12 +104,52 @@ pub(super) fn mark_reclaimed(
     let mut operation = read_retention_operation(&write, operation_id)?.ok_or_else(|| {
         StoreError::Integrity("retention confirmation operation disappeared".to_owned())
     })?;
+    match operation.status {
+        RetentionOperationStatus::Pruning => {
+            write_committed_result(&write, &mut operation, &plan)?;
+        }
+        RetentionOperationStatus::Committed => {
+            ensure_committed_pending_result(&operation, plan_id)?;
+        }
+        RetentionOperationStatus::Stale => {
+            return Err(StoreError::Integrity(
+                "stale retention confirmation owns a pruned plan".to_owned(),
+            ));
+        }
+    }
+    guard.commit(write)?;
+    Ok(plan)
+}
+
+fn write_committed_result(
+    write: &WriteTransaction,
+    operation: &mut lumin_evidence::RetentionOperationRecord,
+    plan: &StoredRetentionPlan,
+) -> Result<(), StoreError> {
+    operation.status = RetentionOperationStatus::Committed;
     operation.result = RetentionOperationResult::Retention {
         result: super::super::records::pruned_result(&plan.record)?,
     };
-    write_retention_operation(&write, &operation)?;
-    guard.commit(write)?;
-    Ok(plan)
+    write_retention_operation(write, operation)
+}
+
+fn ensure_committed_pending_result(
+    operation: &lumin_evidence::RetentionOperationRecord,
+    plan_id: &RetentionPlanId,
+) -> Result<(), StoreError> {
+    match &operation.result {
+        RetentionOperationResult::Retention {
+            result:
+                lumin_evidence::RetentionMutationResult::Pruned {
+                    plan_id: result_plan_id,
+                    physical_reclamation_pending: true,
+                    ..
+                },
+        } if result_plan_id == plan_id => Ok(()),
+        _ => Err(StoreError::Integrity(
+            "committed retention result cannot resume physical reclamation".to_owned(),
+        )),
+    }
 }
 
 fn remove_canonical_records(

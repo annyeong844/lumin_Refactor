@@ -175,6 +175,27 @@ pub(crate) fn read_validated_tombstone(
     Ok(Some(tombstone))
 }
 
+pub(super) fn read_validated_tombstone_with_owner(
+    write: &WriteTransaction,
+    kind: RetentionItemKind,
+    record_id: &str,
+) -> Result<Option<(StoredTombstone, StoredRetentionPlan)>, StoreError> {
+    let key = tombstone_key(kind, record_id);
+    let Some(tombstone) = read_record::<StoredTombstone>(write, RETENTION_TOMBSTONES, &key)? else {
+        return Ok(None);
+    };
+    let owner = match read_plan(write, &tombstone.envelope.plan_id) {
+        Err(StoreError::RetentionPlanNotFound(_)) => {
+            return Err(StoreError::Integrity(format!(
+                "retention tombstone {key} has no owner plan"
+            )));
+        }
+        result => result?,
+    };
+    validate_tombstone(&key, &tombstone, &owner)?;
+    Ok(Some((tombstone, owner)))
+}
+
 pub(crate) fn validate_tombstone_owner(
     read: &ReadTransaction,
     key: &str,

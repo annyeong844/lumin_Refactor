@@ -83,6 +83,10 @@ fn reclaim_retries_after_payload_removal_completed_before_store_mark()
         let plan = confirmation::commit_pruned_without_reclaim(guard, &plan_id, &confirm_id)?;
         assert_eq!(plan.record.state, RetentionPlanState::Pruned);
         assert!(plan.record.physical_reclamation_pending);
+        Ok(())
+    })?;
+    store.migrate_lifecycle_store()?;
+    store.with_exclusive_lock(|guard| {
         confirmation::reclaim_without_mark(guard, &plan_id, &confirm_id)
     })?;
     assert!(
@@ -139,6 +143,45 @@ fn reclaim_retries_after_anchor_removal_completed_before_directory_removal()
         }
     ));
     assert!(!trash_directory.exists());
+    Ok(())
+}
+
+#[test]
+fn committed_pending_reclamation_result_is_stable_after_cleanup_retry()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = TempDir::new()?;
+    let store = open_store(root.path())?;
+    let (_run_id, plan_id, confirm_id) = admit_run_pruning(&store, "reclaim-io-retry")?;
+
+    let committed = confirmation::confirm_with_reclaim_io_error(&store, &plan_id, &confirm_id)?;
+    assert!(matches!(
+        committed,
+        RetentionMutationResult::Pruned {
+            physical_reclamation_pending: true,
+            ..
+        }
+    ));
+    assert!(
+        store
+            .load_retention_plan(&plan_id)?
+            .physical_reclamation_pending
+    );
+    store.migrate_lifecycle_store()?;
+
+    assert_eq!(
+        store.confirm_retention_plan(&plan_id, &confirm_id)?,
+        committed
+    );
+    assert!(
+        !store
+            .load_retention_plan(&plan_id)?
+            .physical_reclamation_pending
+    );
+    store.migrate_lifecycle_store()?;
+    assert_eq!(
+        store.confirm_retention_plan(&plan_id, &confirm_id)?,
+        committed
+    );
     Ok(())
 }
 
