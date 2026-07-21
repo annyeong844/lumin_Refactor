@@ -19,9 +19,9 @@ use crate::{RepositoryStore, StoreError, backend_error, nonce_hex, unix_millis};
 
 use super::RetentionPlanRequest;
 use super::records::{
-    OPERATION_SCHEMA, PLAN_SCHEMA, StoredRetentionPlan, StoredTombstone,
-    canonical_content_identity, ensure_result_matches, next_sequence, read_plan,
-    read_retention_operation, retention_operation_result, tombstone_key, write_plan,
+    OPERATION_SCHEMA, PLAN_SCHEMA, StoredRetentionPlan, canonical_content_identity,
+    ensure_result_matches, next_sequence, read_retention_operation,
+    read_validated_tombstone_with_owner, retention_operation_result, write_plan,
     write_retention_operation,
 };
 
@@ -122,25 +122,12 @@ fn exclude_retention_owned_items(
 ) -> Result<(), StoreError> {
     let mut retained = Vec::with_capacity(contents.items.len());
     for item in contents.items.drain(..) {
-        let key = tombstone_key(item.kind, &item.record_id);
-        let tombstone = crate::gate::records::read_record::<StoredTombstone>(
-            write,
-            super::RETENTION_TOMBSTONES,
-            &key,
-        )?;
-        let Some(tombstone) = tombstone else {
+        let Some((tombstone, owner_plan)) =
+            read_validated_tombstone_with_owner(write, item.kind, &item.record_id)?
+        else {
             retained.push(item);
             continue;
         };
-        let owner_plan = match read_plan(write, &tombstone.envelope.plan_id) {
-            Err(StoreError::RetentionPlanNotFound(_)) => {
-                return Err(StoreError::Integrity(format!(
-                    "retention tombstone {key} has no owner plan"
-                )));
-            }
-            result => result?,
-        };
-        super::records::validate_tombstone(&key, &tombstone, &owner_plan)?;
         let owner_matches = owner_plan.record.state == RetentionPlanState::Pruning
             && owner_plan
                 .record
@@ -149,7 +136,8 @@ fn exclude_retention_owned_items(
                 .any(|owner_item| owner_item == &item);
         if !owner_matches {
             return Err(StoreError::Integrity(format!(
-                "retention tombstone {key} disagrees with its active owner plan"
+                "retention tombstone {} disagrees with its active owner plan",
+                super::records::tombstone_key(item.kind, &item.record_id)
             )));
         }
         contents.exclusions.push(RetentionPlanExclusion {

@@ -1,8 +1,8 @@
 use lumin_evidence::{
-    RecordLookup, RetentionExclusionReason, RetentionMutationResult, RetentionPlanRecord,
-    RetentionPlanScope, RetentionPlanState,
+    RecordLookup, RetentionExclusionReason, RetentionItemKind, RetentionMutationResult,
+    RetentionPlanRecord, RetentionPlanScope, RetentionPlanState,
 };
-use lumin_model::{PinId, RunId};
+use lumin_model::{PinId, RetentionPlanId, RunId};
 
 use super::*;
 
@@ -86,6 +86,68 @@ fn pin_creation_rejects_a_run_owned_by_active_retention() -> Result<(), Box<dyn 
     assert!(matches!(
         store.confirm_retention_plan(&plan_id, &confirm_id)?,
         RetentionMutationResult::Pruned { .. }
+    ));
+    Ok(())
+}
+
+#[test]
+fn pin_creation_rejects_a_run_tombstone_without_its_owner_plan()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::TempDir::new()?;
+    let store = open_store(root.path())?;
+    let (run_id, plan_id, _confirm_id) = admit_run_pruning(&store, "pin-orphan-owner")?;
+    store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        let key = records::tombstone_key(RetentionItemKind::Run, run_id.as_str());
+        let mut tombstone = crate::gate::records::read_record::<records::StoredTombstone>(
+            &write,
+            RETENTION_TOMBSTONES,
+            &key,
+        )?
+        .ok_or_else(|| StoreError::Integrity("run tombstone is missing".to_owned()))?;
+        assert_eq!(tombstone.envelope.plan_id, plan_id);
+        tombstone.envelope.plan_id =
+            RetentionPlanId::from_string("retention_plan_missing_owner".to_owned());
+        crate::gate::records::write_record(&write, RETENTION_TOMBSTONES, &key, &tombstone)?;
+        guard.commit(write)
+    })?;
+
+    assert!(matches!(
+        store.pin_run(
+            &run_id,
+            &operation("pin-after-orphan-owner"),
+            "must fail closed",
+        ),
+        Err(StoreError::Integrity(message)) if message.contains("has no owner plan")
+    ));
+    Ok(())
+}
+
+#[test]
+fn pin_creation_rejects_a_live_run_with_a_pruned_owner() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::TempDir::new()?;
+    let store = open_store(root.path())?;
+    let (run_id, plan_id, _confirm_id) = admit_run_pruning(&store, "pin-pruned-owner")?;
+    store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        let mut plan = records::read_plan(&write, &plan_id)?;
+        plan.record.state = RetentionPlanState::Pruned;
+        plan.record.recoverable_state = None;
+        plan.record.tombstone_identity = Some(records::canonical_tombstone_identity(&plan.record));
+        records::write_plan(&write, &plan)?;
+        records::write_pruned_tombstones(&write, &plan.record)?;
+        guard.commit(write)
+    })?;
+
+    assert!(matches!(
+        store.pin_run(
+            &run_id,
+            &operation("pin-after-pruned-owner"),
+            "must fail closed",
+        ),
+        Err(StoreError::Integrity(message)) if message.contains("non-active retention owner")
     ));
     Ok(())
 }

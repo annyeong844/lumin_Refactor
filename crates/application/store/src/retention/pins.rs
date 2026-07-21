@@ -1,6 +1,6 @@
 use lumin_evidence::{
     RecordLookup, RetentionItemKind, RetentionOperationKind, RetentionOperationRecord,
-    RetentionOperationResult, RetentionOperationStatus, RunPinRecord,
+    RetentionOperationResult, RetentionOperationStatus, RetentionPlanState, RunPinRecord,
 };
 use lumin_model::{OperationId, PinId, RunId, append_length_prefixed, digest_hex};
 use redb::ReadableTable;
@@ -8,12 +8,12 @@ use redb::ReadableTable;
 use crate::gate::records::{read_record, write_record};
 use crate::{RUN_CATALOG, RepositoryStore, StoreError, backend_error, unix_millis};
 
+use super::RUN_PINS;
 use super::planning::reject_gate_operation_collision;
 use super::records::{
     OPERATION_SCHEMA, ensure_result_matches, next_sequence, read_retention_operation,
     write_retention_operation,
 };
-use super::{RETENTION_TOMBSTONES, RUN_PINS};
 
 pub(super) fn create(
     store: &RepositoryStore,
@@ -151,15 +151,17 @@ fn ensure_live_run(write: &redb::WriteTransaction, run_id: &RunId) -> Result<(),
         return Err(StoreError::RunNotFound(run_id.as_str().to_owned()));
     }
     drop(table);
-    let key =
-        super::records::tombstone_key(lumin_evidence::RetentionItemKind::Run, run_id.as_str());
-    if crate::gate::records::read_record::<super::records::StoredTombstone>(
+    if let Some((_tombstone, owner)) = super::records::read_validated_tombstone_with_owner(
         write,
-        RETENTION_TOMBSTONES,
-        &key,
-    )?
-    .is_some()
-    {
+        RetentionItemKind::Run,
+        run_id.as_str(),
+    )? {
+        if owner.record.state != RetentionPlanState::Pruning {
+            return Err(StoreError::Integrity(format!(
+                "live run {} has a non-active retention owner",
+                run_id.as_str()
+            )));
+        }
         return Err(StoreError::RunRetentionState(run_id.as_str().to_owned()));
     }
     Ok(())

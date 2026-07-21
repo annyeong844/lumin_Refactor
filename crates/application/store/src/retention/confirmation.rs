@@ -24,13 +24,58 @@ pub(super) fn confirm(
     plan_id: &RetentionPlanId,
     operation_id: &OperationId,
 ) -> Result<RetentionMutationResult, StoreError> {
+    confirm_with_reclaimer(store, plan_id, operation_id, payload::reclaim)
+}
+
+type ReclaimFn = fn(&NamespaceGuard, &StoredRetentionPlan) -> Result<(), StoreError>;
+
+fn confirm_with_reclaimer(
+    store: &RepositoryStore,
+    plan_id: &RetentionPlanId,
+    operation_id: &OperationId,
+    reclaim: ReclaimFn,
+) -> Result<RetentionMutationResult, StoreError> {
     store.with_exclusive_lock(|guard| {
         let result = admit_or_resume(guard, plan_id, operation_id)?;
-        if matches!(result, RetentionMutationResult::Stale { .. }) {
-            return Ok(result);
+        match &result {
+            RetentionMutationResult::Stale { .. }
+            | RetentionMutationResult::Pruned {
+                physical_reclamation_pending: false,
+                ..
+            } => Ok(result),
+            RetentionMutationResult::Pruned {
+                physical_reclamation_pending: true,
+                ..
+            } => {
+                resume_pruning(guard, plan_id, operation_id, reclaim)?;
+                Ok(result)
+            }
+            RetentionMutationResult::Pruning { .. } => {
+                resume_pruning(guard, plan_id, operation_id, reclaim)
+            }
+            RetentionMutationResult::Prepared { .. } => Err(StoreError::Integrity(
+                "retention confirmation returned a prepared result".to_owned(),
+            )),
         }
-        resume_pruning(guard, plan_id, operation_id)
     })
+}
+
+#[cfg(test)]
+pub(super) fn confirm_with_reclaim_io_error(
+    store: &RepositoryStore,
+    plan_id: &RetentionPlanId,
+    operation_id: &OperationId,
+) -> Result<RetentionMutationResult, StoreError> {
+    fn fail_reclaim(
+        _guard: &NamespaceGuard,
+        _plan: &StoredRetentionPlan,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Io(
+            "injected retention reclaim failure".to_owned(),
+        ))
+    }
+
+    confirm_with_reclaimer(store, plan_id, operation_id, fail_reclaim)
 }
 
 pub(super) fn admit_or_resume(
@@ -120,15 +165,18 @@ fn resume_pruning(
     guard: &NamespaceGuard,
     plan_id: &RetentionPlanId,
     operation_id: &OperationId,
+    reclaim: ReclaimFn,
 ) -> Result<RetentionMutationResult, StoreError> {
     let mut plan = advance_to_pruned_without_reclaim(guard, plan_id, operation_id)?;
     if plan.record.state != RetentionPlanState::Pruned {
         return pruning_result(&plan.record);
     }
     if plan.record.physical_reclamation_pending {
-        match payload::reclaim(guard, &plan) {
+        match reclaim(guard, &plan) {
             Ok(()) => plan = logical::mark_reclaimed(guard, plan_id, operation_id)?,
-            Err(StoreError::Io(_)) => return pruned_result(&plan.record),
+            Err(StoreError::Io(_)) => {
+                plan = logical::commit_reclamation_pending(guard, plan_id, operation_id)?;
+            }
             Err(error) => return Err(error),
         }
     }

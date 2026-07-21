@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use lumin_evidence::{
     OperationRecord, RetentionDomain, RetentionMutationResult, RetentionOperationKind,
     RetentionOperationRecord, RetentionOperationResult, RetentionOperationStatus,
-    RetentionPlanState,
+    RetentionPlanState, RetentionRecoverableState,
 };
 
 use crate::StoreError;
@@ -216,6 +216,17 @@ fn validate_confirmation(
         ) => Some(*recoverable_state) == plan.record.recoverable_state,
         (
             RetentionPlanState::Pruned,
+            RetentionOperationStatus::Pruning,
+            RetentionOperationResult::Retention {
+                result:
+                    RetentionMutationResult::Pruning {
+                        recoverable_state: RetentionRecoverableState::ReadyToCommit,
+                        ..
+                    },
+            },
+        ) => plan.record.physical_reclamation_pending,
+        (
+            RetentionPlanState::Pruned,
             RetentionOperationStatus::Committed,
             RetentionOperationResult::Retention {
                 result:
@@ -227,7 +238,7 @@ fn validate_confirmation(
             },
         ) => {
             Some(tombstone_identity) == plan.record.tombstone_identity.as_ref()
-                && *physical_reclamation_pending == plan.record.physical_reclamation_pending
+                && (!plan.record.physical_reclamation_pending || *physical_reclamation_pending)
         }
         _ => false,
     };
