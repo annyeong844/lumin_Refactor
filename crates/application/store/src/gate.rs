@@ -24,12 +24,15 @@ use coordination::{
 pub use liveness::OperationSession;
 use records::{
     current_transition_sequence, load_record, next_gate_id, next_transition_sequence, read_record,
-    read_records, transition_key, write_record,
+    read_records, write_record,
 };
 
-const GATES: TableDefinition<&str, &[u8]> = TableDefinition::new("gates");
-const OPERATIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("operations");
-const TRANSITIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("worktree-transitions");
+pub(crate) const GATES: TableDefinition<&str, &[u8]> = TableDefinition::new("gates");
+pub(crate) const OPERATIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("operations");
+pub(crate) const TRANSITIONS: TableDefinition<&str, &[u8]> =
+    TableDefinition::new("worktree-transitions");
+
+pub(crate) use records::transition_key;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ActiveGateLease {

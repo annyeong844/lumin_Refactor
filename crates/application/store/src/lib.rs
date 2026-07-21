@@ -7,6 +7,7 @@ pub use gate::{
     PreWriteStart, SemanticReadReservation,
 };
 pub use generation::StoreGeneration;
+pub use namespace::MigrationIntent;
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -20,9 +21,9 @@ use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 use thiserror::Error;
 
-const SEQUENCES: TableDefinition<&str, u64> = TableDefinition::new("sequences");
-const RUN_CATALOG: TableDefinition<&str, &[u8]> = TableDefinition::new("run-catalog");
-const POINTERS: TableDefinition<&str, &[u8]> = TableDefinition::new("pointers");
+pub(crate) const SEQUENCES: TableDefinition<&str, u64> = TableDefinition::new("sequences");
+pub(crate) const RUN_CATALOG: TableDefinition<&str, &[u8]> = TableDefinition::new("run-catalog");
+pub(crate) const POINTERS: TableDefinition<&str, &[u8]> = TableDefinition::new("pointers");
 const EVIDENCE: TableDefinition<&str, &[u8]> = TableDefinition::new("evidence");
 
 #[derive(Clone, Debug)]
@@ -110,6 +111,15 @@ pub enum StoreError {
         expected: StoreGeneration,
         observed: StoreGeneration,
     },
+    #[error(
+        "lifecycle migration from generation {from_generation} to {to_generation} requires recovery"
+    )]
+    LifecycleMigrationPending {
+        from_generation: StoreGeneration,
+        to_generation: StoreGeneration,
+    },
+    #[error("completed lifecycle migration still has private payloads to clean")]
+    LifecycleMigrationCleanupPending,
 }
 
 impl RepositoryStore {
@@ -285,6 +295,10 @@ impl RepositoryStore {
                 .map_err(|error| StoreError::Integrity(error.to_string()))?;
             Ok(Some(RunId::from_string(text.to_owned())))
         })
+    }
+
+    pub fn migrate_lifecycle_store(&self) -> Result<StoreGeneration, StoreError> {
+        self.namespace.migrate_lifecycle_store()
     }
 
     fn with_exclusive_lock<T>(

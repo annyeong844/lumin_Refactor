@@ -10,7 +10,8 @@ use super::{NamespaceBinding, NamespaceGuard, entry_exists, require_state_volume
 
 const STORE_HEADER: TableDefinition<&str, &[u8]> = TableDefinition::new("store-header");
 const STORE_HEADER_KEY: &str = "namespace";
-const STORE_HEADER_SCHEMA: &str = "lumin-lifecycle-store-header.v3";
+pub(super) const STORE_HEADER_SCHEMA: &str = "lumin-lifecycle-store-header.v3";
+pub(super) const STORE_HEADER_TABLE_NAME: &str = "store-header";
 
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -32,7 +33,7 @@ pub(super) fn create_or_verify_store(guard: &NamespaceGuard) -> Result<(), Store
         )?;
         require_state_volume(&entry, &guard.state_directory, "lifecycle.store")?;
         if entry.file().metadata().map_err(io_error)?.len() == 0 {
-            return initialize_store(entry, &guard.state.binding, StoreGeneration::INITIAL);
+            return initialize_store(&entry, &guard.state.binding, StoreGeneration::INITIAL);
         }
         let database = Database::builder()
             .create_file(entry.file().try_clone().map_err(io_error)?)
@@ -42,11 +43,11 @@ pub(super) fn create_or_verify_store(guard: &NamespaceGuard) -> Result<(), Store
     }
     let entry = HeldEntry::create_new(&path, "lifecycle.store")?;
     require_state_volume(&entry, &guard.state_directory, "lifecycle.store")?;
-    initialize_store(entry, &guard.state.binding, StoreGeneration::INITIAL)
+    initialize_store(&entry, &guard.state.binding, StoreGeneration::INITIAL)
 }
 
 pub(super) fn initialize_store(
-    entry: HeldEntry,
+    entry: &HeldEntry,
     binding: &NamespaceBinding,
     generation: StoreGeneration,
 ) -> Result<(), StoreError> {

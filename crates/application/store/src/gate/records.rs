@@ -25,7 +25,7 @@ pub(super) fn next_transition_sequence(write: &WriteTransaction) -> Result<u64, 
     Ok(next)
 }
 
-pub(super) fn transition_key(sequence: u64) -> String {
+pub(crate) fn transition_key(sequence: u64) -> String {
     format!("transition_{sequence:016x}")
 }
 

@@ -120,7 +120,7 @@ fn old_generation_operation_reopens_before_any_late_mutation()
     let store = open_store(root.path())?;
     let operation_id = OperationId::from_string("op-generation-change".to_owned());
     let stale = store.begin_operation(&operation_id)?;
-    let observed = store.namespace.replace_store_generation_for_test()?;
+    let observed = store.migrate_lifecycle_store()?;
     let source = path("src/generation.ts")?;
 
     assert!(matches!(

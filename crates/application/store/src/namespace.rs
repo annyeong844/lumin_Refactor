@@ -1,5 +1,6 @@
 mod bootstrap;
 pub(crate) mod database;
+mod migration;
 mod platform;
 mod records;
 mod store_header;
@@ -17,6 +18,7 @@ use lumin_model::RepositoryBinding;
 use crate::{StoreError, io_error};
 use bootstrap::bootstrap_namespace;
 pub(crate) use database::StoreDatabase;
+pub use migration::MigrationIntent;
 use platform::{EntryAccess, EntryKind, HeldEntry, repository_root_physical_identity, same_volume};
 use records::*;
 use store_header::*;
@@ -95,19 +97,27 @@ impl NamespaceState {
         &self,
         operation: impl FnOnce(&NamespaceGuard) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
-        self.with_lock(true, operation)
+        self.with_lock(true, LockPurpose::Ordinary, operation)
     }
 
     pub(super) fn with_shared_lock<T>(
         &self,
         operation: impl FnOnce(&NamespaceGuard) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
-        self.with_lock(false, operation)
+        self.with_lock(false, LockPurpose::Ordinary, operation)
+    }
+
+    fn with_migration_lock<T>(
+        &self,
+        operation: impl FnOnce(&NamespaceGuard) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        self.with_lock(true, LockPurpose::Migration, operation)
     }
 
     fn with_lock<T>(
         &self,
         exclusive: bool,
+        purpose: LockPurpose,
         operation: impl FnOnce(&NamespaceGuard) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
         self.validate_global_entries()?;
@@ -118,7 +128,12 @@ impl NamespaceState {
             FileExt::lock_shared(lock.file()).map_err(io_error)?;
         }
         let guard = NamespaceGuard::acquire(self.clone(), lock)?;
-        let result = operation(&guard);
+        let result = match purpose {
+            LockPurpose::Ordinary => {
+                migration::require_idle(&guard).and_then(|()| operation(&guard))
+            }
+            LockPurpose::Migration => operation(&guard),
+        };
         let final_validation = guard.validate_complete();
         let unlock = FileExt::unlock(guard.lock.file()).map_err(io_error);
         combine_lock_results(result, final_validation, unlock)
@@ -163,11 +178,17 @@ impl NamespaceState {
         let lock = self.open_bound_lock()?;
         FileExt::lock_exclusive(lock.file()).map_err(io_error)?;
         let guard = NamespaceGuard::acquire_without_store(self.clone(), lock)?;
-        let result = create_or_verify_store(&guard);
+        let result = migration::recover_on_open(&guard);
         let final_validation = result.and_then(|()| guard.validate_complete());
         let unlock = FileExt::unlock(guard.lock.file()).map_err(io_error);
         combine_lock_results(final_validation, Ok(()), unlock)
     }
+}
+
+#[derive(Clone, Copy)]
+enum LockPurpose {
+    Ordinary,
+    Migration,
 }
 
 impl HeldRepository {

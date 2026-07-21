@@ -159,6 +159,59 @@ pub(super) fn same_volume(left: &PhysicalFileIdentity, right: &PhysicalFileIdent
     }
 }
 
+#[cfg(target_os = "linux")]
+pub(super) fn replace_file_atomic(replaced: &Path, replacement: &Path) -> Result<(), StoreError> {
+    std::fs::rename(replacement, replaced).map_err(io_error)
+}
+
+#[cfg_attr(
+    windows,
+    allow(
+        unsafe_code,
+        reason = "Windows atomic replacement requires ReplaceFileW"
+    )
+)]
+#[cfg(windows)]
+pub(super) fn replace_file_atomic(replaced: &Path, replacement: &Path) -> Result<(), StoreError> {
+    use std::os::windows::ffi::OsStrExt;
+
+    use windows_sys::Win32::Storage::FileSystem::{REPLACEFILE_WRITE_THROUGH, ReplaceFileW};
+
+    let replaced = replaced
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let replacement = replacement
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    // SAFETY: both vectors are NUL-terminated and remain alive for the call;
+    // backup and reserved arguments are intentionally null.
+    let replaced_ok = unsafe {
+        ReplaceFileW(
+            replaced.as_ptr(),
+            replacement.as_ptr(),
+            std::ptr::null(),
+            REPLACEFILE_WRITE_THROUGH,
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    if replaced_ok == 0 {
+        return Err(io_error(std::io::Error::last_os_error()));
+    }
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+pub(super) fn replace_file_atomic(_replaced: &Path, _replacement: &Path) -> Result<(), StoreError> {
+    Err(StoreError::Integrity(
+        "lifecycle store replacement supports Windows and Linux".to_owned(),
+    ))
+}
+
 #[cfg_attr(
     windows,
     allow(

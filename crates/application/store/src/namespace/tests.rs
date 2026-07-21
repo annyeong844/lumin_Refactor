@@ -7,6 +7,7 @@ use crate::{RepositoryStore, SEQUENCES, StoreError, backend_error, io_error};
 use super::{LifecycleLockHeader, MANAGED_KINDS, RepositoryMarker, read_canonical_path};
 
 mod generation;
+mod migration;
 
 fn open_store(root: &std::path::Path) -> Result<RepositoryStore, StoreError> {
     let admission = lumin_inventory::repository_admission(root)
