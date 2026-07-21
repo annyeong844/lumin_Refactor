@@ -121,25 +121,7 @@ fn resume_pruning(
     plan_id: &RetentionPlanId,
     operation_id: &OperationId,
 ) -> Result<RetentionMutationResult, StoreError> {
-    let mut plan = load_plan_for_resume(guard, plan_id, operation_id)?;
-    if plan.record.state == RetentionPlanState::Pruned {
-        if plan.record.physical_reclamation_pending {
-            payload::reclaim(guard, &plan)?;
-            plan = logical::mark_reclaimed(guard, plan_id, operation_id)?;
-        }
-        return pruned_result(&plan.record);
-    }
-
-    if plan.record.recoverable_state == Some(RetentionRecoverableState::MovingPayloads) {
-        payload::move_payloads(guard, &plan)?;
-        plan = update_progress(guard, plan_id, operation_id, |plan, _| {
-            plan.record.recoverable_state = Some(RetentionRecoverableState::ReadyToCommit);
-            Ok(())
-        })?;
-    }
-    if plan.record.recoverable_state == Some(RetentionRecoverableState::ReadyToCommit) {
-        plan = logical::commit_pruned(guard, plan_id, operation_id)?;
-    }
+    let mut plan = advance_to_pruned_without_reclaim(guard, plan_id, operation_id)?;
     if plan.record.state != RetentionPlanState::Pruned {
         return pruning_result(&plan.record);
     }
@@ -151,6 +133,53 @@ fn resume_pruning(
         }
     }
     pruned_result(&plan.record)
+}
+
+fn advance_to_pruned_without_reclaim(
+    guard: &NamespaceGuard,
+    plan_id: &RetentionPlanId,
+    operation_id: &OperationId,
+) -> Result<StoredRetentionPlan, StoreError> {
+    let mut plan = load_plan_for_resume(guard, plan_id, operation_id)?;
+    if plan.record.state == RetentionPlanState::Pruned {
+        return Ok(plan);
+    }
+    if plan.record.recoverable_state == Some(RetentionRecoverableState::MovingPayloads) {
+        payload::move_payloads(guard, &plan)?;
+        plan = update_progress(guard, plan_id, operation_id, |plan, _| {
+            plan.record.recoverable_state = Some(RetentionRecoverableState::ReadyToCommit);
+            Ok(())
+        })?;
+    }
+    if plan.record.recoverable_state == Some(RetentionRecoverableState::ReadyToCommit) {
+        plan = logical::commit_pruned(guard, plan_id, operation_id)?;
+    }
+    Ok(plan)
+}
+
+#[cfg(test)]
+pub(super) fn commit_pruned_without_reclaim(
+    guard: &NamespaceGuard,
+    plan_id: &RetentionPlanId,
+    operation_id: &OperationId,
+) -> Result<StoredRetentionPlan, StoreError> {
+    advance_to_pruned_without_reclaim(guard, plan_id, operation_id)
+}
+
+#[cfg(test)]
+pub(super) fn reclaim_without_mark(
+    guard: &NamespaceGuard,
+    plan_id: &RetentionPlanId,
+    operation_id: &OperationId,
+) -> Result<(), StoreError> {
+    let plan = load_plan_for_resume(guard, plan_id, operation_id)?;
+    if plan.record.state != RetentionPlanState::Pruned || !plan.record.physical_reclamation_pending
+    {
+        return Err(StoreError::Integrity(
+            "retention plan is not waiting for physical reclamation".to_owned(),
+        ));
+    }
+    payload::reclaim(guard, &plan)
 }
 
 pub(super) fn update_progress(

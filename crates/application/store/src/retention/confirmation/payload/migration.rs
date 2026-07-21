@@ -81,16 +81,23 @@ fn bound_trash_if_present(
         }
         return Ok(None);
     }
-    if plan.record.state == RetentionPlanState::Pruned && !plan.record.physical_reclamation_pending
-    {
-        if trash::entry_exists(trash_path)? {
-            return Err(StoreError::Integrity(
-                "reclaimed retention plan still has a trash directory".to_owned(),
-            ));
+    match (plan.record.state, plan.record.physical_reclamation_pending) {
+        (RetentionPlanState::Pruned, false) => {
+            if trash::entry_exists(trash_path)? {
+                return Err(StoreError::Integrity(
+                    "reclaimed retention plan still has a trash directory".to_owned(),
+                ));
+            }
+            Ok(None)
         }
-        return Ok(None);
+        (RetentionPlanState::Pruned, true) => match trash::reclaim_state(guard, plan, progress)? {
+            trash::TrashReclaimState::Bound(bound) => Ok(Some(bound)),
+            trash::TrashReclaimState::Absent | trash::TrashReclaimState::AnchorRemoved { .. } => {
+                Ok(None)
+            }
+        },
+        _ => trash::open_bound(guard, plan, progress).map(Some),
     }
-    trash::open_bound(guard, plan, progress).map(Some)
 }
 
 fn authoritative_payload<'a>(
@@ -109,6 +116,13 @@ fn authoritative_payload<'a>(
             if plan.record.physical_reclamation_pending && !source_exists && destination_exists =>
         {
             Ok(Some(destination))
+        }
+        RetentionPlanState::Pruned
+            if plan.record.physical_reclamation_pending
+                && !source_exists
+                && !destination_exists =>
+        {
+            Ok(None)
         }
         RetentionPlanState::Pruned
             if !plan.record.physical_reclamation_pending

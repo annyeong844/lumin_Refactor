@@ -110,23 +110,19 @@ impl RepositoryStore {
     ) -> Result<lumin_evidence::RecordLookup<GateRecord>, StoreError> {
         self.with_shared_lock(|guard| {
             let database = guard.open_database()?;
-            let tombstone_key = crate::retention::records::tombstone_key(
+            let read = database.begin_read()?;
+            if let Some(tombstone) = crate::retention::records::read_validated_tombstone(
+                &read,
                 lumin_evidence::RetentionItemKind::Gate,
                 gate_id.as_str(),
-            );
-            if let Some(tombstone) =
-                records::load_record::<crate::retention::records::StoredTombstone>(
-                    &database,
-                    crate::retention::RETENTION_TOMBSTONES,
-                    &tombstone_key,
-                )?
-            {
+            )? {
                 return if tombstone.envelope.tombstone_identity.is_some() {
                     Ok(lumin_evidence::RecordLookup::Pruned(tombstone.envelope))
                 } else {
                     Ok(lumin_evidence::RecordLookup::Pruning(tombstone.envelope))
                 };
             }
+            drop(read);
             let gate = load_record::<GateRecord>(&database, GATES, gate_id.as_str())?
                 .ok_or_else(|| StoreError::GateNotFound(gate_id.as_str().to_owned()))?;
             Ok(lumin_evidence::RecordLookup::Live(gate))

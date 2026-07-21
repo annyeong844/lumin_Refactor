@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
@@ -6,7 +7,9 @@ use crate::namespace::{EntryAccess, EntryKind, HeldEntry, NamespaceGuard};
 use crate::{StoreError, io_error};
 
 use super::super::super::super::records::StoredRetentionPlan;
-use super::{entry_exists, open_bound, validate_parent_bindings};
+use super::{
+    TRASH_ANCHOR, TrashReclaimState, entry_exists, reclaim_state, validate_parent_bindings,
+};
 
 pub(super) fn run(guard: &NamespaceGuard, plan: &StoredRetentionPlan) -> Result<(), StoreError> {
     let progress = plan
@@ -17,19 +20,70 @@ pub(super) fn run(guard: &NamespaceGuard, plan: &StoredRetentionPlan) -> Result<
         return Ok(());
     }
     validate_parent_bindings(guard, progress)?;
-    let bound = open_bound(guard, plan, progress)?;
+    match reclaim_state(guard, plan, progress)? {
+        TrashReclaimState::Absent => {}
+        TrashReclaimState::AnchorRemoved { path, directory } => {
+            drop(directory);
+            fs::remove_dir(&path).map_err(io_error)?;
+        }
+        TrashReclaimState::Bound(bound) => reclaim_bound(bound, progress)?,
+    }
+    finish_reclamation(guard)
+}
+
+fn reclaim_bound(
+    bound: super::BoundTrash,
+    progress: &super::super::super::super::records::RetentionProgress,
+) -> Result<(), StoreError> {
     validate_tree(&bound.path)?;
-    let path = bound.path.clone();
-    drop(bound);
-    fs::remove_dir_all(&path).map_err(io_error)?;
+    let expected = progress
+        .moves
+        .iter()
+        .map(|movement| movement.trash_child.as_str())
+        .collect::<BTreeSet<_>>();
+    for entry in fs::read_dir(&bound.path).map_err(io_error)? {
+        let entry = entry.map_err(io_error)?;
+        let name = entry.file_name();
+        let name = name.to_str().ok_or_else(|| {
+            StoreError::Integrity("retention trash contains a non-UTF-8 child name".to_owned())
+        })?;
+        if name != TRASH_ANCHOR && !expected.contains(name) {
+            return Err(StoreError::Integrity(format!(
+                "retention trash contains an unplanned child: {}",
+                entry.path().display()
+            )));
+        }
+    }
+    for child in expected {
+        let path = bound.path.join(child);
+        if entry_exists(&path)? {
+            fs::remove_dir_all(&path).map_err(io_error)?;
+        }
+    }
+    bound.directory.sync_directory()?;
+    let remaining = fs::read_dir(&bound.path)
+        .map_err(io_error)?
+        .map(|entry| entry.map(|entry| entry.file_name()).map_err(io_error))
+        .collect::<Result<Vec<_>, _>>()?;
+    if remaining.as_slice() != [std::ffi::OsString::from(TRASH_ANCHOR)] {
+        return Err(StoreError::Integrity(
+            "retention trash payload children survived reclamation".to_owned(),
+        ));
+    }
+    let path = bound.path;
+    let directory = bound.directory;
+    let anchor = bound.anchor;
+    drop(anchor);
+    fs::remove_file(path.join(TRASH_ANCHOR)).map_err(io_error)?;
+    directory.sync_directory()?;
+    drop(directory);
+    fs::remove_dir(&path).map_err(io_error)
+}
+
+fn finish_reclamation(guard: &NamespaceGuard) -> Result<(), StoreError> {
     guard
         .managed_parent_entry(ManagedStateParentKind::Trash)?
         .sync_directory()?;
-    if entry_exists(&path)? {
-        return Err(StoreError::Integrity(
-            "retention trash directory survived reclamation".to_owned(),
-        ));
-    }
     guard.validate_bound_entries()
 }
 

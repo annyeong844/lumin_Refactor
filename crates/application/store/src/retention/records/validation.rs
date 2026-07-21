@@ -10,7 +10,10 @@ use lumin_evidence::{
 use crate::StoreError;
 use crate::namespace::records::ManagedStateParentKind;
 
-use super::{StoredRetentionPlan, canonical_content_identity};
+use super::{
+    StoredRetentionPlan, StoredTombstone, TOMBSTONE_SCHEMA, canonical_content_identity,
+    tombstone_key,
+};
 
 pub(crate) fn validate_plan(plan: &StoredRetentionPlan) -> Result<(), StoreError> {
     if plan.record.schema_version != super::PLAN_SCHEMA {
@@ -52,6 +55,64 @@ pub(crate) fn validate_plan(plan: &StoredRetentionPlan) -> Result<(), StoreError
             "retention plan lifecycle fields are incoherent".to_owned(),
         )),
     }
+}
+
+pub(crate) fn validate_tombstone(
+    key: &str,
+    tombstone: &StoredTombstone,
+    plan: &StoredRetentionPlan,
+) -> Result<(), StoreError> {
+    if tombstone.schema_version != TOMBSTONE_SCHEMA
+        || tombstone_key(
+            tombstone.envelope.record_kind,
+            &tombstone.envelope.record_id,
+        ) != key
+    {
+        return Err(StoreError::Integrity(format!(
+            "retention tombstone key {key} disagrees with its record"
+        )));
+    }
+    if plan.record.plan_id != tombstone.envelope.plan_id {
+        return Err(StoreError::Integrity(format!(
+            "retention tombstone {key} disagrees with its owner plan"
+        )));
+    }
+    let item = plan
+        .record
+        .items
+        .iter()
+        .find(|item| {
+            item.kind == tombstone.envelope.record_kind
+                && item.record_id == tombstone.envelope.record_id
+        })
+        .ok_or_else(|| StoreError::Integrity(format!("tombstone {key} has no plan item")))?;
+    if tombstone.identity_sha256 != item.identity_sha256
+        || tombstone.owning_sequence != item.owning_sequence
+    {
+        return Err(StoreError::Integrity(format!(
+            "retention tombstone {key} changed its item identity"
+        )));
+    }
+    let state_matches = match plan.record.state {
+        RetentionPlanState::Pruning => {
+            tombstone.envelope.recoverable_state == plan.record.recoverable_state
+                && tombstone.envelope.tombstone_identity.is_none()
+        }
+        RetentionPlanState::Pruned => {
+            tombstone.envelope.recoverable_state.is_none()
+                && tombstone.envelope.tombstone_identity == plan.record.tombstone_identity
+        }
+        RetentionPlanState::Prepared => false,
+    };
+    if !state_matches
+        || tombstone.envelope.physical_reclamation_pending
+            != plan.record.physical_reclamation_pending
+    {
+        return Err(StoreError::Integrity(format!(
+            "retention tombstone {key} disagrees with its plan state"
+        )));
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_retention_operation(

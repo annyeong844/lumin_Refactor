@@ -17,7 +17,7 @@ fn run_plan_prunes_only_nonlatest_unpinned_run() -> Result<(), Box<dyn std::erro
     let store = open_store(root.path())?;
     let first = publish(&store)?;
     let second = publish(&store)?;
-    let initial_catalog = store.list_runs()?;
+    let initial_catalog = store.list_runs(None, 100)?;
     let initial_revision = initial_catalog.revision;
     assert_eq!(
         initial_catalog
@@ -64,7 +64,7 @@ fn run_plan_prunes_only_nonlatest_unpinned_run() -> Result<(), Box<dyn std::erro
         store.lookup_run(&second.run_id)?,
         RecordLookup::Live(_)
     ));
-    let pruned_catalog = store.list_runs()?;
+    let pruned_catalog = store.list_runs(None, 100)?;
     assert!(pruned_catalog.revision > initial_revision);
     assert_eq!(
         pruned_catalog
@@ -75,6 +75,163 @@ fn run_plan_prunes_only_nonlatest_unpinned_run() -> Result<(), Box<dyn std::erro
         vec![second.run_id.as_str()]
     );
     assert_eq!(store.confirm_retention_plan(&plan_id, &confirm_id)?, pruned);
+    Ok(())
+}
+
+#[test]
+fn overlapping_plans_cannot_replace_an_active_retention_owner()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = TempDir::new()?;
+    let store = open_store(root.path())?;
+    let first = publish(&store)?;
+    let _latest = publish(&store)?;
+    let scope = RetentionPlanScope::Runs {
+        before_unix_millis: 9_000_000_000_000,
+    };
+    let first_plan = store.prepare_retention_plan(&RetentionPlanRequest {
+        scope: scope.clone(),
+        operation_id: operation("plan-owner-first"),
+    })?;
+    let second_plan = store.prepare_retention_plan(&RetentionPlanRequest {
+        scope: scope.clone(),
+        operation_id: operation("plan-owner-second"),
+    })?;
+    let first_plan_id = prepared_plan_id(&first_plan)?;
+    let second_plan_id = prepared_plan_id(&second_plan)?;
+    let first_confirmation = operation("confirm-owner-first");
+    store.with_exclusive_lock(|guard| {
+        let result = confirmation::admit_or_resume(guard, &first_plan_id, &first_confirmation)?;
+        assert!(matches!(result, RetentionMutationResult::Pruning { .. }));
+        Ok(())
+    })?;
+
+    assert!(matches!(
+        store.confirm_retention_plan(&second_plan_id, &operation("confirm-owner-second"))?,
+        RetentionMutationResult::Stale { .. }
+    ));
+    assert!(matches!(
+        store.lookup_run(&first.run_id)?,
+        RecordLookup::Pruning(tombstone) if tombstone.plan_id == first_plan_id
+    ));
+
+    let later_plan = store.prepare_retention_plan(&RetentionPlanRequest {
+        scope,
+        operation_id: operation("plan-owner-later"),
+    })?;
+    let later_plan_id = prepared_plan_id(&later_plan)?;
+    let later_plan = store.load_retention_plan(&later_plan_id)?;
+    assert!(later_plan.exclusions.iter().any(|exclusion| {
+        exclusion.record_id == first.run_id.as_str()
+            && exclusion.reason
+                == RetentionExclusionReason::RetentionInProgress {
+                    plan_id: first_plan_id.clone(),
+                }
+    }));
+
+    assert!(matches!(
+        store.confirm_retention_plan(&first_plan_id, &first_confirmation)?,
+        RetentionMutationResult::Pruned { .. }
+    ));
+    Ok(())
+}
+
+#[test]
+fn planning_rejects_a_tombstone_without_its_active_owner_plan()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = TempDir::new()?;
+    let store = open_store(root.path())?;
+    let first = publish(&store)?;
+    let _latest = publish(&store)?;
+    let scope = RetentionPlanScope::Runs {
+        before_unix_millis: 9_000_000_000_000,
+    };
+    let plan = store.prepare_retention_plan(&RetentionPlanRequest {
+        scope: scope.clone(),
+        operation_id: operation("plan-orphan-owner"),
+    })?;
+    let plan_id = prepared_plan_id(&plan)?;
+    store.with_exclusive_lock(|guard| {
+        let result =
+            confirmation::admit_or_resume(guard, &plan_id, &operation("confirm-orphan-owner"))?;
+        assert!(matches!(result, RetentionMutationResult::Pruning { .. }));
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        let key = records::tombstone_key(RetentionItemKind::Run, first.run_id.as_str());
+        let mut tombstone = crate::gate::records::read_record::<records::StoredTombstone>(
+            &write,
+            RETENTION_TOMBSTONES,
+            &key,
+        )?
+        .ok_or_else(|| StoreError::Integrity("run tombstone is missing".to_owned()))?;
+        tombstone.envelope.plan_id =
+            RetentionPlanId::from_string("retention_plan_missing_owner".to_owned());
+        crate::gate::records::write_record(&write, RETENTION_TOMBSTONES, &key, &tombstone)?;
+        guard.commit(write)
+    })?;
+
+    assert!(matches!(
+        store.lookup_run(&first.run_id),
+        Err(StoreError::Integrity(message)) if message.contains("has no owner plan")
+    ));
+    assert!(matches!(
+        store.list_runs(None, 100),
+        Err(StoreError::Integrity(message)) if message.contains("has no owner plan")
+    ));
+    assert!(matches!(
+        store.prepare_retention_plan(&RetentionPlanRequest {
+            scope,
+            operation_id: operation("plan-after-orphan-owner"),
+        }),
+        Err(StoreError::Integrity(message)) if message.contains("has no owner plan")
+    ));
+    Ok(())
+}
+
+#[test]
+fn run_catalog_cursor_is_bounded_and_repository_scoped() -> Result<(), Box<dyn std::error::Error>> {
+    let first_root = TempDir::new()?;
+    let first_store = open_store(first_root.path())?;
+    let older = publish(&first_store)?;
+    let newer = publish(&first_store)?;
+    assert!(matches!(
+        first_store.list_runs(None, 101),
+        Err(StoreError::RunCatalogPageSize {
+            requested: 101,
+            max: 100
+        })
+    ));
+    let first_page = first_store.list_runs(None, 1)?;
+    assert_eq!(first_page.total, 2);
+    assert_eq!(first_page.runs.len(), 1);
+    assert!(first_page.truncated);
+    assert_eq!(first_page.runs[0].run_id, newer.run_id);
+    let anchor = &first_page.runs[0];
+    let cursor = crate::RunCatalogCursor {
+        repository_id: first_page.repository_id.clone(),
+        revision: first_page.revision,
+        attempt_id: anchor.attempt_id.clone(),
+        run_id: anchor.run_id.clone(),
+        sequence: anchor.sequence,
+    };
+    let second_page = first_store.list_runs(Some(&cursor), 1)?;
+    assert_eq!(second_page.total, 2);
+    assert_eq!(second_page.runs.len(), 1);
+    assert!(!second_page.truncated);
+    assert_eq!(second_page.runs[0].run_id, older.run_id);
+
+    let second_root = TempDir::new()?;
+    let second_store = open_store(second_root.path())?;
+    let _second_run = publish(&second_store)?;
+    assert!(matches!(
+        second_store.list_runs(Some(&cursor), 1),
+        Err(StoreError::RunCatalogScopeMismatch)
+    ));
+
+    let _newest = publish(&first_store)?;
+    assert!(matches!(
+        first_store.list_runs(Some(&cursor), 1),
+        Err(StoreError::RunCatalogRevisionChanged { .. })
+    ));
     Ok(())
 }
 

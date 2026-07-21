@@ -31,14 +31,30 @@ fn list(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliErro
         }
     }
     require_json(&format)?;
-    let catalog = lumin_engine::list_runs(root)?;
+    let cursor = cursor
+        .as_deref()
+        .map(lumin_protocol::decode_run_catalog_cursor)
+        .transpose()?
+        .map(|cursor| lumin_engine::RunCatalogCursor {
+            repository_id: cursor.repository_id,
+            revision: cursor.revision,
+            attempt_id: cursor.last_run.attempt_id,
+            run_id: cursor.last_run.run_id,
+            sequence: cursor.last_run.sequence,
+        });
+    let catalog = lumin_engine::list_runs(root, cursor.as_ref(), lumin_protocol::RUNS_PAGE_SIZE)?;
     let runs = catalog
         .runs
         .into_iter()
         .map(|run| lumin_protocol::run_catalog_item(run.attempt_id, run.run_id, run.sequence))
         .collect::<Vec<_>>();
-    let response =
-        lumin_protocol::run_catalog_response(catalog.revision, &runs, cursor.as_deref())?;
+    let response = lumin_protocol::run_catalog_response(
+        catalog.repository_id,
+        catalog.revision,
+        catalog.total,
+        runs,
+        catalog.truncated,
+    )?;
     json_success(lumin_protocol::to_json(&response))
 }
 
