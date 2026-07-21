@@ -1,6 +1,7 @@
 mod gate;
 mod generation;
 mod namespace;
+mod retention;
 
 pub use gate::{
     ActiveGateLease, OperationSession, PostWriteFinish, PostWriteStart, PreWriteFinish,
@@ -8,6 +9,7 @@ pub use gate::{
 };
 pub use generation::StoreGeneration;
 pub use namespace::MigrationIntent;
+pub use retention::{RETENTION_PLAN_ITEMS_ORDERING, RetentionPlanRequest};
 
 use std::fs;
 use std::io::Write;
@@ -16,7 +18,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use lumin_evidence::RunEvidence;
 use lumin_model::{AttemptId, RepositoryBinding, RunId, digest_hex};
-use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
+use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition, TableError};
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 use thiserror::Error;
@@ -57,6 +59,12 @@ pub struct RunCatalogRecord {
     pub evidence_store_size: u64,
 }
 
+#[derive(Clone, Debug)]
+pub struct RunCatalogSnapshot {
+    pub revision: u64,
+    pub runs: Vec<RunCatalogRecord>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AttemptEnvelope {
@@ -90,6 +98,8 @@ pub enum StoreError {
     Serialization(String),
     #[error("run does not exist: {0}")]
     RunNotFound(String),
+    #[error("run pin does not exist: {0}")]
+    PinNotFound(String),
     #[error("operation ID was reused with a different request: {0}")]
     OperationConflict(String),
     #[error("operation is already live in another session: {0}")]
@@ -104,6 +114,10 @@ pub enum StoreError {
     GateRevisionBusy(String),
     #[error("gate revision changed before lifecycle mutation: {0}")]
     GateRevisionChanged(String),
+    #[error("retention plan does not exist: {0}")]
+    RetentionPlanNotFound(String),
+    #[error("retention plan cannot be confirmed in its current state: {0}")]
+    RetentionPlanState(String),
     #[error(
         "lifecycle store generation changed before mutation: expected {expected}, observed {observed}"
     )]
@@ -262,23 +276,77 @@ impl RepositoryStore {
     pub fn load_run(&self, run_id: &RunId) -> Result<(RunCatalogRecord, RunEvidence), StoreError> {
         self.with_shared_lock(|guard| {
             let database = guard.open_database()?;
-            let record = read_catalog_record(&database, run_id)?;
-            let path = self
-                .state_dir
-                .join("runs")
-                .join(run_id.as_str())
-                .join("evidence.store");
-            let bytes = fs::read(&path).map_err(io_error)?;
-            if digest_hex(&bytes) != record.evidence_store_sha256
-                || bytes.len() as u64 != record.evidence_store_size
-            {
-                return Err(StoreError::Integrity(format!(
-                    "evidence store identity mismatch for {}",
-                    run_id.as_str()
-                )));
+            read_live_run(&self.state_dir, &database, run_id)
+        })
+    }
+
+    pub fn lookup_run(
+        &self,
+        run_id: &RunId,
+    ) -> Result<lumin_evidence::RecordLookup<(RunCatalogRecord, RunEvidence)>, StoreError> {
+        self.with_shared_lock(|guard| {
+            let database = guard.open_database()?;
+            let tombstone_key = retention::records::tombstone_key(
+                lumin_evidence::RetentionItemKind::Run,
+                run_id.as_str(),
+            );
+            if let Some(tombstone) = gate::records::load_record::<
+                retention::records::StoredTombstone,
+            >(
+                &database, retention::RETENTION_TOMBSTONES, &tombstone_key
+            )? {
+                return if tombstone.envelope.tombstone_identity.is_some() {
+                    Ok(lumin_evidence::RecordLookup::Pruned(tombstone.envelope))
+                } else {
+                    Ok(lumin_evidence::RecordLookup::Pruning(tombstone.envelope))
+                };
             }
-            let evidence = read_evidence_store(&path)?;
-            Ok((record, evidence))
+            read_live_run(&self.state_dir, &database, run_id)
+                .map(lumin_evidence::RecordLookup::Live)
+        })
+    }
+
+    pub fn list_runs(&self) -> Result<RunCatalogSnapshot, StoreError> {
+        self.with_shared_lock(|guard| {
+            let database = guard.open_database()?;
+            let read = database.begin_read()?;
+            let revision = read_sequence(&read, "run-catalog")?;
+            let tombstones = match read.open_table(retention::RETENTION_TOMBSTONES) {
+                Ok(table) => Some(table),
+                Err(TableError::TableDoesNotExist(_)) => None,
+                Err(error) => return Err(backend_error(error)),
+            };
+            let table = read.open_table(RUN_CATALOG).map_err(backend_error)?;
+            let mut runs = Vec::new();
+            for row in table.iter().map_err(backend_error)? {
+                let (key, value) = row.map_err(backend_error)?;
+                let key = key.value();
+                let tombstone_key =
+                    retention::records::tombstone_key(lumin_evidence::RetentionItemKind::Run, key);
+                if let Some(tombstones) = &tombstones
+                    && tombstones
+                        .get(tombstone_key.as_str())
+                        .map_err(backend_error)?
+                        .is_some()
+                {
+                    continue;
+                }
+                let record: RunCatalogRecord =
+                    serde_json::from_slice(value.value()).map_err(serialization_error)?;
+                if record.run_id.as_str() != key {
+                    return Err(StoreError::Integrity(format!(
+                        "run catalog key {key} disagrees with its record"
+                    )));
+                }
+                runs.push(record);
+            }
+            runs.sort_by(|left, right| {
+                right
+                    .sequence
+                    .cmp(&left.sequence)
+                    .then_with(|| left.run_id.cmp(&right.run_id))
+            });
+            Ok(RunCatalogSnapshot { revision, runs })
         })
     }
 
@@ -350,7 +418,16 @@ fn insert_catalog_record(
             .insert(record.run_id.as_str(), bytes.as_slice())
             .map_err(backend_error)?;
     }
+    retention::records::next_sequence(&write, "run-catalog")?;
     guard.commit(write)
+}
+
+fn read_sequence(read: &redb::ReadTransaction, key: &str) -> Result<u64, StoreError> {
+    let table = read.open_table(SEQUENCES).map_err(backend_error)?;
+    table
+        .get(key)
+        .map_err(backend_error)
+        .map(|value| value.map_or(0, |value| value.value()))
 }
 
 fn read_catalog_record(
@@ -364,6 +441,28 @@ fn read_catalog_record(
         .map_err(backend_error)?
         .ok_or_else(|| StoreError::RunNotFound(run_id.as_str().to_owned()))?;
     serde_json::from_slice(value.value()).map_err(serialization_error)
+}
+
+fn read_live_run(
+    state_dir: &Path,
+    database: &namespace::StoreDatabase<'_>,
+    run_id: &RunId,
+) -> Result<(RunCatalogRecord, RunEvidence), StoreError> {
+    let record = read_catalog_record(database, run_id)?;
+    let path = state_dir
+        .join("runs")
+        .join(run_id.as_str())
+        .join("evidence.store");
+    let bytes = fs::read(&path).map_err(io_error)?;
+    if digest_hex(&bytes) != record.evidence_store_sha256
+        || bytes.len() as u64 != record.evidence_store_size
+    {
+        return Err(StoreError::Integrity(format!(
+            "evidence store identity mismatch for {}",
+            run_id.as_str()
+        )));
+    }
+    Ok((record, read_evidence_store(&path)?))
 }
 
 fn set_pointer(
@@ -429,13 +528,13 @@ fn write_replace(path: &Path, bytes: &[u8]) -> Result<(), StoreError> {
         .map_err(|error| io_error(error.error))
 }
 
-fn nonce_hex() -> Result<String, StoreError> {
+pub(crate) fn nonce_hex() -> Result<String, StoreError> {
     let mut bytes = [0_u8; 16];
     getrandom::fill(&mut bytes).map_err(|error| StoreError::Io(error.to_string()))?;
     Ok(digest_hex(&bytes)[..32].to_owned())
 }
 
-fn unix_millis() -> Result<u128, StoreError> {
+pub(crate) fn unix_millis() -> Result<u128, StoreError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())

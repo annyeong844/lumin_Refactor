@@ -2,7 +2,7 @@ mod bootstrap;
 pub(crate) mod database;
 mod migration;
 mod platform;
-mod records;
+pub(crate) mod records;
 mod store_header;
 
 #[cfg(test)]
@@ -13,14 +13,14 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use fs2::FileExt;
-use lumin_model::RepositoryBinding;
+use lumin_model::{RepositoryBinding, RepositoryId};
 
 use crate::{StoreError, io_error};
 use bootstrap::bootstrap_namespace;
 pub(crate) use database::StoreDatabase;
 pub use migration::MigrationIntent;
-pub(crate) use platform::{EntryAccess, EntryKind, HeldEntry};
-use platform::{repository_root_physical_identity, same_volume};
+use platform::repository_root_physical_identity;
+pub(crate) use platform::{EntryAccess, EntryKind, HeldEntry, same_volume};
 use records::*;
 use store_header::*;
 
@@ -162,7 +162,7 @@ impl NamespaceState {
         let lock = HeldEntry::open(
             &self.state_dir.join("lifecycle.lock"),
             EntryKind::RegularFile,
-            EntryAccess::ReadWrite,
+            EntryAccess::ReadOnly,
             true,
             "lifecycle.lock",
         )?;
@@ -306,6 +306,84 @@ impl NamespaceGuard {
         })
     }
 
+    pub(crate) fn repository_id(&self) -> &RepositoryId {
+        &self.state.binding.global.repository_id
+    }
+
+    pub(crate) fn managed_parent_binding(
+        &self,
+        kind: ManagedStateParentKind,
+    ) -> Result<&ManagedStateParentBinding, StoreError> {
+        self.managed_parents
+            .iter()
+            .find(|parent| parent.binding.kind == kind)
+            .map(|parent| &parent.binding)
+            .ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "managed parent binding is missing for {}",
+                    kind.directory_name()
+                ))
+            })
+    }
+
+    pub(crate) fn managed_parent_path(&self, kind: ManagedStateParentKind) -> PathBuf {
+        self.state.state_dir.join(kind.directory_name())
+    }
+
+    pub(crate) fn managed_child_path(
+        &self,
+        kind: ManagedStateParentKind,
+        child: &str,
+    ) -> Result<PathBuf, StoreError> {
+        let mut components = Path::new(child).components();
+        if !matches!(components.next(), Some(Component::Normal(_))) || components.next().is_some() {
+            return Err(StoreError::Integrity(format!(
+                "managed child for {} must be one normal component",
+                kind.directory_name()
+            )));
+        }
+        Ok(self.managed_parent_path(kind).join(child))
+    }
+
+    pub(crate) fn managed_parent_entry(
+        &self,
+        kind: ManagedStateParentKind,
+    ) -> Result<&HeldEntry, StoreError> {
+        self.managed_parents
+            .iter()
+            .find(|parent| parent.binding.kind == kind)
+            .map(|parent| &parent.directory)
+            .ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "managed parent handle is missing for {}",
+                    kind.directory_name()
+                ))
+            })
+    }
+
+    pub(crate) fn open_managed_child_directory(
+        &self,
+        kind: ManagedStateParentKind,
+        child: &str,
+        label: &str,
+    ) -> Result<HeldEntry, StoreError> {
+        let path = self.managed_child_path(kind, child)?;
+        let entry = HeldEntry::open(
+            &path,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            label,
+        )?;
+        let parent = self.managed_parent_entry(kind)?;
+        if !same_volume(entry.identity(), parent.identity()) {
+            return Err(StoreError::Integrity(format!(
+                "{label} must remain on its managed parent volume"
+            )));
+        }
+        Ok(entry)
+    }
+
     pub(crate) fn open_state_file(&self, name: &str, label: &str) -> Result<HeldEntry, StoreError> {
         let path = self.direct_state_file_path(name)?;
         let entry = match fs::symlink_metadata(&path) {
@@ -359,7 +437,7 @@ impl NamespaceGuard {
         self.validate_bound_entries()
     }
 
-    fn validate_bound_entries(&self) -> Result<(), StoreError> {
+    pub(crate) fn validate_bound_entries(&self) -> Result<(), StoreError> {
         self.state_directory.validate_path(
             &self.state.state_dir,
             EntryKind::Directory,
@@ -486,7 +564,7 @@ fn ensure_state_directory(path: &Path) -> Result<bool, StoreError> {
     }
 }
 
-fn entry_exists(path: &Path) -> Result<bool, StoreError> {
+pub(crate) fn entry_exists(path: &Path) -> Result<bool, StoreError> {
     match fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),

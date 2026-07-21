@@ -6,20 +6,25 @@ use redb::{
 };
 
 use crate::gate::{GATES, OPERATIONS, TRANSITIONS};
+use crate::retention::{RETENTION_OPERATIONS, RETENTION_PLANS, RETENTION_TOMBSTONES, RUN_PINS};
 use crate::{POINTERS, RUN_CATALOG, SEQUENCES, StoreError, backend_error};
 
 use super::super::super::store_header::STORE_HEADER_TABLE_NAME;
 use super::LogicalStoreSnapshot;
 use super::validation::validate_referential_closure;
 
-const KNOWN_TABLES: [&str; 7] = [
+const KNOWN_TABLES: [&str; 11] = [
     "gates",
     "operations",
     "pointers",
     "run-catalog",
+    "run-pins",
     "sequences",
     STORE_HEADER_TABLE_NAME,
     "worktree-transitions",
+    "retention-operations",
+    "retention-plans",
+    "retention-tombstones",
 ];
 
 pub(super) fn read_snapshot(read: &ReadTransaction) -> Result<LogicalStoreSnapshot, StoreError> {
@@ -31,6 +36,10 @@ pub(super) fn read_snapshot(read: &ReadTransaction) -> Result<LogicalStoreSnapsh
         gates: read_bytes_table(read, GATES)?,
         operations: read_bytes_table(read, OPERATIONS)?,
         transitions: read_bytes_table(read, TRANSITIONS)?,
+        retention_plans: read_bytes_table(read, RETENTION_PLANS)?,
+        retention_operations: read_bytes_table(read, RETENTION_OPERATIONS)?,
+        retention_tombstones: read_bytes_table(read, RETENTION_TOMBSTONES)?,
+        run_pins: read_bytes_table(read, RUN_PINS)?,
     };
     validate_referential_closure(&snapshot)?;
     Ok(snapshot)
@@ -47,6 +56,10 @@ pub(super) fn write_snapshot(
     write_bytes_table(&write, GATES, &snapshot.gates)?;
     write_bytes_table(&write, OPERATIONS, &snapshot.operations)?;
     write_bytes_table(&write, TRANSITIONS, &snapshot.transitions)?;
+    write_bytes_table(&write, RETENTION_PLANS, &snapshot.retention_plans)?;
+    write_bytes_table(&write, RETENTION_OPERATIONS, &snapshot.retention_operations)?;
+    write_bytes_table(&write, RETENTION_TOMBSTONES, &snapshot.retention_tombstones)?;
+    write_bytes_table(&write, RUN_PINS, &snapshot.run_pins)?;
     write.commit().map_err(backend_error)
 }
 

@@ -13,7 +13,7 @@ mod abandon;
 mod coordination;
 mod liveness;
 mod operations;
-mod records;
+pub(crate) mod records;
 #[cfg(test)]
 mod tests;
 
@@ -104,6 +104,35 @@ impl RepositoryStore {
         })
     }
 
+    pub fn lookup_gate(
+        &self,
+        gate_id: &GateId,
+    ) -> Result<lumin_evidence::RecordLookup<GateRecord>, StoreError> {
+        self.with_shared_lock(|guard| {
+            let database = guard.open_database()?;
+            let tombstone_key = crate::retention::records::tombstone_key(
+                lumin_evidence::RetentionItemKind::Gate,
+                gate_id.as_str(),
+            );
+            if let Some(tombstone) =
+                records::load_record::<crate::retention::records::StoredTombstone>(
+                    &database,
+                    crate::retention::RETENTION_TOMBSTONES,
+                    &tombstone_key,
+                )?
+            {
+                return if tombstone.envelope.tombstone_identity.is_some() {
+                    Ok(lumin_evidence::RecordLookup::Pruned(tombstone.envelope))
+                } else {
+                    Ok(lumin_evidence::RecordLookup::Pruning(tombstone.envelope))
+                };
+            }
+            let gate = load_record::<GateRecord>(&database, GATES, gate_id.as_str())?
+                .ok_or_else(|| StoreError::GateNotFound(gate_id.as_str().to_owned()))?;
+            Ok(lumin_evidence::RecordLookup::Live(gate))
+        })
+    }
+
     pub fn load_operation(
         &self,
         operation_id: &OperationId,
@@ -125,6 +154,7 @@ fn load_operation_for_finish(
     gate_id: Option<&GateId>,
     phase: &str,
 ) -> Result<OperationRecord, StoreError> {
+    reject_retention_operation_collision(write, operation_id)?;
     let operation = read_record::<OperationRecord>(write, OPERATIONS, operation_id.as_str())?
         .ok_or_else(|| {
             StoreError::Integrity(format!(
@@ -134,6 +164,24 @@ fn load_operation_for_finish(
         })?;
     validate_operation(&operation, kind, request_digest, gate_id)?;
     Ok(operation)
+}
+
+fn reject_retention_operation_collision(
+    write: &WriteTransaction,
+    operation_id: &OperationId,
+) -> Result<(), StoreError> {
+    if read_record::<lumin_evidence::RetentionOperationRecord>(
+        write,
+        crate::retention::RETENTION_OPERATIONS,
+        operation_id.as_str(),
+    )?
+    .is_some()
+    {
+        return Err(StoreError::OperationConflict(
+            operation_id.as_str().to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_pre_write_context(
@@ -257,6 +305,7 @@ fn completed_pre_write_records(
         revisions: vec![GateRevision {
             revision: 0,
             operation_id: operation.operation_id.clone(),
+            committed_unix_millis: Some(crate::unix_millis()?),
             decision,
             reason: None,
             signals,
@@ -467,12 +516,12 @@ fn rejected_gate(
     analysis_options: GateAnalysisOptions,
     signals: &[GateSignal],
     baseline: Option<GateBaseline>,
-) -> GateRecord {
+) -> Result<GateRecord, StoreError> {
     let decision = gate_policy::decision(signals);
     let protected_semantic_inputs = baseline.as_ref().map_or_else(Vec::new, |baseline| {
         baseline.protected_semantic_inputs.clone()
     });
-    GateRecord {
+    Ok(GateRecord {
         schema_version: "lumin-gate.v1".to_owned(),
         gate_id: operation.gate_id.clone(),
         lifecycle: GateLifecycle::Rejected,
@@ -487,6 +536,7 @@ fn rejected_gate(
         revisions: vec![GateRevision {
             revision: 0,
             operation_id: operation.operation_id.clone(),
+            committed_unix_millis: Some(crate::unix_millis()?),
             decision,
             reason: None,
             signals: signals.to_vec(),
@@ -497,7 +547,7 @@ fn rejected_gate(
             reconciled_transition_sequences: Vec::new(),
             deltas: Vec::new(),
         }],
-    }
+    })
 }
 
 fn validate_operation(

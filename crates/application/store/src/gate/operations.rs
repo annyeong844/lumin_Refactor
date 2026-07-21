@@ -12,6 +12,7 @@ impl OperationSession<'_> {
         self.store.with_exclusive_lock(|guard| {
             let database = self.open_database(guard)?;
             let write = database.begin_write()?;
+            reject_retention_operation_collision(&write, operation_id)?;
             let mut operation = if let Some(mut operation) =
                 read_record::<OperationRecord>(&write, OPERATIONS, operation_id.as_str())?
             {
@@ -70,7 +71,7 @@ impl OperationSession<'_> {
             if !paths.is_empty() {
                 let signals = vec![GateSignal::WriteConflict { paths, gate_ids }];
                 let result = rejected_open_result(&operation, &signals);
-                let gate = rejected_gate(&operation, analysis_options.clone(), &signals, None);
+                let gate = rejected_gate(&operation, analysis_options.clone(), &signals, None)?;
                 operation.status = GateOperationStatus::Committed;
                 operation.operation_liveness = None;
                 operation.result = Some(result.clone());
@@ -157,6 +158,7 @@ impl OperationSession<'_> {
         self.store.with_exclusive_lock(|guard| {
             let database = self.open_database(guard)?;
             let write = database.begin_write()?;
+            reject_retention_operation_collision(&write, operation_id)?;
             if let Some(mut operation) =
                 read_record::<OperationRecord>(&write, OPERATIONS, operation_id.as_str())?
             {
@@ -445,6 +447,7 @@ impl OperationSession<'_> {
             gate.revisions.push(GateRevision {
                 revision,
                 operation_id: operation_id.clone(),
+                committed_unix_millis: Some(crate::unix_millis()?),
                 decision,
                 reason: None,
                 signals: signals.clone(),

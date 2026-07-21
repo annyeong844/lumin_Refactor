@@ -1,7 +1,12 @@
+mod cursor;
+mod retention;
+
+pub use retention::*;
+
 use std::collections::BTreeMap;
 
 use base64::Engine;
-use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+use base64::engine::general_purpose::STANDARD;
 use lumin_evidence::{
     DeclaredPathUnsupportedReason, FindingRecord, GateDecision, GateLifecycle, GateOperationKind,
     GateOperationResult, GateOperationStatus, GateRecord, GateSignal, OperationRecord,
@@ -222,6 +227,8 @@ pub enum ProtocolError {
     CursorScopeMismatch,
     #[error("cursor anchor no longer exists in the immutable run")]
     CursorAnchorMissing,
+    #[error("cursor repository view is stale")]
+    CursorStale,
     #[error("machine response serialization failed: {0}")]
     Serialization(String),
 }
@@ -556,17 +563,11 @@ fn encode_cursor(
         filters: filters.clone(),
         last_finding_id: last_finding_id.clone(),
     };
-    let bytes = serde_json::to_vec(&cursor)
-        .map_err(|error| ProtocolError::Serialization(error.to_string()))?;
-    Ok(URL_SAFE_NO_PAD.encode(bytes))
+    cursor::encode_cursor_payload(&cursor)
 }
 
 fn decode_cursor(value: &str) -> Result<CursorDto, ProtocolError> {
-    let bytes = URL_SAFE_NO_PAD
-        .decode(value)
-        .map_err(|_| ProtocolError::CursorEncoding)?;
-    let cursor: CursorDto = serde_json::from_slice(&bytes)
-        .map_err(|error| ProtocolError::CursorPayload(error.to_string()))?;
+    let cursor: CursorDto = cursor::decode_cursor_payload(value)?;
     if cursor.schema_version != "lumin-cursor.v1" {
         return Err(ProtocolError::CursorScopeMismatch);
     }

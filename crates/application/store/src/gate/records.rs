@@ -4,7 +4,7 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{SEQUENCES, StoreError, backend_error, namespace::StoreDatabase, serialization_error};
 
-pub(super) fn current_transition_sequence(write: &WriteTransaction) -> Result<u64, StoreError> {
+pub(crate) fn current_transition_sequence(write: &WriteTransaction) -> Result<u64, StoreError> {
     let table = write.open_table(SEQUENCES).map_err(backend_error)?;
     table
         .get("transition")
@@ -12,7 +12,7 @@ pub(super) fn current_transition_sequence(write: &WriteTransaction) -> Result<u6
         .map(|value| value.map_or(0, |value| value.value()))
 }
 
-pub(super) fn next_transition_sequence(write: &WriteTransaction) -> Result<u64, StoreError> {
+pub(crate) fn next_transition_sequence(write: &WriteTransaction) -> Result<u64, StoreError> {
     let mut table = write.open_table(SEQUENCES).map_err(backend_error)?;
     let current = table
         .get("transition")
@@ -29,7 +29,7 @@ pub(crate) fn transition_key(sequence: u64) -> String {
     format!("transition_{sequence:016x}")
 }
 
-pub(super) fn next_gate_id(write: &WriteTransaction) -> Result<GateId, StoreError> {
+pub(crate) fn next_gate_id(write: &WriteTransaction) -> Result<GateId, StoreError> {
     let next = {
         let mut table = write.open_table(SEQUENCES).map_err(backend_error)?;
         let current = table
@@ -45,7 +45,7 @@ pub(super) fn next_gate_id(write: &WriteTransaction) -> Result<GateId, StoreErro
     Ok(GateId::from_string(format!("gate_{next:016x}")))
 }
 
-pub(super) fn load_record<T: DeserializeOwned>(
+pub(crate) fn load_record<T: DeserializeOwned>(
     database: &StoreDatabase<'_>,
     definition: TableDefinition<'static, &str, &[u8]>,
     key: &str,
@@ -65,7 +65,7 @@ pub(super) fn load_record<T: DeserializeOwned>(
         .transpose()
 }
 
-pub(super) fn read_record<T: DeserializeOwned>(
+pub(crate) fn read_record<T: DeserializeOwned>(
     write: &WriteTransaction,
     definition: TableDefinition<'static, &str, &[u8]>,
     key: &str,
@@ -80,7 +80,7 @@ pub(super) fn read_record<T: DeserializeOwned>(
         .transpose()
 }
 
-pub(super) fn read_records<T: DeserializeOwned>(
+pub(crate) fn read_records<T: DeserializeOwned>(
     write: &WriteTransaction,
     definition: TableDefinition<'static, &str, &[u8]>,
 ) -> Result<Vec<T>, StoreError> {
@@ -93,7 +93,7 @@ pub(super) fn read_records<T: DeserializeOwned>(
     Ok(records)
 }
 
-pub(super) fn write_record<T: Serialize>(
+pub(crate) fn write_record<T: Serialize>(
     write: &WriteTransaction,
     definition: TableDefinition<'static, &str, &[u8]>,
     key: &str,

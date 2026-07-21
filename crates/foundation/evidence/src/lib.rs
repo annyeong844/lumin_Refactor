@@ -1,7 +1,9 @@
 mod delta;
 mod gate;
+mod retention;
 
 pub use gate::*;
+pub use retention::*;
 
 use lumin_model::{
     CapabilityState, FindingDisposition, FindingId, Limitation, LogicalSourceId, RepoPath,

@@ -14,6 +14,7 @@ impl OperationSession<'_> {
         self.store.with_exclusive_lock(|guard| {
             let database = self.open_database(guard)?;
             let write = database.begin_write()?;
+            reject_retention_operation_collision(&write, operation_id)?;
             let mut operation = load_or_create_abandon_operation(
                 &write,
                 operation_id,
@@ -106,6 +107,7 @@ fn apply_abandon(
     gate.revisions.push(GateRevision {
         revision,
         operation_id: operation.operation_id.clone(),
+        committed_unix_millis: Some(crate::unix_millis()?),
         decision: GateDecision::Allow,
         reason: Some(reason.clone()),
         signals: Vec::new(),

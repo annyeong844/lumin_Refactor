@@ -1,4 +1,5 @@
 mod external;
+mod retention;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -29,6 +30,7 @@ pub(super) fn validate_referential_closure(
     validate_operation_gate_refs(&operations, &gates)?;
     validate_transition_gate_refs(&transitions, &gates)?;
     validate_run_catalog(snapshot)?;
+    retention::validate_retention(snapshot, &operations)?;
     validate_pointers(snapshot)
 }
 

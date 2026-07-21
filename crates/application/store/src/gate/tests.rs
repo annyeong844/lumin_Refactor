@@ -34,6 +34,7 @@ fn persisted_v1_gate_additions_default_when_absent() -> Result<(), Box<dyn std::
     let revision = GateRevision {
         revision: 0,
         operation_id: operation_id.clone(),
+        committed_unix_millis: None,
         decision: lumin_evidence::GateDecision::Allow,
         reason: None,
         signals: Vec::new(),

@@ -1,3 +1,5 @@
+mod retention;
+
 use std::ffi::OsString;
 use std::path::Path;
 
@@ -30,6 +32,8 @@ enum CliError {
     NonUtf8(String),
     #[error("invalid worker count: {0}")]
     InvalidJobs(String),
+    #[error("invalid Unix millisecond timestamp: {0}")]
+    InvalidTimestamp(String),
     #[error("unsupported output format: {0}")]
     UnsupportedFormat(String),
     #[error("unknown source role: {0}")]
@@ -93,6 +97,7 @@ fn execute_inner(root: &Path, arguments: Vec<OsString>) -> Result<CommandOutput,
         "post-write" => post_write(root, &mut arguments),
         "gate" => gate(root, &mut arguments),
         "operation" => operation(root, &mut arguments),
+        "runs" => retention::runs(root, &mut arguments),
         _ => Err(CliError::UnknownArgument(command)),
     }
 }
@@ -172,17 +177,42 @@ fn overview(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> 
     }
     require_json(&format)?;
 
-    let (record, evidence) = match run_id {
-        Some(run_id) => lumin_engine::load_run(root, &run_id)?,
-        None => lumin_engine::load_latest_run(root)?.ok_or(CliError::NoCompletedRun)?,
-    };
-    let response = lumin_protocol::overview_response(
-        record.attempt_id,
-        record.run_id,
-        record.sequence,
-        &evidence,
-    );
-    lumin_protocol::to_json(&response).map_err(Into::into)
+    match run_id {
+        Some(run_id) => match lumin_engine::lookup_run(root, &run_id)? {
+            lumin_engine::RecordLookup::Live((record, evidence)) => {
+                lumin_protocol::to_json(&lumin_protocol::overview_response(
+                    record.attempt_id,
+                    record.run_id,
+                    record.sequence,
+                    &evidence,
+                ))
+                .map_err(Into::into)
+            }
+            lumin_engine::RecordLookup::Pruning(tombstone) => {
+                lumin_protocol::to_json(&lumin_protocol::LookupTombstoneResponseDto::Pruning {
+                    tombstone,
+                })
+                .map_err(Into::into)
+            }
+            lumin_engine::RecordLookup::Pruned(tombstone) => {
+                lumin_protocol::to_json(&lumin_protocol::LookupTombstoneResponseDto::Pruned {
+                    tombstone,
+                })
+                .map_err(Into::into)
+            }
+        },
+        None => {
+            let (record, evidence) =
+                lumin_engine::load_latest_run(root)?.ok_or(CliError::NoCompletedRun)?;
+            lumin_protocol::to_json(&lumin_protocol::overview_response(
+                record.attempt_id,
+                record.run_id,
+                record.sequence,
+                &evidence,
+            ))
+            .map_err(Into::into)
+        }
+    }
 }
 
 fn findings(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> {
@@ -294,6 +324,7 @@ fn gate(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliErro
     match subcommand.as_str() {
         "show" => gate_show(root, arguments),
         "abandon" => gate_abandon(root, arguments),
+        "prune" => retention::gate_prune(root, arguments),
         _ => Err(CliError::UnknownArgument(subcommand)),
     }
 }
@@ -302,8 +333,8 @@ fn gate_show(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, Cl
     let gate_id = parse_gate_id(arguments.required_utf8("gate-id")?)?;
     let format = parse_read_format(arguments, "gate show argument")?;
     require_json(&format)?;
-    let gate = lumin_engine::load_gate(root, &gate_id)?;
-    let response = lumin_protocol::gate_show_response(&gate);
+    let gate = lumin_engine::lookup_gate(root, &gate_id)?;
+    let response = lumin_protocol::gate_lookup_response(gate);
     lumin_protocol::to_json(&response)
         .map(success)
         .map_err(Into::into)
@@ -352,8 +383,8 @@ fn operation(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, Cl
     let operation_id = parse_operation_id(arguments.required_utf8("operation-id")?)?;
     let format = parse_read_format(arguments, "operation show argument")?;
     require_json(&format)?;
-    let operation = lumin_engine::load_operation(root, &operation_id)?;
-    let response = lumin_protocol::operation_show_response(&operation);
+    let operation = lumin_engine::load_lifecycle_operation(root, &operation_id)?;
+    let response = lumin_protocol::lifecycle_operation_response(&operation);
     lumin_protocol::to_json(&response)
         .map(success)
         .map_err(Into::into)
@@ -436,11 +467,13 @@ fn require_json(value: &str) -> Result<(), CliError> {
 
 fn error_exit_code(error: &CliError) -> i32 {
     match error {
+        CliError::Protocol(ProtocolError::CursorStale) => 5,
         CliError::MissingCommand
         | CliError::UnknownArgument(_)
         | CliError::MissingValue(_)
         | CliError::NonUtf8(_)
         | CliError::InvalidJobs(_)
+        | CliError::InvalidTimestamp(_)
         | CliError::UnsupportedFormat(_)
         | CliError::UnknownRole(_)
         | CliError::UnknownResolutionProfile(_)

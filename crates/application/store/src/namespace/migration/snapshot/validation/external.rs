@@ -1,7 +1,9 @@
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use serde::de::DeserializeOwned;
 
+use crate::retention::records::StoredRetentionPlan;
 use crate::{AttemptEnvelope, RunCatalogRecord, StoreError, digest_hex};
 
 use super::super::super::super::platform::{EntryAccess, EntryKind, HeldEntry};
@@ -15,8 +17,9 @@ pub(super) fn validate_external_references(
 ) -> Result<(), StoreError> {
     guard.validate_bound_entries()?;
     validate_latest_attempt(snapshot, guard)?;
+    let moved_runs = validate_retention_payloads(snapshot, guard)?;
     for (key, bytes) in &snapshot.run_catalog {
-        validate_run(key, bytes, guard)?;
+        validate_run(key, bytes, guard, moved_runs.get(key))?;
     }
     guard.validate_bound_entries()
 }
@@ -60,7 +63,12 @@ fn validate_latest_attempt(
     Ok(())
 }
 
-fn validate_run(key: &str, bytes: &[u8], guard: &NamespaceGuard) -> Result<(), StoreError> {
+fn validate_run(
+    key: &str,
+    bytes: &[u8],
+    guard: &NamespaceGuard,
+    moved_path: Option<&PathBuf>,
+) -> Result<(), StoreError> {
     let record = parse_record::<RunCatalogRecord>("run-catalog", key, bytes)?;
     let run_sequence = canonical_sequence_id(record.run_id.as_str(), "run_", "run")?;
     let attempt_sequence =
@@ -71,18 +79,13 @@ fn validate_run(key: &str, bytes: &[u8], guard: &NamespaceGuard) -> Result<(), S
         )));
     }
 
-    let run_dir = guard
+    let canonical_run_dir = guard
         .state
         .state_dir
         .join("runs")
         .join(record.run_id.as_str());
-    let held_dir = open_state_entry(
-        guard,
-        &run_dir,
-        EntryKind::Directory,
-        false,
-        "run directory",
-    )?;
+    let run_dir = moved_path.unwrap_or(&canonical_run_dir);
+    let held_dir = open_state_entry(guard, run_dir, EntryKind::Directory, false, "run directory")?;
     let envelope =
         read_state_json::<RunCatalogRecord>(guard, &run_dir.join("run.json"), "run envelope")?;
     if envelope.run_id != record.run_id
@@ -98,7 +101,7 @@ fn validate_run(key: &str, bytes: &[u8], guard: &NamespaceGuard) -> Result<(), S
     let evidence_path = run_dir.join("evidence.store");
     let evidence = read_state_file(guard, &evidence_path, "run evidence store")?;
     held_dir.validate_path(
-        &run_dir,
+        run_dir,
         EntryKind::Directory,
         EntryAccess::ReadOnly,
         false,
@@ -112,6 +115,21 @@ fn validate_run(key: &str, bytes: &[u8], guard: &NamespaceGuard) -> Result<(), S
         )));
     }
     Ok(())
+}
+
+fn validate_retention_payloads(
+    snapshot: &LogicalStoreSnapshot,
+    guard: &NamespaceGuard,
+) -> Result<BTreeMap<String, PathBuf>, StoreError> {
+    let mut moved_runs = BTreeMap::new();
+    for (key, bytes) in &snapshot.retention_plans {
+        let plan = parse_record::<StoredRetentionPlan>("retention-plans", key, bytes)?;
+        if plan.progress.is_none() {
+            continue;
+        }
+        moved_runs.extend(crate::retention::validate_migration_payloads(guard, &plan)?);
+    }
+    Ok(moved_runs)
 }
 
 fn canonical_sequence_id(value: &str, prefix: &str, label: &str) -> Result<u64, StoreError> {

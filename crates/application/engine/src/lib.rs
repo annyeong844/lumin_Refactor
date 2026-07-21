@@ -1,8 +1,16 @@
 mod gate_abandon;
+mod retention;
 mod write_gate;
 
 pub use gate_abandon::{AbandonGateRequest, abandon_gate};
-pub use lumin_evidence::{GateDecision, GateOperationResult};
+pub use lumin_evidence::{
+    GateDecision, GateOperationResult, RecordLookup, RetentionMutationResult, RetentionPlanScope,
+};
+pub use retention::{
+    ConfirmRetentionPlanRequest, PinRunRequest, PrepareRetentionPlanRequest, UnpinRunRequest,
+    confirm_retention_plan, list_runs, load_lifecycle_operation, load_retention_plan, lookup_gate,
+    lookup_run, pin_run, prepare_retention_plan, unpin_run,
+};
 pub use write_gate::{
     PostWriteRequest, PreWriteRequest, close_write_gate, load_gate, load_operation, open_write_gate,
 };
@@ -86,8 +94,12 @@ impl EngineError {
             | Self::Store(
                 StoreError::OperationConflict(_)
                 | StoreError::OperationNotFound(_)
+                | StoreError::RunNotFound(_)
+                | StoreError::PinNotFound(_)
                 | StoreError::GateNotFound(_)
-                | StoreError::GateNotActive(_),
+                | StoreError::GateNotActive(_)
+                | StoreError::RetentionPlanNotFound(_)
+                | StoreError::RetentionPlanState(_),
             ) => 2,
             Self::Store(StoreError::GateRevisionBusy(_) | StoreError::OperationBusy(_)) => 4,
             Self::Store(StoreError::GateRevisionChanged(_)) => 5,

@@ -28,6 +28,10 @@ string_id!(RunId);
 string_id!(AttemptId);
 string_id!(GateId);
 string_id!(OperationId);
+string_id!(RetentionPlanId);
+string_id!(RetentionContentIdentity);
+string_id!(RetentionTombstoneIdentity);
+string_id!(PinId);
 string_id!(AnalysisInputId);
 string_id!(RepositoryId);
 

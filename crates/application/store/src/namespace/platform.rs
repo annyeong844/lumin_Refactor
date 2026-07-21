@@ -26,7 +26,7 @@ pub(crate) struct HeldEntry {
 }
 
 impl HeldEntry {
-    pub(super) fn open(
+    pub(crate) fn open(
         path: &Path,
         kind: EntryKind,
         access: EntryAccess,
@@ -37,7 +37,7 @@ impl HeldEntry {
         Self::from_file(file, kind, one_link, label)
     }
 
-    pub(super) fn create_new(path: &Path, label: &str) -> Result<Self, StoreError> {
+    pub(crate) fn create_new(path: &Path, label: &str) -> Result<Self, StoreError> {
         let file = create_new_nofollow(path).map_err(io_error)?;
         Self::from_file(file, EntryKind::RegularFile, true, label)
     }
@@ -107,7 +107,7 @@ impl HeldEntry {
         Ok(bytes)
     }
 
-    pub(super) fn replace_contents(&self, bytes: &[u8]) -> Result<(), StoreError> {
+    pub(crate) fn replace_contents(&self, bytes: &[u8]) -> Result<(), StoreError> {
         self.file.set_len(0).map_err(io_error)?;
         let mut writer = self.file();
         writer.seek(SeekFrom::Start(0)).map_err(io_error)?;
@@ -115,31 +115,31 @@ impl HeldEntry {
         writer.sync_all().map_err(io_error)
     }
 
-    pub(super) fn sync(&self) -> Result<(), StoreError> {
+    pub(crate) fn sync(&self) -> Result<(), StoreError> {
         self.file.sync_all().map_err(io_error)
     }
 
     #[cfg(target_os = "linux")]
-    pub(super) fn sync_directory(&self) -> Result<(), StoreError> {
+    pub(crate) fn sync_directory(&self) -> Result<(), StoreError> {
         self.sync()
     }
 
     #[cfg(windows)]
-    pub(super) fn sync_directory(&self) -> Result<(), StoreError> {
+    pub(crate) fn sync_directory(&self) -> Result<(), StoreError> {
         // Windows rejects FlushFileBuffers on directory handles. The files
         // published into the directory are flushed individually.
         Ok(())
     }
 
     #[cfg(not(any(target_os = "linux", windows)))]
-    pub(super) fn sync_directory(&self) -> Result<(), StoreError> {
+    pub(crate) fn sync_directory(&self) -> Result<(), StoreError> {
         Err(StoreError::Integrity(
             "managed state directory flush supports Windows and Linux".to_owned(),
         ))
     }
 }
 
-pub(super) fn same_volume(left: &PhysicalFileIdentity, right: &PhysicalFileIdentity) -> bool {
+pub(crate) fn same_volume(left: &PhysicalFileIdentity, right: &PhysicalFileIdentity) -> bool {
     match (left, right) {
         (
             PhysicalFileIdentity::Unix { device: left, .. },

@@ -22,9 +22,9 @@ pub(super) const REPOSITORY_SCHEMA: &str = "lumin-repository.v3";
 pub(super) const LOCK_SCHEMA: &str = "lumin-lifecycle-lock.v2";
 pub(super) const ANCHOR_SCHEMA: &str = "lumin-managed-parent-anchor.v2";
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
-pub(super) enum ManagedStateParentKind {
+pub(crate) enum ManagedStateParentKind {
     Attempts,
     Runs,
     Trash,
@@ -32,7 +32,7 @@ pub(super) enum ManagedStateParentKind {
 }
 
 impl ManagedStateParentKind {
-    pub(super) fn directory_name(self) -> &'static str {
+    pub(crate) fn directory_name(self) -> &'static str {
         match self {
             Self::Attempts => "attempts",
             Self::Runs => "runs",
@@ -55,11 +55,11 @@ pub(super) struct GlobalNamespaceBinding {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(super) struct ManagedStateParentBinding {
-    pub(super) kind: ManagedStateParentKind,
-    pub(super) directory_physical_identity: PhysicalFileIdentity,
-    pub(super) anchor_physical_identity: PhysicalFileIdentity,
-    pub(super) parent_nonce: String,
+pub(crate) struct ManagedStateParentBinding {
+    pub(crate) kind: ManagedStateParentKind,
+    pub(crate) directory_physical_identity: PhysicalFileIdentity,
+    pub(crate) anchor_physical_identity: PhysicalFileIdentity,
+    pub(crate) parent_nonce: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
