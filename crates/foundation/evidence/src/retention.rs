@@ -112,6 +112,7 @@ pub enum RetentionExclusionReason {
     LatestCompleted,
     ActivePin { pin_ids: Vec<PinId> },
     ActiveTransitionReference { gate_ids: Vec<GateId> },
+    RetentionInProgress { plan_id: RetentionPlanId },
     ActiveGate,
     TerminalTimestampUnavailable,
 }

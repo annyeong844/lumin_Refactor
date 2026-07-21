@@ -73,6 +73,75 @@ fn migration_preserves_inflight_pruning_state() -> Result<(), Box<dyn std::error
     Ok(())
 }
 
+#[test]
+fn reclaim_retries_after_payload_removal_completed_before_store_mark()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = TempDir::new()?;
+    let store = open_store(root.path())?;
+    let (run_id, plan_id, confirm_id) = admit_run_pruning(&store, "reclaim-before-mark")?;
+    store.with_exclusive_lock(|guard| {
+        let plan = confirmation::commit_pruned_without_reclaim(guard, &plan_id, &confirm_id)?;
+        assert_eq!(plan.record.state, RetentionPlanState::Pruned);
+        assert!(plan.record.physical_reclamation_pending);
+        confirmation::reclaim_without_mark(guard, &plan_id, &confirm_id)
+    })?;
+    assert!(
+        store
+            .load_retention_plan(&plan_id)?
+            .physical_reclamation_pending
+    );
+    drop(store);
+
+    let reopened = open_store(root.path())?;
+    assert!(matches!(
+        reopened.confirm_retention_plan(&plan_id, &confirm_id)?,
+        RetentionMutationResult::Pruned {
+            physical_reclamation_pending: false,
+            ..
+        }
+    ));
+    assert!(matches!(
+        reopened.lookup_run(&run_id)?,
+        RecordLookup::Pruned(_)
+    ));
+    Ok(())
+}
+
+#[test]
+fn reclaim_retries_after_anchor_removal_completed_before_directory_removal()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = TempDir::new()?;
+    let store = open_store(root.path())?;
+    let (_run_id, plan_id, confirm_id) = admit_run_pruning(&store, "anchor-before-directory")?;
+    let (_source, trash_child) = first_move_paths(&store, &plan_id, &confirm_id)?;
+    store.with_exclusive_lock(|guard| {
+        let plan = confirmation::commit_pruned_without_reclaim(guard, &plan_id, &confirm_id)?;
+        assert_eq!(plan.record.state, RetentionPlanState::Pruned);
+        Ok(())
+    })?;
+    let trash_directory = trash_child
+        .parent()
+        .ok_or("trash movement has no plan directory")?;
+    for entry in std::fs::read_dir(trash_directory)? {
+        let entry = entry?;
+        if entry.file_name() != ".plan-anchor" {
+            std::fs::remove_dir_all(entry.path())?;
+        }
+    }
+    std::fs::remove_file(trash_directory.join(".plan-anchor"))?;
+    assert!(trash_directory.is_dir());
+
+    assert!(matches!(
+        store.confirm_retention_plan(&plan_id, &confirm_id)?,
+        RetentionMutationResult::Pruned {
+            physical_reclamation_pending: false,
+            ..
+        }
+    ));
+    assert!(!trash_directory.exists());
+    Ok(())
+}
+
 fn assert_integrity_error(
     result: Result<RetentionMutationResult, StoreError>,
     expected_message: &str,

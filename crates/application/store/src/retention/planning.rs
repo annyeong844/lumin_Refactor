@@ -4,10 +4,10 @@ mod runs;
 use std::collections::BTreeMap;
 
 use lumin_evidence::{
-    OperationRecord, RetentionItemKind, RetentionMutationResult, RetentionOperationKind,
-    RetentionOperationRecord, RetentionOperationResult, RetentionOperationStatus,
-    RetentionPlanExclusion, RetentionPlanItem, RetentionPlanRecord, RetentionPlanScope,
-    RetentionPlanState,
+    OperationRecord, RetentionExclusionReason, RetentionItemKind, RetentionMutationResult,
+    RetentionOperationKind, RetentionOperationRecord, RetentionOperationResult,
+    RetentionOperationStatus, RetentionPlanExclusion, RetentionPlanItem, RetentionPlanRecord,
+    RetentionPlanScope, RetentionPlanState,
 };
 use lumin_model::{OperationId, RetentionPlanId, append_length_prefixed, digest_hex};
 use redb::{ReadableTable, TableDefinition, TableError, WriteTransaction};
@@ -19,9 +19,10 @@ use crate::{RepositoryStore, StoreError, backend_error, nonce_hex, unix_millis};
 
 use super::RetentionPlanRequest;
 use super::records::{
-    OPERATION_SCHEMA, PLAN_SCHEMA, StoredRetentionPlan, canonical_content_identity,
-    ensure_result_matches, next_sequence, read_retention_operation, retention_operation_result,
-    write_plan, write_retention_operation,
+    OPERATION_SCHEMA, PLAN_SCHEMA, StoredRetentionPlan, StoredTombstone,
+    canonical_content_identity, ensure_result_matches, next_sequence, read_plan,
+    read_retention_operation, retention_operation_result, tombstone_key, write_plan,
+    write_retention_operation,
 };
 
 pub(super) struct PlanContents {
@@ -100,14 +101,67 @@ pub(super) fn build_contents(
     write: &WriteTransaction,
     scope: &RetentionPlanScope,
 ) -> Result<PlanContents, StoreError> {
-    match scope {
+    let mut contents = match scope {
         RetentionPlanScope::Runs { before_unix_millis } => {
             runs::collect(guard, write, *before_unix_millis)
         }
         RetentionPlanScope::Gates {
             terminal_before_unix_millis,
         } => gates::collect(guard, write, *terminal_before_unix_millis),
+    }?;
+    exclude_retention_owned_items(write, &mut contents)?;
+    contents.items.sort();
+    contents.exclusions.sort();
+    contents.exclusions.dedup();
+    Ok(contents)
+}
+
+fn exclude_retention_owned_items(
+    write: &WriteTransaction,
+    contents: &mut PlanContents,
+) -> Result<(), StoreError> {
+    let mut retained = Vec::with_capacity(contents.items.len());
+    for item in contents.items.drain(..) {
+        let key = tombstone_key(item.kind, &item.record_id);
+        let tombstone = crate::gate::records::read_record::<StoredTombstone>(
+            write,
+            super::RETENTION_TOMBSTONES,
+            &key,
+        )?;
+        let Some(tombstone) = tombstone else {
+            retained.push(item);
+            continue;
+        };
+        let owner_plan = match read_plan(write, &tombstone.envelope.plan_id) {
+            Err(StoreError::RetentionPlanNotFound(_)) => {
+                return Err(StoreError::Integrity(format!(
+                    "retention tombstone {key} has no owner plan"
+                )));
+            }
+            result => result?,
+        };
+        super::records::validate_tombstone(&key, &tombstone, &owner_plan)?;
+        let owner_matches = owner_plan.record.state == RetentionPlanState::Pruning
+            && owner_plan
+                .record
+                .items
+                .iter()
+                .any(|owner_item| owner_item == &item);
+        if !owner_matches {
+            return Err(StoreError::Integrity(format!(
+                "retention tombstone {key} disagrees with its active owner plan"
+            )));
+        }
+        contents.exclusions.push(RetentionPlanExclusion {
+            kind: item.kind,
+            record_id: item.record_id,
+            reason: RetentionExclusionReason::RetentionInProgress {
+                plan_id: tombstone.envelope.plan_id,
+            },
+        });
     }
+    contents.items = retained;
+    Ok(())
 }
 
 pub(super) fn plan_request_digest(scope: &RetentionPlanScope) -> Result<String, StoreError> {

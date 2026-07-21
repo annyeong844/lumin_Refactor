@@ -11,7 +11,7 @@ pub(super) use crate::namespace::entry_exists;
 
 use super::super::super::records::{RetentionProgress, StoredRetentionPlan, TrashDirectoryBinding};
 
-const TRASH_ANCHOR: &str = ".plan-anchor";
+pub(super) const TRASH_ANCHOR: &str = ".plan-anchor";
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,7 +25,13 @@ struct TrashAnchor {
 pub(super) struct BoundTrash {
     pub(super) path: PathBuf,
     pub(super) directory: HeldEntry,
-    anchor: HeldEntry,
+    pub(super) anchor: HeldEntry,
+}
+
+pub(super) enum TrashReclaimState {
+    Absent,
+    Bound(BoundTrash),
+    AnchorRemoved { path: PathBuf, directory: HeldEntry },
 }
 
 impl BoundTrash {
@@ -185,6 +191,65 @@ pub(super) fn open_bound(
     Ok(bound)
 }
 
+pub(super) fn reclaim_state(
+    guard: &NamespaceGuard,
+    plan: &StoredRetentionPlan,
+    progress: &RetentionProgress,
+) -> Result<TrashReclaimState, StoreError> {
+    let path = trash_directory_path(guard, plan)?;
+    if !entry_exists(&path)? {
+        return Ok(TrashReclaimState::Absent);
+    }
+    let expected = progress.trash_directory.as_ref().ok_or_else(|| {
+        StoreError::Integrity("retention trash directory is not durably bound".to_owned())
+    })?;
+    let directory = guard.open_managed_child_directory(
+        ManagedStateParentKind::Trash,
+        plan.record.plan_id.as_str(),
+        "retention trash plan directory",
+    )?;
+    require_identity(
+        &directory,
+        &expected.directory_physical_identity,
+        "retention trash plan directory",
+    )?;
+    let anchor_path = path.join(TRASH_ANCHOR);
+    if !entry_exists(&anchor_path)? {
+        if fs::read_dir(&path).map_err(io_error)?.next().is_some() {
+            return Err(StoreError::Integrity(
+                "anchorless retention trash directory is not empty".to_owned(),
+            ));
+        }
+        directory.validate_path(
+            &path,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            true,
+            "anchorless retention trash plan directory",
+        )?;
+        return Ok(TrashReclaimState::AnchorRemoved { path, directory });
+    }
+    let anchor = HeldEntry::open(
+        &anchor_path,
+        EntryKind::RegularFile,
+        EntryAccess::ReadOnly,
+        true,
+        "retention trash anchor",
+    )?;
+    if !same_volume(anchor.identity(), directory.identity()) {
+        return Err(StoreError::Integrity(
+            "retention trash anchor left its plan directory volume".to_owned(),
+        ));
+    }
+    let bound = BoundTrash {
+        path,
+        directory,
+        anchor,
+    };
+    bound.validate(plan, progress)?;
+    Ok(TrashReclaimState::Bound(bound))
+}
+
 pub(super) fn reclaim(
     guard: &NamespaceGuard,
     plan: &StoredRetentionPlan,
@@ -237,7 +302,7 @@ fn anchor_bytes(plan: &StoredRetentionPlan) -> Result<Vec<u8>, StoreError> {
     .map_err(crate::serialization_error)
 }
 
-fn trash_directory_path(
+pub(super) fn trash_directory_path(
     guard: &NamespaceGuard,
     plan: &StoredRetentionPlan,
 ) -> Result<PathBuf, StoreError> {

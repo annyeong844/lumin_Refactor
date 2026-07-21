@@ -63,12 +63,28 @@ fn public_run_retention_flow_keeps_tombstone_visible() -> Result<(), Box<dyn std
 
     let overview = crate::execute(
         root.path(),
-        vec!["overview".into(), "--run".into(), first_run.into()],
+        vec!["overview".into(), "--run".into(), first_run.clone().into()],
     );
     assert_eq!(overview.exit_code, 0, "{}", overview.stderr);
     let overview_json: Value = serde_json::from_str(&overview.stdout)?;
     assert_eq!(
         overview_json.get("status").and_then(Value::as_str),
+        Some("pruned")
+    );
+    let findings = crate::execute(
+        root.path(),
+        vec![
+            "findings".into(),
+            "--run".into(),
+            first_run.into(),
+            "--area".into(),
+            "dead-code".into(),
+        ],
+    );
+    assert_eq!(findings.exit_code, 0, "{}", findings.stderr);
+    let findings_json: Value = serde_json::from_str(&findings.stdout)?;
+    assert_eq!(
+        findings_json.get("status").and_then(Value::as_str),
         Some("pruned")
     );
 

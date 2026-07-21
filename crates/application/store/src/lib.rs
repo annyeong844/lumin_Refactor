@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use lumin_evidence::RunEvidence;
-use lumin_model::{AttemptId, RepositoryBinding, RunId, digest_hex};
+use lumin_model::{AttemptId, RepositoryBinding, RepositoryId, RunId, digest_hex};
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition, TableError};
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
@@ -27,6 +27,7 @@ pub(crate) const SEQUENCES: TableDefinition<&str, u64> = TableDefinition::new("s
 pub(crate) const RUN_CATALOG: TableDefinition<&str, &[u8]> = TableDefinition::new("run-catalog");
 pub(crate) const POINTERS: TableDefinition<&str, &[u8]> = TableDefinition::new("pointers");
 const EVIDENCE: TableDefinition<&str, &[u8]> = TableDefinition::new("evidence");
+const MAX_RUN_CATALOG_PAGE_SIZE: usize = 100;
 
 #[derive(Clone, Debug)]
 pub struct RepositoryStore {
@@ -61,8 +62,20 @@ pub struct RunCatalogRecord {
 
 #[derive(Clone, Debug)]
 pub struct RunCatalogSnapshot {
+    pub repository_id: RepositoryId,
     pub revision: u64,
+    pub total: usize,
     pub runs: Vec<RunCatalogRecord>,
+    pub truncated: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RunCatalogCursor {
+    pub repository_id: RepositoryId,
+    pub revision: u64,
+    pub attempt_id: AttemptId,
+    pub run_id: RunId,
+    pub sequence: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -98,6 +111,8 @@ pub enum StoreError {
     Serialization(String),
     #[error("run does not exist: {0}")]
     RunNotFound(String),
+    #[error("run is already owned by retention: {0}")]
+    RunRetentionState(String),
     #[error("run pin does not exist: {0}")]
     PinNotFound(String),
     #[error("operation ID was reused with a different request: {0}")]
@@ -118,6 +133,16 @@ pub enum StoreError {
     RetentionPlanNotFound(String),
     #[error("retention plan cannot be confirmed in its current state: {0}")]
     RetentionPlanState(String),
+    #[error("run catalog cursor belongs to another repository")]
+    RunCatalogScopeMismatch,
+    #[error(
+        "run catalog changed before continuation: expected revision {expected}, observed {observed}"
+    )]
+    RunCatalogRevisionChanged { expected: u64, observed: u64 },
+    #[error("run catalog cursor anchor does not exist: {0}")]
+    RunCatalogAnchorMissing(String),
+    #[error("run catalog page size {requested} is outside 1..={max}")]
+    RunCatalogPageSize { requested: usize, max: usize },
     #[error(
         "lifecycle store generation changed before mutation: expected {expected}, observed {observed}"
     )]
@@ -286,14 +311,11 @@ impl RepositoryStore {
     ) -> Result<lumin_evidence::RecordLookup<(RunCatalogRecord, RunEvidence)>, StoreError> {
         self.with_shared_lock(|guard| {
             let database = guard.open_database()?;
-            let tombstone_key = retention::records::tombstone_key(
+            let read = database.begin_read()?;
+            if let Some(tombstone) = retention::records::read_validated_tombstone(
+                &read,
                 lumin_evidence::RetentionItemKind::Run,
                 run_id.as_str(),
-            );
-            if let Some(tombstone) = gate::records::load_record::<
-                retention::records::StoredTombstone,
-            >(
-                &database, retention::RETENTION_TOMBSTONES, &tombstone_key
             )? {
                 return if tombstone.envelope.tombstone_identity.is_some() {
                     Ok(lumin_evidence::RecordLookup::Pruned(tombstone.envelope))
@@ -301,52 +323,37 @@ impl RepositoryStore {
                     Ok(lumin_evidence::RecordLookup::Pruning(tombstone.envelope))
                 };
             }
+            drop(read);
             read_live_run(&self.state_dir, &database, run_id)
                 .map(lumin_evidence::RecordLookup::Live)
         })
     }
 
-    pub fn list_runs(&self) -> Result<RunCatalogSnapshot, StoreError> {
+    pub fn list_runs(
+        &self,
+        cursor: Option<&RunCatalogCursor>,
+        limit: usize,
+    ) -> Result<RunCatalogSnapshot, StoreError> {
+        if !(1..=MAX_RUN_CATALOG_PAGE_SIZE).contains(&limit) {
+            return Err(StoreError::RunCatalogPageSize {
+                requested: limit,
+                max: MAX_RUN_CATALOG_PAGE_SIZE,
+            });
+        }
         self.with_shared_lock(|guard| {
+            let repository_id = guard.repository_id().clone();
             let database = guard.open_database()?;
             let read = database.begin_read()?;
             let revision = read_sequence(&read, "run-catalog")?;
-            let tombstones = match read.open_table(retention::RETENTION_TOMBSTONES) {
-                Ok(table) => Some(table),
-                Err(TableError::TableDoesNotExist(_)) => None,
-                Err(error) => return Err(backend_error(error)),
-            };
-            let table = read.open_table(RUN_CATALOG).map_err(backend_error)?;
-            let mut runs = Vec::new();
-            for row in table.iter().map_err(backend_error)? {
-                let (key, value) = row.map_err(backend_error)?;
-                let key = key.value();
-                let tombstone_key =
-                    retention::records::tombstone_key(lumin_evidence::RetentionItemKind::Run, key);
-                if let Some(tombstones) = &tombstones
-                    && tombstones
-                        .get(tombstone_key.as_str())
-                        .map_err(backend_error)?
-                        .is_some()
-                {
-                    continue;
-                }
-                let record: RunCatalogRecord =
-                    serde_json::from_slice(value.value()).map_err(serialization_error)?;
-                if record.run_id.as_str() != key {
-                    return Err(StoreError::Integrity(format!(
-                        "run catalog key {key} disagrees with its record"
-                    )));
-                }
-                runs.push(record);
-            }
-            runs.sort_by(|left, right| {
-                right
-                    .sequence
-                    .cmp(&left.sequence)
-                    .then_with(|| left.run_id.cmp(&right.run_id))
-            });
-            Ok(RunCatalogSnapshot { revision, runs })
+            validate_run_catalog_cursor(&repository_id, revision, cursor)?;
+            let (total, runs, truncated) = read_run_catalog_page(&read, cursor, limit)?;
+            Ok(RunCatalogSnapshot {
+                repository_id,
+                revision,
+                total,
+                runs,
+                truncated,
+            })
         })
     }
 
@@ -428,6 +435,90 @@ fn read_sequence(read: &redb::ReadTransaction, key: &str) -> Result<u64, StoreEr
         .get(key)
         .map_err(backend_error)
         .map(|value| value.map_or(0, |value| value.value()))
+}
+
+fn validate_run_catalog_cursor(
+    repository_id: &RepositoryId,
+    revision: u64,
+    cursor: Option<&RunCatalogCursor>,
+) -> Result<(), StoreError> {
+    let Some(cursor) = cursor else {
+        return Ok(());
+    };
+    if &cursor.repository_id != repository_id {
+        return Err(StoreError::RunCatalogScopeMismatch);
+    }
+    if cursor.revision != revision {
+        return Err(StoreError::RunCatalogRevisionChanged {
+            expected: cursor.revision,
+            observed: revision,
+        });
+    }
+    Ok(())
+}
+
+fn read_run_catalog_page(
+    read: &redb::ReadTransaction,
+    cursor: Option<&RunCatalogCursor>,
+    limit: usize,
+) -> Result<(usize, Vec<RunCatalogRecord>, bool), StoreError> {
+    let tombstones = match read.open_table(retention::RETENTION_TOMBSTONES) {
+        Ok(table) => Some(table),
+        Err(TableError::TableDoesNotExist(_)) => None,
+        Err(error) => return Err(backend_error(error)),
+    };
+    let table = read.open_table(RUN_CATALOG).map_err(backend_error)?;
+    let mut runs = Vec::with_capacity(limit.saturating_add(1));
+    let mut total = 0usize;
+    let mut anchor_found = cursor.is_none();
+    for row in table.iter().map_err(backend_error)?.rev() {
+        let (key, value) = row.map_err(backend_error)?;
+        let key = key.value();
+        let tombstone_key =
+            retention::records::tombstone_key(lumin_evidence::RetentionItemKind::Run, key);
+        if let Some(tombstones) = &tombstones
+            && let Some(bytes) = tombstones
+                .get(tombstone_key.as_str())
+                .map_err(backend_error)?
+                .map(|value| value.value().to_vec())
+        {
+            let tombstone: retention::records::StoredTombstone =
+                serde_json::from_slice(&bytes).map_err(serialization_error)?;
+            retention::records::validate_tombstone_owner(read, &tombstone_key, &tombstone)?;
+            continue;
+        }
+        let record: RunCatalogRecord =
+            serde_json::from_slice(value.value()).map_err(serialization_error)?;
+        if record.run_id.as_str() != key {
+            return Err(StoreError::Integrity(format!(
+                "run catalog key {key} disagrees with its record"
+            )));
+        }
+        total = total
+            .checked_add(1)
+            .ok_or_else(|| StoreError::Integrity("run catalog total overflow".to_owned()))?;
+        if !anchor_found {
+            anchor_found = cursor.is_some_and(|cursor| {
+                cursor.attempt_id == record.attempt_id
+                    && cursor.run_id == record.run_id
+                    && cursor.sequence == record.sequence
+            });
+            continue;
+        }
+        if runs.len() <= limit {
+            runs.push(record);
+        }
+    }
+    if !anchor_found {
+        return Err(StoreError::RunCatalogAnchorMissing(
+            cursor
+                .map(|cursor| cursor.run_id.as_str().to_owned())
+                .unwrap_or_default(),
+        ));
+    }
+    let truncated = runs.len() > limit;
+    runs.truncate(limit);
+    Ok((total, runs, truncated))
 }
 
 fn read_catalog_record(

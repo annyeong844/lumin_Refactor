@@ -6,16 +6,16 @@ use lumin_model::{
     OperationId, PhysicalFileIdentity, RetentionContentIdentity, RetentionPlanId,
     RetentionTombstoneIdentity, append_length_prefixed, digest_hex,
 };
-use redb::{ReadableTable, WriteTransaction};
+use redb::{ReadTransaction, ReadableTable, TableError, WriteTransaction};
 use serde::{Deserialize, Serialize};
 
 use crate::gate::records::{load_record, read_record, write_record};
 use crate::namespace::records::{ManagedStateParentBinding, ManagedStateParentKind};
-use crate::{RepositoryStore, StoreError, backend_error};
+use crate::{RepositoryStore, StoreError, backend_error, serialization_error};
 
 use super::{RETENTION_OPERATIONS, RETENTION_PLANS, RETENTION_TOMBSTONES};
 
-pub(crate) use validation::{validate_plan, validate_retention_operation};
+pub(crate) use validation::{validate_plan, validate_retention_operation, validate_tombstone};
 
 pub(super) const PLAN_SCHEMA: &str = "lumin-retention-plan.v1";
 pub(super) const OPERATION_SCHEMA: &str = "lumin-retention-operation.v1";
@@ -131,7 +131,74 @@ pub(super) fn write_tombstone(
         tombstone.envelope.record_kind,
         &tombstone.envelope.record_id,
     );
+    if let Some(existing) = read_record::<StoredTombstone>(write, RETENTION_TOMBSTONES, &key)? {
+        if existing.envelope.plan_id != tombstone.envelope.plan_id {
+            return Err(StoreError::Integrity(format!(
+                "retention target {key} is already owned by plan {}",
+                existing.envelope.plan_id.as_str()
+            )));
+        }
+        if existing.schema_version != tombstone.schema_version
+            || existing.envelope.record_kind != tombstone.envelope.record_kind
+            || existing.envelope.record_id != tombstone.envelope.record_id
+            || existing.identity_sha256 != tombstone.identity_sha256
+            || existing.owning_sequence != tombstone.owning_sequence
+        {
+            return Err(StoreError::Integrity(format!(
+                "retention target {key} changed its immutable tombstone identity"
+            )));
+        }
+    }
     write_record(write, RETENTION_TOMBSTONES, &key, tombstone)
+}
+
+pub(crate) fn read_validated_tombstone(
+    read: &ReadTransaction,
+    kind: RetentionItemKind,
+    record_id: &str,
+) -> Result<Option<StoredTombstone>, StoreError> {
+    let key = tombstone_key(kind, record_id);
+    let table = match read.open_table(RETENTION_TOMBSTONES) {
+        Ok(table) => table,
+        Err(TableError::TableDoesNotExist(_)) => return Ok(None),
+        Err(error) => return Err(backend_error(error)),
+    };
+    let bytes = table
+        .get(key.as_str())
+        .map_err(backend_error)?
+        .map(|value| value.value().to_vec());
+    let Some(bytes) = bytes else {
+        return Ok(None);
+    };
+    let tombstone = serde_json::from_slice(&bytes).map_err(serialization_error)?;
+    validate_tombstone_owner(read, &key, &tombstone)?;
+    Ok(Some(tombstone))
+}
+
+pub(crate) fn validate_tombstone_owner(
+    read: &ReadTransaction,
+    key: &str,
+    tombstone: &StoredTombstone,
+) -> Result<(), StoreError> {
+    let table = match read.open_table(RETENTION_PLANS) {
+        Ok(table) => table,
+        Err(TableError::TableDoesNotExist(_)) => {
+            return Err(StoreError::Integrity(format!(
+                "retention tombstone {key} has no owner plan"
+            )));
+        }
+        Err(error) => return Err(backend_error(error)),
+    };
+    let bytes = table
+        .get(tombstone.envelope.plan_id.as_str())
+        .map_err(backend_error)?
+        .map(|value| value.value().to_vec())
+        .ok_or_else(|| {
+            StoreError::Integrity(format!("retention tombstone {key} has no owner plan"))
+        })?;
+    let plan: StoredRetentionPlan = serde_json::from_slice(&bytes).map_err(serialization_error)?;
+    validate_plan(&plan)?;
+    validate_tombstone(key, tombstone, &plan)
 }
 
 pub(super) fn write_pruning_tombstones(

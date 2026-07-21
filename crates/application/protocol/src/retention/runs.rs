@@ -1,4 +1,4 @@
-use lumin_model::{AttemptId, RunId};
+use lumin_model::{AttemptId, RepositoryId, RunId};
 use serde::{Deserialize, Serialize};
 
 use crate::ProtocolError;
@@ -19,6 +19,7 @@ pub struct RunCatalogItemDto {
 #[serde(rename_all = "camelCase")]
 pub struct RunCatalogCollectionDto {
     pub schema_version: &'static str,
+    pub repository_id: RepositoryId,
     pub revision: u64,
     pub ordering: &'static str,
     pub total: usize,
@@ -32,9 +33,17 @@ pub struct RunCatalogCollectionDto {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RunCatalogCursorDto {
     schema_version: String,
+    repository_id: RepositoryId,
     revision: u64,
     ordering: String,
     last_run: RunCatalogItemDto,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DecodedRunCatalogCursor {
+    pub repository_id: RepositoryId,
+    pub revision: u64,
+    pub last_run: RunCatalogItemDto,
 }
 
 pub fn run_catalog_item(attempt_id: AttemptId, run_id: RunId, sequence: u64) -> RunCatalogItemDto {
@@ -46,57 +55,51 @@ pub fn run_catalog_item(attempt_id: AttemptId, run_id: RunId, sequence: u64) -> 
 }
 
 pub fn run_catalog_response(
+    repository_id: RepositoryId,
     revision: u64,
-    runs: &[RunCatalogItemDto],
-    cursor: Option<&str>,
+    total: usize,
+    runs: Vec<RunCatalogItemDto>,
+    truncated: bool,
 ) -> Result<RunCatalogCollectionDto, ProtocolError> {
-    let start = match cursor {
-        Some(value) => resume_offset(revision, runs, value)?,
-        None => 0,
-    };
-    let end = start.saturating_add(RUNS_PAGE_SIZE).min(runs.len());
-    let page = runs[start..end].to_vec();
-    let truncated = end < runs.len();
     let next_cursor = if truncated {
-        page.last()
-            .map(|run| encode_cursor(revision, run))
-            .transpose()?
+        Some(encode_cursor(
+            repository_id.clone(),
+            revision,
+            runs.last().ok_or(ProtocolError::CursorAnchorMissing)?,
+        )?)
     } else {
         None
     };
     Ok(RunCatalogCollectionDto {
         schema_version: "lumin.runs.v1",
+        repository_id,
         revision,
         ordering: RUNS_ORDERING,
-        total: runs.len(),
-        returned: page.len(),
+        total,
+        returned: runs.len(),
         truncated,
         next_cursor,
-        runs: page,
+        runs,
     })
 }
 
-fn resume_offset(
-    revision: u64,
-    runs: &[RunCatalogItemDto],
-    value: &str,
-) -> Result<usize, ProtocolError> {
+pub fn decode_run_catalog_cursor(value: &str) -> Result<DecodedRunCatalogCursor, ProtocolError> {
     let cursor = decode_cursor(value)?;
-    if cursor.revision != revision {
-        return Err(ProtocolError::CursorStale);
-    }
-    if cursor.ordering != RUNS_ORDERING {
-        return Err(ProtocolError::CursorScopeMismatch);
-    }
-    runs.iter()
-        .position(|run| run == &cursor.last_run)
-        .map(|index| index + 1)
-        .ok_or(ProtocolError::CursorAnchorMissing)
+    Ok(DecodedRunCatalogCursor {
+        repository_id: cursor.repository_id,
+        revision: cursor.revision,
+        last_run: cursor.last_run,
+    })
 }
 
-fn encode_cursor(revision: u64, last_run: &RunCatalogItemDto) -> Result<String, ProtocolError> {
+fn encode_cursor(
+    repository_id: RepositoryId,
+    revision: u64,
+    last_run: &RunCatalogItemDto,
+) -> Result<String, ProtocolError> {
     let cursor = RunCatalogCursorDto {
-        schema_version: "lumin-runs-cursor.v1".to_owned(),
+        schema_version: "lumin-runs-cursor.v2".to_owned(),
+        repository_id,
         revision,
         ordering: RUNS_ORDERING.to_owned(),
         last_run: last_run.clone(),
@@ -106,7 +109,7 @@ fn encode_cursor(revision: u64, last_run: &RunCatalogItemDto) -> Result<String, 
 
 fn decode_cursor(value: &str) -> Result<RunCatalogCursorDto, ProtocolError> {
     let cursor: RunCatalogCursorDto = decode_cursor_payload(value)?;
-    if cursor.schema_version != "lumin-runs-cursor.v1" {
+    if cursor.schema_version != "lumin-runs-cursor.v2" || cursor.ordering != RUNS_ORDERING {
         return Err(ProtocolError::CursorScopeMismatch);
     }
     Ok(cursor)

@@ -18,8 +18,8 @@ pub const RETENTION_PLAN_ITEMS_ORDERING: &str = "retention-plan-items.v1";
 pub const RETENTION_PLAN_PAGE_SIZE: usize = 100;
 
 pub use runs::{
-    RUNS_ORDERING, RUNS_PAGE_SIZE, RunCatalogCollectionDto, RunCatalogItemDto, run_catalog_item,
-    run_catalog_response,
+    DecodedRunCatalogCursor, RUNS_ORDERING, RUNS_PAGE_SIZE, RunCatalogCollectionDto,
+    RunCatalogItemDto, decode_run_catalog_cursor, run_catalog_item, run_catalog_response,
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -96,7 +96,18 @@ struct RetentionCursorDto {
     plan_id: RetentionPlanId,
     content_identity: RetentionContentIdentity,
     ordering: String,
-    last_item: RetentionPlanItem,
+    anchor: RetentionCursorAnchor,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+enum RetentionCursorAnchor {
+    Item { item: RetentionPlanItem },
+    Exclusion { exclusion: RetentionPlanExclusion },
 }
 
 pub fn retention_mutation_response(
@@ -119,6 +130,8 @@ pub fn retention_plan_response(
     plan: &RetentionPlanRecord,
     cursor: Option<&str>,
 ) -> Result<RetentionPlanCollectionDto, ProtocolError> {
+    let item_count = plan.items.len();
+    let total = item_count.saturating_add(plan.exclusions.len());
     let start = match cursor {
         Some(cursor) => {
             let cursor = decode_cursor(cursor)?;
@@ -128,24 +141,42 @@ pub fn retention_plan_response(
             {
                 return Err(ProtocolError::CursorScopeMismatch);
             }
-            plan.items
-                .iter()
-                .position(|item| item == &cursor.last_item)
-                .map(|index| index + 1)
-                .ok_or(ProtocolError::CursorAnchorMissing)?
+            match cursor.anchor {
+                RetentionCursorAnchor::Item { item } => plan
+                    .items
+                    .iter()
+                    .position(|candidate| candidate == &item)
+                    .map(|index| index + 1)
+                    .ok_or(ProtocolError::CursorAnchorMissing)?,
+                RetentionCursorAnchor::Exclusion { exclusion } => plan
+                    .exclusions
+                    .iter()
+                    .position(|candidate| candidate == &exclusion)
+                    .map(|index| item_count + index + 1)
+                    .ok_or(ProtocolError::CursorAnchorMissing)?,
+            }
         }
         None => 0,
     };
-    let end = start
-        .saturating_add(RETENTION_PLAN_PAGE_SIZE)
-        .min(plan.items.len());
-    let items = plan.items[start..end].to_vec();
-    let truncated = end < plan.items.len();
+    let end = start.saturating_add(RETENTION_PLAN_PAGE_SIZE).min(total);
+    let item_start = start.min(item_count);
+    let item_end = end.min(item_count);
+    let items = plan.items[item_start..item_end].to_vec();
+    let exclusion_start = start.saturating_sub(item_count);
+    let exclusion_end = end.saturating_sub(item_count).min(plan.exclusions.len());
+    let exclusions = plan.exclusions[exclusion_start..exclusion_end].to_vec();
+    let truncated = end < total;
     let next_cursor = if truncated {
-        items
-            .last()
-            .map(|item| encode_cursor(plan, item))
-            .transpose()?
+        let anchor = if end <= item_count {
+            RetentionCursorAnchor::Item {
+                item: plan.items[end - 1].clone(),
+            }
+        } else {
+            RetentionCursorAnchor::Exclusion {
+                exclusion: plan.exclusions[end - item_count - 1].clone(),
+            }
+        };
+        Some(encode_cursor(plan, anchor)?)
     } else {
         None
     };
@@ -158,12 +189,12 @@ pub fn retention_plan_response(
         created_unix_millis: plan.created_unix_millis,
         catalog_revision: plan.catalog_revision,
         ordering: RETENTION_PLAN_ITEMS_ORDERING,
-        total: plan.items.len(),
-        returned: items.len(),
+        total,
+        returned: items.len() + exclusions.len(),
         truncated,
         next_cursor,
         items,
-        exclusions: plan.exclusions.clone(),
+        exclusions,
         physical_reclamation_pending: plan.physical_reclamation_pending,
     })
 }
@@ -199,21 +230,21 @@ pub fn lifecycle_operation_response(
 
 fn encode_cursor(
     plan: &RetentionPlanRecord,
-    last_item: &RetentionPlanItem,
+    anchor: RetentionCursorAnchor,
 ) -> Result<String, ProtocolError> {
     let cursor = RetentionCursorDto {
-        schema_version: "lumin-retention-cursor.v1".to_owned(),
+        schema_version: "lumin-retention-cursor.v2".to_owned(),
         plan_id: plan.plan_id.clone(),
         content_identity: plan.content_identity.clone(),
         ordering: RETENTION_PLAN_ITEMS_ORDERING.to_owned(),
-        last_item: last_item.clone(),
+        anchor,
     };
     encode_cursor_payload(&cursor)
 }
 
 fn decode_cursor(value: &str) -> Result<RetentionCursorDto, ProtocolError> {
     let cursor: RetentionCursorDto = decode_cursor_payload(value)?;
-    if cursor.schema_version != "lumin-retention-cursor.v1" {
+    if cursor.schema_version != "lumin-retention-cursor.v2" {
         return Err(ProtocolError::CursorScopeMismatch);
     }
     Ok(cursor)

@@ -1,6 +1,6 @@
 use lumin_evidence::{
-    RecordLookup, RetentionOperationKind, RetentionOperationRecord, RetentionOperationResult,
-    RetentionOperationStatus, RunPinRecord,
+    RecordLookup, RetentionItemKind, RetentionOperationKind, RetentionOperationRecord,
+    RetentionOperationResult, RetentionOperationStatus, RunPinRecord,
 };
 use lumin_model::{OperationId, PinId, RunId, append_length_prefixed, digest_hex};
 use redb::ReadableTable;
@@ -124,23 +124,24 @@ pub(super) fn lookup(
 ) -> Result<RecordLookup<RunPinRecord>, StoreError> {
     store.with_shared_lock(|guard| {
         let database = guard.open_database()?;
+        let read = database.begin_read()?;
+        if let Some(tombstone) = super::records::read_validated_tombstone(
+            &read,
+            RetentionItemKind::PinOrReference,
+            pin_id.as_str(),
+        )? {
+            return if tombstone.envelope.tombstone_identity.is_some() {
+                Ok(RecordLookup::Pruned(tombstone.envelope))
+            } else {
+                Ok(RecordLookup::Pruning(tombstone.envelope))
+            };
+        }
+        drop(read);
         if let Some(pin) = crate::gate::records::load_record(&database, RUN_PINS, pin_id.as_str())?
         {
             return Ok(RecordLookup::Live(pin));
         }
-        let tombstone_key = super::records::tombstone_key(
-            lumin_evidence::RetentionItemKind::PinOrReference,
-            pin_id.as_str(),
-        );
-        let tombstone: Option<super::records::StoredTombstone> =
-            crate::gate::records::load_record(&database, RETENTION_TOMBSTONES, &tombstone_key)?;
-        let tombstone =
-            tombstone.ok_or_else(|| StoreError::PinNotFound(pin_id.as_str().to_owned()))?;
-        if tombstone.envelope.tombstone_identity.is_some() {
-            Ok(RecordLookup::Pruned(tombstone.envelope))
-        } else {
-            Ok(RecordLookup::Pruning(tombstone.envelope))
-        }
+        Err(StoreError::PinNotFound(pin_id.as_str().to_owned()))
     })
 }
 
@@ -148,6 +149,18 @@ fn ensure_live_run(write: &redb::WriteTransaction, run_id: &RunId) -> Result<(),
     let table = write.open_table(RUN_CATALOG).map_err(backend_error)?;
     if table.get(run_id.as_str()).map_err(backend_error)?.is_none() {
         return Err(StoreError::RunNotFound(run_id.as_str().to_owned()));
+    }
+    drop(table);
+    let key =
+        super::records::tombstone_key(lumin_evidence::RetentionItemKind::Run, run_id.as_str());
+    if crate::gate::records::read_record::<super::records::StoredTombstone>(
+        write,
+        RETENTION_TOMBSTONES,
+        &key,
+    )?
+    .is_some()
+    {
+        return Err(StoreError::RunRetentionState(run_id.as_str().to_owned()));
     }
     Ok(())
 }

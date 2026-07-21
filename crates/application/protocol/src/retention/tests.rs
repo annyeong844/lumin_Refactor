@@ -1,6 +1,6 @@
 use lumin_evidence::{
-    RetentionItemKind, RetentionPlanItem, RetentionPlanRecord, RetentionPlanScope,
-    RetentionPlanState,
+    RetentionExclusionReason, RetentionItemKind, RetentionPlanExclusion, RetentionPlanItem,
+    RetentionPlanRecord, RetentionPlanScope, RetentionPlanState,
 };
 use lumin_model::{RepositoryId, RetentionContentIdentity, RetentionPlanId, RunId};
 
@@ -13,6 +13,8 @@ fn retention_cursor_resumes_after_exact_immutable_item() -> Result<(), Box<dyn s
     assert_eq!(first.returned, 100);
     assert!(first.truncated);
     let cursor = first.next_cursor.as_deref().ok_or("cursor is missing")?;
+    let cursor_payload: serde_json::Value = crate::cursor::decode_cursor_payload(cursor)?;
+    assert_eq!(cursor_payload["schemaVersion"], "lumin-retention-cursor.v2");
     let second = retention_plan_response(&plan, Some(cursor))?;
     assert_eq!(second.returned, 1);
     assert!(!second.truncated);
@@ -29,7 +31,36 @@ fn retention_cursor_resumes_after_exact_immutable_item() -> Result<(), Box<dyn s
 }
 
 #[test]
-fn run_catalog_cursor_rejects_a_changed_revision() -> Result<(), Box<dyn std::error::Error>> {
+fn retention_cursor_pages_exclusions_with_the_same_bound() -> Result<(), Box<dyn std::error::Error>>
+{
+    let mut plan = plan_with_items(0);
+    plan.exclusions = (0..101)
+        .map(|index| RetentionPlanExclusion {
+            kind: RetentionItemKind::Run,
+            record_id: format!("run_{index:016x}"),
+            reason: RetentionExclusionReason::LatestCompleted,
+        })
+        .collect();
+    let first = retention_plan_response(&plan, None)?;
+    assert_eq!(first.total, 101);
+    assert_eq!(first.returned, 100);
+    assert!(first.items.is_empty());
+    assert_eq!(first.exclusions.len(), 100);
+    assert!(first.truncated);
+    let cursor = first.next_cursor.as_deref().ok_or("cursor is missing")?;
+    let second = retention_plan_response(&plan, Some(cursor))?;
+    assert_eq!(second.total, 101);
+    assert_eq!(second.returned, 1);
+    assert!(second.items.is_empty());
+    assert_eq!(second.exclusions.len(), 1);
+    assert!(!second.truncated);
+    assert_ne!(first.exclusions[99], second.exclusions[0]);
+    Ok(())
+}
+
+#[test]
+fn run_catalog_cursor_binds_repository_revision_and_anchor()
+-> Result<(), Box<dyn std::error::Error>> {
     let runs = (0..101)
         .rev()
         .map(|index| RunCatalogItemDto {
@@ -38,15 +69,32 @@ fn run_catalog_cursor_rejects_a_changed_revision() -> Result<(), Box<dyn std::er
             sequence: index,
         })
         .collect::<Vec<_>>();
-    let first = run_catalog_response(7, &runs, None)?;
+    let repository_id = RepositoryId::from_string("repository-runs".to_owned());
+    let first = run_catalog_response(
+        repository_id.clone(),
+        7,
+        runs.len(),
+        runs[..100].to_vec(),
+        true,
+    )?;
     assert_eq!(first.returned, 100);
     let cursor = first.next_cursor.as_deref().ok_or("cursor is missing")?;
-    let second = run_catalog_response(7, &runs, Some(cursor))?;
+    let cursor_payload: serde_json::Value = crate::cursor::decode_cursor_payload(cursor)?;
+    assert_eq!(cursor_payload["schemaVersion"], "lumin-runs-cursor.v2");
+    let decoded = decode_run_catalog_cursor(cursor)?;
+    assert_eq!(decoded.repository_id, repository_id);
+    assert_eq!(decoded.revision, 7);
+    assert_eq!(decoded.last_run, runs[99]);
+    let second = run_catalog_response(
+        decoded.repository_id,
+        decoded.revision,
+        runs.len(),
+        runs[100..].to_vec(),
+        false,
+    )?;
     assert_eq!(second.returned, 1);
-    assert!(matches!(
-        run_catalog_response(8, &runs, Some(cursor)),
-        Err(ProtocolError::CursorStale)
-    ));
+    assert!(!second.truncated);
+    assert!(second.next_cursor.is_none());
     Ok(())
 }
 

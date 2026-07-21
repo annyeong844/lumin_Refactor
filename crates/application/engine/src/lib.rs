@@ -6,6 +6,7 @@ pub use gate_abandon::{AbandonGateRequest, abandon_gate};
 pub use lumin_evidence::{
     GateDecision, GateOperationResult, RecordLookup, RetentionMutationResult, RetentionPlanScope,
 };
+pub use lumin_store::RunCatalogCursor;
 pub use retention::{
     ConfirmRetentionPlanRequest, PinRunRequest, PrepareRetentionPlanRequest, UnpinRunRequest,
     confirm_retention_plan, list_runs, load_lifecycle_operation, load_retention_plan, lookup_gate,
@@ -95,14 +96,18 @@ impl EngineError {
                 StoreError::OperationConflict(_)
                 | StoreError::OperationNotFound(_)
                 | StoreError::RunNotFound(_)
+                | StoreError::RunRetentionState(_)
                 | StoreError::PinNotFound(_)
                 | StoreError::GateNotFound(_)
                 | StoreError::GateNotActive(_)
                 | StoreError::RetentionPlanNotFound(_)
-                | StoreError::RetentionPlanState(_),
+                | StoreError::RetentionPlanState(_)
+                | StoreError::RunCatalogScopeMismatch
+                | StoreError::RunCatalogAnchorMissing(_),
             ) => 2,
             Self::Store(StoreError::GateRevisionBusy(_) | StoreError::OperationBusy(_)) => 4,
             Self::Store(StoreError::GateRevisionChanged(_)) => 5,
+            Self::Store(StoreError::RunCatalogRevisionChanged { .. }) => 5,
             _ => 1,
         }
     }

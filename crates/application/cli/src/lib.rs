@@ -236,9 +236,24 @@ fn findings(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> 
         return Err(CliError::InvalidArea);
     }
     let run_id = run_id.ok_or(CliError::RunRequired)?;
-    let (_, evidence) = lumin_engine::load_run(root, &run_id)?;
-    let response = lumin_protocol::findings_response(run_id, &evidence, cursor.as_deref())?;
-    lumin_protocol::to_json(&response).map_err(Into::into)
+    match lumin_engine::lookup_run(root, &run_id)? {
+        lumin_engine::RecordLookup::Live((_, evidence)) => {
+            let response = lumin_protocol::findings_response(run_id, &evidence, cursor.as_deref())?;
+            lumin_protocol::to_json(&response).map_err(Into::into)
+        }
+        lumin_engine::RecordLookup::Pruning(tombstone) => {
+            lumin_protocol::to_json(&lumin_protocol::LookupTombstoneResponseDto::Pruning {
+                tombstone,
+            })
+            .map_err(Into::into)
+        }
+        lumin_engine::RecordLookup::Pruned(tombstone) => {
+            lumin_protocol::to_json(&lumin_protocol::LookupTombstoneResponseDto::Pruned {
+                tombstone,
+            })
+            .map_err(Into::into)
+        }
+    }
 }
 
 fn pre_write(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {

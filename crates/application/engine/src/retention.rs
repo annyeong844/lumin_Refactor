@@ -114,9 +114,13 @@ pub fn load_lifecycle_operation(
         .map_err(Into::into)
 }
 
-pub fn list_runs(root: &Path) -> Result<lumin_store::RunCatalogSnapshot, EngineError> {
+pub fn list_runs(
+    root: &Path,
+    cursor: Option<&lumin_store::RunCatalogCursor>,
+    limit: usize,
+) -> Result<lumin_store::RunCatalogSnapshot, EngineError> {
     open_repository_context(root)?
         .store
-        .list_runs()
+        .list_runs(cursor, limit)
         .map_err(Into::into)
 }
