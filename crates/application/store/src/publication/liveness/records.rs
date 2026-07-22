@@ -1,10 +1,12 @@
+use fs2::FileExt;
 use lumin_model::{AttemptId, PhysicalFileIdentity};
 use redb::{ReadableTable, TableError};
 use serde::{Deserialize, Serialize};
 
-use crate::namespace::{HeldEntry, NamespaceGuard};
+use crate::namespace::{HeldEntry, NamespaceGuard, lock_contended};
 use crate::{
-    ATTEMPT_LEASES, SEQUENCES, StoreError, StoreGeneration, backend_error, serialization_error,
+    ATTEMPT_LEASES, SEQUENCES, StoreError, StoreGeneration, backend_error, io_error,
+    serialization_error,
 };
 
 const LEASE_SCHEMA: &str = "lumin-attempt-lease.v1";
@@ -31,16 +33,16 @@ pub(super) struct AttemptLeaseRecord {
     pub(super) state: AttemptLeaseState,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct AttemptLockBinding<'record> {
-    schema_version: &'static str,
-    attempt_id: &'record AttemptId,
+struct AttemptLockBinding {
+    schema_version: String,
+    attempt_id: AttemptId,
     sequence: u64,
-    lease_nonce: &'record str,
+    lease_nonce: String,
     owner_process_id: u32,
-    lock_name: &'record str,
-    lock_physical_identity: &'record PhysicalFileIdentity,
+    lock_name: String,
+    lock_physical_identity: PhysicalFileIdentity,
     generation: StoreGeneration,
 }
 
@@ -80,6 +82,7 @@ pub(super) fn allocate(
     validate_record(&lease)?;
     let bytes = record_bytes(&lease)?;
     lock_file.replace_contents(&lock_bytes(&lease)?)?;
+    super::hit_before_allocation();
     {
         let mut leases = write.open_table(ATTEMPT_LEASES).map_err(backend_error)?;
         if leases
@@ -193,6 +196,73 @@ pub(super) fn validate_snapshot(
     Ok(())
 }
 
+pub(super) fn validate_snapshot_locks(
+    rows: &std::collections::BTreeMap<String, Vec<u8>>,
+    guard: &NamespaceGuard,
+) -> Result<(), StoreError> {
+    for (key, bytes) in rows {
+        let attempt_id = AttemptId::from_string(key.clone());
+        let lease = parse_record(bytes, Some(&attempt_id))?;
+        if lease.state != AttemptLeaseState::Active {
+            continue;
+        }
+        let lock = guard.open_state_file(&lease.lock_name, "attempt process-liveness lock")?;
+        validate_lock_identity(guard, &lock, &lease)?;
+        match lock.file().try_lock_exclusive() {
+            Ok(()) => validate_lock(guard, &lock, &lease)?,
+            Err(error) if lock_contended(&error) => {
+                // Windows mandatory range locking prevents a second handle from reading or
+                // changing bytes. On advisory-lock platforms the bytes remain readable.
+                #[cfg(not(windows))]
+                validate_lock(guard, &lock, &lease)?;
+            }
+            Err(error) => return Err(io_error(error)),
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn validate_unreferenced_lock(
+    guard: &NamespaceGuard,
+    file: &HeldEntry,
+    lock_name: &str,
+    bytes: &[u8],
+) -> Result<(), StoreError> {
+    guard.validate_state_file(
+        file,
+        lock_name,
+        "unreferenced attempt process-liveness lock",
+    )?;
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    let binding: AttemptLockBinding = serde_json::from_slice(bytes).map_err(|error| {
+        StoreError::Integrity(format!(
+            "unreferenced attempt process-liveness lock is malformed: {error}"
+        ))
+    })?;
+    let current_generation = guard.open_database()?.generation();
+    if binding.schema_version != LOCK_SCHEMA
+        || binding.sequence == 0
+        || binding.attempt_id.as_str() != format!("attempt_{:016x}", binding.sequence)
+        || binding.lease_nonce.len() != 32
+        || !binding
+            .lease_nonce
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        || binding.lock_name != lock_name
+        || binding.lock_name != format!("attempt-liveness-{}.lock", binding.lease_nonce)
+        || binding.lock_physical_identity != *file.identity()
+        || binding.generation != current_generation
+        || bytes != serde_json::to_vec(&binding).map_err(serialization_error)?
+    {
+        return Err(StoreError::Integrity(format!(
+            "unreferenced attempt process-liveness lock binding is invalid: {lock_name}"
+        )));
+    }
+    Ok(())
+}
+
 pub(super) fn remove(
     guard: &NamespaceGuard,
     expected: &AttemptLeaseRecord,
@@ -294,13 +364,13 @@ fn record_bytes(record: &AttemptLeaseRecord) -> Result<Vec<u8>, StoreError> {
 
 fn lock_bytes(record: &AttemptLeaseRecord) -> Result<Vec<u8>, StoreError> {
     serde_json::to_vec(&AttemptLockBinding {
-        schema_version: LOCK_SCHEMA,
-        attempt_id: &record.attempt_id,
+        schema_version: LOCK_SCHEMA.to_owned(),
+        attempt_id: record.attempt_id.clone(),
         sequence: record.sequence,
-        lease_nonce: &record.lease_nonce,
+        lease_nonce: record.lease_nonce.clone(),
         owner_process_id: record.owner_process_id,
-        lock_name: &record.lock_name,
-        lock_physical_identity: &record.lock_physical_identity,
+        lock_name: record.lock_name.clone(),
+        lock_physical_identity: record.lock_physical_identity.clone(),
         generation: record.generation,
     })
     .map_err(serialization_error)

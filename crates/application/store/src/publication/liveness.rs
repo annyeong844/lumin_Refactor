@@ -23,7 +23,6 @@ pub(super) fn begin(store: &RepositoryStore) -> Result<AttemptSession<'_>, Store
     store.with_exclusive_lock(|guard| {
         latest::ensure(store, guard)?;
         recovery::recover_under_guard(store, guard)?;
-        hit_before_allocation();
 
         let lease_nonce = nonce_hex()?;
         let lock_name = format!("attempt-liveness-{lease_nonce}.lock");
@@ -119,6 +118,13 @@ pub(super) fn validate_snapshot(
     rows: &std::collections::BTreeMap<String, Vec<u8>>,
 ) -> Result<(), StoreError> {
     records::validate_snapshot(rows)
+}
+
+pub(super) fn validate_snapshot_locks(
+    rows: &std::collections::BTreeMap<String, Vec<u8>>,
+    guard: &NamespaceGuard,
+) -> Result<(), StoreError> {
+    records::validate_snapshot_locks(rows, guard)
 }
 
 pub(super) fn has_active_lease(

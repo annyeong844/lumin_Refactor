@@ -88,6 +88,9 @@ jobs:
       - name: Lint publication crash corpus
         run: cargo clippy -p lumin-cli --test publication_faults --features publication-test-crash --locked -- -D warnings
 
+      - name: Lint concurrent publication corpus
+        run: cargo clippy -p lumin-cli --test publication_concurrency --features publication-test-crash --locked -- -D warnings
+
       - name: Test all targets
         run: cargo test --workspace --all-targets --locked
 
@@ -96,6 +99,9 @@ jobs:
 
       - name: Test publication crash corpus
         run: cargo test -p lumin-cli --test publication_faults --features publication-test-crash --locked
+
+      - name: Test concurrent publication corpus
+        run: cargo test -p lumin-cli --test publication_concurrency --features publication-test-crash --locked
 
       - name: Test documentation
         run: cargo test --workspace --doc --locked

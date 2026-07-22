@@ -213,15 +213,22 @@ fn overview(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> 
                         status: attempt.status,
                         failure: attempt.failure,
                     });
-            let (record, evidence) = latest.completed.ok_or(CliError::NoCompletedRun)?;
-            lumin_protocol::to_json(&lumin_protocol::overview_response(
-                record.attempt_id,
-                record.run_id,
-                record.sequence,
-                latest_attempt,
-                &evidence,
-            ))
-            .map_err(Into::into)
+            match latest.completed {
+                Some((record, evidence)) => {
+                    lumin_protocol::to_json(&lumin_protocol::overview_response(
+                        record.attempt_id,
+                        record.run_id,
+                        record.sequence,
+                        latest_attempt,
+                        &evidence,
+                    ))
+                    .map_err(Into::into)
+                }
+                None => lumin_protocol::to_json(&lumin_protocol::attempt_overview_response(
+                    latest_attempt.ok_or(CliError::NoCompletedRun)?,
+                ))
+                .map_err(Into::into),
+            }
         }
     }
 }

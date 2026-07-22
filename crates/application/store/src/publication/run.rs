@@ -24,6 +24,8 @@ pub(super) fn publish(
             "attempt session belongs to another repository store".to_owned(),
         ));
     }
+    #[cfg(feature = "publication-test-crash")]
+    super::barrier::wait(session.attempt_id())?;
     store.with_exclusive_lock(|guard| {
         session
             .validate(guard)

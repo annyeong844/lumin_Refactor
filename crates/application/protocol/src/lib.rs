@@ -51,6 +51,14 @@ pub struct OverviewResponseDto {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AttemptOverviewResponseDto {
+    pub schema_version: &'static str,
+    pub scope: ScopeDto,
+    pub latest_attempt: AttemptSummaryDto,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AttemptSummaryDto {
     pub attempt_id: AttemptId,
     pub sequence: u64,
@@ -84,6 +92,7 @@ pub struct FindingCollectionDto {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum ScopeDto {
     Run { id: RunId },
+    Attempt { id: AttemptId },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -285,6 +294,16 @@ pub fn overview_response(
         finding_count: evidence.findings.len(),
         limitation_count: evidence.limitations.len(),
         limitations: evidence.limitations.clone(),
+    }
+}
+
+pub fn attempt_overview_response(latest_attempt: AttemptSummaryDto) -> AttemptOverviewResponseDto {
+    AttemptOverviewResponseDto {
+        schema_version: "lumin.attempt-overview.v1",
+        scope: ScopeDto::Attempt {
+            id: latest_attempt.attempt_id.clone(),
+        },
+        latest_attempt,
     }
 }
 
