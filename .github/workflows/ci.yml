@@ -85,11 +85,17 @@ jobs:
       - name: Lint retention crash corpus
         run: cargo clippy -p lumin-cli --test retention_faults --features retention-test-crash --locked -- -D warnings
 
+      - name: Lint publication crash corpus
+        run: cargo clippy -p lumin-cli --test publication_faults --features publication-test-crash --locked -- -D warnings
+
       - name: Test all targets
         run: cargo test --workspace --all-targets --locked
 
       - name: Test retention crash corpus
         run: cargo test -p lumin-cli --test retention_faults --features retention-test-crash --locked
+
+      - name: Test publication crash corpus
+        run: cargo test -p lumin-cli --test publication_faults --features publication-test-crash --locked
 
       - name: Test documentation
         run: cargo test --workspace --doc --locked

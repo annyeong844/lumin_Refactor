@@ -7,6 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [features]
+publication-test-crash = ["lumin-engine/publication-test-crash"]
 retention-test-crash = ["lumin-engine/retention-test-crash"]
 
 [[bin]]
@@ -17,6 +18,11 @@ path = "src/main.rs"
 name = "retention_faults"
 path = "tests/retention_faults.rs"
 required-features = ["retention-test-crash"]
+
+[[test]]
+name = "publication_faults"
+path = "tests/publication_faults.rs"
+required-features = ["publication-test-crash"]
 
 [dependencies]
 lumin-engine = { path = "../engine" }

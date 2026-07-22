@@ -13,8 +13,8 @@ use lumin_evidence::{
     RepoPathProjection, RunEvidence, WriteLease, WriteLeaseKind,
 };
 use lumin_model::{
-    AnalysisInputId, AttemptId, CapabilityState, FindingDisposition, FindingId, GateDeltaRecord,
-    GateId, Limitation, OperationId, RunId, SourceSpan, SymbolNamespace,
+    AnalysisInputId, AttemptId, AttemptStatus, CapabilityState, FindingDisposition, FindingId,
+    GateDeltaRecord, GateId, Limitation, OperationId, RunId, SourceSpan, SymbolNamespace,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -39,6 +39,7 @@ pub struct AuditResponseDto {
 pub struct OverviewResponseDto {
     pub schema_version: &'static str,
     pub scope: ScopeDto,
+    pub latest_attempt: Option<AttemptSummaryDto>,
     pub attempt_id: AttemptId,
     pub sequence: u64,
     pub capability_states: Vec<CapabilityStateDto>,
@@ -46,6 +47,15 @@ pub struct OverviewResponseDto {
     pub finding_count: usize,
     pub limitation_count: usize,
     pub limitations: Vec<Limitation>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttemptSummaryDto {
+    pub attempt_id: AttemptId,
+    pub sequence: u64,
+    pub status: AttemptStatus,
+    pub failure: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -254,11 +264,13 @@ pub fn overview_response(
     attempt_id: AttemptId,
     run_id: RunId,
     sequence: u64,
+    latest_attempt: Option<AttemptSummaryDto>,
     evidence: &RunEvidence,
 ) -> OverviewResponseDto {
     OverviewResponseDto {
         schema_version: "lumin.overview.v1",
         scope: ScopeDto::Run { id: run_id },
+        latest_attempt,
         attempt_id,
         sequence,
         capability_states: evidence

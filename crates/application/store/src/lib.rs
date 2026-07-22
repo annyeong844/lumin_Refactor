@@ -1,6 +1,7 @@
 mod gate;
 mod generation;
 mod namespace;
+mod publication;
 mod retention;
 
 pub use gate::{
@@ -9,10 +10,10 @@ pub use gate::{
 };
 pub use generation::StoreGeneration;
 pub use namespace::MigrationIntent;
+pub use publication::{AttemptEnvelope, AttemptSession, AttemptState, LatestRunSnapshot};
 pub use retention::{RETENTION_PLAN_ITEMS_ORDERING, RetentionPlanRequest};
 
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -22,10 +23,11 @@ use redb::{
     Database, ReadOnlyDatabase, ReadableDatabase, ReadableTable, TableDefinition, TableError,
 };
 use serde::{Deserialize, Serialize};
-use tempfile::NamedTempFile;
 use thiserror::Error;
 
 pub(crate) const SEQUENCES: TableDefinition<&str, u64> = TableDefinition::new("sequences");
+pub(crate) const ATTEMPT_LEASES: TableDefinition<&str, &[u8]> =
+    TableDefinition::new("attempt-leases");
 pub(crate) const RUN_CATALOG: TableDefinition<&str, &[u8]> = TableDefinition::new("run-catalog");
 pub(crate) const POINTERS: TableDefinition<&str, &[u8]> = TableDefinition::new("pointers");
 const EVIDENCE: TableDefinition<&str, &[u8]> = TableDefinition::new("evidence");
@@ -35,13 +37,6 @@ const MAX_RUN_CATALOG_PAGE_SIZE: usize = 100;
 pub struct RepositoryStore {
     state_dir: PathBuf,
     namespace: namespace::NamespaceState,
-}
-
-#[derive(Clone, Debug)]
-pub struct AttemptHandle {
-    attempt_id: AttemptId,
-    sequence: u64,
-    generation: StoreGeneration,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -78,27 +73,6 @@ pub struct RunCatalogCursor {
     pub attempt_id: AttemptId,
     pub run_id: RunId,
     pub sequence: u64,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AttemptEnvelope {
-    pub schema_version: String,
-    pub attempt_id: AttemptId,
-    pub sequence: u64,
-    pub state: AttemptState,
-    pub started_unix_millis: u128,
-    pub finished_unix_millis: Option<u128>,
-    pub run_id: Option<RunId>,
-    pub failure: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum AttemptState {
-    Running,
-    Completed,
-    Failed,
 }
 
 #[derive(Debug, Error)]
@@ -167,137 +141,12 @@ impl RepositoryStore {
     pub fn open(root: &Path, binding: &RepositoryBinding) -> Result<Self, StoreError> {
         let namespace = namespace::NamespaceState::open(root, binding)?;
         let state_dir = namespace.state_dir().to_path_buf();
-        Ok(Self {
+        let store = Self {
             state_dir,
             namespace,
-        })
-    }
-
-    pub fn begin_attempt(&self) -> Result<AttemptHandle, StoreError> {
-        self.with_exclusive_lock(|guard| {
-            let database = guard.open_database()?;
-            let generation = database.generation();
-            let sequence = next_attempt_sequence(guard, &database)?;
-            let attempt = AttemptHandle {
-                attempt_id: AttemptId::from_string(format!("attempt_{sequence:016x}")),
-                sequence,
-                generation,
-            };
-            let envelope = AttemptEnvelope {
-                schema_version: "lumin-attempt.v1".to_owned(),
-                attempt_id: attempt.attempt_id.clone(),
-                sequence,
-                state: AttemptState::Running,
-                started_unix_millis: unix_millis()?,
-                finished_unix_millis: None,
-                run_id: None,
-                failure: None,
-            };
-            let directory = self
-                .state_dir
-                .join("attempts")
-                .join(attempt.attempt_id.as_str());
-            drop(database);
-            guard.mutate_for_generation(generation, || {
-                fs::create_dir(&directory).map_err(io_error)?;
-                write_json(&directory.join("attempt.json"), &envelope)
-            })?;
-            let database = guard.open_database_for_generation(generation)?;
-            set_pointer(
-                guard,
-                &database,
-                "latest-attempt",
-                attempt.attempt_id.as_str().as_bytes(),
-            )?;
-            Ok(attempt)
-        })
-    }
-
-    pub fn fail_attempt(&self, attempt: &AttemptHandle, failure: &str) -> Result<(), StoreError> {
-        self.with_exclusive_lock(|guard| {
-            let database = guard.open_database_for_generation(attempt.generation)?;
-            drop(database);
-            let path = self
-                .state_dir
-                .join("attempts")
-                .join(attempt.attempt_id.as_str())
-                .join("attempt.json");
-            let mut envelope = read_json::<AttemptEnvelope>(&path)?;
-            envelope.state = AttemptState::Failed;
-            envelope.finished_unix_millis = Some(unix_millis()?);
-            envelope.failure = Some(failure.to_owned());
-            guard.mutate_for_generation(attempt.generation, || write_json(&path, &envelope))
-        })
-    }
-
-    pub fn publish_run(
-        &self,
-        attempt: &AttemptHandle,
-        evidence: &RunEvidence,
-    ) -> Result<PublishedRun, StoreError> {
-        self.with_exclusive_lock(|guard| {
-            let database = guard.open_database_for_generation(attempt.generation)?;
-            drop(database);
-            let run_id = RunId::from_string(format!("run_{:016x}", attempt.sequence));
-            let staging = self
-                .state_dir
-                .join("runs")
-                .join(format!(".{}.staging", run_id.as_str()));
-            let run_dir = self.state_dir.join("runs").join(run_id.as_str());
-            if staging.exists() || run_dir.exists() {
-                return Err(StoreError::Integrity(format!(
-                    "run publication target already exists: {}",
-                    run_id.as_str()
-                )));
-            }
-            let record = guard.mutate_for_generation(attempt.generation, || {
-                fs::create_dir(&staging).map_err(io_error)?;
-                let evidence_path = staging.join("evidence.store");
-                write_evidence_store(&evidence_path, evidence)?;
-                let evidence_bytes = fs::read(&evidence_path).map_err(io_error)?;
-                let record = RunCatalogRecord {
-                    attempt_id: attempt.attempt_id.clone(),
-                    run_id: run_id.clone(),
-                    sequence: attempt.sequence,
-                    evidence_store_sha256: digest_hex(&evidence_bytes),
-                    evidence_store_size: evidence_bytes.len() as u64,
-                };
-                write_json(&staging.join("run.json"), &record)?;
-                Ok(record)
-            })?;
-            guard.mutate_for_generation(attempt.generation, || {
-                fs::rename(&staging, &run_dir).map_err(io_error)
-            })?;
-
-            let database = guard.open_database_for_generation(attempt.generation)?;
-            insert_catalog_record(guard, &database, &record)?;
-            set_pointer(
-                guard,
-                &database,
-                "latest-completed",
-                run_id.as_str().as_bytes(),
-            )?;
-            drop(database);
-
-            let attempt_path = self
-                .state_dir
-                .join("attempts")
-                .join(attempt.attempt_id.as_str())
-                .join("attempt.json");
-            let mut envelope = read_json::<AttemptEnvelope>(&attempt_path)?;
-            envelope.state = AttemptState::Completed;
-            envelope.finished_unix_millis = Some(unix_millis()?);
-            envelope.run_id = Some(run_id.clone());
-            guard.mutate_for_generation(attempt.generation, || {
-                write_json(&attempt_path, &envelope)
-            })?;
-
-            Ok(PublishedRun {
-                attempt_id: attempt.attempt_id.clone(),
-                run_id,
-                sequence: attempt.sequence,
-            })
-        })
+        };
+        store.recover_publication()?;
+        Ok(store)
     }
 
     pub fn load_run(&self, run_id: &RunId) -> Result<(RunCatalogRecord, RunEvidence), StoreError> {
@@ -360,18 +209,7 @@ impl RepositoryStore {
     }
 
     pub fn latest_run_id(&self) -> Result<Option<RunId>, StoreError> {
-        self.with_shared_lock(|guard| {
-            let database = guard.open_database()?;
-            let read = database.begin_read()?;
-            let table = read.open_table(POINTERS).map_err(backend_error)?;
-            let value = table.get("latest-completed").map_err(backend_error)?;
-            let Some(value) = value else {
-                return Ok(None);
-            };
-            let text = std::str::from_utf8(value.value())
-                .map_err(|error| StoreError::Integrity(error.to_string()))?;
-            Ok(Some(RunId::from_string(text.to_owned())))
-        })
+        publication::latest_run_id(self)
     }
 
     pub fn migrate_lifecycle_store(&self) -> Result<StoreGeneration, StoreError> {
@@ -393,27 +231,6 @@ impl RepositoryStore {
     }
 }
 
-fn next_attempt_sequence(
-    guard: &namespace::NamespaceGuard,
-    database: &namespace::StoreDatabase<'_>,
-) -> Result<u64, StoreError> {
-    let write = database.begin_write()?;
-    let next = {
-        let mut table = write.open_table(SEQUENCES).map_err(backend_error)?;
-        let current = table
-            .get("attempt")
-            .map_err(backend_error)?
-            .map_or(0, |value| value.value());
-        let next = current
-            .checked_add(1)
-            .ok_or_else(|| StoreError::Integrity("attempt sequence overflow".to_owned()))?;
-        table.insert("attempt", next).map_err(backend_error)?;
-        next
-    };
-    guard.commit(write)?;
-    Ok(next)
-}
-
 fn insert_catalog_record(
     guard: &namespace::NamespaceGuard,
     database: &namespace::StoreDatabase<'_>,
@@ -421,13 +238,31 @@ fn insert_catalog_record(
 ) -> Result<(), StoreError> {
     let bytes = serde_json::to_vec(record).map_err(serialization_error)?;
     let write = database.begin_write()?;
-    {
+    let inserted = {
         let mut table = write.open_table(RUN_CATALOG).map_err(backend_error)?;
-        table
-            .insert(record.run_id.as_str(), bytes.as_slice())
-            .map_err(backend_error)?;
+        let current = table
+            .get(record.run_id.as_str())
+            .map_err(backend_error)?
+            .map(|value| value.value().to_vec());
+        match current {
+            Some(current) if current == bytes => false,
+            Some(_) => {
+                return Err(StoreError::Integrity(format!(
+                    "run catalog record changed for {}",
+                    record.run_id.as_str()
+                )));
+            }
+            None => {
+                table
+                    .insert(record.run_id.as_str(), bytes.as_slice())
+                    .map_err(backend_error)?;
+                true
+            }
+        }
+    };
+    if inserted {
+        retention::records::next_sequence(&write, "run-catalog")?;
     }
-    retention::records::next_sequence(&write, "run-catalog")?;
     guard.commit(write)
 }
 
@@ -558,20 +393,6 @@ fn read_live_run(
     Ok((record, read_evidence_store(&path)?))
 }
 
-fn set_pointer(
-    guard: &namespace::NamespaceGuard,
-    database: &namespace::StoreDatabase<'_>,
-    key: &str,
-    value: &[u8],
-) -> Result<(), StoreError> {
-    let write = database.begin_write()?;
-    {
-        let mut table = write.open_table(POINTERS).map_err(backend_error)?;
-        table.insert(key, value).map_err(backend_error)?;
-    }
-    guard.commit(write)
-}
-
 fn write_evidence_store(path: &Path, evidence: &RunEvidence) -> Result<(), StoreError> {
     let bytes = serde_json::to_vec(evidence).map_err(serialization_error)?;
     let database = Database::create(path).map_err(backend_error)?;
@@ -599,27 +420,10 @@ fn read_evidence_store(path: &Path) -> Result<RunEvidence, StoreError> {
     serde_json::from_slice(value.value()).map_err(serialization_error)
 }
 
-fn write_json(path: &Path, value: &impl Serialize) -> Result<(), StoreError> {
-    let mut bytes = serde_json::to_vec_pretty(value).map_err(serialization_error)?;
-    bytes.push(b'\n');
-    write_replace(path, &bytes)
-}
-
+#[cfg(test)]
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, StoreError> {
     let bytes = fs::read(path).map_err(io_error)?;
     serde_json::from_slice(&bytes).map_err(serialization_error)
-}
-
-fn write_replace(path: &Path, bytes: &[u8]) -> Result<(), StoreError> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| StoreError::Io("state file has no parent".to_owned()))?;
-    let mut temp = NamedTempFile::new_in(parent).map_err(io_error)?;
-    temp.write_all(bytes).map_err(io_error)?;
-    temp.as_file().sync_all().map_err(io_error)?;
-    temp.persist(path)
-        .map(|_| ())
-        .map_err(|error| io_error(error.error))
 }
 
 pub(crate) fn nonce_hex() -> Result<String, StoreError> {

@@ -26,7 +26,7 @@ impl RepositoryStore {
         let (lock_path, lock_file) = self.ensure_operation_lock_file(operation_id)?;
         match lock_file.file().try_lock_exclusive() {
             Ok(()) => {}
-            Err(error) if lock_contended(&error) => {
+            Err(error) if namespace::lock_contended(&error) => {
                 return Err(StoreError::OperationBusy(operation_id.as_str().to_owned()));
             }
             Err(error) => return Err(io_error(error)),
@@ -220,7 +220,7 @@ fn operation_lock_is_interrupted(
             recovered_locks.push(file);
             Ok(true)
         }
-        Err(error) if lock_contended(&error) => Ok(false),
+        Err(error) if namespace::lock_contended(&error) => Ok(false),
         Err(error) => Err(io_error(error)),
     }
 }
@@ -297,9 +297,4 @@ fn verify_operation_lock_file(
         )));
     }
     Ok(())
-}
-
-fn lock_contended(error: &std::io::Error) -> bool {
-    let expected = fs2::lock_contended_error();
-    error.raw_os_error() == expected.raw_os_error() || error.kind() == expected.kind()
 }

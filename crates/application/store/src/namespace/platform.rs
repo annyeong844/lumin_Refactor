@@ -160,12 +160,12 @@ pub(crate) fn same_volume(left: &PhysicalFileIdentity, right: &PhysicalFileIdent
 }
 
 #[cfg(target_os = "linux")]
-pub(super) fn replace_file_atomic(replaced: &Path, replacement: &Path) -> Result<(), StoreError> {
+pub(crate) fn replace_file_atomic(replaced: &Path, replacement: &Path) -> Result<(), StoreError> {
     std::fs::rename(replacement, replaced).map_err(io_error)
 }
 
 #[cfg(windows)]
-pub(super) fn replace_file_atomic(replaced: &Path, replacement: &Path) -> Result<(), StoreError> {
+pub(crate) fn replace_file_atomic(replaced: &Path, replacement: &Path) -> Result<(), StoreError> {
     use windows_sys::Win32::Storage::FileSystem::{
         MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
     };
@@ -178,26 +178,26 @@ pub(super) fn replace_file_atomic(replaced: &Path, replacement: &Path) -> Result
 }
 
 #[cfg(not(any(target_os = "linux", windows)))]
-pub(super) fn replace_file_atomic(_replaced: &Path, _replacement: &Path) -> Result<(), StoreError> {
+pub(crate) fn replace_file_atomic(_replaced: &Path, _replacement: &Path) -> Result<(), StoreError> {
     Err(StoreError::Integrity(
         "lifecycle store replacement supports Windows and Linux".to_owned(),
     ))
 }
 
 #[cfg(target_os = "linux")]
-pub(super) fn publish_file_atomic(published: &Path, pending: &Path) -> Result<(), StoreError> {
+pub(crate) fn publish_file_atomic(published: &Path, pending: &Path) -> Result<(), StoreError> {
     std::fs::rename(pending, published).map_err(io_error)
 }
 
 #[cfg(windows)]
-pub(super) fn publish_file_atomic(published: &Path, pending: &Path) -> Result<(), StoreError> {
+pub(crate) fn publish_file_atomic(published: &Path, pending: &Path) -> Result<(), StoreError> {
     use windows_sys::Win32::Storage::FileSystem::MOVEFILE_WRITE_THROUGH;
 
     move_file_atomic(pending, published, MOVEFILE_WRITE_THROUGH)
 }
 
 #[cfg(not(any(target_os = "linux", windows)))]
-pub(super) fn publish_file_atomic(_published: &Path, _pending: &Path) -> Result<(), StoreError> {
+pub(crate) fn publish_file_atomic(_published: &Path, _pending: &Path) -> Result<(), StoreError> {
     Err(StoreError::Integrity(
         "lifecycle intent publication supports Windows and Linux".to_owned(),
     ))

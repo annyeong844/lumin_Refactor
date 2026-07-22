@@ -29,6 +29,7 @@ pub(super) fn validate_referential_closure(
     let gates = read_gates(snapshot, &operations, &transition_sequences)?;
     validate_operation_gate_refs(&operations, &gates)?;
     validate_transition_gate_refs(&transitions, &gates)?;
+    crate::publication::validate_attempt_leases(&snapshot.attempt_leases)?;
     validate_run_catalog(snapshot)?;
     retention::validate_retention(snapshot, &operations)?;
     validate_pointers(snapshot)

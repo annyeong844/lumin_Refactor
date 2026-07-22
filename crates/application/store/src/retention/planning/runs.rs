@@ -125,7 +125,7 @@ impl<'a> RunCollector<'a> {
         }
         let is_latest_attempt = self.latest_attempt.as_deref() == Some(child.as_str());
         match envelope.state {
-            AttemptState::Failed => {
+            AttemptState::Failed | AttemptState::Interrupted => {
                 self.collect_failed_attempt(child, &envelope, &envelope_bytes, is_latest_attempt)
             }
             AttemptState::Completed => self.collect_completed_attempt(
