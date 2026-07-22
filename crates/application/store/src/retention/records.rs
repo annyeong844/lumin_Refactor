@@ -1,6 +1,7 @@
 use lumin_evidence::{
-    RetentionItemKind, RetentionMutationResult, RetentionOperationRecord, RetentionOperationResult,
-    RetentionPlanRecord, RetentionTombstoneEnvelope,
+    RetentionItemKind, RetentionMutationResult, RetentionOperationKind, RetentionOperationRecord,
+    RetentionOperationResult, RetentionOperationStatus, RetentionPlanRecord, RetentionPlanState,
+    RetentionTombstoneEnvelope,
 };
 use lumin_model::{
     OperationId, PhysicalFileIdentity, RetentionContentIdentity, RetentionPlanId,
@@ -10,7 +11,10 @@ use redb::{ReadTransaction, ReadableTable, TableError, WriteTransaction};
 use serde::{Deserialize, Serialize};
 
 use crate::gate::records::{load_record, read_record, write_record};
-use crate::namespace::records::{ManagedStateParentBinding, ManagedStateParentKind};
+use crate::namespace::{
+    StoreDatabase,
+    records::{ManagedStateParentBinding, ManagedStateParentKind},
+};
 use crate::{RepositoryStore, StoreError, backend_error, serialization_error};
 
 use super::{RETENTION_OPERATIONS, RETENTION_PLANS, RETENTION_TOMBSTONES};
@@ -108,6 +112,62 @@ pub(super) fn read_retention_operation(
         validate_retention_operation(operation)?;
     }
     Ok(operation)
+}
+
+pub(crate) fn project_retention_operation(
+    database: &StoreDatabase<'_>,
+    mut operation: RetentionOperationRecord,
+) -> Result<RetentionOperationRecord, StoreError> {
+    validate_retention_operation(&operation)?;
+    if operation.status != RetentionOperationStatus::Committed
+        || !matches!(
+            operation.kind,
+            RetentionOperationKind::RunPruneConfirm | RetentionOperationKind::GatePruneConfirm
+        )
+    {
+        return Ok(operation);
+    }
+
+    let plan_id = operation.plan_id.as_ref().ok_or_else(|| {
+        StoreError::Integrity("committed retention confirmation has no plan".to_owned())
+    })?;
+    let plan = load_record::<StoredRetentionPlan>(database, RETENTION_PLANS, plan_id.as_str())?
+        .ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "retention operation {} has no owner plan",
+                operation.operation_id.as_str()
+            ))
+        })?;
+    validate_plan(&plan)?;
+    if plan.record.state != RetentionPlanState::Pruned
+        || plan.record.confirmation_operation_id.as_ref() != Some(&operation.operation_id)
+    {
+        return Err(StoreError::Integrity(format!(
+            "retention operation {} disagrees with its owner plan",
+            operation.operation_id.as_str()
+        )));
+    }
+
+    match &mut operation.result {
+        RetentionOperationResult::Retention {
+            result:
+                RetentionMutationResult::Pruned {
+                    plan_id: result_plan_id,
+                    tombstone_identity,
+                    physical_reclamation_pending,
+                },
+        } if result_plan_id == plan_id
+            && Some(&*tombstone_identity) == plan.record.tombstone_identity.as_ref()
+            && (!plan.record.physical_reclamation_pending || *physical_reclamation_pending) =>
+        {
+            *physical_reclamation_pending = plan.record.physical_reclamation_pending;
+            Ok(operation)
+        }
+        _ => Err(StoreError::Integrity(format!(
+            "retention operation {} disagrees with its pruned plan",
+            operation.operation_id.as_str()
+        ))),
+    }
 }
 
 pub(super) fn write_retention_operation(

@@ -102,8 +102,7 @@ impl crate::RepositoryStore {
                 operation_id.as_str(),
             )?
             .ok_or_else(|| StoreError::OperationNotFound(operation_id.as_str().to_owned()))?;
-            records::validate_retention_operation(&operation)?;
-            Ok(operation)
+            records::project_retention_operation(&database, operation)
         })
     }
 

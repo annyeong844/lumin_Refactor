@@ -39,7 +39,7 @@ fn retention_truth_survives_public_process_reopen() -> Result<(), Box<dyn std::e
     assert_eq!(confirm_retry.stdout, confirmed.stdout);
 
     assert_pruned_views(root.path(), &plan_id, &first_run, &second_run)?;
-    assert_committed_operation(root.path(), &plan_id, &confirmed.stdout)?;
+    assert_committed_operation(root.path(), &plan_id)?;
     Ok(())
 }
 
@@ -141,7 +141,6 @@ fn assert_pruned_views(
 fn assert_committed_operation(
     root: &Path,
     plan_id: &str,
-    committed_result: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let operation = run(root, &["operation", "show", "public-retention-confirm"])?;
     assert_status(&operation, 0);
@@ -156,8 +155,9 @@ fn assert_committed_operation(
         Some(plan_id)
     );
     assert_eq!(
-        body.pointer("/operation/result/result"),
-        json(committed_result)?.get("result")
+        body.pointer("/operation/result/result/physicalReclamationPending")
+            .and_then(Value::as_bool),
+        Some(false)
     );
     Ok(())
 }

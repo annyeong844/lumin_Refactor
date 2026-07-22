@@ -215,8 +215,7 @@ impl Fixture {
             Some(false)
         );
         self.assert_tombstone("pruned", false)?;
-        let pending = matches!(self.target, Target::Run { .. });
-        self.assert_operation("committed", "pruned", Some(pending))?;
+        self.assert_operation("committed", "pruned", Some(false))?;
         match &self.target {
             Target::Run { retained, .. } => self.assert_only_run(retained),
             Target::Gate { .. } => Ok(()),
