@@ -114,6 +114,46 @@ pub(super) fn read_retention_operation(
     Ok(operation)
 }
 
+fn committed_pruned_result_matches_plan(
+    plan: &StoredRetentionPlan,
+    operation: &RetentionOperationRecord,
+) -> bool {
+    let Some(progress) = plan.progress.as_ref() else {
+        return false;
+    };
+    let expected_committed_pending = !progress.moves.is_empty();
+    plan.record.state == RetentionPlanState::Pruned
+        && operation.status == RetentionOperationStatus::Committed
+        && operation.plan_id.as_ref() == Some(&plan.record.plan_id)
+        && plan.record.confirmation_operation_id.as_ref() == Some(&operation.operation_id)
+        && matches!(
+            &operation.result,
+            RetentionOperationResult::Retention {
+                result:
+                    RetentionMutationResult::Pruned {
+                        plan_id,
+                        tombstone_identity,
+                        physical_reclamation_pending,
+                    },
+            } if plan_id == &plan.record.plan_id
+                && Some(tombstone_identity) == plan.record.tombstone_identity.as_ref()
+                && *physical_reclamation_pending == expected_committed_pending
+        )
+}
+
+pub(crate) fn ensure_committed_pruned_result_matches_plan(
+    plan: &StoredRetentionPlan,
+    operation: &RetentionOperationRecord,
+) -> Result<(), StoreError> {
+    if committed_pruned_result_matches_plan(plan, operation) {
+        return Ok(());
+    }
+    Err(StoreError::Integrity(format!(
+        "retention operation {} disagrees with its pruned plan",
+        operation.operation_id.as_str()
+    )))
+}
+
 pub(crate) fn project_retention_operation(
     database: &StoreDatabase<'_>,
     operation: &RetentionOperationRecord,
@@ -139,34 +179,8 @@ pub(crate) fn project_retention_operation(
             ))
         })?;
     validate_plan(&plan)?;
-    if plan.record.state != RetentionPlanState::Pruned
-        || plan.record.confirmation_operation_id.as_ref() != Some(&operation.operation_id)
-    {
-        return Err(StoreError::Integrity(format!(
-            "retention operation {} disagrees with its owner plan",
-            operation.operation_id.as_str()
-        )));
-    }
-
-    match &operation.result {
-        RetentionOperationResult::Retention {
-            result:
-                RetentionMutationResult::Pruned {
-                    plan_id: result_plan_id,
-                    tombstone_identity,
-                    physical_reclamation_pending,
-                },
-        } if result_plan_id == plan_id
-            && Some(tombstone_identity) == plan.record.tombstone_identity.as_ref()
-            && (!plan.record.physical_reclamation_pending || *physical_reclamation_pending) =>
-        {
-            Ok(Some(plan.record.physical_reclamation_pending))
-        }
-        _ => Err(StoreError::Integrity(format!(
-            "retention operation {} disagrees with its pruned plan",
-            operation.operation_id.as_str()
-        ))),
-    }
+    ensure_committed_pruned_result_matches_plan(&plan, operation)?;
+    Ok(Some(plan.record.physical_reclamation_pending))
 }
 
 pub(super) fn write_retention_operation(

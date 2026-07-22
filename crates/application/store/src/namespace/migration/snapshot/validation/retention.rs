@@ -10,7 +10,10 @@ use lumin_evidence::{
 };
 
 use crate::StoreError;
-use crate::retention::records::{StoredRetentionPlan, validate_plan, validate_retention_operation};
+use crate::retention::records::{
+    StoredRetentionPlan, ensure_committed_pruned_result_matches_plan, validate_plan,
+    validate_retention_operation,
+};
 
 use super::{LogicalStoreSnapshot, parse_record};
 
@@ -229,17 +232,9 @@ fn validate_confirmation(
             RetentionPlanState::Pruned,
             RetentionOperationStatus::Committed,
             RetentionOperationResult::Retention {
-                result:
-                    RetentionMutationResult::Pruned {
-                        tombstone_identity,
-                        physical_reclamation_pending,
-                        ..
-                    },
+                result: RetentionMutationResult::Pruned { .. },
             },
-        ) => {
-            Some(tombstone_identity) == plan.record.tombstone_identity.as_ref()
-                && (!plan.record.physical_reclamation_pending || *physical_reclamation_pending)
-        }
+        ) => ensure_committed_pruned_result_matches_plan(plan, operation).is_ok(),
         _ => false,
     };
     if !state_matches {
