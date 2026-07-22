@@ -68,6 +68,39 @@ fn migration_preserves_run_gate_and_pending_operation_records()
 }
 
 #[test]
+fn migration_rejects_changed_attempt_liveness_lock_before_copy()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let attempt = store.begin_attempt()?;
+    let lock_path = fs::read_dir(root.path().join(".lumin"))?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .find(|path| {
+            path.file_name()
+                .and_then(std::ffi::OsStr::to_str)
+                .is_some_and(|name| {
+                    name.starts_with("attempt-liveness-") && name.ends_with(".lock")
+                })
+        })
+        .ok_or("active attempt omitted its liveness lock")?;
+    drop(attempt);
+    fs::write(lock_path, b"changed liveness binding")?;
+
+    let result = store.migrate_lifecycle_store();
+    assert!(matches!(
+        result,
+        Err(StoreError::Integrity(message)) if message.contains("lock contents changed")
+    ));
+    let state = root.path().join(".lumin");
+    assert!(state.join("lifecycle-migration.json").is_file());
+    assert!(!state.join("lifecycle.store.migration-source").exists());
+    assert!(!state.join("lifecycle.store.migration-target").exists());
+    Ok(())
+}
+
+#[test]
 fn every_migration_process_death_boundary_recovers_on_reopen()
 -> Result<(), Box<dyn std::error::Error>> {
     for point in CRASH_POINTS {

@@ -4,6 +4,8 @@ mod liveness;
 mod run;
 
 #[cfg(feature = "publication-test-crash")]
+mod barrier;
+#[cfg(feature = "publication-test-crash")]
 mod crash;
 
 #[cfg(all(feature = "publication-test-crash", not(debug_assertions)))]
@@ -76,6 +78,13 @@ pub(crate) fn validate_attempt_leases(
     rows: &std::collections::BTreeMap<String, Vec<u8>>,
 ) -> Result<(), StoreError> {
     liveness::validate_snapshot(rows)
+}
+
+pub(crate) fn validate_attempt_lease_locks(
+    rows: &std::collections::BTreeMap<String, Vec<u8>>,
+    guard: &crate::namespace::NamespaceGuard,
+) -> Result<(), StoreError> {
+    liveness::validate_snapshot_locks(rows, guard)
 }
 
 pub(super) fn run_id(sequence: u64) -> RunId {

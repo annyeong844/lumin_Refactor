@@ -18,7 +18,8 @@ pub(super) fn validate_external_references(
     snapshot: &LogicalStoreSnapshot,
     guard: &NamespaceGuard,
 ) -> Result<(), StoreError> {
-    external::validate_external_references(snapshot, guard)
+    external::validate_external_references(snapshot, guard)?;
+    crate::publication::validate_attempt_lease_locks(&snapshot.attempt_leases, guard)
 }
 
 pub(super) fn validate_referential_closure(

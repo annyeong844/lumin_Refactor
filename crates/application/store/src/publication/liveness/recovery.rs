@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 
 use fs2::FileExt;
@@ -15,6 +16,7 @@ pub(super) fn recover_under_guard(
     guard: &NamespaceGuard,
 ) -> Result<(), StoreError> {
     let leases = records::read_all(guard)?;
+    remove_unreferenced_liveness_locks(store, guard, &leases)?;
     for lease in leases {
         if lease.state == AttemptLeaseState::Releasing {
             let lock = acquire_releasing_lock(store, guard, &lease)?;
@@ -33,6 +35,67 @@ pub(super) fn recover_under_guard(
         recover_one(store, guard, &lease, true)?;
         let releasing = records::mark_releasing(guard, &lease)?;
         finish_releasing(store, guard, &releasing, Some(lock))?;
+    }
+    Ok(())
+}
+
+fn remove_unreferenced_liveness_locks(
+    store: &RepositoryStore,
+    guard: &NamespaceGuard,
+    leases: &[AttemptLeaseRecord],
+) -> Result<(), StoreError> {
+    let mut referenced = BTreeSet::new();
+    for lease in leases {
+        if !referenced.insert(lease.lock_name.as_str()) {
+            return Err(StoreError::Integrity(
+                "attempt leases share one process-liveness lock".to_owned(),
+            ));
+        }
+    }
+
+    let mut removed = false;
+    for entry in fs::read_dir(&store.state_dir).map_err(io_error)? {
+        let entry = entry.map_err(io_error)?;
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let Some(nonce) = name
+            .strip_prefix("attempt-liveness-")
+            .and_then(|name| name.strip_suffix(".lock"))
+        else {
+            continue;
+        };
+        if nonce.len() != 32
+            || !nonce
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(StoreError::Integrity(format!(
+                "attempt process-liveness lock name is malformed: {name}"
+            )));
+        }
+        if referenced.contains(name.as_str()) {
+            continue;
+        }
+
+        let path = store.state_dir.join(&name);
+        let lock = guard.open_state_file(&name, "unreferenced attempt process-liveness lock")?;
+        lock.file().try_lock_exclusive().map_err(io_error)?;
+        let bytes = lock.read_all()?;
+        records::validate_unreferenced_lock(guard, &lock, &name, &bytes)?;
+        lock.validate_path(
+            &path,
+            crate::namespace::EntryKind::RegularFile,
+            crate::namespace::EntryAccess::ReadWrite,
+            true,
+            "unreferenced attempt process-liveness lock",
+        )?;
+        drop(lock);
+        fs::remove_file(path).map_err(io_error)?;
+        removed = true;
+    }
+    if removed {
+        guard.state_directory_entry().sync_directory()?;
     }
     Ok(())
 }

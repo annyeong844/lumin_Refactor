@@ -3,6 +3,9 @@ use std::process::Command;
 
 use serde_json::Value;
 
+#[cfg(feature = "publication-test-crash")]
+pub mod publication;
+
 pub struct ProcessResult {
     pub status: i32,
     pub stdout: String,

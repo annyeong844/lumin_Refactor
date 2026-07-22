@@ -4,6 +4,7 @@ use serde_json::Value;
 
 mod support;
 
+use support::publication::{assert_no_attempt_liveness_files, baseline_repository, json, number};
 use support::{ProcessResult, assert_status, field, run, run_with_env};
 
 const CRASH_POINT_ENV: &str = "LUMIN_TEST_PUBLICATION_CRASH_POINT";
@@ -140,17 +141,10 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let root = tempfile::tempdir()?;
-        fs::create_dir(root.path().join("src"))?;
-        fs::write(
-            root.path().join("src/lib.ts"),
-            "export const visible = 1;\n",
-        )?;
-        let baseline = run(root.path(), &["audit", "--jobs", "1"])?;
-        assert_status(&baseline, 0);
+        let (root, baseline) = baseline_repository()?;
         let baseline_run = field(&baseline.stdout, "runId")?;
         let fixture = Self { root, baseline_run };
-        fixture.assert_no_attempt_liveness_files()?;
+        assert_no_attempt_liveness_files(fixture.root.path())?;
         Ok(fixture)
     }
 
@@ -213,7 +207,7 @@ impl Fixture {
                     .is_some_and(|failure| !failure.is_empty())
             );
         }
-        self.assert_no_attempt_liveness_files()?;
+        assert_no_attempt_liveness_files(self.root.path())?;
         Ok(())
     }
 
@@ -239,29 +233,4 @@ impl Fixture {
         assert_eq!(observed, expected);
         Ok(())
     }
-
-    fn assert_no_attempt_liveness_files(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let mut names = fs::read_dir(self.root.path().join(".lumin"))?
-            .map(|entry| {
-                entry?
-                    .file_name()
-                    .into_string()
-                    .map_err(|_| std::io::Error::other("state entry name is not UTF-8"))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        names.retain(|name| name.starts_with("attempt-liveness-") && name.ends_with(".lock"));
-        assert!(names.is_empty(), "attempt liveness files leaked: {names:?}");
-        Ok(())
-    }
-}
-
-fn json(output: &str) -> Result<Value, Box<dyn std::error::Error>> {
-    serde_json::from_str(output).map_err(Into::into)
-}
-
-fn number(output: &str, field: &str) -> Result<u64, Box<dyn std::error::Error>> {
-    json(output)?
-        .get(field)
-        .and_then(Value::as_u64)
-        .ok_or_else(|| std::io::Error::other(format!("missing numeric field {field}")).into())
 }
