@@ -247,7 +247,10 @@ impl RunPinRecord {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LifecycleOperationRecord {
     Gate(Box<OperationRecord>),
-    Retention(Box<RetentionOperationRecord>),
+    Retention {
+        operation: Box<RetentionOperationRecord>,
+        current_physical_reclamation_pending: Option<bool>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

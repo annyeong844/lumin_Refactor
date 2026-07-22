@@ -183,12 +183,12 @@ impl Fixture {
             }
             DurableState::Pruning => {
                 self.assert_tombstone("pruning", self.physical_move_count > 0)?;
-                self.assert_operation("pruning", "pruning", None)
+                self.assert_operation("pruning", "pruning", None, None)
             }
             DurableState::Pruned => {
                 let pending = self.physical_move_count > 0;
                 self.assert_tombstone("pruned", pending)?;
-                self.assert_operation("committed", "pruned", Some(pending))
+                self.assert_operation("committed", "pruned", Some(pending), Some(pending))
             }
         }
     }
@@ -215,7 +215,12 @@ impl Fixture {
             Some(false)
         );
         self.assert_tombstone("pruned", false)?;
-        self.assert_operation("committed", "pruned", Some(false))?;
+        self.assert_operation(
+            "committed",
+            "pruned",
+            Some(self.physical_move_count > 0),
+            Some(false),
+        )?;
         match &self.target {
             Target::Run { retained, .. } => self.assert_only_run(retained),
             Target::Gate { .. } => Ok(()),
@@ -327,7 +332,8 @@ impl Fixture {
         &self,
         operation_status: &str,
         result_status: &str,
-        pending: Option<bool>,
+        committed_pending: Option<bool>,
+        current_pending: Option<bool>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let output = run(
             self.root(),
@@ -349,9 +355,16 @@ impl Fixture {
                 .and_then(Value::as_str),
             Some(self.plan_id.as_str())
         );
-        if let Some(pending) = pending {
+        if let Some(pending) = committed_pending {
             assert_eq!(
                 body.pointer("/operation/result/result/physicalReclamationPending")
+                    .and_then(Value::as_bool),
+                Some(pending)
+            );
+        }
+        if let Some(pending) = current_pending {
+            assert_eq!(
+                body.get("currentPhysicalReclamationPending")
                     .and_then(Value::as_bool),
                 Some(pending)
             );
