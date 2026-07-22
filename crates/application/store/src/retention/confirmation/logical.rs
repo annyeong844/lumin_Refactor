@@ -45,9 +45,7 @@ pub(super) fn commit_pruned(
             "retention confirmation operation is not pruning".to_owned(),
         ));
     }
-    if !plan.record.physical_reclamation_pending {
-        write_committed_result(&write, &mut operation, &plan)?;
-    }
+    write_committed_result(&write, &mut operation, &plan)?;
     next_sequence(&write, "retention-catalog")?;
     guard.commit(write)?;
     Ok(plan)

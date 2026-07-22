@@ -6,6 +6,8 @@ use crate::namespace::records::ManagedStateParentKind;
 use crate::namespace::{EntryAccess, EntryKind, HeldEntry, NamespaceGuard};
 use crate::{StoreError, io_error};
 
+#[cfg(feature = "retention-test-crash")]
+use super::super::super::super::crash::{CrashPointSequence, RetentionCrashPoint, hit};
 use super::super::super::super::records::StoredRetentionPlan;
 use super::{
     TRASH_ANCHOR, TrashReclaimState, entry_exists, reclaim_state, validate_parent_bindings,
@@ -25,10 +27,15 @@ pub(super) fn run(guard: &NamespaceGuard, plan: &StoredRetentionPlan) -> Result<
         TrashReclaimState::AnchorRemoved { path, directory } => {
             drop(directory);
             fs::remove_dir(&path).map_err(io_error)?;
+            #[cfg(feature = "retention-test-crash")]
+            hit(RetentionCrashPoint::AfterReclaimDirectoryRemoved);
         }
         TrashReclaimState::Bound(bound) => reclaim_bound(bound, progress)?,
     }
-    finish_reclamation(guard)
+    finish_reclamation(guard)?;
+    #[cfg(feature = "retention-test-crash")]
+    hit(RetentionCrashPoint::AfterReclaimParentFlushed);
+    Ok(())
 }
 
 fn reclaim_bound(
@@ -54,13 +61,19 @@ fn reclaim_bound(
             )));
         }
     }
+    #[cfg(feature = "retention-test-crash")]
+    let mut crash_sequence = CrashPointSequence::default();
     for child in expected {
         let path = bound.path.join(child);
         if entry_exists(&path)? {
             fs::remove_dir_all(&path).map_err(io_error)?;
         }
+        #[cfg(feature = "retention-test-crash")]
+        crash_sequence.hit_indexed(RetentionCrashPoint::ReclaimChildRemoved);
     }
     bound.directory.sync_directory()?;
+    #[cfg(feature = "retention-test-crash")]
+    hit(RetentionCrashPoint::AfterReclaimPayloadsFlushed);
     let remaining = fs::read_dir(&bound.path)
         .map_err(io_error)?
         .map(|entry| entry.map(|entry| entry.file_name()).map_err(io_error))
@@ -76,8 +89,13 @@ fn reclaim_bound(
     drop(anchor);
     fs::remove_file(path.join(TRASH_ANCHOR)).map_err(io_error)?;
     directory.sync_directory()?;
+    #[cfg(feature = "retention-test-crash")]
+    hit(RetentionCrashPoint::AfterReclaimAnchorRemoved);
     drop(directory);
-    fs::remove_dir(&path).map_err(io_error)
+    fs::remove_dir(&path).map_err(io_error)?;
+    #[cfg(feature = "retention-test-crash")]
+    hit(RetentionCrashPoint::AfterReclaimDirectoryRemoved);
+    Ok(())
 }
 
 fn finish_reclamation(guard: &NamespaceGuard) -> Result<(), StoreError> {

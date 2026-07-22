@@ -91,6 +91,8 @@ pub(super) fn prepare(
         };
         write_plan(&write, &plan)?;
         write_retention_operation(&write, &operation)?;
+        #[cfg(feature = "retention-test-crash")]
+        super::crash::hit(super::crash::RetentionCrashPoint::BeforePreparedCommit);
         guard.commit(write)?;
         Ok(result)
     })

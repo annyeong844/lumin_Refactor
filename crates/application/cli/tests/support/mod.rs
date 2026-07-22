@@ -10,10 +10,20 @@ pub struct ProcessResult {
 }
 
 pub fn run(root: &Path, arguments: &[&str]) -> Result<ProcessResult, Box<dyn std::error::Error>> {
-    let output = Command::new(env!("CARGO_BIN_EXE_lumin"))
-        .current_dir(root)
-        .args(arguments)
-        .output()?;
+    run_with_env(root, arguments, &[])
+}
+
+pub fn run_with_env(
+    root: &Path,
+    arguments: &[&str],
+    environment: &[(&str, &str)],
+) -> Result<ProcessResult, Box<dyn std::error::Error>> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_lumin"));
+    command.current_dir(root).args(arguments);
+    for (name, value) in environment {
+        command.env(name, value);
+    }
+    let output = command.output()?;
     Ok(ProcessResult {
         status: output.status.code().unwrap_or(-1),
         stdout: String::from_utf8(output.stdout)?,

@@ -157,7 +157,11 @@ pub(super) fn admit_or_resume(
     {
         super::records::next_sequence(&write, "run-catalog")?;
     }
+    #[cfg(feature = "retention-test-crash")]
+    super::crash::hit(super::crash::RetentionCrashPoint::BeforePruningCommit);
     guard.commit(write)?;
+    #[cfg(feature = "retention-test-crash")]
+    super::crash::hit(super::crash::RetentionCrashPoint::AfterPruningCommit);
     Ok(result)
 }
 
@@ -167,20 +171,23 @@ fn resume_pruning(
     operation_id: &OperationId,
     reclaim: ReclaimFn,
 ) -> Result<RetentionMutationResult, StoreError> {
-    let mut plan = advance_to_pruned_without_reclaim(guard, plan_id, operation_id)?;
+    let plan = advance_to_pruned_without_reclaim(guard, plan_id, operation_id)?;
     if plan.record.state != RetentionPlanState::Pruned {
         return pruning_result(&plan.record);
     }
+    let committed_result = pruned_result(&plan.record)?;
     if plan.record.physical_reclamation_pending {
         match reclaim(guard, &plan) {
-            Ok(()) => plan = logical::mark_reclaimed(guard, plan_id, operation_id)?,
+            Ok(()) => {
+                logical::mark_reclaimed(guard, plan_id, operation_id)?;
+            }
             Err(StoreError::Io(_)) => {
-                plan = logical::commit_reclamation_pending(guard, plan_id, operation_id)?;
+                logical::commit_reclamation_pending(guard, plan_id, operation_id)?;
             }
             Err(error) => return Err(error),
         }
     }
-    pruned_result(&plan.record)
+    Ok(committed_result)
 }
 
 fn advance_to_pruned_without_reclaim(
@@ -198,9 +205,13 @@ fn advance_to_pruned_without_reclaim(
             plan.record.recoverable_state = Some(RetentionRecoverableState::ReadyToCommit);
             Ok(())
         })?;
+        #[cfg(feature = "retention-test-crash")]
+        super::crash::hit(super::crash::RetentionCrashPoint::AfterMovesCommitted);
     }
     if plan.record.recoverable_state == Some(RetentionRecoverableState::ReadyToCommit) {
         plan = logical::commit_pruned(guard, plan_id, operation_id)?;
+        #[cfg(feature = "retention-test-crash")]
+        super::crash::hit(super::crash::RetentionCrashPoint::AfterPrunedCommit);
     }
     Ok(plan)
 }

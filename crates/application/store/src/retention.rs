@@ -1,7 +1,12 @@
 mod confirmation;
+#[cfg(feature = "retention-test-crash")]
+mod crash;
 mod pins;
 mod planning;
 pub(crate) mod records;
+
+#[cfg(all(feature = "retention-test-crash", not(debug_assertions)))]
+compile_error!("retention-test-crash is restricted to debug test builds");
 
 #[cfg(test)]
 mod tests;
