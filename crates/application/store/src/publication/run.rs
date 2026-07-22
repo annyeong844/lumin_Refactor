@@ -26,7 +26,7 @@ pub(super) fn publish(
     }
     let (envelope, record) = prepare_publication(store, session, evidence)?;
     #[cfg(feature = "publication-test-crash")]
-    super::barrier::wait(session.attempt_id())?;
+    super::barrier::wait_prepared(session.attempt_id())?;
 
     finalize_publication(store, session, &envelope, &record)
 }

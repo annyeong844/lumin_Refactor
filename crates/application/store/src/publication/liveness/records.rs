@@ -234,7 +234,9 @@ pub(super) fn validate_unreferenced_lock(
         "unreferenced attempt process-liveness lock",
     )?;
     if bytes.is_empty() {
-        return Ok(());
+        return Err(StoreError::Integrity(format!(
+            "unreferenced attempt process-liveness lock has no self-binding: {lock_name}"
+        )));
     }
     let binding: AttemptLockBinding = serde_json::from_slice(bytes).map_err(|error| {
         StoreError::Integrity(format!(

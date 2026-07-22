@@ -123,6 +123,29 @@ fn malformed_latest_pending_file_is_not_silently_discarded()
 }
 
 #[test]
+fn empty_unreferenced_liveness_lock_is_not_silently_discarded()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = Fixture::new()?;
+    let lock = fixture
+        .root
+        .path()
+        .join(".lumin/attempt-liveness-00000000000000000000000000000000.lock");
+    fs::write(&lock, [])?;
+
+    let overview = run(fixture.root.path(), &["overview"])?;
+    assert_status(&overview, 1);
+    assert!(
+        overview
+            .stderr
+            .contains("attempt process-liveness lock has no self-binding"),
+        "{}",
+        overview.stderr
+    );
+    assert!(lock.is_file(), "unbound liveness evidence was discarded");
+    Ok(())
+}
+
+#[test]
 fn analysis_failure_publishes_a_terminal_attempt_and_releases_liveness()
 -> Result<(), Box<dyn std::error::Error>> {
     let fixture = Fixture::new()?;

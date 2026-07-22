@@ -6,12 +6,21 @@ use lumin_model::AttemptId;
 
 use crate::StoreError;
 
-const BARRIER_ENV: &str = "LUMIN_TEST_PUBLICATION_BARRIER";
+const PREPARED_BARRIER_ENV: &str = "LUMIN_TEST_PUBLICATION_PREPARED_BARRIER";
+const GUARDED_BARRIER_ENV: &str = "LUMIN_TEST_PUBLICATION_GUARDED_BARRIER";
 const BARRIER_TIMEOUT: Duration = Duration::from_secs(30);
 const RELEASE_FRAME: &[u8; 8] = b"release\n";
 
-pub(super) fn wait(attempt_id: &AttemptId) -> Result<(), StoreError> {
-    let Some(raw_address) = std::env::var_os(BARRIER_ENV) else {
+pub(super) fn wait_prepared(attempt_id: &AttemptId) -> Result<(), StoreError> {
+    wait(PREPARED_BARRIER_ENV, "prepared", attempt_id)
+}
+
+pub(super) fn wait_guarded(attempt_id: &AttemptId) -> Result<(), StoreError> {
+    wait(GUARDED_BARRIER_ENV, "guarded", attempt_id)
+}
+
+fn wait(environment: &str, stage: &str, attempt_id: &AttemptId) -> Result<(), StoreError> {
+    let Some(raw_address) = std::env::var_os(environment) else {
         return Ok(());
     };
     let raw_address = raw_address.into_string().map_err(|_| {
@@ -35,6 +44,8 @@ pub(super) fn wait(attempt_id: &AttemptId) -> Result<(), StoreError> {
     stream
         .set_write_timeout(Some(BARRIER_TIMEOUT))
         .map_err(io_error)?;
+    stream.write_all(stage.as_bytes()).map_err(io_error)?;
+    stream.write_all(b" ").map_err(io_error)?;
     stream
         .write_all(attempt_id.as_str().as_bytes())
         .map_err(io_error)?;

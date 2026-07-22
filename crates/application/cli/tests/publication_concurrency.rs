@@ -1,4 +1,7 @@
 use std::fs;
+use std::io::{BufRead, BufReader};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -10,28 +13,36 @@ use publication_barrier::{PausedAudit, PublicationBarrier, TestResult};
 use support::publication::{assert_no_attempt_liveness_files, baseline_repository, json, number};
 use support::{assert_status, field, run};
 
+const PREPARED_BARRIER_ENV: &str = "LUMIN_TEST_PUBLICATION_PREPARED_BARRIER";
+const GUARDED_BARRIER_ENV: &str = "LUMIN_TEST_PUBLICATION_GUARDED_BARRIER";
+
 #[test]
 fn concurrent_latest_publication_preserves_monotonic_fields() -> TestResult {
     let fixture = Fixture::new()?;
     fixture.advance_to_sequence(9)?;
 
-    let first_barrier = PublicationBarrier::new()?;
-    let mut first = fixture.spawn_paused_audit(&first_barrier)?;
-    let first_permit = first_barrier.accept(&mut first, "attempt_000000000000000a")?;
+    let prepared = PublicationBarrier::new(PREPARED_BARRIER_ENV, "prepared")?;
+    let guarded = PublicationBarrier::new(GUARDED_BARRIER_ENV, "guarded")?;
+    let mut first = prepared.spawn_audit(fixture.root.path(), &[&guarded])?;
+    let first_prepared = prepared.accept(&mut first, "attempt_000000000000000a")?;
     fixture.assert_overview_state(10, "completed", "run_0000000000000009")?;
 
-    let second_barrier = PublicationBarrier::new()?;
-    let mut second = fixture.spawn_paused_audit(&second_barrier)?;
-    let second_permit = second_barrier.accept(&mut second, "attempt_000000000000000b")?;
+    let mut second = prepared.spawn_audit(fixture.root.path(), &[&guarded])?;
+    let second_prepared = prepared.accept(&mut second, "attempt_000000000000000b")?;
     fixture.assert_overview_state(11, "completed", "run_0000000000000009")?;
 
-    second_permit.release()?;
+    second_prepared.release()?;
+    let second_guarded = guarded.accept(&mut second, "attempt_000000000000000b")?;
+    first_prepared.release()?;
+    assert_guarded_barrier_blocked(&guarded, &mut first)?;
+    second_guarded.release()?;
+    let first_guarded = guarded.accept(&mut first, "attempt_000000000000000a")?;
+    first_guarded.release()?;
+
     let second_result = second.finish()?;
     assert_status(&second_result, 0);
     assert_eq!(number(&second_result.stdout, "sequence")?, 11);
-    fixture.assert_overview_state(11, "completed", "run_000000000000000b")?;
 
-    first_permit.release()?;
     let first_result = first.finish()?;
     assert_status(&first_result, 0);
     assert_eq!(number(&first_result.stdout, "sequence")?, 10);
@@ -49,8 +60,8 @@ fn concurrent_latest_publication_merges_attempt_and_completed_independently() ->
     let fixture = Fixture::new()?;
     fixture.advance_to_sequence(9)?;
 
-    let barrier = PublicationBarrier::new()?;
-    let mut older = fixture.spawn_paused_audit(&barrier)?;
+    let barrier = PublicationBarrier::new(PREPARED_BARRIER_ENV, "prepared")?;
+    let mut older = barrier.spawn_audit(fixture.root.path(), &[])?;
     let permit = barrier.accept(&mut older, "attempt_000000000000000a")?;
 
     fs::write(fixture.root.path().join("lumin.json"), b"{\n")?;
@@ -89,10 +100,6 @@ impl Fixture {
             assert_eq!(number(&output.stdout, "sequence")?, expected);
         }
         Ok(())
-    }
-
-    fn spawn_paused_audit(&self, barrier: &PublicationBarrier) -> TestResult<PausedAudit> {
-        barrier.spawn_audit(self.root.path())
     }
 
     fn assert_overview(&self, sequence: u64, status: &str, selected_run: &str) -> TestResult {
@@ -138,4 +145,33 @@ impl Fixture {
         assert_eq!(observed, expected);
         Ok(())
     }
+}
+
+fn assert_guarded_barrier_blocked(
+    barrier: &PublicationBarrier,
+    process: &mut PausedAudit,
+) -> TestResult {
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_millis(250) {
+        if let Some(stream) = barrier.try_accept()? {
+            let mut frame = String::new();
+            BufReader::new(stream).read_line(&mut frame)?;
+            return Err(std::io::Error::other(format!(
+                "publisher crossed the guarded latest boundary concurrently: {}",
+                frame.trim_end()
+            ))
+            .into());
+        }
+        if process.has_exited()? {
+            let output = process.take_output()?;
+            return Err(std::io::Error::other(format!(
+                "publisher exited while waiting for the publication guard: status={:?}, stderr={}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ))
+            .into());
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    Ok(())
 }

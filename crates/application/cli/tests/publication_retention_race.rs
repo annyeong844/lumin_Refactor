@@ -13,6 +13,7 @@ use support::{ProcessResult, assert_status, field, run, run_with_env};
 const TARGET_ATTEMPT: &str = "attempt_0000000000000002";
 const TARGET_RUN: &str = "run_0000000000000002";
 const BASELINE_RUN: &str = "run_0000000000000001";
+const PREPARED_BARRIER_ENV: &str = "LUMIN_TEST_PUBLICATION_PREPARED_BARRIER";
 const RETENTION_CRASH_ENV: &str = "LUMIN_TEST_RETENTION_CRASH_POINT";
 const RETENTION_CRASH_EXIT_CODE: i32 = 93;
 
@@ -112,8 +113,8 @@ impl RaceFixture {
     }
 
     fn pause_target_after_terminal_publication(&self) -> TestResult<(PausedAudit, Permit)> {
-        let barrier = PublicationBarrier::new()?;
-        let mut target = barrier.spawn_audit(self.root.path())?;
+        let barrier = PublicationBarrier::new(PREPARED_BARRIER_ENV, "prepared")?;
+        let mut target = barrier.spawn_audit(self.root.path(), &[])?;
         let permit = barrier.accept(&mut target, TARGET_ATTEMPT)?;
 
         fs::write(self.root.path().join("lumin.json"), b"{\n")?;
