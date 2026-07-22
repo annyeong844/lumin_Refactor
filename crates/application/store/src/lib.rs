@@ -18,7 +18,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use lumin_evidence::RunEvidence;
 use lumin_model::{AttemptId, RepositoryBinding, RepositoryId, RunId, digest_hex};
-use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition, TableError};
+use redb::{
+    Database, ReadOnlyDatabase, ReadableDatabase, ReadableTable, TableDefinition, TableError,
+};
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 use thiserror::Error;
@@ -586,7 +588,8 @@ fn write_evidence_store(path: &Path, evidence: &RunEvidence) -> Result<(), Store
 }
 
 fn read_evidence_store(path: &Path) -> Result<RunEvidence, StoreError> {
-    let database = Database::open(path).map_err(backend_error)?;
+    // Writable redb opens may update container metadata and invalidate the published byte hash.
+    let database = ReadOnlyDatabase::open(path).map_err(backend_error)?;
     let read = database.begin_read().map_err(backend_error)?;
     let table = read.open_table(EVIDENCE).map_err(backend_error)?;
     let value = table

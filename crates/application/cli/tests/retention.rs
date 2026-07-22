@@ -3,9 +3,12 @@ use std::path::Path;
 
 use serde_json::Value;
 
+#[path = "support/retention.rs"]
+mod retention_support;
 mod support;
 
-use support::{assert_status, field, run};
+use retention_support::{audit, json};
+use support::{assert_status, run};
 
 #[test]
 fn retention_truth_survives_public_process_reopen() -> Result<(), Box<dyn std::error::Error>> {
@@ -38,12 +41,6 @@ fn retention_truth_survives_public_process_reopen() -> Result<(), Box<dyn std::e
     assert_pruned_views(root.path(), &plan_id, &first_run, &second_run)?;
     assert_committed_operation(root.path(), &plan_id, &confirmed.stdout)?;
     Ok(())
-}
-
-fn audit(root: &Path) -> Result<String, Box<dyn std::error::Error>> {
-    let output = run(root, &["audit", "--jobs", "1"])?;
-    assert_status(&output, 0);
-    field(&output.stdout, "runId")
 }
 
 fn prepare_plan(root: &Path) -> Result<support::ProcessResult, Box<dyn std::error::Error>> {
@@ -174,8 +171,4 @@ fn contains_record(body: &Value, collection: &str, kind: &str, record_id: &str) 
                     && record.get("recordId").and_then(Value::as_str) == Some(record_id)
             })
         })
-}
-
-fn json(value: &str) -> Result<Value, serde_json::Error> {
-    serde_json::from_str(value)
 }

@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+retention-test-crash = ["lumin-store/retention-test-crash"]
+
 [dependencies]
 lumin-dead = { path = "../../analyses/dead-code" }
 lumin-evidence = { path = "../../foundation/evidence" }

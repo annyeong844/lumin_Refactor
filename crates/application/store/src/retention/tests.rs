@@ -52,10 +52,15 @@ fn run_plan_prunes_only_nonlatest_unpinned_run() -> Result<(), Box<dyn std::erro
     assert!(matches!(
         pruned,
         RetentionMutationResult::Pruned {
-            physical_reclamation_pending: false,
+            physical_reclamation_pending: true,
             ..
         }
     ));
+    assert!(
+        !store
+            .load_retention_plan(&plan_id)?
+            .physical_reclamation_pending
+    );
     assert!(matches!(
         store.lookup_run(&first.run_id)?,
         RecordLookup::Pruned(_)

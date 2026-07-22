@@ -100,10 +100,15 @@ fn reclaim_retries_after_payload_removal_completed_before_store_mark()
     assert!(matches!(
         reopened.confirm_retention_plan(&plan_id, &confirm_id)?,
         RetentionMutationResult::Pruned {
-            physical_reclamation_pending: false,
+            physical_reclamation_pending: true,
             ..
         }
     ));
+    assert!(
+        !reopened
+            .load_retention_plan(&plan_id)?
+            .physical_reclamation_pending
+    );
     assert!(matches!(
         reopened.lookup_run(&run_id)?,
         RecordLookup::Pruned(_)
@@ -138,10 +143,15 @@ fn reclaim_retries_after_anchor_removal_completed_before_directory_removal()
     assert!(matches!(
         store.confirm_retention_plan(&plan_id, &confirm_id)?,
         RetentionMutationResult::Pruned {
-            physical_reclamation_pending: false,
+            physical_reclamation_pending: true,
             ..
         }
     ));
+    assert!(
+        !store
+            .load_retention_plan(&plan_id)?
+            .physical_reclamation_pending
+    );
     assert!(!trash_directory.exists());
     Ok(())
 }

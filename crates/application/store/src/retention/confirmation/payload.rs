@@ -85,6 +85,8 @@ pub(super) fn move_payloads(
         .ok_or_else(|| StoreError::Integrity("pruning plan has no progress record".to_owned()))?;
     trash::validate_parent_bindings(guard, progress)?;
     let held_trash = trash::open_bound(guard, plan, progress)?;
+    #[cfg(feature = "retention-test-crash")]
+    let mut crash_sequence = super::super::crash::CrashPointSequence::default();
     for movement in &progress.moves {
         trash::validate_parent_bindings(guard, progress)?;
         held_trash.validate(plan, progress)?;
@@ -153,6 +155,8 @@ pub(super) fn move_payloads(
         }
         trash::validate_parent_bindings(guard, progress)?;
         held_trash.validate(plan, progress)?;
+        #[cfg(feature = "retention-test-crash")]
+        crash_sequence.hit_indexed(super::super::crash::RetentionCrashPoint::PayloadMoved);
     }
     Ok(())
 }
