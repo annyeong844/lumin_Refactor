@@ -191,9 +191,16 @@ fn committed_pending_reclamation_result_is_stable_after_cleanup_retry()
         store.load_retention_operation(&confirm_id)?.result,
         lumin_evidence::RetentionOperationResult::Retention {
             result: RetentionMutationResult::Pruned {
-                physical_reclamation_pending: false,
+                physical_reclamation_pending: true,
                 ..
             }
+        }
+    ));
+    assert!(matches!(
+        store.load_lifecycle_operation(&confirm_id)?,
+        lumin_evidence::LifecycleOperationRecord::Retention {
+            current_physical_reclamation_pending: Some(false),
+            ..
         }
     ));
     store.migrate_lifecycle_store()?;

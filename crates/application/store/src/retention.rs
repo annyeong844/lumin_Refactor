@@ -94,6 +94,14 @@ impl crate::RepositoryStore {
         &self,
         operation_id: &OperationId,
     ) -> Result<RetentionOperationRecord, StoreError> {
+        self.load_retention_operation_projection(operation_id)
+            .map(|(operation, _)| operation)
+    }
+
+    fn load_retention_operation_projection(
+        &self,
+        operation_id: &OperationId,
+    ) -> Result<(RetentionOperationRecord, Option<bool>), StoreError> {
         self.with_shared_lock(|guard| {
             let database = guard.open_database()?;
             let operation = crate::gate::records::load_record(
@@ -102,7 +110,9 @@ impl crate::RepositoryStore {
                 operation_id.as_str(),
             )?
             .ok_or_else(|| StoreError::OperationNotFound(operation_id.as_str().to_owned()))?;
-            records::project_retention_operation(&database, operation)
+            let current_physical_reclamation_pending =
+                records::project_retention_operation(&database, &operation)?;
+            Ok((operation, current_physical_reclamation_pending))
         })
     }
 
@@ -112,10 +122,14 @@ impl crate::RepositoryStore {
     ) -> Result<LifecycleOperationRecord, StoreError> {
         match self.load_operation(operation_id) {
             Ok(operation) => Ok(LifecycleOperationRecord::Gate(Box::new(operation))),
-            Err(StoreError::OperationNotFound(_)) => self
-                .load_retention_operation(operation_id)
-                .map(Box::new)
-                .map(LifecycleOperationRecord::Retention),
+            Err(StoreError::OperationNotFound(_)) => {
+                let (operation, current_physical_reclamation_pending) =
+                    self.load_retention_operation_projection(operation_id)?;
+                Ok(LifecycleOperationRecord::Retention {
+                    operation: Box::new(operation),
+                    current_physical_reclamation_pending,
+                })
+            }
             Err(error) => Err(error),
         }
     }

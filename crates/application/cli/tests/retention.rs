@@ -157,6 +157,11 @@ fn assert_committed_operation(
     assert_eq!(
         body.pointer("/operation/result/result/physicalReclamationPending")
             .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        body.get("currentPhysicalReclamationPending")
+            .and_then(Value::as_bool),
         Some(false)
     );
     Ok(())

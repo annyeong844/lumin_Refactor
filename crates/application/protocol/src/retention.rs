@@ -87,6 +87,8 @@ pub struct RetentionOperationResponseDto {
     pub schema_version: &'static str,
     pub operation_id: OperationId,
     pub operation: RetentionOperationRecord,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_physical_reclamation_pending: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -218,13 +220,15 @@ pub fn lifecycle_operation_response(
         LifecycleOperationRecord::Gate(operation) => {
             LifecycleOperationShowResponseDto::Gate(operation_show_response(operation))
         }
-        LifecycleOperationRecord::Retention(operation) => {
-            LifecycleOperationShowResponseDto::Retention(RetentionOperationResponseDto {
-                schema_version: "lumin.retention-operation.v1",
-                operation_id: operation.operation_id.clone(),
-                operation: operation.as_ref().clone(),
-            })
-        }
+        LifecycleOperationRecord::Retention {
+            operation,
+            current_physical_reclamation_pending,
+        } => LifecycleOperationShowResponseDto::Retention(RetentionOperationResponseDto {
+            schema_version: "lumin.retention-operation.v1",
+            operation_id: operation.operation_id.clone(),
+            operation: operation.as_ref().clone(),
+            current_physical_reclamation_pending: *current_physical_reclamation_pending,
+        }),
     }
 }
 
