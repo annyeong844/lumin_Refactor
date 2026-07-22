@@ -211,6 +211,80 @@ fn committed_pending_reclamation_result_is_stable_after_cleanup_retry()
     Ok(())
 }
 
+#[test]
+fn payload_reclamation_rejects_false_committed_pending_result()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = TempDir::new()?;
+    let store = open_store(root.path())?;
+    let (_run_id, plan_id, confirm_id) = admit_run_pruning(&store, "false-committed-pending")?;
+
+    let committed = confirmation::confirm_with_reclaim_io_error(&store, &plan_id, &confirm_id)?;
+    assert!(matches!(
+        committed,
+        RetentionMutationResult::Pruned {
+            physical_reclamation_pending: true,
+            ..
+        }
+    ));
+    assert_eq!(
+        store.confirm_retention_plan(&plan_id, &confirm_id)?,
+        committed
+    );
+    assert!(
+        !store
+            .load_retention_plan(&plan_id)?
+            .physical_reclamation_pending
+    );
+
+    corrupt_committed_reclamation_pending(&store, &confirm_id, false)?;
+
+    assert!(matches!(
+        store.load_lifecycle_operation(&confirm_id),
+        Err(StoreError::Integrity(message))
+            if message.contains("disagrees with its pruned plan")
+    ));
+    assert!(matches!(
+        store.confirm_retention_plan(&plan_id, &confirm_id),
+        Err(StoreError::Integrity(message))
+            if message.contains("disagrees with its pruned plan")
+    ));
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("disagrees with its confirmation result")
+    ));
+    Ok(())
+}
+
+fn corrupt_committed_reclamation_pending(
+    store: &crate::RepositoryStore,
+    operation_id: &OperationId,
+    pending: bool,
+) -> Result<(), StoreError> {
+    store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        let mut operation = records::read_retention_operation(&write, operation_id)?
+            .ok_or_else(|| StoreError::Integrity("retention confirmation is missing".to_owned()))?;
+        match &mut operation.result {
+            lumin_evidence::RetentionOperationResult::Retention {
+                result:
+                    RetentionMutationResult::Pruned {
+                        physical_reclamation_pending,
+                        ..
+                    },
+            } => *physical_reclamation_pending = pending,
+            result => {
+                return Err(StoreError::Integrity(format!(
+                    "unexpected retention confirmation result: {result:?}"
+                )));
+            }
+        }
+        records::write_retention_operation(&write, &operation)?;
+        guard.commit(write)
+    })
+}
+
 fn assert_integrity_error(
     result: Result<RetentionMutationResult, StoreError>,
     expected_message: &str,

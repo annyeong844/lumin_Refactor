@@ -14,7 +14,8 @@ use super::planning::{
     build_contents, confirm_operation_kind, confirm_request_digest, reject_gate_operation_collision,
 };
 use super::records::{
-    OPERATION_SCHEMA, RetentionProgress, StoredRetentionPlan, ensure_result_matches, pruned_result,
+    OPERATION_SCHEMA, RetentionProgress, StoredRetentionPlan,
+    ensure_committed_pruned_result_matches_plan, ensure_result_matches, pruned_result,
     pruning_result, read_plan, read_retention_operation, retention_operation_result, write_plan,
     write_pruning_tombstones, write_retention_operation,
 };
@@ -91,6 +92,9 @@ pub(super) fn admit_or_resume(
     if let Some(operation) = read_retention_operation(&write, operation_id)? {
         ensure_result_matches(&operation, kind, &request_digest)?;
         ensure_operation_plan(&operation, plan_id)?;
+        if operation.status == RetentionOperationStatus::Committed {
+            ensure_committed_pruned_result_matches_plan(&plan, &operation)?;
+        }
         return retention_operation_result(operation);
     }
     reject_gate_operation_collision(&write, operation_id)?;
