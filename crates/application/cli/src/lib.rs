@@ -184,6 +184,7 @@ fn overview(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> 
                     record.attempt_id,
                     record.run_id,
                     record.sequence,
+                    None,
                     &evidence,
                 ))
                 .map_err(Into::into)
@@ -202,12 +203,22 @@ fn overview(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> 
             }
         },
         None => {
-            let (record, evidence) =
-                lumin_engine::load_latest_run(root)?.ok_or(CliError::NoCompletedRun)?;
+            let latest = lumin_engine::load_latest_overview(root)?;
+            let latest_attempt =
+                latest
+                    .latest_attempt
+                    .map(|attempt| lumin_protocol::AttemptSummaryDto {
+                        attempt_id: attempt.attempt_id,
+                        sequence: attempt.sequence,
+                        status: attempt.status,
+                        failure: attempt.failure,
+                    });
+            let (record, evidence) = latest.completed.ok_or(CliError::NoCompletedRun)?;
             lumin_protocol::to_json(&lumin_protocol::overview_response(
                 record.attempt_id,
                 record.run_id,
                 record.sequence,
+                latest_attempt,
                 &evidence,
             ))
             .map_err(Into::into)

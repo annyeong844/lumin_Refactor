@@ -25,9 +25,9 @@ use lumin_evidence::{
 };
 use lumin_inventory::{InventoryError, InventoryRequest, InventorySnapshot, repository_admission};
 use lumin_model::{
-    CapabilityState, ConfigObservation, FileFacts, Limitation, ResolutionOutcome,
-    ResolutionProfile, ResolvedSourceUse, RoleOverride, RunId, SfcDialect, SourceSnapshot,
-    digest_hex,
+    AttemptId, AttemptStatus, CapabilityState, ConfigObservation, FileFacts, Limitation,
+    ResolutionOutcome, ResolutionProfile, ResolvedSourceUse, RoleOverride, RunId, SfcDialect,
+    SourceSnapshot, digest_hex,
 };
 use lumin_resolve::{ConfigDemand, ResolverError, ResolverOutput};
 use lumin_store::{PublishedRun, RepositoryStore, RunCatalogRecord, StoreError};
@@ -48,6 +48,20 @@ pub struct AuditRequest {
 pub struct AuditResult {
     pub published: PublishedRun,
     pub evidence: RunEvidence,
+}
+
+#[derive(Clone, Debug)]
+pub struct LatestAttempt {
+    pub attempt_id: AttemptId,
+    pub sequence: u64,
+    pub status: AttemptStatus,
+    pub failure: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct LatestOverview {
+    pub latest_attempt: Option<LatestAttempt>,
+    pub completed: Option<(RunCatalogRecord, RunEvidence)>,
 }
 
 #[derive(Debug, Error)]
@@ -119,7 +133,7 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
     }
     let context = open_repository_context(&request.root)?;
     let store = &context.store;
-    let attempt = store.begin_attempt()?;
+    let mut attempt = store.begin_attempt()?;
     let inventory_request = InventoryRequest {
         includes: request.includes.clone(),
         excludes: request.excludes.clone(),
@@ -135,7 +149,7 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
     {
         Ok(evidence) => evidence,
         Err(error) => {
-            if let Err(persistence) = store.fail_attempt(&attempt, &error.to_string()) {
+            if let Err(persistence) = store.fail_attempt(&mut attempt, &error.to_string()) {
                 return Err(EngineError::AnalysisAndPersistence {
                     analysis: error.to_string(),
                     persistence: persistence.to_string(),
@@ -144,10 +158,10 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
             return Err(error);
         }
     };
-    let published = match store.publish_run(&attempt, &evidence) {
+    let published = match store.publish_run(&mut attempt, &evidence) {
         Ok(published) => published,
         Err(error) => {
-            if let Err(persistence) = store.fail_attempt(&attempt, &error.to_string()) {
+            if let Err(persistence) = store.fail_attempt(&mut attempt, &error.to_string()) {
                 return Err(EngineError::PublicationAndPersistence {
                     publication: error.to_string(),
                     persistence: persistence.to_string(),
@@ -589,11 +603,20 @@ pub fn load_run(
 pub fn load_latest_run(
     root: &Path,
 ) -> Result<Option<(RunCatalogRecord, RunEvidence)>, EngineError> {
-    let store = open_repository_context(root)?.store;
-    let Some(run_id) = store.latest_run_id()? else {
-        return Ok(None);
-    };
-    store.load_run(&run_id).map(Some).map_err(Into::into)
+    load_latest_overview(root).map(|overview| overview.completed)
+}
+
+pub fn load_latest_overview(root: &Path) -> Result<LatestOverview, EngineError> {
+    let snapshot = open_repository_context(root)?.store.latest_snapshot()?;
+    Ok(LatestOverview {
+        latest_attempt: snapshot.latest_attempt.map(|attempt| LatestAttempt {
+            attempt_id: attempt.attempt_id,
+            sequence: attempt.sequence,
+            status: attempt.state,
+            failure: attempt.failure,
+        }),
+        completed: snapshot.completed,
+    })
 }
 
 fn limitation_sort_key(limitation: &Limitation) -> String {

@@ -16,6 +16,7 @@ use super::super::{NamespaceGuard, entry_exists, require_state_volume};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct LogicalStoreSnapshot {
     sequences: BTreeMap<String, u64>,
+    attempt_leases: BTreeMap<String, Vec<u8>>,
     run_catalog: BTreeMap<String, Vec<u8>>,
     pointers: BTreeMap<String, Vec<u8>>,
     gates: BTreeMap<String, Vec<u8>>,

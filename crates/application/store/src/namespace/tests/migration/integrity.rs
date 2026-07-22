@@ -88,8 +88,8 @@ fn migration_rejects_run_ids_that_escape_the_managed_parent()
 fn migration_rejects_hard_linked_run_evidence() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     let store = open_store(root.path())?;
-    let attempt = store.begin_attempt()?;
-    let published = store.publish_run(&attempt, &evidence())?;
+    let mut attempt = store.begin_attempt()?;
+    let published = store.publish_run(&mut attempt, &evidence())?;
     drop(store);
 
     let evidence_path = root

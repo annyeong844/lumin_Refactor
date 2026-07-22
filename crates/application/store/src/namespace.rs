@@ -20,7 +20,9 @@ use bootstrap::bootstrap_namespace;
 pub(crate) use database::StoreDatabase;
 pub use migration::MigrationIntent;
 use platform::repository_root_physical_identity;
-pub(crate) use platform::{EntryAccess, EntryKind, HeldEntry, same_volume};
+pub(crate) use platform::{
+    EntryAccess, EntryKind, HeldEntry, publish_file_atomic, replace_file_atomic, same_volume,
+};
 use records::*;
 use store_header::*;
 
@@ -310,6 +312,10 @@ impl NamespaceGuard {
         &self.state.binding.global.repository_id
     }
 
+    pub(crate) fn state_directory_entry(&self) -> &HeldEntry {
+        &self.state_directory
+    }
+
     pub(crate) fn managed_parent_binding(
         &self,
         kind: ManagedStateParentKind,
@@ -570,6 +576,11 @@ pub(crate) fn entry_exists(path: &Path) -> Result<bool, StoreError> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(io_error(error)),
     }
+}
+
+pub(crate) fn lock_contended(error: &std::io::Error) -> bool {
+    let expected = fs2::lock_contended_error();
+    error.raw_os_error() == expected.raw_os_error() || error.kind() == expected.kind()
 }
 
 fn require_state_volume(

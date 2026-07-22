@@ -7,13 +7,14 @@ use redb::{
 
 use crate::gate::{GATES, OPERATIONS, TRANSITIONS};
 use crate::retention::{RETENTION_OPERATIONS, RETENTION_PLANS, RETENTION_TOMBSTONES, RUN_PINS};
-use crate::{POINTERS, RUN_CATALOG, SEQUENCES, StoreError, backend_error};
+use crate::{ATTEMPT_LEASES, POINTERS, RUN_CATALOG, SEQUENCES, StoreError, backend_error};
 
 use super::super::super::store_header::STORE_HEADER_TABLE_NAME;
 use super::LogicalStoreSnapshot;
 use super::validation::validate_referential_closure;
 
-const KNOWN_TABLES: [&str; 11] = [
+const KNOWN_TABLES: [&str; 12] = [
+    "attempt-leases",
     "gates",
     "operations",
     "pointers",
@@ -31,6 +32,7 @@ pub(super) fn read_snapshot(read: &ReadTransaction) -> Result<LogicalStoreSnapsh
     validate_table_inventory(read)?;
     let snapshot = LogicalStoreSnapshot {
         sequences: read_u64_table(read, SEQUENCES)?,
+        attempt_leases: read_bytes_table(read, ATTEMPT_LEASES)?,
         run_catalog: read_bytes_table(read, RUN_CATALOG)?,
         pointers: read_bytes_table(read, POINTERS)?,
         gates: read_bytes_table(read, GATES)?,
@@ -51,6 +53,7 @@ pub(super) fn write_snapshot(
 ) -> Result<(), StoreError> {
     let write = database.begin_write().map_err(backend_error)?;
     write_u64_table(&write, SEQUENCES, &snapshot.sequences)?;
+    write_bytes_table(&write, ATTEMPT_LEASES, &snapshot.attempt_leases)?;
     write_bytes_table(&write, RUN_CATALOG, &snapshot.run_catalog)?;
     write_bytes_table(&write, POINTERS, &snapshot.pointers)?;
     write_bytes_table(&write, GATES, &snapshot.gates)?;

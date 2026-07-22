@@ -35,6 +35,15 @@ string_id!(PinId);
 string_id!(AnalysisInputId);
 string_id!(RepositoryId);
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AttemptStatus {
+    Running,
+    Completed,
+    Failed,
+    Interrupted,
+}
+
 impl RepositoryId {
     pub fn for_root(root: &RepositoryRootIdentity) -> Self {
         let mut bytes = Vec::new();

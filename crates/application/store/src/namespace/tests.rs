@@ -97,19 +97,17 @@ fn state_directory_replacement_cannot_form_a_second_domain()
     let root = tempfile::tempdir()?;
     let store = open_store(root.path())?;
     let _existing_attempt = store.begin_attempt()?;
-    let state = root.path().join(".lumin");
-    let displaced = root.path().join(".lumin.displaced");
-    fs::rename(&state, &displaced)?;
-    fs::create_dir(&state)?;
-
+    if !try_replace_state_directory(root.path())? {
+        assert!(store.latest_run_id()?.is_none());
+        return Ok(());
+    }
     assert!(matches!(
         store.begin_attempt(),
         Err(StoreError::Integrity(_))
     ));
     require_integrity_failure(open_store(root.path()))?;
 
-    fs::remove_dir(&state)?;
-    fs::rename(displaced, &state)?;
+    restore_state_directory(root.path())?;
     assert!(open_store(root.path())?.latest_run_id()?.is_none());
     Ok(())
 }

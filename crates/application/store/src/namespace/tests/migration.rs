@@ -30,8 +30,8 @@ fn migration_preserves_run_gate_and_pending_operation_records()
     let root = tempfile::tempdir()?;
     let store = open_store(root.path())?;
     let evidence = evidence();
-    let attempt = store.begin_attempt()?;
-    let published = store.publish_run(&attempt, &evidence)?;
+    let mut attempt = store.begin_attempt()?;
+    let published = store.publish_run(&mut attempt, &evidence)?;
     let gate_id = open_active_gate(&store)?;
     let gate_before = store.load_gate(&gate_id)?;
 
@@ -74,8 +74,8 @@ fn every_migration_process_death_boundary_recovers_on_reopen()
         let root = tempfile::tempdir()?;
         let store = open_store(root.path())?;
         let evidence = evidence();
-        let attempt = store.begin_attempt()?;
-        let published = store.publish_run(&attempt, &evidence)?;
+        let mut attempt = store.begin_attempt()?;
+        let published = store.publish_run(&mut attempt, &evidence)?;
         drop(store);
 
         run_death_fixture(root.path(), point)?;
@@ -129,8 +129,8 @@ fn external_payload_change_before_replace_keeps_source_generation_authoritative(
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     let store = open_store(root.path())?;
-    let attempt = store.begin_attempt()?;
-    let published = store.publish_run(&attempt, &evidence())?;
+    let mut attempt = store.begin_attempt()?;
+    let published = store.publish_run(&mut attempt, &evidence())?;
     let evidence_path = root
         .path()
         .join(".lumin/runs")

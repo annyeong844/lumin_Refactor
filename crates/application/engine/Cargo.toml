@@ -7,6 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [features]
+publication-test-crash = ["lumin-store/publication-test-crash"]
 retention-test-crash = ["lumin-store/retention-test-crash"]
 
 [dependencies]
