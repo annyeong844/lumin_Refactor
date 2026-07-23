@@ -106,6 +106,53 @@ fn retention_cannot_adopt_the_latest_uncatalogued_attempt_as_an_orphan() -> Test
 }
 
 #[test]
+fn retention_rejects_corrupt_latest_uncatalogued_run_payload() -> TestResult {
+    let fixture = RaceFixture::new()?;
+    let (target, permit) = fixture.pause_target_after_terminal_publication()?;
+    fs::write(
+        fixture
+            .root
+            .path()
+            .join(".lumin")
+            .join("runs")
+            .join(TARGET_RUN)
+            .join("run.json"),
+        b"[]\n",
+    )?;
+
+    let plan = run(
+        fixture.root.path(),
+        &[
+            "runs",
+            "prune",
+            "plan",
+            "--before",
+            "9000000000000",
+            "--operation-id",
+            "corrupt-latest-run-plan",
+        ],
+    )?;
+    assert_status(&plan, 1);
+    assert!(
+        plan.stderr.contains("state serialization failure")
+            && plan.stderr.contains("RunCatalogRecord"),
+        "{}",
+        plan.stderr
+    );
+
+    permit.release()?;
+    let rejected = target.finish()?;
+    assert_status(&rejected, 1);
+    assert!(
+        rejected.stderr.contains("run publication failed")
+            && rejected.stderr.contains("state serialization failure"),
+        "{}",
+        rejected.stderr
+    );
+    Ok(())
+}
+
+#[test]
 fn pruning_crash_and_publisher_death_cannot_recover_a_pointer() -> TestResult {
     let fixture = RaceFixture::new()?;
     let (target, permit) = fixture.pause_target_after_terminal_publication()?;

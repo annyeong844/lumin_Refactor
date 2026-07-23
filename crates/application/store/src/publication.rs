@@ -87,6 +87,13 @@ pub(crate) fn validate_attempt_lease_locks(
     liveness::validate_snapshot_locks(rows, guard)
 }
 
+pub(crate) fn validate_completed_run_payload(
+    guard: &crate::namespace::NamespaceGuard,
+    envelope: &AttemptEnvelope,
+) -> Result<RunCatalogRecord, StoreError> {
+    run::validate_published(guard, envelope)
+}
+
 pub(super) fn run_id(sequence: u64) -> RunId {
     RunId::from_string(format!("run_{sequence:016x}"))
 }

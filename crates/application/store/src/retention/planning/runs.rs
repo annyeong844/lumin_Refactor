@@ -184,7 +184,7 @@ impl<'a> RunCollector<'a> {
             return self.collect_uncatalogued_completed_attempt(
                 path,
                 child,
-                run_id.as_str(),
+                envelope,
                 is_latest_attempt,
             );
         };
@@ -227,11 +227,13 @@ impl<'a> RunCollector<'a> {
         &mut self,
         path: &Path,
         child: String,
-        run_id: &str,
+        envelope: &AttemptEnvelope,
         is_latest_attempt: bool,
     ) -> Result<(), StoreError> {
         if is_latest_attempt {
-            self.known_run_directories.insert(run_id.to_owned());
+            let run = crate::publication::validate_completed_run_payload(self.guard, envelope)?;
+            self.known_run_directories
+                .insert(run.run_id.as_str().to_owned());
             self.exclusions.push(exclusion(
                 RetentionItemKind::Attempt,
                 child,
