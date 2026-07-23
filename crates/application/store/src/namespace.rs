@@ -123,8 +123,7 @@ impl NamespaceState {
         purpose: LockPurpose,
         operation: impl FnOnce(&NamespaceGuard) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
-        self.validate_global_entries()?;
-        let lock = self.open_bound_lock()?;
+        let lock = self.open_prevalidated_lock()?;
         if exclusive {
             FileExt::lock_exclusive(lock.file()).map_err(io_error)?;
         } else {
@@ -142,7 +141,7 @@ impl NamespaceState {
         combine_lock_results(result, final_validation, unlock)
     }
 
-    fn validate_global_entries(&self) -> Result<(), StoreError> {
+    fn open_prevalidated_lock(&self) -> Result<HeldEntry, StoreError> {
         self.repository.validate()?;
         let state = HeldEntry::open(
             &self.state_dir,
@@ -156,8 +155,10 @@ impl NamespaceState {
                 "state directory physical identity changed".to_owned(),
             ));
         }
-        let lock = self.open_bound_lock()?;
-        verify_lock_header(&lock, &self.binding.global)
+        // Windows mandatory range locking can reject a header read while another
+        // process owns the lock. Prove object identity here; NamespaceGuard performs
+        // the complete header and namespace proof after this handle acquires the lock.
+        self.open_bound_lock()
     }
 
     fn open_bound_lock(&self) -> Result<HeldEntry, StoreError> {
@@ -177,8 +178,7 @@ impl NamespaceState {
     }
 
     fn ensure_store_ready(&self) -> Result<(), StoreError> {
-        self.validate_global_entries()?;
-        let lock = self.open_bound_lock()?;
+        let lock = self.open_prevalidated_lock()?;
         FileExt::lock_exclusive(lock.file()).map_err(io_error)?;
         let guard = NamespaceGuard::acquire_without_store(self.clone(), lock)?;
         let result = migration::recover_on_open(&guard);

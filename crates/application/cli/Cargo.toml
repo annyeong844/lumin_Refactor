@@ -29,6 +29,11 @@ name = "publication_concurrency"
 path = "tests/publication_concurrency.rs"
 required-features = ["publication-test-crash"]
 
+[[test]]
+name = "publication_retention_race"
+path = "tests/publication_retention_race.rs"
+required-features = ["publication-test-crash", "retention-test-crash"]
+
 [dependencies]
 lumin-engine = { path = "../engine" }
 lumin-model = { path = "../../foundation/model" }

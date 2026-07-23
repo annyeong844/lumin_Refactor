@@ -12,9 +12,10 @@ compile_error!("retention-test-crash is restricted to debug test builds");
 mod tests;
 
 use lumin_evidence::{
-    LifecycleOperationRecord, RetentionOperationRecord, RetentionPlanRecord, RetentionPlanScope,
+    LifecycleOperationRecord, RetentionItemKind, RetentionOperationRecord, RetentionPlanRecord,
+    RetentionPlanScope,
 };
-use lumin_model::{OperationId, PinId, RetentionPlanId, RunId};
+use lumin_model::{AttemptId, OperationId, PinId, RetentionPlanId, RunId};
 use redb::TableDefinition;
 
 use crate::StoreError;
@@ -35,6 +36,28 @@ pub(crate) fn validate_migration_payloads(
     plan: &records::StoredRetentionPlan,
 ) -> Result<std::collections::BTreeMap<String, std::path::PathBuf>, StoreError> {
     confirmation::payload::validate_migration_state(guard, plan)
+}
+
+pub(crate) fn ensure_publication_target_available(
+    guard: &NamespaceGuard,
+    attempt_id: &AttemptId,
+    run_id: &RunId,
+) -> Result<(), StoreError> {
+    let database = guard.open_database()?;
+    let read = database.begin_read()?;
+    let attempt_orphan = format!("attempts/{}", attempt_id.as_str());
+    let run_orphan = format!("runs/{}", run_id.as_str());
+    for (kind, record_id) in [
+        (RetentionItemKind::Run, run_id.as_str()),
+        (RetentionItemKind::Attempt, attempt_id.as_str()),
+        (RetentionItemKind::OrphanPayload, attempt_orphan.as_str()),
+        (RetentionItemKind::OrphanPayload, run_orphan.as_str()),
+    ] {
+        if records::read_validated_tombstone(&read, kind, record_id)?.is_some() {
+            return Err(StoreError::RunRetentionState(run_id.as_str().to_owned()));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug)]

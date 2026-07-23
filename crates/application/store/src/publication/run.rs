@@ -24,9 +24,19 @@ pub(super) fn publish(
             "attempt session belongs to another repository store".to_owned(),
         ));
     }
+    let (envelope, record) = prepare_publication(store, session, evidence)?;
     #[cfg(feature = "publication-test-crash")]
-    super::barrier::wait(session.attempt_id())?;
-    store.with_exclusive_lock(|guard| {
+    super::barrier::wait_prepared(session.attempt_id())?;
+
+    finalize_publication(store, session, &envelope, &record)
+}
+
+fn prepare_publication(
+    store: &RepositoryStore,
+    session: &liveness::AttemptSession<'_>,
+    evidence: &RunEvidence,
+) -> Result<(AttemptEnvelope, RunCatalogRecord), StoreError> {
+    store.with_shared_lock(|guard| {
         session
             .validate(guard)
             .map_err(|error| publication_error("validate attempt session", error))?;
@@ -50,6 +60,51 @@ pub(super) fn publish(
         liveness::write_terminal(store, guard, session.store_generation(), &envelope)
             .map_err(|error| publication_error("publish terminal attempt", error))?;
         hit_after_terminal_attempt();
+        Ok((envelope, record))
+    })
+}
+
+fn finalize_publication(
+    store: &RepositoryStore,
+    session: &mut liveness::AttemptSession<'_>,
+    expected_envelope: &AttemptEnvelope,
+    expected_record: &RunCatalogRecord,
+) -> Result<PublishedRun, StoreError> {
+    store.with_exclusive_lock(|guard| {
+        session
+            .validate(guard)
+            .map_err(|error| publication_error("validate attempt session", error))?;
+        match crate::retention::ensure_publication_target_available(
+            guard,
+            &expected_record.attempt_id,
+            &expected_record.run_id,
+        ) {
+            Ok(()) => {}
+            Err(error @ StoreError::RunRetentionState(_)) => {
+                liveness::remove_session(store, guard, session).map_err(|cleanup| {
+                    publication_error("release retained attempt lease", cleanup)
+                })?;
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        }
+
+        let envelope = latest::read_attempt(store, guard, session.attempt_id())
+            .map_err(|error| publication_error("read terminal attempt", error))?;
+        if &envelope != expected_envelope {
+            return Err(StoreError::Integrity(format!(
+                "terminal attempt changed before catalog publication: {}",
+                expected_envelope.attempt_id.as_str()
+            )));
+        }
+        let record = validate_published(store, guard, &envelope)
+            .map_err(|error| publication_error("revalidate published run", error))?;
+        if !same_record(&record, expected_record) {
+            return Err(StoreError::Integrity(format!(
+                "run catalog candidate changed before publication: {}",
+                expected_record.run_id.as_str()
+            )));
+        }
 
         let database = guard.open_database_for_generation(session.store_generation())?;
         insert_catalog_record(guard, &database, &record)
@@ -67,6 +122,14 @@ pub(super) fn publish(
     })
 }
 
+fn same_record(left: &RunCatalogRecord, right: &RunCatalogRecord) -> bool {
+    left.attempt_id == right.attempt_id
+        && left.run_id == right.run_id
+        && left.sequence == right.sequence
+        && left.evidence_store_sha256 == right.evidence_store_sha256
+        && left.evidence_store_size == right.evidence_store_size
+}
+
 pub(super) fn recover_completed(
     store: &RepositoryStore,
     guard: &NamespaceGuard,
@@ -77,6 +140,9 @@ pub(super) fn recover_completed(
             "non-completed attempt cannot recover a run: {}",
             envelope.attempt_id.as_str()
         )));
+    }
+    if let Some(run_id) = envelope.run_id.as_ref() {
+        crate::retention::ensure_publication_target_available(guard, &envelope.attempt_id, run_id)?;
     }
     let record = validate_published(store, guard, envelope)?;
     let database = guard.open_database()?;

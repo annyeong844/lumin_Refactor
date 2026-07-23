@@ -144,7 +144,11 @@ fn recover_one(
             super::write_terminal(store, guard, generation, &envelope)?;
         }
         AttemptStatus::Completed => {
-            super::super::run::recover_completed(store, guard, &envelope)?;
+            match super::super::run::recover_completed(store, guard, &envelope) {
+                Ok(()) => {}
+                Err(StoreError::RunRetentionState(_)) => return Ok(()),
+                Err(error) => return Err(error),
+            }
         }
         AttemptStatus::Failed | AttemptStatus::Interrupted => {}
     }

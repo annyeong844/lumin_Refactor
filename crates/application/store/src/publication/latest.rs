@@ -114,6 +114,10 @@ pub(super) fn publish_attempt(
     validate_attempt_envelope(attempt)?;
     let current = read_document(store, guard)?;
     validate_document(store, guard, &current)?;
+    #[cfg(feature = "publication-test-crash")]
+    if terminal_crash_hooks {
+        super::barrier::wait_guarded(&attempt.attempt_id)?;
+    }
     let candidate = LatestAttemptPointer {
         attempt_id: attempt.attempt_id.clone(),
         sequence: attempt.sequence,

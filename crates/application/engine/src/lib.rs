@@ -160,6 +160,9 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
     };
     let published = match store.publish_run(&mut attempt, &evidence) {
         Ok(published) => published,
+        Err(error @ StoreError::RunRetentionState(_)) => {
+            return Err(EngineError::Store(error));
+        }
         Err(error) => {
             if let Err(persistence) = store.fail_attempt(&mut attempt, &error.to_string()) {
                 return Err(EngineError::PublicationAndPersistence {

@@ -1,44 +1,48 @@
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
-use std::process::{Child, Command, Stdio};
+use std::io::{BufRead, BufReader};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+#[path = "support/publication_barrier.rs"]
+mod publication_barrier;
 mod support;
 
+use publication_barrier::{PausedAudit, PublicationBarrier, TestResult};
 use support::publication::{assert_no_attempt_liveness_files, baseline_repository, json, number};
-use support::{ProcessResult, assert_status, field, run};
+use support::{assert_status, field, run};
 
-type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
-
-const BARRIER_ENV: &str = "LUMIN_TEST_PUBLICATION_BARRIER";
-const BARRIER_WAIT_LIMIT: Duration = Duration::from_secs(30);
+const PREPARED_BARRIER_ENV: &str = "LUMIN_TEST_PUBLICATION_PREPARED_BARRIER";
+const GUARDED_BARRIER_ENV: &str = "LUMIN_TEST_PUBLICATION_GUARDED_BARRIER";
 
 #[test]
 fn concurrent_latest_publication_preserves_monotonic_fields() -> TestResult {
     let fixture = Fixture::new()?;
     fixture.advance_to_sequence(9)?;
 
-    let first_barrier = PublicationBarrier::new()?;
-    let mut first = fixture.spawn_paused_audit(&first_barrier)?;
-    let first_permit = first_barrier.accept(&mut first, "attempt_000000000000000a")?;
-    fixture.assert_overview_state(10, "running", "run_0000000000000009")?;
+    let prepared = PublicationBarrier::new(PREPARED_BARRIER_ENV, "prepared")?;
+    let guarded = PublicationBarrier::new(GUARDED_BARRIER_ENV, "guarded")?;
+    let mut first = prepared.spawn_audit(fixture.root.path(), &[&guarded])?;
+    let first_prepared = prepared.accept(&mut first, "attempt_000000000000000a")?;
+    fixture.assert_overview_state(10, "completed", "run_0000000000000009")?;
 
-    let second_barrier = PublicationBarrier::new()?;
-    let mut second = fixture.spawn_paused_audit(&second_barrier)?;
-    let second_permit = second_barrier.accept(&mut second, "attempt_000000000000000b")?;
-    fixture.assert_overview_state(11, "running", "run_0000000000000009")?;
+    let mut second = prepared.spawn_audit(fixture.root.path(), &[&guarded])?;
+    let second_prepared = prepared.accept(&mut second, "attempt_000000000000000b")?;
+    fixture.assert_overview_state(11, "completed", "run_0000000000000009")?;
 
-    second_permit.release()?;
+    second_prepared.release()?;
+    let second_guarded = guarded.accept(&mut second, "attempt_000000000000000b")?;
+    first_prepared.release()?;
+    assert_guarded_barrier_blocked(&guarded, &mut first)?;
+    second_guarded.release()?;
+    let first_guarded = guarded.accept(&mut first, "attempt_000000000000000a")?;
+    first_guarded.release()?;
+
     let second_result = second.finish()?;
     assert_status(&second_result, 0);
     assert_eq!(number(&second_result.stdout, "sequence")?, 11);
-    fixture.assert_overview_state(11, "completed", "run_000000000000000b")?;
 
-    first_permit.release()?;
     let first_result = first.finish()?;
     assert_status(&first_result, 0);
     assert_eq!(number(&first_result.stdout, "sequence")?, 10);
@@ -56,8 +60,8 @@ fn concurrent_latest_publication_merges_attempt_and_completed_independently() ->
     let fixture = Fixture::new()?;
     fixture.advance_to_sequence(9)?;
 
-    let barrier = PublicationBarrier::new()?;
-    let mut older = fixture.spawn_paused_audit(&barrier)?;
+    let barrier = PublicationBarrier::new(PREPARED_BARRIER_ENV, "prepared")?;
+    let mut older = barrier.spawn_audit(fixture.root.path(), &[])?;
     let permit = barrier.accept(&mut older, "attempt_000000000000000a")?;
 
     fs::write(fixture.root.path().join("lumin.json"), b"{\n")?;
@@ -96,17 +100,6 @@ impl Fixture {
             assert_eq!(number(&output.stdout, "sequence")?, expected);
         }
         Ok(())
-    }
-
-    fn spawn_paused_audit(&self, barrier: &PublicationBarrier) -> TestResult<PausedAudit> {
-        let child = Command::new(env!("CARGO_BIN_EXE_lumin"))
-            .current_dir(self.root.path())
-            .args(["audit", "--jobs", "1"])
-            .env(BARRIER_ENV, barrier.address()?)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-        Ok(PausedAudit { child: Some(child) })
     }
 
     fn assert_overview(&self, sequence: u64, status: &str, selected_run: &str) -> TestResult {
@@ -154,104 +147,31 @@ impl Fixture {
     }
 }
 
-struct PublicationBarrier {
-    listener: TcpListener,
-}
-
-impl PublicationBarrier {
-    fn new() -> TestResult<Self> {
-        let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
-        listener.set_nonblocking(true)?;
-        Ok(Self { listener })
-    }
-
-    fn address(&self) -> TestResult<String> {
-        self.listener
-            .local_addr()
-            .map(|address| address.to_string())
-            .map_err(Into::into)
-    }
-
-    fn accept(&self, process: &mut PausedAudit, expected_attempt_id: &str) -> TestResult<Permit> {
-        let started = Instant::now();
-        loop {
-            match self.listener.accept() {
-                Ok((stream, peer)) => {
-                    assert!(peer.ip().is_loopback());
-                    return Permit::new(stream, expected_attempt_id);
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    if process.has_exited()? {
-                        return Err(std::io::Error::other(
-                            "audit exited before reaching the publication barrier",
-                        )
-                        .into());
-                    }
-                    if started.elapsed() >= BARRIER_WAIT_LIMIT {
-                        return Err(std::io::Error::other(
-                            "audit did not reach the publication barrier",
-                        )
-                        .into());
-                    }
-                    thread::sleep(Duration::from_millis(10));
-                }
-                Err(error) => return Err(error.into()),
-            }
+fn assert_guarded_barrier_blocked(
+    barrier: &PublicationBarrier,
+    process: &mut PausedAudit,
+) -> TestResult {
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_millis(250) {
+        if let Some(stream) = barrier.try_accept()? {
+            let mut frame = String::new();
+            BufReader::new(stream).read_line(&mut frame)?;
+            return Err(std::io::Error::other(format!(
+                "publisher crossed the guarded latest boundary concurrently: {}",
+                frame.trim_end()
+            ))
+            .into());
         }
-    }
-}
-
-struct Permit {
-    stream: TcpStream,
-}
-
-impl Permit {
-    fn new(stream: TcpStream, expected_attempt_id: &str) -> TestResult<Self> {
-        stream.set_read_timeout(Some(BARRIER_WAIT_LIMIT))?;
-        let mut attempt_id = String::new();
-        BufReader::new(stream.try_clone()?).read_line(&mut attempt_id)?;
-        assert_eq!(attempt_id.trim_end(), expected_attempt_id);
-        Ok(Self { stream })
-    }
-
-    fn release(mut self) -> TestResult {
-        self.stream.write_all(b"release\n")?;
-        Ok(())
-    }
-}
-
-struct PausedAudit {
-    child: Option<Child>,
-}
-
-impl PausedAudit {
-    fn has_exited(&mut self) -> Result<bool, std::io::Error> {
-        self.child
-            .as_mut()
-            .ok_or_else(|| std::io::Error::other("paused audit child already consumed"))?
-            .try_wait()
-            .map(|status| status.is_some())
-    }
-
-    fn finish(mut self) -> TestResult<ProcessResult> {
-        let output = self
-            .child
-            .take()
-            .ok_or_else(|| std::io::Error::other("paused audit child already consumed"))?
-            .wait_with_output()?;
-        Ok(ProcessResult {
-            status: output.status.code().unwrap_or(-1),
-            stdout: String::from_utf8(output.stdout)?,
-            stderr: String::from_utf8(output.stderr)?,
-        })
-    }
-}
-
-impl Drop for PausedAudit {
-    fn drop(&mut self) {
-        if let Some(child) = self.child.as_mut() {
-            let _ = child.kill();
-            let _ = child.wait();
+        if process.has_exited()? {
+            let output = process.take_output()?;
+            return Err(std::io::Error::other(format!(
+                "publisher exited while waiting for the publication guard: status={:?}, stderr={}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ))
+            .into());
         }
+        thread::sleep(Duration::from_millis(10));
     }
+    Ok(())
 }
