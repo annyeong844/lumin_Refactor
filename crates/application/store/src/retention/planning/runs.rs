@@ -181,13 +181,12 @@ impl<'a> RunCollector<'a> {
             ))
         })?;
         let Some((run, run_bytes)) = self.runs.get(run_id.as_str()) else {
-            collect_orphan(
+            return self.collect_uncatalogued_completed_attempt(
                 path,
-                format!("attempts/{child}"),
-                self.before_unix_millis,
-                &mut self.items,
-            )?;
-            return Ok(());
+                child,
+                run_id.as_str(),
+                is_latest_attempt,
+            );
         };
         validate_run_link(envelope, run)?;
         self.known_run_directories
@@ -222,6 +221,31 @@ impl<'a> RunCollector<'a> {
             byte_count: run.evidence_store_size,
         });
         collect_inactive_pins(run, &self.pins, &mut self.items)
+    }
+
+    fn collect_uncatalogued_completed_attempt(
+        &mut self,
+        path: &Path,
+        child: String,
+        run_id: &str,
+        is_latest_attempt: bool,
+    ) -> Result<(), StoreError> {
+        if is_latest_attempt {
+            self.known_run_directories.insert(run_id.to_owned());
+            self.exclusions.push(exclusion(
+                RetentionItemKind::Attempt,
+                child,
+                RetentionExclusionReason::LatestAttempt,
+            ));
+        } else {
+            collect_orphan(
+                path,
+                format!("attempts/{child}"),
+                self.before_unix_millis,
+                &mut self.items,
+            )?;
+        }
+        Ok(())
     }
 }
 

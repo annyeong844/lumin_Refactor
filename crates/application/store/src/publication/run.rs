@@ -44,20 +44,14 @@ fn prepare_publication(
             .map_err(|error| publication_error("read running attempt", error))?;
         session.require_running(&envelope)?;
 
-        let record = publish_directory(
-            store,
-            guard,
-            &envelope,
-            evidence,
-            session.store_generation(),
-        )
-        .map_err(|error| publication_error("publish run directory", error))?;
+        let record = publish_directory(store, guard, &envelope, evidence, session.generation())
+            .map_err(|error| publication_error("publish run directory", error))?;
         hit_after_run_rename();
 
         envelope.state = AttemptStatus::Completed;
         envelope.finished_unix_millis = Some(unix_millis()?);
         envelope.run_id = Some(record.run_id.clone());
-        liveness::write_terminal(store, guard, session.store_generation(), &envelope)
+        liveness::write_terminal(store, guard, session.generation(), &envelope)
             .map_err(|error| publication_error("publish terminal attempt", error))?;
         hit_after_terminal_attempt();
         Ok((envelope, record))
@@ -70,56 +64,104 @@ fn finalize_publication(
     expected_envelope: &AttemptEnvelope,
     expected_record: &RunCatalogRecord,
 ) -> Result<PublishedRun, StoreError> {
-    store.with_exclusive_lock(|guard| {
-        session
-            .validate(guard)
-            .map_err(|error| publication_error("validate attempt session", error))?;
-        match crate::retention::ensure_publication_target_available(
-            guard,
-            &expected_record.attempt_id,
-            &expected_record.run_id,
-        ) {
-            Ok(()) => {}
-            Err(error @ StoreError::RunRetentionState(_)) => {
-                liveness::remove_session(store, guard, session).map_err(|cleanup| {
-                    publication_error("release retained attempt lease", cleanup)
-                })?;
-                return Err(error);
-            }
-            Err(error) => return Err(error),
-        }
+    #[cfg(feature = "publication-test-crash")]
+    let attempt_id = session.attempt_id().clone();
 
-        let envelope = latest::read_attempt(store, guard, session.attempt_id())
-            .map_err(|error| publication_error("read terminal attempt", error))?;
-        if &envelope != expected_envelope {
-            return Err(StoreError::Integrity(format!(
-                "terminal attempt changed before catalog publication: {}",
-                expected_envelope.attempt_id.as_str()
-            )));
-        }
-        let record = validate_published(store, guard, &envelope)
-            .map_err(|error| publication_error("revalidate published run", error))?;
-        if !same_record(&record, expected_record) {
-            return Err(StoreError::Integrity(format!(
-                "run catalog candidate changed before publication: {}",
-                expected_record.run_id.as_str()
-            )));
-        }
-
-        let database = guard.open_database_for_generation(session.store_generation())?;
-        insert_catalog_record(guard, &database, &record)
-            .map_err(|error| publication_error("publish run catalog", error))?;
-        drop(database);
-        latest::publish_attempt(store, guard, &envelope, true)
-            .map_err(|error| publication_error("publish latest pointer", error))?;
-        liveness::remove_session(store, guard, session)
-            .map_err(|error| publication_error("release attempt lease", error))?;
-        Ok(PublishedRun {
-            attempt_id: record.attempt_id,
-            run_id: record.run_id,
-            sequence: record.sequence,
+    #[cfg(feature = "publication-test-crash")]
+    {
+        store.with_exclusive_lock_after_contention(
+            || super::barrier::wait_contended(&attempt_id),
+            |guard| finalize_under_guard(store, guard, session, expected_envelope, expected_record),
+        )
+    }
+    #[cfg(not(feature = "publication-test-crash"))]
+    {
+        store.with_exclusive_lock(|guard| {
+            finalize_under_guard(store, guard, session, expected_envelope, expected_record)
         })
+    }
+}
+
+fn finalize_under_guard(
+    store: &RepositoryStore,
+    guard: &NamespaceGuard,
+    session: &mut liveness::AttemptSession<'_>,
+    expected_envelope: &AttemptEnvelope,
+    expected_record: &RunCatalogRecord,
+) -> Result<PublishedRun, StoreError> {
+    session
+        .validate(guard)
+        .map_err(|error| publication_error("validate attempt session", error))?;
+    ensure_target_available_or_release(store, guard, session, expected_record)?;
+    let (envelope, record) = revalidate_publication_candidate(
+        store,
+        guard,
+        session,
+        expected_envelope,
+        expected_record,
+    )?;
+
+    let database = guard.open_database_for_generation(session.generation())?;
+    insert_catalog_record(guard, &database, &record)
+        .map_err(|error| publication_error("publish run catalog", error))?;
+    drop(database);
+    latest::publish_attempt(store, guard, &envelope, true)
+        .map_err(|error| publication_error("publish latest pointer", error))?;
+    liveness::release_session(store, guard, session)
+        .map_err(|error| publication_error("release attempt lease", error))?;
+    Ok(PublishedRun {
+        attempt_id: record.attempt_id,
+        run_id: record.run_id,
+        sequence: record.sequence,
     })
+}
+
+fn ensure_target_available_or_release(
+    store: &RepositoryStore,
+    guard: &NamespaceGuard,
+    session: &mut liveness::AttemptSession<'_>,
+    expected_record: &RunCatalogRecord,
+) -> Result<(), StoreError> {
+    match crate::retention::ensure_publication_target_available(
+        guard,
+        &expected_record.attempt_id,
+        &expected_record.run_id,
+    ) {
+        Ok(()) => {}
+        Err(error @ StoreError::RunRetentionState(_)) => {
+            liveness::release_session(store, guard, session)
+                .map_err(|cleanup| publication_error("release retained attempt lease", cleanup))?;
+            return Err(error);
+        }
+        Err(error) => return Err(error),
+    }
+    Ok(())
+}
+
+fn revalidate_publication_candidate(
+    store: &RepositoryStore,
+    guard: &NamespaceGuard,
+    session: &liveness::AttemptSession<'_>,
+    expected_envelope: &AttemptEnvelope,
+    expected_record: &RunCatalogRecord,
+) -> Result<(AttemptEnvelope, RunCatalogRecord), StoreError> {
+    let envelope = latest::read_attempt(store, guard, session.attempt_id())
+        .map_err(|error| publication_error("read terminal attempt", error))?;
+    if &envelope != expected_envelope {
+        return Err(StoreError::Integrity(format!(
+            "terminal attempt changed before catalog publication: {}",
+            expected_envelope.attempt_id.as_str()
+        )));
+    }
+    let record = validate_published(store, guard, &envelope)
+        .map_err(|error| publication_error("revalidate published run", error))?;
+    if !same_record(&record, expected_record) {
+        return Err(StoreError::Integrity(format!(
+            "run catalog candidate changed before publication: {}",
+            expected_record.run_id.as_str()
+        )));
+    }
+    Ok((envelope, record))
 }
 
 fn same_record(left: &RunCatalogRecord, right: &RunCatalogRecord) -> bool {

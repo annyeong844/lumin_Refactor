@@ -7,6 +7,7 @@ use lumin_model::AttemptId;
 use crate::StoreError;
 
 const PREPARED_BARRIER_ENV: &str = "LUMIN_TEST_PUBLICATION_PREPARED_BARRIER";
+const CONTENDED_BARRIER_ENV: &str = "LUMIN_TEST_PUBLICATION_CONTENDED_BARRIER";
 const GUARDED_BARRIER_ENV: &str = "LUMIN_TEST_PUBLICATION_GUARDED_BARRIER";
 const BARRIER_TIMEOUT: Duration = Duration::from_secs(30);
 const RELEASE_FRAME: &[u8; 8] = b"release\n";
@@ -17,6 +18,10 @@ pub(super) fn wait_prepared(attempt_id: &AttemptId) -> Result<(), StoreError> {
 
 pub(super) fn wait_guarded(attempt_id: &AttemptId) -> Result<(), StoreError> {
     wait(GUARDED_BARRIER_ENV, "guarded", attempt_id)
+}
+
+pub(super) fn wait_contended(attempt_id: &AttemptId) -> Result<(), StoreError> {
+    wait(CONTENDED_BARRIER_ENV, "contended", attempt_id)
 }
 
 fn wait(environment: &str, stage: &str, attempt_id: &AttemptId) -> Result<(), StoreError> {

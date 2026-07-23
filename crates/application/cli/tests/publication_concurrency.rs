@@ -1,7 +1,4 @@
 use std::fs;
-use std::io::{BufRead, BufReader};
-use std::thread;
-use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -9,11 +6,12 @@ use serde_json::Value;
 mod publication_barrier;
 mod support;
 
-use publication_barrier::{PausedAudit, PublicationBarrier, TestResult};
+use publication_barrier::{PublicationBarrier, TestResult};
 use support::publication::{assert_no_attempt_liveness_files, baseline_repository, json, number};
 use support::{assert_status, field, run};
 
 const PREPARED_BARRIER_ENV: &str = "LUMIN_TEST_PUBLICATION_PREPARED_BARRIER";
+const CONTENDED_BARRIER_ENV: &str = "LUMIN_TEST_PUBLICATION_CONTENDED_BARRIER";
 const GUARDED_BARRIER_ENV: &str = "LUMIN_TEST_PUBLICATION_GUARDED_BARRIER";
 
 #[test]
@@ -22,19 +20,21 @@ fn concurrent_latest_publication_preserves_monotonic_fields() -> TestResult {
     fixture.advance_to_sequence(9)?;
 
     let prepared = PublicationBarrier::new(PREPARED_BARRIER_ENV, "prepared")?;
+    let contended = PublicationBarrier::new(CONTENDED_BARRIER_ENV, "contended")?;
     let guarded = PublicationBarrier::new(GUARDED_BARRIER_ENV, "guarded")?;
-    let mut first = prepared.spawn_audit(fixture.root.path(), &[&guarded])?;
+    let mut first = prepared.spawn_audit(fixture.root.path(), &[&contended, &guarded])?;
     let first_prepared = prepared.accept(&mut first, "attempt_000000000000000a")?;
     fixture.assert_overview_state(10, "completed", "run_0000000000000009")?;
 
-    let mut second = prepared.spawn_audit(fixture.root.path(), &[&guarded])?;
+    let mut second = prepared.spawn_audit(fixture.root.path(), &[&contended, &guarded])?;
     let second_prepared = prepared.accept(&mut second, "attempt_000000000000000b")?;
     fixture.assert_overview_state(11, "completed", "run_0000000000000009")?;
 
     second_prepared.release()?;
     let second_guarded = guarded.accept(&mut second, "attempt_000000000000000b")?;
     first_prepared.release()?;
-    assert_guarded_barrier_blocked(&guarded, &mut first)?;
+    let first_contended = contended.accept(&mut first, "attempt_000000000000000a")?;
+    first_contended.release()?;
     second_guarded.release()?;
     let first_guarded = guarded.accept(&mut first, "attempt_000000000000000a")?;
     first_guarded.release()?;
@@ -145,33 +145,4 @@ impl Fixture {
         assert_eq!(observed, expected);
         Ok(())
     }
-}
-
-fn assert_guarded_barrier_blocked(
-    barrier: &PublicationBarrier,
-    process: &mut PausedAudit,
-) -> TestResult {
-    let started = Instant::now();
-    while started.elapsed() < Duration::from_millis(250) {
-        if let Some(stream) = barrier.try_accept()? {
-            let mut frame = String::new();
-            BufReader::new(stream).read_line(&mut frame)?;
-            return Err(std::io::Error::other(format!(
-                "publisher crossed the guarded latest boundary concurrently: {}",
-                frame.trim_end()
-            ))
-            .into());
-        }
-        if process.has_exited()? {
-            let output = process.take_output()?;
-            return Err(std::io::Error::other(format!(
-                "publisher exited while waiting for the publication guard: status={:?}, stderr={}",
-                output.status.code(),
-                String::from_utf8_lossy(&output.stderr).trim()
-            ))
-            .into());
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-    Ok(())
 }

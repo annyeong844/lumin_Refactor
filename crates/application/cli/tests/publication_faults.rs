@@ -16,6 +16,7 @@ fn pre_start_crashes_preserve_sequence_rules_without_inventing_attempts()
 -> Result<(), Box<dyn std::error::Error>> {
     for (point, next_sequence) in [
         ("before-attempt-catalog-allocation", 2),
+        ("after-attempt-lock-creation", 3),
         ("after-catalog-allocation", 3),
     ] {
         let fixture = Fixture::new()?;

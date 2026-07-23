@@ -15,6 +15,7 @@ const LOCK_SCHEMA: &str = "lumin-attempt-lock.v1";
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub(super) enum AttemptLeaseState {
+    Allocating,
     Active,
     Releasing,
 }
@@ -28,7 +29,7 @@ pub(super) struct AttemptLeaseRecord {
     pub(super) lease_nonce: String,
     pub(super) owner_process_id: u32,
     pub(super) lock_name: String,
-    pub(super) lock_physical_identity: PhysicalFileIdentity,
+    pub(super) lock_physical_identity: Option<PhysicalFileIdentity>,
     pub(super) generation: StoreGeneration,
     pub(super) state: AttemptLeaseState,
 }
@@ -46,9 +47,8 @@ struct AttemptLockBinding {
     generation: StoreGeneration,
 }
 
-pub(super) fn allocate(
+pub(super) fn reserve(
     guard: &NamespaceGuard,
-    lock_file: &HeldEntry,
     lock_name: String,
     lease_nonce: String,
     owner_process_id: u32,
@@ -75,14 +75,12 @@ pub(super) fn allocate(
         lease_nonce,
         owner_process_id,
         lock_name,
-        lock_physical_identity: lock_file.identity().clone(),
+        lock_physical_identity: None,
         generation,
-        state: AttemptLeaseState::Active,
+        state: AttemptLeaseState::Allocating,
     };
     validate_record(&lease)?;
     let bytes = record_bytes(&lease)?;
-    lock_file.replace_contents(&lock_bytes(&lease)?)?;
-    super::hit_before_allocation();
     {
         let mut leases = write.open_table(ATTEMPT_LEASES).map_err(backend_error)?;
         if leases
@@ -101,6 +99,53 @@ pub(super) fn allocate(
     }
     guard.commit(write)?;
     Ok(lease)
+}
+
+pub(super) fn activate(
+    guard: &NamespaceGuard,
+    lock_file: &HeldEntry,
+    expected: &AttemptLeaseRecord,
+) -> Result<AttemptLeaseRecord, StoreError> {
+    if expected.state != AttemptLeaseState::Allocating || expected.lock_physical_identity.is_some()
+    {
+        return Err(StoreError::Integrity(format!(
+            "attempt lease is not allocating: {}",
+            expected.attempt_id.as_str()
+        )));
+    }
+    let mut active = expected.clone();
+    active.lock_physical_identity = Some(lock_file.identity().clone());
+    active.state = AttemptLeaseState::Active;
+    validate_record(&active)?;
+    lock_file.replace_contents(&lock_bytes(&active)?)?;
+
+    let database = guard.open_database_for_generation(expected.generation)?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(ATTEMPT_LEASES).map_err(backend_error)?;
+        let current = table
+            .get(expected.attempt_id.as_str())
+            .map_err(backend_error)?
+            .map(|value| value.value().to_vec())
+            .ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "allocating attempt lease is missing: {}",
+                    expected.attempt_id.as_str()
+                ))
+            })?;
+        if current != record_bytes(expected)? {
+            return Err(StoreError::Integrity(format!(
+                "allocating attempt lease changed: {}",
+                expected.attempt_id.as_str()
+            )));
+        }
+        let bytes = record_bytes(&active)?;
+        table
+            .insert(active.attempt_id.as_str(), bytes.as_slice())
+            .map_err(backend_error)?;
+    }
+    guard.commit(write)?;
+    Ok(active)
 }
 
 pub(super) fn mark_releasing(
@@ -191,7 +236,13 @@ pub(super) fn validate_snapshot(
 ) -> Result<(), StoreError> {
     for (key, bytes) in rows {
         let attempt_id = AttemptId::from_string(key.clone());
-        parse_record(bytes, Some(&attempt_id))?;
+        let lease = parse_record(bytes, Some(&attempt_id))?;
+        if lease.state == AttemptLeaseState::Allocating {
+            return Err(StoreError::Integrity(format!(
+                "lifecycle migration cannot copy an incomplete attempt allocation: {}",
+                attempt_id.as_str()
+            )));
+        }
     }
     Ok(())
 }
@@ -265,6 +316,36 @@ pub(super) fn validate_unreferenced_lock(
     Ok(())
 }
 
+pub(super) fn validate_allocating_lock(
+    guard: &NamespaceGuard,
+    file: &HeldEntry,
+    allocation: &AttemptLeaseRecord,
+    bytes: &[u8],
+) -> Result<(), StoreError> {
+    if allocation.state != AttemptLeaseState::Allocating
+        || allocation.lock_physical_identity.is_some()
+    {
+        return Err(StoreError::Integrity(format!(
+            "attempt allocation is not recoverable: {}",
+            allocation.attempt_id.as_str()
+        )));
+    }
+    validate_record(allocation)?;
+    guard.validate_state_file(
+        file,
+        &allocation.lock_name,
+        "allocating attempt process-liveness lock",
+    )?;
+    if bytes.is_empty() {
+        return Ok(());
+    }
+
+    let mut bound = allocation.clone();
+    bound.lock_physical_identity = Some(file.identity().clone());
+    bound.state = AttemptLeaseState::Active;
+    validate_lock(guard, file, &bound)
+}
+
 pub(super) fn remove(
     guard: &NamespaceGuard,
     expected: &AttemptLeaseRecord,
@@ -318,7 +399,7 @@ pub(super) fn validate_lock_identity(
 ) -> Result<(), StoreError> {
     validate_record(lease)?;
     guard.validate_state_file(file, &lease.lock_name, "attempt process-liveness lock")?;
-    if file.identity() != &lease.lock_physical_identity {
+    if lease.lock_physical_identity.as_ref() != Some(file.identity()) {
         return Err(StoreError::Integrity(format!(
             "attempt process-liveness lock binding changed: {}",
             lease.attempt_id.as_str()
@@ -349,8 +430,18 @@ fn parse_record(
 fn validate_record(record: &AttemptLeaseRecord) -> Result<(), StoreError> {
     if record.schema_version != LEASE_SCHEMA
         || record.attempt_id.as_str() != format!("attempt_{:016x}", record.sequence)
-        || record.lease_nonce.is_empty()
+        || record.lease_nonce.len() != 32
+        || !record
+            .lease_nonce
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         || record.lock_name != format!("attempt-liveness-{}.lock", record.lease_nonce)
+        || match record.state {
+            AttemptLeaseState::Allocating => record.lock_physical_identity.is_some(),
+            AttemptLeaseState::Active | AttemptLeaseState::Releasing => {
+                record.lock_physical_identity.is_none()
+            }
+        }
     {
         return Err(StoreError::Integrity(format!(
             "attempt process-liveness lease is malformed: {}",
@@ -365,6 +456,12 @@ fn record_bytes(record: &AttemptLeaseRecord) -> Result<Vec<u8>, StoreError> {
 }
 
 fn lock_bytes(record: &AttemptLeaseRecord) -> Result<Vec<u8>, StoreError> {
+    let lock_physical_identity = record.lock_physical_identity.clone().ok_or_else(|| {
+        StoreError::Integrity(format!(
+            "attempt lease has no lock binding: {}",
+            record.attempt_id.as_str()
+        ))
+    })?;
     serde_json::to_vec(&AttemptLockBinding {
         schema_version: LOCK_SCHEMA.to_owned(),
         attempt_id: record.attempt_id.clone(),
@@ -372,7 +469,7 @@ fn lock_bytes(record: &AttemptLeaseRecord) -> Result<Vec<u8>, StoreError> {
         lease_nonce: record.lease_nonce.clone(),
         owner_process_id: record.owner_process_id,
         lock_name: record.lock_name.clone(),
-        lock_physical_identity: record.lock_physical_identity.clone(),
+        lock_physical_identity,
         generation: record.generation,
     })
     .map_err(serialization_error)

@@ -3,12 +3,18 @@ use std::path::Path;
 
 use serde_json::Value;
 
+#[path = "support/retention_plan.rs"]
+mod retention_plan_support;
 #[path = "support/retention.rs"]
 mod retention_support;
 mod support;
 
+use retention_plan_support::contains_exclusion;
 use retention_support::{audit, json};
 use support::{assert_status, run};
+
+const RETENTION_CONFIRM_OPERATION: &str = "public-retention-confirm";
+const LATEST_PROTECTION_CONFIRM_OPERATION: &str = "public-latest-protection-confirm";
 
 #[test]
 fn retention_truth_survives_public_process_reopen() -> Result<(), Box<dyn std::error::Error>> {
@@ -28,14 +34,14 @@ fn retention_truth_survives_public_process_reopen() -> Result<(), Box<dyn std::e
     assert_eq!(plan_retry.stdout, plan.stdout);
     assert_prepared_plan(root.path(), &plan_id, &first_run, &second_run)?;
 
-    let confirmed = confirm_plan(root.path(), &plan_id)?;
+    let confirmed = confirm_plan(root.path(), &plan_id, RETENTION_CONFIRM_OPERATION, 0)?;
     assert_eq!(
         json(&confirmed.stdout)?
             .pointer("/result/status")
             .and_then(Value::as_str),
         Some("pruned")
     );
-    let confirm_retry = confirm_plan(root.path(), &plan_id)?;
+    let confirm_retry = confirm_plan(root.path(), &plan_id, RETENTION_CONFIRM_OPERATION, 0)?;
     assert_eq!(confirm_retry.stdout, confirmed.stdout);
 
     assert_pruned_views(root.path(), &plan_id, &first_run, &second_run)?;
@@ -57,11 +63,16 @@ fn latest_attempt_and_completed_closures_survive_stale_confirmation()
     assert_status(&failed, 1);
     let failed_overview = overview(root.path())?;
     let failed_attempt = required_string(&failed_overview, "/latestAttempt/attemptId")?;
+    let failed_reason = required_string(&failed_overview, "/latestAttempt/failure")?;
     assert_eq!(
         failed_overview
             .pointer("/latestAttempt/status")
             .and_then(Value::as_str),
         Some("failed")
+    );
+    assert!(
+        failed_reason.contains("malformed lumin.json"),
+        "audit failed for an unexpected reason: {failed_reason}"
     );
     assert_eq!(
         failed_overview.pointer("/scope/id").and_then(Value::as_str),
@@ -84,18 +95,12 @@ fn latest_attempt_and_completed_closures_survive_stale_confirmation()
     let newest_overview = overview(root.path())?;
     let newest_attempt = required_string(&newest_overview, "/latestAttempt/attemptId")?;
 
-    let stale = run(
+    let stale = confirm_plan(
         root.path(),
-        &[
-            "runs",
-            "prune",
-            "confirm",
-            &plan_id,
-            "--operation-id",
-            "public-latest-protection-confirm",
-        ],
+        &plan_id,
+        LATEST_PROTECTION_CONFIRM_OPERATION,
+        5,
     )?;
-    assert_status(&stale, 5);
     let stale_body = json(&stale.stdout)?;
     assert_eq!(
         stale_body.pointer("/result/status").and_then(Value::as_str),
@@ -108,9 +113,19 @@ fn latest_attempt_and_completed_closures_survive_stale_confirmation()
             .is_some_and(|inputs| !inputs.is_empty())
     );
 
+    let stale_retry = confirm_plan(
+        root.path(),
+        &plan_id,
+        LATEST_PROTECTION_CONFIRM_OPERATION,
+        5,
+    )?;
+    assert_eq!(stale_retry.stdout, stale.stdout);
+
     assert_stale_views(
         root.path(),
         &plan_id,
+        &failed_attempt,
+        &completed_attempt,
         &completed_run,
         &newest_run,
         &newest_attempt,
@@ -138,6 +153,8 @@ fn prepare_plan(root: &Path) -> Result<support::ProcessResult, Box<dyn std::erro
 fn confirm_plan(
     root: &Path,
     plan_id: &str,
+    operation_id: &str,
+    expected_status: i32,
 ) -> Result<support::ProcessResult, Box<dyn std::error::Error>> {
     let output = run(
         root,
@@ -147,10 +164,10 @@ fn confirm_plan(
             "confirm",
             plan_id,
             "--operation-id",
-            "public-retention-confirm",
+            operation_id,
         ],
     )?;
-    assert_status(&output, 0);
+    assert_status(&output, expected_status);
     Ok(output)
 }
 
@@ -296,20 +313,34 @@ fn assert_latest_exclusions(
 fn assert_stale_views(
     root: &Path,
     plan_id: &str,
+    failed_attempt: &str,
+    completed_attempt: &str,
     completed_run: &str,
     newest_run: &str,
     newest_attempt: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let shown = run(root, &["runs", "prune", "plan", "show", plan_id])?;
-    assert_status(&shown, 0);
-    assert_eq!(
-        json(&shown.stdout)?.get("state").and_then(Value::as_str),
-        Some("prepared")
-    );
+    assert_latest_exclusions(
+        root,
+        plan_id,
+        failed_attempt,
+        completed_attempt,
+        completed_run,
+    )?;
+    for attempt_id in [failed_attempt, completed_attempt] {
+        let path = root
+            .join(".lumin")
+            .join("attempts")
+            .join(attempt_id)
+            .join("attempt.json");
+        assert!(
+            path.is_file(),
+            "stale confirmation removed excluded attempt {attempt_id}"
+        );
+    }
 
     let operation = run(
         root,
-        &["operation", "show", "public-latest-protection-confirm"],
+        &["operation", "show", LATEST_PROTECTION_CONFIRM_OPERATION],
     )?;
     assert_status(&operation, 0);
     let operation = json(&operation.stdout)?;
@@ -356,18 +387,6 @@ fn contains_record(body: &Value, collection: &str, kind: &str, record_id: &str) 
             records.iter().any(|record| {
                 record.get("kind").and_then(Value::as_str) == Some(kind)
                     && record.get("recordId").and_then(Value::as_str) == Some(record_id)
-            })
-        })
-}
-
-fn contains_exclusion(body: &Value, kind: &str, record_id: &str, reason: &str) -> bool {
-    body.get("exclusions")
-        .and_then(Value::as_array)
-        .is_some_and(|records| {
-            records.iter().any(|record| {
-                record.get("kind").and_then(Value::as_str) == Some(kind)
-                    && record.get("recordId").and_then(Value::as_str) == Some(record_id)
-                    && record.pointer("/reason/reason").and_then(Value::as_str) == Some(reason)
             })
         })
 }
