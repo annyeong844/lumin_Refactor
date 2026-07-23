@@ -26,22 +26,13 @@ pub(super) fn begin(store: &RepositoryStore) -> Result<AttemptSession<'_>, Store
 
         let lease_nonce = nonce_hex()?;
         let lock_name = format!("attempt-liveness-{lease_nonce}.lock");
-        let lock_file =
-            guard.open_or_create_state_file(&lock_name, "attempt process-liveness lock", &[])?;
-        if !lock_file.read_all()?.is_empty() {
-            return Err(StoreError::Integrity(
-                "new attempt process-liveness lock name already exists".to_owned(),
-            ));
-        }
+        hit_before_allocation();
+        let allocation =
+            records::reserve(guard, lock_name.clone(), lease_nonce, std::process::id())?;
+        let lock_file = guard.create_state_file(&lock_name, "attempt process-liveness lock")?;
         lock_file.file().try_lock_exclusive().map_err(io_error)?;
-
-        let lease = records::allocate(
-            guard,
-            &lock_file,
-            lock_name,
-            lease_nonce,
-            std::process::id(),
-        )?;
+        hit_after_lock_creation();
+        let lease = records::activate(guard, &lock_file, &allocation)?;
         hit_after_allocation();
 
         create_attempt_directory(store, guard, &lease.attempt_id, lease.generation)?;
@@ -134,6 +125,9 @@ pub(super) fn has_active_lease(
     let Some(lease) = records::read(guard, attempt_id)? else {
         return Ok(false);
     };
+    if lease.state == AttemptLeaseState::Allocating {
+        return Ok(false);
+    }
     let file = guard.open_state_file(&lease.lock_name, "attempt process-liveness lock")?;
     records::validate_lock_identity(guard, &file, &lease)?;
     Ok(lease.state == AttemptLeaseState::Active)
@@ -144,12 +138,7 @@ impl AttemptSession<'_> {
         &self.lease.attempt_id
     }
 
-    #[cfg(test)]
     pub(crate) fn generation(&self) -> StoreGeneration {
-        self.generation
-    }
-
-    pub(super) fn store_generation(&self) -> StoreGeneration {
         self.generation
     }
 
@@ -192,15 +181,7 @@ impl AttemptSession<'_> {
     }
 }
 
-pub(super) fn remove_session(
-    store: &RepositoryStore,
-    guard: &NamespaceGuard,
-    session: &mut AttemptSession<'_>,
-) -> Result<(), StoreError> {
-    release_session(store, guard, session)
-}
-
-fn release_session(
+pub(super) fn release_session(
     store: &RepositoryStore,
     guard: &NamespaceGuard,
     session: &mut AttemptSession<'_>,
@@ -276,6 +257,11 @@ fn hit_before_allocation() {
 fn hit_after_allocation() {
     #[cfg(feature = "publication-test-crash")]
     super::crash::hit(super::crash::PublicationCrashPoint::AfterCatalogAllocation);
+}
+
+fn hit_after_lock_creation() {
+    #[cfg(feature = "publication-test-crash")]
+    super::crash::hit(super::crash::PublicationCrashPoint::AfterAttemptLockCreation);
 }
 
 fn hit_after_running() {

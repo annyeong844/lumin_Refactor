@@ -18,6 +18,10 @@ pub(super) fn recover_under_guard(
     let leases = records::read_all(guard)?;
     remove_unreferenced_liveness_locks(store, guard, &leases)?;
     for lease in leases {
+        if lease.state == AttemptLeaseState::Allocating {
+            recover_allocation(store, guard, &lease)?;
+            continue;
+        }
         if lease.state == AttemptLeaseState::Releasing {
             let lock = acquire_releasing_lock(store, guard, &lease)?;
             recover_one(store, guard, &lease, false)?;
@@ -37,6 +41,35 @@ pub(super) fn recover_under_guard(
         finish_releasing(store, guard, &releasing, Some(lock))?;
     }
     Ok(())
+}
+
+fn recover_allocation(
+    store: &RepositoryStore,
+    guard: &NamespaceGuard,
+    allocation: &AttemptLeaseRecord,
+) -> Result<(), StoreError> {
+    let path = store.state_dir.join(&allocation.lock_name);
+    if !entry_exists(&path)? {
+        return records::remove(guard, allocation);
+    }
+
+    let lock = guard.open_state_file(
+        &allocation.lock_name,
+        "allocating attempt process-liveness lock",
+    )?;
+    lock.file().try_lock_exclusive().map_err(io_error)?;
+    records::validate_allocating_lock(guard, &lock, allocation, &lock.read_all()?)?;
+    lock.validate_path(
+        &path,
+        crate::namespace::EntryKind::RegularFile,
+        crate::namespace::EntryAccess::ReadWrite,
+        true,
+        "allocating attempt process-liveness lock",
+    )?;
+    drop(lock);
+    fs::remove_file(path).map_err(io_error)?;
+    guard.state_directory_entry().sync_directory()?;
+    records::remove(guard, allocation)
 }
 
 fn remove_unreferenced_liveness_locks(

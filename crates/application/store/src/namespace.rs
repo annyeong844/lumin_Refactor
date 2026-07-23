@@ -100,32 +100,70 @@ impl NamespaceState {
         &self,
         operation: impl FnOnce(&NamespaceGuard) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
-        self.with_lock(true, LockPurpose::Ordinary, operation)
+        self.with_lock(
+            true,
+            LockPurpose::Ordinary,
+            None::<fn() -> Result<(), StoreError>>,
+            operation,
+        )
+    }
+
+    #[cfg(feature = "publication-test-crash")]
+    pub(super) fn with_exclusive_lock_after_contention<T>(
+        &self,
+        on_contention: impl FnOnce() -> Result<(), StoreError>,
+        operation: impl FnOnce(&NamespaceGuard) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        self.with_lock(true, LockPurpose::Ordinary, Some(on_contention), operation)
     }
 
     pub(super) fn with_shared_lock<T>(
         &self,
         operation: impl FnOnce(&NamespaceGuard) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
-        self.with_lock(false, LockPurpose::Ordinary, operation)
+        self.with_lock(
+            false,
+            LockPurpose::Ordinary,
+            None::<fn() -> Result<(), StoreError>>,
+            operation,
+        )
     }
 
     fn with_migration_lock<T>(
         &self,
         operation: impl FnOnce(&NamespaceGuard) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
-        self.with_lock(true, LockPurpose::Migration, operation)
+        self.with_lock(
+            true,
+            LockPurpose::Migration,
+            None::<fn() -> Result<(), StoreError>>,
+            operation,
+        )
     }
 
-    fn with_lock<T>(
+    fn with_lock<T, C>(
         &self,
         exclusive: bool,
         purpose: LockPurpose,
+        on_contention: Option<C>,
         operation: impl FnOnce(&NamespaceGuard) -> Result<T, StoreError>,
-    ) -> Result<T, StoreError> {
+    ) -> Result<T, StoreError>
+    where
+        C: FnOnce() -> Result<(), StoreError>,
+    {
         let lock = self.open_prevalidated_lock()?;
         if exclusive {
-            FileExt::lock_exclusive(lock.file()).map_err(io_error)?;
+            match on_contention {
+                Some(on_contention) => match lock.file().try_lock_exclusive() {
+                    Ok(()) => {}
+                    Err(error) if lock_contended(&error) => {
+                        on_contention()?;
+                        FileExt::lock_exclusive(lock.file()).map_err(io_error)?;
+                    }
+                    Err(error) => return Err(io_error(error)),
+                },
+                None => FileExt::lock_exclusive(lock.file()).map_err(io_error)?,
+            }
         } else {
             FileExt::lock_shared(lock.file()).map_err(io_error)?;
         }
@@ -304,6 +342,32 @@ impl NamespaceGuard {
                 true,
                 label,
             )?;
+            Ok(entry)
+        })
+    }
+
+    pub(crate) fn create_state_file(
+        &self,
+        name: &str,
+        label: &str,
+    ) -> Result<HeldEntry, StoreError> {
+        let path = self.direct_state_file_path(name)?;
+        self.mutate(|| {
+            if entry_exists(&path)? {
+                return Err(StoreError::Integrity(format!(
+                    "{label} already exists before allocation"
+                )));
+            }
+            let entry = HeldEntry::create_new(&path, label)?;
+            require_state_volume(&entry, &self.state_directory, label)?;
+            entry.validate_path(
+                &path,
+                EntryKind::RegularFile,
+                EntryAccess::ReadWrite,
+                true,
+                label,
+            )?;
+            self.state_directory.sync_directory()?;
             Ok(entry)
         })
     }

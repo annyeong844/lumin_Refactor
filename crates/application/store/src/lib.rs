@@ -223,6 +223,16 @@ impl RepositoryStore {
         self.namespace.with_exclusive_lock(operation)
     }
 
+    #[cfg(feature = "publication-test-crash")]
+    fn with_exclusive_lock_after_contention<T>(
+        &self,
+        on_contention: impl FnOnce() -> Result<(), StoreError>,
+        operation: impl FnOnce(&namespace::NamespaceGuard) -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        self.namespace
+            .with_exclusive_lock_after_contention(on_contention, operation)
+    }
+
     fn with_shared_lock<T>(
         &self,
         operation: impl FnOnce(&namespace::NamespaceGuard) -> Result<T, StoreError>,

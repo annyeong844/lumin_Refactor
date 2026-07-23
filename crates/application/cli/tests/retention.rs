@@ -3,10 +3,13 @@ use std::path::Path;
 
 use serde_json::Value;
 
+#[path = "support/retention_plan.rs"]
+mod retention_plan_support;
 #[path = "support/retention.rs"]
 mod retention_support;
 mod support;
 
+use retention_plan_support::contains_exclusion;
 use retention_support::{audit, json};
 use support::{assert_status, run};
 
@@ -356,18 +359,6 @@ fn contains_record(body: &Value, collection: &str, kind: &str, record_id: &str) 
             records.iter().any(|record| {
                 record.get("kind").and_then(Value::as_str) == Some(kind)
                     && record.get("recordId").and_then(Value::as_str) == Some(record_id)
-            })
-        })
-}
-
-fn contains_exclusion(body: &Value, kind: &str, record_id: &str, reason: &str) -> bool {
-    body.get("exclusions")
-        .and_then(Value::as_array)
-        .is_some_and(|records| {
-            records.iter().any(|record| {
-                record.get("kind").and_then(Value::as_str) == Some(kind)
-                    && record.get("recordId").and_then(Value::as_str) == Some(record_id)
-                    && record.pointer("/reason/reason").and_then(Value::as_str) == Some(reason)
             })
         })
 }

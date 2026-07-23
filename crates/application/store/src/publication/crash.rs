@@ -5,6 +5,7 @@ const INVALID_SELECTOR_EXIT_CODE: i32 = 96;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum PublicationCrashPoint {
     BeforeAttemptCatalogAllocation,
+    AfterAttemptLockCreation,
     AfterCatalogAllocation,
     AfterRunningEnvelope,
     AfterLatestRunning,
@@ -18,6 +19,7 @@ impl PublicationCrashPoint {
     fn label(self) -> &'static str {
         match self {
             Self::BeforeAttemptCatalogAllocation => "before-attempt-catalog-allocation",
+            Self::AfterAttemptLockCreation => "after-attempt-lock-creation",
             Self::AfterCatalogAllocation => "after-catalog-allocation",
             Self::AfterRunningEnvelope => "after-running-envelope",
             Self::AfterLatestRunning => "after-latest-running",
@@ -45,8 +47,9 @@ pub(super) fn hit(point: PublicationCrashPoint) {
     }
 }
 
-const ALL_POINTS: [PublicationCrashPoint; 8] = [
+const ALL_POINTS: [PublicationCrashPoint; 9] = [
     PublicationCrashPoint::BeforeAttemptCatalogAllocation,
+    PublicationCrashPoint::AfterAttemptLockCreation,
     PublicationCrashPoint::AfterCatalogAllocation,
     PublicationCrashPoint::AfterRunningEnvelope,
     PublicationCrashPoint::AfterLatestRunning,
