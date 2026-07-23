@@ -153,7 +153,7 @@ fn revalidate_publication_candidate(
             expected_envelope.attempt_id.as_str()
         )));
     }
-    let record = validate_published(store, guard, &envelope)
+    let record = validate_published(guard, &envelope)
         .map_err(|error| publication_error("revalidate published run", error))?;
     if !same_record(&record, expected_record) {
         return Err(StoreError::Integrity(format!(
@@ -173,7 +173,6 @@ fn same_record(left: &RunCatalogRecord, right: &RunCatalogRecord) -> bool {
 }
 
 pub(super) fn recover_completed(
-    store: &RepositoryStore,
     guard: &NamespaceGuard,
     envelope: &AttemptEnvelope,
 ) -> Result<(), StoreError> {
@@ -186,7 +185,7 @@ pub(super) fn recover_completed(
     if let Some(run_id) = envelope.run_id.as_ref() {
         crate::retention::ensure_publication_target_available(guard, &envelope.attempt_id, run_id)?;
     }
-    let record = validate_published(store, guard, envelope)?;
+    let record = validate_published(guard, envelope)?;
     let database = guard.open_database()?;
     insert_catalog_record(guard, &database, &record)
 }
@@ -293,8 +292,7 @@ fn write_staging(
     Ok(record)
 }
 
-fn validate_published(
-    store: &RepositoryStore,
+pub(super) fn validate_published(
     guard: &NamespaceGuard,
     envelope: &AttemptEnvelope,
 ) -> Result<RunCatalogRecord, StoreError> {
@@ -309,7 +307,9 @@ fn validate_published(
         run_id.as_str(),
         "published run directory",
     )?;
-    let path = run_path(store, run_id);
+    let path = guard
+        .managed_parent_path(ManagedStateParentKind::Runs)
+        .join(run_id.as_str());
     let record: RunCatalogRecord =
         files::read_json(&path.join("run.json"), &directory, "run envelope")?;
     if record.attempt_id != envelope.attempt_id
