@@ -102,6 +102,7 @@ pub struct Permit {
 
 impl Permit {
     fn new(stream: TcpStream, label: &str, expected_attempt_id: &str) -> TestResult<Self> {
+        stream.set_nonblocking(false)?;
         stream.set_read_timeout(Some(BARRIER_WAIT_LIMIT))?;
         let mut frame = String::new();
         BufReader::new(stream.try_clone()?).read_line(&mut frame)?;
