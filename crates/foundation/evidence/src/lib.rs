@@ -6,8 +6,8 @@ pub use gate::*;
 pub use retention::*;
 
 use lumin_model::{
-    CapabilityState, FindingDisposition, FindingId, Limitation, LogicalSourceId, RepoPath,
-    SelectedResolutionProfile, SourceSpan, SymbolNamespace,
+    CapabilityState, EvidenceId, FindingDisposition, FindingId, FindingRelationId, Limitation,
+    LogicalSourceId, RepoPath, SelectedResolutionProfile, SourceSpan, SymbolNamespace,
 };
 use serde::{Deserialize, Serialize};
 
@@ -44,6 +44,26 @@ impl Confidence {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct EvidenceRecord {
+    pub evidence_id: EvidenceId,
+    pub kind: String,
+    pub source_id: LogicalSourceId,
+    pub path: RepoPathProjection,
+    pub span: SourceSpan,
+    pub payload_sha256: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FindingRelationRecord {
+    pub relation_id: FindingRelationId,
+    pub kind: String,
+    pub target_finding_id: FindingId,
+    pub grounding_evidence_id: EvidenceId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FindingRecord {
     pub finding_id: FindingId,
     pub rule_id: String,
@@ -57,6 +77,10 @@ pub struct FindingRecord {
     pub span: SourceSpan,
     pub exported_name: String,
     pub namespace: SymbolNamespace,
+    #[serde(default)]
+    pub evidence: Vec<EvidenceRecord>,
+    #[serde(default)]
+    pub relations: Vec<FindingRelationRecord>,
 }
 
 impl FindingRecord {
@@ -111,6 +135,24 @@ impl RunEvidence {
 }
 
 pub fn sort_findings(findings: &mut [FindingRecord]) {
+    for finding in findings.iter_mut() {
+        finding.evidence.sort_by(|left, right| {
+            left.kind
+                .cmp(&right.kind)
+                .then_with(|| left.source_id.cmp(&right.source_id))
+                .then_with(|| left.span.start.cmp(&right.span.start))
+                .then_with(|| left.span.end.cmp(&right.span.end))
+                .then_with(|| left.evidence_id.cmp(&right.evidence_id))
+        });
+        finding.evidence.dedup();
+        finding.relations.sort_by(|left, right| {
+            left.kind
+                .cmp(&right.kind)
+                .then_with(|| left.target_finding_id.cmp(&right.target_finding_id))
+                .then_with(|| left.relation_id.cmp(&right.relation_id))
+        });
+        finding.relations.dedup();
+    }
     findings.sort_by(|left, right| {
         right
             .severity
@@ -123,4 +165,74 @@ pub fn sort_findings(findings: &mut [FindingRecord]) {
             .then_with(|| left.span.end.cmp(&right.span.end))
             .then_with(|| left.finding_id.cmp(&right.finding_id))
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use lumin_model::{FindingDisposition, SymbolNamespace};
+
+    use super::*;
+
+    #[test]
+    fn canonicalization_deduplicates_identical_nested_rows()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = RepoPath::from_portable("src/lib.ts")?;
+        let source_id = LogicalSourceId::from_path(&path);
+        let finding_id = FindingId::for_export(
+            DEAD_EXPORT_RULE_ID,
+            &source_id,
+            SymbolNamespace::Value,
+            "dead",
+        );
+        let span = SourceSpan { start: 0, end: 4 };
+        let evidence_id = EvidenceId::for_source_span(
+            "definition",
+            &source_id,
+            span.start,
+            span.end,
+            "payload-sha256",
+        );
+        let evidence = EvidenceRecord {
+            evidence_id: evidence_id.clone(),
+            kind: "definition".to_owned(),
+            source_id: source_id.clone(),
+            path: RepoPathProjection::from(&path),
+            span: span.clone(),
+            payload_sha256: "payload-sha256".to_owned(),
+        };
+        let target_finding_id = FindingId::from_string("finding-target".to_owned());
+        let relation = FindingRelationRecord {
+            relation_id: FindingRelationId::for_finding(
+                &finding_id,
+                "related",
+                &target_finding_id,
+                &evidence_id,
+            ),
+            kind: "related".to_owned(),
+            target_finding_id,
+            grounding_evidence_id: evidence_id,
+        };
+        let mut findings = vec![FindingRecord {
+            finding_id,
+            rule_id: DEAD_EXPORT_RULE_ID.to_owned(),
+            owner_capability: DEAD_CODE_CAPABILITY_ID.to_owned(),
+            severity: Severity::Warning,
+            confidence: Confidence::Grounded,
+            disposition: FindingDisposition::ReviewCandidate,
+            claim: "zero grounded exact fan-in".to_owned(),
+            source_id,
+            path: RepoPathProjection::from(&path),
+            span,
+            exported_name: "dead".to_owned(),
+            namespace: SymbolNamespace::Value,
+            evidence: vec![evidence.clone(), evidence],
+            relations: vec![relation.clone(), relation],
+        }];
+
+        sort_findings(&mut findings);
+
+        assert_eq!(findings[0].evidence.len(), 1);
+        assert_eq!(findings[0].relations.len(), 1);
+        Ok(())
+    }
 }

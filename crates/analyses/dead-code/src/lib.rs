@@ -1,13 +1,13 @@
 use std::collections::BTreeMap;
 
 use lumin_evidence::{
-    Confidence, DEAD_CODE_CAPABILITY_ID, DEAD_EXPORT_RULE_ID, FindingRecord, RepoPathProjection,
-    Severity, sort_findings,
+    Confidence, DEAD_CODE_CAPABILITY_ID, DEAD_EXPORT_RULE_ID, EvidenceRecord, FindingRecord,
+    RepoPathProjection, Severity, sort_findings,
 };
 use lumin_graph::SymbolGraph;
 use lumin_model::{
-    FindingDisposition, FindingId, Limitation, LogicalSourceId, RepoPath, ReviewOnlyReason,
-    SemanticConfigSnapshot, SourceSnapshot,
+    EvidenceId, FindingDisposition, FindingId, Limitation, LogicalSourceId, RepoPath,
+    ReviewOnlyReason, SemanticConfigSnapshot, SourceSnapshot,
 };
 
 pub fn analyze(
@@ -16,10 +16,15 @@ pub fn analyze(
     config: &SemanticConfigSnapshot,
     limitations: &[Limitation],
 ) -> Vec<FindingRecord> {
-    let paths = sources
+    let sources_by_id = sources
         .iter()
-        .map(|source| (source.id.clone(), source.path.clone()))
-        .collect::<BTreeMap<LogicalSourceId, RepoPath>>();
+        .map(|source| {
+            (
+                source.id.clone(),
+                (source.path.clone(), source.payload_sha256.clone()),
+            )
+        })
+        .collect::<BTreeMap<LogicalSourceId, (RepoPath, String)>>();
     let (workspace_blocked, blocked_paths) = blocked_absence_scope(sources, config, limitations);
     let mut findings = Vec::new();
     for export in graph.exports.values() {
@@ -30,7 +35,7 @@ pub fn analyze(
         {
             continue;
         }
-        let Some(path) = paths.get(&export.fact.source_id) else {
+        let Some((path, payload_sha256)) = sources_by_id.get(&export.fact.source_id) else {
             continue;
         };
         if workspace_blocked
@@ -61,6 +66,13 @@ pub fn analyze(
                 export.fact.exported_name
             )
         };
+        let evidence_id = EvidenceId::for_source_span(
+            "definition",
+            &export.fact.source_id,
+            export.fact.span.start,
+            export.fact.span.end,
+            payload_sha256,
+        );
         findings.push(FindingRecord {
             finding_id,
             rule_id: DEAD_EXPORT_RULE_ID.to_owned(),
@@ -74,6 +86,15 @@ pub fn analyze(
             span: export.fact.span.clone(),
             exported_name: export.fact.exported_name.clone(),
             namespace: export.fact.namespace,
+            evidence: vec![EvidenceRecord {
+                evidence_id,
+                kind: "definition".to_owned(),
+                source_id: export.fact.source_id.clone(),
+                path: RepoPathProjection::from(path),
+                span: export.fact.span.clone(),
+                payload_sha256: payload_sha256.clone(),
+            }],
+            relations: Vec::new(),
         });
     }
     sort_findings(&mut findings);

@@ -53,11 +53,23 @@ fn finding_delta_fact(finding: &FindingRecord) -> DeltaFact {
         canonical: finding.finding_id.as_str().as_bytes().to_vec(),
     }]);
     let affected_identities = BTreeSet::from([logical_source(&finding.source_id)]);
-    let evidence_identity = DeltaValue::bytes(frame([
-        finding.path.canonical.as_slice(),
-        finding.span.start.to_be_bytes().as_slice(),
-        finding.span.end.to_be_bytes().as_slice(),
-    ]));
+    let evidence_identity = if finding.evidence.is_empty() && finding.relations.is_empty() {
+        DeltaValue::bytes(frame([
+            finding.path.canonical.as_slice(),
+            finding.span.start.to_be_bytes().as_slice(),
+            finding.span.end.to_be_bytes().as_slice(),
+        ]))
+    } else {
+        let mut identity = Vec::new();
+        append_length_prefixed(&mut identity, b"lumin-finding-evidence-set.v1");
+        for evidence in &finding.evidence {
+            append_length_prefixed(&mut identity, evidence.evidence_id.as_str().as_bytes());
+        }
+        for relation in &finding.relations {
+            append_length_prefixed(&mut identity, relation.relation_id.as_str().as_bytes());
+        }
+        DeltaValue::bytes(identity)
+    };
     let owner_payload = BTreeMap::from([
         (
             "claim".to_owned(),
@@ -232,6 +244,8 @@ mod tests {
             span: SourceSpan { start: 1, end: 2 },
             exported_name: "dead".to_owned(),
             namespace: SymbolNamespace::Value,
+            evidence: Vec::new(),
+            relations: Vec::new(),
         };
         let fact = finding_delta_fact(&finding);
         assert_eq!(fact.key.family, DeltaFactFamily::DeadExport);
@@ -341,6 +355,8 @@ mod tests {
             span: SourceSpan { start: 1, end: 2 },
             exported_name: "dead".to_owned(),
             namespace: SymbolNamespace::Value,
+            evidence: Vec::new(),
+            relations: Vec::new(),
         }
     }
 

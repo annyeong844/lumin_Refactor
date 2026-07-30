@@ -5,6 +5,8 @@ use serde_json::Value;
 
 mod support;
 
+#[path = "write_gate/reopen_queries.rs"]
+mod reopen_queries;
 #[path = "write_gate/transition_retention.rs"]
 mod transition_retention;
 
