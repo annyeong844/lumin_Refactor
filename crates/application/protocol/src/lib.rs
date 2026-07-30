@@ -21,7 +21,7 @@ use lumin_model::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub const FINDINGS_ORDERING: &str = "findings.v1";
+pub const FINDINGS_ORDERING: &str = lumin_evidence::FINDINGS_ORDERING_ID;
 pub const FINDINGS_PAGE_SIZE: usize = 100;
 
 #[derive(Clone, Debug, Serialize)]
@@ -718,6 +718,7 @@ mod tests {
                 span: SourceSpan { start: 0, end: 1 },
                 exported_name,
                 namespace: SymbolNamespace::Value,
+                nested_collections_available: true,
                 evidence: Vec::new(),
                 relations: Vec::new(),
             });

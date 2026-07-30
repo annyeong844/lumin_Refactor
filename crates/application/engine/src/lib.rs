@@ -1,8 +1,10 @@
 mod gate_abandon;
+mod gate_query;
 mod retention;
 mod write_gate;
 
 pub use gate_abandon::{AbandonGateRequest, abandon_gate};
+pub use gate_query::{GateEvidenceQueryError, query_gate_explain, query_gate_findings};
 pub use lumin_evidence::{
     GateDecision, GateOperationResult, RecordLookup, RetentionMutationResult, RetentionPlanScope,
 };
@@ -72,6 +74,8 @@ pub enum EngineError {
     Resolver(#[from] ResolverError),
     #[error(transparent)]
     Store(#[from] StoreError),
+    #[error(transparent)]
+    EvidenceQuery(#[from] GateEvidenceQueryError),
     #[error("invalid worker count: {0}")]
     InvalidWorkerCount(usize),
     #[error("failed to build the local worker pool: {0}")]
@@ -106,6 +110,7 @@ impl EngineError {
     pub fn lifecycle_exit_code(&self) -> i32 {
         match self {
             Self::NoDeclaredPaths
+            | Self::EvidenceQuery(_)
             | Self::Store(
                 StoreError::OperationConflict(_)
                 | StoreError::OperationNotFound(_)

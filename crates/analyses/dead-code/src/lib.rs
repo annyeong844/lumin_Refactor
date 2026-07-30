@@ -86,6 +86,7 @@ pub fn analyze(
             span: export.fact.span.clone(),
             exported_name: export.fact.exported_name.clone(),
             namespace: export.fact.namespace,
+            nested_collections_available: true,
             evidence: vec![EvidenceRecord {
                 evidence_id,
                 kind: "definition".to_owned(),

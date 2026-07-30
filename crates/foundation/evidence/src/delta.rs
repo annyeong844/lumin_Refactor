@@ -53,7 +53,14 @@ fn finding_delta_fact(finding: &FindingRecord) -> DeltaFact {
         canonical: finding.finding_id.as_str().as_bytes().to_vec(),
     }]);
     let affected_identities = BTreeSet::from([logical_source(&finding.source_id)]);
-    let evidence_identity = if finding.evidence.is_empty() && finding.relations.is_empty() {
+    let evidence_identity = if !finding.nested_collections_available {
+        DeltaValue::bytes(frame([
+            b"lumin-finding-nested-evidence-unavailable.v1".as_slice(),
+            finding.path.canonical.as_slice(),
+            finding.span.start.to_be_bytes().as_slice(),
+            finding.span.end.to_be_bytes().as_slice(),
+        ]))
+    } else if finding.evidence.is_empty() && finding.relations.is_empty() {
         DeltaValue::bytes(frame([
             finding.path.canonical.as_slice(),
             finding.span.start.to_be_bytes().as_slice(),
@@ -244,6 +251,7 @@ mod tests {
             span: SourceSpan { start: 1, end: 2 },
             exported_name: "dead".to_owned(),
             namespace: SymbolNamespace::Value,
+            nested_collections_available: true,
             evidence: Vec::new(),
             relations: Vec::new(),
         };
@@ -355,6 +363,7 @@ mod tests {
             span: SourceSpan { start: 1, end: 2 },
             exported_name: "dead".to_owned(),
             namespace: SymbolNamespace::Value,
+            nested_collections_available: true,
             evidence: Vec::new(),
             relations: Vec::new(),
         }

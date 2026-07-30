@@ -5,14 +5,90 @@ mod retention;
 pub use gate::*;
 pub use retention::*;
 
+use std::collections::BTreeMap;
+
 use lumin_model::{
-    CapabilityState, EvidenceId, FindingDisposition, FindingId, FindingRelationId, Limitation,
-    LogicalSourceId, RepoPath, SelectedResolutionProfile, SourceSpan, SymbolNamespace,
+    CapabilityState, EvidenceId, FindingDisposition, FindingId, FindingRelationId, GateId,
+    Limitation, LogicalSourceId, RepoPath, SelectedResolutionProfile, SourceSpan, SymbolNamespace,
+    append_length_prefixed, digest_hex,
 };
 use serde::{Deserialize, Serialize};
 
 pub const DEAD_EXPORT_RULE_ID: &str = "dead-code/zero-exact-fan-in.v1";
 pub const DEAD_CODE_CAPABILITY_ID: &str = "dead-code.v1";
+pub const FINDINGS_ORDERING_ID: &str = "findings.v1";
+pub const EVIDENCE_ORDERING_ID: &str = "evidence.v1";
+pub const RELATIONS_ORDERING_ID: &str = "relations.v1";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EvidenceQueryScope {
+    GateAttempt { gate_id: GateId, revision: u64 },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CollectionOrderingId(String);
+
+impl CollectionOrderingId {
+    pub fn from_string(value: String) -> Self {
+        Self(value)
+    }
+
+    pub fn findings() -> Self {
+        Self(FINDINGS_ORDERING_ID.to_owned())
+    }
+
+    pub fn evidence() -> Self {
+        Self(EVIDENCE_ORDERING_ID.to_owned())
+    }
+
+    pub fn relations() -> Self {
+        Self(RELATIONS_ORDERING_ID.to_owned())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PageAnchor(String);
+
+impl PageAnchor {
+    pub fn from_string(value: String) -> Self {
+        Self(value)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EvidenceQuery {
+    pub scope: EvidenceQueryScope,
+    pub finding_id: Option<FindingId>,
+    pub collection_path: String,
+    pub ordering: CollectionOrderingId,
+    pub page_size: usize,
+    pub filters: BTreeMap<String, Vec<String>>,
+    pub anchor: Option<PageAnchor>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EvidencePage<T> {
+    pub query: EvidenceQuery,
+    pub scope_total: usize,
+    pub total: usize,
+    pub items: Vec<T>,
+    pub next_query: Option<EvidenceQuery>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FindingExplanation {
+    pub finding: FindingRecord,
+    pub evidence: EvidencePage<EvidenceRecord>,
+    pub relations: EvidencePage<FindingRelationRecord>,
+}
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -62,6 +138,21 @@ pub struct FindingRelationRecord {
     pub grounding_evidence_id: EvidenceId,
 }
 
+pub fn finding_relation_id(
+    source_finding_id: &FindingId,
+    kind: &str,
+    target_finding_id: &FindingId,
+    grounding_evidence_id: &EvidenceId,
+) -> FindingRelationId {
+    let mut bytes = Vec::new();
+    append_length_prefixed(&mut bytes, b"lumin-finding-relation-id.v1");
+    append_length_prefixed(&mut bytes, source_finding_id.as_str().as_bytes());
+    append_length_prefixed(&mut bytes, kind.as_bytes());
+    append_length_prefixed(&mut bytes, target_finding_id.as_str().as_bytes());
+    append_length_prefixed(&mut bytes, grounding_evidence_id.as_str().as_bytes());
+    FindingRelationId::from_string(format!("relation_{}", digest_hex(&bytes)))
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FindingRecord {
@@ -77,6 +168,8 @@ pub struct FindingRecord {
     pub span: SourceSpan,
     pub exported_name: String,
     pub namespace: SymbolNamespace,
+    #[serde(default)]
+    pub nested_collections_available: bool,
     #[serde(default)]
     pub evidence: Vec<EvidenceRecord>,
     #[serde(default)]
@@ -202,7 +295,7 @@ mod tests {
         };
         let target_finding_id = FindingId::from_string("finding-target".to_owned());
         let relation = FindingRelationRecord {
-            relation_id: FindingRelationId::for_finding(
+            relation_id: finding_relation_id(
                 &finding_id,
                 "related",
                 &target_finding_id,
@@ -225,12 +318,14 @@ mod tests {
             span,
             exported_name: "dead".to_owned(),
             namespace: SymbolNamespace::Value,
+            nested_collections_available: true,
             evidence: vec![evidence.clone(), evidence],
             relations: vec![relation.clone(), relation],
         }];
 
         sort_findings(&mut findings);
 
+        assert!(findings[0].nested_collections_available);
         assert_eq!(findings[0].evidence.len(), 1);
         assert_eq!(findings[0].relations.len(), 1);
         Ok(())

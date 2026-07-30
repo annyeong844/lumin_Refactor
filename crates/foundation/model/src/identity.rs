@@ -65,23 +65,6 @@ impl EvidenceId {
     }
 }
 
-impl FindingRelationId {
-    pub fn for_finding(
-        source_finding_id: &FindingId,
-        kind: &str,
-        target_finding_id: &FindingId,
-        grounding_evidence_id: &EvidenceId,
-    ) -> Self {
-        let mut bytes = Vec::new();
-        append_length_prefixed(&mut bytes, b"lumin-finding-relation-id.v1");
-        append_length_prefixed(&mut bytes, source_finding_id.as_str().as_bytes());
-        append_length_prefixed(&mut bytes, kind.as_bytes());
-        append_length_prefixed(&mut bytes, target_finding_id.as_str().as_bytes());
-        append_length_prefixed(&mut bytes, grounding_evidence_id.as_str().as_bytes());
-        Self(format!("relation_{}", digest_hex(&bytes)))
-    }
-}
-
 impl RepositoryId {
     pub fn for_root(root: &RepositoryRootIdentity) -> Self {
         let mut bytes = Vec::new();

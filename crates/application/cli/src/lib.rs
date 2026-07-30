@@ -424,9 +424,11 @@ fn gate_findings(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput
     require_json(&format)?;
     let revision = revision.ok_or(CliError::RevisionRequired)?;
     let response = match lumin_engine::lookup_gate(root, &gate_id)? {
-        lumin_engine::RecordLookup::Live(gate) => lumin_protocol::to_json(
-            &lumin_protocol::gate_findings_response(&gate, revision, cursor.as_deref())?,
-        )?,
+        lumin_engine::RecordLookup::Live(gate) => {
+            let cursor = lumin_protocol::decode_gate_query_cursor(cursor.as_deref())?;
+            let page = lumin_engine::query_gate_findings(&gate, revision, cursor)?;
+            lumin_protocol::to_json(&lumin_protocol::gate_findings_response(&page)?)?
+        }
         lumin_engine::RecordLookup::Pruning(tombstone) => {
             lumin_protocol::to_json(&lumin_protocol::LookupTombstoneResponseDto::Pruning {
                 tombstone,
@@ -471,13 +473,18 @@ fn gate_explain(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput,
     let finding_id = finding_id.ok_or_else(|| CliError::MissingValue("finding-id".to_owned()))?;
     let response = match lumin_engine::lookup_gate(root, &gate_id)? {
         lumin_engine::RecordLookup::Live(gate) => {
-            lumin_protocol::to_json(&lumin_protocol::gate_explain_response(
+            let evidence_cursor =
+                lumin_protocol::decode_gate_query_cursor(evidence_cursor.as_deref())?;
+            let relations_cursor =
+                lumin_protocol::decode_gate_query_cursor(relations_cursor.as_deref())?;
+            let explanation = lumin_engine::query_gate_explain(
                 &gate,
                 revision,
                 &finding_id,
-                evidence_cursor.as_deref(),
-                relations_cursor.as_deref(),
-            )?)?
+                evidence_cursor,
+                relations_cursor,
+            )?;
+            lumin_protocol::to_json(&lumin_protocol::gate_explain_response(&explanation)?)?
         }
         lumin_engine::RecordLookup::Pruning(tombstone) => {
             lumin_protocol::to_json(&lumin_protocol::LookupTombstoneResponseDto::Pruning {
