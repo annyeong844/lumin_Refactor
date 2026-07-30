@@ -1,6 +1,8 @@
 mod cursor;
+mod gate_query;
 mod retention;
 
+pub use gate_query::*;
 pub use retention::*;
 
 use std::collections::BTreeMap;
@@ -19,7 +21,7 @@ use lumin_model::{
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-pub const FINDINGS_ORDERING: &str = "findings.v1";
+pub const FINDINGS_ORDERING: &str = lumin_evidence::FINDINGS_ORDERING_ID;
 pub const FINDINGS_PAGE_SIZE: usize = 100;
 
 #[derive(Clone, Debug, Serialize)]
@@ -91,8 +93,17 @@ pub struct FindingCollectionDto {
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum ScopeDto {
-    Run { id: RunId },
-    Attempt { id: AttemptId },
+    Run {
+        id: RunId,
+    },
+    Attempt {
+        id: AttemptId,
+    },
+    GateAttempt {
+        #[serde(rename = "gateId")]
+        gate_id: GateId,
+        revision: u64,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -151,6 +162,8 @@ pub struct GateShowResponseDto {
     pub gate_id: GateId,
     pub lifecycle: GateLifecycle,
     pub current_revision: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_revision: Option<u64>,
     pub declared_write_set: Vec<RepoPathDto>,
     pub leased_write_set: Vec<WriteLeaseDto>,
     pub transition_refs: Vec<u64>,
@@ -244,8 +257,14 @@ pub enum ProtocolError {
     CursorPayload(String),
     #[error("cursor scope, filters, or ordering do not match this query")]
     CursorScopeMismatch,
-    #[error("cursor anchor no longer exists in the immutable run")]
+    #[error("cursor anchor no longer exists in the immutable collection")]
     CursorAnchorMissing,
+    #[error("gate revision does not exist: {0}")]
+    GateRevisionMissing(u64),
+    #[error("gate revision has no sealed queryable evidence: {0}")]
+    GateRevisionEvidenceUnavailable(u64),
+    #[error("finding does not exist in the requested immutable scope: {0}")]
+    FindingNotFound(String),
     #[error("cursor repository view is stale")]
     CursorStale,
     #[error("machine response serialization failed: {0}")]
@@ -380,11 +399,33 @@ pub fn gate_mutation_response(result: &GateOperationResult) -> GateMutationRespo
 }
 
 pub fn gate_show_response(gate: &GateRecord) -> GateShowResponseDto {
+    gate_show_response_with_selection(gate, None)
+}
+
+pub fn gate_show_response_at(
+    gate: &GateRecord,
+    revision: u64,
+) -> Result<GateShowResponseDto, ProtocolError> {
+    if !gate
+        .revisions
+        .iter()
+        .any(|candidate| candidate.revision == revision)
+    {
+        return Err(ProtocolError::GateRevisionMissing(revision));
+    }
+    Ok(gate_show_response_with_selection(gate, Some(revision)))
+}
+
+fn gate_show_response_with_selection(
+    gate: &GateRecord,
+    selected_revision: Option<u64>,
+) -> GateShowResponseDto {
     GateShowResponseDto {
         schema_version: "lumin.gate.v1",
         gate_id: gate.gate_id.clone(),
         lifecycle: gate.lifecycle,
         current_revision: gate.current_revision,
+        selected_revision,
         declared_write_set: gate
             .declared_write_set
             .iter()
@@ -677,6 +718,9 @@ mod tests {
                 span: SourceSpan { start: 0, end: 1 },
                 exported_name,
                 namespace: SymbolNamespace::Value,
+                nested_collections_available: true,
+                evidence: Vec::new(),
+                relations: Vec::new(),
             });
         }
         Ok(RunEvidence {

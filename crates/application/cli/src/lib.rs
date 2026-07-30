@@ -8,7 +8,7 @@ use lumin_engine::{
     PostWriteRequest, PreWriteRequest,
 };
 use lumin_model::{
-    GateId, OperationId, RepoPath, ResolutionProfile, RoleOverride, RunId, ScanRole,
+    FindingId, GateId, OperationId, RepoPath, ResolutionProfile, RoleOverride, RunId, ScanRole,
 };
 use lumin_protocol::ProtocolError;
 use thiserror::Error;
@@ -42,6 +42,10 @@ enum CliError {
     UnknownResolutionProfile(String),
     #[error("--run is required")]
     RunRequired,
+    #[error("--revision is required")]
+    RevisionRequired,
+    #[error("invalid gate revision: {0}")]
+    InvalidRevision(String),
     #[error("only --area dead-code is available in this slice")]
     InvalidArea,
     #[error("no completed run exists for this repository")]
@@ -356,6 +360,8 @@ fn gate(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliErro
         .ok_or(CliError::MissingCommand)?;
     match subcommand.as_str() {
         "show" => gate_show(root, arguments),
+        "findings" => gate_findings(root, arguments),
+        "explain" => gate_explain(root, arguments),
         "abandon" => gate_abandon(root, arguments),
         "prune" => retention::gate_prune(root, arguments),
         _ => Err(CliError::UnknownArgument(subcommand)),
@@ -364,13 +370,134 @@ fn gate(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliErro
 
 fn gate_show(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {
     let gate_id = parse_gate_id(arguments.required_utf8("gate-id")?)?;
-    let format = parse_read_format(arguments, "gate show argument")?;
+    let mut revision = None;
+    let mut format = "json".to_owned();
+    while let Some(argument) = arguments.next_utf8("gate show argument")? {
+        match argument.as_str() {
+            "--revision" => {
+                revision = Some(parse_revision(arguments.required_utf8("--revision")?)?);
+            }
+            "--format" => format = arguments.required_utf8("--format")?,
+            _ => return Err(CliError::UnknownArgument(argument)),
+        }
+    }
     require_json(&format)?;
-    let gate = lumin_engine::lookup_gate(root, &gate_id)?;
-    let response = lumin_protocol::gate_lookup_response(gate);
+    let response = match lumin_engine::lookup_gate(root, &gate_id)? {
+        lumin_engine::RecordLookup::Live(gate) => {
+            let response = match revision {
+                Some(revision) => lumin_protocol::gate_show_response_at(&gate, revision)?,
+                None => lumin_protocol::gate_show_response(&gate),
+            };
+            lumin_protocol::GateLookupResponseDto::Live(response)
+        }
+        lumin_engine::RecordLookup::Pruning(tombstone) => {
+            lumin_protocol::GateLookupResponseDto::Tombstone(
+                lumin_protocol::LookupTombstoneResponseDto::Pruning { tombstone },
+            )
+        }
+        lumin_engine::RecordLookup::Pruned(tombstone) => {
+            lumin_protocol::GateLookupResponseDto::Tombstone(
+                lumin_protocol::LookupTombstoneResponseDto::Pruned { tombstone },
+            )
+        }
+    };
     lumin_protocol::to_json(&response)
         .map(success)
         .map_err(Into::into)
+}
+
+fn gate_findings(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {
+    let gate_id = parse_gate_id(arguments.required_utf8("gate-id")?)?;
+    let mut revision = None;
+    let mut cursor = None;
+    let mut format = "json".to_owned();
+    while let Some(argument) = arguments.next_utf8("gate findings argument")? {
+        match argument.as_str() {
+            "--revision" => {
+                revision = Some(parse_revision(arguments.required_utf8("--revision")?)?);
+            }
+            "--cursor" => cursor = Some(arguments.required_utf8("--cursor")?),
+            "--format" => format = arguments.required_utf8("--format")?,
+            _ => return Err(CliError::UnknownArgument(argument)),
+        }
+    }
+    require_json(&format)?;
+    let revision = revision.ok_or(CliError::RevisionRequired)?;
+    let response = match lumin_engine::lookup_gate(root, &gate_id)? {
+        lumin_engine::RecordLookup::Live(gate) => {
+            let cursor = lumin_protocol::decode_gate_query_cursor(cursor.as_deref())?;
+            let page = lumin_engine::query_gate_findings(&gate, revision, cursor)?;
+            lumin_protocol::to_json(&lumin_protocol::gate_findings_response(&page)?)?
+        }
+        lumin_engine::RecordLookup::Pruning(tombstone) => {
+            lumin_protocol::to_json(&lumin_protocol::LookupTombstoneResponseDto::Pruning {
+                tombstone,
+            })?
+        }
+        lumin_engine::RecordLookup::Pruned(tombstone) => {
+            lumin_protocol::to_json(&lumin_protocol::LookupTombstoneResponseDto::Pruned {
+                tombstone,
+            })?
+        }
+    };
+    Ok(success(response))
+}
+
+fn gate_explain(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {
+    let gate_id = parse_gate_id(arguments.required_utf8("gate-id")?)?;
+    let mut revision = None;
+    let mut finding_id = None;
+    let mut evidence_cursor = None;
+    let mut relations_cursor = None;
+    let mut format = "json".to_owned();
+    while let Some(argument) = arguments.next_utf8("gate explain argument")? {
+        match argument.as_str() {
+            "--revision" => {
+                revision = Some(parse_revision(arguments.required_utf8("--revision")?)?);
+            }
+            "--evidence-cursor" => {
+                evidence_cursor = Some(arguments.required_utf8("--evidence-cursor")?);
+            }
+            "--relations-cursor" => {
+                relations_cursor = Some(arguments.required_utf8("--relations-cursor")?);
+            }
+            "--format" => format = arguments.required_utf8("--format")?,
+            _ if argument.starts_with("--") || finding_id.is_some() => {
+                return Err(CliError::UnknownArgument(argument));
+            }
+            _ => finding_id = Some(parse_finding_id(argument)?),
+        }
+    }
+    require_json(&format)?;
+    let revision = revision.ok_or(CliError::RevisionRequired)?;
+    let finding_id = finding_id.ok_or_else(|| CliError::MissingValue("finding-id".to_owned()))?;
+    let response = match lumin_engine::lookup_gate(root, &gate_id)? {
+        lumin_engine::RecordLookup::Live(gate) => {
+            let evidence_cursor =
+                lumin_protocol::decode_gate_query_cursor(evidence_cursor.as_deref())?;
+            let relations_cursor =
+                lumin_protocol::decode_gate_query_cursor(relations_cursor.as_deref())?;
+            let explanation = lumin_engine::query_gate_explain(
+                &gate,
+                revision,
+                &finding_id,
+                evidence_cursor,
+                relations_cursor,
+            )?;
+            lumin_protocol::to_json(&lumin_protocol::gate_explain_response(&explanation)?)?
+        }
+        lumin_engine::RecordLookup::Pruning(tombstone) => {
+            lumin_protocol::to_json(&lumin_protocol::LookupTombstoneResponseDto::Pruning {
+                tombstone,
+            })?
+        }
+        lumin_engine::RecordLookup::Pruned(tombstone) => {
+            lumin_protocol::to_json(&lumin_protocol::LookupTombstoneResponseDto::Pruned {
+                tombstone,
+            })?
+        }
+    };
+    Ok(success(response))
 }
 
 fn gate_abandon(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {
@@ -460,6 +587,18 @@ fn parse_gate_id(value: String) -> Result<GateId, CliError> {
     }
 }
 
+fn parse_finding_id(value: String) -> Result<FindingId, CliError> {
+    if value.is_empty() {
+        Err(CliError::EmptyIdentifier("finding-id".to_owned()))
+    } else {
+        Ok(FindingId::from_string(value))
+    }
+}
+
+fn parse_revision(value: String) -> Result<u64, CliError> {
+    value.parse().map_err(|_| CliError::InvalidRevision(value))
+}
+
 fn decision_exit_code(decision: GateDecision) -> i32 {
     match decision {
         GateDecision::Allow | GateDecision::AllowWithWarnings => 0,
@@ -511,6 +650,8 @@ fn error_exit_code(error: &CliError) -> i32 {
         | CliError::UnknownRole(_)
         | CliError::UnknownResolutionProfile(_)
         | CliError::RunRequired
+        | CliError::RevisionRequired
+        | CliError::InvalidRevision(_)
         | CliError::InvalidArea
         | CliError::NoCompletedRun
         | CliError::EmptyIdentifier(_)

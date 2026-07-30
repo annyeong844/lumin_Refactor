@@ -24,6 +24,8 @@ macro_rules! string_id {
 string_id!(LogicalSourceId);
 string_id!(EmbeddedSourceUnitId);
 string_id!(FindingId);
+string_id!(EvidenceId);
+string_id!(FindingRelationId);
 string_id!(RunId);
 string_id!(AttemptId);
 string_id!(GateId);
@@ -42,6 +44,25 @@ pub enum AttemptStatus {
     Completed,
     Failed,
     Interrupted,
+}
+
+impl EvidenceId {
+    pub fn for_source_span(
+        kind: &str,
+        source_id: &LogicalSourceId,
+        start: u32,
+        end: u32,
+        payload_sha256: &str,
+    ) -> Self {
+        let mut bytes = Vec::new();
+        append_length_prefixed(&mut bytes, b"lumin-evidence-id.v1");
+        append_length_prefixed(&mut bytes, kind.as_bytes());
+        append_length_prefixed(&mut bytes, source_id.as_str().as_bytes());
+        bytes.extend_from_slice(&start.to_be_bytes());
+        bytes.extend_from_slice(&end.to_be_bytes());
+        append_length_prefixed(&mut bytes, payload_sha256.as_bytes());
+        Self(format!("evidence_{}", digest_hex(&bytes)))
+    }
 }
 
 impl RepositoryId {
