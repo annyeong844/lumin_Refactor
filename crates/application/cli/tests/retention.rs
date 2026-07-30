@@ -430,19 +430,26 @@ fn retention_plan_pages_survive_unrelated_repository_mutation_and_reject_cross_p
 
     let mut expected_attempts_and_runs = std::collections::BTreeSet::new();
     let mut catalogued_runs = std::collections::BTreeSet::new();
+    let mut ordered_runs = Vec::new();
     let mut latest_attempt_id = None;
     for catalog_run in catalog_runs {
         let attempt_id = required_string(catalog_run, "/attemptId")?;
         let run_id = required_string(catalog_run, "/runId")?;
+        let sequence = catalog_run
+            .get("sequence")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| std::io::Error::other("run catalog item omitted sequence"))?;
         if run_id == latest_run_id {
             latest_attempt_id = Some(attempt_id.clone());
         }
         assert!(catalogued_runs.insert(run_id.clone()));
+        ordered_runs.push((sequence, attempt_id.clone(), run_id.clone()));
         assert!(expected_attempts_and_runs.insert(("attempt".to_owned(), attempt_id)));
         assert!(expected_attempts_and_runs.insert(("run".to_owned(), run_id)));
     }
     let latest_attempt_id = latest_attempt_id
         .ok_or_else(|| std::io::Error::other("latest run has no catalogued attempt"))?;
+    ordered_runs.sort_by_key(|record| record.0);
     assert_eq!(catalogued_runs, authored_runs);
     assert_eq!(expected_attempts_and_runs.len(), COMPLETED_RUN_COUNT * 2);
     let expected_total = COMPLETED_RUN_COUNT * RETENTION_RECORDS_PER_COMPLETION;
@@ -466,8 +473,13 @@ fn retention_plan_pages_survive_unrelated_repository_mutation_and_reject_cross_p
     );
     let first_cursor = required_string(&first_page, "/nextCursor")?;
 
-    let mut observed_records = std::collections::BTreeSet::new();
-    insert_plan_page_records(&first_page, &mut observed_records)?;
+    let mut observed_record_identities = std::collections::BTreeSet::new();
+    let mut observed_record_order = Vec::new();
+    append_plan_page_records(
+        &first_page,
+        &mut observed_record_identities,
+        &mut observed_record_order,
+    )?;
 
     fs::write(
         root.path().join("lib.ts"),
@@ -536,7 +548,11 @@ fn retention_plan_pages_survive_unrelated_repository_mutation_and_reject_cross_p
             &first_content_identity,
             expected_total,
         )?;
-        insert_plan_page_records(&page, &mut observed_records)?;
+        append_plan_page_records(
+            &page,
+            &mut observed_record_identities,
+            &mut observed_record_order,
+        )?;
         cursor = page
             .get("nextCursor")
             .and_then(Value::as_str)
@@ -549,8 +565,13 @@ fn retention_plan_pages_survive_unrelated_repository_mutation_and_reject_cross_p
     }
 
     assert_eq!(page_count, 2);
+    assert_eq!(
+        observed_record_order,
+        expected_plan_record_order(&ordered_runs, &latest_attempt_id, &latest_run_id),
+        "retention pages did not preserve retention-plan-items.v1 adjacency",
+    );
     assert_plan_record_truth(
-        &observed_records,
+        &observed_record_identities,
         &expected_attempts_and_runs,
         &latest_attempt_id,
         &latest_run_id,
@@ -615,21 +636,26 @@ fn assert_plan_page_scope(
 }
 
 type PlanRecordIdentity = (String, String, String, String);
+type PlanRecordOrder = (String, String, Option<u64>, String, Option<String>);
 
-fn insert_plan_page_records(
+fn append_plan_page_records(
     page: &Value,
-    observed: &mut std::collections::BTreeSet<PlanRecordIdentity>,
+    observed_identities: &mut std::collections::BTreeSet<PlanRecordIdentity>,
+    observed_order: &mut Vec<PlanRecordOrder>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    for record in plan_page_records(page)? {
+    for (identity, order) in plan_page_records(page)? {
         assert!(
-            observed.insert(record.clone()),
-            "retention plan record appeared more than once: {record:?}"
+            observed_identities.insert(identity.clone()),
+            "retention plan record appeared more than once: {identity:?}"
         );
+        observed_order.push(order);
     }
     Ok(())
 }
 
-fn plan_page_records(page: &Value) -> Result<Vec<PlanRecordIdentity>, Box<dyn std::error::Error>> {
+fn plan_page_records(
+    page: &Value,
+) -> Result<Vec<(PlanRecordIdentity, PlanRecordOrder)>, Box<dyn std::error::Error>> {
     let mut records = Vec::new();
     for collection in ["items", "exclusions"] {
         let values = page
@@ -637,20 +663,97 @@ fn plan_page_records(page: &Value) -> Result<Vec<PlanRecordIdentity>, Box<dyn st
             .and_then(Value::as_array)
             .ok_or_else(|| std::io::Error::other(format!("plan page omitted {collection}")))?;
         for value in values {
-            let discriminator = match collection {
-                "items" => required_string(value, "/identitySha256")?,
-                "exclusions" => required_string(value, "/reason/reason")?,
+            let kind = required_string(value, "/kind")?;
+            let record_id = required_string(value, "/recordId")?;
+            let (owning_sequence, discriminator, reason) = match collection {
+                "items" => (
+                    Some(
+                        value
+                            .get("owningSequence")
+                            .and_then(Value::as_u64)
+                            .ok_or_else(|| {
+                                std::io::Error::other("plan item omitted owningSequence")
+                            })?,
+                    ),
+                    required_string(value, "/identitySha256")?,
+                    None,
+                ),
+                "exclusions" => {
+                    let reason = required_string(value, "/reason/reason")?;
+                    (None, reason.clone(), Some(reason))
+                }
                 _ => unreachable!(),
             };
             records.push((
-                collection.to_owned(),
-                required_string(value, "/kind")?,
-                required_string(value, "/recordId")?,
-                discriminator,
+                (
+                    collection.to_owned(),
+                    kind.clone(),
+                    record_id.clone(),
+                    discriminator,
+                ),
+                (
+                    collection.to_owned(),
+                    kind,
+                    owning_sequence,
+                    record_id,
+                    reason,
+                ),
             ));
         }
     }
     Ok(records)
+}
+
+fn expected_plan_record_order(
+    ordered_runs: &[(u64, String, String)],
+    latest_attempt_id: &str,
+    latest_run_id: &str,
+) -> Vec<PlanRecordOrder> {
+    let mut expected = Vec::new();
+    for kind in ["attempt", "run", "evidence"] {
+        for (sequence, attempt_id, run_id) in ordered_runs {
+            if run_id == latest_run_id {
+                continue;
+            }
+            let record_id = match kind {
+                "attempt" => attempt_id.clone(),
+                "run" => run_id.clone(),
+                "evidence" => format!("run:{run_id}/evidence"),
+                _ => unreachable!(),
+            };
+            expected.push((
+                "items".to_owned(),
+                kind.to_owned(),
+                Some(*sequence),
+                record_id,
+                None,
+            ));
+        }
+    }
+    expected.extend([
+        (
+            "exclusions".to_owned(),
+            "attempt".to_owned(),
+            None,
+            latest_attempt_id.to_owned(),
+            Some("latest-attempt".to_owned()),
+        ),
+        (
+            "exclusions".to_owned(),
+            "attempt".to_owned(),
+            None,
+            latest_attempt_id.to_owned(),
+            Some("latest-completed".to_owned()),
+        ),
+        (
+            "exclusions".to_owned(),
+            "run".to_owned(),
+            None,
+            latest_run_id.to_owned(),
+            Some("latest-completed".to_owned()),
+        ),
+    ]);
+    expected
 }
 
 fn assert_plan_record_truth(

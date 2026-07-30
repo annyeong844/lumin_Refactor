@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
@@ -112,12 +113,127 @@ fn gate_mutations_recover_post_commit_delivery_failure_without_duplication()
 }
 
 #[test]
+fn gate_retention_mutations_recover_post_commit_delivery_failure_without_duplication()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    let gate_id = open_gate(root.path(), "lifecycle-gate-retention-open", "src/lib.ts")?;
+    fs::write(root.path().join("src/lib.ts"), "export const value = 3;\n")?;
+    let closed = run(
+        root.path(),
+        &[
+            "post-write",
+            gate_id.as_str(),
+            "--operation-id",
+            "lifecycle-gate-retention-close",
+        ],
+    )?;
+    assert_status(&closed, 0);
+
+    let plan_args = [
+        "gate",
+        "prune",
+        "plan",
+        "--terminal-before",
+        "9000000000000",
+        "--operation-id",
+        "lifecycle-gate-plan",
+    ];
+    assert_delivery_failure(root.path(), &plan_args, "lifecycle-gate-plan")?;
+    let plan_operation =
+        recovered_retention_result(root.path(), "lifecycle-gate-plan", "gate-prune-plan")?;
+    let plan_result = required_value(&plan_operation, "/result")?;
+    let plan_id = required_string(plan_result, "/planId")?;
+    let plan_retry = run(root.path(), &plan_args)?;
+    assert_status(&plan_retry, 0);
+    assert_eq!(
+        json(&plan_retry.stdout)?.pointer("/result"),
+        Some(plan_result)
+    );
+    assert_conflict(run(
+        root.path(),
+        &[
+            "gate",
+            "prune",
+            "plan",
+            "--terminal-before",
+            "8999999999999",
+            "--operation-id",
+            "lifecycle-gate-plan",
+        ],
+    )?);
+    let shown_plan = show_gate_plan(root.path(), &plan_id)?;
+    assert_plan_contains_record(&shown_plan, "items", "gate", &gate_id)?;
+
+    let second_plan_output = run(
+        root.path(),
+        &[
+            "gate",
+            "prune",
+            "plan",
+            "--terminal-before",
+            "9000000000000",
+            "--operation-id",
+            "lifecycle-gate-plan-secondary",
+        ],
+    )?;
+    assert_status(&second_plan_output, 0);
+    let second_plan = required_string(&json(&second_plan_output.stdout)?, "/result/planId")?;
+
+    let confirm_args = [
+        "gate",
+        "prune",
+        "confirm",
+        plan_id.as_str(),
+        "--operation-id",
+        "lifecycle-gate-confirm",
+    ];
+    assert_delivery_failure(root.path(), &confirm_args, "lifecycle-gate-confirm")?;
+    let confirm_operation =
+        recovered_retention_result(root.path(), "lifecycle-gate-confirm", "gate-prune-confirm")?;
+    let confirm_result = required_value(&confirm_operation, "/result")?;
+    assert_eq!(required_string(confirm_result, "/status")?, "pruned");
+    assert_eq!(required_string(confirm_result, "/planId")?, plan_id);
+    let confirm_retry = run(root.path(), &confirm_args)?;
+    assert_status(&confirm_retry, 0);
+    assert_eq!(
+        json(&confirm_retry.stdout)?.pointer("/result"),
+        Some(confirm_result)
+    );
+    assert_conflict(run(
+        root.path(),
+        &[
+            "gate",
+            "prune",
+            "confirm",
+            second_plan.as_str(),
+            "--operation-id",
+            "lifecycle-gate-confirm",
+        ],
+    )?);
+    assert_eq!(
+        required_string(&show_gate_plan(root.path(), &plan_id)?, "/state")?,
+        "pruned"
+    );
+    assert_eq!(
+        required_string(&show_gate_plan(root.path(), &second_plan)?, "/state")?,
+        "prepared"
+    );
+    assert_tombstone(root.path(), &["gate", "show", gate_id.as_str()], &plan_id)?;
+    Ok(())
+}
+
+#[test]
 fn retention_mutations_recover_post_commit_delivery_failure_without_duplication()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = fixture()?;
+    let first_audited = run(root.path(), &["audit", "--jobs", "1"])?;
+    assert_status(&first_audited, 0);
+    let prunable_run_id = field(&first_audited.stdout, "runId")?;
+    fs::write(root.path().join("src/lib.ts"), "export const value = 2;\n")?;
     let audited = run(root.path(), &["audit", "--jobs", "1"])?;
     assert_status(&audited, 0);
     let run_id = field(&audited.stdout, "runId")?;
+    assert_ne!(prunable_run_id, run_id);
 
     let pin_args = [
         "runs",
@@ -128,8 +244,15 @@ fn retention_mutations_recover_post_commit_delivery_failure_without_duplication(
         "--reason",
         "primary review",
     ];
+    let pin_started_unix_millis = unix_millis()?;
     assert_delivery_failure(root.path(), &pin_args, "lifecycle-pin")?;
+    let pin_finished_unix_millis = unix_millis()?;
     let pin_operation = recovered_retention_result(root.path(), "lifecycle-pin", "run-pin")?;
+    let created_unix_millis = required_u64(&pin_operation, "/pin/createdUnixMillis")?;
+    assert!(
+        (pin_started_unix_millis..=pin_finished_unix_millis).contains(&created_unix_millis),
+        "pin timestamp {created_unix_millis} fell outside {pin_started_unix_millis}..={pin_finished_unix_millis}"
+    );
     let first_pin = required_string(&pin_operation, "/pin/pinId")?;
     let pin_retry = run(root.path(), &pin_args)?;
     assert_status(&pin_retry, 0);
@@ -227,11 +350,12 @@ fn retention_mutations_recover_post_commit_delivery_failure_without_duplication(
             "lifecycle-plan",
         ],
     )?);
-    let shown_plan = show_plan(root.path(), &plan_id)?;
+    let shown_plan = show_run_plan(root.path(), &plan_id)?;
     assert_eq!(
         active_pin_ids(&shown_plan, "run", &run_id)?,
         vec![second_pin]
     );
+    assert_plan_contains_record(&shown_plan, "items", "run", &prunable_run_id)?;
 
     let second_plan_output = run(
         root.path(),
@@ -280,13 +404,18 @@ fn retention_mutations_recover_post_commit_delivery_failure_without_duplication(
         ],
     )?);
     assert_eq!(
-        required_string(&show_plan(root.path(), &plan_id)?, "/state")?,
+        required_string(&show_run_plan(root.path(), &plan_id)?, "/state")?,
         "pruned"
     );
     assert_eq!(
-        required_string(&show_plan(root.path(), &second_plan)?, "/state")?,
+        required_string(&show_run_plan(root.path(), &second_plan)?, "/state")?,
         "prepared"
     );
+    assert_tombstone(
+        root.path(),
+        &["overview", "--run", prunable_run_id.as_str()],
+        &plan_id,
+    )?;
     Ok(())
 }
 
@@ -398,10 +527,56 @@ fn assert_gate_history(
     Ok(())
 }
 
-fn show_plan(root: &Path, plan_id: &str) -> Result<Value, Box<dyn std::error::Error>> {
+fn show_run_plan(root: &Path, plan_id: &str) -> Result<Value, Box<dyn std::error::Error>> {
     let shown = run(root, &["runs", "prune", "plan", "show", plan_id])?;
     assert_status(&shown, 0);
     json(&shown.stdout).map_err(Into::into)
+}
+
+fn show_gate_plan(root: &Path, plan_id: &str) -> Result<Value, Box<dyn std::error::Error>> {
+    let shown = run(root, &["gate", "prune", "plan", "show", plan_id])?;
+    assert_status(&shown, 0);
+    json(&shown.stdout).map_err(Into::into)
+}
+
+fn assert_plan_contains_record(
+    plan: &Value,
+    collection: &str,
+    kind: &str,
+    record_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let records = plan
+        .get(collection)
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other(format!("plan omitted {collection}")))?;
+    let matches = records
+        .iter()
+        .filter(|record| {
+            record.get("kind").and_then(Value::as_str) == Some(kind)
+                && record.get("recordId").and_then(Value::as_str) == Some(record_id)
+        })
+        .count();
+    assert_eq!(
+        matches, 1,
+        "expected one {kind} {record_id} in {collection}"
+    );
+    Ok(())
+}
+
+fn assert_tombstone(
+    root: &Path,
+    arguments: &[&str],
+    plan_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let lookup = run(root, arguments)?;
+    assert_status(&lookup, 0);
+    let lookup = json(&lookup.stdout)?;
+    assert_eq!(lookup.get("status").and_then(Value::as_str), Some("pruned"));
+    assert_eq!(
+        lookup.pointer("/tombstone/planId").and_then(Value::as_str),
+        Some(plan_id)
+    );
+    Ok(())
 }
 
 fn active_pin_ids(
@@ -459,6 +634,14 @@ fn required_string(value: &Value, pointer: &str) -> Result<String, Box<dyn std::
         .as_str()
         .map(str::to_owned)
         .ok_or_else(|| std::io::Error::other(format!("{pointer} was not a string")).into())
+}
+
+fn unix_millis() -> Result<u64, Box<dyn std::error::Error>> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)?
+        .as_millis()
+        .try_into()
+        .map_err(Into::into)
 }
 
 fn required_u64(value: &Value, pointer: &str) -> Result<u64, Box<dyn std::error::Error>> {
