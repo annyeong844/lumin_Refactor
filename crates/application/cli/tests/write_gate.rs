@@ -5,6 +5,9 @@ use serde_json::Value;
 
 mod support;
 
+#[path = "write_gate/transition_retention.rs"]
+mod transition_retention;
+
 use support::{assert_status, field, run};
 
 #[test]
@@ -631,63 +634,6 @@ fn physical_alias_members_are_reanalyzed_as_one_leased_payload()
             .pointer("/revisions/1/aliasGroupCount")
             .and_then(Value::as_u64),
         Some(1)
-    );
-    Ok(())
-}
-
-#[test]
-fn disjoint_gates_reconcile_a_terminal_transition_on_retry()
--> Result<(), Box<dyn std::error::Error>> {
-    let root = disjoint_fixture()?;
-    let gate_a = open_gate(root.path(), "op-a-open", "src/a.ts")?;
-    let gate_b = open_gate(root.path(), "op-b-open", "src/b.ts")?;
-
-    fs::write(root.path().join("src/b.ts"), "console.log('b2');\n")?;
-    let pending_a = run(
-        root.path(),
-        &["post-write", &gate_a, "--operation-id", "op-a-pending"],
-    )?;
-    assert_status(&pending_a, 4);
-    assert_eq!(field(&pending_a.stdout, "decision")?, "incomplete");
-    assert!(
-        serde_json::from_str::<Value>(&pending_a.stdout)?
-            .get("signals")
-            .and_then(Value::as_array)
-            .is_some_and(|signals| signals.iter().any(|signal| {
-                signal.get("kind").and_then(Value::as_str) == Some("active-transition-pending")
-            }))
-    );
-
-    let close_b = run(
-        root.path(),
-        &["post-write", &gate_b, "--operation-id", "op-b-close"],
-    )?;
-    assert_status(&close_b, 0);
-    assert_eq!(field(&close_b.stdout, "decision")?, "allow");
-
-    fs::write(root.path().join("src/a.ts"), "console.log('a2');\n")?;
-    let close_a = run(
-        root.path(),
-        &["post-write", &gate_a, "--operation-id", "op-a-close"],
-    )?;
-    assert_status(&close_a, 0);
-    assert_eq!(field(&close_a.stdout, "decision")?, "allow");
-
-    let shown = run(root.path(), &["gate", "show", &gate_a])?;
-    assert_status(&shown, 0);
-    let shown_json: Value = serde_json::from_str(&shown.stdout)?;
-    assert_eq!(
-        shown_json
-            .pointer("/revisions/2/reconciledTransitionSequences/0")
-            .and_then(Value::as_u64),
-        Some(1)
-    );
-    assert_eq!(
-        shown_json
-            .get("transitionRefs")
-            .and_then(Value::as_array)
-            .map(Vec::len),
-        Some(0)
     );
     Ok(())
 }

@@ -85,6 +85,9 @@ jobs:
       - name: Lint retention crash corpus
         run: cargo clippy -p lumin-cli --test retention_faults --features retention-test-crash --locked -- -D warnings
 
+      - name: Lint lifecycle operation idempotency corpus
+        run: cargo clippy -p lumin-cli --test lifecycle_operation_idempotency --features lifecycle-test-fault --locked -- -D warnings
+
       - name: Lint publication crash corpus
         run: cargo clippy -p lumin-cli --test publication_faults --features publication-test-crash --locked -- -D warnings
 
@@ -99,6 +102,9 @@ jobs:
 
       - name: Test retention crash corpus
         run: cargo test -p lumin-cli --test retention_faults --features retention-test-crash --locked
+
+      - name: Test lifecycle operation idempotency corpus
+        run: cargo test -p lumin-cli --test lifecycle_operation_idempotency --features lifecycle-test-fault --locked
 
       - name: Test publication crash corpus
         run: cargo test -p lumin-cli --test publication_faults --features publication-test-crash --locked
