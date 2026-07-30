@@ -665,6 +665,59 @@ fn disjoint_gates_reconcile_a_terminal_transition_on_retry()
     assert_status(&close_b, 0);
     assert_eq!(field(&close_b.stdout, "decision")?, "allow");
 
+    let active_a = run(root.path(), &["gate", "show", &gate_a])?;
+    assert_status(&active_a, 0);
+    let active_a: Value = serde_json::from_str(&active_a.stdout)?;
+    let transition_refs = active_a
+        .get("transitionRefs")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("active gate omitted transitionRefs"))?;
+    assert_eq!(transition_refs.len(), 1);
+    let terminal_transition_sequence = transition_refs[0]
+        .as_u64()
+        .ok_or_else(|| std::io::Error::other("transition reference was not a sequence"))?;
+
+    let protected_plan = prepare_and_show_gate_plan(root.path(), "op-transition-plan-protected")?;
+    assert_eq!(protected_plan.get("total").and_then(Value::as_u64), Some(2));
+    assert_eq!(
+        protected_plan.get("returned").and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        protected_plan
+            .get("items")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(0)
+    );
+    let exclusions = protected_plan
+        .get("exclusions")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("protected gate plan omitted exclusions"))?;
+    let mut active_a_exclusions = exclusions.iter().filter(|exclusion| {
+        exclusion.get("kind").and_then(Value::as_str) == Some("gate")
+            && exclusion.get("recordId").and_then(Value::as_str) == Some(gate_a.as_str())
+            && exclusion.pointer("/reason/reason").and_then(Value::as_str) == Some("active-gate")
+    });
+    assert!(active_a_exclusions.next().is_some());
+    assert!(active_a_exclusions.next().is_none());
+    let mut referenced_b_exclusions = exclusions.iter().filter(|exclusion| {
+        exclusion.get("kind").and_then(Value::as_str) == Some("gate")
+            && exclusion.get("recordId").and_then(Value::as_str) == Some(gate_b.as_str())
+            && exclusion.pointer("/reason/reason").and_then(Value::as_str)
+                == Some("active-transition-reference")
+    });
+    let referenced_b = referenced_b_exclusions
+        .next()
+        .ok_or_else(|| std::io::Error::other("terminal gate omitted transition exclusion"))?;
+    assert!(referenced_b_exclusions.next().is_none());
+    let protecting_gate_ids = referenced_b
+        .pointer("/reason/gateIds")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("transition exclusion omitted gateIds"))?;
+    assert_eq!(protecting_gate_ids.len(), 1);
+    assert_eq!(protecting_gate_ids[0].as_str(), Some(gate_a.as_str()));
+
     fs::write(root.path().join("src/a.ts"), "console.log('a2');\n")?;
     let close_a = run(
         root.path(),
@@ -680,7 +733,7 @@ fn disjoint_gates_reconcile_a_terminal_transition_on_retry()
         shown_json
             .pointer("/revisions/2/reconciledTransitionSequences/0")
             .and_then(Value::as_u64),
-        Some(1)
+        Some(terminal_transition_sequence)
     );
     assert_eq!(
         shown_json
@@ -689,7 +742,114 @@ fn disjoint_gates_reconcile_a_terminal_transition_on_retry()
             .map(Vec::len),
         Some(0)
     );
+
+    let released_plan = prepare_and_show_gate_plan(root.path(), "op-transition-plan-released")?;
+    assert_eq!(
+        released_plan
+            .get("exclusions")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(0)
+    );
+    let items = released_plan
+        .get("items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("released gate plan omitted items"))?;
+    let contains_item = |kind: &str, record_id: &str| {
+        items.iter().any(|item| {
+            item.get("kind").and_then(Value::as_str) == Some(kind)
+                && item.get("recordId").and_then(Value::as_str) == Some(record_id)
+        })
+    };
+    assert!(contains_item("gate", &gate_b));
+    assert!(contains_item(
+        "gate-revision",
+        &format!("gate:{gate_b}/revision:0")
+    ));
+    assert!(contains_item(
+        "gate-revision",
+        &format!("gate:{gate_b}/revision:1")
+    ));
+    assert!(contains_item(
+        "evidence",
+        &format!("gate:{gate_b}/baseline/evidence")
+    ));
+    assert!(contains_item(
+        "evidence",
+        &format!("gate:{gate_b}/revision:1/evidence")
+    ));
+    assert!(contains_item("operation", "op-b-open"));
+    assert!(contains_item("operation", "op-b-close"));
+    assert!(contains_item(
+        "transition",
+        &format!("transition_{terminal_transition_sequence:016x}")
+    ));
     Ok(())
+}
+
+fn prepare_and_show_gate_plan(
+    root: &Path,
+    operation_id: &str,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let prepared = run(
+        root,
+        &[
+            "gate",
+            "prune",
+            "plan",
+            "--terminal-before",
+            "9000000000000",
+            "--operation-id",
+            operation_id,
+        ],
+    )?;
+    assert_status(&prepared, 0);
+    let prepared: Value = serde_json::from_str(&prepared.stdout)?;
+    assert_eq!(
+        prepared.get("schemaVersion").and_then(Value::as_str),
+        Some("lumin.retention-mutation.v1")
+    );
+    let plan_id = prepared
+        .pointer("/result/planId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| std::io::Error::other("gate plan response omitted planId"))?;
+    let content_identity = prepared
+        .pointer("/result/contentIdentity")
+        .and_then(Value::as_str)
+        .ok_or_else(|| std::io::Error::other("gate plan response omitted contentIdentity"))?;
+    let shown = run(root, &["gate", "prune", "plan", "show", plan_id])?;
+    assert_status(&shown, 0);
+    let shown: Value = serde_json::from_str(&shown.stdout)?;
+    assert_eq!(
+        shown.get("schemaVersion").and_then(Value::as_str),
+        Some("lumin.retention-plan.v1")
+    );
+    assert_eq!(shown.get("planId").and_then(Value::as_str), Some(plan_id));
+    assert_eq!(
+        shown.get("contentIdentity").and_then(Value::as_str),
+        Some(content_identity)
+    );
+    assert_eq!(
+        shown.pointer("/scope/kind").and_then(Value::as_str),
+        Some("gates")
+    );
+    assert_eq!(
+        shown
+            .pointer("/scope/terminalBeforeUnixMillis")
+            .and_then(Value::as_u64),
+        Some(9_000_000_000_000)
+    );
+    assert_eq!(shown.get("state").and_then(Value::as_str), Some("prepared"));
+    assert_eq!(
+        shown.get("ordering").and_then(Value::as_str),
+        Some("retention-plan-items.v1")
+    );
+    assert_eq!(shown.get("truncated").and_then(Value::as_bool), Some(false));
+    assert_eq!(
+        shown.get("returned").and_then(Value::as_u64),
+        shown.get("total").and_then(Value::as_u64)
+    );
+    Ok(shown)
 }
 
 #[test]
