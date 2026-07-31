@@ -288,6 +288,28 @@ pub fn capability_id(dialect: SfcDialect) -> &'static str {
     }
 }
 
+/// Returns the ordered compiled dialect initial states.
+/// Vue is Complete (production analysis available), Svelte and Astro are Unavailable.
+pub fn compiled_dialect_states() -> [(SfcDialect, &'static str, CapabilityState); 3] {
+    [
+        (
+            SfcDialect::Vue,
+            VUE_CAPABILITY_ID,
+            CapabilityState::Complete,
+        ),
+        (
+            SfcDialect::Svelte,
+            SVELTE_CAPABILITY_ID,
+            CapabilityState::Unavailable,
+        ),
+        (
+            SfcDialect::Astro,
+            ASTRO_CAPABILITY_ID,
+            CapabilityState::Unavailable,
+        ),
+    ]
+}
+
 fn unavailable(snapshot: &SourceSnapshot, dialect: SfcDialect, name: &str) -> SfcDecomposition {
     SfcDecomposition {
         source_id: snapshot.id.clone(),

@@ -128,3 +128,43 @@ pub fn append_length_prefixed(output: &mut Vec<u8>, value: &[u8]) {
 }
 
 use crate::SymbolNamespace;
+
+/// Build-time identity for the compiled binary. Domain-separated and length-prefixed.
+/// Same metadata + same registry rows intentionally share scope; no artifact-hash claim.
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct BuildIdentity(String);
+
+impl BuildIdentity {
+    /// Derive from package name, version, optional revision, and engine registry contract digest.
+    pub fn derive(
+        package_name: &str,
+        package_version: &str,
+        revision: Option<&str>,
+        registry_contract_digest: &str,
+    ) -> Self {
+        let mut bytes = Vec::new();
+        append_length_prefixed(&mut bytes, b"lumin-build-identity.v1");
+        append_length_prefixed(&mut bytes, package_name.as_bytes());
+        append_length_prefixed(&mut bytes, package_version.as_bytes());
+        match revision {
+            Some(rev) => {
+                bytes.push(1);
+                append_length_prefixed(&mut bytes, rev.as_bytes());
+            }
+            None => {
+                bytes.push(0);
+            }
+        }
+        append_length_prefixed(&mut bytes, registry_contract_digest.as_bytes());
+        Self(format!("build_{}", digest_hex(&bytes)))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn from_string(value: String) -> Self {
+        Self(value)
+    }
+}

@@ -8,7 +8,8 @@ use lumin_engine::{
     PostWriteRequest, PreWriteRequest,
 };
 use lumin_model::{
-    FindingId, GateId, OperationId, RepoPath, ResolutionProfile, RoleOverride, RunId, ScanRole,
+    BuildIdentity, FindingId, GateId, OperationId, RepoPath, ResolutionProfile, RoleOverride,
+    RunId, ScanRole,
 };
 use lumin_protocol::ProtocolError;
 use thiserror::Error;
@@ -63,7 +64,26 @@ enum CliError {
 }
 
 pub fn execute(root: &Path, arguments: Vec<OsString>) -> CommandOutput {
-    match execute_inner(root, arguments) {
+    let build_identity = match default_build_identity() {
+        Ok(identity) => identity,
+        Err(error) => {
+            return CommandOutput {
+                exit_code: error_exit_code(&error),
+                stdout: String::new(),
+                stderr: format!("lumin: {error}\n"),
+            };
+        }
+    };
+    execute_with_build_identity(root, arguments, &build_identity)
+}
+
+/// Execute with an explicit BuildIdentity, for testing cross-build cursor rejection.
+pub fn execute_with_build_identity(
+    root: &Path,
+    arguments: Vec<OsString>,
+    build_identity: &BuildIdentity,
+) -> CommandOutput {
+    match execute_inner(root, arguments, build_identity) {
         Ok(output) => output,
         Err(error) => CommandOutput {
             exit_code: error_exit_code(&error),
@@ -71,6 +91,19 @@ pub fn execute(root: &Path, arguments: Vec<OsString>) -> CommandOutput {
             stderr: format!("lumin: {error}\n"),
         },
     }
+}
+
+fn default_build_identity() -> Result<BuildIdentity, CliError> {
+    let registry = lumin_engine::compiled_capability_registry()?;
+    let revision = option_env!("LUMIN_BUILD_REVISION")
+        .filter(|value| !value.is_empty())
+        .or_else(|| option_env!("GITHUB_SHA").filter(|value| !value.is_empty()));
+    Ok(BuildIdentity::derive(
+        env!("CARGO_PKG_NAME"),
+        env!("CARGO_PKG_VERSION"),
+        revision,
+        registry.contract_digest(),
+    ))
 }
 
 struct CommandSuccess {
@@ -88,7 +121,11 @@ impl From<CommandSuccess> for CommandOutput {
     }
 }
 
-fn execute_inner(root: &Path, arguments: Vec<OsString>) -> Result<CommandOutput, CliError> {
+fn execute_inner(
+    root: &Path,
+    arguments: Vec<OsString>,
+    build_identity: &BuildIdentity,
+) -> Result<CommandOutput, CliError> {
     let mut arguments = Arguments::new(arguments);
     let command = arguments
         .next_utf8("command")?
@@ -98,6 +135,7 @@ fn execute_inner(root: &Path, arguments: Vec<OsString>) -> Result<CommandOutput,
         "overview" => overview(root, &mut arguments).map(success),
         "findings" => findings(root, &mut arguments).map(success),
         "explain" => explain(root, &mut arguments).map(success),
+        "capabilities" => capabilities(root, &mut arguments, build_identity).map(success),
         "pre-write" => pre_write(root, &mut arguments),
         "post-write" => post_write(root, &mut arguments),
         "gate" => gate(root, &mut arguments),
@@ -341,6 +379,68 @@ fn explain(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> {
                 tombstone,
             })
             .map_err(Into::into)
+        }
+    }
+}
+
+fn capabilities(
+    root: &Path,
+    arguments: &mut Arguments,
+    build_identity: &BuildIdentity,
+) -> Result<String, CliError> {
+    let mut run_id = None;
+    let mut cursor = None;
+    let mut format = "json".to_owned();
+    while let Some(argument) = arguments.next_utf8("capabilities argument")? {
+        match argument.as_str() {
+            "--run" => {
+                run_id = Some(RunId::from_string(arguments.required_utf8("--run")?));
+            }
+            "--cursor" => cursor = Some(arguments.required_utf8("--cursor")?),
+            "--format" => format = arguments.required_utf8("--format")?,
+            _ => return Err(CliError::UnknownArgument(argument)),
+        }
+    }
+    require_json(&format)?;
+
+    match run_id {
+        Some(run_id) => {
+            // Run query: requires .lumin
+            match lumin_engine::lookup_run(root, &run_id)? {
+                (repository_id, lumin_engine::RecordLookup::Live((_, evidence))) => {
+                    let decoded_cursor =
+                        lumin_protocol::decode_run_query_cursor(cursor.as_deref())?;
+                    let page = lumin_engine::query_run_capabilities(
+                        &repository_id,
+                        &run_id,
+                        &evidence,
+                        decoded_cursor,
+                    )?;
+                    let response = lumin_protocol::capabilities_response(&page)?;
+                    lumin_protocol::to_json(&response).map_err(Into::into)
+                }
+                (_, lumin_engine::RecordLookup::Pruning(tombstone)) => {
+                    lumin_protocol::to_json(&lumin_protocol::LookupTombstoneResponseDto::Pruning {
+                        tombstone,
+                    })
+                    .map_err(Into::into)
+                }
+                (_, lumin_engine::RecordLookup::Pruned(tombstone)) => {
+                    lumin_protocol::to_json(&lumin_protocol::LookupTombstoneResponseDto::Pruned {
+                        tombstone,
+                    })
+                    .map_err(Into::into)
+                }
+            }
+        }
+        None => {
+            // Binary query: never opens/creates .lumin, repository-independent
+            let registry = lumin_engine::compiled_capability_registry()?;
+            let decoded_cursor = lumin_protocol::decode_binary_query_cursor(cursor.as_deref())?;
+            let page =
+                lumin_engine::query_binary_capabilities(build_identity, &registry, decoded_cursor)?;
+            let response = lumin_protocol::capabilities_response(&page)?;
+            lumin_protocol::to_json(&response).map_err(Into::into)
         }
     }
 }
