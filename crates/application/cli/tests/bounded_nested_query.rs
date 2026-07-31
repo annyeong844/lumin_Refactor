@@ -861,29 +861,30 @@ fn cross_collection_cursor_rejected() -> Result<(), Box<dyn std::error::Error>> 
 
 #[test]
 fn cross_repository_cursor_rejected() -> Result<(), Box<dyn std::error::Error>> {
+    // Two IDENTICAL fixture repositories have the same finding anchors and fresh
+    // repository-local sequences, but distinct physical roots and RepositoryIds.
     let root1 = tempfile::tempdir()?;
     create_fixture(root1.path())?;
 
-    // Create a different fixture in root2 (different content → different run_id)
     let root2 = tempfile::tempdir()?;
-    fs::create_dir_all(root2.path().join("src"))?;
-    fs::write(root2.path().join("src/lib.ts"), "export const other = 1;\n")?;
-    for i in 0..101 {
-        let filename = format!("src/{i:03}.test.ts");
-        let content = format!("export {{ other as other{i:03} }} from './lib.js';\n");
-        fs::write(root2.path().join(&filename), content)?;
-    }
+    create_fixture(root2.path())?;
 
-    // Audit repo 1
+    // Audit both repos with identical content
     let audit1 = support::run(root1.path(), &["audit", "--jobs", "1"])?;
     support::assert_status(&audit1, 0);
     let run_id_1 = support::field(&audit1.stdout, "runId")?;
 
-    // Audit repo 2
     let audit2 = support::run(root2.path(), &["audit", "--jobs", "1"])?;
     support::assert_status(&audit2, 0);
+    let run_id_2 = support::field(&audit2.stdout, "runId")?;
 
-    // Get cursor from repo 1 (required)
+    // Fresh stores allocate the same first repository-local run ID.
+    assert_eq!(
+        run_id_1, run_id_2,
+        "fresh stores must allocate the same first run ID"
+    );
+
+    // Get a run cursor from repo1
     let page1 = support::run(
         root1.path(),
         &["findings", "--run", &run_id_1, "--area", "dead-code"],
@@ -892,23 +893,113 @@ fn cross_repository_cursor_rejected() -> Result<(), Box<dyn std::error::Error>> 
     let p1 = json(&page1.stdout)?;
     let cursor = required_cursor(&p1)?;
 
-    // Use repo-1 cursor in repo-2 with run_id_1 → must fail
-    // (the run doesn't exist in repo 2's store)
+    // Use repo1 run cursor against repo2 with the same run ID → must fail with exit 2 cursor-scope
     let result = support::run(
         root2.path(),
         &[
             "findings",
             "--run",
-            &run_id_1,
+            &run_id_2,
             "--area",
             "dead-code",
             "--cursor",
             cursor,
         ],
     )?;
-    assert_ne!(
-        result.status, 0,
-        "cursor from repo 1 must not work in repo 2"
+    support::assert_status(&result, 2);
+    assert!(
+        result.stderr.contains("cursor scope"),
+        "run cursor from repo1 must be rejected on repo2 with cursor-scope diagnostic: {}",
+        result.stderr
+    );
+
+    // Gate cross-repository test: open identical gates in both repos
+    let pre1 = support::run(
+        root1.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-cross-repo",
+            "--path",
+            "src/lib.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    support::assert_status(&pre1, 0);
+    let pre1_json = json(&pre1.stdout)?;
+    let gate_id_1 = pre1_json
+        .get("gateId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| std::io::Error::other("missing gateId repo1"))?
+        .to_owned();
+
+    let pre2 = support::run(
+        root2.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-cross-repo",
+            "--path",
+            "src/lib.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    support::assert_status(&pre2, 0);
+    let pre2_json = json(&pre2.stdout)?;
+    let gate_id_2 = pre2_json
+        .get("gateId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| std::io::Error::other("missing gateId repo2"))?
+        .to_owned();
+
+    // Fresh stores allocate the same first repository-local gate ID.
+    assert_eq!(
+        gate_id_1, gate_id_2,
+        "fresh stores must allocate the same first gate ID"
+    );
+
+    // Close both gates
+    let post1 = support::run(
+        root1.path(),
+        &["post-write", &gate_id_1, "--operation-id", "op-close-cross"],
+    )?;
+    support::assert_status(&post1, 0);
+
+    let post2 = support::run(
+        root2.path(),
+        &["post-write", &gate_id_2, "--operation-id", "op-close-cross"],
+    )?;
+    support::assert_status(&post2, 0);
+
+    // Get gate cursor from repo1 revision 0
+    let gf1 = support::run(
+        root1.path(),
+        &["gate", "findings", &gate_id_1, "--revision", "0"],
+    )?;
+    support::assert_status(&gf1, 0);
+    let gf1_json = json(&gf1.stdout)?;
+    let gate_cursor = required_cursor(&gf1_json)?;
+
+    // Use repo1 gate cursor against repo2 identical gate → must fail with exit 2 cursor-scope
+    let gate_result = support::run(
+        root2.path(),
+        &[
+            "gate",
+            "findings",
+            &gate_id_2,
+            "--revision",
+            "0",
+            "--cursor",
+            gate_cursor,
+        ],
+    )?;
+    support::assert_status(&gate_result, 2);
+    assert!(
+        gate_result.stderr.contains("cursor scope"),
+        "gate cursor from repo1 must be rejected on repo2 with cursor-scope diagnostic: {}",
+        gate_result.stderr
     );
 
     Ok(())

@@ -5,7 +5,9 @@ use lumin_evidence::{
     EvidenceRecord, FINDINGS_ORDERING_ID, FindingExplanation, FindingRecord, FindingRelationRecord,
     PageAnchor, RELATIONS_ORDERING_ID,
 };
-use lumin_model::{EvidenceId, FindingId, FindingRelationId, GateId, RunId, SourceSpan};
+use lumin_model::{
+    EvidenceId, FindingId, FindingRelationId, GateId, RepositoryId, RunId, SourceSpan,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::cursor::{decode_cursor_payload, encode_cursor_payload};
@@ -75,6 +77,7 @@ pub struct FindingRelationDto {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct GateCursorDto {
     schema_version: String,
+    repository_id: RepositoryId,
     gate_id: GateId,
     revision: u64,
     finding_id: Option<FindingId>,
@@ -89,6 +92,7 @@ struct GateCursorDto {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RunCursorDto {
     schema_version: String,
+    repository_id: RepositoryId,
     run_id: RunId,
     finding_id: Option<FindingId>,
     collection_path: String,
@@ -109,6 +113,7 @@ pub fn decode_run_query_cursor(
             }
             Ok(EvidenceQuery {
                 scope: EvidenceQueryScope::Run {
+                    repository_id: cursor.repository_id,
                     run_id: cursor.run_id,
                 },
                 finding_id: cursor.finding_id,
@@ -133,6 +138,7 @@ pub fn decode_gate_query_cursor(
             }
             Ok(EvidenceQuery {
                 scope: EvidenceQueryScope::GateAttempt {
+                    repository_id: cursor.repository_id,
                     gate_id: cursor.gate_id,
                     revision: cursor.revision,
                 },
@@ -259,8 +265,10 @@ fn relations_response(
 
 fn scope(query: &EvidenceQuery) -> ScopeDto {
     match &query.scope {
-        EvidenceQueryScope::Run { run_id } => ScopeDto::Run { id: run_id.clone() },
-        EvidenceQueryScope::GateAttempt { gate_id, revision } => ScopeDto::GateAttempt {
+        EvidenceQueryScope::Run { run_id, .. } => ScopeDto::Run { id: run_id.clone() },
+        EvidenceQueryScope::GateAttempt {
+            gate_id, revision, ..
+        } => ScopeDto::GateAttempt {
             gate_id: gate_id.clone(),
             revision: *revision,
         },
@@ -285,8 +293,12 @@ fn encode_query_cursor(query: &EvidenceQuery) -> Result<String, ProtocolError> {
         .as_ref()
         .ok_or(ProtocolError::CursorAnchorMissing)?;
     match &query.scope {
-        EvidenceQueryScope::Run { run_id } => encode_cursor_payload(&RunCursorDto {
+        EvidenceQueryScope::Run {
+            repository_id,
+            run_id,
+        } => encode_cursor_payload(&RunCursorDto {
             schema_version: "lumin-run-cursor.v1".to_owned(),
+            repository_id: repository_id.clone(),
             run_id: run_id.clone(),
             finding_id: query.finding_id.clone(),
             collection_path: query.collection_path.clone(),
@@ -295,19 +307,22 @@ fn encode_query_cursor(query: &EvidenceQuery) -> Result<String, ProtocolError> {
             filters: query.filters.clone(),
             last_id: anchor.as_str().to_owned(),
         }),
-        EvidenceQueryScope::GateAttempt { gate_id, revision } => {
-            encode_cursor_payload(&GateCursorDto {
-                schema_version: "lumin-gate-cursor.v1".to_owned(),
-                gate_id: gate_id.clone(),
-                revision: *revision,
-                finding_id: query.finding_id.clone(),
-                collection_path: query.collection_path.clone(),
-                ordering: query.ordering.as_str().to_owned(),
-                page_size: query.page_size,
-                filters: query.filters.clone(),
-                last_id: anchor.as_str().to_owned(),
-            })
-        }
+        EvidenceQueryScope::GateAttempt {
+            repository_id,
+            gate_id,
+            revision,
+        } => encode_cursor_payload(&GateCursorDto {
+            schema_version: "lumin-gate-cursor.v1".to_owned(),
+            repository_id: repository_id.clone(),
+            gate_id: gate_id.clone(),
+            revision: *revision,
+            finding_id: query.finding_id.clone(),
+            collection_path: query.collection_path.clone(),
+            ordering: query.ordering.as_str().to_owned(),
+            page_size: query.page_size,
+            filters: query.filters.clone(),
+            last_id: anchor.as_str().to_owned(),
+        }),
     }
 }
 
@@ -343,14 +358,19 @@ impl From<&FindingRelationRecord> for FindingRelationDto {
 #[cfg(test)]
 mod tests {
     use lumin_evidence::{Confidence, RepoPathProjection, Severity};
-    use lumin_model::{FindingDisposition, LogicalSourceId, SymbolNamespace};
+    use lumin_model::{FindingDisposition, LogicalSourceId, RepositoryId, SymbolNamespace};
 
     use super::*;
+
+    fn test_repository_id() -> RepositoryId {
+        RepositoryId::from_string("repository-test".to_owned())
+    }
 
     #[test]
     fn cursor_codec_preserves_engine_query_contract() -> Result<(), Box<dyn std::error::Error>> {
         let query = EvidenceQuery {
             scope: EvidenceQueryScope::GateAttempt {
+                repository_id: test_repository_id(),
                 gate_id: GateId::from_string("gate-a".to_owned()),
                 revision: 7,
             },
@@ -395,6 +415,7 @@ mod tests {
     {
         let query = EvidenceQuery {
             scope: EvidenceQueryScope::GateAttempt {
+                repository_id: test_repository_id(),
                 gate_id: GateId::from_string("gate-a".to_owned()),
                 revision: 1,
             },

@@ -565,10 +565,15 @@ mod tests {
         FindingRecord, PageAnchor, RepoPathProjection, Severity,
     };
     use lumin_model::{
-        FindingDisposition, GateId, LogicalSourceId, RepoPath, SourceSpan, SymbolNamespace,
+        FindingDisposition, GateId, LogicalSourceId, RepoPath, RepositoryId, SourceSpan,
+        SymbolNamespace,
     };
 
     use super::*;
+
+    fn test_repository_id() -> RepositoryId {
+        RepositoryId::from_string("repository-test".to_owned())
+    }
 
     #[test]
     fn run_findings_response_encodes_run_cursor() -> Result<(), Box<dyn std::error::Error>> {
@@ -576,6 +581,7 @@ mod tests {
         let evidence = evidence_with_findings(101)?;
         let query = EvidenceQuery {
             scope: EvidenceQueryScope::Run {
+                repository_id: test_repository_id(),
                 run_id: run_id.clone(),
             },
             finding_id: None,
@@ -611,6 +617,7 @@ mod tests {
         let evidence = evidence_with_findings(101)?;
         let query = EvidenceQuery {
             scope: EvidenceQueryScope::Run {
+                repository_id: test_repository_id(),
                 run_id: run_id.clone(),
             },
             finding_id: None,
@@ -643,6 +650,7 @@ mod tests {
         // Manually construct a gate cursor by encoding a gate scope page
         let gate_query = EvidenceQuery {
             scope: EvidenceQueryScope::GateAttempt {
+                repository_id: test_repository_id(),
                 gate_id: GateId::from_string("gate-a".to_owned()),
                 revision: 1,
             },
@@ -657,6 +665,7 @@ mod tests {
         let page = EvidencePage {
             query: EvidenceQuery {
                 scope: EvidenceQueryScope::GateAttempt {
+                    repository_id: test_repository_id(),
                     gate_id: GateId::from_string("gate-a".to_owned()),
                     revision: 1,
                 },

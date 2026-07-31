@@ -184,7 +184,7 @@ fn overview(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> 
 
     match run_id {
         Some(run_id) => match lumin_engine::lookup_run(root, &run_id)? {
-            lumin_engine::RecordLookup::Live((record, evidence)) => {
+            (_, lumin_engine::RecordLookup::Live((record, evidence))) => {
                 lumin_protocol::to_json(&lumin_protocol::overview_response(
                     record.attempt_id,
                     record.run_id,
@@ -194,13 +194,13 @@ fn overview(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> 
                 ))
                 .map_err(Into::into)
             }
-            lumin_engine::RecordLookup::Pruning(tombstone) => {
+            (_, lumin_engine::RecordLookup::Pruning(tombstone)) => {
                 lumin_protocol::to_json(&lumin_protocol::LookupTombstoneResponseDto::Pruning {
                     tombstone,
                 })
                 .map_err(Into::into)
             }
-            lumin_engine::RecordLookup::Pruned(tombstone) => {
+            (_, lumin_engine::RecordLookup::Pruned(tombstone)) => {
                 lumin_protocol::to_json(&lumin_protocol::LookupTombstoneResponseDto::Pruned {
                     tombstone,
                 })
@@ -260,19 +260,24 @@ fn findings(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> 
     }
     let run_id = run_id.ok_or(CliError::RunRequired)?;
     match lumin_engine::lookup_run(root, &run_id)? {
-        lumin_engine::RecordLookup::Live((_, evidence)) => {
+        (repository_id, lumin_engine::RecordLookup::Live((_, evidence))) => {
             let decoded_cursor = lumin_protocol::decode_run_query_cursor(cursor.as_deref())?;
-            let page = lumin_engine::query_run_findings(&run_id, &evidence, decoded_cursor)?;
+            let page = lumin_engine::query_run_findings(
+                &repository_id,
+                &run_id,
+                &evidence,
+                decoded_cursor,
+            )?;
             let response = lumin_protocol::run_findings_response(&page)?;
             lumin_protocol::to_json(&response).map_err(Into::into)
         }
-        lumin_engine::RecordLookup::Pruning(tombstone) => {
+        (_, lumin_engine::RecordLookup::Pruning(tombstone)) => {
             lumin_protocol::to_json(&lumin_protocol::LookupTombstoneResponseDto::Pruning {
                 tombstone,
             })
             .map_err(Into::into)
         }
-        lumin_engine::RecordLookup::Pruned(tombstone) => {
+        (_, lumin_engine::RecordLookup::Pruned(tombstone)) => {
             lumin_protocol::to_json(&lumin_protocol::LookupTombstoneResponseDto::Pruned {
                 tombstone,
             })
@@ -309,12 +314,13 @@ fn explain(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> {
     let run_id = run_id.ok_or(CliError::RunRequired)?;
     let finding_id = finding_id.ok_or_else(|| CliError::MissingValue("finding-id".to_owned()))?;
     match lumin_engine::lookup_run(root, &run_id)? {
-        lumin_engine::RecordLookup::Live((_, evidence)) => {
+        (repository_id, lumin_engine::RecordLookup::Live((_, evidence))) => {
             let evidence_cursor =
                 lumin_protocol::decode_run_query_cursor(evidence_cursor.as_deref())?;
             let relations_cursor =
                 lumin_protocol::decode_run_query_cursor(relations_cursor.as_deref())?;
             let explanation = lumin_engine::query_run_explain(
+                &repository_id,
                 &run_id,
                 &evidence,
                 &finding_id,
@@ -324,13 +330,13 @@ fn explain(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> {
             let response = lumin_protocol::run_explain_response(&explanation)?;
             lumin_protocol::to_json(&response).map_err(Into::into)
         }
-        lumin_engine::RecordLookup::Pruning(tombstone) => {
+        (_, lumin_engine::RecordLookup::Pruning(tombstone)) => {
             lumin_protocol::to_json(&lumin_protocol::LookupTombstoneResponseDto::Pruning {
                 tombstone,
             })
             .map_err(Into::into)
         }
-        lumin_engine::RecordLookup::Pruned(tombstone) => {
+        (_, lumin_engine::RecordLookup::Pruned(tombstone)) => {
             lumin_protocol::to_json(&lumin_protocol::LookupTombstoneResponseDto::Pruned {
                 tombstone,
             })
@@ -444,19 +450,19 @@ fn gate_show(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, Cl
     }
     require_json(&format)?;
     let response = match lumin_engine::lookup_gate(root, &gate_id)? {
-        lumin_engine::RecordLookup::Live(gate) => {
+        (_, lumin_engine::RecordLookup::Live(gate)) => {
             let response = match revision {
                 Some(revision) => lumin_protocol::gate_show_response_at(&gate, revision)?,
                 None => lumin_protocol::gate_show_response(&gate),
             };
             lumin_protocol::GateLookupResponseDto::Live(response)
         }
-        lumin_engine::RecordLookup::Pruning(tombstone) => {
+        (_, lumin_engine::RecordLookup::Pruning(tombstone)) => {
             lumin_protocol::GateLookupResponseDto::Tombstone(
                 lumin_protocol::LookupTombstoneResponseDto::Pruning { tombstone },
             )
         }
-        lumin_engine::RecordLookup::Pruned(tombstone) => {
+        (_, lumin_engine::RecordLookup::Pruned(tombstone)) => {
             lumin_protocol::GateLookupResponseDto::Tombstone(
                 lumin_protocol::LookupTombstoneResponseDto::Pruned { tombstone },
             )
@@ -485,17 +491,17 @@ fn gate_findings(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput
     require_json(&format)?;
     let revision = revision.ok_or(CliError::RevisionRequired)?;
     let response = match lumin_engine::lookup_gate(root, &gate_id)? {
-        lumin_engine::RecordLookup::Live(gate) => {
+        (repository_id, lumin_engine::RecordLookup::Live(gate)) => {
             let cursor = lumin_protocol::decode_gate_query_cursor(cursor.as_deref())?;
-            let page = lumin_engine::query_gate_findings(&gate, revision, cursor)?;
+            let page = lumin_engine::query_gate_findings(&repository_id, &gate, revision, cursor)?;
             lumin_protocol::to_json(&lumin_protocol::gate_findings_response(&page)?)?
         }
-        lumin_engine::RecordLookup::Pruning(tombstone) => {
+        (_, lumin_engine::RecordLookup::Pruning(tombstone)) => {
             lumin_protocol::to_json(&lumin_protocol::LookupTombstoneResponseDto::Pruning {
                 tombstone,
             })?
         }
-        lumin_engine::RecordLookup::Pruned(tombstone) => {
+        (_, lumin_engine::RecordLookup::Pruned(tombstone)) => {
             lumin_protocol::to_json(&lumin_protocol::LookupTombstoneResponseDto::Pruned {
                 tombstone,
             })?
@@ -533,12 +539,13 @@ fn gate_explain(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput,
     let revision = revision.ok_or(CliError::RevisionRequired)?;
     let finding_id = finding_id.ok_or_else(|| CliError::MissingValue("finding-id".to_owned()))?;
     let response = match lumin_engine::lookup_gate(root, &gate_id)? {
-        lumin_engine::RecordLookup::Live(gate) => {
+        (repository_id, lumin_engine::RecordLookup::Live(gate)) => {
             let evidence_cursor =
                 lumin_protocol::decode_gate_query_cursor(evidence_cursor.as_deref())?;
             let relations_cursor =
                 lumin_protocol::decode_gate_query_cursor(relations_cursor.as_deref())?;
             let explanation = lumin_engine::query_gate_explain(
+                &repository_id,
                 &gate,
                 revision,
                 &finding_id,
@@ -547,12 +554,12 @@ fn gate_explain(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput,
             )?;
             lumin_protocol::to_json(&lumin_protocol::gate_explain_response(&explanation)?)?
         }
-        lumin_engine::RecordLookup::Pruning(tombstone) => {
+        (_, lumin_engine::RecordLookup::Pruning(tombstone)) => {
             lumin_protocol::to_json(&lumin_protocol::LookupTombstoneResponseDto::Pruning {
                 tombstone,
             })?
         }
-        lumin_engine::RecordLookup::Pruned(tombstone) => {
+        (_, lumin_engine::RecordLookup::Pruned(tombstone)) => {
             lumin_protocol::to_json(&lumin_protocol::LookupTombstoneResponseDto::Pruned {
                 tombstone,
             })?

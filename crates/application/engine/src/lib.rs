@@ -200,14 +200,17 @@ pub fn analyze_repository(
 
 struct RepositoryContext {
     root: PathBuf,
+    repository_id: lumin_model::RepositoryId,
     store: RepositoryStore,
 }
 
 fn open_repository_context(root: &Path) -> Result<RepositoryContext, EngineError> {
     let admission = repository_admission(root)?;
+    let repository_id = admission.binding.repository_id().clone();
     let store = RepositoryStore::open(&admission.canonical_root, &admission.binding)?;
     Ok(RepositoryContext {
         root: admission.canonical_root,
+        repository_id,
         store,
     })
 }
