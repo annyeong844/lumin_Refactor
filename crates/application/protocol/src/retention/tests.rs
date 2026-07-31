@@ -14,7 +14,8 @@ fn retention_cursor_resumes_after_exact_immutable_item() -> Result<(), Box<dyn s
     assert!(first.truncated);
     let cursor = first.next_cursor.as_deref().ok_or("cursor is missing")?;
     let cursor_payload: serde_json::Value = crate::cursor::decode_cursor_payload(cursor)?;
-    assert_eq!(cursor_payload["schemaVersion"], "lumin-retention-cursor.v2");
+    assert_eq!(cursor_payload["schemaVersion"], "lumin-retention-cursor.v3");
+    assert_eq!(cursor_payload["pageSize"], RETENTION_PLAN_PAGE_SIZE);
     let second = retention_plan_response(&plan, Some(cursor))?;
     assert_eq!(second.returned, 1);
     assert!(!second.truncated);
@@ -25,6 +26,24 @@ fn retention_cursor_resumes_after_exact_immutable_item() -> Result<(), Box<dyn s
         RetentionContentIdentity::from_string("retention_content_changed".to_owned());
     assert!(matches!(
         retention_plan_response(&changed, Some(cursor)),
+        Err(ProtocolError::CursorScopeMismatch)
+    ));
+    Ok(())
+}
+
+#[test]
+fn retention_cursor_rejects_existing_nonboundary_anchor() -> Result<(), Box<dyn std::error::Error>>
+{
+    let plan = plan_with_items(101);
+    let cursor = encode_cursor(
+        &plan,
+        RetentionCursorAnchor::Item {
+            item: plan.items[0].clone(),
+        },
+    )?;
+
+    assert!(matches!(
+        retention_plan_response(&plan, Some(&cursor)),
         Err(ProtocolError::CursorScopeMismatch)
     ));
     Ok(())
@@ -80,10 +99,12 @@ fn run_catalog_cursor_binds_repository_revision_and_anchor()
     assert_eq!(first.returned, 100);
     let cursor = first.next_cursor.as_deref().ok_or("cursor is missing")?;
     let cursor_payload: serde_json::Value = crate::cursor::decode_cursor_payload(cursor)?;
-    assert_eq!(cursor_payload["schemaVersion"], "lumin-runs-cursor.v2");
+    assert_eq!(cursor_payload["schemaVersion"], "lumin-runs-cursor.v3");
+    assert_eq!(cursor_payload["pageSize"], RUNS_PAGE_SIZE);
     let decoded = decode_run_catalog_cursor(cursor)?;
     assert_eq!(decoded.repository_id, repository_id);
     assert_eq!(decoded.revision, 7);
+    assert_eq!(decoded.page_size, RUNS_PAGE_SIZE);
     assert_eq!(decoded.last_run, runs[99]);
     let second = run_catalog_response(
         decoded.repository_id,

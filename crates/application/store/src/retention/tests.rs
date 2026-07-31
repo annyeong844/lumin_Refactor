@@ -214,6 +214,7 @@ fn run_catalog_cursor_is_bounded_and_repository_scoped() -> Result<(), Box<dyn s
     let cursor = crate::RunCatalogCursor {
         repository_id: first_page.repository_id.clone(),
         revision: first_page.revision,
+        page_size: 1,
         attempt_id: anchor.attempt_id.clone(),
         run_id: anchor.run_id.clone(),
         sequence: anchor.sequence,
@@ -223,6 +224,23 @@ fn run_catalog_cursor_is_bounded_and_repository_scoped() -> Result<(), Box<dyn s
     assert_eq!(second_page.runs.len(), 1);
     assert!(!second_page.truncated);
     assert_eq!(second_page.runs[0].run_id, older.run_id);
+
+    assert!(matches!(
+        first_store.list_runs(Some(&cursor), 2),
+        Err(StoreError::RunCatalogScopeMismatch)
+    ));
+    let nonboundary = crate::RunCatalogCursor {
+        repository_id: first_page.repository_id.clone(),
+        revision: first_page.revision,
+        page_size: 2,
+        attempt_id: anchor.attempt_id.clone(),
+        run_id: anchor.run_id.clone(),
+        sequence: anchor.sequence,
+    };
+    assert!(matches!(
+        first_store.list_runs(Some(&nonboundary), 2),
+        Err(StoreError::RunCatalogAnchorMissing(_))
+    ));
 
     let second_root = TempDir::new()?;
     let second_store = open_store(second_root.path())?;

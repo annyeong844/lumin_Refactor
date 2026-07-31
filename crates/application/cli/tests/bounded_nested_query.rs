@@ -4,7 +4,12 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde_json::Value;
+
+const CURSOR_BINDING_DOMAIN: &[u8] = b"lumin-cursor-binding.v1\0";
+const CURSOR_BINDING_HEADER_LEN: usize = CURSOR_BINDING_DOMAIN.len() + 1 + 32;
 
 /// Create a fixture with src/lib.ts (1 export with 101 evidence + 101 relations)
 /// and 101 *.test.ts files that each re-export a named export from lib.ts.
@@ -694,7 +699,7 @@ fn cross_gate_cursor_rejected() -> Result<(), Box<dyn std::error::Error>> {
 // ─── Tampered cursor rejection ───────────────────────────────────────────
 
 #[test]
-fn tampered_cursor_rejected() -> Result<(), Box<dyn std::error::Error>> {
+fn structured_tampered_cursor_rejected() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     create_fixture(root.path())?;
 
@@ -702,7 +707,6 @@ fn tampered_cursor_rejected() -> Result<(), Box<dyn std::error::Error>> {
     support::assert_status(&audit, 0);
     let run_id = support::field(&audit.stdout, "runId")?;
 
-    // Obtain a real issued cursor from a paginated findings query
     let page1 = support::run(
         root.path(),
         &["findings", "--run", &run_id, "--area", "dead-code"],
@@ -710,24 +714,26 @@ fn tampered_cursor_rejected() -> Result<(), Box<dyn std::error::Error>> {
     support::assert_status(&page1, 0);
     let p1 = json(&page1.stdout)?;
     let real_cursor = required_cursor(&p1)?;
+    let substituted_id = p1
+        .pointer("/items/0/findingId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| std::io::Error::other("missing substitute finding ID"))?;
 
-    // Deterministically mutate the cursor bytes while keeping valid Base64URL alphabet.
-    // Flip each ASCII byte to its complement within the URL-safe Base64 alphabet
-    // (A-Z, a-z, 0-9, -, _). This preserves structural plausibility but corrupts the payload.
-    let tampered: String = real_cursor
-        .bytes()
-        .map(|byte| match byte {
-            b'A'..=b'Z' => b'A' + (b'Z' - byte),
-            b'a'..=b'z' => b'a' + (b'z' - byte),
-            b'0'..=b'9' => b'0' + (b'9' - byte),
-            b'-' => b'_',
-            b'_' => b'-',
-            other => other,
-        })
-        .map(|byte| byte as char)
-        .collect();
+    // Keep a valid content-binding envelope and valid inner JSON, but replace lastId
+    // with another real row while retaining the binding issued for the original payload.
+    let mut envelope = URL_SAFE_NO_PAD.decode(real_cursor)?;
+    assert!(
+        envelope.starts_with(CURSOR_BINDING_DOMAIN) && envelope.len() >= CURSOR_BINDING_HEADER_LEN,
+        "issued cursor must use the bound envelope"
+    );
+    let mut payload: Value = serde_json::from_slice(&envelope[CURSOR_BINDING_HEADER_LEN..])?;
+    payload["lastId"] = Value::String(substituted_id.to_owned());
+    let changed_payload = serde_json::to_vec(&payload)?;
+    let _: Value = serde_json::from_slice(&changed_payload)?;
+    envelope.truncate(CURSOR_BINDING_HEADER_LEN);
+    envelope.extend_from_slice(&changed_payload);
+    let tampered = URL_SAFE_NO_PAD.encode(envelope);
 
-    // The tampered string is valid Base64URL alphabet but decodes to garbage payload
     let result = support::run(
         root.path(),
         &[
@@ -742,11 +748,12 @@ fn tampered_cursor_rejected() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     support::assert_status(&result, 2);
     assert!(
-        result.stderr.contains("cursor")
-            && (result.stderr.contains("Base64")
-                || result.stderr.contains("payload")
-                || result.stderr.contains("scope")),
-        "tampered cursor must produce cursor encoding/payload/scope diagnostic: {}",
+        result.stdout.is_empty(),
+        "malformed cursor must emit no stdout"
+    );
+    assert!(
+        result.stderr.contains("cursor") && result.stderr.contains("content binding"),
+        "structured payload mutation must produce content-binding diagnostic: {}",
         result.stderr
     );
     Ok(())

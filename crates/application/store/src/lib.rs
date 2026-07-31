@@ -70,6 +70,7 @@ pub struct RunCatalogSnapshot {
 pub struct RunCatalogCursor {
     pub repository_id: RepositoryId,
     pub revision: u64,
+    pub page_size: usize,
     pub attempt_id: AttemptId,
     pub run_id: RunId,
     pub sequence: u64,
@@ -196,7 +197,7 @@ impl RepositoryStore {
             let database = guard.open_database()?;
             let read = database.begin_read()?;
             let revision = read_sequence(&read, "run-catalog")?;
-            validate_run_catalog_cursor(&repository_id, revision, cursor)?;
+            validate_run_catalog_cursor(&repository_id, revision, cursor, limit)?;
             let (total, runs, truncated) = read_run_catalog_page(&read, cursor, limit)?;
             Ok(RunCatalogSnapshot {
                 repository_id,
@@ -288,11 +289,12 @@ fn validate_run_catalog_cursor(
     repository_id: &RepositoryId,
     revision: u64,
     cursor: Option<&RunCatalogCursor>,
+    limit: usize,
 ) -> Result<(), StoreError> {
     let Some(cursor) = cursor else {
         return Ok(());
     };
-    if &cursor.repository_id != repository_id {
+    if &cursor.repository_id != repository_id || cursor.page_size != limit {
         return Err(StoreError::RunCatalogScopeMismatch);
     }
     if cursor.revision != revision {
@@ -318,6 +320,7 @@ fn read_run_catalog_page(
     let mut runs = Vec::with_capacity(limit.saturating_add(1));
     let mut total = 0usize;
     let mut anchor_found = cursor.is_none();
+    let mut resume_offset = None;
     for row in table.iter().map_err(backend_error)?.rev() {
         let (key, value) = row.map_err(backend_error)?;
         let key = key.value();
@@ -350,6 +353,9 @@ fn read_run_catalog_page(
                     && cursor.run_id == record.run_id
                     && cursor.sequence == record.sequence
             });
+            if anchor_found {
+                resume_offset = Some(total);
+            }
             continue;
         }
         if runs.len() <= limit {
@@ -357,6 +363,13 @@ fn read_run_catalog_page(
         }
     }
     if !anchor_found {
+        return Err(StoreError::RunCatalogAnchorMissing(
+            cursor
+                .map(|cursor| cursor.run_id.as_str().to_owned())
+                .unwrap_or_default(),
+        ));
+    }
+    if resume_offset.is_some_and(|offset| !offset.is_multiple_of(limit) || offset >= total) {
         return Err(StoreError::RunCatalogAnchorMissing(
             cursor
                 .map(|cursor| cursor.run_id.as_str().to_owned())

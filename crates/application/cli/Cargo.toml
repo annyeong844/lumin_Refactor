@@ -47,6 +47,7 @@ lumin-protocol = { path = "../protocol" }
 thiserror.workspace = true
 
 [dev-dependencies]
+base64.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 

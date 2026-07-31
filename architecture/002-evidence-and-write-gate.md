@@ -235,6 +235,8 @@ Rules:
 - normalized `filters`, unfiltered `scopeTotal`, matched `total`, `returned`, and `truncated` are mandatory;
 - an omitted CLI filter normalizes to `{}`; `lumin findings` and `lumin gate findings` with `{}` return every canonical finding, including `ReviewOnly`, with no implicit role, framework, severity, or remediation filter;
 - cursors are opaque and bound to protocol schema, immutable scope identity or gate revision, normalized filters, collection path, ordering ID/version, page-size policy, and last semantic key;
+- every encoded cursor carries a versioned, domain-separated SHA-256 content binding over its exact inner payload, and each paging owner accepts an existing anchor only when its one-based resume offset is a nonterminal multiple of the bound page size; changing an issued payload without its matching binding or selecting a nonboundary row is malformed;
+- this deterministic content binding is neither a MAC nor an authentication or authorization credential: a local caller that reimplements the open codec may construct a cursor at another actual legal boundary, which is an equivalent read continuation because the caller may already read or discard preceding pages; no secret, global state, repository access for current-binary queries, or read-time mutation is introduced;
 - every collection uses its owner-defined ordering below; there is no backend-order or generic-finding-order fallback;
 - a current-worktree absence query reports `SnapshotStatus`; drift or unverifiable freshness cannot render a clean claim;
 - an unavailable capability is returned as unavailable, never as an empty item set;
