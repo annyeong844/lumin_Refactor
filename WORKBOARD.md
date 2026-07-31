@@ -56,7 +56,9 @@ Current implementation checkpoint:
 
 - The public `bounded-nested-query` corpus now drives real audit, pre-write, post-write, run findings/explain, and gate findings/explain child processes over 102 canonical findings, 102 evidence rows, and 101 grounded finding relations. Run and exact gate-revision scopes traverse `100+2`, `100+2`, and `100+1` pages exactly once under `findings.v1`, `evidence.v1`, and `relations.v1`; revision-0 cursors remain resumable after revision 1 exists, while run, gate, revision, finding, collection, repository, and tampered-cursor reuse exits malformed without page-one restart. Query policy and continuation anchors are engine-owned, protocol owns distinct `lumin-run-cursor.v1` and `lumin-gate-cursor.v1` codecs, and top-level `lumin explain --run` exposes the same bounded nested contract.
 
-Next implementation order: implement `capabilities-pagination` for current-binary and exact-run capability collections. Exceed the fixed page boundary, traverse every capability ID exactly once under `capabilities.v1`, and prove cursors cannot cross binary build or immutable run scope.
+- The public `capabilities-pagination` corpus now exposes the four grounded compiled capabilities as fixed `3+1` pages under `capabilities.v1`. Current-binary traversal works without `.lumin`, binds `lumin-binary-cursor.v1` to a model-owned semantic `BuildIdentity`, and rejects cross-build or run cursors; exact-run traversal reuses repository-bound `lumin-run-cursor.v1`, survives later audits, and rejects cross-run or cross-repository reuse. Both scopes return each exact capability ID/state once, and duplicate registry or persisted-run IDs hard-stop instead of being silently deduplicated.
+
+Next implementation order: implement `collection-ordering` for findings, evidence, relations, files, runs, active gates, and plan items. Traverse each collection exactly once under its versioned ordering despite randomized insertion and backend traversal.
 
 ## Routing Rules
 

@@ -1,17 +1,20 @@
 use std::collections::BTreeMap;
 
 use lumin_evidence::{
-    CollectionOrderingId, EVIDENCE_ORDERING_ID, EvidencePage, EvidenceQuery, EvidenceQueryScope,
-    EvidenceRecord, FINDINGS_ORDERING_ID, FindingExplanation, FindingRecord, FindingRelationRecord,
-    PageAnchor, RELATIONS_ORDERING_ID,
+    CAPABILITIES_ORDERING_ID, CapabilityRecord, CollectionOrderingId, EVIDENCE_ORDERING_ID,
+    EvidencePage, EvidenceQuery, EvidenceQueryScope, EvidenceRecord, FINDINGS_ORDERING_ID,
+    FindingExplanation, FindingRecord, FindingRelationRecord, PageAnchor, RELATIONS_ORDERING_ID,
 };
 use lumin_model::{
-    EvidenceId, FindingId, FindingRelationId, GateId, RepositoryId, RunId, SourceSpan,
+    BuildIdentity, EvidenceId, FindingId, FindingRelationId, GateId, RepositoryId, RunId,
+    SourceSpan,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::cursor::{decode_cursor_payload, encode_cursor_payload};
-use crate::{FindingCollectionDto, FindingDto, ProtocolError, RepoPathDto, ScopeDto};
+use crate::{
+    CapabilityStateDto, FindingCollectionDto, FindingDto, ProtocolError, RepoPathDto, ScopeDto,
+};
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -102,6 +105,33 @@ struct RunCursorDto {
     last_id: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BinaryCursorDto {
+    schema_version: String,
+    build_id: BuildIdentity,
+    collection_path: String,
+    ordering: String,
+    page_size: usize,
+    filters: BTreeMap<String, Vec<String>>,
+    last_id: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapabilityCollectionDto {
+    pub schema_version: &'static str,
+    pub scope: ScopeDto,
+    pub filters: BTreeMap<String, Vec<String>>,
+    pub ordering: &'static str,
+    pub scope_total: usize,
+    pub total: usize,
+    pub returned: usize,
+    pub truncated: bool,
+    pub next_cursor: Option<String>,
+    pub items: Vec<CapabilityStateDto>,
+}
+
 pub fn decode_run_query_cursor(
     value: Option<&str>,
 ) -> Result<Option<EvidenceQuery>, ProtocolError> {
@@ -117,6 +147,30 @@ pub fn decode_run_query_cursor(
                     run_id: cursor.run_id,
                 },
                 finding_id: cursor.finding_id,
+                collection_path: cursor.collection_path,
+                ordering: CollectionOrderingId::from_string(cursor.ordering),
+                page_size: cursor.page_size,
+                filters: cursor.filters,
+                anchor: Some(PageAnchor::from_string(cursor.last_id)),
+            })
+        })
+        .transpose()
+}
+
+pub fn decode_binary_query_cursor(
+    value: Option<&str>,
+) -> Result<Option<EvidenceQuery>, ProtocolError> {
+    value
+        .map(|value| {
+            let cursor: BinaryCursorDto = decode_cursor_payload(value)?;
+            if cursor.schema_version != "lumin-binary-cursor.v1" {
+                return Err(ProtocolError::CursorScopeMismatch);
+            }
+            Ok(EvidenceQuery {
+                scope: EvidenceQueryScope::Binary {
+                    build_identity: cursor.build_id,
+                },
+                finding_id: None,
                 collection_path: cursor.collection_path,
                 ordering: CollectionOrderingId::from_string(cursor.ordering),
                 page_size: cursor.page_size,
@@ -202,6 +256,24 @@ pub fn run_findings_response(
     })
 }
 
+pub fn capabilities_response(
+    page: &EvidencePage<CapabilityRecord>,
+) -> Result<CapabilityCollectionDto, ProtocolError> {
+    let next_cursor = encode_next_cursor(page.next_query.as_ref())?;
+    Ok(CapabilityCollectionDto {
+        schema_version: "lumin.collection.v1",
+        scope: scope(&page.query),
+        filters: page.query.filters.clone(),
+        ordering: ordering(&page.query, CAPABILITIES_ORDERING_ID)?,
+        scope_total: page.scope_total,
+        total: page.total,
+        returned: page.items.len(),
+        truncated: next_cursor.is_some(),
+        next_cursor,
+        items: page.items.iter().map(CapabilityStateDto::from).collect(),
+    })
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunExplainResponseDto {
@@ -265,6 +337,9 @@ fn relations_response(
 
 fn scope(query: &EvidenceQuery) -> ScopeDto {
     match &query.scope {
+        EvidenceQueryScope::Binary { build_identity } => ScopeDto::Binary {
+            build_id: build_identity.clone(),
+        },
         EvidenceQueryScope::Run { run_id, .. } => ScopeDto::Run { id: run_id.clone() },
         EvidenceQueryScope::GateAttempt {
             gate_id, revision, ..
@@ -293,6 +368,15 @@ fn encode_query_cursor(query: &EvidenceQuery) -> Result<String, ProtocolError> {
         .as_ref()
         .ok_or(ProtocolError::CursorAnchorMissing)?;
     match &query.scope {
+        EvidenceQueryScope::Binary { build_identity } => encode_cursor_payload(&BinaryCursorDto {
+            schema_version: "lumin-binary-cursor.v1".to_owned(),
+            build_id: build_identity.clone(),
+            collection_path: query.collection_path.clone(),
+            ordering: query.ordering.as_str().to_owned(),
+            page_size: query.page_size,
+            filters: query.filters.clone(),
+            last_id: anchor.as_str().to_owned(),
+        }),
         EvidenceQueryScope::Run {
             repository_id,
             run_id,
@@ -351,6 +435,15 @@ impl From<&FindingRelationRecord> for FindingRelationDto {
             kind: relation.kind.clone(),
             target_finding_id: relation.target_finding_id.clone(),
             grounding_evidence_id: relation.grounding_evidence_id.clone(),
+        }
+    }
+}
+
+impl From<&CapabilityRecord> for CapabilityStateDto {
+    fn from(record: &CapabilityRecord) -> Self {
+        Self {
+            capability_id: record.capability_id.clone(),
+            state: record.state,
         }
     }
 }

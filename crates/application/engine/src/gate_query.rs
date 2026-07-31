@@ -14,7 +14,7 @@ const GATE_FINDINGS_PATH: &str = "gate/findings";
 const RUN_FINDINGS_PATH: &str = "run/findings";
 
 #[derive(Debug, Error)]
-pub enum GateEvidenceQueryError {
+pub enum EvidenceQueryError {
     #[error("cursor scope, filters, ordering, or page policy do not match this query")]
     CursorScopeMismatch,
     #[error("cursor anchor no longer exists in the immutable collection")]
@@ -27,6 +27,8 @@ pub enum GateEvidenceQueryError {
     FindingNotFound(String),
     #[error("nested finding collection is unavailable in this persisted record: {0}")]
     NestedCollectionUnavailable(String),
+    #[error("duplicate capability_id in capability collection: {0}")]
+    DuplicateCapabilityId(String),
 }
 
 pub fn query_run_findings(
@@ -66,9 +68,9 @@ pub fn query_run_explain(
         .findings
         .iter()
         .find(|finding| &finding.finding_id == finding_id)
-        .ok_or_else(|| GateEvidenceQueryError::FindingNotFound(finding_id.as_str().to_owned()))?;
+        .ok_or_else(|| EvidenceQueryError::FindingNotFound(finding_id.as_str().to_owned()))?;
     if !finding.nested_collections_available {
-        return Err(GateEvidenceQueryError::NestedCollectionUnavailable(format!(
+        return Err(EvidenceQueryError::NestedCollectionUnavailable(format!(
             "run/findings/{}",
             finding.finding_id.as_str()
         ))
@@ -157,9 +159,9 @@ pub fn query_gate_explain(
         .findings
         .iter()
         .find(|finding| &finding.finding_id == finding_id)
-        .ok_or_else(|| GateEvidenceQueryError::FindingNotFound(finding_id.as_str().to_owned()))?;
+        .ok_or_else(|| EvidenceQueryError::FindingNotFound(finding_id.as_str().to_owned()))?;
     if !finding.nested_collections_available {
-        return Err(GateEvidenceQueryError::NestedCollectionUnavailable(format!(
+        return Err(EvidenceQueryError::NestedCollectionUnavailable(format!(
             "gate/findings/{}",
             finding.finding_id.as_str()
         ))
@@ -205,20 +207,17 @@ pub fn query_gate_explain(
     })
 }
 
-fn revision_evidence(
-    gate: &GateRecord,
-    revision: u64,
-) -> Result<&RunEvidence, GateEvidenceQueryError> {
+fn revision_evidence(gate: &GateRecord, revision: u64) -> Result<&RunEvidence, EvidenceQueryError> {
     let revision_record = gate
         .revisions
         .iter()
         .find(|candidate| candidate.revision == revision)
-        .ok_or(GateEvidenceQueryError::GateRevisionMissing(revision))?;
+        .ok_or(EvidenceQueryError::GateRevisionMissing(revision))?;
     if revision == 0 {
         gate.baseline
             .as_ref()
             .map(|baseline| &baseline.snapshot.evidence)
-            .ok_or(GateEvidenceQueryError::GateRevisionEvidenceUnavailable(
+            .ok_or(EvidenceQueryError::GateRevisionEvidenceUnavailable(
                 revision,
             ))
     } else {
@@ -226,7 +225,7 @@ fn revision_evidence(
             .snapshot
             .as_ref()
             .map(|snapshot| &snapshot.evidence)
-            .ok_or(GateEvidenceQueryError::GateRevisionEvidenceUnavailable(
+            .ok_or(EvidenceQueryError::GateRevisionEvidenceUnavailable(
                 revision,
             ))
     }
@@ -255,10 +254,10 @@ fn expected_query(
     }
 }
 
-fn validated_query(
+pub(crate) fn validated_query(
     cursor: Option<EvidenceQuery>,
     expected: EvidenceQuery,
-) -> Result<EvidenceQuery, GateEvidenceQueryError> {
+) -> Result<EvidenceQuery, EvidenceQueryError> {
     let Some(cursor) = cursor else {
         return Ok(expected);
     };
@@ -270,22 +269,22 @@ fn validated_query(
         || cursor.filters != expected.filters
         || cursor.anchor.is_none()
     {
-        return Err(GateEvidenceQueryError::CursorScopeMismatch);
+        return Err(EvidenceQueryError::CursorScopeMismatch);
     }
     Ok(cursor)
 }
 
-fn page<T: Clone>(
+pub(crate) fn page<T: Clone>(
     items: &[T],
     query: EvidenceQuery,
     semantic_id: impl Fn(&T) -> &str,
-) -> Result<EvidencePage<T>, GateEvidenceQueryError> {
+) -> Result<EvidencePage<T>, EvidenceQueryError> {
     let start = match &query.anchor {
         Some(anchor) => items
             .iter()
             .position(|item| semantic_id(item) == anchor.as_str())
             .map(|index| index + 1)
-            .ok_or(GateEvidenceQueryError::CursorAnchorMissing)?,
+            .ok_or(EvidenceQueryError::CursorAnchorMissing)?,
         None => 0,
     };
     let end = start.saturating_add(query.page_size).min(items.len());
@@ -293,7 +292,7 @@ fn page<T: Clone>(
     let next_query = if end < items.len() {
         let last = page_items
             .last()
-            .ok_or(GateEvidenceQueryError::CursorAnchorMissing)?;
+            .ok_or(EvidenceQueryError::CursorAnchorMissing)?;
         let mut next = query.clone();
         next.anchor = Some(PageAnchor::from_string(semantic_id(last).to_owned()));
         Some(next)
@@ -343,7 +342,7 @@ mod tests {
         assert!(matches!(
             result,
             Err(EngineError::EvidenceQuery(
-                GateEvidenceQueryError::CursorScopeMismatch
+                EvidenceQueryError::CursorScopeMismatch
             ))
         ));
         Ok(())
@@ -387,7 +386,7 @@ mod tests {
         assert!(matches!(
             legacy,
             Err(EngineError::EvidenceQuery(
-                GateEvidenceQueryError::NestedCollectionUnavailable(_)
+                EvidenceQueryError::NestedCollectionUnavailable(_)
             ))
         ));
         Ok(())
@@ -545,7 +544,7 @@ mod tests {
         assert!(matches!(
             result,
             Err(EngineError::EvidenceQuery(
-                GateEvidenceQueryError::CursorScopeMismatch
+                EvidenceQueryError::CursorScopeMismatch
             ))
         ));
 
@@ -555,7 +554,7 @@ mod tests {
         assert!(matches!(
             result,
             Err(EngineError::EvidenceQuery(
-                GateEvidenceQueryError::CursorScopeMismatch
+                EvidenceQueryError::CursorScopeMismatch
             ))
         ));
         Ok(())
@@ -594,7 +593,7 @@ mod tests {
         assert!(matches!(
             result,
             Err(EngineError::EvidenceQuery(
-                GateEvidenceQueryError::NestedCollectionUnavailable(_)
+                EvidenceQueryError::NestedCollectionUnavailable(_)
             ))
         ));
         Ok(())

@@ -8,8 +8,8 @@ pub use retention::*;
 use std::collections::BTreeMap;
 
 use lumin_model::{
-    CapabilityState, EvidenceId, FindingDisposition, FindingId, FindingRelationId, GateId,
-    Limitation, LogicalSourceId, RepoPath, RepositoryId, RunId, SelectedResolutionProfile,
+    BuildIdentity, CapabilityState, EvidenceId, FindingDisposition, FindingId, FindingRelationId,
+    GateId, Limitation, LogicalSourceId, RepoPath, RepositoryId, RunId, SelectedResolutionProfile,
     SourceSpan, SymbolNamespace, append_length_prefixed, digest_hex,
 };
 use serde::{Deserialize, Serialize};
@@ -19,9 +19,13 @@ pub const DEAD_CODE_CAPABILITY_ID: &str = "dead-code.v1";
 pub const FINDINGS_ORDERING_ID: &str = "findings.v1";
 pub const EVIDENCE_ORDERING_ID: &str = "evidence.v1";
 pub const RELATIONS_ORDERING_ID: &str = "relations.v1";
+pub const CAPABILITIES_ORDERING_ID: &str = "capabilities.v1";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EvidenceQueryScope {
+    Binary {
+        build_identity: BuildIdentity,
+    },
     Run {
         repository_id: RepositoryId,
         run_id: RunId,
@@ -51,6 +55,10 @@ impl CollectionOrderingId {
 
     pub fn relations() -> Self {
         Self(RELATIONS_ORDERING_ID.to_owned())
+    }
+
+    pub fn capabilities() -> Self {
+        Self(CAPABILITIES_ORDERING_ID.to_owned())
     }
 
     pub fn as_str(&self) -> &str {

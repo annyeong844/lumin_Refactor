@@ -1,11 +1,16 @@
+mod capability_query;
 mod gate_abandon;
 mod gate_query;
 mod retention;
 mod write_gate;
 
+pub use capability_query::{
+    CompiledCapabilityRegistry, compiled_capability_registry, query_binary_capabilities,
+    query_run_capabilities,
+};
 pub use gate_abandon::{AbandonGateRequest, abandon_gate};
 pub use gate_query::{
-    GateEvidenceQueryError, query_gate_explain, query_gate_findings, query_run_explain,
+    EvidenceQueryError, query_gate_explain, query_gate_findings, query_run_explain,
     query_run_findings,
 };
 pub use lumin_evidence::{
@@ -78,7 +83,7 @@ pub enum EngineError {
     #[error(transparent)]
     Store(#[from] StoreError),
     #[error(transparent)]
-    EvidenceQuery(#[from] GateEvidenceQueryError),
+    EvidenceQuery(#[from] EvidenceQueryError),
     #[error("invalid worker count: {0}")]
     InvalidWorkerCount(usize),
     #[error("failed to build the local worker pool: {0}")]
@@ -112,6 +117,7 @@ pub enum EngineError {
 impl EngineError {
     pub fn lifecycle_exit_code(&self) -> i32 {
         match self {
+            Self::EvidenceQuery(EvidenceQueryError::DuplicateCapabilityId(_)) => 1,
             Self::NoDeclaredPaths
             | Self::EvidenceQuery(_)
             | Self::Store(
@@ -512,11 +518,10 @@ fn extract_facts(sources: &[SourceSnapshot], jobs: usize) -> Result<ExtractionOu
             embedded_by_parent.entry(parent).or_default().push(facts);
         }
 
-        let mut sfc_states = BTreeMap::from([
-            (SfcDialect::Vue, CapabilityState::Complete),
-            (SfcDialect::Svelte, CapabilityState::Unavailable),
-            (SfcDialect::Astro, CapabilityState::Unavailable),
-        ]);
+        let mut sfc_states = BTreeMap::new();
+        for (dialect, _id, initial_state) in lumin_sfc::compiled_dialect_states() {
+            sfc_states.insert(dialect, initial_state);
+        }
         let mut sfc_facts = Vec::new();
         for decomposition in decompositions {
             let parent = decomposition.source_id.clone();
@@ -544,14 +549,11 @@ fn extract_facts(sources: &[SourceSnapshot], jobs: usize) -> Result<ExtractionOu
 }
 
 fn sfc_capability_records(states: &BTreeMap<SfcDialect, CapabilityState>) -> Vec<CapabilityRecord> {
-    [SfcDialect::Vue, SfcDialect::Svelte, SfcDialect::Astro]
+    lumin_sfc::compiled_dialect_states()
         .into_iter()
-        .map(|dialect| CapabilityRecord {
-            capability_id: lumin_sfc::capability_id(dialect).to_owned(),
-            state: states
-                .get(&dialect)
-                .copied()
-                .unwrap_or(CapabilityState::Unavailable),
+        .map(|(dialect, capability_id, initial_state)| CapabilityRecord {
+            capability_id: capability_id.to_owned(),
+            state: states.get(&dialect).copied().unwrap_or(initial_state),
         })
         .collect()
 }

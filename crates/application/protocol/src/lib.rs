@@ -90,6 +90,10 @@ pub struct FindingCollectionDto {
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum ScopeDto {
+    Binary {
+        #[serde(rename = "buildId")]
+        build_id: lumin_model::BuildIdentity,
+    },
     Run {
         id: RunId,
     },
