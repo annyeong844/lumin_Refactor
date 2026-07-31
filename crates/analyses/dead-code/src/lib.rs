@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use lumin_evidence::{
     Confidence, DEAD_CODE_CAPABILITY_ID, DEAD_EXPORT_RULE_ID, EvidenceRecord, FindingRecord,
-    RepoPathProjection, Severity, sort_findings,
+    FindingRelationRecord, RepoPathProjection, Severity, finding_relation_id, sort_findings,
 };
 use lumin_graph::SymbolGraph;
 use lumin_model::{
@@ -98,6 +98,79 @@ pub fn analyze(
             relations: Vec::new(),
         });
     }
+
+    // Build finding_id set for the full canonical findings (all dispositions including ReviewOnly).
+    let canonical_finding_ids: std::collections::BTreeSet<FindingId> =
+        findings.iter().map(|f| f.finding_id.clone()).collect();
+
+    // Add test-only-reexport evidence and relations from graph test re-exports.
+    for test_re_export in &graph.test_re_exports {
+        let Some((importer_path, importer_payload_sha256)) =
+            sources_by_id.get(&test_re_export.importer_source_id)
+        else {
+            continue;
+        };
+
+        // Find the finding for the target export.
+        let target_finding_id = FindingId::for_export(
+            DEAD_EXPORT_RULE_ID,
+            &test_re_export.target.source_id,
+            test_re_export.target.namespace,
+            &test_re_export.target.exported_name,
+        );
+
+        // Find the finding for the re-export alias (the importer's own export).
+        let alias_finding_id = FindingId::for_export(
+            DEAD_EXPORT_RULE_ID,
+            &test_re_export.importer_export.source_id,
+            test_re_export.importer_export.namespace,
+            &test_re_export.importer_export.exported_name,
+        );
+
+        // Create the test-only-reexport evidence grounded by importer source.
+        let reexport_evidence_id = EvidenceId::for_source_span(
+            "test-only-reexport",
+            &test_re_export.importer_source_id,
+            test_re_export.use_span.start,
+            test_re_export.use_span.end,
+            importer_payload_sha256,
+        );
+
+        let reexport_evidence = EvidenceRecord {
+            evidence_id: reexport_evidence_id.clone(),
+            kind: "test-only-reexport".to_owned(),
+            source_id: test_re_export.importer_source_id.clone(),
+            path: RepoPathProjection::from(importer_path),
+            span: test_re_export.use_span.clone(),
+            payload_sha256: importer_payload_sha256.clone(),
+        };
+
+        // Attach evidence row to the target finding.
+        if let Some(target_finding) = findings
+            .iter_mut()
+            .find(|f| f.finding_id == target_finding_id)
+        {
+            target_finding.evidence.push(reexport_evidence);
+
+            // Add relation only if the alias re-export export is itself in the
+            // full canonical findings set.
+            if canonical_finding_ids.contains(&alias_finding_id) {
+                let relation_id = finding_relation_id(
+                    &target_finding_id,
+                    "test-only-reexport",
+                    &alias_finding_id,
+                    &reexport_evidence_id,
+                );
+                target_finding.relations.push(FindingRelationRecord {
+                    relation_id,
+                    kind: "test-only-reexport".to_owned(),
+                    target_finding_id: alias_finding_id,
+                    grounding_evidence_id: reexport_evidence_id,
+                });
+            }
+        }
+    }
+
     sort_findings(&mut findings);
     findings
 }
@@ -296,5 +369,452 @@ fn disposition(generated: bool, vendored: bool) -> FindingDisposition {
         (true, true) => FindingDisposition::ReviewOnly {
             reason: ReviewOnlyReason::GeneratedAndVendoredSource,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lumin_graph::{ExportIdentity, GraphExport, GraphTestReExport, SymbolGraph};
+    use lumin_model::{
+        ExportFact, LogicalSourceId, RepoPath, SourceKind, SourceRoleReason, SourceRoles,
+        SourceSnapshot, SourceSpan, SymbolNamespace,
+    };
+
+    fn make_source(
+        path: &str,
+        test_like: bool,
+    ) -> Result<SourceSnapshot, Box<dyn std::error::Error>> {
+        let repo_path = RepoPath::from_portable(path)?;
+        let roles = SourceRoles {
+            test_like: if test_like {
+                Some(SourceRoleReason::TestPathRule)
+            } else {
+                None
+            },
+            ..Default::default()
+        };
+        Ok(SourceSnapshot::new(
+            repo_path,
+            SourceKind::TypeScript,
+            roles,
+            b"content".to_vec(),
+        ))
+    }
+
+    fn empty_config() -> SemanticConfigSnapshot {
+        SemanticConfigSnapshot::default()
+    }
+
+    #[test]
+    fn test_only_reexport_evidence_attached_to_target_finding()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // prod "src/lib.ts" exports "helper" (zero production fan-in -> candidate finding).
+        // test "test/barrel.ts" re-exports "helper" from "src/lib.ts".
+        let prod_source = make_source("src/lib.ts", false)?;
+        let test_source = make_source("test/barrel.ts", true)?;
+
+        let export_span = SourceSpan { start: 0, end: 20 };
+        let use_span = SourceSpan { start: 0, end: 30 };
+
+        let prod_export = ExportFact {
+            source_id: prod_source.id.clone(),
+            exported_name: "helper".to_owned(),
+            local_name: Some("helper".to_owned()),
+            namespace: SymbolNamespace::Value,
+            span: export_span.clone(),
+        };
+
+        let test_re_export_fact = ExportFact {
+            source_id: test_source.id.clone(),
+            exported_name: "helper".to_owned(),
+            local_name: Some("helper".to_owned()),
+            namespace: SymbolNamespace::Value,
+            span: use_span.clone(),
+        };
+
+        let target_identity = ExportIdentity {
+            source_id: prod_source.id.clone(),
+            namespace: SymbolNamespace::Value,
+            exported_name: "helper".to_owned(),
+        };
+
+        let mut graph = SymbolGraph::default();
+        graph.exports.insert(
+            target_identity.clone(),
+            GraphExport {
+                fact: prod_export.clone(),
+                roles: SourceRoles::default(),
+                production_exact_fan_in: 0,
+                test_exact_fan_in: 1,
+                production_broad_fan_in: 0,
+                test_broad_fan_in: 0,
+                public_surface_count: 0,
+            },
+        );
+        // The test source also has an export (the re-export alias) with zero fan-in.
+        let alias_identity = ExportIdentity {
+            source_id: test_source.id.clone(),
+            namespace: SymbolNamespace::Value,
+            exported_name: "helper".to_owned(),
+        };
+        graph.exports.insert(
+            alias_identity.clone(),
+            GraphExport {
+                fact: test_re_export_fact.clone(),
+                roles: SourceRoles {
+                    test_like: Some(SourceRoleReason::TestPathRule),
+                    ..Default::default()
+                },
+                production_exact_fan_in: 0,
+                test_exact_fan_in: 0,
+                production_broad_fan_in: 0,
+                test_broad_fan_in: 0,
+                public_surface_count: 0,
+            },
+        );
+        graph.test_re_exports.push(GraphTestReExport {
+            importer_source_id: test_source.id.clone(),
+            importer_export: test_re_export_fact.clone(),
+            use_span: use_span.clone(),
+            target: target_identity.clone(),
+        });
+
+        let findings = analyze(
+            &[prod_source.clone(), test_source.clone()],
+            &graph,
+            &empty_config(),
+            &[],
+        );
+
+        // Find the target finding.
+        let target_finding_id = FindingId::for_export(
+            DEAD_EXPORT_RULE_ID,
+            &prod_source.id,
+            SymbolNamespace::Value,
+            "helper",
+        );
+        let target_finding = findings
+            .iter()
+            .find(|f| f.finding_id == target_finding_id)
+            .ok_or("target finding must exist")?;
+
+        // Should have definition evidence + test-only-reexport evidence.
+        assert_eq!(target_finding.evidence.len(), 2);
+        let reexport_ev = target_finding
+            .evidence
+            .iter()
+            .find(|e| e.kind == "test-only-reexport")
+            .ok_or("test-only-reexport evidence must exist")?;
+        assert_eq!(reexport_ev.source_id, test_source.id);
+        assert_eq!(reexport_ev.span, use_span);
+        assert_eq!(reexport_ev.payload_sha256, test_source.payload_sha256);
+
+        // The alias re-export export is itself a canonical finding, so a relation
+        // should exist.
+        assert_eq!(target_finding.relations.len(), 1);
+        let relation = &target_finding.relations[0];
+        assert_eq!(relation.kind, "test-only-reexport");
+        let alias_finding_id = FindingId::for_export(
+            DEAD_EXPORT_RULE_ID,
+            &test_source.id,
+            SymbolNamespace::Value,
+            "helper",
+        );
+        assert_eq!(relation.target_finding_id, alias_finding_id);
+        Ok(())
+    }
+
+    #[test]
+    fn test_only_reexport_no_relation_when_alias_not_in_findings()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // If the alias re-export export is NOT in the canonical finding set
+        // (e.g. it has production fan-in), no relation should be added.
+        let prod_source = make_source("src/lib.ts", false)?;
+        let test_source = make_source("test/barrel.ts", true)?;
+
+        let export_span = SourceSpan { start: 0, end: 20 };
+        let use_span = SourceSpan { start: 0, end: 30 };
+
+        let prod_export = ExportFact {
+            source_id: prod_source.id.clone(),
+            exported_name: "helper".to_owned(),
+            local_name: Some("helper".to_owned()),
+            namespace: SymbolNamespace::Value,
+            span: export_span.clone(),
+        };
+
+        let test_re_export_fact = ExportFact {
+            source_id: test_source.id.clone(),
+            exported_name: "helper".to_owned(),
+            local_name: Some("helper".to_owned()),
+            namespace: SymbolNamespace::Value,
+            span: use_span.clone(),
+        };
+
+        let target_identity = ExportIdentity {
+            source_id: prod_source.id.clone(),
+            namespace: SymbolNamespace::Value,
+            exported_name: "helper".to_owned(),
+        };
+
+        let mut graph = SymbolGraph::default();
+        graph.exports.insert(
+            target_identity.clone(),
+            GraphExport {
+                fact: prod_export.clone(),
+                roles: SourceRoles::default(),
+                production_exact_fan_in: 0,
+                test_exact_fan_in: 1,
+                production_broad_fan_in: 0,
+                test_broad_fan_in: 0,
+                public_surface_count: 0,
+            },
+        );
+        // The alias has production fan-in -> not a candidate.
+        let alias_identity = ExportIdentity {
+            source_id: test_source.id.clone(),
+            namespace: SymbolNamespace::Value,
+            exported_name: "helper".to_owned(),
+        };
+        graph.exports.insert(
+            alias_identity.clone(),
+            GraphExport {
+                fact: test_re_export_fact.clone(),
+                roles: SourceRoles {
+                    test_like: Some(SourceRoleReason::TestPathRule),
+                    ..Default::default()
+                },
+                production_exact_fan_in: 1,
+                test_exact_fan_in: 0,
+                production_broad_fan_in: 0,
+                test_broad_fan_in: 0,
+                public_surface_count: 0,
+            },
+        );
+        graph.test_re_exports.push(GraphTestReExport {
+            importer_source_id: test_source.id.clone(),
+            importer_export: test_re_export_fact.clone(),
+            use_span: use_span.clone(),
+            target: target_identity.clone(),
+        });
+
+        let findings = analyze(
+            &[prod_source.clone(), test_source.clone()],
+            &graph,
+            &empty_config(),
+            &[],
+        );
+
+        let target_finding_id = FindingId::for_export(
+            DEAD_EXPORT_RULE_ID,
+            &prod_source.id,
+            SymbolNamespace::Value,
+            "helper",
+        );
+        let target_finding = findings
+            .iter()
+            .find(|f| f.finding_id == target_finding_id)
+            .ok_or("target finding must exist")?;
+
+        // Evidence should still be present.
+        assert!(
+            target_finding
+                .evidence
+                .iter()
+                .any(|e| e.kind == "test-only-reexport")
+        );
+
+        // But no relation since alias is not in the canonical finding set (has production fan-in).
+        assert!(target_finding.relations.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_only_reexport_not_attached_when_target_has_production_fan_in()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // If the target export has production fan-in, it's not in findings at all.
+        let prod_source = make_source("src/lib.ts", false)?;
+        let test_source = make_source("test/barrel.ts", true)?;
+
+        let export_span = SourceSpan { start: 0, end: 20 };
+        let use_span = SourceSpan { start: 0, end: 30 };
+
+        let prod_export = ExportFact {
+            source_id: prod_source.id.clone(),
+            exported_name: "helper".to_owned(),
+            local_name: Some("helper".to_owned()),
+            namespace: SymbolNamespace::Value,
+            span: export_span.clone(),
+        };
+
+        let test_re_export_fact = ExportFact {
+            source_id: test_source.id.clone(),
+            exported_name: "helper".to_owned(),
+            local_name: Some("helper".to_owned()),
+            namespace: SymbolNamespace::Value,
+            span: use_span.clone(),
+        };
+
+        let target_identity = ExportIdentity {
+            source_id: prod_source.id.clone(),
+            namespace: SymbolNamespace::Value,
+            exported_name: "helper".to_owned(),
+        };
+
+        let mut graph = SymbolGraph::default();
+        // Target has production fan-in, so it won't be a finding.
+        graph.exports.insert(
+            target_identity.clone(),
+            GraphExport {
+                fact: prod_export,
+                roles: SourceRoles::default(),
+                production_exact_fan_in: 1,
+                test_exact_fan_in: 1,
+                production_broad_fan_in: 0,
+                test_broad_fan_in: 0,
+                public_surface_count: 0,
+            },
+        );
+        graph.test_re_exports.push(GraphTestReExport {
+            importer_source_id: test_source.id.clone(),
+            importer_export: test_re_export_fact,
+            use_span: use_span.clone(),
+            target: target_identity,
+        });
+
+        let findings = analyze(&[prod_source, test_source], &graph, &empty_config(), &[]);
+
+        // No finding for the target, so no test-only-reexport evidence attached.
+        let target_finding_id = FindingId::for_export(
+            DEAD_EXPORT_RULE_ID,
+            &LogicalSourceId::from_path(&RepoPath::from_portable("src/lib.ts")?),
+            SymbolNamespace::Value,
+            "helper",
+        );
+        assert!(
+            findings
+                .iter()
+                .find(|f| f.finding_id == target_finding_id)
+                .is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_only_reexport_relation_includes_review_only_alias()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // A ReviewOnly finding (generated/vendored) must still be relation-eligible.
+        // The canonical finding set includes ALL dispositions.
+        let prod_source = make_source("src/lib.ts", false)?;
+        let test_source = make_source("test/barrel.ts", true)?;
+
+        let export_span = SourceSpan { start: 0, end: 20 };
+        let use_span = SourceSpan { start: 0, end: 30 };
+
+        let prod_export = ExportFact {
+            source_id: prod_source.id.clone(),
+            exported_name: "helper".to_owned(),
+            local_name: Some("helper".to_owned()),
+            namespace: SymbolNamespace::Value,
+            span: export_span.clone(),
+        };
+
+        let test_re_export_fact = ExportFact {
+            source_id: test_source.id.clone(),
+            exported_name: "helper".to_owned(),
+            local_name: Some("helper".to_owned()),
+            namespace: SymbolNamespace::Value,
+            span: use_span.clone(),
+        };
+
+        let target_identity = ExportIdentity {
+            source_id: prod_source.id.clone(),
+            namespace: SymbolNamespace::Value,
+            exported_name: "helper".to_owned(),
+        };
+
+        let mut graph = SymbolGraph::default();
+        graph.exports.insert(
+            target_identity.clone(),
+            GraphExport {
+                fact: prod_export.clone(),
+                roles: SourceRoles::default(),
+                production_exact_fan_in: 0,
+                test_exact_fan_in: 1,
+                production_broad_fan_in: 0,
+                test_broad_fan_in: 0,
+                public_surface_count: 0,
+            },
+        );
+        // The alias is a generated source (ReviewOnly disposition) with zero fan-in.
+        let alias_identity = ExportIdentity {
+            source_id: test_source.id.clone(),
+            namespace: SymbolNamespace::Value,
+            exported_name: "helper".to_owned(),
+        };
+        graph.exports.insert(
+            alias_identity.clone(),
+            GraphExport {
+                fact: test_re_export_fact.clone(),
+                roles: SourceRoles {
+                    test_like: Some(SourceRoleReason::TestPathRule),
+                    generated: Some(SourceRoleReason::TestPathRule),
+                    ..Default::default()
+                },
+                production_exact_fan_in: 0,
+                test_exact_fan_in: 0,
+                production_broad_fan_in: 0,
+                test_broad_fan_in: 0,
+                public_surface_count: 0,
+            },
+        );
+        graph.test_re_exports.push(GraphTestReExport {
+            importer_source_id: test_source.id.clone(),
+            importer_export: test_re_export_fact.clone(),
+            use_span: use_span.clone(),
+            target: target_identity.clone(),
+        });
+
+        let findings = analyze(
+            &[prod_source.clone(), test_source.clone()],
+            &graph,
+            &empty_config(),
+            &[],
+        );
+
+        // The alias finding exists with ReviewOnly disposition (generated source).
+        let alias_finding_id = FindingId::for_export(
+            DEAD_EXPORT_RULE_ID,
+            &test_source.id,
+            SymbolNamespace::Value,
+            "helper",
+        );
+        let alias_finding = findings
+            .iter()
+            .find(|f| f.finding_id == alias_finding_id)
+            .ok_or("alias ReviewOnly finding must exist")?;
+        assert!(matches!(
+            alias_finding.disposition,
+            FindingDisposition::ReviewOnly { .. }
+        ));
+
+        // The target finding must have a relation pointing to the ReviewOnly alias.
+        let target_finding_id = FindingId::for_export(
+            DEAD_EXPORT_RULE_ID,
+            &prod_source.id,
+            SymbolNamespace::Value,
+            "helper",
+        );
+        let target_finding = findings
+            .iter()
+            .find(|f| f.finding_id == target_finding_id)
+            .ok_or("target finding must exist")?;
+        assert_eq!(target_finding.relations.len(), 1);
+        assert_eq!(
+            target_finding.relations[0].target_finding_id,
+            alias_finding_id
+        );
+        Ok(())
     }
 }

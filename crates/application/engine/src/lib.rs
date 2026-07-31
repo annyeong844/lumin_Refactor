@@ -4,7 +4,10 @@ mod retention;
 mod write_gate;
 
 pub use gate_abandon::{AbandonGateRequest, abandon_gate};
-pub use gate_query::{GateEvidenceQueryError, query_gate_explain, query_gate_findings};
+pub use gate_query::{
+    GateEvidenceQueryError, query_gate_explain, query_gate_findings, query_run_explain,
+    query_run_findings,
+};
 pub use lumin_evidence::{
     GateDecision, GateOperationResult, RecordLookup, RetentionMutationResult, RetentionPlanScope,
 };
@@ -197,14 +200,17 @@ pub fn analyze_repository(
 
 struct RepositoryContext {
     root: PathBuf,
+    repository_id: lumin_model::RepositoryId,
     store: RepositoryStore,
 }
 
 fn open_repository_context(root: &Path) -> Result<RepositoryContext, EngineError> {
     let admission = repository_admission(root)?;
+    let repository_id = admission.binding.repository_id().clone();
     let store = RepositoryStore::open(&admission.canonical_root, &admission.binding)?;
     Ok(RepositoryContext {
         root: admission.canonical_root,
+        repository_id,
         store,
     })
 }

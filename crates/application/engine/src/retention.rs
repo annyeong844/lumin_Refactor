@@ -4,7 +4,7 @@ use lumin_evidence::{
     LifecycleOperationRecord, RecordLookup, RetentionMutationResult, RetentionPlanRecord,
     RetentionPlanScope, RunPinRecord,
 };
-use lumin_model::{GateId, OperationId, PinId, RetentionPlanId, RunId};
+use lumin_model::{GateId, OperationId, PinId, RepositoryId, RetentionPlanId, RunId};
 use lumin_store::RetentionPlanRequest as StoreRetentionPlanRequest;
 
 use crate::{EngineError, open_repository_context};
@@ -86,22 +86,25 @@ pub fn unpin_run(request: &UnpinRunRequest) -> Result<RunPinRecord, EngineError>
 pub fn lookup_run(
     root: &Path,
     run_id: &RunId,
-) -> Result<RecordLookup<(lumin_store::RunCatalogRecord, lumin_evidence::RunEvidence)>, EngineError>
-{
-    open_repository_context(root)?
-        .store
-        .lookup_run(run_id)
-        .map_err(Into::into)
+) -> Result<
+    (
+        RepositoryId,
+        RecordLookup<(lumin_store::RunCatalogRecord, lumin_evidence::RunEvidence)>,
+    ),
+    EngineError,
+> {
+    let context = open_repository_context(root)?;
+    let lookup = context.store.lookup_run(run_id)?;
+    Ok((context.repository_id, lookup))
 }
 
 pub fn lookup_gate(
     root: &Path,
     gate_id: &GateId,
-) -> Result<RecordLookup<lumin_evidence::GateRecord>, EngineError> {
-    open_repository_context(root)?
-        .store
-        .lookup_gate(gate_id)
-        .map_err(Into::into)
+) -> Result<(RepositoryId, RecordLookup<lumin_evidence::GateRecord>), EngineError> {
+    let context = open_repository_context(root)?;
+    let lookup = context.store.lookup_gate(gate_id)?;
+    Ok((context.repository_id, lookup))
 }
 
 pub fn load_lifecycle_operation(

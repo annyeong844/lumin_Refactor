@@ -2,7 +2,7 @@
 
 Status: Phase 1 foundation implementation active
 
-Revision: 2026-07-30
+Revision: 2026-07-31
 
 ## One-Line Purpose
 
@@ -54,7 +54,9 @@ Current implementation checkpoint:
 
 - The public `gate-reopen-after-process-exit` corpus now opens and closes one gate through separate CLI child processes, reopens exact committed revision 1 through `gate show --revision`, and traverses 101 immutable findings across the fixed 100-record boundary. After an unrelated audit and a second gate transition, the original cursor resumes its exact gate/revision scope while cross-gate, cross-revision, and run-cursor reuse exits malformed. `gate explain` projects the selected finding's stable source/payload-bound evidence and bounded evidence/relations envelopes; owner canonicalization sorts and deduplicates identical nested rows before persistence and delta identity.
 
-Next implementation order: implement `bounded-nested-query` through public run and gate-revision explain paths. Exceed the fixed page boundary for top-level findings and one finding's evidence/relations, traverse every stable ID exactly once, and prove that cursors cannot cross run, gate, revision, finding, collection path, ordering, or repository mutation scope.
+- The public `bounded-nested-query` corpus now drives real audit, pre-write, post-write, run findings/explain, and gate findings/explain child processes over 102 canonical findings, 102 evidence rows, and 101 grounded finding relations. Run and exact gate-revision scopes traverse `100+2`, `100+2`, and `100+1` pages exactly once under `findings.v1`, `evidence.v1`, and `relations.v1`; revision-0 cursors remain resumable after revision 1 exists, while run, gate, revision, finding, collection, repository, and tampered-cursor reuse exits malformed without page-one restart. Query policy and continuation anchors are engine-owned, protocol owns distinct `lumin-run-cursor.v1` and `lumin-gate-cursor.v1` codecs, and top-level `lumin explain --run` exposes the same bounded nested contract.
+
+Next implementation order: implement `capabilities-pagination` for current-binary and exact-run capability collections. Exceed the fixed page boundary, traverse every capability ID exactly once under `capabilities.v1`, and prove cursors cannot cross binary build or immutable run scope.
 
 ## Routing Rules
 
