@@ -138,7 +138,7 @@ pub fn decode_run_query_cursor(
     value
         .map(|value| {
             let cursor: RunCursorDto = decode_cursor_payload(value)?;
-            if cursor.schema_version != "lumin-run-cursor.v1" {
+            if cursor.schema_version != "lumin-run-cursor.v2" {
                 return Err(ProtocolError::CursorScopeMismatch);
             }
             Ok(EvidenceQuery {
@@ -163,7 +163,7 @@ pub fn decode_binary_query_cursor(
     value
         .map(|value| {
             let cursor: BinaryCursorDto = decode_cursor_payload(value)?;
-            if cursor.schema_version != "lumin-binary-cursor.v1" {
+            if cursor.schema_version != "lumin-binary-cursor.v2" {
                 return Err(ProtocolError::CursorScopeMismatch);
             }
             Ok(EvidenceQuery {
@@ -187,7 +187,7 @@ pub fn decode_gate_query_cursor(
     value
         .map(|value| {
             let cursor: GateCursorDto = decode_cursor_payload(value)?;
-            if cursor.schema_version != "lumin-gate-cursor.v1" {
+            if cursor.schema_version != "lumin-gate-cursor.v2" {
                 return Err(ProtocolError::CursorScopeMismatch);
             }
             Ok(EvidenceQuery {
@@ -369,7 +369,7 @@ fn encode_query_cursor(query: &EvidenceQuery) -> Result<String, ProtocolError> {
         .ok_or(ProtocolError::CursorAnchorMissing)?;
     match &query.scope {
         EvidenceQueryScope::Binary { build_identity } => encode_cursor_payload(&BinaryCursorDto {
-            schema_version: "lumin-binary-cursor.v1".to_owned(),
+            schema_version: "lumin-binary-cursor.v2".to_owned(),
             build_id: build_identity.clone(),
             collection_path: query.collection_path.clone(),
             ordering: query.ordering.as_str().to_owned(),
@@ -381,7 +381,7 @@ fn encode_query_cursor(query: &EvidenceQuery) -> Result<String, ProtocolError> {
             repository_id,
             run_id,
         } => encode_cursor_payload(&RunCursorDto {
-            schema_version: "lumin-run-cursor.v1".to_owned(),
+            schema_version: "lumin-run-cursor.v2".to_owned(),
             repository_id: repository_id.clone(),
             run_id: run_id.clone(),
             finding_id: query.finding_id.clone(),
@@ -396,7 +396,7 @@ fn encode_query_cursor(query: &EvidenceQuery) -> Result<String, ProtocolError> {
             gate_id,
             revision,
         } => encode_cursor_payload(&GateCursorDto {
-            schema_version: "lumin-gate-cursor.v1".to_owned(),
+            schema_version: "lumin-gate-cursor.v2".to_owned(),
             repository_id: repository_id.clone(),
             gate_id: gate_id.clone(),
             revision: *revision,

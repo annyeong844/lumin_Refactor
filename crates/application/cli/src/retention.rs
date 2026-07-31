@@ -38,6 +38,7 @@ fn list(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliErro
         .map(|cursor| lumin_engine::RunCatalogCursor {
             repository_id: cursor.repository_id,
             revision: cursor.revision,
+            page_size: cursor.page_size,
             attempt_id: cursor.last_run.attempt_id,
             run_id: cursor.last_run.run_id,
             sequence: cursor.last_run.sequence,

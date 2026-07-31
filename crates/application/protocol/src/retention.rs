@@ -98,6 +98,7 @@ struct RetentionCursorDto {
     plan_id: RetentionPlanId,
     content_identity: RetentionContentIdentity,
     ordering: String,
+    page_size: usize,
     anchor: RetentionCursorAnchor,
 }
 
@@ -135,15 +136,15 @@ pub fn retention_plan_response(
     let item_count = plan.items.len();
     let total = item_count.saturating_add(plan.exclusions.len());
     let start = match cursor {
-        Some(cursor) => {
-            let cursor = decode_cursor(cursor)?;
+        Some(value) => {
+            let cursor = decode_cursor(value)?;
             if cursor.plan_id != plan.plan_id
                 || cursor.content_identity != plan.content_identity
                 || cursor.ordering != RETENTION_PLAN_ITEMS_ORDERING
             {
                 return Err(ProtocolError::CursorScopeMismatch);
             }
-            match cursor.anchor {
+            let resume_offset = match cursor.anchor {
                 RetentionCursorAnchor::Item { item } => plan
                     .items
                     .iter()
@@ -156,7 +157,11 @@ pub fn retention_plan_response(
                     .position(|candidate| candidate == &exclusion)
                     .map(|index| item_count + index + 1)
                     .ok_or(ProtocolError::CursorAnchorMissing)?,
+            };
+            if !resume_offset.is_multiple_of(cursor.page_size) || resume_offset >= total {
+                return Err(ProtocolError::CursorScopeMismatch);
             }
+            resume_offset
         }
         None => 0,
     };
@@ -237,10 +242,11 @@ fn encode_cursor(
     anchor: RetentionCursorAnchor,
 ) -> Result<String, ProtocolError> {
     let cursor = RetentionCursorDto {
-        schema_version: "lumin-retention-cursor.v2".to_owned(),
+        schema_version: "lumin-retention-cursor.v3".to_owned(),
         plan_id: plan.plan_id.clone(),
         content_identity: plan.content_identity.clone(),
         ordering: RETENTION_PLAN_ITEMS_ORDERING.to_owned(),
+        page_size: RETENTION_PLAN_PAGE_SIZE,
         anchor,
     };
     encode_cursor_payload(&cursor)
@@ -248,7 +254,9 @@ fn encode_cursor(
 
 fn decode_cursor(value: &str) -> Result<RetentionCursorDto, ProtocolError> {
     let cursor: RetentionCursorDto = decode_cursor_payload(value)?;
-    if cursor.schema_version != "lumin-retention-cursor.v2" {
+    if cursor.schema_version != "lumin-retention-cursor.v3"
+        || cursor.page_size != RETENTION_PLAN_PAGE_SIZE
+    {
         return Err(ProtocolError::CursorScopeMismatch);
     }
     Ok(cursor)

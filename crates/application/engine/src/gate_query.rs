@@ -280,11 +280,20 @@ pub(crate) fn page<T: Clone>(
     semantic_id: impl Fn(&T) -> &str,
 ) -> Result<EvidencePage<T>, EvidenceQueryError> {
     let start = match &query.anchor {
-        Some(anchor) => items
-            .iter()
-            .position(|item| semantic_id(item) == anchor.as_str())
-            .map(|index| index + 1)
-            .ok_or(EvidenceQueryError::CursorAnchorMissing)?,
+        Some(anchor) => {
+            let resume_offset = items
+                .iter()
+                .position(|item| semantic_id(item) == anchor.as_str())
+                .map(|index| index + 1)
+                .ok_or(EvidenceQueryError::CursorAnchorMissing)?;
+            if query.page_size == 0
+                || !resume_offset.is_multiple_of(query.page_size)
+                || resume_offset >= items.len()
+            {
+                return Err(EvidenceQueryError::CursorScopeMismatch);
+            }
+            resume_offset
+        }
         None => 0,
     };
     let end = start.saturating_add(query.page_size).min(items.len());
@@ -324,6 +333,28 @@ mod tests {
 
     fn test_repository_id() -> RepositoryId {
         RepositoryId::from_string("repository-test".to_owned())
+    }
+
+    #[test]
+    fn existing_nonboundary_anchor_is_rejected() {
+        let items = vec!["finding-a", "finding-b", "finding-c"];
+        let query = EvidenceQuery {
+            scope: EvidenceQueryScope::Run {
+                repository_id: test_repository_id(),
+                run_id: RunId::from_string("run-test".to_owned()),
+            },
+            finding_id: None,
+            collection_path: RUN_FINDINGS_PATH.to_owned(),
+            ordering: CollectionOrderingId::findings(),
+            page_size: 2,
+            filters: BTreeMap::new(),
+            anchor: Some(PageAnchor::from_string("finding-a".to_owned())),
+        };
+
+        assert!(matches!(
+            page(&items, query, |item| item),
+            Err(EvidenceQueryError::CursorScopeMismatch)
+        ));
     }
 
     #[test]

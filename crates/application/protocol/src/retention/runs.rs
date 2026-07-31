@@ -36,6 +36,7 @@ struct RunCatalogCursorDto {
     repository_id: RepositoryId,
     revision: u64,
     ordering: String,
+    page_size: usize,
     last_run: RunCatalogItemDto,
 }
 
@@ -43,6 +44,7 @@ struct RunCatalogCursorDto {
 pub struct DecodedRunCatalogCursor {
     pub repository_id: RepositoryId,
     pub revision: u64,
+    pub page_size: usize,
     pub last_run: RunCatalogItemDto,
 }
 
@@ -88,6 +90,7 @@ pub fn decode_run_catalog_cursor(value: &str) -> Result<DecodedRunCatalogCursor,
     Ok(DecodedRunCatalogCursor {
         repository_id: cursor.repository_id,
         revision: cursor.revision,
+        page_size: cursor.page_size,
         last_run: cursor.last_run,
     })
 }
@@ -98,10 +101,11 @@ fn encode_cursor(
     last_run: &RunCatalogItemDto,
 ) -> Result<String, ProtocolError> {
     let cursor = RunCatalogCursorDto {
-        schema_version: "lumin-runs-cursor.v2".to_owned(),
+        schema_version: "lumin-runs-cursor.v3".to_owned(),
         repository_id,
         revision,
         ordering: RUNS_ORDERING.to_owned(),
+        page_size: RUNS_PAGE_SIZE,
         last_run: last_run.clone(),
     };
     encode_cursor_payload(&cursor)
@@ -109,7 +113,10 @@ fn encode_cursor(
 
 fn decode_cursor(value: &str) -> Result<RunCatalogCursorDto, ProtocolError> {
     let cursor: RunCatalogCursorDto = decode_cursor_payload(value)?;
-    if cursor.schema_version != "lumin-runs-cursor.v2" || cursor.ordering != RUNS_ORDERING {
+    if cursor.schema_version != "lumin-runs-cursor.v3"
+        || cursor.ordering != RUNS_ORDERING
+        || cursor.page_size != RUNS_PAGE_SIZE
+    {
         return Err(ProtocolError::CursorScopeMismatch);
     }
     Ok(cursor)
