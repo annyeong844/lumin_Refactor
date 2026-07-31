@@ -18,11 +18,8 @@ use lumin_model::{
     AnalysisInputId, AttemptId, AttemptStatus, CapabilityState, FindingDisposition, FindingId,
     GateDeltaRecord, GateId, Limitation, OperationId, RunId, SourceSpan, SymbolNamespace,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use thiserror::Error;
-
-pub const FINDINGS_ORDERING: &str = lumin_evidence::FINDINGS_ORDERING_ID;
-pub const FINDINGS_PAGE_SIZE: usize = 100;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -239,16 +236,6 @@ pub struct GateSignalDto {
     pub sequence: Option<u64>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct CursorDto {
-    schema_version: String,
-    run_id: RunId,
-    ordering: String,
-    filters: BTreeMap<String, Vec<String>>,
-    last_finding_id: FindingId,
-}
-
 #[derive(Debug, Error)]
 pub enum ProtocolError {
     #[error("cursor is not valid Base64")]
@@ -324,58 +311,6 @@ pub fn attempt_overview_response(latest_attempt: AttemptSummaryDto) -> AttemptOv
         },
         latest_attempt,
     }
-}
-
-pub fn findings_response(
-    run_id: RunId,
-    evidence: &RunEvidence,
-    cursor: Option<&str>,
-) -> Result<FindingCollectionDto, ProtocolError> {
-    let filters = BTreeMap::new();
-    let start = match cursor {
-        Some(cursor) => {
-            let cursor = decode_cursor(cursor)?;
-            if cursor.run_id != run_id
-                || cursor.ordering != FINDINGS_ORDERING
-                || cursor.filters != filters
-            {
-                return Err(ProtocolError::CursorScopeMismatch);
-            }
-            evidence
-                .findings
-                .iter()
-                .position(|finding| finding.finding_id == cursor.last_finding_id)
-                .map(|index| index + 1)
-                .ok_or(ProtocolError::CursorAnchorMissing)?
-        }
-        None => 0,
-    };
-    let end = (start + FINDINGS_PAGE_SIZE).min(evidence.findings.len());
-    let items = evidence.findings[start..end]
-        .iter()
-        .map(FindingDto::from)
-        .collect::<Vec<_>>();
-    let truncated = end < evidence.findings.len();
-    let next_cursor = if truncated {
-        items
-            .last()
-            .map(|finding| encode_cursor(&run_id, &filters, &finding.finding_id))
-            .transpose()?
-    } else {
-        None
-    };
-    Ok(FindingCollectionDto {
-        schema_version: "lumin.collection.v1",
-        scope: ScopeDto::Run { id: run_id },
-        filters,
-        ordering: FINDINGS_ORDERING,
-        scope_total: evidence.findings.len(),
-        total: evidence.findings.len(),
-        returned: items.len(),
-        truncated,
-        next_cursor,
-        items,
-    })
 }
 
 pub fn gate_mutation_response(result: &GateOperationResult) -> GateMutationResponseDto {
@@ -623,75 +558,153 @@ fn signal_kind(signal: &GateSignal) -> &'static str {
     }
 }
 
-fn encode_cursor(
-    run_id: &RunId,
-    filters: &BTreeMap<String, Vec<String>>,
-    last_finding_id: &FindingId,
-) -> Result<String, ProtocolError> {
-    let cursor = CursorDto {
-        schema_version: "lumin-cursor.v1".to_owned(),
-        run_id: run_id.clone(),
-        ordering: FINDINGS_ORDERING.to_owned(),
-        filters: filters.clone(),
-        last_finding_id: last_finding_id.clone(),
-    };
-    cursor::encode_cursor_payload(&cursor)
-}
-
-fn decode_cursor(value: &str) -> Result<CursorDto, ProtocolError> {
-    let cursor: CursorDto = cursor::decode_cursor_payload(value)?;
-    if cursor.schema_version != "lumin-cursor.v1" {
-        return Err(ProtocolError::CursorScopeMismatch);
-    }
-    Ok(cursor)
-}
-
 #[cfg(test)]
 mod tests {
-    use lumin_evidence::{Confidence, RepoPathProjection, Severity};
-    use lumin_model::{FindingDisposition, LogicalSourceId, RepoPath, SourceSpan, SymbolNamespace};
+    use lumin_evidence::{
+        CollectionOrderingId, Confidence, EvidencePage, EvidenceQuery, EvidenceQueryScope,
+        FindingRecord, PageAnchor, RepoPathProjection, Severity,
+    };
+    use lumin_model::{
+        FindingDisposition, GateId, LogicalSourceId, RepoPath, SourceSpan, SymbolNamespace,
+    };
 
     use super::*;
 
     #[test]
-    fn findings_resume_after_the_exact_cursor_anchor() -> Result<(), Box<dyn std::error::Error>> {
-        let evidence = evidence_with_findings(101)?;
+    fn run_findings_response_encodes_run_cursor() -> Result<(), Box<dyn std::error::Error>> {
         let run_id = RunId::from_string("run-a".to_owned());
-
-        let first = findings_response(run_id.clone(), &evidence, None)?;
-        assert_eq!(first.scope_total, 101);
-        assert_eq!(first.total, 101);
-        assert_eq!(first.returned, FINDINGS_PAGE_SIZE);
-        assert!(first.truncated);
-        let cursor = first
-            .next_cursor
-            .as_deref()
-            .ok_or_else(|| std::io::Error::other("truncated page did not return a cursor"))?;
-
-        let second = findings_response(run_id, &evidence, Some(cursor))?;
-        assert_eq!(second.returned, 1);
-        assert!(!second.truncated);
-        assert!(second.next_cursor.is_none());
-        assert_ne!(first.items[99].finding_id, second.items[0].finding_id);
+        let evidence = evidence_with_findings(101)?;
+        let query = EvidenceQuery {
+            scope: EvidenceQueryScope::Run {
+                run_id: run_id.clone(),
+            },
+            finding_id: None,
+            collection_path: "run/findings".to_owned(),
+            ordering: CollectionOrderingId::findings(),
+            page_size: 100,
+            filters: BTreeMap::new(),
+            anchor: None,
+        };
+        let mut next_query = query.clone();
+        next_query.anchor = Some(PageAnchor::from_string(
+            evidence.findings[99].finding_id.as_str().to_owned(),
+        ));
+        let page = EvidencePage {
+            query,
+            scope_total: 101,
+            total: 101,
+            items: evidence.findings[..100].to_vec(),
+            next_query: Some(next_query.clone()),
+        };
+        let response = run_findings_response(&page)?;
+        assert_eq!(response.scope_total, 101);
+        assert_eq!(response.returned, 100);
+        assert!(response.truncated);
+        let decoded = decode_run_query_cursor(response.next_cursor.as_deref())?;
+        assert_eq!(decoded, Some(next_query));
         Ok(())
     }
 
     #[test]
-    fn findings_cursor_is_bound_to_its_run() -> Result<(), Box<dyn std::error::Error>> {
+    fn run_cursor_rejects_gate_scope() -> Result<(), Box<dyn std::error::Error>> {
+        let run_id = RunId::from_string("run-a".to_owned());
         let evidence = evidence_with_findings(101)?;
-        let first = findings_response(RunId::from_string("run-a".to_owned()), &evidence, None)?;
-        let cursor = first
+        let query = EvidenceQuery {
+            scope: EvidenceQueryScope::Run {
+                run_id: run_id.clone(),
+            },
+            finding_id: None,
+            collection_path: "run/findings".to_owned(),
+            ordering: CollectionOrderingId::findings(),
+            page_size: 100,
+            filters: BTreeMap::new(),
+            anchor: None,
+        };
+        let mut next_query = query.clone();
+        next_query.anchor = Some(PageAnchor::from_string(
+            evidence.findings[99].finding_id.as_str().to_owned(),
+        ));
+        let page = EvidencePage {
+            query,
+            scope_total: 101,
+            total: 101,
+            items: evidence.findings[..100].to_vec(),
+            next_query: Some(next_query),
+        };
+        let response = run_findings_response(&page)?;
+        // Decode as gate cursor must fail
+        let gate_result = decode_gate_query_cursor(response.next_cursor.as_deref());
+        assert!(gate_result.is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn gate_cursor_rejects_run_scope() -> Result<(), Box<dyn std::error::Error>> {
+        // Manually construct a gate cursor by encoding a gate scope page
+        let gate_query = EvidenceQuery {
+            scope: EvidenceQueryScope::GateAttempt {
+                gate_id: GateId::from_string("gate-a".to_owned()),
+                revision: 1,
+            },
+            finding_id: None,
+            collection_path: "gate/findings".to_owned(),
+            ordering: CollectionOrderingId::findings(),
+            page_size: 100,
+            filters: BTreeMap::new(),
+            anchor: Some(PageAnchor::from_string("finding-a".to_owned())),
+        };
+        // Encode using the gate_findings_response round-trip
+        let page = EvidencePage {
+            query: EvidenceQuery {
+                scope: EvidenceQueryScope::GateAttempt {
+                    gate_id: GateId::from_string("gate-a".to_owned()),
+                    revision: 1,
+                },
+                finding_id: None,
+                collection_path: "gate/findings".to_owned(),
+                ordering: CollectionOrderingId::findings(),
+                page_size: 100,
+                filters: BTreeMap::new(),
+                anchor: None,
+            },
+            scope_total: 2,
+            total: 2,
+            items: vec![finding()],
+            next_query: Some(gate_query),
+        };
+        let response = gate_findings_response(&page)?;
+        let encoded = response
             .next_cursor
             .as_deref()
-            .ok_or_else(|| std::io::Error::other("truncated page did not return a cursor"))?;
-
-        let result = findings_response(
-            RunId::from_string("run-b".to_owned()),
-            &evidence,
-            Some(cursor),
-        );
-        assert!(matches!(result, Err(ProtocolError::CursorScopeMismatch)));
+            .ok_or_else(|| std::io::Error::other("missing cursor"))?;
+        // Decode as run cursor must fail
+        let run_result = decode_run_query_cursor(Some(encoded));
+        assert!(run_result.is_err());
         Ok(())
+    }
+
+    fn finding() -> FindingRecord {
+        FindingRecord {
+            finding_id: FindingId::from_string("finding-a".to_owned()),
+            rule_id: "dead-code/zero-exact-fan-in.v1".to_owned(),
+            owner_capability: "dead-code.v1".to_owned(),
+            severity: Severity::Warning,
+            confidence: Confidence::Grounded,
+            disposition: FindingDisposition::ReviewCandidate,
+            claim: "zero grounded exact fan-in".to_owned(),
+            source_id: LogicalSourceId::from_string("source-a".to_owned()),
+            path: RepoPathProjection {
+                canonical: b"src/a.ts".to_vec(),
+                components: Vec::new(),
+                display: "src/a.ts".to_owned(),
+            },
+            span: SourceSpan { start: 0, end: 1 },
+            exported_name: "dead".to_owned(),
+            namespace: SymbolNamespace::Value,
+            nested_collections_available: true,
+            evidence: Vec::new(),
+            relations: Vec::new(),
+        }
     }
 
     fn evidence_with_findings(count: usize) -> Result<RunEvidence, Box<dyn std::error::Error>> {

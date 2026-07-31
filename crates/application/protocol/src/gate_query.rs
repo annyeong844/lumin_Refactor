@@ -5,7 +5,7 @@ use lumin_evidence::{
     EvidenceRecord, FINDINGS_ORDERING_ID, FindingExplanation, FindingRecord, FindingRelationRecord,
     PageAnchor, RELATIONS_ORDERING_ID,
 };
-use lumin_model::{EvidenceId, FindingId, FindingRelationId, GateId, SourceSpan};
+use lumin_model::{EvidenceId, FindingId, FindingRelationId, GateId, RunId, SourceSpan};
 use serde::{Deserialize, Serialize};
 
 use crate::cursor::{decode_cursor_payload, encode_cursor_payload};
@@ -85,6 +85,43 @@ struct GateCursorDto {
     last_id: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RunCursorDto {
+    schema_version: String,
+    run_id: RunId,
+    finding_id: Option<FindingId>,
+    collection_path: String,
+    ordering: String,
+    page_size: usize,
+    filters: BTreeMap<String, Vec<String>>,
+    last_id: String,
+}
+
+pub fn decode_run_query_cursor(
+    value: Option<&str>,
+) -> Result<Option<EvidenceQuery>, ProtocolError> {
+    value
+        .map(|value| {
+            let cursor: RunCursorDto = decode_cursor_payload(value)?;
+            if cursor.schema_version != "lumin-run-cursor.v1" {
+                return Err(ProtocolError::CursorScopeMismatch);
+            }
+            Ok(EvidenceQuery {
+                scope: EvidenceQueryScope::Run {
+                    run_id: cursor.run_id,
+                },
+                finding_id: cursor.finding_id,
+                collection_path: cursor.collection_path,
+                ordering: CollectionOrderingId::from_string(cursor.ordering),
+                page_size: cursor.page_size,
+                filters: cursor.filters,
+                anchor: Some(PageAnchor::from_string(cursor.last_id)),
+            })
+        })
+        .transpose()
+}
+
 pub fn decode_gate_query_cursor(
     value: Option<&str>,
 ) -> Result<Option<EvidenceQuery>, ProtocolError> {
@@ -141,6 +178,47 @@ pub fn gate_explain_response(
     })
 }
 
+pub fn run_findings_response(
+    page: &EvidencePage<FindingRecord>,
+) -> Result<FindingCollectionDto, ProtocolError> {
+    let next_cursor = encode_next_cursor(page.next_query.as_ref())?;
+    Ok(FindingCollectionDto {
+        schema_version: "lumin.collection.v1",
+        scope: scope(&page.query),
+        filters: page.query.filters.clone(),
+        ordering: ordering(&page.query, FINDINGS_ORDERING_ID)?,
+        scope_total: page.scope_total,
+        total: page.total,
+        returned: page.items.len(),
+        truncated: next_cursor.is_some(),
+        next_cursor,
+        items: page.items.iter().map(FindingDto::from).collect(),
+    })
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunExplainResponseDto {
+    pub schema_version: &'static str,
+    pub scope: ScopeDto,
+    pub finding: FindingDto,
+    pub evidence: EvidenceCollectionDto,
+    pub relations: RelationCollectionDto,
+}
+
+pub fn run_explain_response(
+    explanation: &FindingExplanation,
+) -> Result<RunExplainResponseDto, ProtocolError> {
+    let scope = scope(&explanation.evidence.query);
+    Ok(RunExplainResponseDto {
+        schema_version: "lumin.run-explain.v1",
+        scope: scope.clone(),
+        finding: FindingDto::from(&explanation.finding),
+        evidence: evidence_response(&explanation.evidence, scope.clone())?,
+        relations: relations_response(&explanation.relations, scope)?,
+    })
+}
+
 fn evidence_response(
     page: &EvidencePage<EvidenceRecord>,
     scope: ScopeDto,
@@ -181,6 +259,7 @@ fn relations_response(
 
 fn scope(query: &EvidenceQuery) -> ScopeDto {
     match &query.scope {
+        EvidenceQueryScope::Run { run_id } => ScopeDto::Run { id: run_id.clone() },
         EvidenceQueryScope::GateAttempt { gate_id, revision } => ScopeDto::GateAttempt {
             gate_id: gate_id.clone(),
             revision: *revision,
@@ -197,26 +276,44 @@ fn ordering(query: &EvidenceQuery, expected: &'static str) -> Result<&'static st
 }
 
 fn encode_next_cursor(query: Option<&EvidenceQuery>) -> Result<Option<String>, ProtocolError> {
-    query.map(encode_gate_query_cursor).transpose()
+    query.map(encode_query_cursor).transpose()
 }
 
-fn encode_gate_query_cursor(query: &EvidenceQuery) -> Result<String, ProtocolError> {
-    let EvidenceQueryScope::GateAttempt { gate_id, revision } = &query.scope;
+fn encode_query_cursor(query: &EvidenceQuery) -> Result<String, ProtocolError> {
     let anchor = query
         .anchor
         .as_ref()
         .ok_or(ProtocolError::CursorAnchorMissing)?;
-    encode_cursor_payload(&GateCursorDto {
-        schema_version: "lumin-gate-cursor.v1".to_owned(),
-        gate_id: gate_id.clone(),
-        revision: *revision,
-        finding_id: query.finding_id.clone(),
-        collection_path: query.collection_path.clone(),
-        ordering: query.ordering.as_str().to_owned(),
-        page_size: query.page_size,
-        filters: query.filters.clone(),
-        last_id: anchor.as_str().to_owned(),
-    })
+    match &query.scope {
+        EvidenceQueryScope::Run { run_id } => encode_cursor_payload(&RunCursorDto {
+            schema_version: "lumin-run-cursor.v1".to_owned(),
+            run_id: run_id.clone(),
+            finding_id: query.finding_id.clone(),
+            collection_path: query.collection_path.clone(),
+            ordering: query.ordering.as_str().to_owned(),
+            page_size: query.page_size,
+            filters: query.filters.clone(),
+            last_id: anchor.as_str().to_owned(),
+        }),
+        EvidenceQueryScope::GateAttempt { gate_id, revision } => {
+            encode_cursor_payload(&GateCursorDto {
+                schema_version: "lumin-gate-cursor.v1".to_owned(),
+                gate_id: gate_id.clone(),
+                revision: *revision,
+                finding_id: query.finding_id.clone(),
+                collection_path: query.collection_path.clone(),
+                ordering: query.ordering.as_str().to_owned(),
+                page_size: query.page_size,
+                filters: query.filters.clone(),
+                last_id: anchor.as_str().to_owned(),
+            })
+        }
+    }
+}
+
+#[cfg(test)]
+fn encode_gate_query_cursor(query: &EvidenceQuery) -> Result<String, ProtocolError> {
+    encode_query_cursor(query)
 }
 
 impl From<&EvidenceRecord> for EvidenceDto {

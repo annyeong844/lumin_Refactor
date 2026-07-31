@@ -4,7 +4,10 @@ mod retention;
 mod write_gate;
 
 pub use gate_abandon::{AbandonGateRequest, abandon_gate};
-pub use gate_query::{GateEvidenceQueryError, query_gate_explain, query_gate_findings};
+pub use gate_query::{
+    GateEvidenceQueryError, query_gate_explain, query_gate_findings, query_run_explain,
+    query_run_findings,
+};
 pub use lumin_evidence::{
     GateDecision, GateOperationResult, RecordLookup, RetentionMutationResult, RetentionPlanScope,
 };

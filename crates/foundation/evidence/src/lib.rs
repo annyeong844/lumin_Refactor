@@ -9,8 +9,8 @@ use std::collections::BTreeMap;
 
 use lumin_model::{
     CapabilityState, EvidenceId, FindingDisposition, FindingId, FindingRelationId, GateId,
-    Limitation, LogicalSourceId, RepoPath, SelectedResolutionProfile, SourceSpan, SymbolNamespace,
-    append_length_prefixed, digest_hex,
+    Limitation, LogicalSourceId, RepoPath, RunId, SelectedResolutionProfile, SourceSpan,
+    SymbolNamespace, append_length_prefixed, digest_hex,
 };
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +22,7 @@ pub const RELATIONS_ORDERING_ID: &str = "relations.v1";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EvidenceQueryScope {
+    Run { run_id: RunId },
     GateAttempt { gate_id: GateId, revision: u64 },
 }
 

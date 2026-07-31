@@ -4,13 +4,14 @@ use lumin_evidence::{
     CollectionOrderingId, EvidencePage, EvidenceQuery, EvidenceQueryScope, FindingExplanation,
     FindingRecord, GateRecord, PageAnchor, RunEvidence,
 };
-use lumin_model::FindingId;
+use lumin_model::{FindingId, RunId};
 use thiserror::Error;
 
 use crate::EngineError;
 
 const QUERY_PAGE_SIZE: usize = 100;
 const GATE_FINDINGS_PATH: &str = "gate/findings";
+const RUN_FINDINGS_PATH: &str = "run/findings";
 
 #[derive(Debug, Error)]
 pub enum GateEvidenceQueryError {
@@ -26,6 +27,94 @@ pub enum GateEvidenceQueryError {
     FindingNotFound(String),
     #[error("nested finding collection is unavailable in this persisted record: {0}")]
     NestedCollectionUnavailable(String),
+}
+
+pub fn query_run_findings(
+    run_id: &RunId,
+    evidence: &RunEvidence,
+    cursor: Option<EvidenceQuery>,
+) -> Result<EvidencePage<FindingRecord>, EngineError> {
+    let expected = EvidenceQuery {
+        scope: EvidenceQueryScope::Run {
+            run_id: run_id.clone(),
+        },
+        finding_id: None,
+        collection_path: RUN_FINDINGS_PATH.to_owned(),
+        ordering: CollectionOrderingId::findings(),
+        page_size: QUERY_PAGE_SIZE,
+        filters: BTreeMap::new(),
+        anchor: None,
+    };
+    let query = validated_query(cursor, expected)?;
+    page(&evidence.findings, query, |finding| {
+        finding.finding_id.as_str()
+    })
+    .map_err(Into::into)
+}
+
+pub fn query_run_explain(
+    run_id: &RunId,
+    evidence: &RunEvidence,
+    finding_id: &FindingId,
+    evidence_cursor: Option<EvidenceQuery>,
+    relations_cursor: Option<EvidenceQuery>,
+) -> Result<FindingExplanation, EngineError> {
+    let finding = evidence
+        .findings
+        .iter()
+        .find(|finding| &finding.finding_id == finding_id)
+        .ok_or_else(|| GateEvidenceQueryError::FindingNotFound(finding_id.as_str().to_owned()))?;
+    if !finding.nested_collections_available {
+        return Err(GateEvidenceQueryError::NestedCollectionUnavailable(format!(
+            "run/findings/{}",
+            finding.finding_id.as_str()
+        ))
+        .into());
+    }
+
+    let evidence_path = format!("run/findings/{}/evidence", finding.finding_id.as_str());
+    let evidence_query = validated_query(
+        evidence_cursor,
+        EvidenceQuery {
+            scope: EvidenceQueryScope::Run {
+                run_id: run_id.clone(),
+            },
+            finding_id: Some(finding.finding_id.clone()),
+            collection_path: evidence_path,
+            ordering: CollectionOrderingId::evidence(),
+            page_size: QUERY_PAGE_SIZE,
+            filters: BTreeMap::new(),
+            anchor: None,
+        },
+    )?;
+    let evidence_page = page(&finding.evidence, evidence_query, |ev| {
+        ev.evidence_id.as_str()
+    })?;
+
+    let relations_path = format!("run/findings/{}/relations", finding.finding_id.as_str());
+    let relations_query = validated_query(
+        relations_cursor,
+        EvidenceQuery {
+            scope: EvidenceQueryScope::Run {
+                run_id: run_id.clone(),
+            },
+            finding_id: Some(finding.finding_id.clone()),
+            collection_path: relations_path,
+            ordering: CollectionOrderingId::relations(),
+            page_size: QUERY_PAGE_SIZE,
+            filters: BTreeMap::new(),
+            anchor: None,
+        },
+    )?;
+    let relations_page = page(&finding.relations, relations_query, |rel| {
+        rel.relation_id.as_str()
+    })?;
+
+    Ok(FindingExplanation {
+        finding: finding.clone(),
+        evidence: evidence_page,
+        relations: relations_page,
+    })
 }
 
 pub fn query_gate_findings(
@@ -217,7 +306,7 @@ mod tests {
     };
     use lumin_model::{
         AnalysisInputId, EvidenceId, FindingDisposition, GateId, LogicalSourceId, OperationId,
-        RepoPath, SourceSpan, SymbolNamespace,
+        RepoPath, RunId, SourceSpan, SymbolNamespace,
     };
 
     use super::*;
@@ -413,6 +502,82 @@ mod tests {
             nested_collections_available: true,
             evidence,
             relations,
+        })
+    }
+
+    #[test]
+    fn run_findings_pages_immutable_evidence() -> Result<(), Box<dyn std::error::Error>> {
+        let run_id = RunId::from_string("run-a".to_owned());
+        let evidence = run_evidence_with_nested()?;
+        let first = query_run_findings(&run_id, &evidence, None)?;
+        assert_eq!(first.items.len(), QUERY_PAGE_SIZE);
+        assert_eq!(first.scope_total, 101);
+        let cursor = first
+            .next_query
+            .ok_or_else(|| std::io::Error::other("missing run findings cursor"))?;
+        let second = query_run_findings(&run_id, &evidence, Some(cursor.clone()))?;
+        assert_eq!(second.items.len(), 1);
+        assert!(second.next_query.is_none());
+
+        // Cross-run cursor rejected
+        let other_run = RunId::from_string("run-b".to_owned());
+        let result = query_run_findings(&other_run, &evidence, Some(cursor));
+        assert!(matches!(
+            result,
+            Err(EngineError::EvidenceQuery(
+                GateEvidenceQueryError::CursorScopeMismatch
+            ))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn run_explain_pages_nested_collections() -> Result<(), Box<dyn std::error::Error>> {
+        let run_id = RunId::from_string("run-a".to_owned());
+        let evidence = run_evidence_with_nested()?;
+        let finding_id = evidence.findings[0].finding_id.clone();
+        let first = query_run_explain(&run_id, &evidence, &finding_id, None, None)?;
+        assert_eq!(first.evidence.items.len(), QUERY_PAGE_SIZE);
+        assert_eq!(first.relations.items.len(), QUERY_PAGE_SIZE);
+        let second = query_run_explain(
+            &run_id,
+            &evidence,
+            &finding_id,
+            first.evidence.next_query,
+            first.relations.next_query,
+        )?;
+        assert_eq!(second.evidence.items.len(), 1);
+        assert_eq!(second.relations.items.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn run_explain_rejects_unavailable_nested() -> Result<(), Box<dyn std::error::Error>> {
+        let run_id = RunId::from_string("run-a".to_owned());
+        let mut evidence = run_evidence_with_nested()?;
+        evidence.findings[0].nested_collections_available = false;
+        let finding_id = evidence.findings[0].finding_id.clone();
+        let result = query_run_explain(&run_id, &evidence, &finding_id, None, None);
+        assert!(matches!(
+            result,
+            Err(EngineError::EvidenceQuery(
+                GateEvidenceQueryError::NestedCollectionUnavailable(_)
+            ))
+        ));
+        Ok(())
+    }
+
+    fn run_evidence_with_nested() -> Result<RunEvidence, Box<dyn std::error::Error>> {
+        let mut findings = (0..101)
+            .map(|index| finding(index, if index == 0 { 101 } else { 1 }))
+            .collect::<Result<Vec<_>, _>>()?;
+        sort_findings(&mut findings);
+        Ok(RunEvidence {
+            schema_version: "lumin-evidence.v1".to_owned(),
+            capabilities: Vec::new(),
+            resolution_profiles: Vec::new(),
+            findings,
+            limitations: Vec::new(),
         })
     }
 }

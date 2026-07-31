@@ -97,6 +97,7 @@ fn execute_inner(root: &Path, arguments: Vec<OsString>) -> Result<CommandOutput,
         "audit" => audit(root, &mut arguments).map(success),
         "overview" => overview(root, &mut arguments).map(success),
         "findings" => findings(root, &mut arguments).map(success),
+        "explain" => explain(root, &mut arguments).map(success),
         "pre-write" => pre_write(root, &mut arguments),
         "post-write" => post_write(root, &mut arguments),
         "gate" => gate(root, &mut arguments),
@@ -260,7 +261,67 @@ fn findings(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> 
     let run_id = run_id.ok_or(CliError::RunRequired)?;
     match lumin_engine::lookup_run(root, &run_id)? {
         lumin_engine::RecordLookup::Live((_, evidence)) => {
-            let response = lumin_protocol::findings_response(run_id, &evidence, cursor.as_deref())?;
+            let decoded_cursor = lumin_protocol::decode_run_query_cursor(cursor.as_deref())?;
+            let page = lumin_engine::query_run_findings(&run_id, &evidence, decoded_cursor)?;
+            let response = lumin_protocol::run_findings_response(&page)?;
+            lumin_protocol::to_json(&response).map_err(Into::into)
+        }
+        lumin_engine::RecordLookup::Pruning(tombstone) => {
+            lumin_protocol::to_json(&lumin_protocol::LookupTombstoneResponseDto::Pruning {
+                tombstone,
+            })
+            .map_err(Into::into)
+        }
+        lumin_engine::RecordLookup::Pruned(tombstone) => {
+            lumin_protocol::to_json(&lumin_protocol::LookupTombstoneResponseDto::Pruned {
+                tombstone,
+            })
+            .map_err(Into::into)
+        }
+    }
+}
+
+fn explain(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> {
+    let mut run_id = None;
+    let mut finding_id = None;
+    let mut evidence_cursor = None;
+    let mut relations_cursor = None;
+    let mut format = "json".to_owned();
+    while let Some(argument) = arguments.next_utf8("explain argument")? {
+        match argument.as_str() {
+            "--run" => {
+                run_id = Some(RunId::from_string(arguments.required_utf8("--run")?));
+            }
+            "--evidence-cursor" => {
+                evidence_cursor = Some(arguments.required_utf8("--evidence-cursor")?);
+            }
+            "--relations-cursor" => {
+                relations_cursor = Some(arguments.required_utf8("--relations-cursor")?);
+            }
+            "--format" => format = arguments.required_utf8("--format")?,
+            _ if argument.starts_with("--") || finding_id.is_some() => {
+                return Err(CliError::UnknownArgument(argument));
+            }
+            _ => finding_id = Some(parse_finding_id(argument)?),
+        }
+    }
+    require_json(&format)?;
+    let run_id = run_id.ok_or(CliError::RunRequired)?;
+    let finding_id = finding_id.ok_or_else(|| CliError::MissingValue("finding-id".to_owned()))?;
+    match lumin_engine::lookup_run(root, &run_id)? {
+        lumin_engine::RecordLookup::Live((_, evidence)) => {
+            let evidence_cursor =
+                lumin_protocol::decode_run_query_cursor(evidence_cursor.as_deref())?;
+            let relations_cursor =
+                lumin_protocol::decode_run_query_cursor(relations_cursor.as_deref())?;
+            let explanation = lumin_engine::query_run_explain(
+                &run_id,
+                &evidence,
+                &finding_id,
+                evidence_cursor,
+                relations_cursor,
+            )?;
+            let response = lumin_protocol::run_explain_response(&explanation)?;
             lumin_protocol::to_json(&response).map_err(Into::into)
         }
         lumin_engine::RecordLookup::Pruning(tombstone) => {
