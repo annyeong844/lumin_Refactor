@@ -5,8 +5,9 @@ mod publication;
 mod retention;
 
 pub use gate::{
-    ActiveGateLease, OperationSession, PostWriteFinish, PostWriteStart, PreWriteFinish,
-    PreWriteStart, SemanticReadReservation,
+    ActiveGateCatalogCursor, ActiveGateCatalogItem, ActiveGateCatalogSnapshot, ActiveGateLease,
+    OperationSession, PostWriteFinish, PostWriteStart, PreWriteFinish, PreWriteStart,
+    SemanticReadReservation,
 };
 pub use generation::StoreGeneration;
 pub use namespace::MigrationIntent;
@@ -120,6 +121,16 @@ pub enum StoreError {
     RunCatalogAnchorMissing(String),
     #[error("run catalog page size {requested} is outside 1..={max}")]
     RunCatalogPageSize { requested: usize, max: usize },
+    #[error("active gate catalog cursor belongs to another repository or page size")]
+    ActiveGateCatalogScopeMismatch,
+    #[error(
+        "active gate catalog changed before continuation: expected revision {expected}, observed {observed}"
+    )]
+    ActiveGateCatalogRevisionChanged { expected: u64, observed: u64 },
+    #[error("active gate catalog cursor anchor does not exist: {0}")]
+    ActiveGateCatalogAnchorMissing(String),
+    #[error("active gate catalog page size {requested} is outside 1..={max}")]
+    ActiveGateCatalogPageSize { requested: usize, max: usize },
     #[error(
         "lifecycle store generation changed before mutation: expected {expected}, observed {observed}"
     )]
@@ -317,11 +328,9 @@ fn read_run_catalog_page(
         Err(error) => return Err(backend_error(error)),
     };
     let table = read.open_table(RUN_CATALOG).map_err(backend_error)?;
-    let mut runs = Vec::with_capacity(limit.saturating_add(1));
-    let mut total = 0usize;
-    let mut anchor_found = cursor.is_none();
-    let mut resume_offset = None;
-    for row in table.iter().map_err(backend_error)?.rev() {
+    // Collect all visible (non-tombstoned) records
+    let mut visible = Vec::new();
+    for row in table.iter().map_err(backend_error)? {
         let (key, value) = row.map_err(backend_error)?;
         let key = key.value();
         let tombstone_key =
@@ -344,40 +353,41 @@ fn read_run_catalog_page(
                 "run catalog key {key} disagrees with its record"
             )));
         }
-        total = total
-            .checked_add(1)
-            .ok_or_else(|| StoreError::Integrity("run catalog total overflow".to_owned()))?;
-        if !anchor_found {
-            anchor_found = cursor.is_some_and(|cursor| {
-                cursor.attempt_id == record.attempt_id
-                    && cursor.run_id == record.run_id
-                    && cursor.sequence == record.sequence
-            });
-            if anchor_found {
-                resume_offset = Some(total);
-            }
-            continue;
+        visible.push(record);
+    }
+    // Sort explicitly: sequence DESC then run_id ASC
+    visible.sort_by(|a, b| {
+        b.sequence
+            .cmp(&a.sequence)
+            .then_with(|| a.run_id.as_str().cmp(b.run_id.as_str()))
+    });
+    let total = visible.len();
+    // Find cursor anchor in sorted visible vec
+    let start = if let Some(cursor) = cursor {
+        let anchor_index = visible
+            .iter()
+            .position(|record| {
+                record.attempt_id == cursor.attempt_id
+                    && record.run_id == cursor.run_id
+                    && record.sequence == cursor.sequence
+            })
+            .ok_or_else(|| {
+                StoreError::RunCatalogAnchorMissing(cursor.run_id.as_str().to_owned())
+            })?;
+        let resume_offset = anchor_index + 1;
+        // Validate canonical nonterminal boundary
+        if !resume_offset.is_multiple_of(limit) || resume_offset >= total {
+            return Err(StoreError::RunCatalogAnchorMissing(
+                cursor.run_id.as_str().to_owned(),
+            ));
         }
-        if runs.len() <= limit {
-            runs.push(record);
-        }
-    }
-    if !anchor_found {
-        return Err(StoreError::RunCatalogAnchorMissing(
-            cursor
-                .map(|cursor| cursor.run_id.as_str().to_owned())
-                .unwrap_or_default(),
-        ));
-    }
-    if resume_offset.is_some_and(|offset| !offset.is_multiple_of(limit) || offset >= total) {
-        return Err(StoreError::RunCatalogAnchorMissing(
-            cursor
-                .map(|cursor| cursor.run_id.as_str().to_owned())
-                .unwrap_or_default(),
-        ));
-    }
-    let truncated = runs.len() > limit;
-    runs.truncate(limit);
+        resume_offset
+    } else {
+        0
+    };
+    let end = start.saturating_add(limit).min(total);
+    let runs = visible[start..end].to_vec();
+    let truncated = end < total;
     Ok((total, runs, truncated))
 }
 

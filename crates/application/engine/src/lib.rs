@@ -11,16 +11,17 @@ pub use capability_query::{
 pub use gate_abandon::{AbandonGateRequest, abandon_gate};
 pub use gate_query::{
     EvidenceQueryError, query_gate_explain, query_gate_findings, query_run_explain,
-    query_run_findings,
+    query_run_file_findings, query_run_findings, query_run_relations,
 };
 pub use lumin_evidence::{
     GateDecision, GateOperationResult, RecordLookup, RetentionMutationResult, RetentionPlanScope,
 };
 pub use lumin_store::RunCatalogCursor;
 pub use retention::{
+    ActiveGateCatalogCursor, ActiveGateCatalogItem, ActiveGateCatalogSnapshot,
     ConfirmRetentionPlanRequest, PinRunRequest, PrepareRetentionPlanRequest, UnpinRunRequest,
-    confirm_retention_plan, list_runs, load_lifecycle_operation, load_retention_plan, lookup_gate,
-    lookup_run, pin_run, prepare_retention_plan, unpin_run,
+    confirm_retention_plan, list_active_gates, list_runs, load_lifecycle_operation,
+    load_retention_plan, lookup_gate, lookup_run, pin_run, prepare_retention_plan, unpin_run,
 };
 pub use write_gate::{
     PostWriteRequest, PreWriteRequest, close_write_gate, load_gate, load_operation, open_write_gate,
@@ -118,6 +119,7 @@ impl EngineError {
     pub fn lifecycle_exit_code(&self) -> i32 {
         match self {
             Self::EvidenceQuery(EvidenceQueryError::DuplicateCapabilityId(_)) => 1,
+            Self::EvidenceQuery(EvidenceQueryError::DuplicateCollectionId(_)) => 1,
             Self::NoDeclaredPaths
             | Self::EvidenceQuery(_)
             | Self::Store(
@@ -131,11 +133,17 @@ impl EngineError {
                 | StoreError::RetentionPlanNotFound(_)
                 | StoreError::RetentionPlanState(_)
                 | StoreError::RunCatalogScopeMismatch
-                | StoreError::RunCatalogAnchorMissing(_),
+                | StoreError::RunCatalogAnchorMissing(_)
+                | StoreError::ActiveGateCatalogScopeMismatch
+                | StoreError::ActiveGateCatalogAnchorMissing(_)
+                | StoreError::ActiveGateCatalogPageSize { .. },
             ) => 2,
             Self::Store(StoreError::GateRevisionBusy(_) | StoreError::OperationBusy(_)) => 4,
             Self::Store(StoreError::GateRevisionChanged(_)) => 5,
-            Self::Store(StoreError::RunCatalogRevisionChanged { .. }) => 5,
+            Self::Store(
+                StoreError::RunCatalogRevisionChanged { .. }
+                | StoreError::ActiveGateCatalogRevisionChanged { .. },
+            ) => 5,
             _ => 1,
         }
     }

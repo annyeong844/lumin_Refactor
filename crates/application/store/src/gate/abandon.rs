@@ -37,6 +37,7 @@ impl OperationSession<'_> {
 
             let result = apply_abandon(&mut gate, &operation, reason)?;
             persist_operation_result(&write, &gate, &mut operation, &result)?;
+            records::increment_active_gate_catalog(&write)?;
             guard.commit(write)?;
             Ok(result)
         })

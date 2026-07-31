@@ -5,7 +5,7 @@ use lumin_evidence::{
     SemanticReadReservationBinding, TransitionCapsule, WorktreeTransition, WriteLease, gate_policy,
 };
 use lumin_model::{GateDeltaRecord, GateId, OperationId};
-use redb::{TableDefinition, WriteTransaction};
+use redb::{ReadableTable, TableDefinition, WriteTransaction};
 
 use super::{RepositoryStore, StoreError};
 
@@ -38,6 +38,32 @@ pub(crate) use records::transition_key;
 pub struct ActiveGateLease {
     pub gate_id: GateId,
     pub leased_write_set: Vec<WriteLease>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActiveGateCatalogCursor {
+    pub repository_id: lumin_model::RepositoryId,
+    pub revision: u64,
+    pub page_size: usize,
+    pub opening_sequence: u64,
+    pub gate_id: GateId,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActiveGateCatalogItem {
+    pub gate_id: GateId,
+    pub current_revision: u64,
+    pub opening_transition_sequence: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActiveGateCatalogSnapshot {
+    pub repository_id: lumin_model::RepositoryId,
+    pub revision: u64,
+    pub scope_total: usize,
+    pub total: usize,
+    pub items: Vec<ActiveGateCatalogItem>,
+    pub truncated: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -138,6 +164,169 @@ impl RepositoryStore {
             let database = guard.open_database()?;
             load_record::<OperationRecord>(&database, OPERATIONS, operation_id.as_str())?
                 .ok_or_else(|| StoreError::OperationNotFound(operation_id.as_str().to_owned()))
+        })
+    }
+
+    pub fn list_active_gates(
+        &self,
+        cursor: Option<&ActiveGateCatalogCursor>,
+        limit: usize,
+    ) -> Result<ActiveGateCatalogSnapshot, StoreError> {
+        if !(1..=100).contains(&limit) {
+            return Err(StoreError::ActiveGateCatalogPageSize {
+                requested: limit,
+                max: 100,
+            });
+        }
+        self.with_shared_lock(|guard| {
+            let repository_id = guard.repository_id().clone();
+            let database = guard.open_database()?;
+            let read = database.begin_read()?;
+            // Read active-gate-catalog revision
+            let revision = {
+                match read.open_table(crate::SEQUENCES) {
+                    Ok(table) => table
+                        .get(records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY)
+                        .map_err(super::backend_error)?
+                        .map_or(0, |value| value.value()),
+                    Err(redb::TableError::TableDoesNotExist(_)) => 0,
+                    Err(error) => return Err(super::backend_error(error)),
+                }
+            };
+            // Validate cursor
+            if let Some(cursor) = cursor {
+                if cursor.repository_id != repository_id || cursor.page_size != limit {
+                    return Err(StoreError::ActiveGateCatalogScopeMismatch);
+                }
+                if cursor.revision != revision {
+                    return Err(StoreError::ActiveGateCatalogRevisionChanged {
+                        expected: cursor.revision,
+                        observed: revision,
+                    });
+                }
+            }
+            // Read all gates
+            let table = match read.open_table(GATES) {
+                Ok(table) => table,
+                Err(redb::TableError::TableDoesNotExist(_)) => {
+                    if let Some(cursor) = cursor {
+                        return Err(StoreError::ActiveGateCatalogAnchorMissing(
+                            cursor.gate_id.as_str().to_owned(),
+                        ));
+                    }
+                    return Ok(ActiveGateCatalogSnapshot {
+                        repository_id,
+                        revision,
+                        scope_total: 0,
+                        total: 0,
+                        items: Vec::new(),
+                        truncated: false,
+                    });
+                }
+                Err(error) => return Err(super::backend_error(error)),
+            };
+            // Check for tombstones
+            let tombstones = match read.open_table(crate::retention::RETENTION_TOMBSTONES) {
+                Ok(t) => Some(t),
+                Err(redb::TableError::TableDoesNotExist(_)) => None,
+                Err(error) => return Err(super::backend_error(error)),
+            };
+            let mut active_items = Vec::new();
+            for row in table.iter().map_err(super::backend_error)? {
+                let (key, value) = row.map_err(super::backend_error)?;
+                let key_str = key.value();
+                // Check tombstone
+                if let Some(ref tombstones) = tombstones {
+                    let tombstone_key = crate::retention::records::tombstone_key(
+                        lumin_evidence::RetentionItemKind::Gate,
+                        key_str,
+                    );
+                    if tombstones
+                        .get(tombstone_key.as_str())
+                        .map_err(super::backend_error)?
+                        .is_some()
+                    {
+                        // active+tombstone is integrity error
+                        let gate: GateRecord = serde_json::from_slice(value.value())
+                            .map_err(super::serialization_error)?;
+                        if gate.lifecycle == GateLifecycle::Active {
+                            return Err(StoreError::Integrity(format!(
+                                "active gate {} has a tombstone",
+                                key_str
+                            )));
+                        }
+                        continue;
+                    }
+                }
+                let gate: GateRecord =
+                    serde_json::from_slice(value.value()).map_err(super::serialization_error)?;
+                // Validate key==gate_id
+                if gate.gate_id.as_str() != key_str {
+                    return Err(StoreError::Integrity(format!(
+                        "gate key {key_str} disagrees with gate_id {}",
+                        gate.gate_id.as_str()
+                    )));
+                }
+                // Terminal ignored
+                if gate.lifecycle != GateLifecycle::Active {
+                    continue;
+                }
+                // Active requires baseline
+                let baseline = gate.baseline.as_ref().ok_or_else(|| {
+                    StoreError::Integrity(format!(
+                        "active gate {} omitted its baseline",
+                        gate.gate_id.as_str()
+                    ))
+                })?;
+                active_items.push(ActiveGateCatalogItem {
+                    gate_id: gate.gate_id.clone(),
+                    current_revision: gate.current_revision,
+                    opening_transition_sequence: baseline.transition_sequence,
+                });
+            }
+            // Sort: baseline.transition_sequence ASC then gate_id ASC
+            active_items.sort_by(|a, b| {
+                a.opening_transition_sequence
+                    .cmp(&b.opening_transition_sequence)
+                    .then_with(|| a.gate_id.as_str().cmp(b.gate_id.as_str()))
+            });
+            let scope_total = active_items.len();
+            let total = active_items.len();
+            // Find cursor anchor in sorted vec
+            let start = if let Some(cursor) = cursor {
+                let anchor_index = active_items
+                    .iter()
+                    .position(|item| {
+                        item.opening_transition_sequence == cursor.opening_sequence
+                            && item.gate_id == cursor.gate_id
+                    })
+                    .ok_or_else(|| {
+                        StoreError::ActiveGateCatalogAnchorMissing(
+                            cursor.gate_id.as_str().to_owned(),
+                        )
+                    })?;
+                let resume_offset = anchor_index + 1;
+                // Validate canonical nonterminal boundary
+                if !resume_offset.is_multiple_of(limit) || resume_offset >= total {
+                    return Err(StoreError::ActiveGateCatalogAnchorMissing(
+                        cursor.gate_id.as_str().to_owned(),
+                    ));
+                }
+                resume_offset
+            } else {
+                0
+            };
+            let end = start.saturating_add(limit).min(total);
+            let items = active_items[start..end].to_vec();
+            let truncated = end < total;
+            Ok(ActiveGateCatalogSnapshot {
+                repository_id,
+                revision,
+                scope_total,
+                total,
+                items,
+                truncated,
+            })
         })
     }
 }

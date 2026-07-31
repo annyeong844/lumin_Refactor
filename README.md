@@ -28,15 +28,29 @@ Legacy Lumin remains a compatibility and defect corpus. Its internal boundaries 
 
 ## Runnable Checkpoint
 
-The native Rust vertical path is executable. The current binary scans JS/TS and Vue SFCs, routes inline Vue scripts through OXC while preserving embedded-source identity, attaches exact external scripts without copying their logical source, admits strict `package.json` and restricted `pnpm-workspace.yaml` workspace facts plus JSONC tsconfig/jsconfig inputs, resolves relative imports, supported `baseUrl`/`paths` mappings, and workspace package public surfaces under an explicit resolution profile, produces deterministic zero-production-fan-in findings, persists the run under `.lumin`, and reopens it through `overview` and `findings`.
+The native Rust vertical is executable across repository analysis, bounded evidence queries, durable write gates, and retention. The current binary scans JS/TS and Vue SFCs, routes inline Vue scripts through OXC while preserving embedded-source identity, attaches exact external scripts without copying their logical source, admits strict `package.json` and restricted `pnpm-workspace.yaml` workspace facts plus JSONC tsconfig/jsconfig inputs, resolves relative imports, supported `baseUrl`/`paths` mappings, and workspace package public surfaces under an explicit resolution profile, then persists deterministic zero-production-fan-in evidence under `.lumin`.
 
 ```text
 lumin audit --format json
 lumin audit --resolution-profile <bundler|node|node10|node16|nodenext> --format json
 lumin overview --run <run-id> --format json
+lumin capabilities --run <run-id> --format json
 lumin findings --run <run-id> --area dead-code --format json
+lumin explain --run <run-id> <finding-id> --format json
+lumin related --run <run-id> <finding-id> --format json
+lumin files --run <run-id> <repo-path> --format json
+lumin runs list --format json
+lumin pre-write --operation-id <operation-id> --path <repo-path> --format json
+lumin post-write <gate-id> --operation-id <operation-id> --format json
+lumin gate list --active --format json
+lumin gate show <gate-id> --format json
+lumin gate abandon <gate-id> --operation-id <operation-id> --reason <text> --format json
 ```
 
-Generated and vendored findings remain in canonical output with a `review-only` disposition. Vue template opacity, malformed decomposition, external-script conflicts, parse failures, unsupported Svelte/Astro dialects, configuration uncertainty, and resolution uncertainty are emitted as visible incomplete or unavailable evidence; they are never converted into a clean zero.
+Findings, nested evidence, relations, file findings, runs, active gates, and retention-plan items use explicit versioned total orders and bounded, content-bound continuation cursors. Duplicate semantic anchors, cross-scope or nonboundary cursors, stale mutable catalog views, and active-gate record contradictions fail closed rather than restarting at page one. Run and gate retention also expose independent pins, immutable plans, tombstone-aware lookup, and idempotent plan/confirm operations.
 
-This checkpoint is not the completed foundation slice. The durable pre-write/post-write gate, complete state-directory physical-identity and crash recovery, remaining corpus behavior, packaged skills, platform packages, and achieved-budget evidence remain active Phase 1 work.
+The durable gate binds pre-write and post-write through one gate ID, retains logical and physical alias-aware leases, protects semantic reads, records monotonic worktree transitions, and supports exact retry, process-death interruption recovery, abandon, and active-gate listing. State-directory physical identity, generation-bound storage transactions, copy-on-write migration, publication crash recovery, and retention recovery are covered by the current behavioral corpus.
+
+Generated and vendored findings remain canonical `review-only` rows. Vue template opacity, malformed decomposition, external-script conflicts, parse failures, unsupported Svelte/Astro dialects, configuration uncertainty, and resolution uncertainty remain visible incomplete or unavailable evidence; they are never converted into a clean zero.
+
+This checkpoint is still not the completed foundation slice. Remaining Phase 1 work includes the unclosed SLICE-001 acceptance corpus, packaged skill adapters, Windows/Linux product packages, and achieved-budget evidence. Use `WORKBOARD.md` as the current implementation ledger rather than inferring completion from this overview.
