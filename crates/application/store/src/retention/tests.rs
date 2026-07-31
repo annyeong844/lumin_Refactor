@@ -442,3 +442,75 @@ fn assert_pruning_truth(
     ));
     Ok(())
 }
+
+#[test]
+fn runs_list_sorts_by_sequence_desc_then_run_id_asc() -> Result<(), Box<dyn std::error::Error>> {
+    let root = TempDir::new()?;
+    let store = open_store(root.path())?;
+    // Publish multiple runs - sequence increments monotonically
+    let first = publish(&store)?;
+    let second = publish(&store)?;
+    let third = publish(&store)?;
+
+    let catalog = store.list_runs(None, 100)?;
+    assert_eq!(catalog.total, 3);
+    // Sequence DESC means newest first
+    assert_eq!(catalog.runs[0].run_id, third.run_id);
+    assert_eq!(catalog.runs[1].run_id, second.run_id);
+    assert_eq!(catalog.runs[2].run_id, first.run_id);
+    // Verify sequence monotone descending
+    assert!(catalog.runs[0].sequence > catalog.runs[1].sequence);
+    assert!(catalog.runs[1].sequence > catalog.runs[2].sequence);
+    Ok(())
+}
+
+#[test]
+fn runs_list_excludes_tombstoned_runs() -> Result<(), Box<dyn std::error::Error>> {
+    let root = TempDir::new()?;
+    let store = open_store(root.path())?;
+    let first = publish(&store)?;
+    let _second = publish(&store)?;
+    // Prune the first run
+    let plan = store.prepare_retention_plan(&RetentionPlanRequest {
+        scope: RetentionPlanScope::Runs {
+            before_unix_millis: 9_000_000_000_000,
+        },
+        operation_id: operation("plan-tombstone"),
+    })?;
+    let plan_id = prepared_plan_id(&plan)?;
+    store.confirm_retention_plan(&plan_id, &operation("confirm-tombstone"))?;
+    let catalog = store.list_runs(None, 100)?;
+    assert_eq!(catalog.total, 1);
+    assert!(!catalog.runs.iter().any(|run| run.run_id == first.run_id));
+    Ok(())
+}
+
+#[test]
+fn runs_list_nonboundary_cursor_rejected() -> Result<(), Box<dyn std::error::Error>> {
+    let root = TempDir::new()?;
+    let store = open_store(root.path())?;
+    let _first = publish(&store)?;
+    let _second = publish(&store)?;
+    let _third = publish(&store)?;
+    // With page size 2 for 3 items, the only valid boundary is after item[1]
+    let catalog = store.list_runs(None, 100)?;
+    // Use second run (index 1) with page_size 2 => offset 2 → NOT boundary for page_size 2
+    // since 2.is_multiple_of(2) is true but offset must < total (3) → this is actually valid.
+    // Let's use page_size 3 with first anchor at index 0 → not a boundary (1 is not multiple of 3)
+    let anchor = &catalog.runs[0]; // newest, sequence DESC
+    let cursor = crate::RunCatalogCursor {
+        repository_id: catalog.repository_id.clone(),
+        revision: catalog.revision,
+        page_size: 3,
+        attempt_id: anchor.attempt_id.clone(),
+        run_id: anchor.run_id.clone(),
+        sequence: anchor.sequence,
+    };
+    // Position 0 anchor → resume_offset = 1 → not multiple of 3 → should error
+    let result = store.list_runs(Some(&cursor), 3);
+    assert!(matches!(
+        result,
+        Err(crate::StoreError::RunCatalogAnchorMissing(_))
+    ));
+    Ok(())
+}

@@ -4,6 +4,24 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{SEQUENCES, StoreError, backend_error, namespace::StoreDatabase, serialization_error};
 
+/// Sequence key for the active-gate-catalog revision.
+pub(crate) const ACTIVE_GATE_CATALOG_SEQUENCE_KEY: &str = "active-gate-catalog";
+
+pub(crate) fn increment_active_gate_catalog(write: &WriteTransaction) -> Result<u64, StoreError> {
+    let mut table = write.open_table(SEQUENCES).map_err(backend_error)?;
+    let current = table
+        .get(ACTIVE_GATE_CATALOG_SEQUENCE_KEY)
+        .map_err(backend_error)?
+        .map_or(0, |value| value.value());
+    let next = current
+        .checked_add(1)
+        .ok_or_else(|| StoreError::Integrity("active-gate-catalog sequence overflow".to_owned()))?;
+    table
+        .insert(ACTIVE_GATE_CATALOG_SEQUENCE_KEY, next)
+        .map_err(backend_error)?;
+    Ok(next)
+}
+
 pub(crate) fn current_transition_sequence(write: &WriteTransaction) -> Result<u64, StoreError> {
     let table = write.open_table(SEQUENCES).map_err(backend_error)?;
     table

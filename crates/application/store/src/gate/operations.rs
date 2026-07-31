@@ -144,6 +144,9 @@ impl OperationSession<'_> {
             )?;
             operation.leased_write_set = result.leased_write_set.clone();
             persist_operation_result(&write, &gate, &mut operation, &result)?;
+            if result.lifecycle == GateLifecycle::Active {
+                records::increment_active_gate_catalog(&write)?;
+            }
             guard.commit(write)?;
             Ok(result)
         })
@@ -459,6 +462,9 @@ impl OperationSession<'_> {
                 deltas,
             });
             persist_operation_result(&write, &gate, &mut operation, &result)?;
+            if result.decision.authorizes() {
+                records::increment_active_gate_catalog(&write)?;
+            }
             guard.commit(write)?;
             Ok(result)
         })

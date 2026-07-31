@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use lumin_evidence::{
     CollectionOrderingId, EvidencePage, EvidenceQuery, EvidenceQueryScope, FindingExplanation,
@@ -29,6 +29,8 @@ pub enum EvidenceQueryError {
     NestedCollectionUnavailable(String),
     #[error("duplicate capability_id in capability collection: {0}")]
     DuplicateCapabilityId(String),
+    #[error("duplicate semantic anchor in collection: {0}")]
+    DuplicateCollectionId(String),
 }
 
 pub fn query_run_findings(
@@ -122,6 +124,79 @@ pub fn query_run_explain(
         evidence: evidence_page,
         relations: relations_page,
     })
+}
+
+pub fn query_run_file_findings(
+    repository_id: &RepositoryId,
+    run_id: &RunId,
+    evidence: &RunEvidence,
+    repo_path: &lumin_model::RepoPath,
+    cursor: Option<EvidenceQuery>,
+) -> Result<EvidencePage<FindingRecord>, EngineError> {
+    let source_id = lumin_model::LogicalSourceId::from_path(repo_path);
+    let canonical_bytes = repo_path.canonical_bytes();
+    let filtered: Vec<FindingRecord> = evidence
+        .findings
+        .iter()
+        .filter(|finding| finding.path_identity() == canonical_bytes)
+        .cloned()
+        .collect();
+    let collection_path = format!("run/files/{}", source_id.as_str());
+    let mut filters = BTreeMap::new();
+    filters.insert("path".to_owned(), vec![source_id.as_str().to_owned()]);
+    let expected = EvidenceQuery {
+        scope: EvidenceQueryScope::Run {
+            repository_id: repository_id.clone(),
+            run_id: run_id.clone(),
+        },
+        finding_id: None,
+        collection_path,
+        ordering: CollectionOrderingId::file_findings(),
+        page_size: QUERY_PAGE_SIZE,
+        filters: filters.clone(),
+        anchor: None,
+    };
+    let query = validated_query(cursor, expected)?;
+    let result = page_with_scope_total(&filtered, evidence.findings.len(), query, |finding| {
+        finding.finding_id.as_str()
+    })?;
+    Ok(result)
+}
+
+pub fn query_run_relations(
+    repository_id: &RepositoryId,
+    run_id: &RunId,
+    evidence: &RunEvidence,
+    finding_id: &FindingId,
+    cursor: Option<EvidenceQuery>,
+) -> Result<EvidencePage<lumin_evidence::FindingRelationRecord>, EngineError> {
+    let finding = evidence
+        .findings
+        .iter()
+        .find(|finding| &finding.finding_id == finding_id)
+        .ok_or_else(|| EvidenceQueryError::FindingNotFound(finding_id.as_str().to_owned()))?;
+    if !finding.nested_collections_available {
+        return Err(EvidenceQueryError::NestedCollectionUnavailable(format!(
+            "run/findings/{}",
+            finding.finding_id.as_str()
+        ))
+        .into());
+    }
+    let relations_path = format!("run/findings/{}/relations", finding.finding_id.as_str());
+    let expected = EvidenceQuery {
+        scope: EvidenceQueryScope::Run {
+            repository_id: repository_id.clone(),
+            run_id: run_id.clone(),
+        },
+        finding_id: Some(finding.finding_id.clone()),
+        collection_path: relations_path,
+        ordering: CollectionOrderingId::relations(),
+        page_size: QUERY_PAGE_SIZE,
+        filters: BTreeMap::new(),
+        anchor: None,
+    };
+    let query = validated_query(cursor, expected)?;
+    page(&finding.relations, query, |rel| rel.relation_id.as_str()).map_err(Into::into)
 }
 
 pub fn query_gate_findings(
@@ -279,6 +354,7 @@ pub(crate) fn page<T: Clone>(
     query: EvidenceQuery,
     semantic_id: impl Fn(&T) -> &str,
 ) -> Result<EvidencePage<T>, EvidenceQueryError> {
+    detect_duplicate_anchors(items, &semantic_id)?;
     let start = match &query.anchor {
         Some(anchor) => {
             let resume_offset = items
@@ -315,6 +391,65 @@ pub(crate) fn page<T: Clone>(
         items: page_items,
         next_query,
     })
+}
+
+fn page_with_scope_total<T: Clone>(
+    items: &[T],
+    scope_total: usize,
+    query: EvidenceQuery,
+    semantic_id: impl Fn(&T) -> &str,
+) -> Result<EvidencePage<T>, EvidenceQueryError> {
+    detect_duplicate_anchors(items, &semantic_id)?;
+    let start = match &query.anchor {
+        Some(anchor) => {
+            let resume_offset = items
+                .iter()
+                .position(|item| semantic_id(item) == anchor.as_str())
+                .map(|index| index + 1)
+                .ok_or(EvidenceQueryError::CursorAnchorMissing)?;
+            if query.page_size == 0
+                || !resume_offset.is_multiple_of(query.page_size)
+                || resume_offset >= items.len()
+            {
+                return Err(EvidenceQueryError::CursorScopeMismatch);
+            }
+            resume_offset
+        }
+        None => 0,
+    };
+    let end = start.saturating_add(query.page_size).min(items.len());
+    let page_items = items[start..end].to_vec();
+    let next_query = if end < items.len() {
+        let last = page_items
+            .last()
+            .ok_or(EvidenceQueryError::CursorAnchorMissing)?;
+        let mut next = query.clone();
+        next.anchor = Some(PageAnchor::from_string(semantic_id(last).to_owned()));
+        Some(next)
+    } else {
+        None
+    };
+    Ok(EvidencePage {
+        query,
+        scope_total,
+        total: items.len(),
+        items: page_items,
+        next_query,
+    })
+}
+
+fn detect_duplicate_anchors<T>(
+    items: &[T],
+    semantic_id: &impl Fn(&T) -> &str,
+) -> Result<(), EvidenceQueryError> {
+    let mut seen = HashSet::new();
+    for item in items {
+        let id = semantic_id(item);
+        if !seen.insert(id) {
+            return Err(EvidenceQueryError::DuplicateCollectionId(id.to_owned()));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -642,5 +777,132 @@ mod tests {
             findings,
             limitations: Vec::new(),
         })
+    }
+
+    #[test]
+    fn duplicate_semantic_ids_fail_closed_before_paging() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let repo_id = test_repository_id();
+        let run_id = RunId::from_string("run-duplicate".to_owned());
+        let mut evidence = run_evidence_with_nested()?;
+        evidence.findings.push(evidence.findings[0].clone());
+        let result = query_run_findings(&repo_id, &run_id, &evidence, None);
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => return Err("duplicate finding ID was accepted".into()),
+        };
+        assert!(matches!(
+            &error,
+            EngineError::EvidenceQuery(EvidenceQueryError::DuplicateCollectionId(_))
+        ));
+        assert_eq!(error.lifecycle_exit_code(), 1);
+
+        let mut evidence = run_evidence_with_nested()?;
+        let duplicate = evidence.findings[0].relations[0].clone();
+        evidence.findings[0].relations.push(duplicate);
+        assert!(matches!(
+            query_run_relations(
+                &repo_id,
+                &run_id,
+                &evidence,
+                &evidence.findings[0].finding_id,
+                None,
+            ),
+            Err(EngineError::EvidenceQuery(
+                EvidenceQueryError::DuplicateCollectionId(_)
+            ))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn file_findings_bind_canonical_path_scope_and_total() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let repo_id = test_repository_id();
+        let run_id = RunId::from_string("run-files".to_owned());
+        let mut evidence = run_evidence_with_nested()?;
+        let path = RepoPath::from_portable("src/shared.ts")?;
+        for finding in &mut evidence.findings {
+            finding.path = RepoPathProjection::from(&path);
+        }
+        sort_findings(&mut evidence.findings);
+
+        let first = query_run_file_findings(&repo_id, &run_id, &evidence, &path, None)?;
+        assert_eq!(first.scope_total, 101);
+        assert_eq!(first.total, 101);
+        assert_eq!(first.items.len(), QUERY_PAGE_SIZE);
+        assert_eq!(first.query.ordering, CollectionOrderingId::file_findings());
+        let source_id = LogicalSourceId::from_path(&path);
+        assert_eq!(
+            first.query.collection_path,
+            format!("run/files/{}", source_id.as_str())
+        );
+        assert_eq!(
+            first.query.filters.get("path"),
+            Some(&vec![source_id.as_str().to_owned()])
+        );
+        assert!(
+            first
+                .items
+                .iter()
+                .all(|finding| finding.path_identity() == path.canonical_bytes())
+        );
+
+        let second = query_run_file_findings(
+            &repo_id,
+            &run_id,
+            &evidence,
+            &path,
+            first.next_query.clone(),
+        )?;
+        assert_eq!(second.items.len(), 1);
+        assert!(second.next_query.is_none());
+        let other_path = RepoPath::from_portable("src/other.ts")?;
+        assert!(matches!(
+            query_run_file_findings(&repo_id, &run_id, &evidence, &other_path, first.next_query,),
+            Err(EngineError::EvidenceQuery(
+                EvidenceQueryError::CursorScopeMismatch
+            ))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn related_reuses_the_finding_relation_scope_and_canonical_order()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let repo_id = test_repository_id();
+        let run_id = RunId::from_string("run-related".to_owned());
+        let evidence = run_evidence_with_nested()?;
+        let finding = &evidence.findings[0];
+        let first = query_run_relations(&repo_id, &run_id, &evidence, &finding.finding_id, None)?;
+        assert_eq!(first.scope_total, 101);
+        assert_eq!(first.total, 101);
+        assert_eq!(first.items.len(), QUERY_PAGE_SIZE);
+        assert_eq!(first.query.finding_id.as_ref(), Some(&finding.finding_id));
+        assert_eq!(
+            first.query.collection_path,
+            format!("run/findings/{}/relations", finding.finding_id.as_str())
+        );
+        assert_eq!(first.query.ordering, CollectionOrderingId::relations());
+        assert_eq!(
+            first
+                .items
+                .iter()
+                .map(|relation| relation.target_finding_id.as_str())
+                .collect::<Vec<_>>(),
+            (0..100)
+                .map(|index| format!("target-{index:03}"))
+                .collect::<Vec<_>>()
+        );
+        let second = query_run_relations(
+            &repo_id,
+            &run_id,
+            &evidence,
+            &finding.finding_id,
+            first.next_query,
+        )?;
+        assert_eq!(second.items.len(), 1);
+        assert_eq!(second.items[0].target_finding_id.as_str(), "target-100");
+        Ok(())
     }
 }

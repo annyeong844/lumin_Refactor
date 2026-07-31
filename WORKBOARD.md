@@ -58,7 +58,11 @@ Current implementation checkpoint:
 
 - The public `capabilities-pagination` corpus now exposes the four grounded compiled capabilities as fixed `3+1` pages under `capabilities.v1`. Current-binary traversal works without `.lumin`, binds content-bound `lumin-binary-cursor.v2` to a model-owned semantic `BuildIdentity`, and rejects cross-build or run cursors; exact-run traversal reuses repository-bound `lumin-run-cursor.v2`, survives later audits, and rejects cross-run or cross-repository reuse. Both scopes return each exact capability ID/state once, and duplicate registry or persisted-run IDs hard-stop instead of being silently deduplicated.
 
-Next implementation order: implement `collection-ordering` for findings, evidence, relations, files, runs, active gates, and plan items. Traverse each collection exactly once under its versioned ordering despite randomized insertion and backend traversal.
+- The public `collection-ordering` corpus now binds all seven owner-defined collections to explicit total orders: findings, nested evidence, relations, file findings, runs, active gates, and retention-plan items. `lumin related --run`, `lumin files --run`, and `lumin gate list --active` expose the previously missing verticals with content-bound cursors, canonical continuation boundaries, collection envelopes, and typed malformed/stale/integrity exits. Run catalogs sort visible records by attempt sequence descending then run ID, while active gates sort opening transition sequence then gate ID and advance a transaction-local catalog revision exactly once for authorized open, close, or abandon membership changes. Duplicate semantic anchors, active-gate key/baseline/tombstone contradictions, and nonboundary cursors fail closed.
+
+- Rust production and behavioral-corpus owners under `crates/` now stay below 1,000 lines. CLI query commands, inventory unit tests, bounded cursor-integrity scenarios, and semantic-demand write-gate scenarios live in focused owner modules; frozen historical probe snapshots under `reviews/` remain unchanged.
+
+Next implementation order: select the next unimplemented SLICE-001 acceptance item through a fresh canonical owner and corpus survey after this checkpoint closes.
 
 ## Routing Rules
 

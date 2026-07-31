@@ -20,6 +20,8 @@ pub const FINDINGS_ORDERING_ID: &str = "findings.v1";
 pub const EVIDENCE_ORDERING_ID: &str = "evidence.v1";
 pub const RELATIONS_ORDERING_ID: &str = "relations.v1";
 pub const CAPABILITIES_ORDERING_ID: &str = "capabilities.v1";
+pub const FILE_FINDINGS_ORDERING_ID: &str = "file-findings.v1";
+pub const ACTIVE_GATES_ORDERING_ID: &str = "active-gates.v1";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EvidenceQueryScope {
@@ -59,6 +61,14 @@ impl CollectionOrderingId {
 
     pub fn capabilities() -> Self {
         Self(CAPABILITIES_ORDERING_ID.to_owned())
+    }
+
+    pub fn file_findings() -> Self {
+        Self(FILE_FINDINGS_ORDERING_ID.to_owned())
+    }
+
+    pub fn active_gates() -> Self {
+        Self(ACTIVE_GATES_ORDERING_ID.to_owned())
     }
 
     pub fn as_str(&self) -> &str {
@@ -346,4 +356,156 @@ mod tests {
         assert_eq!(findings[0].relations.len(), 1);
         Ok(())
     }
+}
+
+#[cfg(test)]
+fn ordering_finding(
+    finding_id: &str,
+    rule_id: &str,
+    path: &RepoPath,
+    span: SourceSpan,
+) -> FindingRecord {
+    FindingRecord {
+        finding_id: FindingId::from_string(finding_id.to_owned()),
+        rule_id: rule_id.to_owned(),
+        owner_capability: DEAD_CODE_CAPABILITY_ID.to_owned(),
+        severity: Severity::Warning,
+        confidence: Confidence::Grounded,
+        disposition: FindingDisposition::ReviewCandidate,
+        claim: "ordering fixture".to_owned(),
+        source_id: LogicalSourceId::from_path(path),
+        path: RepoPathProjection::from(path),
+        span,
+        exported_name: finding_id.to_owned(),
+        namespace: SymbolNamespace::Value,
+        nested_collections_available: true,
+        evidence: Vec::new(),
+        relations: Vec::new(),
+    }
+}
+
+#[test]
+fn canonical_ordering_is_stable_across_insertion_orders_and_ties()
+-> Result<(), Box<dyn std::error::Error>> {
+    let path_a = RepoPath::from_portable("src/a.ts")?;
+    let path_b = RepoPath::from_portable("src/b.ts")?;
+    let source_a = LogicalSourceId::from_string("source-a".to_owned());
+    let source_b = LogicalSourceId::from_string("source-b".to_owned());
+    let evidence = |id: &str, kind: &str, source_id: &LogicalSourceId, start: u32| EvidenceRecord {
+        evidence_id: EvidenceId::from_string(id.to_owned()),
+        kind: kind.to_owned(),
+        source_id: source_id.clone(),
+        path: RepoPathProjection::from(&path_a),
+        span: SourceSpan {
+            start,
+            end: start + 1,
+        },
+        payload_sha256: id.to_owned(),
+    };
+    let relation = |id: &str, kind: &str, target: &str| FindingRelationRecord {
+        relation_id: FindingRelationId::from_string(id.to_owned()),
+        kind: kind.to_owned(),
+        target_finding_id: FindingId::from_string(target.to_owned()),
+        grounding_evidence_id: EvidenceId::from_string(format!("evidence-{id}")),
+    };
+
+    let mut tied = ordering_finding(
+        "finding-a",
+        "rule-a",
+        &path_a,
+        SourceSpan { start: 0, end: 1 },
+    );
+    tied.evidence = vec![
+        evidence("evidence-z", "z-kind", &source_a, 0),
+        evidence("evidence-source-b", "a-kind", &source_b, 0),
+        evidence("evidence-b", "a-kind", &source_a, 0),
+        evidence("evidence-span", "a-kind", &source_a, 1),
+        evidence("evidence-a", "a-kind", &source_a, 0),
+    ];
+    tied.relations = vec![
+        relation("relation-z", "z-kind", "target-a"),
+        relation("relation-target-b", "a-kind", "target-b"),
+        relation("relation-b", "a-kind", "target-a"),
+        relation("relation-a", "a-kind", "target-a"),
+    ];
+    let base = vec![
+        ordering_finding(
+            "finding-rule-b",
+            "rule-b",
+            &path_a,
+            SourceSpan { start: 0, end: 1 },
+        ),
+        ordering_finding(
+            "finding-path-b",
+            "rule-a",
+            &path_b,
+            SourceSpan { start: 0, end: 1 },
+        ),
+        ordering_finding(
+            "finding-span",
+            "rule-a",
+            &path_a,
+            SourceSpan { start: 1, end: 2 },
+        ),
+        ordering_finding(
+            "finding-b",
+            "rule-a",
+            &path_a,
+            SourceSpan { start: 0, end: 1 },
+        ),
+        tied,
+    ];
+    let expected_findings = [
+        "finding-a",
+        "finding-b",
+        "finding-span",
+        "finding-path-b",
+        "finding-rule-b",
+    ];
+    let expected_evidence = [
+        "evidence-a",
+        "evidence-b",
+        "evidence-span",
+        "evidence-source-b",
+        "evidence-z",
+    ];
+    let expected_relations = [
+        "relation-a",
+        "relation-b",
+        "relation-target-b",
+        "relation-z",
+    ];
+
+    for shift in 0..base.len() {
+        let mut findings = base.clone();
+        findings.rotate_left(shift);
+        if shift % 2 == 1 {
+            findings.reverse();
+        }
+        sort_findings(&mut findings);
+        assert_eq!(
+            findings
+                .iter()
+                .map(|finding| finding.finding_id.as_str())
+                .collect::<Vec<_>>(),
+            expected_findings
+        );
+        assert_eq!(
+            findings[0]
+                .evidence
+                .iter()
+                .map(|item| item.evidence_id.as_str())
+                .collect::<Vec<_>>(),
+            expected_evidence
+        );
+        assert_eq!(
+            findings[0]
+                .relations
+                .iter()
+                .map(|item| item.relation_id.as_str())
+                .collect::<Vec<_>>(),
+            expected_relations
+        );
+    }
+    Ok(())
 }

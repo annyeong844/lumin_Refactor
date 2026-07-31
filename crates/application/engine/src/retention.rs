@@ -9,6 +9,8 @@ use lumin_store::RetentionPlanRequest as StoreRetentionPlanRequest;
 
 use crate::{EngineError, open_repository_context};
 
+pub use lumin_store::{ActiveGateCatalogCursor, ActiveGateCatalogItem, ActiveGateCatalogSnapshot};
+
 #[derive(Clone, Debug)]
 pub struct PrepareRetentionPlanRequest {
     pub root: PathBuf,
@@ -125,5 +127,16 @@ pub fn list_runs(
     open_repository_context(root)?
         .store
         .list_runs(cursor, limit)
+        .map_err(Into::into)
+}
+
+pub fn list_active_gates(
+    root: &Path,
+    cursor: Option<&ActiveGateCatalogCursor>,
+    limit: usize,
+) -> Result<ActiveGateCatalogSnapshot, EngineError> {
+    open_repository_context(root)?
+        .store
+        .list_active_gates(cursor, limit)
         .map_err(Into::into)
 }

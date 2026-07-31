@@ -297,6 +297,138 @@ pub fn run_explain_response(
     })
 }
 
+pub fn run_relations_response(
+    page: &EvidencePage<FindingRelationRecord>,
+) -> Result<RelationCollectionDto, ProtocolError> {
+    let scope = scope(&page.query);
+    relations_response(page, scope)
+}
+
+pub fn run_file_findings_response(
+    page: &EvidencePage<FindingRecord>,
+) -> Result<FindingCollectionDto, ProtocolError> {
+    let next_cursor = encode_next_cursor(page.next_query.as_ref())?;
+    Ok(FindingCollectionDto {
+        schema_version: "lumin.collection.v1",
+        scope: scope(&page.query),
+        filters: page.query.filters.clone(),
+        ordering: ordering(&page.query, lumin_evidence::FILE_FINDINGS_ORDERING_ID)?,
+        scope_total: page.scope_total,
+        total: page.total,
+        returned: page.items.len(),
+        truncated: next_cursor.is_some(),
+        next_cursor,
+        items: page.items.iter().map(FindingDto::from).collect(),
+    })
+}
+
+// --- Active Gates Catalog ---
+
+pub const ACTIVE_GATES_PAGE_SIZE: usize = 100;
+const ACTIVE_GATES_CURSOR_SCHEMA: &str = "lumin-active-gates-cursor.v1";
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ActiveGatesCursorDto {
+    schema_version: String,
+    repository_id: RepositoryId,
+    revision: u64,
+    ordering: String,
+    page_size: usize,
+    opening_sequence: u64,
+    gate_id: GateId,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActiveGatesCollectionDto {
+    pub schema_version: &'static str,
+    pub repository_id: RepositoryId,
+    pub revision: u64,
+    pub filters: BTreeMap<String, Vec<String>>,
+    pub ordering: &'static str,
+    pub scope_total: usize,
+    pub total: usize,
+    pub returned: usize,
+    pub truncated: bool,
+    pub next_cursor: Option<String>,
+    pub items: Vec<ActiveGateItemDto>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActiveGateItemDto {
+    pub gate_id: GateId,
+    pub current_revision: u64,
+    pub opening_transition_sequence: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DecodedActiveGatesCursor {
+    pub repository_id: RepositoryId,
+    pub revision: u64,
+    pub page_size: usize,
+    pub opening_sequence: u64,
+    pub gate_id: GateId,
+}
+
+pub fn decode_active_gates_cursor(value: &str) -> Result<DecodedActiveGatesCursor, ProtocolError> {
+    let cursor: ActiveGatesCursorDto = decode_cursor_payload(value)?;
+    if cursor.schema_version != ACTIVE_GATES_CURSOR_SCHEMA {
+        return Err(ProtocolError::CursorScopeMismatch);
+    }
+    if cursor.ordering != lumin_evidence::ACTIVE_GATES_ORDERING_ID {
+        return Err(ProtocolError::CursorScopeMismatch);
+    }
+    if cursor.page_size != ACTIVE_GATES_PAGE_SIZE {
+        return Err(ProtocolError::CursorScopeMismatch);
+    }
+    Ok(DecodedActiveGatesCursor {
+        repository_id: cursor.repository_id,
+        revision: cursor.revision,
+        page_size: cursor.page_size,
+        opening_sequence: cursor.opening_sequence,
+        gate_id: cursor.gate_id,
+    })
+}
+
+pub fn active_gates_response(
+    repository_id: RepositoryId,
+    revision: u64,
+    scope_total: usize,
+    total: usize,
+    items: Vec<ActiveGateItemDto>,
+    truncated: bool,
+) -> Result<ActiveGatesCollectionDto, ProtocolError> {
+    let next_cursor = if truncated {
+        let last = items.last().ok_or(ProtocolError::CursorAnchorMissing)?;
+        Some(encode_cursor_payload(&ActiveGatesCursorDto {
+            schema_version: ACTIVE_GATES_CURSOR_SCHEMA.to_owned(),
+            repository_id: repository_id.clone(),
+            revision,
+            ordering: lumin_evidence::ACTIVE_GATES_ORDERING_ID.to_owned(),
+            page_size: ACTIVE_GATES_PAGE_SIZE,
+            opening_sequence: last.opening_transition_sequence,
+            gate_id: last.gate_id.clone(),
+        })?)
+    } else {
+        None
+    };
+    Ok(ActiveGatesCollectionDto {
+        schema_version: "lumin.active-gates.v1",
+        repository_id,
+        revision,
+        filters: BTreeMap::new(),
+        ordering: lumin_evidence::ACTIVE_GATES_ORDERING_ID,
+        scope_total,
+        total,
+        returned: items.len(),
+        truncated,
+        next_cursor,
+        items,
+    })
+}
+
 fn evidence_response(
     page: &EvidencePage<EvidenceRecord>,
     scope: ScopeDto,
@@ -556,5 +688,92 @@ mod tests {
             evidence: Vec::new(),
             relations: Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod active_gate_catalog_tests {
+    use super::*;
+
+    #[test]
+    fn active_gate_cursor_round_trips_and_binds_ordering() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let repository_id = RepositoryId::from_string("repository-active".to_owned());
+        let gate_id = GateId::from_string("gate-active".to_owned());
+        let response = active_gates_response(
+            repository_id.clone(),
+            7,
+            101,
+            101,
+            vec![ActiveGateItemDto {
+                gate_id: gate_id.clone(),
+                current_revision: 3,
+                opening_transition_sequence: 41,
+            }],
+            true,
+        )?;
+        let decoded = decode_active_gates_cursor(
+            response
+                .next_cursor
+                .as_deref()
+                .ok_or("missing active gate cursor")?,
+        )?;
+        assert_eq!(
+            decoded,
+            DecodedActiveGatesCursor {
+                repository_id,
+                revision: 7,
+                page_size: ACTIVE_GATES_PAGE_SIZE,
+                opening_sequence: 41,
+                gate_id,
+            }
+        );
+
+        let wrong_ordering = encode_cursor_payload(&ActiveGatesCursorDto {
+            schema_version: ACTIVE_GATES_CURSOR_SCHEMA.to_owned(),
+            repository_id: RepositoryId::from_string("repository-active".to_owned()),
+            revision: 7,
+            ordering: "runs.v1".to_owned(),
+            page_size: ACTIVE_GATES_PAGE_SIZE,
+            opening_sequence: 41,
+            gate_id: GateId::from_string("gate-active".to_owned()),
+        })?;
+        assert!(matches!(
+            decode_active_gates_cursor(&wrong_ordering),
+            Err(ProtocolError::CursorScopeMismatch)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn active_gate_response_has_the_mandatory_collection_envelope()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let response = active_gates_response(
+            RepositoryId::from_string("repository-active".to_owned()),
+            2,
+            1,
+            1,
+            vec![ActiveGateItemDto {
+                gate_id: GateId::from_string("gate-active".to_owned()),
+                current_revision: 0,
+                opening_transition_sequence: 9,
+            }],
+            false,
+        )?;
+        let value = serde_json::to_value(response)?;
+        assert_eq!(value["schemaVersion"], "lumin.active-gates.v1");
+        assert_eq!(value["repositoryId"], "repository-active");
+        assert_eq!(value["revision"], 2);
+        assert_eq!(value["filters"], serde_json::json!({}));
+        assert_eq!(value["ordering"], lumin_evidence::ACTIVE_GATES_ORDERING_ID);
+        assert_eq!(value["scopeTotal"], 1);
+        assert_eq!(value["total"], 1);
+        assert_eq!(value["returned"], 1);
+        assert_eq!(value["truncated"], false);
+        assert!(value["nextCursor"].is_null());
+        assert_eq!(value["items"][0]["gateId"], "gate-active");
+        assert_eq!(value["items"][0]["currentRevision"], 0);
+        assert_eq!(value["items"][0]["openingTransitionSequence"], 9);
+        Ok(())
     }
 }
