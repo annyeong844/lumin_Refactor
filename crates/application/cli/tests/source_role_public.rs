@@ -328,7 +328,7 @@ fn classifications(
         .ok_or_else(|| std::io::Error::other("sourceClassification is missing"))?;
     assert_eq!(
         source_classification
-            .pointer("/path/schemaVersion")
+            .pointer("/path/encoding")
             .and_then(Value::as_str),
         Some("repo-path.v1")
     );
@@ -371,7 +371,7 @@ fn finding_views(response: &Value) -> Result<BTreeSet<FindingView>, Box<dyn std:
                 Some("dead-code/zero-exact-fan-in.v1")
             );
             assert_eq!(
-                item.pointer("/path/schemaVersion").and_then(Value::as_str),
+                item.pointer("/path/encoding").and_then(Value::as_str),
                 Some("repo-path.v1")
             );
             let required = |pointer: &str| {

@@ -1,7 +1,7 @@
 //! AST-based source policy checks for production crates.
 //!
 //! Scans production source files using `syn` to enforce:
-//! - No `std::process::Command` imports or usage
+//! - No process `Command` imports, re-exports, aliases, or constructors
 //! - Exactly one `ThreadPoolBuilder::new()` in the engine with correct chain
 //! - No `ScanLock` named types
 //! - No global Rayon entry points (join/spawn/scope/scope_fifo)
@@ -90,7 +90,7 @@ struct PolicyVisitor {
     file_display: String,
     /// Violations collected.
     violations: Vec<String>,
-    /// Command import paths found (for deferred third-party note).
+    /// Process Command imports or constructors found.
     command_found: bool,
     /// ThreadPoolBuilder::new() call sites found.
     pool_builders: Vec<PoolBuilderInfo>,
@@ -281,57 +281,52 @@ impl<'ast> Visit<'ast> for PolicyVisitor {
     }
 }
 
-/// Recursively check a use tree for `std::process::Command`.
+/// Reject explicit `Command` imports/re-exports from std or third-party crates.
+/// A std::process glob is also rejected because it necessarily imports Command.
 fn check_use_tree_for_command(
     tree: &syn::UseTree,
     found: &mut bool,
     violations: &mut Vec<String>,
     file_display: &str,
 ) {
-    match tree {
-        syn::UseTree::Path(use_path) => {
-            if use_path.ident == "std" && has_process_command_in_tree(&use_path.tree) {
-                *found = true;
-                violations.push(format!("{file_display}: imports std::process::Command"));
-            }
-        }
-        syn::UseTree::Group(group) => {
-            for item in &group.items {
-                check_use_tree_for_command(item, found, violations, file_display);
-            }
-        }
-        syn::UseTree::Rename(rename) => {
-            // use X as Y — the path leading here is checked by parent
-            let _ = rename;
-        }
-        syn::UseTree::Name(_) | syn::UseTree::Glob(_) => {}
+    if explicitly_imports_command(tree) || std_process_glob(tree) {
+        *found = true;
+        violations.push(format!(
+            "{file_display}: imports or re-exports a process Command"
+        ));
     }
 }
 
-/// Check if a use subtree contains `process::Command`.
-fn has_process_command_in_tree(tree: &syn::UseTree) -> bool {
-    match tree {
-        syn::UseTree::Path(path) => {
-            if path.ident == "process" {
-                return subtree_contains_command(&path.tree);
-            }
-            false
-        }
-        syn::UseTree::Group(group) => group.items.iter().any(has_process_command_in_tree),
-        _ => false,
-    }
-}
-
-fn subtree_contains_command(tree: &syn::UseTree) -> bool {
+fn explicitly_imports_command(tree: &syn::UseTree) -> bool {
     match tree {
         syn::UseTree::Name(name) => name.ident == "Command",
         syn::UseTree::Rename(rename) => rename.ident == "Command",
-        syn::UseTree::Path(path) => path.ident == "Command" || subtree_contains_command(&path.tree),
-        syn::UseTree::Group(group) => group.items.iter().any(subtree_contains_command),
-        syn::UseTree::Glob(_) => {
-            // `use std::process::*` — conservative: flag it
-            true
+        syn::UseTree::Path(path) => {
+            path.ident == "Command" || explicitly_imports_command(&path.tree)
         }
+        syn::UseTree::Group(group) => group.items.iter().any(explicitly_imports_command),
+        syn::UseTree::Glob(_) => false,
+    }
+}
+
+fn std_process_glob(tree: &syn::UseTree) -> bool {
+    std_process_glob_with_prefix(tree, &mut Vec::new())
+}
+
+fn std_process_glob_with_prefix(tree: &syn::UseTree, prefix: &mut Vec<String>) -> bool {
+    match tree {
+        syn::UseTree::Path(path) => {
+            prefix.push(path.ident.to_string());
+            let found = std_process_glob_with_prefix(&path.tree, prefix);
+            prefix.pop();
+            found
+        }
+        syn::UseTree::Group(group) => group
+            .items
+            .iter()
+            .any(|item| std_process_glob_with_prefix(item, prefix)),
+        syn::UseTree::Glob(_) => prefix.len() == 2 && prefix[0] == "std" && prefix[1] == "process",
+        syn::UseTree::Name(_) | syn::UseTree::Rename(_) => false,
     }
 }
 
@@ -357,7 +352,8 @@ fn check_expr_for_rayon_global(
     }
 }
 
-/// Check if an expression call is `std::process::Command::new(...)`.
+/// Reject `Command::new` through std, aliases exposed under that name, or
+/// third-party re-exports. Explicit aliases are rejected at the import site.
 fn check_expr_for_command_new(
     node: &syn::ExprCall,
     file_display: &str,
@@ -366,22 +362,11 @@ fn check_expr_for_command_new(
 ) {
     if let syn::Expr::Path(expr_path) = &*node.func {
         let segs = segments_to_strings(&expr_path.path);
-        // std::process::Command::new
-        if segs.len() >= 4
-            && segs[0] == "std"
-            && segs[1] == "process"
-            && segs[2] == "Command"
-            && segs[3] == "new"
-        {
+        if segs.len() >= 2 && segs[segs.len() - 2] == "Command" && segs[segs.len() - 1] == "new" {
             *found = true;
             violations.push(format!(
-                "{file_display}: fully-qualified std::process::Command::new call"
+                "{file_display}: constructs a process Command (directly or through a re-export)"
             ));
-        }
-        // Command::new (after import)
-        if segs.len() == 2 && segs[0] == "Command" && segs[1] == "new" {
-            *found = true;
-            violations.push(format!("{file_display}: Command::new call"));
         }
     }
 }
@@ -560,13 +545,6 @@ pub fn scan_production_sources(
     // Verify spec artifact digests
     verify_spec_digests(workspace_root, &mut result);
 
-    // Add deferred items
-    result.deferred.push(
-        "std::process::Command: direct usage PROVEN in lumin-xtask; \
-         third-party reexports DEFERRED to package-check"
-            .to_owned(),
-    );
-
     result
 }
 
@@ -743,6 +721,28 @@ mod tests {
     fn command_glob_import() {
         let v = parse_and_visit("use std::process::*;");
         assert!(v.command_found);
+    }
+
+    #[test]
+    fn command_grouped_glob_import() {
+        let v = parse_and_visit("use std::{path::Path, process::*};");
+        assert!(v.command_found);
+    }
+
+    #[test]
+    fn third_party_command_reexport_import_is_detected() {
+        let v = parse_and_visit("use process_wrapper::Command as Wrapped;");
+        assert!(v.command_found);
+        assert!(!v.violations.is_empty());
+    }
+
+    #[test]
+    fn third_party_command_reexport_constructor_is_detected() {
+        let v = parse_and_visit(
+            "fn f() { let _c = process_wrapper::process::Command::new(\"tool\"); }",
+        );
+        assert!(v.command_found);
+        assert!(!v.violations.is_empty());
     }
 
     #[test]

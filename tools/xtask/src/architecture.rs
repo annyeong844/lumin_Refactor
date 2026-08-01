@@ -9,6 +9,7 @@ use std::process::ExitCode;
 use crate::generated_tables;
 use crate::limitation_registry;
 use crate::metadata;
+use crate::path_codec;
 use crate::path_owner;
 use crate::source_policy;
 
@@ -43,12 +44,13 @@ pub fn run() -> ExitCode {
     );
 
     // Phase 2: AST source policy scanning
-    println!("[CHECK] source policy: std::process::Command");
+    println!("[CHECK] source policy: process Command and third-party re-exports");
     println!("[CHECK] source policy: Rayon ThreadPoolBuilder");
     println!("[CHECK] source policy: ScanLock types");
     println!("[CHECK] source policy: global rayon entry points");
     println!("[CHECK] source policy: spec artifact SHA-256 digests");
     println!("[CHECK] path identity declaration and native-lowering owners");
+    println!("[CHECK] path/root codec artifact, vectors, DTOs, and generated digest");
     println!("[CHECK] generated configuration tables and owner partitions");
     println!("[CHECK] exhaustive limitation registry and fact owners");
 
@@ -57,6 +59,7 @@ pub fn run() -> ExitCode {
         source_policy::scan_production_sources(&metadata_result.production_members, effective_root);
     let path_owner_result =
         path_owner::scan_path_ownership(&metadata_result.production_members, effective_root);
+    let path_codec_result = path_codec::check_path_codec(effective_root);
     let generated_table_result = generated_tables::check_generated_tables(effective_root);
     let limitation_registry_result = limitation_registry::check_limitation_registry(
         &metadata_result.production_members,
@@ -70,10 +73,12 @@ pub fn run() -> ExitCode {
     all_violations.extend(metadata_result.violations);
     all_violations.extend(source_result.violations);
     all_violations.extend(path_owner_result.violations);
+    all_violations.extend(path_codec_result.violations);
     all_violations.extend(generated_table_result.violations);
     all_violations.extend(limitation_registry_result.violations);
     all_tool_errors.extend(source_result.tool_errors);
     all_tool_errors.extend(path_owner_result.tool_errors);
+    all_tool_errors.extend(path_codec_result.tool_errors);
     all_tool_errors.extend(generated_table_result.tool_errors);
     all_tool_errors.extend(limitation_registry_result.tool_errors);
 
@@ -100,7 +105,6 @@ pub fn run() -> ExitCode {
     for d in &source_result.deferred {
         println!("  DEFERRED: {d}");
     }
-    println!("  DEFERRED: codec DTO/runtime equivalence");
     println!("  DEFERRED: corpus/package/benchmark checks");
     println!();
 

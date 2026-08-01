@@ -4,7 +4,7 @@ Status: active
 
 Owner: PLAN-001
 
-Revision: 2026-08-01
+Revision: 2026-08-02
 
 ## Purpose and Ownership
 
@@ -51,8 +51,6 @@ These are execution-matrix counts, not a percentage estimate of product code.
 
 Known non-corpus exit gaps:
 
-- architecture enforcement still defers codec-runtime and third-party command
-  re-export checks;
 - Windows/Linux packages and packaged Codex/Claude Code adapters are not yet
   accepted as products;
 - approved performance and memory budgets have not yet been achieved and
@@ -91,8 +89,8 @@ Owner routes: ARCH-000, ARCH-001, ARCH-002, SLICE-001 AC 19, 21, 35, 37, and 38.
 - [x] Enforce generated-table ownership and drift in `architecture-check`.
 - [x] Enforce exhaustive limitation-registry ownership in
   `architecture-check`.
-- [ ] Enforce the path/root codec runtime boundary in `architecture-check`.
-- [ ] Enforce the third-party command re-export boundary in
+- [x] Enforce the path/root codec runtime boundary in `architecture-check`.
+- [x] Enforce the third-party command re-export boundary in
   `architecture-check`.
 
 Exit: no known semantic or structural prerequisite is being hidden by an

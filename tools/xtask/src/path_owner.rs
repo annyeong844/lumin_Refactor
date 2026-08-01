@@ -23,12 +23,8 @@ const REQUIRED_DECLARATIONS: &[(&str, &str)] = &[
     ("RepositoryRootIdentity", MODEL_OWNER),
     ("RepositoryBinding", MODEL_OWNER),
     ("RepoPathDto", PROTOCOL_OWNER),
+    ("RepositoryRootDto", PROTOCOL_OWNER),
 ];
-
-// `RepositoryRootDto` is contract-owned by protocol but lands with the
-// separately tracked codec DTO/runtime slice. Until then, a declaration is
-// optional but may not appear under another owner.
-const OPTIONAL_DECLARATIONS: &[(&str, &str)] = &[("RepositoryRootDto", PROTOCOL_OWNER)];
 
 #[derive(Debug, Default)]
 pub struct PathOwnerResult {
@@ -101,6 +97,25 @@ impl<'a> PathOwnerVisitor<'a> {
         if !allowed.contains(&self.owner) {
             self.violations.push(format!(
                 "PATH OWNER: native identity lowering {method} referenced by {} ({}) outside {}",
+                self.owner,
+                self.file,
+                allowed.join(" or ")
+            ));
+        }
+    }
+
+    fn check_native_method(&mut self, method: &syn::Ident) {
+        let method = method.to_string();
+        let allowed = match method.as_str() {
+            "to_native_relative"
+            | "decode_native_nul_stream"
+            | "encode_native_nul_stream"
+            | "native_match_bytes" => MODEL_OR_INVENTORY,
+            _ => return,
+        };
+        if !allowed.contains(&self.owner) {
+            self.violations.push(format!(
+                "PATH OWNER: native codec method {method} referenced by {} ({}) outside {}",
                 self.owner,
                 self.file,
                 allowed.join(" or ")
@@ -182,12 +197,16 @@ impl<'ast> Visit<'ast> for PathOwnerVisitor<'_> {
         self.check_native_lowering_path(node);
         syn::visit::visit_expr_path(self, node);
     }
+
+    fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
+        self.check_native_method(&node.method);
+        syn::visit::visit_expr_method_call(self, node);
+    }
 }
 
 fn declaration_owner(name: &str) -> Option<&'static str> {
     REQUIRED_DECLARATIONS
         .iter()
-        .chain(OPTIONAL_DECLARATIONS)
         .find_map(|(candidate, owner)| (*candidate == name).then_some(*owner))
 }
 
@@ -405,6 +424,17 @@ mod tests {
             "fn lower(path: &std::path::Path, physical: P) { let _ = RepoPath::from_native_relative(path); let _ = Root::from_native_absolute(path, physical); }",
         )?;
         assert!(visitor.violations.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_native_codec_method_outside_model_and_inventory() -> Result<(), syn::Error> {
+        let visitor = visit(
+            "lumin-engine",
+            "fn lower(path: &RepoPath) { let _ = path.to_native_relative(); }",
+        )?;
+        assert_eq!(visitor.violations.len(), 1);
+        assert!(visitor.violations[0].contains("to_native_relative"));
         Ok(())
     }
 

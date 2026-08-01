@@ -9,11 +9,19 @@ const ROOT_VECTORS: [&str; 4] = [
 
 #[test]
 fn decodes_every_frozen_root_vector() -> Result<(), Box<dyn std::error::Error>> {
+    let expected_display = [
+        "/repo",
+        "C:/repo",
+        "//server/share/repo",
+        "//?/Volume{00112233-4455-6677-8899-aabbccddeeff}/repo",
+    ];
     let mut repository_ids = std::collections::BTreeSet::new();
-    for vector in ROOT_VECTORS {
+    for (vector, display) in ROOT_VECTORS.into_iter().zip(expected_display) {
         let bytes = decode_hex(vector)?;
         let root = RepositoryRootIdentity::from_canonical_bytes(&bytes)?;
         assert_eq!(root.canonical_bytes(), bytes);
+        assert_eq!(root.display_escaped(), display);
+        assert_eq!(root.readable_address().as_deref(), Some(display));
         repository_ids.insert(RepositoryId::for_root(&root));
     }
     assert_eq!(repository_ids.len(), ROOT_VECTORS.len());
@@ -33,6 +41,14 @@ fn rejects_noncanonical_drive_and_trailing_bytes() -> Result<(), Box<dyn std::er
     trailing.push(0);
     assert_eq!(
         RepositoryRootIdentity::from_canonical_bytes(&trailing),
+        Err(RepositoryRootError::InvalidCanonicalEncoding)
+    );
+
+    let mut physical_platform_mismatch = decode_hex(ROOT_VECTORS[0])?;
+    let physical_tag = physical_platform_mismatch.len() - 17;
+    physical_platform_mismatch[physical_tag] = WINDOWS_PHYSICAL_IDENTITY_TAG;
+    assert_eq!(
+        RepositoryRootIdentity::from_canonical_bytes(&physical_platform_mismatch),
         Err(RepositoryRootError::InvalidCanonicalEncoding)
     );
     Ok(())

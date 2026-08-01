@@ -162,7 +162,7 @@ fn audit_findings(
                 Some("dead-code/zero-exact-fan-in.v1")
             );
             assert_eq!(
-                item.pointer("/path/schemaVersion").and_then(Value::as_str),
+                item.pointer("/path/encoding").and_then(Value::as_str),
                 Some("repo-path.v1")
             );
             let path = item
