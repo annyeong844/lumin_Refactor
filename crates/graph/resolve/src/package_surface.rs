@@ -13,6 +13,10 @@ use lumin_model::{
 
 use crate::candidates;
 use crate::config::{ImporterSettings, PackageConditionMode};
+use crate::generated_config_policy::{
+    FieldClassification, PackageFieldApplicability, RESOLVER_PACKAGE_FIELD_APPLICABILITY,
+    RESOLVER_PACKAGE_JSON_FIELDS,
+};
 
 pub(crate) struct PackageResolution {
     pub outcome: ResolutionOutcome,
@@ -338,13 +342,13 @@ pub(super) fn resolve_request(
     request: ResolutionRequest<'_>,
 ) -> PackageResolution {
     if request.import_kind == ImportKind::SideEffect
-        && context.manifest.root.get("sideEffects").is_some()
-    {
-        return unsupported(
-            context.package,
+        && let Some(result) = reject_applicable_unsupported_fields(
+            context,
             request.specifier,
-            "package sideEffects semantics are unsupported",
-        );
+            &[PackageFieldApplicability::SideEffectReachability],
+        )
+    {
+        return result;
     }
     if request.lane != PackageSurfaceLane::LegacyNode
         && let Some(exports) = context.manifest.root.get("exports")
@@ -370,26 +374,26 @@ fn resolve_legacy_subpath(
     request: ResolutionRequest<'_>,
 ) -> PackageResolution {
     if request.namespace == SymbolNamespace::Type
-        && context.manifest.root.get("typesVersions").is_some()
-    {
-        return unsupported(
-            context.package,
+        && let Some(result) = reject_applicable_unsupported_fields(
+            context,
             request.specifier,
-            "package typesVersions semantics are unsupported",
-        );
+            &[PackageFieldApplicability::TypeFallbackWhenExportsAbsentOrNotConsulted],
+        )
+    {
+        return result;
     }
     if request.namespace == SymbolNamespace::Value
         && request.lane == PackageSurfaceLane::BundlerImport
+        && let Some(result) = reject_applicable_unsupported_fields(
+            context,
+            request.specifier,
+            &[
+                PackageFieldApplicability::BundlerValueWhenExportsAbsentOrNotConsulted,
+                PackageFieldApplicability::BundlerValueFallbackWhenExportsAbsent,
+            ],
+        )
     {
-        for field in ["browser", "react-native"] {
-            if context.manifest.root.get(field).is_some() {
-                return unsupported(
-                    context.package,
-                    request.specifier,
-                    &format!("package {field} semantics are unsupported"),
-                );
-            }
-        }
+        return result;
     }
     let base = match exports::lower_target(&context.package.root, request.key, None) {
         Ok(base) => base,
@@ -410,6 +414,36 @@ fn resolve_legacy_subpath(
     );
     result.declaration = None;
     result
+}
+
+pub(super) fn package_field_policy(
+    path: &str,
+) -> Option<&'static crate::generated_config_policy::FieldPolicy> {
+    RESOLVER_PACKAGE_JSON_FIELDS
+        .iter()
+        .find(|policy| policy.path == path)
+}
+
+pub(super) fn reject_applicable_unsupported_fields(
+    context: &PackageContext<'_>,
+    specifier: &str,
+    applicability: &[PackageFieldApplicability],
+) -> Option<PackageResolution> {
+    RESOLVER_PACKAGE_FIELD_APPLICABILITY
+        .iter()
+        .filter(|policy| applicability.contains(&policy.applicability))
+        .find_map(|applicability_policy| {
+            let policy = package_field_policy(applicability_policy.path)?;
+            (policy.classification == FieldClassification::UnsupportedResolutionAffecting
+                && context.manifest.root.get(policy.path).is_some())
+            .then(|| {
+                unsupported(
+                    context.package,
+                    specifier,
+                    &format!("package {} semantics are unsupported", policy.path),
+                )
+            })
+        })
 }
 
 pub(super) fn resolve_base(

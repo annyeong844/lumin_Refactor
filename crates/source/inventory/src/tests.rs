@@ -117,6 +117,73 @@ fn scans_generated_and_explicit_vendor_roles() -> Result<(), Box<dyn std::error:
 }
 
 #[test]
+fn same_tier_configuration_role_conflicts_are_order_independent_hard_stops()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut errors = Vec::new();
+    for roles in [
+        r#"[{"pattern":"src/a.ts","role":"generated"},{"pattern":"src/a.ts","role":"authored"}]"#,
+        r#"[{"pattern":"src/a.ts","role":"authored"},{"pattern":"src/a.ts","role":"generated"}]"#,
+    ] {
+        let root = tempfile::tempdir()?;
+        fs::create_dir(root.path().join("src"))?;
+        fs::write(root.path().join("src/a.ts"), "export const a = 1;\n")?;
+        fs::write(
+            root.path().join("lumin.json"),
+            format!(r#"{{"schemaVersion":"lumin-config.v1","scan":{{"roles":{roles}}}}}"#),
+        )?;
+
+        let error = scan(root.path(), &InventoryRequest::default())
+            .err()
+            .ok_or_else(|| {
+                std::io::Error::other("conflicting configuration roles were accepted")
+            })?;
+        errors.push(error.to_string());
+    }
+
+    assert_eq!(errors[0], errors[1]);
+    assert_eq!(
+        errors[0],
+        "malformed lumin.json: contradictory configuration source role declarations for src/a.ts: generated conflicts with authored"
+    );
+    Ok(())
+}
+
+#[test]
+fn same_tier_invocation_role_conflicts_are_order_independent_hard_stops()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir(root.path().join("src"))?;
+    fs::write(root.path().join("src/a.ts"), "export const a = 1;\n")?;
+    let mut errors = Vec::new();
+    for roles in [
+        [ScanRole::Generated, ScanRole::Authored],
+        [ScanRole::Authored, ScanRole::Generated],
+    ] {
+        let request = InventoryRequest {
+            role_overrides: roles
+                .into_iter()
+                .map(|role| RoleOverride {
+                    pattern: "src/a.ts".to_owned(),
+                    role,
+                })
+                .collect(),
+            ..InventoryRequest::default()
+        };
+        let error = scan(root.path(), &request)
+            .err()
+            .ok_or_else(|| std::io::Error::other("conflicting invocation roles were accepted"))?;
+        errors.push(error.to_string());
+    }
+
+    assert_eq!(errors[0], errors[1]);
+    assert_eq!(
+        errors[0],
+        "malformed lumin.json: contradictory invocation source role declarations for src/a.ts: generated conflicts with authored"
+    );
+    Ok(())
+}
+
+#[test]
 fn workspace_object_form_selects_only_matching_package_roots()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;

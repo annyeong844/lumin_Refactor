@@ -218,6 +218,77 @@ fn source_role_findings_remain_visible_and_only_explicit_filtering_narrows()
     Ok(())
 }
 
+#[test]
+fn contradictory_invocation_roles_hard_stop_audit_and_pre_write_without_authorization()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir(root.path().join("src"))?;
+    fs::write(root.path().join("src/a.ts"), "export const a = 1;\n")?;
+
+    let audit = run(
+        root.path(),
+        &[
+            "audit",
+            "--jobs",
+            "1",
+            "--role-at",
+            "src/a.ts",
+            "generated",
+            "--role-at",
+            "src/a.ts",
+            "authored",
+        ],
+    )?;
+    assert_status(&audit, 2);
+    assert!(audit.stdout.is_empty());
+    assert!(audit.stderr.contains(
+        "contradictory invocation source role declarations for src/a.ts: generated conflicts with authored"
+    ));
+
+    let pre = run(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-role-conflict",
+            "--path",
+            "src/a.ts",
+            "--jobs",
+            "1",
+            "--role-at",
+            "src/a.ts",
+            "authored",
+            "--role-at",
+            "src/a.ts",
+            "generated",
+        ],
+    )?;
+    assert_status(&pre, 4);
+    assert!(pre.stderr.is_empty());
+    let pre_json: Value = serde_json::from_str(&pre.stdout)?;
+    assert_eq!(
+        pre_json.get("lifecycle").and_then(Value::as_str),
+        Some("rejected")
+    );
+    assert_eq!(
+        pre_json.get("decision").and_then(Value::as_str),
+        Some("incomplete")
+    );
+    assert!(pre_json
+        .get("signals")
+        .and_then(Value::as_array)
+        .is_some_and(|signals| signals.iter().any(|signal| {
+            signal.get("kind").and_then(Value::as_str) == Some("analysis-failed")
+                && signal
+                    .get("detail")
+                    .and_then(Value::as_str)
+                    .is_some_and(|detail| detail.contains(
+                        "contradictory invocation source role declarations for src/a.ts: generated conflicts with authored"
+                    ))
+        })));
+    Ok(())
+}
+
 fn assert_collection_counts(
     response: &Value,
     scope_total: u64,

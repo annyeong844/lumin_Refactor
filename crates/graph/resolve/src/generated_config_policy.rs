@@ -10,6 +10,25 @@ pub enum FieldClassification {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PackageFieldApplicability {
+    BundlerValueWhenExportsAbsentOrNotConsulted,
+    ExportsEnabledModeled,
+    InternalImportsEnabledUnsupported,
+    ValueFallbackWhenExportsAbsentOrNotConsulted,
+    BundlerValueFallbackWhenExportsAbsent,
+    SideEffectReachability,
+    WorkspacePackageTsconfig,
+    NodeImporterFormat,
+    TypeFallbackWhenExportsAbsentOrNotConsulted,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PackageFieldApplicabilityPolicy {
+    pub path: &'static str,
+    pub applicability: PackageFieldApplicability,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FieldPolicy {
     pub path: &'static str,
     pub shape: &'static str,
@@ -1584,6 +1603,57 @@ pub static RESOLVER_PACKAGE_JSON_FIELDS: &[FieldPolicy] = &[
         rule: Some("typings-then-types-field"),
         shape_mismatch_limitation: Some("PublicSurfaceUnsupported"),
         applies_when: Some("type lane fallback when exports is absent or NotConsultedForProfile"),
+    },
+];
+
+pub(crate) static RESOLVER_PACKAGE_FIELD_APPLICABILITY: &[PackageFieldApplicabilityPolicy] = &[
+    PackageFieldApplicabilityPolicy {
+        path: "browser",
+        applicability: PackageFieldApplicability::BundlerValueWhenExportsAbsentOrNotConsulted,
+    },
+    PackageFieldApplicabilityPolicy {
+        path: "exports",
+        applicability: PackageFieldApplicability::ExportsEnabledModeled,
+    },
+    PackageFieldApplicabilityPolicy {
+        path: "imports",
+        applicability: PackageFieldApplicability::InternalImportsEnabledUnsupported,
+    },
+    PackageFieldApplicabilityPolicy {
+        path: "main",
+        applicability: PackageFieldApplicability::ValueFallbackWhenExportsAbsentOrNotConsulted,
+    },
+    PackageFieldApplicabilityPolicy {
+        path: "module",
+        applicability: PackageFieldApplicability::BundlerValueFallbackWhenExportsAbsent,
+    },
+    PackageFieldApplicabilityPolicy {
+        path: "react-native",
+        applicability: PackageFieldApplicability::BundlerValueFallbackWhenExportsAbsent,
+    },
+    PackageFieldApplicabilityPolicy {
+        path: "sideEffects",
+        applicability: PackageFieldApplicability::SideEffectReachability,
+    },
+    PackageFieldApplicabilityPolicy {
+        path: "tsconfig",
+        applicability: PackageFieldApplicability::WorkspacePackageTsconfig,
+    },
+    PackageFieldApplicabilityPolicy {
+        path: "type",
+        applicability: PackageFieldApplicability::NodeImporterFormat,
+    },
+    PackageFieldApplicabilityPolicy {
+        path: "types",
+        applicability: PackageFieldApplicability::TypeFallbackWhenExportsAbsentOrNotConsulted,
+    },
+    PackageFieldApplicabilityPolicy {
+        path: "typesVersions",
+        applicability: PackageFieldApplicability::TypeFallbackWhenExportsAbsentOrNotConsulted,
+    },
+    PackageFieldApplicabilityPolicy {
+        path: "typings",
+        applicability: PackageFieldApplicability::TypeFallbackWhenExportsAbsentOrNotConsulted,
     },
 ];
 

@@ -28,6 +28,9 @@ struct RegistryRow {
 #[derive(Clone, Debug)]
 struct SpecRow {
     owner: String,
+    scope: String,
+    absence: String,
+    gate: String,
 }
 
 #[derive(Clone, Debug)]
@@ -191,7 +194,7 @@ fn parse_spec_rows(source: &str) -> Result<BTreeMap<String, SpecRow>, String> {
     let mut rows = BTreeMap::new();
     for line in source.lines() {
         let cells = line.split('|').map(str::trim).collect::<Vec<_>>();
-        if cells.len() < 7 {
+        if cells.len() < 8 {
             continue;
         }
         let Some(variant) = first_code_span(cells[1]) else {
@@ -210,11 +213,25 @@ fn parse_spec_rows(source: &str) -> Result<BTreeMap<String, SpecRow>, String> {
                 "registry row {variant} assigns lifecycle GateEffect directly"
             ));
         }
+        let Some(policy) = first_code_span(cells[6]) else {
+            return Err(format!(
+                "registry row {variant} has no coded scope/absence/gate policy"
+            ));
+        };
+        let parts = policy.split('/').collect::<Vec<_>>();
+        if parts.len() != 3 || parts.iter().any(|part| part.is_empty()) {
+            return Err(format!(
+                "registry row {variant} policy must be Scope/Absence/Gate"
+            ));
+        }
         if rows
             .insert(
                 variant.to_owned(),
                 SpecRow {
                     owner: owner.to_owned(),
+                    scope: parts[0].to_owned(),
+                    absence: parts[1].to_owned(),
+                    gate: parts[2].to_owned(),
                 },
             )
             .is_some()
@@ -262,16 +279,25 @@ fn validate_contract<'a>(
                 row.variant, row.owner
             ));
         }
-        match spec_rows.get(&row.variant) {
-            Some(spec) if spec.owner == expected_owner => {}
-            Some(spec) => violations.push(format!(
-                "LIMITATION REGISTRY OWNER DRIFT: {} is {} in model but {} in {SLICE_SPEC}",
-                row.variant, expected_owner, spec.owner
-            )),
-            None => violations.push(format!(
+        if let Some(spec) = spec_rows.get(&row.variant) {
+            for (dimension, model_value, spec_value) in [
+                ("OWNER", expected_owner.as_str(), spec.owner.as_str()),
+                ("SCOPE", row.scope.as_str(), spec.scope.as_str()),
+                ("ABSENCE", row.absence.as_str(), spec.absence.as_str()),
+                ("GATE", row.gate.as_str(), spec.gate.as_str()),
+            ] {
+                if model_value != spec_value {
+                    violations.push(format!(
+                        "LIMITATION REGISTRY {dimension} DRIFT: {} is {} in model but {} in {SLICE_SPEC}",
+                        row.variant, model_value, spec_value
+                    ));
+                }
+            }
+        } else {
+            violations.push(format!(
                 "LIMITATION REGISTRY CONTRACT: {} has no row in {SLICE_SPEC}",
                 row.variant
-            )),
+            ));
         }
         if row.scope == "GateEffect" || row.absence == "GateEffect" || row.gate == "GateEffect" {
             violations.push(format!(

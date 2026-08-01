@@ -712,6 +712,7 @@ pub mod gate_policy {
             matches!(
                 signal,
                 GateSignal::AnalysisFailed { .. }
+                    | GateSignal::RequiredEvidenceIncomplete { .. }
                     | GateSignal::SemanticInputConflict { .. }
                     | GateSignal::ProtectedInputChanged { .. }
                     | GateSignal::ActiveTransitionPending { .. }
@@ -903,6 +904,15 @@ mod tests {
 
     use super::*;
     use crate::{CapabilityRecord, DEAD_CODE_CAPABILITY_ID};
+
+    #[test]
+    fn required_evidence_incompleteness_withholds_actual_write_attribution() {
+        let signals = vec![GateSignal::RequiredEvidenceIncomplete {
+            limitation_count: 1,
+        }];
+
+        assert!(!gate_policy::actual_write_attribution_is_complete(&signals));
+    }
 
     #[test]
     fn retry_revalidates_a_previously_protected_new_demand()
