@@ -30,6 +30,55 @@ fn config_identity_observation_preserves_hard_link_alias_identity()
 }
 
 #[test]
+fn demanded_nonregular_configs_keep_fact_owner_limitations()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    for name in ["package.json", "tsconfig.json", "pnpm-workspace.yaml"] {
+        fs::create_dir(root.path().join(name))?;
+    }
+
+    let package = capture_config(
+        root.path(),
+        &RepoPath::from_portable("package.json")?,
+        ConfigSyntax::StrictJson,
+    )?;
+    assert!(matches!(
+        package.observation,
+        ConfigObservation::NonRegular { .. }
+    ));
+    assert!(matches!(
+        package.limitation,
+        Some(Limitation::PackageMetadataUnobservable { .. })
+    ));
+
+    let tsconfig = capture_config(
+        root.path(),
+        &RepoPath::from_portable("tsconfig.json")?,
+        ConfigSyntax::Jsonc,
+    )?;
+    assert!(matches!(
+        tsconfig.observation,
+        ConfigObservation::NonRegular { .. }
+    ));
+    assert!(tsconfig.limitation.is_none());
+
+    let workspace = capture_config(
+        root.path(),
+        &RepoPath::from_portable("pnpm-workspace.yaml")?,
+        ConfigSyntax::RestrictedYaml,
+    )?;
+    assert!(matches!(
+        workspace.observation,
+        ConfigObservation::NonRegular { .. }
+    ));
+    assert!(matches!(
+        workspace.limitation,
+        Some(Limitation::WorkspaceOwnershipUnsupported { .. })
+    ));
+    Ok(())
+}
+
+#[test]
 fn scans_generated_and_explicit_vendor_roles() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     fs::create_dir_all(root.path().join("src"))?;

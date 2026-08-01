@@ -234,9 +234,9 @@ fn inline_script(
 }
 
 fn external_script_unresolved(snapshot: &SourceSnapshot, specifier: &str) -> Limitation {
-    Limitation::SfcExternalScriptUnresolved {
+    Limitation::SfcDecompositionUnknown {
         source_id: snapshot.id.clone(),
-        specifier: specifier.to_owned(),
+        detail: format!("external script {specifier} could not be resolved"),
     }
 }
 
@@ -608,6 +608,7 @@ fn source_span(start: usize, end: usize) -> Option<SourceSpan> {
 }
 
 fn decomposition_unknown(snapshot: &SourceSnapshot, detail: String) -> SfcDecomposition {
+    let limitation = decomposition_limitation(snapshot, detail);
     SfcDecomposition {
         source_id: snapshot.id.clone(),
         dialect: SfcDialect::Vue,
@@ -617,10 +618,7 @@ fn decomposition_unknown(snapshot: &SourceSnapshot, detail: String) -> SfcDecomp
         external_scripts: Vec::new(),
         template_uses: Vec::new(),
         resource_uses: Vec::new(),
-        limitations: vec![Limitation::SfcDecompositionUnknown {
-            source_id: snapshot.id.clone(),
-            detail,
-        }],
+        limitations: vec![limitation],
     }
 }
 

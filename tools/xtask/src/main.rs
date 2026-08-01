@@ -5,6 +5,7 @@
 mod architecture;
 mod corpus;
 mod generated_tables;
+mod limitation_registry;
 mod metadata;
 mod path_owner;
 mod source_policy;

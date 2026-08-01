@@ -104,6 +104,20 @@ pub fn resolve_all(
                 settings,
                 semantic_config,
             );
+            let limitation = limitation.or_else(|| match &outcome {
+                ResolutionOutcome::Unresolved {
+                    specifier,
+                    candidates,
+                } => Some(Limitation::InternalSpecifierUnresolved {
+                    importer: source_use.importer.clone(),
+                    specifier: specifier.clone(),
+                    candidates: candidates.clone(),
+                }),
+                ResolutionOutcome::Internal { .. }
+                | ResolutionOutcome::External { .. }
+                | ResolutionOutcome::NonSourceAsset { .. }
+                | ResolutionOutcome::Unsupported { .. } => None,
+            });
             if let Some(limitation) = limitation {
                 selection.limitations.push(limitation);
             }
@@ -208,9 +222,13 @@ fn resolve_one(
         );
     }
     if specifier.starts_with('/') || specifier.starts_with('\\') {
-        return unsupported_with_unknown_limitation(
+        return unsupported_with_limitation(
             source_use,
             "root-absolute internal-looking specifier".to_owned(),
+            |source_id, detail| Limitation::AbsoluteInternalSpecifierUnsupported {
+                source_id,
+                detail,
+            },
         );
     }
     if !specifier.starts_with("./") && !specifier.starts_with("../") {
@@ -293,9 +311,10 @@ fn resolve_relative_specifier(
     Option<PackageSurfaceDeclaration>,
 ) {
     let Some(base) = importer_path.resolve_portable_relative(specifier) else {
-        return unsupported_with_unknown_limitation(
+        return unsupported_with_limitation(
             source_use,
             "relative specifier escapes the canonical root".to_owned(),
+            |source_id, detail| Limitation::AliasShapeUnsupported { source_id, detail },
         );
     };
     if !settings.allow_extensionless
@@ -303,12 +322,13 @@ fn resolve_relative_specifier(
             .file_name_portable()
             .is_some_and(|name| !name.contains('.'))
     {
-        return unsupported_with_unknown_limitation(
+        return unsupported_with_limitation(
             source_use,
             format!(
                 "{} ESM resolution requires an explicit relative extension",
                 settings.profile.as_str()
             ),
+            |source_id, detail| Limitation::AliasShapeUnsupported { source_id, detail },
         );
     }
     let candidates = candidates(&base, source_use.namespace, settings.allow_extensionless);
@@ -372,9 +392,10 @@ fn resolve_relative_specifier(
     )
 }
 
-fn unsupported_with_unknown_limitation(
+fn unsupported_with_limitation(
     source_use: &SourceUseFact,
     reason: String,
+    make_limitation: impl FnOnce(LogicalSourceId, String) -> Limitation,
 ) -> (
     ResolutionOutcome,
     Option<Limitation>,
@@ -384,10 +405,7 @@ fn unsupported_with_unknown_limitation(
     let detail = format!("unsupported specifier {specifier}: {reason}");
     (
         ResolutionOutcome::Unsupported { specifier, reason },
-        Some(Limitation::JsModuleUseUnknown {
-            source_id: source_use.importer.clone(),
-            detail,
-        }),
+        Some(make_limitation(source_use.importer.clone(), detail)),
         None,
     )
 }
@@ -558,8 +576,8 @@ fn package_name(specifier: &str) -> String {
 #[cfg(test)]
 mod tests {
     use lumin_model::{
-        ConfigObservation, ImportKind, ModuleRequestKind, SourceKind, SourceRoles, SourceSpan,
-        SourceUseFact, SymbolNamespace,
+        ConfigDocument, ConfigObservation, ConfigValue, ImportKind, ModuleRequestKind, SourceKind,
+        SourceRoles, SourceSpan, SourceUseFact, SymbolNamespace,
     };
 
     use super::*;
@@ -665,6 +683,53 @@ mod tests {
             second.resolved[0].outcome,
             ResolutionOutcome::Internal { target: index.id }
         );
+        Ok(())
+    }
+
+    #[test]
+    fn observed_directory_manifest_without_package_fact_is_typed_incomplete()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let importer = SourceSnapshot::new(
+            RepoPath::from_portable("src/main.ts")?,
+            SourceKind::TypeScript,
+            SourceRoles::default(),
+            Vec::new(),
+        );
+        let mut facts = FileFacts::physical(importer.id.clone());
+        facts.uses.push(SourceUseFact {
+            importer: importer.id.clone(),
+            specifier: "./lib".to_owned(),
+            imported_name: Some("used".to_owned()),
+            local_name: Some("used".to_owned()),
+            namespace: SymbolNamespace::Value,
+            kind: ImportKind::Named,
+            request_kind: ModuleRequestKind::StaticImport,
+            span: SourceSpan { start: 0, end: 10 },
+        });
+        let manifest_path = RepoPath::from_portable("src/lib/package.json")?;
+        let mut config = SemanticConfigSnapshot::default();
+        config.observations.insert(
+            manifest_path.clone(),
+            ConfigObservation::Present(ConfigDocument {
+                path: manifest_path.clone(),
+                payload_sha256: "digest".to_owned(),
+                root: ConfigValue::Object(Vec::new()),
+            }),
+        );
+
+        let selection = resolve_all(&[importer], &[facts], &config, None)?;
+
+        assert!(selection.demands.is_empty());
+        assert!(matches!(
+            selection.resolved[0].outcome,
+            ResolutionOutcome::Unsupported { .. }
+        ));
+        assert!(selection.limitations.iter().any(|limitation| matches!(
+            limitation,
+            Limitation::PublicSurfaceUnsupported { path, detail }
+                if path == &manifest_path.display_escaped()
+                    && detail.contains("no matching package fact")
+        )));
         Ok(())
     }
 }

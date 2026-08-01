@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use crate::generated_tables;
+use crate::limitation_registry;
 use crate::metadata;
 use crate::path_owner;
 use crate::source_policy;
@@ -49,6 +50,7 @@ pub fn run() -> ExitCode {
     println!("[CHECK] source policy: spec artifact SHA-256 digests");
     println!("[CHECK] path identity declaration and native-lowering owners");
     println!("[CHECK] generated configuration tables and owner partitions");
+    println!("[CHECK] exhaustive limitation registry and fact owners");
 
     let effective_root = &metadata_result.workspace_root;
     let source_result =
@@ -56,6 +58,10 @@ pub fn run() -> ExitCode {
     let path_owner_result =
         path_owner::scan_path_ownership(&metadata_result.production_members, effective_root);
     let generated_table_result = generated_tables::check_generated_tables(effective_root);
+    let limitation_registry_result = limitation_registry::check_limitation_registry(
+        &metadata_result.production_members,
+        effective_root,
+    );
 
     // Collect results
     let mut all_violations = Vec::new();
@@ -65,9 +71,11 @@ pub fn run() -> ExitCode {
     all_violations.extend(source_result.violations);
     all_violations.extend(path_owner_result.violations);
     all_violations.extend(generated_table_result.violations);
+    all_violations.extend(limitation_registry_result.violations);
     all_tool_errors.extend(source_result.tool_errors);
     all_tool_errors.extend(path_owner_result.tool_errors);
     all_tool_errors.extend(generated_table_result.tool_errors);
+    all_tool_errors.extend(limitation_registry_result.tool_errors);
 
     // Print results
     println!();
@@ -92,7 +100,6 @@ pub fn run() -> ExitCode {
     for d in &source_result.deferred {
         println!("  DEFERRED: {d}");
     }
-    println!("  DEFERRED: limitation registry exhaustiveness");
     println!("  DEFERRED: codec DTO/runtime equivalence");
     println!("  DEFERRED: corpus/package/benchmark checks");
     println!();

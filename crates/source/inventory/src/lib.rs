@@ -964,32 +964,11 @@ impl CollectedFiles {
     ) -> Result<(), InventoryError> {
         if let Some(syntax) = config_syntax(relative) {
             self.consulted_config_paths.push(path.clone());
-            match observe_config(root, &path, syntax)? {
-                observation @ ConfigObservation::Present(_) => {
-                    self.config_observations.insert(path, observation);
-                }
-                observation @ ConfigObservation::Unreadable { .. } => {
-                    let limitation = match syntax {
-                        ConfigSyntax::StrictJson => Limitation::PackageMetadataUnobservable {
-                            path: path.display_escaped(),
-                            detail: "package manifest could not be read".to_owned(),
-                        },
-                        ConfigSyntax::Jsonc => Limitation::TsconfigPayloadUnavailable {
-                            path: path.display_escaped(),
-                            detail: "controlling config could not be read".to_owned(),
-                        },
-                        ConfigSyntax::RestrictedYaml => Limitation::WorkspaceOwnershipUnsupported {
-                            path: path.display_escaped(),
-                            detail: "pnpm workspace configuration could not be read".to_owned(),
-                        },
-                    };
-                    self.limitations.push(limitation);
-                    self.config_observations.insert(path, observation);
-                }
-                observation => {
-                    self.config_observations.insert(path, observation);
-                }
+            let capture = capture_config(root, &path, syntax)?;
+            if let Some(limitation) = capture.limitation {
+                self.limitations.push(limitation);
             }
+            self.config_observations.insert(path, capture.observation);
             return Ok(());
         }
         if !patterns.admits(relative) {
@@ -1019,7 +998,71 @@ impl CollectedFiles {
     }
 }
 
-pub fn observe_config(
+pub struct ConfigCapture {
+    pub observation: ConfigObservation,
+    pub limitation: Option<Limitation>,
+}
+
+pub fn capture_config(
+    root: &Path,
+    path: &RepoPath,
+    syntax: ConfigSyntax,
+) -> Result<ConfigCapture, InventoryError> {
+    let observation = observe_config(root, path, syntax)?;
+    let limitation = config_capture_limitation(&observation, syntax);
+    Ok(ConfigCapture {
+        observation,
+        limitation,
+    })
+}
+
+fn config_capture_limitation(
+    observation: &ConfigObservation,
+    syntax: ConfigSyntax,
+) -> Option<Limitation> {
+    let path = match observation {
+        ConfigObservation::Unreadable { path, .. } | ConfigObservation::NonRegular { path } => {
+            path.display_escaped()
+        }
+        ConfigObservation::Present(_) | ConfigObservation::Missing { .. } => return None,
+    };
+    match (syntax, observation) {
+        (ConfigSyntax::StrictJson, ConfigObservation::Unreadable { detail, .. }) => {
+            Some(Limitation::PackageMetadataUnobservable {
+                path,
+                detail: detail.clone(),
+            })
+        }
+        (ConfigSyntax::StrictJson, ConfigObservation::NonRegular { .. }) => {
+            Some(Limitation::PackageMetadataUnobservable {
+                path,
+                detail: "package manifest is not a regular file".to_owned(),
+            })
+        }
+        (ConfigSyntax::Jsonc, ConfigObservation::Unreadable { detail, .. }) => {
+            Some(Limitation::TsconfigPayloadUnavailable {
+                path,
+                detail: detail.clone(),
+            })
+        }
+        (ConfigSyntax::RestrictedYaml, ConfigObservation::Unreadable { detail, .. }) => {
+            Some(Limitation::WorkspaceOwnershipUnsupported {
+                path,
+                detail: detail.clone(),
+            })
+        }
+        (ConfigSyntax::RestrictedYaml, ConfigObservation::NonRegular { .. }) => {
+            Some(Limitation::WorkspaceOwnershipUnsupported {
+                path,
+                detail: "pnpm workspace configuration is not a regular file".to_owned(),
+            })
+        }
+        (ConfigSyntax::Jsonc, ConfigObservation::NonRegular { .. })
+        | (_, ConfigObservation::Present(_) | ConfigObservation::Missing { .. }) => None,
+    }
+}
+
+fn observe_config(
     root: &Path,
     path: &RepoPath,
     syntax: ConfigSyntax,

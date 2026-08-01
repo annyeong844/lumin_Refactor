@@ -93,10 +93,14 @@ pub(crate) fn resolve_relative_directory(
     let manifest_path = match base.join_portable("package.json") {
         Ok(path) => path,
         Err(_) => {
+            let detail = "directory cannot form package.json";
             return relative_directory_unsupported(
-                base,
                 &source_use.specifier,
-                "directory cannot form package.json",
+                detail,
+                Some(Limitation::AliasShapeUnsupported {
+                    source_id: source_use.importer.clone(),
+                    detail: detail.to_owned(),
+                }),
             );
         }
     };
@@ -107,10 +111,14 @@ pub(crate) fn resolve_relative_directory(
                 .iter()
                 .find(|package| package.root == *base && package.manifest_path == manifest_path)
             else {
+                let detail = "observed package manifest has no matching package fact";
                 return relative_directory_unsupported(
-                    &manifest_path,
                     &source_use.specifier,
-                    "observed package manifest has no matching package fact",
+                    detail,
+                    Some(Limitation::PublicSurfaceUnsupported {
+                        path: manifest_path.display_escaped(),
+                        detail: detail.to_owned(),
+                    }),
                 );
             };
             let context = PackageContext {
@@ -132,23 +140,27 @@ pub(crate) fn resolve_relative_directory(
             result
         }
         Some(ConfigObservation::NonRegular { .. }) => relative_directory_unsupported(
-            &manifest_path,
             &source_use.specifier,
             "package.json is not a regular file",
+            None,
         ),
         Some(ConfigObservation::Unreadable { .. }) => relative_directory_unsupported(
-            &manifest_path,
             &source_use.specifier,
             "package.json could not be read",
+            None,
         ),
         Some(ConfigObservation::Missing { .. }) => {
             let index = match base.join_portable("index.js") {
                 Ok(path) => path,
                 Err(_) => {
+                    let detail = "directory cannot form index.js";
                     return relative_directory_unsupported(
-                        base,
                         &source_use.specifier,
-                        "directory cannot form index.js",
+                        detail,
+                        Some(Limitation::AliasShapeUnsupported {
+                            source_id: source_use.importer.clone(),
+                            detail: detail.to_owned(),
+                        }),
                     );
                 }
             };
@@ -167,28 +179,31 @@ pub(crate) fn resolve_relative_directory(
                 paths.iter().map(RepoPath::display_escaped).collect(),
             )
         }
-        None => relative_directory_unsupported(
-            &manifest_path,
-            &source_use.specifier,
-            "package.json observation is missing after demand collection",
-        ),
+        None => {
+            let detail = "package.json observation is missing after demand collection";
+            relative_directory_unsupported(
+                &source_use.specifier,
+                detail,
+                Some(Limitation::PublicSurfaceUnsupported {
+                    path: manifest_path.display_escaped(),
+                    detail: detail.to_owned(),
+                }),
+            )
+        }
     }
 }
 
 fn relative_directory_unsupported(
-    path: &RepoPath,
     specifier: &str,
     detail: &str,
+    limitation: Option<Limitation>,
 ) -> PackageResolution {
     PackageResolution {
         outcome: ResolutionOutcome::Unsupported {
             specifier: specifier.to_owned(),
             reason: detail.to_owned(),
         },
-        limitation: Some(Limitation::PackageMetadataUnobservable {
-            path: path.display_escaped(),
-            detail: detail.to_owned(),
-        }),
+        limitation,
         declaration: None,
     }
 }

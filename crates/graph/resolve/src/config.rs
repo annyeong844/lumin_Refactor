@@ -226,11 +226,7 @@ fn evaluate_config(
                 ..EffectiveConfig::default()
             });
         }
-        ConfigObservation::Unreadable { detail, .. } => {
-            limitations.push(Limitation::TsconfigPayloadUnavailable {
-                path: path.display_escaped(),
-                detail: detail.clone(),
-            });
+        ConfigObservation::Unreadable { .. } => {
             visiting.remove(path);
             return Ok(EffectiveConfig {
                 blocked: true,
@@ -436,13 +432,7 @@ fn select_relative_candidate(
             let fallback = append_json(&exact)?;
             select_exact_candidate(fallback, config, demands, limitations)
         }
-        Some(ConfigObservation::Unreadable { detail, .. }) => {
-            limitations.push(Limitation::TsconfigPayloadUnavailable {
-                path: exact.display_escaped(),
-                detail: detail.clone(),
-            });
-            Ok(ExtendsSelection::Blocked)
-        }
+        Some(ConfigObservation::Unreadable { .. }) => Ok(ExtendsSelection::Blocked),
     }
 }
 
@@ -468,13 +458,7 @@ fn select_exact_candidate(
             });
             Ok(ExtendsSelection::Blocked)
         }
-        Some(ConfigObservation::Unreadable { detail, .. }) => {
-            limitations.push(Limitation::TsconfigPayloadUnavailable {
-                path: path.display_escaped(),
-                detail: detail.clone(),
-            });
-            Ok(ExtendsSelection::Blocked)
-        }
+        Some(ConfigObservation::Unreadable { .. }) => Ok(ExtendsSelection::Blocked),
     }
 }
 

@@ -371,11 +371,14 @@ impl RepositoryAnalysisSession {
         demands: Vec<ConfigDemand>,
     ) -> Result<(), EngineError> {
         for demand in demands {
-            let observation = lumin_inventory::observe_config(root, &demand.path, demand.syntax)?;
+            let capture = lumin_inventory::capture_config(root, &demand.path, demand.syntax)?;
+            if let Some(limitation) = capture.limitation {
+                self.inventory.limitations.push(limitation);
+            }
             self.inventory
                 .config
                 .observations
-                .insert(demand.path, observation);
+                .insert(demand.path, capture.observation);
         }
         Ok(())
     }
@@ -395,7 +398,6 @@ impl RepositoryAnalysisSession {
         let limitations = collect_limitations(
             &mut self.inventory.limitations,
             &self.facts,
-            &resolved,
             resolver_limitations,
         );
 
@@ -673,29 +675,12 @@ fn less_complete(left: CapabilityState, right: CapabilityState) -> CapabilitySta
 fn collect_limitations(
     inventory_limitations: &mut Vec<Limitation>,
     facts: &[FileFacts],
-    resolved: &[ResolvedSourceUse],
     resolver_limitations: Vec<Limitation>,
 ) -> Vec<Limitation> {
     let mut limitations = std::mem::take(inventory_limitations);
     limitations.extend(resolver_limitations);
     for file in facts {
         limitations.extend(file.limitations.iter().cloned());
-    }
-    for resolution in resolved {
-        match &resolution.outcome {
-            ResolutionOutcome::Unresolved {
-                specifier,
-                candidates,
-            } => limitations.push(Limitation::InternalSpecifierUnresolved {
-                importer: resolution.source_use.importer.clone(),
-                specifier: specifier.clone(),
-                candidates: candidates.clone(),
-            }),
-            ResolutionOutcome::Unsupported { .. } => {}
-            ResolutionOutcome::Internal { .. }
-            | ResolutionOutcome::External { .. }
-            | ResolutionOutcome::NonSourceAsset { .. } => {}
-        }
     }
     limitations.sort_by_key(limitation_sort_key);
     limitations.dedup();
@@ -879,7 +864,7 @@ mod tests {
         );
         assert!(evidence.limitations.iter().any(|limitation| matches!(
             limitation,
-            Limitation::JsModuleUseUnknown { detail, .. }
+            Limitation::AliasShapeUnsupported { detail, .. }
                 if detail.contains("requires an explicit relative extension")
         )));
         Ok(())

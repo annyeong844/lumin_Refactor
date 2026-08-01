@@ -311,6 +311,10 @@ pub fn compiled_dialect_states() -> [(SfcDialect, &'static str, CapabilityState)
 }
 
 fn unavailable(snapshot: &SourceSnapshot, dialect: SfcDialect, name: &str) -> SfcDecomposition {
+    let limitation = Limitation::SfcDialectUnavailable {
+        source_id: snapshot.id.clone(),
+        dialect: name.to_owned(),
+    };
     SfcDecomposition {
         source_id: snapshot.id.clone(),
         dialect,
@@ -320,10 +324,7 @@ fn unavailable(snapshot: &SourceSnapshot, dialect: SfcDialect, name: &str) -> Sf
         external_scripts: Vec::new(),
         template_uses: Vec::new(),
         resource_uses: Vec::new(),
-        limitations: vec![Limitation::SfcDialectUnavailable {
-            source_id: snapshot.id.clone(),
-            dialect: name.to_owned(),
-        }],
+        limitations: vec![limitation],
     }
 }
 
