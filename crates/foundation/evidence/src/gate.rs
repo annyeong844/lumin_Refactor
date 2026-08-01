@@ -80,7 +80,84 @@ pub struct SemanticInputRecord {
 pub struct AnalysisSnapshot {
     pub analysis_input_id: AnalysisInputId,
     pub inputs: Vec<SemanticInputRecord>,
+    #[serde(default)]
+    pub scan_invocation: ScanInvocationTier,
+    #[serde(default)]
+    pub entry_selections: Vec<EntrySelectionRecord>,
     pub evidence: RunEvidence,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanInvocationTier {
+    #[serde(default)]
+    pub includes: Vec<String>,
+    #[serde(default)]
+    pub excludes: Vec<String>,
+    #[serde(default)]
+    pub role_overrides: Vec<lumin_model::RoleOverride>,
+    #[serde(default)]
+    pub entries: Vec<RepoPathProjection>,
+    #[serde(default)]
+    pub resolution_profile: Option<ResolutionProfile>,
+}
+
+impl ScanInvocationTier {
+    /// Append canonical length-prefixed framing of all tier fields for deterministic hashing.
+    /// Uses exhaustive stable tags for each ScanRole variant.
+    pub fn append_semantic_framing(&self, output: &mut Vec<u8>) {
+        // Tag: struct present
+        output.push(1);
+        // Includes
+        output.extend_from_slice(&(self.includes.len() as u64).to_be_bytes());
+        for include in &self.includes {
+            append_length_prefixed(output, include.as_bytes());
+        }
+        // Excludes
+        output.extend_from_slice(&(self.excludes.len() as u64).to_be_bytes());
+        for exclude in &self.excludes {
+            append_length_prefixed(output, exclude.as_bytes());
+        }
+        // Role overrides
+        output.extend_from_slice(&(self.role_overrides.len() as u64).to_be_bytes());
+        for role_override in &self.role_overrides {
+            append_length_prefixed(output, role_override.pattern.as_bytes());
+            output.push(scan_role_tag(role_override.role));
+        }
+        // Entries (already sorted/deduped by construction)
+        output.extend_from_slice(&(self.entries.len() as u64).to_be_bytes());
+        for entry in &self.entries {
+            append_length_prefixed(output, &entry.canonical);
+        }
+        // Resolution profile
+        match self.resolution_profile {
+            Some(profile) => {
+                output.push(1);
+                append_length_prefixed(output, profile.as_str().as_bytes());
+            }
+            None => output.push(0),
+        }
+    }
+}
+
+/// Stable exhaustive tag for ScanRole used in framing. Must remain stable across versions.
+fn scan_role_tag(role: lumin_model::ScanRole) -> u8 {
+    match role {
+        lumin_model::ScanRole::Test => 1,
+        lumin_model::ScanRole::Production => 2,
+        lumin_model::ScanRole::Generated => 3,
+        lumin_model::ScanRole::Vendor => 4,
+        lumin_model::ScanRole::Authored => 5,
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EntrySelectionRecord {
+    pub path: RepoPathProjection,
+    pub source: lumin_model::EntrySource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unavailable_reason: Option<lumin_model::EntryUnavailableReason>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -88,6 +165,8 @@ pub struct AnalysisSnapshot {
 pub struct GateAnalysisOptions {
     pub jobs: usize,
     pub resolution_profile: Option<ResolutionProfile>,
+    #[serde(default)]
+    pub scan_invocation: ScanInvocationTier,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -432,10 +511,33 @@ pub struct WorktreeTransition {
 pub fn seal_analysis_snapshot(
     mut inputs: Vec<SemanticInputRecord>,
     evidence: RunEvidence,
+    scan_invocation: ScanInvocationTier,
+    mut entry_selections: Vec<EntrySelectionRecord>,
 ) -> AnalysisSnapshot {
     inputs.sort();
     inputs.dedup();
+    entry_selections.sort();
+    entry_selections.dedup();
     let mut framed = Vec::new();
+    // Frame scan invocation tier using canonical append_semantic_framing
+    scan_invocation.append_semantic_framing(&mut framed);
+    // Frame entry selections (including unavailable ones)
+    framed.extend_from_slice(&(entry_selections.len() as u64).to_be_bytes());
+    for entry in &entry_selections {
+        append_length_prefixed(&mut framed, &entry.path.canonical);
+        match entry.source {
+            lumin_model::EntrySource::Invocation => framed.push(1),
+            lumin_model::EntrySource::Configuration => framed.push(2),
+        }
+        match entry.unavailable_reason {
+            None => framed.push(0),
+            Some(reason) => {
+                framed.push(1);
+                framed.push(entry_unavailable_reason_tag(reason));
+            }
+        }
+    }
+    // Frame semantic inputs
     framed.extend_from_slice(&(inputs.len() as u64).to_be_bytes());
     for input in &inputs {
         append_length_prefixed(&mut framed, &input.path.canonical);
@@ -461,7 +563,20 @@ pub fn seal_analysis_snapshot(
             digest_hex(&framed)
         )),
         inputs,
+        scan_invocation,
+        entry_selections,
         evidence,
+    }
+}
+
+/// Stable tag for EntryUnavailableReason used in framing.
+fn entry_unavailable_reason_tag(reason: lumin_model::EntryUnavailableReason) -> u8 {
+    match reason {
+        lumin_model::EntryUnavailableReason::Missing => 1,
+        lumin_model::EntryUnavailableReason::Ignored => 2,
+        lumin_model::EntryUnavailableReason::Excluded => 3,
+        lumin_model::EntryUnavailableReason::OutOfDomain => 4,
+        lumin_model::EntryUnavailableReason::HardExcluded => 5,
     }
 }
 
@@ -815,6 +930,8 @@ mod tests {
                 findings: Vec::new(),
                 limitations: Vec::new(),
             },
+            ScanInvocationTier::default(),
+            Vec::new(),
         )
     }
 
@@ -832,5 +949,80 @@ mod tests {
 
     fn path(value: &str) -> Result<RepoPathProjection, Box<dyn std::error::Error>> {
         Ok(RepoPathProjection::from(&RepoPath::from_portable(value)?))
+    }
+
+    #[test]
+    fn scan_invocation_changes_analysis_input_id() {
+        let evidence = RunEvidence {
+            schema_version: "lumin-evidence.v1".to_owned(),
+            capabilities: vec![CapabilityRecord {
+                capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
+                state: CapabilityState::Complete,
+            }],
+            resolution_profiles: Vec::new(),
+            findings: Vec::new(),
+            limitations: Vec::new(),
+        };
+        let without_invocation = seal_analysis_snapshot(
+            Vec::new(),
+            evidence.clone(),
+            ScanInvocationTier::default(),
+            Vec::new(),
+        );
+        let with_includes = seal_analysis_snapshot(
+            Vec::new(),
+            evidence.clone(),
+            ScanInvocationTier {
+                includes: vec!["src/**".to_owned()],
+                ..Default::default()
+            },
+            Vec::new(),
+        );
+        assert_ne!(
+            without_invocation.analysis_input_id, with_includes.analysis_input_id,
+            "scan invocation tier includes must affect the analysis input ID"
+        );
+    }
+
+    #[test]
+    fn entry_source_changes_analysis_input_id() -> Result<(), Box<dyn std::error::Error>> {
+        let evidence = RunEvidence {
+            schema_version: "lumin-evidence.v1".to_owned(),
+            capabilities: vec![CapabilityRecord {
+                capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
+                state: CapabilityState::Complete,
+            }],
+            resolution_profiles: Vec::new(),
+            findings: Vec::new(),
+            limitations: Vec::new(),
+        };
+        let entry_path = RepoPathProjection::from(&RepoPath::from_portable("src/lib.ts")?);
+        let invocation_entry = vec![EntrySelectionRecord {
+            path: entry_path.clone(),
+            source: lumin_model::EntrySource::Invocation,
+            unavailable_reason: None,
+        }];
+        let config_entry = vec![EntrySelectionRecord {
+            path: entry_path,
+            source: lumin_model::EntrySource::Configuration,
+            unavailable_reason: None,
+        }];
+        let snap_invocation = seal_analysis_snapshot(
+            Vec::new(),
+            evidence.clone(),
+            ScanInvocationTier::default(),
+            invocation_entry,
+        );
+        let snap_config = seal_analysis_snapshot(
+            Vec::new(),
+            evidence,
+            ScanInvocationTier::default(),
+            config_entry,
+        );
+        assert_ne!(
+            snap_invocation.analysis_input_id, snap_config.analysis_input_id,
+            "entry source (invocation vs config) must affect the analysis input ID"
+        );
+        Ok(())
     }
 }

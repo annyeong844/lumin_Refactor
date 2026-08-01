@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use lumin_evidence::{
     GateAnalysisOptions, GateBaseline, GateOperationResult, GateRecord, GateSignal,
     OperationRecord, PathPrefixIdentity, PhysicalAliasClosureRecord, RepoPathProjection,
-    SemanticInputRecord, SemanticInputState, SemanticReadReservationBinding, WriteLease,
-    WriteLeaseKind, gate_policy,
+    ScanInvocationTier, SemanticInputRecord, SemanticInputState, SemanticReadReservationBinding,
+    WriteLease, WriteLeaseKind, gate_policy,
 };
 use lumin_inventory::{
     InventoryRequest, WriteTargetError, WriteTargetKind, WriteTargetObservation,
@@ -28,13 +28,17 @@ mod transitions;
 
 use transitions::{active_transition_signals, changed_paths, reconcile_transitions};
 
-const ANALYSIS_CONTRACT: &str = "lumin-analysis-contract.phase1-foundation.v1";
+const ANALYSIS_CONTRACT: &str = "lumin-analysis-contract.phase1-foundation.v2";
 
 #[derive(Clone, Debug)]
 pub struct PreWriteRequest {
     pub root: PathBuf,
     pub operation_id: OperationId,
     pub paths: Vec<RepoPath>,
+    pub includes: Vec<String>,
+    pub excludes: Vec<String>,
+    pub role_overrides: Vec<lumin_model::RoleOverride>,
+    pub entries: Vec<RepoPath>,
     pub jobs: usize,
     pub resolution_profile: Option<ResolutionProfile>,
 }
@@ -50,6 +54,8 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
     if request.jobs == 0 {
         return Err(EngineError::InvalidWorkerCount(0));
     }
+    // Fail closed: validate caller entries BEFORE opening/reserving an operation/gate
+    lumin_inventory::validate_caller_entries(&request.root, &request.entries)?;
     let mut paths = request.paths.clone();
     paths.sort();
     paths.dedup();
@@ -60,9 +66,12 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         .iter()
         .map(RepoPathProjection::from)
         .collect::<Vec<_>>();
+    // Build the exact tier from the request
+    let scan_invocation = build_gate_scan_invocation_tier(request);
     let analysis_options = GateAnalysisOptions {
         jobs: request.jobs,
         resolution_profile: request.resolution_profile,
+        scan_invocation: scan_invocation.clone(),
     };
     let request_digest = pre_write_digest(&paths, &analysis_options);
     let context = open_repository_context(&request.root)?;
@@ -107,6 +116,25 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         .map_err(Into::into)
 }
 
+/// Build the exact ScanInvocationTier from a PreWriteRequest with normalized entries.
+fn build_gate_scan_invocation_tier(request: &PreWriteRequest) -> ScanInvocationTier {
+    let mut entries: Vec<RepoPathProjection> = request
+        .entries
+        .iter()
+        .map(RepoPathProjection::from)
+        .collect();
+    entries.sort();
+    entries.dedup();
+    ScanInvocationTier {
+        includes: request.includes.clone(),
+        excludes: request.excludes.clone(),
+        role_overrides: request.role_overrides.clone(),
+        entries,
+        resolution_profile: request.resolution_profile,
+    }
+}
+
+#[allow(clippy::large_enum_variant)]
 enum PreWriteAnalysis {
     Finished(PreWriteFinish),
     Committed(GateOperationResult),
@@ -124,8 +152,10 @@ fn analyze_pre_write(
     let options = GateAnalysisOptions {
         jobs: request.jobs,
         resolution_profile: request.resolution_profile,
+        scan_invocation: build_gate_scan_invocation_tier(request),
     };
-    let capture = match capture_reserved_repository(root, &options, |paths| {
+    let inventory_request = inventory_request_from_tier(&options.scan_invocation)?;
+    let capture = match capture_reserved_repository(root, &options, &inventory_request, |paths| {
         operation
             .reserve_pre_write_semantic_inputs(request_digest, gate_id, paths)
             .map_err(Into::into)
@@ -198,29 +228,59 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         );
     }
 
-    let capture =
-        match capture_reserved_repository(&context.root, &gate.analysis_options, |paths| {
+    // Reconstruct InventoryRequest from persisted tier (not default)
+    let inventory_request = inventory_request_from_tier(&gate.analysis_options.scan_invocation)?;
+    if let Err(error) =
+        lumin_inventory::validate_caller_entries(&context.root, &inventory_request.entries)
+    {
+        return finish_failed_close(
+            &operation,
+            request,
+            &request_digest,
+            vec![GateSignal::AnalysisFailed {
+                detail: error.to_string(),
+            }],
+        );
+    }
+
+    // Validate tier resolution_profile agrees with legacy options.resolution_profile
+    if gate.analysis_options.scan_invocation.resolution_profile
+        != gate.analysis_options.resolution_profile
+    {
+        return Err(EngineError::TierProfileInconsistency(format!(
+            "tier profile {:?} != options profile {:?}",
+            gate.analysis_options.scan_invocation.resolution_profile,
+            gate.analysis_options.resolution_profile
+        )));
+    }
+
+    let capture = match capture_reserved_repository(
+        &context.root,
+        &gate.analysis_options,
+        &inventory_request,
+        |paths| {
             operation
                 .reserve_post_write_semantic_inputs(&request_digest, &request.gate_id, paths)
                 .map_err(Into::into)
-        }) {
-            Ok(ReservedCapture::Finished { capture }) => capture,
-            Ok(ReservedCapture::Blocked(signal)) => {
-                return finish_failed_close(&operation, request, &request_digest, vec![signal]);
-            }
-            Ok(ReservedCapture::Committed(result)) => return Ok(result),
-            Err(EngineError::Store(error)) => return Err(EngineError::Store(error)),
-            Err(error) => {
-                return finish_failed_close(
-                    &operation,
-                    request,
-                    &request_digest,
-                    vec![GateSignal::AnalysisFailed {
-                        detail: error.to_string(),
-                    }],
-                );
-            }
-        };
+        },
+    ) {
+        Ok(ReservedCapture::Finished { capture }) => capture,
+        Ok(ReservedCapture::Blocked(signal)) => {
+            return finish_failed_close(&operation, request, &request_digest, vec![signal]);
+        }
+        Ok(ReservedCapture::Committed(result)) => return Ok(result),
+        Err(EngineError::Store(error)) => return Err(EngineError::Store(error)),
+        Err(error) => {
+            return finish_failed_close(
+                &operation,
+                request,
+                &request_digest,
+                vec![GateSignal::AnalysisFailed {
+                    detail: error.to_string(),
+                }],
+            );
+        }
+    };
 
     let (reconciled_baseline, reconciled_sequences, mut signals) =
         reconcile_transitions(&gate, baseline, &transitions);
@@ -300,12 +360,17 @@ enum ReservedCapture {
 fn capture_reserved_repository(
     root: &Path,
     options: &GateAnalysisOptions,
+    inventory_request: &InventoryRequest,
     mut reserve: impl FnMut(
         &[SemanticReadReservationBinding],
     ) -> Result<SemanticReadReservation, EngineError>,
 ) -> Result<ReservedCapture, EngineError> {
-    let mut session =
-        RepositoryAnalysisSession::start(root, &InventoryRequest::default(), options.jobs)?;
+    let mut session = RepositoryAnalysisSession::start(
+        root,
+        inventory_request,
+        options.jobs,
+        options.scan_invocation.clone(),
+    )?;
     loop {
         match session.next_step(options.resolution_profile)? {
             RepositoryAnalysisStep::NeedsInputs(demands) => {
@@ -354,6 +419,36 @@ pub fn load_gate(root: &Path, gate_id: &GateId) -> Result<GateRecord, EngineErro
         .store
         .load_gate(gate_id)
         .map_err(Into::into)
+}
+
+/// Reconstruct a full InventoryRequest from a persisted ScanInvocationTier.
+/// Each RepoPathProjection is canonical-decoded and reprojected for full equality.
+/// Any corruption or inconsistency returns EngineError (fail-closed, never filter_map).
+fn inventory_request_from_tier(tier: &ScanInvocationTier) -> Result<InventoryRequest, EngineError> {
+    let mut entries = Vec::with_capacity(tier.entries.len());
+    for projection in &tier.entries {
+        let path = RepoPath::from_canonical_bytes(&projection.canonical).map_err(|error| {
+            EngineError::TierProjectionCorrupt(format!(
+                "failed to decode entry projection {}: {error}",
+                projection.display
+            ))
+        })?;
+        // Reprojection validation
+        let reprojected = RepoPathProjection::from(&path);
+        if reprojected != *projection {
+            return Err(EngineError::TierProjectionCorrupt(format!(
+                "entry projection round-trip failed for {}",
+                projection.display
+            )));
+        }
+        entries.push(path);
+    }
+    Ok(InventoryRequest {
+        includes: tier.includes.clone(),
+        excludes: tier.excludes.clone(),
+        role_overrides: tier.role_overrides.clone(),
+        entries,
+    })
 }
 
 pub fn load_operation(
@@ -749,18 +844,15 @@ fn validate_stable_lease_parents(root: &Path, leases: &[WriteLease]) -> Vec<Gate
 
 fn pre_write_digest(paths: &[RepoPath], options: &GateAnalysisOptions) -> String {
     let mut bytes = Vec::new();
-    append_length_prefixed(&mut bytes, b"lumin-pre-write.v2");
-    bytes.extend_from_slice(&(options.jobs as u64).to_be_bytes());
-    append_length_prefixed(
-        &mut bytes,
-        options
-            .resolution_profile
-            .map_or(b"default".as_slice(), |profile| profile.as_str().as_bytes()),
-    );
+    append_length_prefixed(&mut bytes, b"lumin-pre-write.v3");
+    // Use canonical tier framing for all invocation parameters
+    options.scan_invocation.append_semantic_framing(&mut bytes);
+    // Declared write paths
     bytes.extend_from_slice(&(paths.len() as u64).to_be_bytes());
     for path in paths {
         append_length_prefixed(&mut bytes, path.canonical_bytes());
     }
+    // NOTE: jobs is deliberately excluded
     digest_hex(&bytes)
 }
 

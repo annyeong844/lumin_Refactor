@@ -164,7 +164,8 @@ fn limitation_delta(limitation: &Limitation) -> LimitationDelta {
         | Limitation::SfcDecompositionUnknown { .. }
         | Limitation::SfcExternalScriptUnresolved { .. }
         | Limitation::VueExternalScriptModeConflict { .. }
-        | Limitation::VueTemplateOpaque { .. } => LimitationDelta::RequiredEvidenceGap,
+        | Limitation::VueTemplateOpaque { .. }
+        | Limitation::ExplicitEntryUnavailable { .. } => LimitationDelta::RequiredEvidenceGap,
     }
 }
 

@@ -50,6 +50,7 @@ fn insert_terminal_gate(store: &crate::RepositoryStore) -> Result<GateId, crate:
             analysis_options: GateAnalysisOptions {
                 jobs: 1,
                 resolution_profile: None,
+                scan_invocation: Default::default(),
             },
             baseline: None,
             protected_semantic_inputs: Vec::new(),

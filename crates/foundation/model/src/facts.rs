@@ -70,6 +70,23 @@ pub enum ScanRole {
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+pub enum EntrySource {
+    Invocation,
+    Configuration,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EntryUnavailableReason {
+    Missing,
+    Ignored,
+    Excluded,
+    OutOfDomain,
+    HardExcluded,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum SourceRoleReason {
     TestPathRule,
     TestBasenameRule,
@@ -407,6 +424,11 @@ pub enum Limitation {
     VueTemplateOpaque {
         source_id: LogicalSourceId,
         detail: String,
+    },
+    ExplicitEntryUnavailable {
+        path: String,
+        source: EntrySource,
+        unavailable_reason: EntryUnavailableReason,
     },
 }
 

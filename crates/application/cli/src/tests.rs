@@ -5,6 +5,24 @@ use serde_json::Value;
 use super::*;
 
 #[test]
+fn default_jobs_matches_the_frozen_quota_cap() {
+    let cases = [
+        (None, 1),
+        (NonZeroUsize::new(1), 1),
+        (NonZeroUsize::new(7), 7),
+        (NonZeroUsize::new(8), 8),
+        (NonZeroUsize::new(9), 8),
+        (NonZeroUsize::new(usize::MAX), 8),
+    ];
+    for (available, expected) in cases {
+        assert_eq!(compute_default_jobs(available), expected);
+    }
+
+    let observed = std::thread::available_parallelism().ok();
+    assert_eq!(default_jobs(), compute_default_jobs(observed));
+}
+
+#[test]
 fn audit_then_findings_reopens_the_persisted_run() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     fs::write(root.path().join("lib.ts"), "export const dead = 1;")?;
@@ -187,5 +205,107 @@ fn resolution_profile_override_is_validated_and_persisted() -> Result<(), Box<dy
         profile.get("profile").and_then(Value::as_str) == Some("node")
             && profile.pointer("/source/kind").and_then(Value::as_str) == Some("invocation")
     }));
+    Ok(())
+}
+
+#[test]
+fn audit_with_entry_flag_round_trip() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::write(root.path().join("src/lib.ts"), "export const dead = 1;")?;
+    fs::write(root.path().join("src/other.ts"), "export const other = 2;")?;
+
+    let audit = execute(
+        root.path(),
+        vec![
+            "audit".into(),
+            "--entry".into(),
+            "src/lib.ts".into(),
+            "--jobs".into(),
+            "1".into(),
+        ],
+    );
+    assert_eq!(audit.exit_code, 0, "{}", audit.stderr);
+    let audit_json: Value = serde_json::from_str(&audit.stdout)?;
+    assert!(audit_json.get("runId").is_some());
+    Ok(())
+}
+
+#[test]
+fn pre_write_accepts_entry_include_exclude_role_at() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::write(root.path().join("src/lib.ts"), "export const dead = 1;")?;
+
+    let result = execute(
+        root.path(),
+        vec![
+            "pre-write".into(),
+            "--operation-id".into(),
+            "op-entry-test".into(),
+            "--path".into(),
+            "src/lib.ts".into(),
+            "--entry".into(),
+            "src/lib.ts".into(),
+            "--include".into(),
+            "src/**".into(),
+            "--exclude".into(),
+            "vendor/**".into(),
+            "--role-at".into(),
+            "src/lib.ts".into(),
+            "production".into(),
+            "--jobs".into(),
+            "1".into(),
+        ],
+    );
+    assert_eq!(result.exit_code, 0, "{}", result.stderr);
+    let json: Value = serde_json::from_str(&result.stdout)?;
+    assert!(json.get("gateId").is_some());
+    Ok(())
+}
+
+#[test]
+fn post_write_rejects_replacement_flags() -> Result<(), Box<dyn std::error::Error>> {
+    // Post-write should reject --include, --exclude, --entry, --role-at, --resolution-profile
+    let root = tempfile::tempdir()?;
+    fs::write(root.path().join("lib.ts"), "export const a = 1;")?;
+
+    for flag in [
+        "--include",
+        "--exclude",
+        "--entry",
+        "--role-at",
+        "--resolution-profile",
+    ] {
+        let result = execute(
+            root.path(),
+            vec![
+                "post-write".into(),
+                "gate-fake-id".into(),
+                "--operation-id".into(),
+                "op-reject-test".into(),
+                flag.into(),
+                "value".into(),
+            ],
+        );
+        assert_eq!(
+            result.exit_code, 2,
+            "post-write should reject {flag}: {}",
+            result.stderr
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn invalid_entry_path_exits_code_2() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+
+    let result = execute(
+        root.path(),
+        vec!["audit".into(), "--entry".into(), "../escape.ts".into()],
+    );
+    assert_eq!(result.exit_code, 2);
+    assert!(result.stderr.contains("invalid repository path"));
     Ok(())
 }

@@ -10,9 +10,9 @@ use std::collections::BTreeMap;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use lumin_evidence::{
-    DeclaredPathUnsupportedReason, FindingRecord, GateDecision, GateLifecycle, GateOperationKind,
-    GateOperationResult, GateOperationStatus, GateRecord, GateSignal, OperationRecord,
-    RepoPathProjection, RunEvidence, WriteLease, WriteLeaseKind,
+    DeclaredPathUnsupportedReason, EntrySelectionRecord, FindingRecord, GateDecision,
+    GateLifecycle, GateOperationKind, GateOperationResult, GateOperationStatus, GateRecord,
+    GateSignal, OperationRecord, RepoPathProjection, RunEvidence, WriteLease, WriteLeaseKind,
 };
 use lumin_model::{
     AnalysisInputId, AttemptId, AttemptStatus, CapabilityState, FindingDisposition, FindingId,
@@ -134,6 +134,15 @@ pub struct RepoPathDto {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct EntrySelectionDto {
+    pub path: RepoPathDto,
+    pub source: lumin_model::EntrySource,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unavailable_reason: Option<lumin_model::EntryUnavailableReason>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GateMutationResponseDto {
     pub schema_version: &'static str,
     pub operation_id: OperationId,
@@ -181,6 +190,8 @@ pub struct GateBaselineSummaryDto {
     pub semantic_input_count: usize,
     pub finding_count: usize,
     pub limitation_count: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub entry_selections: Vec<EntrySelectionDto>,
     pub protected_semantic_input_count: usize,
     pub transition_sequence: u64,
 }
@@ -386,6 +397,12 @@ fn gate_show_response_with_selection(
                 semantic_input_count: baseline.snapshot.inputs.len(),
                 finding_count: baseline.snapshot.evidence.findings.len(),
                 limitation_count: baseline.snapshot.evidence.limitations.len(),
+                entry_selections: baseline
+                    .snapshot
+                    .entry_selections
+                    .iter()
+                    .map(EntrySelectionDto::from)
+                    .collect(),
                 protected_semantic_input_count: baseline.protected_semantic_inputs.len(),
                 transition_sequence: baseline.transition_sequence,
             }),
@@ -476,6 +493,16 @@ impl From<&RepoPathProjection> for RepoPathDto {
             schema_version: "repo-path.v1",
             canonical_base64: STANDARD.encode(&path.canonical),
             display: path.display.clone(),
+        }
+    }
+}
+
+impl From<&EntrySelectionRecord> for EntrySelectionDto {
+    fn from(selection: &EntrySelectionRecord) -> Self {
+        Self {
+            path: RepoPathDto::from(&selection.path),
+            source: selection.source,
+            unavailable_reason: selection.unavailable_reason,
         }
     }
 }

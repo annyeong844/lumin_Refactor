@@ -238,6 +238,11 @@ fn blocked_absence_scope(
                     workspace_blocked = true;
                 }
             }
+            Limitation::ExplicitEntryUnavailable { path, .. } => {
+                if !block_entry_package_prefix(path, sources, config, &mut blocked_paths) {
+                    workspace_blocked = true;
+                }
+            }
         }
     }
     blocked_paths.sort();
@@ -355,6 +360,38 @@ fn block_sources_under(
             .filter(|source| source.path.is_within(root))
             .map(|source| source.path.display_escaped()),
     );
+}
+
+/// Block the nearest package-root prefix for an entry path, else workspace.
+fn block_entry_package_prefix(
+    entry_path: &str,
+    sources: &[SourceSnapshot],
+    config: &SemanticConfigSnapshot,
+    blocked_paths: &mut Vec<String>,
+) -> bool {
+    // Find the nearest package root that is a prefix of the entry path
+    let mut best_package_root: Option<&RepoPath> = None;
+    for package in &config.packages {
+        let root_display = package.root.display_escaped();
+        let is_prefix = entry_path == root_display
+            || entry_path.starts_with(&format!("{root_display}/"))
+            || root_display.is_empty();
+        if is_prefix {
+            if let Some(current) = best_package_root {
+                if package.root.components_len() > current.components_len() {
+                    best_package_root = Some(&package.root);
+                }
+            } else {
+                best_package_root = Some(&package.root);
+            }
+        }
+    }
+    if let Some(root) = best_package_root {
+        block_sources_under(root, sources, blocked_paths);
+        return true;
+    }
+    // No package root found — block workspace
+    false
 }
 
 fn disposition(generated: bool, vendored: bool) -> FindingDisposition {

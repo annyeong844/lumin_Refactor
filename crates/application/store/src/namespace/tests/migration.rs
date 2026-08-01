@@ -332,6 +332,7 @@ fn options() -> GateAnalysisOptions {
     GateAnalysisOptions {
         jobs: 1,
         resolution_profile: None,
+        scan_invocation: Default::default(),
     }
 }
 
@@ -380,7 +381,12 @@ fn open_active_gate_for(
         PreWriteFinish {
             baseline: Some(GateBaseline {
                 analysis_contract: "migration-test-contract".to_owned(),
-                snapshot: seal_analysis_snapshot(Vec::new(), evidence()),
+                snapshot: seal_analysis_snapshot(
+                    Vec::new(),
+                    evidence(),
+                    Default::default(),
+                    Vec::new(),
+                ),
                 protected_semantic_inputs: Vec::new(),
                 transition_sequence,
             }),

@@ -13,6 +13,7 @@ members = [
   "crates/application/engine",
   "crates/application/protocol",
   "crates/application/cli",
+  "tools/xtask",
 ]
 
 [workspace.package]
