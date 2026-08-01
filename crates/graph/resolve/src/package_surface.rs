@@ -83,6 +83,116 @@ pub(crate) fn resolve(
     Some(result)
 }
 
+pub(crate) fn resolve_relative_directory(
+    base: &RepoPath,
+    source_use: &SourceUseFact,
+    sources: &BTreeMap<RepoPath, LogicalSourceId>,
+    settings: &ImporterSettings,
+    config: &SemanticConfigSnapshot,
+) -> PackageResolution {
+    let manifest_path = match base.join_portable("package.json") {
+        Ok(path) => path,
+        Err(_) => {
+            return relative_directory_unsupported(
+                base,
+                &source_use.specifier,
+                "directory cannot form package.json",
+            );
+        }
+    };
+    match config.observations.get(&manifest_path) {
+        Some(ConfigObservation::Present(manifest)) => {
+            let Some(package) = config
+                .packages
+                .iter()
+                .find(|package| package.root == *base && package.manifest_path == manifest_path)
+            else {
+                return relative_directory_unsupported(
+                    &manifest_path,
+                    &source_use.specifier,
+                    "observed package manifest has no matching package fact",
+                );
+            };
+            let context = PackageContext {
+                package,
+                manifest,
+                sources,
+            };
+            let mut result = fallback::resolve(
+                &context,
+                ResolutionRequest {
+                    specifier: &source_use.specifier,
+                    key: ".",
+                    namespace: source_use.namespace,
+                    import_kind: source_use.kind,
+                    lane: lane_for_use(settings, source_use.request_kind),
+                },
+            );
+            result.declaration = None;
+            result
+        }
+        Some(ConfigObservation::NonRegular { .. }) => relative_directory_unsupported(
+            &manifest_path,
+            &source_use.specifier,
+            "package.json is not a regular file",
+        ),
+        Some(ConfigObservation::Unreadable { .. }) => relative_directory_unsupported(
+            &manifest_path,
+            &source_use.specifier,
+            "package.json could not be read",
+        ),
+        Some(ConfigObservation::Missing { .. }) => {
+            let index = match base.join_portable("index.js") {
+                Ok(path) => path,
+                Err(_) => {
+                    return relative_directory_unsupported(
+                        base,
+                        &source_use.specifier,
+                        "directory cannot form index.js",
+                    );
+                }
+            };
+            let paths = candidates(&index, source_use.namespace, true);
+            if let Some(target) = paths.iter().find_map(|path| sources.get(path)) {
+                return PackageResolution {
+                    outcome: ResolutionOutcome::Internal {
+                        target: target.clone(),
+                    },
+                    limitation: None,
+                    declaration: None,
+                };
+            }
+            unresolved(
+                &source_use.specifier,
+                paths.iter().map(RepoPath::display_escaped).collect(),
+            )
+        }
+        None => relative_directory_unsupported(
+            &manifest_path,
+            &source_use.specifier,
+            "package.json observation is missing after demand collection",
+        ),
+    }
+}
+
+fn relative_directory_unsupported(
+    path: &RepoPath,
+    specifier: &str,
+    detail: &str,
+) -> PackageResolution {
+    PackageResolution {
+        outcome: ResolutionOutcome::Unsupported {
+            specifier: specifier.to_owned(),
+            reason: detail.to_owned(),
+        },
+        limitation: Some(Limitation::PackageMetadataUnobservable {
+            path: path.display_escaped(),
+            detail: detail.to_owned(),
+        }),
+        declaration: None,
+    }
+}
+
 pub(crate) fn package_imports_unsupported(
     source_use: &SourceUseFact,
     config: &SemanticConfigSnapshot,

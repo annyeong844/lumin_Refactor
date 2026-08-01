@@ -32,7 +32,7 @@ use transitions::{
     reconcile_transitions,
 };
 
-const ANALYSIS_CONTRACT: &str = "lumin-analysis-contract.phase1-foundation.v2";
+const ANALYSIS_CONTRACT: &str = "lumin-analysis-contract.phase1-foundation.v3";
 
 #[derive(Clone, Debug)]
 pub struct PreWriteRequest {

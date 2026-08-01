@@ -59,6 +59,22 @@ pub fn resolve_all(
         .iter()
         .map(|source| (source.id.clone(), source.path.clone()))
         .collect::<BTreeMap<_, _>>();
+    let demands = collect_relative_directory_demands(
+        facts,
+        &path_by_source,
+        &source_by_path,
+        &selection.settings,
+        semantic_config,
+    );
+    if !demands.is_empty() {
+        return Ok(ResolverOutput {
+            resolved: Vec::new(),
+            package_surfaces: Vec::new(),
+            profiles: selection.profiles,
+            limitations: selection.limitations,
+            demands,
+        });
+    }
 
     let public_surfaces =
         package_surface::collect_public_surfaces(sources, &source_by_path, semantic_config);
@@ -110,6 +126,57 @@ pub fn resolve_all(
     })
 }
 
+fn collect_relative_directory_demands(
+    facts: &[FileFacts],
+    path_by_source: &BTreeMap<LogicalSourceId, RepoPath>,
+    sources: &BTreeMap<RepoPath, LogicalSourceId>,
+    settings_by_source: &BTreeMap<LogicalSourceId, config::ImporterSettings>,
+    semantic_config: &SemanticConfigSnapshot,
+) -> Vec<ConfigDemand> {
+    let mut demands = Vec::new();
+    for file in facts {
+        let Some(importer_path) = path_by_source.get(&file.source_id) else {
+            continue;
+        };
+        let Some(settings) = settings_by_source.get(&file.source_id) else {
+            continue;
+        };
+        if settings.blocked || !settings.allow_extensionless {
+            continue;
+        }
+        for source_use in &file.uses {
+            let specifier = source_use.specifier.as_str();
+            if !specifier.starts_with("./") && !specifier.starts_with("../") {
+                continue;
+            }
+            let Some(base) = importer_path.resolve_portable_relative(specifier) else {
+                continue;
+            };
+            if base
+                .file_name_portable()
+                .is_none_or(|name| name.contains('.'))
+                || candidates(&base, source_use.namespace, true)
+                    .iter()
+                    .any(|candidate| sources.contains_key(candidate))
+            {
+                continue;
+            }
+            let Ok(manifest_path) = base.join_portable("package.json") else {
+                continue;
+            };
+            if !semantic_config.observations.contains_key(&manifest_path) {
+                demands.push(ConfigDemand {
+                    path: manifest_path,
+                    syntax: ConfigSyntax::StrictJson,
+                });
+            }
+        }
+    }
+    demands.sort();
+    demands.dedup();
+    demands
+}
+
 fn resolve_one(
     importer_path: &RepoPath,
     source_use: &SourceUseFact,
@@ -141,7 +208,14 @@ fn resolve_one(
     if !specifier.starts_with("./") && !specifier.starts_with("../") {
         return resolve_bare_specifier(specifier, source_use, sources, settings, semantic_config);
     }
-    resolve_relative_specifier(specifier, source_use, importer_path, sources, settings)
+    resolve_relative_specifier(
+        specifier,
+        source_use,
+        importer_path,
+        sources,
+        settings,
+        semantic_config,
+    )
 }
 
 fn resolve_bare_specifier(
@@ -204,6 +278,7 @@ fn resolve_relative_specifier(
     importer_path: &RepoPath,
     sources: &BTreeMap<RepoPath, LogicalSourceId>,
     settings: &config::ImporterSettings,
+    semantic_config: &SemanticConfigSnapshot,
 ) -> (
     ResolutionOutcome,
     Option<Limitation>,
@@ -251,10 +326,38 @@ fn resolve_relative_specifier(
         );
     }
 
+    let mut unresolved_candidates = candidates
+        .iter()
+        .map(RepoPath::display_escaped)
+        .collect::<Vec<_>>();
+    if settings.allow_extensionless
+        && base
+            .file_name_portable()
+            .is_some_and(|name| !name.contains('.'))
+    {
+        let directory = package_surface::resolve_relative_directory(
+            &base,
+            source_use,
+            sources,
+            settings,
+            semantic_config,
+        );
+        match directory.outcome {
+            ResolutionOutcome::Unresolved { candidates, .. } => {
+                for candidate in candidates {
+                    if !unresolved_candidates.contains(&candidate) {
+                        unresolved_candidates.push(candidate);
+                    }
+                }
+            }
+            outcome => return (outcome, directory.limitation, directory.declaration),
+        }
+    }
+
     (
         ResolutionOutcome::Unresolved {
             specifier: specifier.to_owned(),
-            candidates: candidates.iter().map(RepoPath::display_escaped).collect(),
+            candidates: unresolved_candidates,
         },
         None,
         None,
@@ -447,8 +550,8 @@ fn package_name(specifier: &str) -> String {
 #[cfg(test)]
 mod tests {
     use lumin_model::{
-        ImportKind, ModuleRequestKind, SourceKind, SourceRoles, SourceSpan, SourceUseFact,
-        SymbolNamespace,
+        ConfigObservation, ImportKind, ModuleRequestKind, SourceKind, SourceRoles, SourceSpan,
+        SourceUseFact, SymbolNamespace,
     };
 
     use super::*;
@@ -498,6 +601,62 @@ mod tests {
         assert!(limitation.is_none());
         assert!(declaration.is_none());
         assert_eq!(outcome, ResolutionOutcome::Internal { target: target.id });
+        Ok(())
+    }
+
+    #[test]
+    fn extensionless_directory_manifest_is_demanded_before_index_resolution()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let importer = SourceSnapshot::new(
+            RepoPath::from_portable("src/main.ts")?,
+            SourceKind::TypeScript,
+            SourceRoles::default(),
+            Vec::new(),
+        );
+        let index = SourceSnapshot::new(
+            RepoPath::from_portable("src/lib/index.ts")?,
+            SourceKind::TypeScript,
+            SourceRoles::default(),
+            Vec::new(),
+        );
+        let mut facts = FileFacts::physical(importer.id.clone());
+        facts.uses.push(SourceUseFact {
+            importer: importer.id.clone(),
+            specifier: "./lib".to_owned(),
+            imported_name: Some("used".to_owned()),
+            local_name: Some("used".to_owned()),
+            namespace: SymbolNamespace::Value,
+            kind: ImportKind::Named,
+            request_kind: ModuleRequestKind::StaticImport,
+            span: SourceSpan { start: 0, end: 10 },
+        });
+        let sources = [importer, index.clone()];
+        let mut config = SemanticConfigSnapshot::default();
+        let manifest_path = RepoPath::from_portable("src/lib/package.json")?;
+
+        let first = resolve_all(&sources, std::slice::from_ref(&facts), &config, None)?;
+        assert_eq!(
+            first.demands,
+            vec![ConfigDemand {
+                path: manifest_path.clone(),
+                syntax: ConfigSyntax::StrictJson,
+            }]
+        );
+        assert!(first.resolved.is_empty());
+
+        config.observations.insert(
+            manifest_path.clone(),
+            ConfigObservation::Missing {
+                path: manifest_path,
+            },
+        );
+        let second = resolve_all(&sources, &[facts], &config, None)?;
+        assert!(second.demands.is_empty());
+        assert_eq!(second.resolved.len(), 1);
+        assert_eq!(
+            second.resolved[0].outcome,
+            ResolutionOutcome::Internal { target: index.id }
+        );
         Ok(())
     }
 }

@@ -320,7 +320,7 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("logical-source-physical-aliases"),
     row_sd!("physical-alias-write-closure", INV_ALIAS),
     row_sd!("repo-path-codec-golden-vectors"),
-    row_sd!("extension-probe-precedence"),
+    row_sd!("extension-probe-precedence", &[inv!("extension_probe", "relative_extension_and_directory_probes_follow_frozen_precedence")]),
     row_sd!("declaration-type-space", &[inv!("path_and_declaration", "declaration_facts_satisfy_type_space_only")]),
     row_sd!("tsconfig-aliases"),
     row_sd!("tsconfig-extends-specifier-selection"),
