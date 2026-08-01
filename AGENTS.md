@@ -22,6 +22,7 @@ Start at [WORKBOARD.md](WORKBOARD.md) and read only the owner documents routed f
 8. **Behavioral verification:** Derive expected results from specs and corpus truth authored independently of the implementation, never current implementation or legacy output. Verify a core path, realistic edges, and required hard stops. Never weaken assertions, add arbitrary caps or timeouts, swallow failures, or skip checks to pass CI. Scaffolding tests that create RED by checking only file or function existence are also forbidden.
 9. **Validation scope:** Run focused local checks before push; use the full local matrix only for shared-core changes or CI diagnosis. Public CI is merge authority for clean locked builds, full corpus and determinism, packages, and dependency policy. Reproduce only the failing CI neighborhood locally.
 10. **Close the current change only:** Update the owner spec and Workboard only when their owned facts changed. Remove generated output and report exact checks and limitations. Do not mix unrelated cleanup, copy legacy modules wholesale, or alter user work outside the active slice.
+11. **No chronicles:** Do not turn the Workboard, checklists, README, or owner documents into chronicles of completed work. Use Git history for past implementation narrative that is not required for the current contract, state, or next action. Preserve contract-required provenance, design decisions, and independent review records only in their named owner.
 
 ## Validation Matrix
 
