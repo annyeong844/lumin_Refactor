@@ -12,11 +12,13 @@ use base64::engine::general_purpose::STANDARD;
 use lumin_evidence::{
     DeclaredPathUnsupportedReason, EntrySelectionRecord, FindingRecord, GateDecision,
     GateLifecycle, GateOperationKind, GateOperationResult, GateOperationStatus, GateRecord,
-    GateSignal, OperationRecord, RepoPathProjection, RunEvidence, WriteLease, WriteLeaseKind,
+    GateSignal, OperationRecord, RepoPathProjection, RunEvidence, SourceClassificationRecord,
+    WriteLease, WriteLeaseKind,
 };
 use lumin_model::{
     AnalysisInputId, AttemptId, AttemptStatus, CapabilityState, FindingDisposition, FindingId,
-    GateDeltaRecord, GateId, Limitation, OperationId, RunId, SourceSpan, SymbolNamespace,
+    GateDeltaRecord, GateId, Limitation, OperationId, RunId, SourceRoleClassification, SourceSpan,
+    SymbolNamespace,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -84,7 +86,17 @@ pub struct FindingCollectionDto {
     pub returned: usize,
     pub truncated: bool,
     pub next_cursor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_classification: Option<SourceClassificationDto>,
     pub items: Vec<FindingDto>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceClassificationDto {
+    pub source_id: String,
+    pub path: RepoPathDto,
+    pub classifications: Vec<SourceRoleClassification>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -497,6 +509,16 @@ impl From<&RepoPathProjection> for RepoPathDto {
     }
 }
 
+impl From<&SourceClassificationRecord> for SourceClassificationDto {
+    fn from(record: &SourceClassificationRecord) -> Self {
+        Self {
+            source_id: record.source_id.as_str().to_owned(),
+            path: RepoPathDto::from(&record.path),
+            classifications: record.classifications.clone(),
+        }
+    }
+}
+
 impl From<&EntrySelectionRecord> for EntrySelectionDto {
     fn from(selection: &EntrySelectionRecord) -> Self {
         Self {
@@ -780,6 +802,7 @@ mod tests {
             schema_version: "lumin-evidence.v1".to_owned(),
             capabilities: Vec::new(),
             resolution_profiles: Vec::new(),
+            source_classifications: Vec::new(),
             findings,
             limitations: Vec::new(),
         })

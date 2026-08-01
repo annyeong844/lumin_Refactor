@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{EmbeddedSourceUnitId, LogicalSourceId, RepoPath, digest_hex};
 
+pub const SOURCE_CLASSIFICATION_RULE_VERSION: &str = "source-classification.v1";
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SourceKind {
@@ -49,6 +51,8 @@ pub struct SourceRoles {
     pub generated: Option<SourceRoleReason>,
     pub vendored: Option<SourceRoleReason>,
     pub declaration: bool,
+    #[serde(default)]
+    pub classifications: Vec<SourceRoleClassification>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -66,6 +70,46 @@ pub enum ScanRole {
     Generated,
     Vendor,
     Authored,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SourceClassificationRole {
+    Test,
+    Production,
+    Generated,
+    Vendor,
+    Authored,
+    Declaration,
+}
+
+impl From<ScanRole> for SourceClassificationRole {
+    fn from(role: ScanRole) -> Self {
+        match role {
+            ScanRole::Test => Self::Test,
+            ScanRole::Production => Self::Production,
+            ScanRole::Generated => Self::Generated,
+            ScanRole::Vendor => Self::Vendor,
+            ScanRole::Authored => Self::Authored,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SourceRoleConfigurationSource {
+    CompiledDefault,
+    Configuration,
+    Invocation,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceRoleClassification {
+    pub role: SourceClassificationRole,
+    pub rule_version: String,
+    pub reason: SourceRoleReason,
+    pub configuration_source: SourceRoleConfigurationSource,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]

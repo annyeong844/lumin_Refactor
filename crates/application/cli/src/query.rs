@@ -140,7 +140,10 @@ pub(super) fn files(root: &Path, arguments: &mut Arguments) -> Result<String, Cl
                 &repo_path,
                 decoded_cursor,
             )?;
-            let response = lumin_protocol::run_file_findings_response(&page)?;
+            let source_classification =
+                lumin_engine::query_run_source_classification(&evidence, &repo_path)?;
+            let response =
+                lumin_protocol::run_file_findings_response(&page, source_classification)?;
             lumin_protocol::to_json(&response).map_err(Into::into)
         }
         (_, lumin_engine::RecordLookup::Pruning(tombstone)) => {

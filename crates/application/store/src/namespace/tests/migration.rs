@@ -323,6 +323,7 @@ fn evidence() -> RunEvidence {
             state: CapabilityState::Complete,
         }],
         resolution_profiles: Vec::new(),
+        source_classifications: Vec::new(),
         findings: Vec::new(),
         limitations: Vec::new(),
     }

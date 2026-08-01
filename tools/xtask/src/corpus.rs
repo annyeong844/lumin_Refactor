@@ -315,7 +315,7 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("plain-esm", &[inv!("core_dead_evidence", "plain_esm_preserves_namespace_and_side_effect_distinctions")]),
     row_sd!("ignore-precedence", &[inv!("ignore_precedence", "ignore_precedence_follows_section_3_1_scan_admission")]),
     row_sd!("scan-invocation-containment", &[inv!("scan_invocation_containment", "scan_flags_and_containment_round_trip_through_public_gate")]),
-    row_sd!("source-role-classification"),
+    row_sd!("source-role-classification", &[inv!("source_role_public", "source_role_classification_persists_rule_reason_and_source")]),
     row_sd!("source-role-findings-remain-visible", &[inv!("source_role_public", "source_role_findings_remain_visible_and_only_explicit_filtering_narrows")]),
     row_sd!("logical-source-physical-aliases"),
     row_sd!("physical-alias-write-closure", INV_ALIAS),

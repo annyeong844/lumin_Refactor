@@ -13,8 +13,9 @@ use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use lumin_model::{
     ConfigObservation, ConfigSyntax, EntrySource, EntryUnavailableReason, Limitation,
     PhysicalAliasWriteClosure, PhysicalFileIdentity, RepoPath, RepoPathError, RoleOverride,
-    ScanRole, SemanticConfigSnapshot, SourceKind, SourceRoleReason, SourceRoles, SourceSnapshot,
-    digest_hex,
+    SOURCE_CLASSIFICATION_RULE_VERSION, ScanRole, SemanticConfigSnapshot, SourceClassificationRole,
+    SourceKind, SourceRoleClassification, SourceRoleConfigurationSource, SourceRoleReason,
+    SourceRoles, SourceSnapshot, digest_hex,
 };
 use serde::Deserialize;
 use thiserror::Error;
@@ -1178,19 +1179,63 @@ fn classify_roles(
     bytes: &[u8],
     patterns: &PatternSet,
 ) -> SourceRoles {
+    let test_like = default_test_role(relative);
+    let generated = generated_marker(bytes).then_some(SourceRoleReason::LeadingGeneratedComment);
+    let declaration = kind.is_declaration();
     let mut roles = SourceRoles {
-        test_like: default_test_role(relative),
-        generated: generated_marker(bytes).then_some(SourceRoleReason::LeadingGeneratedComment),
+        test_like,
+        generated,
         vendored: None,
-        declaration: kind.is_declaration(),
+        declaration,
+        classifications: Vec::new(),
     };
 
-    apply_roles(&mut roles, relative, &patterns.config_roles);
-    apply_roles(&mut roles, relative, &patterns.invocation_roles);
+    if let Some(reason) = test_like {
+        push_classification(
+            &mut roles,
+            SourceClassificationRole::Test,
+            reason,
+            SourceRoleConfigurationSource::CompiledDefault,
+        );
+    }
+    if let Some(reason) = generated {
+        push_classification(
+            &mut roles,
+            SourceClassificationRole::Generated,
+            reason,
+            SourceRoleConfigurationSource::CompiledDefault,
+        );
+    }
+    if declaration {
+        push_classification(
+            &mut roles,
+            SourceClassificationRole::Declaration,
+            SourceRoleReason::DeclarationExtension,
+            SourceRoleConfigurationSource::CompiledDefault,
+        );
+    }
+
+    apply_roles(
+        &mut roles,
+        relative,
+        &patterns.config_roles,
+        SourceRoleConfigurationSource::Configuration,
+    );
+    apply_roles(
+        &mut roles,
+        relative,
+        &patterns.invocation_roles,
+        SourceRoleConfigurationSource::Invocation,
+    );
     roles
 }
 
-fn apply_roles(roles: &mut SourceRoles, relative: &Path, rules: &[(Gitignore, ScanRole)]) {
+fn apply_roles(
+    roles: &mut SourceRoles,
+    relative: &Path,
+    rules: &[(Gitignore, ScanRole)],
+    configuration_source: SourceRoleConfigurationSource,
+) {
     for (pattern, role) in rules {
         if !pattern
             .matched_path_or_any_parents(relative, false)
@@ -1198,17 +1243,45 @@ fn apply_roles(roles: &mut SourceRoles, relative: &Path, rules: &[(Gitignore, Sc
         {
             continue;
         }
-        match role {
-            ScanRole::Test => roles.test_like = Some(SourceRoleReason::ExplicitTestRole),
-            ScanRole::Production => roles.test_like = None,
-            ScanRole::Generated => roles.generated = Some(SourceRoleReason::ExplicitGeneratedRole),
-            ScanRole::Vendor => roles.vendored = Some(SourceRoleReason::ExplicitVendorRole),
+        let reason = match role {
+            ScanRole::Test => {
+                roles.test_like = Some(SourceRoleReason::ExplicitTestRole);
+                SourceRoleReason::ExplicitTestRole
+            }
+            ScanRole::Production => {
+                roles.test_like = None;
+                SourceRoleReason::ExplicitProductionRole
+            }
+            ScanRole::Generated => {
+                roles.generated = Some(SourceRoleReason::ExplicitGeneratedRole);
+                SourceRoleReason::ExplicitGeneratedRole
+            }
+            ScanRole::Vendor => {
+                roles.vendored = Some(SourceRoleReason::ExplicitVendorRole);
+                SourceRoleReason::ExplicitVendorRole
+            }
             ScanRole::Authored => {
                 roles.generated = None;
                 roles.vendored = None;
+                SourceRoleReason::ExplicitAuthoredRole
             }
-        }
+        };
+        push_classification(roles, (*role).into(), reason, configuration_source);
     }
+}
+
+fn push_classification(
+    roles: &mut SourceRoles,
+    role: SourceClassificationRole,
+    reason: SourceRoleReason,
+    configuration_source: SourceRoleConfigurationSource,
+) {
+    roles.classifications.push(SourceRoleClassification {
+        role,
+        rule_version: SOURCE_CLASSIFICATION_RULE_VERSION.to_owned(),
+        reason,
+        configuration_source,
+    });
 }
 
 fn default_test_role(path: &Path) -> Option<SourceRoleReason> {

@@ -12,6 +12,7 @@ pub use gate_abandon::{AbandonGateRequest, abandon_gate};
 pub use gate_query::{
     EvidenceQueryError, query_gate_explain, query_gate_findings, query_run_explain,
     query_run_file_findings, query_run_findings, query_run_relations,
+    query_run_source_classification,
 };
 pub use lumin_evidence::{
     GateDecision, GateOperationResult, RecordLookup, RetentionMutationResult, RetentionPlanScope,
@@ -33,7 +34,7 @@ use std::path::{Path, PathBuf};
 use lumin_evidence::{
     AnalysisSnapshot, CapabilityRecord, DEAD_CODE_CAPABILITY_ID, EntrySelectionRecord,
     RepoPathProjection, RunEvidence, ScanInvocationTier, SemanticInputRecord, SemanticInputState,
-    seal_analysis_snapshot,
+    SourceClassificationRecord, seal_analysis_snapshot,
 };
 use lumin_inventory::{
     InventoryError, InventoryRequest, InventorySnapshot, SemanticPolicyState, repository_admission,
@@ -421,10 +422,21 @@ impl RepositoryAnalysisSession {
             state,
         }];
         capabilities.extend(sfc_capability_records(&self.sfc_states));
+        let source_classifications = self
+            .inventory
+            .sources
+            .iter()
+            .map(|source| SourceClassificationRecord {
+                source_id: source.id.clone(),
+                path: RepoPathProjection::from(&source.path),
+                classifications: source.roles.classifications.clone(),
+            })
+            .collect();
         let evidence = RunEvidence {
             schema_version: "lumin-evidence.v1".to_owned(),
             capabilities,
             resolution_profiles: profiles,
+            source_classifications,
             findings,
             limitations,
         };

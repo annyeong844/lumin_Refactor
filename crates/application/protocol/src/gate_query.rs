@@ -4,6 +4,7 @@ use lumin_evidence::{
     CAPABILITIES_ORDERING_ID, CapabilityRecord, CollectionOrderingId, EVIDENCE_ORDERING_ID,
     EvidencePage, EvidenceQuery, EvidenceQueryScope, EvidenceRecord, FINDINGS_ORDERING_ID,
     FindingExplanation, FindingRecord, FindingRelationRecord, PageAnchor, RELATIONS_ORDERING_ID,
+    SourceClassificationRecord,
 };
 use lumin_model::{
     BuildIdentity, EvidenceId, FindingId, FindingRelationId, GateId, RepositoryId, RunId,
@@ -14,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::cursor::{decode_cursor_payload, encode_cursor_payload};
 use crate::{
     CapabilityStateDto, FindingCollectionDto, FindingDto, ProtocolError, RepoPathDto, ScopeDto,
+    SourceClassificationDto,
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -221,6 +223,7 @@ pub fn gate_findings_response(
         returned: page.items.len(),
         truncated: next_cursor.is_some(),
         next_cursor,
+        source_classification: None,
         items: page.items.iter().map(FindingDto::from).collect(),
     })
 }
@@ -252,6 +255,7 @@ pub fn run_findings_response(
         returned: page.items.len(),
         truncated: next_cursor.is_some(),
         next_cursor,
+        source_classification: None,
         items: page.items.iter().map(FindingDto::from).collect(),
     })
 }
@@ -306,6 +310,7 @@ pub fn run_relations_response(
 
 pub fn run_file_findings_response(
     page: &EvidencePage<FindingRecord>,
+    source_classification: Option<&SourceClassificationRecord>,
 ) -> Result<FindingCollectionDto, ProtocolError> {
     let next_cursor = encode_next_cursor(page.next_query.as_ref())?;
     Ok(FindingCollectionDto {
@@ -318,6 +323,7 @@ pub fn run_file_findings_response(
         returned: page.items.len(),
         truncated: next_cursor.is_some(),
         next_cursor,
+        source_classification: source_classification.map(SourceClassificationDto::from),
         items: page.items.iter().map(FindingDto::from).collect(),
     })
 }
