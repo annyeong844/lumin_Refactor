@@ -607,9 +607,9 @@ mod tests {
 
     #[test]
     fn relative_display_uses_forward_slash() {
-        let base = Path::new("C:\\Users\\test\\project");
-        let target = Path::new("C:\\Users\\test\\project\\crates\\model\\src\\lib.rs");
-        let result = relative_display(base, target);
+        let base = PathBuf::from("project");
+        let target = base.join("crates").join("model").join("src").join("lib.rs");
+        let result = relative_display(&base, &target);
         assert_eq!(result, "crates/model/src/lib.rs");
         assert!(!result.contains('\\'));
     }
