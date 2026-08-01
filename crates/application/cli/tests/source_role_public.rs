@@ -239,7 +239,7 @@ fn contradictory_invocation_roles_hard_stop_audit_and_pre_write_without_authoriz
             "authored",
         ],
     )?;
-    assert_status(&audit, 2);
+    assert_status(&audit, 1);
     assert!(audit.stdout.is_empty());
     assert!(audit.stderr.contains(
         "contradictory invocation source role declarations for src/a.ts: generated conflicts with authored"

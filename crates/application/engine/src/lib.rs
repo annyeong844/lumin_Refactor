@@ -132,10 +132,7 @@ impl EngineError {
             Self::EvidenceQuery(EvidenceQueryError::DuplicateCapabilityId(_)) => 1,
             Self::EvidenceQuery(EvidenceQueryError::DuplicateCollectionId(_)) => 1,
             Self::Inventory(
-                InventoryError::MalformedConfiguration(_)
-                | InventoryError::InvalidPattern(_)
-                | InventoryError::ReservedEntryPath(_)
-                | InventoryError::EntryEscapesRoot(_),
+                InventoryError::ReservedEntryPath(_) | InventoryError::EntryEscapesRoot(_),
             ) => 2,
             Self::NoDeclaredPaths
             | Self::TierProjectionCorrupt(_)
