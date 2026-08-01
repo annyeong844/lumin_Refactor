@@ -484,8 +484,9 @@ fn semantic_input_records(
             path: RepoPathProjection::from(&source.path),
             state: SemanticInputState::Source,
             payload_sha256: Some(source.payload_sha256.clone()),
-            physical_identity: Some(lumin_inventory::physical_file_identity(
-                &root.join(source.path.to_native_relative()),
+            physical_identity: Some(lumin_inventory::observe_physical_file_identity(
+                root,
+                &source.path,
             )?),
         });
     }
@@ -505,8 +506,9 @@ fn semantic_input_records(
         let physical_identity = if state == SemanticInputState::Missing {
             None
         } else {
-            Some(lumin_inventory::physical_file_identity(
-                &root.join(observation.path().to_native_relative()),
+            Some(lumin_inventory::observe_physical_file_identity(
+                root,
+                observation.path(),
             )?)
         };
         inputs.push(SemanticInputRecord {

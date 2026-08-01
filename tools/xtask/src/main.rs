@@ -7,6 +7,7 @@ mod corpus;
 mod generated_tables;
 mod limitation_registry;
 mod metadata;
+mod path_codec;
 mod path_owner;
 mod source_policy;
 
@@ -38,12 +39,32 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Some("path-codec") if args.get(1).map(String::as_str) == Some("--write") => {
+            let workspace_root = match architecture::find_workspace_root() {
+                Ok(root) => root,
+                Err(error) => {
+                    eprintln!("[TOOL ERROR] {error}");
+                    return ExitCode::from(2);
+                }
+            };
+            match path_codec::write_generated_codec(&workspace_root) {
+                Ok(path) => {
+                    println!("generated {}", path.display());
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("[TOOL ERROR] {error}");
+                    ExitCode::from(2)
+                }
+            }
+        }
         _ => {
             eprintln!(
                 "usage: lumin-xtask <command>\n\n\
                  commands:\n  \
                  architecture-check\n  \
                  generated-tables --write\n  \
+                 path-codec --write\n  \
                  corpus foundation [--determinism|--store-crash] [--format human|json]"
             );
             ExitCode::from(2)

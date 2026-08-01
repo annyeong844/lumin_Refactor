@@ -60,9 +60,7 @@ fn assert_available_entry_selection_and_package_roots() -> Result<(), Box<dyn st
         .iter()
         .map(|selection| {
             assert_eq!(
-                selection
-                    .pointer("/path/schemaVersion")
-                    .and_then(Value::as_str),
+                selection.pointer("/path/encoding").and_then(Value::as_str),
                 Some("repo-path.v1")
             );
             assert_eq!(

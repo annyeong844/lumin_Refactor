@@ -1,19 +1,19 @@
 mod cursor;
 mod gate_query;
+mod path_dto;
 mod retention;
 
 pub use gate_query::*;
+pub use path_dto::*;
 pub use retention::*;
 
 use std::collections::BTreeMap;
 
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
 use lumin_evidence::{
     ActualWriteSet, DeclaredPathUnsupportedReason, EntrySelectionRecord, FindingRecord,
     GateDecision, GateLifecycle, GateOperationKind, GateOperationResult, GateOperationStatus,
-    GateRecord, GateSignal, OperationRecord, PhysicalAliasClosureRecord, RepoPathProjection,
-    RunEvidence, SourceClassificationRecord, WriteLease, WriteLeaseKind,
+    GateRecord, GateSignal, OperationRecord, PhysicalAliasClosureRecord, RunEvidence,
+    SourceClassificationRecord, WriteLease, WriteLeaseKind,
 };
 use lumin_model::{
     AnalysisInputId, AttemptId, AttemptStatus, CapabilityState, FindingDisposition, FindingId,
@@ -134,14 +134,6 @@ pub struct FindingDto {
     pub span: SourceSpan,
     pub exported_name: String,
     pub namespace: SymbolNamespace,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RepoPathDto {
-    pub schema_version: &'static str,
-    pub canonical_base64: String,
-    pub display: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -300,6 +292,10 @@ pub enum ProtocolError {
     FindingNotFound(String),
     #[error("cursor repository view is stale")]
     CursorStale,
+    #[error("repository path DTO is malformed: {0}")]
+    InvalidRepoPathDto(String),
+    #[error("repository root DTO is malformed: {0}")]
+    InvalidRepositoryRootDto(String),
     #[error("machine response serialization failed: {0}")]
     Serialization(String),
 }
@@ -549,16 +545,6 @@ impl From<&FindingRecord> for FindingDto {
             span: finding.span.clone(),
             exported_name: finding.exported_name.clone(),
             namespace: finding.namespace,
-        }
-    }
-}
-
-impl From<&RepoPathProjection> for RepoPathDto {
-    fn from(path: &RepoPathProjection) -> Self {
-        Self {
-            schema_version: "repo-path.v1",
-            canonical_base64: STANDARD.encode(&path.canonical),
-            display: path.display.clone(),
         }
     }
 }

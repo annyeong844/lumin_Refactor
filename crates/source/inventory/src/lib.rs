@@ -7,7 +7,7 @@ mod root;
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use ignore::WalkBuilder;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
@@ -37,7 +37,7 @@ pub fn validate_caller_entries(root: &Path, entries: &[RepoPath]) -> Result<(), 
     let canonical_root = fs::canonicalize(root)
         .map_err(|error| InventoryError::RepositoryIdentity(error.to_string()))?;
     for entry in entries {
-        let relative = entry.to_native_relative();
+        let relative = native_relative(entry)?;
         let first_component = relative.iter().next();
         if first_component.is_some_and(|component| component == ".lumin") {
             return Err(InventoryError::ReservedEntryPath(entry.display_escaped()));
@@ -52,7 +52,7 @@ fn validate_entry_containment(
     canonical_root: &Path,
     entry: &RepoPath,
 ) -> Result<(), InventoryError> {
-    let mut candidate = root.join(entry.to_native_relative());
+    let mut candidate = root.join(native_relative(entry)?);
     loop {
         match fs::symlink_metadata(&candidate) {
             Ok(_) => {
@@ -153,6 +153,14 @@ pub enum InventoryError {
     ReservedEntryPath(String),
     #[error("caller entry resolves outside repository root: {0}")]
     EntryEscapesRoot(String),
+}
+
+fn native_relative(path: &RepoPath) -> Result<PathBuf, InventoryError> {
+    path.to_native_relative()
+        .map_err(|source| InventoryError::InvalidRepoPath {
+            path: path.display_escaped(),
+            source,
+        })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -338,7 +346,7 @@ fn classify_entry(
     patterns: &PatternSet,
     ignore: &ApplicableIgnore,
 ) -> Result<EntryClassification, InventoryError> {
-    let relative = path.to_native_relative();
+    let relative = native_relative(path)?;
     if is_hard_excluded(&relative) || relative.iter().any(|c| is_hard_excluded(Path::new(c))) {
         return Ok(EntryClassification::Unavailable(
             EntryUnavailableReason::HardExcluded,
@@ -627,12 +635,13 @@ pub fn physical_alias_write_closure(
     target: &RepoPath,
     source_paths: &[RepoPath],
 ) -> Result<PhysicalAliasWriteClosure, InventoryError> {
-    let physical_identity = physical_file_identity(&root.join(target.to_native_relative()))?;
-    let target_handle = same_file::Handle::from_path(root.join(target.to_native_relative()))
+    let target_native = root.join(native_relative(target)?);
+    let physical_identity = physical_file_identity(&target_native)?;
+    let target_handle = same_file::Handle::from_path(&target_native)
         .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
     let mut aliases = Vec::new();
     for source_path in source_paths {
-        let handle = same_file::Handle::from_path(root.join(source_path.to_native_relative()))
+        let handle = same_file::Handle::from_path(root.join(native_relative(source_path)?))
             .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
         if handle == target_handle {
             aliases.push(source_path.clone());
@@ -657,7 +666,7 @@ pub fn inspect_write_target(
         path: root.display().to_string(),
         detail: error.to_string(),
     })?;
-    let native = root.join(path.to_native_relative());
+    let native = root.join(native_relative(path)?);
     let metadata = match fs::symlink_metadata(&native) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -714,7 +723,7 @@ pub fn inspect_write_target(
 fn nearest_existing_parent(root: &Path, path: &RepoPath) -> Result<RepoPath, WriteTargetError> {
     let mut candidate = path.parent();
     while let Some(parent) = candidate {
-        let native = root.join(parent.to_native_relative());
+        let native = root.join(native_relative(&parent)?);
         match fs::symlink_metadata(&native) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
                 return Err(WriteTargetError::LinkedDirectory(parent.display_escaped()));
@@ -757,7 +766,7 @@ fn observe_directory_prefixes(
 
     let mut observed = Vec::with_capacity(prefixes.len());
     for prefix in prefixes {
-        let native = root.join(prefix.to_native_relative());
+        let native = root.join(native_relative(&prefix)?);
         let metadata = fs::symlink_metadata(&native).map_err(|error| WriteTargetError::Io {
             path: prefix.display_escaped(),
             detail: error.to_string(),
@@ -775,7 +784,9 @@ fn observe_directory_prefixes(
 }
 
 pub fn is_supported_source_path(path: &RepoPath) -> bool {
-    source_kind(&path.to_native_relative()).is_some()
+    native_relative(path)
+        .ok()
+        .is_some_and(|native| source_kind(&native).is_some())
 }
 
 pub fn physical_file_identity(path: &Path) -> Result<PhysicalFileIdentity, InventoryError> {
@@ -810,12 +821,20 @@ pub fn observe_config_physical_identity(
     path: &RepoPath,
 ) -> Result<Option<PhysicalFileIdentity>, InventoryError> {
     validate_root(root)?;
-    let native = root.join(path.to_native_relative());
+    let native = root.join(native_relative(path)?);
     match fs::symlink_metadata(&native) {
         Ok(_) => physical_file_identity(&native).map(Some),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(InventoryError::PhysicalIdentity(error.to_string())),
     }
+}
+
+pub fn observe_physical_file_identity(
+    root: &Path,
+    path: &RepoPath,
+) -> Result<PhysicalFileIdentity, InventoryError> {
+    validate_root(root)?;
+    physical_file_identity(&root.join(native_relative(path)?))
 }
 
 pub fn directory_physical_identity(
@@ -1068,7 +1087,7 @@ fn observe_config(
     syntax: ConfigSyntax,
 ) -> Result<ConfigObservation, InventoryError> {
     validate_root(root)?;
-    let native = root.join(path.to_native_relative());
+    let native = root.join(native_relative(path)?);
     let metadata = match fs::symlink_metadata(&native) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {

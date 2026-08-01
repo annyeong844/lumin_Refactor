@@ -413,6 +413,9 @@ dependencies = [
 name = "lumin-xtask"
 version = "0.1.0"
 dependencies = [
+ "base64",
+ "lumin-model",
+ "lumin-protocol",
  "serde_json",
  "sha2",
  "syn",

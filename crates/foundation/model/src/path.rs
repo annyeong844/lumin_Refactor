@@ -1,5 +1,4 @@
 use std::cmp::Ordering;
-use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
@@ -7,9 +6,11 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::codec::{CanonicalReadError, CanonicalReader};
+use crate::generated_path_codec::{
+    PORTABLE_UTF8_TAG, REPO_PATH_MAGIC, REPO_PATH_VERSION, UNIX_BYTES_TAG, WINDOWS_WTF16_TAG,
+};
 
-const MAGIC: &[u8; 8] = b"LUMRPATH";
-const VERSION: u16 = 1;
+mod native_io;
 
 #[derive(Clone, Eq, Hash, PartialEq)]
 pub struct RepoPath {
@@ -17,12 +18,10 @@ pub struct RepoPath {
     canonical: Vec<u8>,
 }
 
-#[derive(Clone, Eq, Hash, PartialEq)]
-enum RepoPathComponent {
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) enum RepoPathComponent {
     PortableUtf8(String),
-    #[cfg(unix)]
     UnixBytes(Vec<u8>),
-    #[cfg(windows)]
     WindowsWtf16(Vec<u16>),
 }
 
@@ -40,6 +39,10 @@ pub enum RepoPathError {
     EncodingOverflow,
     #[error("repository path canonical bytes are malformed or noncanonical")]
     InvalidCanonicalEncoding,
+    #[error("repository path contains a component for another native platform")]
+    ForeignPlatformComponent,
+    #[error("native NUL path stream is malformed or noncanonical")]
+    InvalidNativeNulStream,
 }
 
 impl From<CanonicalReadError> for RepoPathError {
@@ -86,8 +89,8 @@ pub struct PhysicalAliasWriteClosure {
 impl RepoPath {
     pub fn empty() -> Self {
         let mut canonical = Vec::new();
-        canonical.extend_from_slice(MAGIC);
-        canonical.extend_from_slice(&VERSION.to_be_bytes());
+        canonical.extend_from_slice(REPO_PATH_MAGIC);
+        canonical.extend_from_slice(&REPO_PATH_VERSION.to_be_bytes());
         canonical.extend_from_slice(&0_u32.to_be_bytes());
         Self {
             components: Vec::new(),
@@ -103,7 +106,7 @@ impl RepoPath {
         let mut components = Vec::new();
         for component in path.components() {
             match component {
-                Component::Normal(value) => components.push(native_component(value)?),
+                Component::Normal(value) => components.push(native_io::native_component(value)?),
                 Component::CurDir if components.is_empty() => {}
                 Component::CurDir | Component::ParentDir => {
                     return Err(RepoPathError::ForbiddenComponent);
@@ -134,10 +137,10 @@ impl RepoPath {
 
     pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, RepoPathError> {
         let mut reader = CanonicalReader::new(bytes);
-        if reader.take(MAGIC.len())? != MAGIC {
+        if reader.take(REPO_PATH_MAGIC.len())? != REPO_PATH_MAGIC {
             return Err(RepoPathError::InvalidCanonicalEncoding);
         }
-        if reader.read_u16()? != VERSION {
+        if reader.read_u16()? != REPO_PATH_VERSION {
             return Err(RepoPathError::InvalidCanonicalEncoding);
         }
         let component_count = usize::try_from(reader.read_u32()?)
@@ -199,9 +202,7 @@ impl RepoPath {
     pub fn file_name_portable(&self) -> Option<&str> {
         match self.components.last()? {
             RepoPathComponent::PortableUtf8(value) => Some(value),
-            #[cfg(unix)]
             RepoPathComponent::UnixBytes(_) => None,
-            #[cfg(windows)]
             RepoPathComponent::WindowsWtf16(_) => None,
         }
     }
@@ -243,19 +244,56 @@ impl RepoPath {
         self.components.starts_with(&ancestor.components)
     }
 
-    pub fn to_native_relative(&self) -> PathBuf {
+    pub fn to_native_relative(&self) -> Result<PathBuf, RepoPathError> {
         let mut path = PathBuf::new();
         for component in &self.components {
-            path.push(native_os_string(component));
+            path.push(native_io::native_os_string(component)?);
         }
-        path
+        Ok(path)
+    }
+
+    pub fn decode_native_nul_stream(bytes: &[u8]) -> Result<Vec<Self>, RepoPathError> {
+        if bytes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let Some(records) = bytes.strip_suffix(&[0]) else {
+            return Err(RepoPathError::InvalidNativeNulStream);
+        };
+        records
+            .split(|byte| *byte == 0)
+            .map(native_io::from_native_io_bytes)
+            .collect()
+    }
+
+    pub fn encode_native_nul_stream(paths: &[Self]) -> Result<Vec<u8>, RepoPathError> {
+        let mut output = Vec::new();
+        for path in paths {
+            output.extend_from_slice(&path.native_io_bytes()?);
+            output.push(0);
+        }
+        Ok(output)
+    }
+
+    pub fn native_match_bytes(&self) -> Result<Vec<u8>, RepoPathError> {
+        self.native_io_bytes()
+    }
+
+    fn native_io_bytes(&self) -> Result<Vec<u8>, RepoPathError> {
+        let mut output = Vec::new();
+        for (index, component) in self.components.iter().enumerate() {
+            if index > 0 {
+                output.push(b'/');
+            }
+            native_io::append_native_io_component(&mut output, component)?;
+        }
+        Ok(output)
     }
 
     fn from_components(components: Vec<RepoPathComponent>) -> Result<Self, RepoPathError> {
         let count = u32::try_from(components.len()).map_err(|_| RepoPathError::EncodingOverflow)?;
         let mut canonical = Vec::new();
-        canonical.extend_from_slice(MAGIC);
-        canonical.extend_from_slice(&VERSION.to_be_bytes());
+        canonical.extend_from_slice(REPO_PATH_MAGIC);
+        canonical.extend_from_slice(&REPO_PATH_VERSION.to_be_bytes());
         canonical.extend_from_slice(&count.to_be_bytes());
 
         for component in &components {
@@ -274,27 +312,31 @@ impl RepoPath {
     }
 }
 
-fn decode_component(tag: u8, payload: &[u8]) -> Result<RepoPathComponent, RepoPathError> {
+pub(crate) fn decode_component(
+    tag: u8,
+    payload: &[u8],
+) -> Result<RepoPathComponent, RepoPathError> {
     match tag {
-        1 => {
+        PORTABLE_UTF8_TAG => {
             let value = std::str::from_utf8(payload)
                 .map_err(|_| RepoPathError::InvalidCanonicalEncoding)?;
             validate_scalar_component(value)?;
             Ok(RepoPathComponent::PortableUtf8(value.to_owned()))
         }
-        #[cfg(unix)]
-        2 => {
-            use std::os::unix::ffi::OsStrExt;
-
-            match native_component(OsStr::from_bytes(payload))? {
-                component @ RepoPathComponent::UnixBytes(_) => Ok(component),
-                RepoPathComponent::PortableUtf8(_) => Err(RepoPathError::InvalidCanonicalEncoding),
+        UNIX_BYTES_TAG => {
+            validate_native_bytes(payload, b'/')?;
+            if payload == b"." || payload == b".." {
+                return Err(RepoPathError::InvalidCanonicalEncoding);
             }
+            if let Ok(value) = std::str::from_utf8(payload)
+                && !value.contains('\\')
+                && validate_scalar_component(value).is_ok()
+            {
+                return Err(RepoPathError::InvalidCanonicalEncoding);
+            }
+            Ok(RepoPathComponent::UnixBytes(payload.to_vec()))
         }
-        #[cfg(windows)]
-        3 => {
-            use std::os::windows::ffi::OsStringExt;
-
+        WINDOWS_WTF16_TAG => {
             if !payload.len().is_multiple_of(2) {
                 return Err(RepoPathError::InvalidCanonicalEncoding);
             }
@@ -302,11 +344,15 @@ fn decode_component(tag: u8, payload: &[u8]) -> Result<RepoPathComponent, RepoPa
                 .chunks_exact(2)
                 .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
                 .collect::<Vec<_>>();
-            let value = OsString::from_wide(&units);
-            match native_component(&value)? {
-                component @ RepoPathComponent::WindowsWtf16(_) => Ok(component),
-                RepoPathComponent::PortableUtf8(_) => Err(RepoPathError::InvalidCanonicalEncoding),
+            if units.is_empty()
+                || units.contains(&0)
+                || units.contains(&(b'/' as u16))
+                || units.contains(&(b'\\' as u16))
+                || String::from_utf16(&units).is_ok()
+            {
+                return Err(RepoPathError::InvalidCanonicalEncoding);
             }
+            Ok(RepoPathComponent::WindowsWtf16(units))
         }
         _ => Err(RepoPathError::InvalidCanonicalEncoding),
     }
@@ -317,9 +363,7 @@ fn portable_components(components: &[RepoPathComponent]) -> Option<String> {
         .iter()
         .map(|component| match component {
             RepoPathComponent::PortableUtf8(value) => Some(value.as_str()),
-            #[cfg(unix)]
             RepoPathComponent::UnixBytes(_) => None,
-            #[cfg(windows)]
             RepoPathComponent::WindowsWtf16(_) => None,
         })
         .collect::<Option<Vec<_>>>()
@@ -360,74 +404,23 @@ fn validate_scalar_component(value: &str) -> Result<(), RepoPathError> {
     Ok(())
 }
 
-#[cfg(unix)]
-fn native_component(value: &OsStr) -> Result<RepoPathComponent, RepoPathError> {
-    use std::os::unix::ffi::OsStrExt;
-
-    let bytes = value.as_bytes();
-    if bytes.is_empty() || bytes.contains(&0) || bytes.contains(&b'/') {
-        return Err(RepoPathError::InvalidComponent);
-    }
-    if let Ok(text) = std::str::from_utf8(bytes)
-        && !text.contains('\\')
-    {
-        validate_scalar_component(text)?;
-        return Ok(RepoPathComponent::PortableUtf8(text.to_owned()));
-    }
-    Ok(RepoPathComponent::UnixBytes(bytes.to_vec()))
-}
-
-#[cfg(windows)]
-fn native_component(value: &OsStr) -> Result<RepoPathComponent, RepoPathError> {
-    use std::os::windows::ffi::OsStrExt;
-
-    let units: Vec<u16> = value.encode_wide().collect();
-    if units.is_empty() || units.contains(&0) || units.contains(&(b'\\' as u16)) {
-        return Err(RepoPathError::InvalidComponent);
-    }
-    if let Ok(text) = String::from_utf16(&units) {
-        validate_scalar_component(&text)?;
-        return Ok(RepoPathComponent::PortableUtf8(text));
-    }
-    Ok(RepoPathComponent::WindowsWtf16(units))
-}
-
 fn component_payload(component: &RepoPathComponent) -> (u8, Vec<u8>) {
     match component {
-        RepoPathComponent::PortableUtf8(value) => (1, value.as_bytes().to_vec()),
-        #[cfg(unix)]
-        RepoPathComponent::UnixBytes(value) => (2, value.clone()),
-        #[cfg(windows)]
+        RepoPathComponent::PortableUtf8(value) => (PORTABLE_UTF8_TAG, value.as_bytes().to_vec()),
+        RepoPathComponent::UnixBytes(value) => (UNIX_BYTES_TAG, value.clone()),
         RepoPathComponent::WindowsWtf16(value) => {
             let mut bytes = Vec::with_capacity(value.len() * 2);
             for unit in value {
                 bytes.extend_from_slice(&unit.to_be_bytes());
             }
-            (3, bytes)
+            (WINDOWS_WTF16_TAG, bytes)
         }
     }
 }
 
-fn native_os_string(component: &RepoPathComponent) -> OsString {
-    match component {
-        RepoPathComponent::PortableUtf8(value) => OsString::from(value),
-        #[cfg(unix)]
-        RepoPathComponent::UnixBytes(value) => {
-            use std::os::unix::ffi::OsStringExt;
-            OsString::from_vec(value.clone())
-        }
-        #[cfg(windows)]
-        RepoPathComponent::WindowsWtf16(value) => {
-            use std::os::windows::ffi::OsStringExt;
-            OsString::from_wide(value)
-        }
-    }
-}
-
-fn display_component(component: &RepoPathComponent) -> String {
+pub(crate) fn display_component(component: &RepoPathComponent) -> String {
     match component {
         RepoPathComponent::PortableUtf8(value) => value.clone(),
-        #[cfg(unix)]
         RepoPathComponent::UnixBytes(value) => {
             let mut output = String::from("$'");
             for byte in value {
@@ -437,7 +430,6 @@ fn display_component(component: &RepoPathComponent) -> String {
             output.push('\'');
             output
         }
-        #[cfg(windows)]
         RepoPathComponent::WindowsWtf16(value) => {
             let mut output = String::from("wtf16[");
             for (index, unit) in value.iter().enumerate() {
@@ -450,6 +442,21 @@ fn display_component(component: &RepoPathComponent) -> String {
             output.push(']');
             output
         }
+    }
+}
+
+pub(crate) fn portable_component(component: &RepoPathComponent) -> Option<&str> {
+    match component {
+        RepoPathComponent::PortableUtf8(value) => Some(value),
+        RepoPathComponent::UnixBytes(_) | RepoPathComponent::WindowsWtf16(_) => None,
+    }
+}
+
+fn validate_native_bytes(payload: &[u8], separator: u8) -> Result<(), RepoPathError> {
+    if payload.is_empty() || payload.contains(&0) || payload.contains(&separator) {
+        Err(RepoPathError::InvalidCanonicalEncoding)
+    } else {
+        Ok(())
     }
 }
 
@@ -531,5 +538,56 @@ mod tests {
         ] {
             assert!(RepoPath::from_portable(value).is_err(), "{value}");
         }
+    }
+
+    #[test]
+    fn native_nul_stream_preserves_record_order_and_requires_terminator()
+    -> Result<(), RepoPathError> {
+        let paths = [
+            RepoPath::from_portable("src/z.ts")?,
+            RepoPath::from_portable("src/a.ts")?,
+        ];
+        let encoded = RepoPath::encode_native_nul_stream(&paths)?;
+        assert_eq!(encoded, b"src/z.ts\0src/a.ts\0");
+        assert_eq!(RepoPath::decode_native_nul_stream(&encoded)?, paths);
+        assert_eq!(
+            RepoPath::decode_native_nul_stream(b"src/a.ts"),
+            Err(RepoPathError::InvalidNativeNulStream)
+        );
+        assert_eq!(
+            RepoPath::decode_native_nul_stream(b"./src/a.ts\0"),
+            Err(RepoPathError::InvalidNativeNulStream)
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_non_utf8_native_stream_round_trips_exact_bytes() -> Result<(), RepoPathError> {
+        let encoded = b"f\x80o\0";
+        let decoded = RepoPath::decode_native_nul_stream(encoded)?;
+        assert_eq!(RepoPath::encode_native_nul_stream(&decoded)?, encoded);
+        assert_eq!(decoded[0].native_match_bytes()?, b"f\x80o");
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_wtf8_round_trips_unpaired_surrogate_and_rejects_cesu_pair()
+    -> Result<(), RepoPathError> {
+        let unpaired = b"\xed\xa0\x80a\0";
+        let decoded = RepoPath::decode_native_nul_stream(unpaired)?;
+        assert_eq!(RepoPath::encode_native_nul_stream(&decoded)?, unpaired);
+
+        let cesu_pair = b"\xed\xa0\xbd\xed\xb8\x80\0";
+        assert_eq!(
+            RepoPath::decode_native_nul_stream(cesu_pair),
+            Err(RepoPathError::InvalidNativeNulStream)
+        );
+        assert_eq!(
+            RepoPath::decode_native_nul_stream(b"src\\a.ts\0"),
+            Err(RepoPathError::InvalidNativeNulStream)
+        );
+        Ok(())
     }
 }

@@ -32,7 +32,26 @@ use transitions::{
     reconcile_transitions,
 };
 
-const ANALYSIS_CONTRACT: &str = "lumin-analysis-contract.phase1-foundation.v3";
+const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v4";
+
+fn analysis_contract_id() -> String {
+    let inputs = [
+        ANALYSIS_CONTRACT_VERSION,
+        lumin_model::PATH_CODEC_ARTIFACT_SHA256.as_bytes(),
+        lumin_model::PATH_CODEC_TABLE_SHA256.as_bytes(),
+        lumin_model::SOURCE_CLASSIFICATION_RULE_VERSION.as_bytes(),
+        lumin_inventory::INVENTORY_CONFIG_ARTIFACT_SHA256.as_bytes(),
+        lumin_inventory::INVENTORY_CONFIG_TABLE_SHA256.as_bytes(),
+        lumin_resolve::RESOLVER_VERSION.as_bytes(),
+        lumin_resolve::RESOLVER_CONFIG_ARTIFACT_SHA256.as_bytes(),
+        lumin_resolve::RESOLVER_CONFIG_TABLE_SHA256.as_bytes(),
+    ];
+    let mut framed = Vec::new();
+    for input in inputs {
+        append_length_prefixed(&mut framed, input);
+    }
+    digest_hex(&framed)
+}
 
 #[derive(Clone, Debug)]
 pub struct PreWriteRequest {
@@ -193,7 +212,7 @@ fn analyze_pre_write(
     let protected_semantic_inputs = protected_semantic_inputs(&capture, &leased_write_set);
     signals.extend(gate_policy::opening_signals(&capture.snapshot.evidence));
     let baseline = GateBaseline {
-        analysis_contract: ANALYSIS_CONTRACT.to_owned(),
+        analysis_contract: analysis_contract_id(),
         snapshot: capture.snapshot,
         protected_semantic_inputs,
         transition_sequence,
@@ -223,7 +242,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         .baseline
         .as_ref()
         .ok_or_else(|| EngineError::GateBaselineMissing(request.gate_id.as_str().to_owned()))?;
-    if baseline.analysis_contract != ANALYSIS_CONTRACT {
+    if baseline.analysis_contract != analysis_contract_id() {
         return finish_failed_close(
             &operation,
             request,
