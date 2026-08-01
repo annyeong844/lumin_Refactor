@@ -53,4 +53,7 @@ The durable gate binds pre-write and post-write through one gate ID, retains log
 
 Generated and vendored findings remain canonical `review-only` rows. Vue template opacity, malformed decomposition, external-script conflicts, parse failures, unsupported Svelte/Astro dialects, configuration uncertainty, and resolution uncertainty remain visible incomplete or unavailable evidence; they are never converted into a clean zero.
 
-This checkpoint is still not the completed foundation slice. Remaining Phase 1 work includes the unclosed SLICE-001 acceptance corpus, packaged skill adapters, Windows/Linux product packages, and achieved-budget evidence. Use `WORKBOARD.md` as the current implementation ledger rather than inferring completion from this overview.
+This checkpoint is still not the completed foundation slice. Start at
+[`WORKBOARD.md`](WORKBOARD.md) for owner routing and use
+[`PHASE1-CHECKLIST.md`](PHASE1-CHECKLIST.md) as the sole Phase 1 execution and
+progress ledger rather than inferring completion from this overview.

@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use lumin_model::{
     BuildIdentity, CapabilityState, EvidenceId, FindingDisposition, FindingId, FindingRelationId,
     GateId, Limitation, LogicalSourceId, RepoPath, RepositoryId, RunId, SelectedResolutionProfile,
-    SourceSpan, SymbolNamespace, append_length_prefixed, digest_hex,
+    SourceRoleClassification, SourceSpan, SymbolNamespace, append_length_prefixed, digest_hex,
 };
 use serde::{Deserialize, Serialize};
 
@@ -229,6 +229,14 @@ impl From<&RepoPath> for RepoPathProjection {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SourceClassificationRecord {
+    pub source_id: LogicalSourceId,
+    pub path: RepoPathProjection,
+    pub classifications: Vec<SourceRoleClassification>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CapabilityRecord {
     pub capability_id: String,
     pub state: CapabilityState,
@@ -240,6 +248,8 @@ pub struct RunEvidence {
     pub schema_version: String,
     pub capabilities: Vec<CapabilityRecord>,
     pub resolution_profiles: Vec<SelectedResolutionProfile>,
+    #[serde(default)]
+    pub source_classifications: Vec<SourceClassificationRecord>,
     pub findings: Vec<FindingRecord>,
     pub limitations: Vec<Limitation>,
 }

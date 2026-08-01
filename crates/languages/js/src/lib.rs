@@ -493,15 +493,16 @@ fn span(value: Span) -> SourceSpan {
 }
 
 fn unknown_file(input: &ExtractionInput<'_>, detail: String) -> FileFacts {
+    let limitation = Limitation::JsModuleUseUnknown {
+        source_id: input.source_id.clone(),
+        detail,
+    };
     FileFacts {
         source_id: input.source_id.clone(),
         source_unit: input.source_unit.clone(),
         exports: Vec::new(),
         uses: Vec::new(),
-        limitations: vec![Limitation::JsModuleUseUnknown {
-            source_id: input.source_id.clone(),
-            detail,
-        }],
+        limitations: vec![limitation],
     }
 }
 

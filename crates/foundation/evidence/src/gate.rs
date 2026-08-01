@@ -236,6 +236,16 @@ pub struct PhysicalAliasClosureRecord {
     pub members: Vec<RepoPathProjection>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActualWriteSet {
+    pub paths: Vec<RepoPathProjection>,
+    #[serde(default)]
+    pub baseline_alias_closures: Vec<PhysicalAliasClosureRecord>,
+    #[serde(default)]
+    pub current_alias_closures: Vec<PhysicalAliasClosureRecord>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DeclaredPathUnsupportedReason {
@@ -338,6 +348,8 @@ pub struct GateRevision {
     pub reason: Option<String>,
     pub signals: Vec<GateSignal>,
     pub changed_paths: Vec<RepoPathProjection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actual_write_set: Option<ActualWriteSet>,
     pub snapshot: Option<AnalysisSnapshot>,
     #[serde(default)]
     pub protected_semantic_inputs: Vec<SemanticInputRecord>,
@@ -457,6 +469,8 @@ pub struct GateOperationResult {
     pub signals: Vec<GateSignal>,
     #[serde(default)]
     pub leased_write_set: Vec<WriteLease>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actual_write_set: Option<ActualWriteSet>,
     #[serde(default)]
     pub deltas: Vec<GateDeltaRecord>,
 }
@@ -693,6 +707,20 @@ pub mod gate_policy {
         (signals, changed, deltas)
     }
 
+    pub fn actual_write_attribution_is_complete(signals: &[GateSignal]) -> bool {
+        !signals.iter().any(|signal| {
+            matches!(
+                signal,
+                GateSignal::AnalysisFailed { .. }
+                    | GateSignal::SemanticInputConflict { .. }
+                    | GateSignal::ProtectedInputChanged { .. }
+                    | GateSignal::ActiveTransitionPending { .. }
+                    | GateSignal::TransitionChainBroken { .. }
+                    | GateSignal::TransitionCatalogChanged
+            )
+        })
+    }
+
     fn requires_complete_evidence(evidence: &RunEvidence, required_gap_count: usize) -> bool {
         required_gap_count > 0
             || matches!(
@@ -927,6 +955,7 @@ mod tests {
                     state: CapabilityState::Complete,
                 }],
                 resolution_profiles: Vec::new(),
+                source_classifications: Vec::new(),
                 findings: Vec::new(),
                 limitations: Vec::new(),
             },
@@ -960,6 +989,7 @@ mod tests {
                 state: CapabilityState::Complete,
             }],
             resolution_profiles: Vec::new(),
+            source_classifications: Vec::new(),
             findings: Vec::new(),
             limitations: Vec::new(),
         };
@@ -993,6 +1023,7 @@ mod tests {
                 state: CapabilityState::Complete,
             }],
             resolution_profiles: Vec::new(),
+            source_classifications: Vec::new(),
             findings: Vec::new(),
             limitations: Vec::new(),
         };

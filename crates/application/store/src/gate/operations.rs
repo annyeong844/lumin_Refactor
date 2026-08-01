@@ -23,7 +23,7 @@ impl OperationSession<'_> {
                     None,
                 )?;
                 if let Some(result) = operation.result {
-                    return Ok(PreWriteStart::Committed(result));
+                    return Ok(PreWriteStart::Committed(Box::new(result)));
                 }
                 if operation.status == GateOperationStatus::Pending {
                     self.validate_pending_operation(&operation)?;
@@ -83,7 +83,7 @@ impl OperationSession<'_> {
                     &operation,
                 )?;
                 guard.commit(write)?;
-                return Ok(PreWriteStart::Committed(result));
+                return Ok(PreWriteStart::Committed(Box::new(result)));
             }
 
             write_record(
@@ -317,7 +317,7 @@ impl OperationSession<'_> {
                 phase,
             )?;
             if let Some(result) = operation.result {
-                return Ok(SemanticReadReservation::Committed(result));
+                return Ok(SemanticReadReservation::Committed(Box::new(result)));
             }
             self.validate_pending_operation(&operation)?;
             if kind == GateOperationKind::PostWrite {
@@ -378,6 +378,7 @@ impl OperationSession<'_> {
             protected_semantic_inputs,
             reconciled_baseline,
             changed_paths,
+            mut actual_write_set,
             alias_closures,
             reconciled_transition_sequences,
             mut signals,
@@ -415,6 +416,9 @@ impl OperationSession<'_> {
                 &reconciled_transition_sequences,
                 &mut signals,
             )?;
+            if !gate_policy::actual_write_attribution_is_complete(&signals) {
+                actual_write_set = None;
+            }
             let decision = gate_policy::decision(&signals);
             let revision = gate
                 .current_revision
@@ -445,6 +449,7 @@ impl OperationSession<'_> {
                 reason: None,
                 signals: signals.clone(),
                 leased_write_set: gate.leased_write_set.clone(),
+                actual_write_set: actual_write_set.clone(),
                 deltas: deltas.clone(),
             };
             gate.revisions.push(GateRevision {
@@ -455,6 +460,7 @@ impl OperationSession<'_> {
                 reason: None,
                 signals: signals.clone(),
                 changed_paths,
+                actual_write_set,
                 snapshot,
                 protected_semantic_inputs,
                 alias_closures,

@@ -83,6 +83,131 @@ pub(crate) fn resolve(
     Some(result)
 }
 
+pub(crate) fn resolve_relative_directory(
+    base: &RepoPath,
+    source_use: &SourceUseFact,
+    sources: &BTreeMap<RepoPath, LogicalSourceId>,
+    settings: &ImporterSettings,
+    config: &SemanticConfigSnapshot,
+) -> PackageResolution {
+    let manifest_path = match base.join_portable("package.json") {
+        Ok(path) => path,
+        Err(_) => {
+            let detail = "directory cannot form package.json";
+            return relative_directory_unsupported(
+                &source_use.specifier,
+                detail,
+                Some(Limitation::AliasShapeUnsupported {
+                    source_id: source_use.importer.clone(),
+                    detail: detail.to_owned(),
+                }),
+            );
+        }
+    };
+    match config.observations.get(&manifest_path) {
+        Some(ConfigObservation::Present(manifest)) => {
+            let Some(package) = config
+                .packages
+                .iter()
+                .find(|package| package.root == *base && package.manifest_path == manifest_path)
+            else {
+                let detail = "observed package manifest has no matching package fact";
+                return relative_directory_unsupported(
+                    &source_use.specifier,
+                    detail,
+                    Some(Limitation::PublicSurfaceUnsupported {
+                        path: manifest_path.display_escaped(),
+                        detail: detail.to_owned(),
+                    }),
+                );
+            };
+            let context = PackageContext {
+                package,
+                manifest,
+                sources,
+            };
+            let mut result = fallback::resolve(
+                &context,
+                ResolutionRequest {
+                    specifier: &source_use.specifier,
+                    key: ".",
+                    namespace: source_use.namespace,
+                    import_kind: source_use.kind,
+                    lane: lane_for_use(settings, source_use.request_kind),
+                },
+            );
+            result.declaration = None;
+            result
+        }
+        Some(ConfigObservation::NonRegular { .. }) => relative_directory_unsupported(
+            &source_use.specifier,
+            "package.json is not a regular file",
+            None,
+        ),
+        Some(ConfigObservation::Unreadable { .. }) => relative_directory_unsupported(
+            &source_use.specifier,
+            "package.json could not be read",
+            None,
+        ),
+        Some(ConfigObservation::Missing { .. }) => {
+            let index = match base.join_portable("index.js") {
+                Ok(path) => path,
+                Err(_) => {
+                    let detail = "directory cannot form index.js";
+                    return relative_directory_unsupported(
+                        &source_use.specifier,
+                        detail,
+                        Some(Limitation::AliasShapeUnsupported {
+                            source_id: source_use.importer.clone(),
+                            detail: detail.to_owned(),
+                        }),
+                    );
+                }
+            };
+            let paths = candidates(&index, source_use.namespace, true);
+            if let Some(target) = paths.iter().find_map(|path| sources.get(path)) {
+                return PackageResolution {
+                    outcome: ResolutionOutcome::Internal {
+                        target: target.clone(),
+                    },
+                    limitation: None,
+                    declaration: None,
+                };
+            }
+            unresolved(
+                &source_use.specifier,
+                paths.iter().map(RepoPath::display_escaped).collect(),
+            )
+        }
+        None => {
+            let detail = "package.json observation is missing after demand collection";
+            relative_directory_unsupported(
+                &source_use.specifier,
+                detail,
+                Some(Limitation::PublicSurfaceUnsupported {
+                    path: manifest_path.display_escaped(),
+                    detail: detail.to_owned(),
+                }),
+            )
+        }
+    }
+}
+
+fn relative_directory_unsupported(
+    specifier: &str,
+    detail: &str,
+    limitation: Option<Limitation>,
+) -> PackageResolution {
+    PackageResolution {
+        outcome: ResolutionOutcome::Unsupported {
+            specifier: specifier.to_owned(),
+            reason: detail.to_owned(),
+        },
+        limitation,
+        declaration: None,
+    }
+}
+
 pub(crate) fn package_imports_unsupported(
     source_use: &SourceUseFact,
     config: &SemanticConfigSnapshot,

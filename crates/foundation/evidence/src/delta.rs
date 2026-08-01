@@ -149,10 +149,11 @@ fn limitation_delta(limitation: &Limitation) -> LimitationDelta {
         | Limitation::JsModuleUseUnknown { .. }
         | Limitation::SourcePayloadUnavailable { .. }
         | Limitation::PackageImportsUnsupported { .. }
+        | Limitation::AliasShapeUnsupported { .. }
+        | Limitation::AbsoluteInternalSpecifierUnsupported { .. }
         | Limitation::ImporterFormatUnsupported { .. }
         | Limitation::PublicSurfaceUnsupported { .. }
         | Limitation::TsconfigSemanticsUnsupported { .. }
-        | Limitation::PackageDependencySemanticsUnsupported { .. }
         | Limitation::PackageIdentityUnsupported { .. }
         | Limitation::PackageMetadataUnobservable { .. }
         | Limitation::PackagePrivacyUnsupported { .. }
@@ -162,7 +163,6 @@ fn limitation_delta(limitation: &Limitation) -> LimitationDelta {
         | Limitation::TsconfigPayloadUnavailable { .. }
         | Limitation::SfcDialectUnavailable { .. }
         | Limitation::SfcDecompositionUnknown { .. }
-        | Limitation::SfcExternalScriptUnresolved { .. }
         | Limitation::VueExternalScriptModeConflict { .. }
         | Limitation::VueTemplateOpaque { .. }
         | Limitation::ExplicitEntryUnavailable { .. } => LimitationDelta::RequiredEvidenceGap,

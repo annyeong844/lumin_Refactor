@@ -192,12 +192,13 @@ fn blocked_absence_scope(
             | Limitation::PackageIdentityUnsupported { .. }
             | Limitation::SfcDialectUnavailable { .. }
             | Limitation::SfcDecompositionUnknown { .. } => workspace_blocked = true,
-            Limitation::SfcExternalScriptUnresolved { source_id, .. }
-            | Limitation::VueTemplateOpaque { source_id, .. } => {
+            Limitation::VueTemplateOpaque { source_id, .. }
+            | Limitation::AliasShapeUnsupported { source_id, .. } => {
                 if !block_source_owner(source_id, sources, config, &mut blocked_paths) {
                     workspace_blocked = true;
                 }
             }
+            Limitation::AbsoluteInternalSpecifierUnsupported { .. } => workspace_blocked = true,
             Limitation::VueExternalScriptModeConflict {
                 source_id,
                 target_source_id,
@@ -214,7 +215,6 @@ fn blocked_absence_scope(
             Limitation::PublicSurfaceUnsupported { path, .. }
             | Limitation::PackageImportsUnsupported { path, .. }
             | Limitation::ImporterFormatUnsupported { path, .. }
-            | Limitation::PackageDependencySemanticsUnsupported { path, .. }
             | Limitation::PackagePrivacyUnsupported { path, .. }
             | Limitation::DependencyOwnerAmbiguous { path, .. } => {
                 if !block_owned_package(path, sources, config, &mut blocked_paths) {

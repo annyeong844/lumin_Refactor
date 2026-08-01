@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, HashSet};
 
 use lumin_evidence::{
     CollectionOrderingId, EvidencePage, EvidenceQuery, EvidenceQueryScope, FindingExplanation,
-    FindingRecord, GateRecord, PageAnchor, RunEvidence,
+    FindingRecord, GateRecord, PageAnchor, RunEvidence, SourceClassificationRecord,
 };
-use lumin_model::{FindingId, RepositoryId, RunId};
+use lumin_model::{FindingId, RepoPath, RepositoryId, RunId};
 use thiserror::Error;
 
 use crate::EngineError;
@@ -31,6 +31,10 @@ pub enum EvidenceQueryError {
     DuplicateCapabilityId(String),
     #[error("duplicate semantic anchor in collection: {0}")]
     DuplicateCollectionId(String),
+    #[error("duplicate source classification in persisted run evidence: {0}")]
+    DuplicateSourceClassification(String),
+    #[error("source classification identity does not match its persisted path: {0}")]
+    SourceClassificationIdentityMismatch(String),
 }
 
 pub fn query_run_findings(
@@ -161,6 +165,32 @@ pub fn query_run_file_findings(
         finding.finding_id.as_str()
     })?;
     Ok(result)
+}
+
+pub fn query_run_source_classification<'a>(
+    evidence: &'a RunEvidence,
+    repo_path: &RepoPath,
+) -> Result<Option<&'a SourceClassificationRecord>, EngineError> {
+    let mut matches = evidence
+        .source_classifications
+        .iter()
+        .filter(|record| record.path.canonical == repo_path.canonical_bytes());
+    let Some(record) = matches.next() else {
+        return Ok(None);
+    };
+    if matches.next().is_some() {
+        return Err(
+            EvidenceQueryError::DuplicateSourceClassification(repo_path.display_escaped()).into(),
+        );
+    }
+    let expected_source_id = lumin_model::LogicalSourceId::from_path(repo_path);
+    if record.source_id != expected_source_id {
+        return Err(EvidenceQueryError::SourceClassificationIdentityMismatch(
+            repo_path.display_escaped(),
+        )
+        .into());
+    }
+    Ok(Some(record))
 }
 
 pub fn query_run_relations(
@@ -567,6 +597,7 @@ mod tests {
             schema_version: "lumin-evidence.v1".to_owned(),
             capabilities: Vec::new(),
             resolution_profiles: Vec::new(),
+            source_classifications: Vec::new(),
             findings,
             limitations: Vec::new(),
         };
@@ -607,6 +638,7 @@ mod tests {
                     reason: None,
                     signals: Vec::new(),
                     changed_paths: Vec::new(),
+                    actual_write_set: None,
                     snapshot: None,
                     protected_semantic_inputs: Vec::new(),
                     alias_closures: Vec::new(),
@@ -621,6 +653,7 @@ mod tests {
                     reason: None,
                     signals: Vec::new(),
                     changed_paths: Vec::new(),
+                    actual_write_set: None,
                     snapshot: Some(snapshot),
                     protected_semantic_inputs: Vec::new(),
                     alias_closures: Vec::new(),
@@ -777,6 +810,7 @@ mod tests {
             schema_version: "lumin-evidence.v1".to_owned(),
             capabilities: Vec::new(),
             resolution_profiles: Vec::new(),
+            source_classifications: Vec::new(),
             findings,
             limitations: Vec::new(),
         })

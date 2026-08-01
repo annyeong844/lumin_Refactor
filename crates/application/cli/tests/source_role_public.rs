@@ -10,6 +10,112 @@ use support::{assert_status, field, run};
 type FindingView = (String, String, String, String, Option<String>);
 
 #[test]
+fn source_role_classification_persists_rule_reason_and_source()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::create_dir_all(root.path().join("tests"))?;
+    fs::create_dir_all(root.path().join("vendor"))?;
+    fs::write(
+        root.path().join("lumin.json"),
+        concat!(
+            r#"{"schemaVersion":"lumin-config.v1","scan":{"roles":["#,
+            r#"{"pattern":"src/authored.ts","role":"authored"},"#,
+            r#"{"pattern":"src/vendor.ts","role":"vendor"}"#,
+            "]}}",
+        ),
+    )?;
+    for (path, source) in [
+        ("tests/default.ts", "export const defaultTest = 1;\n"),
+        (
+            "tests/production.ts",
+            "export const productionOverride = 1;\n",
+        ),
+        (
+            "src/generated.ts",
+            "// @generated\nexport const generated = 1;\n",
+        ),
+        (
+            "src/authored.ts",
+            "// @generated\nexport const authored = 1;\n",
+        ),
+        ("src/vendor.ts", "export const vendored = 1;\n"),
+        (
+            "src/types.d.ts",
+            "export declare const declaration: string;\n",
+        ),
+        (
+            "vendor/ordinary.ts",
+            "export const ordinaryDirectoryName = 1;\n",
+        ),
+    ] {
+        fs::write(root.path().join(path), source)?;
+    }
+
+    let audit = run(
+        root.path(),
+        &[
+            "audit",
+            "--jobs",
+            "1",
+            "--role-at",
+            "tests/production.ts",
+            "production",
+        ],
+    )?;
+    assert_status(&audit, 0);
+    let run_id = field(&audit.stdout, "runId")?;
+
+    assert_eq!(
+        classifications(root.path(), &run_id, "tests/default.ts")?,
+        serde_json::json!([classification("test", "test-path-rule", "compiled-default")])
+    );
+    assert_eq!(
+        classifications(root.path(), &run_id, "tests/production.ts")?,
+        serde_json::json!([
+            classification("test", "test-path-rule", "compiled-default"),
+            classification("production", "explicit-production-role", "invocation")
+        ])
+    );
+    assert_eq!(
+        classifications(root.path(), &run_id, "src/generated.ts")?,
+        serde_json::json!([classification(
+            "generated",
+            "leading-generated-comment",
+            "compiled-default"
+        )])
+    );
+    assert_eq!(
+        classifications(root.path(), &run_id, "src/authored.ts")?,
+        serde_json::json!([
+            classification("generated", "leading-generated-comment", "compiled-default"),
+            classification("authored", "explicit-authored-role", "configuration")
+        ])
+    );
+    assert_eq!(
+        classifications(root.path(), &run_id, "src/vendor.ts")?,
+        serde_json::json!([classification(
+            "vendor",
+            "explicit-vendor-role",
+            "configuration"
+        )])
+    );
+    assert_eq!(
+        classifications(root.path(), &run_id, "src/types.d.ts")?,
+        serde_json::json!([classification(
+            "declaration",
+            "declaration-extension",
+            "compiled-default"
+        )])
+    );
+    assert_eq!(
+        classifications(root.path(), &run_id, "vendor/ordinary.ts")?,
+        serde_json::json!([])
+    );
+    Ok(())
+}
+
+#[test]
 fn source_role_findings_remain_visible_and_only_explicit_filtering_narrows()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
@@ -136,6 +242,50 @@ fn assert_collection_counts(
         .ok_or_else(|| std::io::Error::other("finding items are missing"))?;
     assert_eq!(items.len() as u64, total);
     Ok(())
+}
+
+fn classifications(
+    root: &std::path::Path,
+    run_id: &str,
+    path: &str,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let output = run(root, &["files", "--run", run_id, path])?;
+    assert_status(&output, 0);
+    let response: Value = serde_json::from_str(&output.stdout)?;
+    let source_classification = response
+        .get("sourceClassification")
+        .ok_or_else(|| std::io::Error::other("sourceClassification is missing"))?;
+    assert_eq!(
+        source_classification
+            .pointer("/path/schemaVersion")
+            .and_then(Value::as_str),
+        Some("repo-path.v1")
+    );
+    assert_eq!(
+        source_classification
+            .pointer("/path/display")
+            .and_then(Value::as_str),
+        Some(path)
+    );
+    assert!(
+        source_classification
+            .get("sourceId")
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.is_empty())
+    );
+    source_classification
+        .get("classifications")
+        .cloned()
+        .ok_or_else(|| std::io::Error::other("classifications are missing").into())
+}
+
+fn classification(role: &str, reason: &str, configuration_source: &str) -> Value {
+    serde_json::json!({
+        "role": role,
+        "ruleVersion": "source-classification.v1",
+        "reason": reason,
+        "configurationSource": configuration_source,
+    })
 }
 
 fn finding_views(response: &Value) -> Result<BTreeSet<FindingView>, Box<dyn std::error::Error>> {

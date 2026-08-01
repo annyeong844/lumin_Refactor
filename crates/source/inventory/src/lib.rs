@@ -1,4 +1,5 @@
 mod config_document;
+mod generated_config_policy;
 mod package_semantics;
 mod pnpm_workspace;
 mod root;
@@ -13,12 +14,19 @@ use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use lumin_model::{
     ConfigObservation, ConfigSyntax, EntrySource, EntryUnavailableReason, Limitation,
     PhysicalAliasWriteClosure, PhysicalFileIdentity, RepoPath, RepoPathError, RoleOverride,
-    ScanRole, SemanticConfigSnapshot, SourceKind, SourceRoleReason, SourceRoles, SourceSnapshot,
-    digest_hex,
+    SOURCE_CLASSIFICATION_RULE_VERSION, ScanRole, SemanticConfigSnapshot, SourceClassificationRole,
+    SourceKind, SourceRoleClassification, SourceRoleConfigurationSource, SourceRoleReason,
+    SourceRoles, SourceSnapshot, digest_hex,
 };
 use serde::Deserialize;
 use thiserror::Error;
 
+pub use generated_config_policy::{
+    FieldClassification as InventoryConfigFieldClassification,
+    FieldPolicy as InventoryConfigFieldPolicy, INVENTORY_CONFIG_ARTIFACT_SHA256,
+    INVENTORY_CONFIG_TABLE_SHA256, INVENTORY_PACKAGE_JSON_FIELDS, INVENTORY_PNPM_WORKSPACE_FIELDS,
+    INVENTORY_RESOLVER_OWNED_FIELDS,
+};
 pub use root::{RepositoryAdmission, repository_admission};
 
 /// Validate caller entries BEFORE audit begins or pre-write opens/reserves a gate.
@@ -956,32 +964,11 @@ impl CollectedFiles {
     ) -> Result<(), InventoryError> {
         if let Some(syntax) = config_syntax(relative) {
             self.consulted_config_paths.push(path.clone());
-            match observe_config(root, &path, syntax)? {
-                observation @ ConfigObservation::Present(_) => {
-                    self.config_observations.insert(path, observation);
-                }
-                observation @ ConfigObservation::Unreadable { .. } => {
-                    let limitation = match syntax {
-                        ConfigSyntax::StrictJson => Limitation::PackageMetadataUnobservable {
-                            path: path.display_escaped(),
-                            detail: "package manifest could not be read".to_owned(),
-                        },
-                        ConfigSyntax::Jsonc => Limitation::TsconfigPayloadUnavailable {
-                            path: path.display_escaped(),
-                            detail: "controlling config could not be read".to_owned(),
-                        },
-                        ConfigSyntax::RestrictedYaml => Limitation::WorkspaceOwnershipUnsupported {
-                            path: path.display_escaped(),
-                            detail: "pnpm workspace configuration could not be read".to_owned(),
-                        },
-                    };
-                    self.limitations.push(limitation);
-                    self.config_observations.insert(path, observation);
-                }
-                observation => {
-                    self.config_observations.insert(path, observation);
-                }
+            let capture = capture_config(root, &path, syntax)?;
+            if let Some(limitation) = capture.limitation {
+                self.limitations.push(limitation);
             }
+            self.config_observations.insert(path, capture.observation);
             return Ok(());
         }
         if !patterns.admits(relative) {
@@ -1011,7 +998,71 @@ impl CollectedFiles {
     }
 }
 
-pub fn observe_config(
+pub struct ConfigCapture {
+    pub observation: ConfigObservation,
+    pub limitation: Option<Limitation>,
+}
+
+pub fn capture_config(
+    root: &Path,
+    path: &RepoPath,
+    syntax: ConfigSyntax,
+) -> Result<ConfigCapture, InventoryError> {
+    let observation = observe_config(root, path, syntax)?;
+    let limitation = config_capture_limitation(&observation, syntax);
+    Ok(ConfigCapture {
+        observation,
+        limitation,
+    })
+}
+
+fn config_capture_limitation(
+    observation: &ConfigObservation,
+    syntax: ConfigSyntax,
+) -> Option<Limitation> {
+    let path = match observation {
+        ConfigObservation::Unreadable { path, .. } | ConfigObservation::NonRegular { path } => {
+            path.display_escaped()
+        }
+        ConfigObservation::Present(_) | ConfigObservation::Missing { .. } => return None,
+    };
+    match (syntax, observation) {
+        (ConfigSyntax::StrictJson, ConfigObservation::Unreadable { detail, .. }) => {
+            Some(Limitation::PackageMetadataUnobservable {
+                path,
+                detail: detail.clone(),
+            })
+        }
+        (ConfigSyntax::StrictJson, ConfigObservation::NonRegular { .. }) => {
+            Some(Limitation::PackageMetadataUnobservable {
+                path,
+                detail: "package manifest is not a regular file".to_owned(),
+            })
+        }
+        (ConfigSyntax::Jsonc, ConfigObservation::Unreadable { detail, .. }) => {
+            Some(Limitation::TsconfigPayloadUnavailable {
+                path,
+                detail: detail.clone(),
+            })
+        }
+        (ConfigSyntax::RestrictedYaml, ConfigObservation::Unreadable { detail, .. }) => {
+            Some(Limitation::WorkspaceOwnershipUnsupported {
+                path,
+                detail: detail.clone(),
+            })
+        }
+        (ConfigSyntax::RestrictedYaml, ConfigObservation::NonRegular { .. }) => {
+            Some(Limitation::WorkspaceOwnershipUnsupported {
+                path,
+                detail: "pnpm workspace configuration is not a regular file".to_owned(),
+            })
+        }
+        (ConfigSyntax::Jsonc, ConfigObservation::NonRegular { .. })
+        | (_, ConfigObservation::Present(_) | ConfigObservation::Missing { .. }) => None,
+    }
+}
+
+fn observe_config(
     root: &Path,
     path: &RepoPath,
     syntax: ConfigSyntax,
@@ -1178,19 +1229,63 @@ fn classify_roles(
     bytes: &[u8],
     patterns: &PatternSet,
 ) -> SourceRoles {
+    let test_like = default_test_role(relative);
+    let generated = generated_marker(bytes).then_some(SourceRoleReason::LeadingGeneratedComment);
+    let declaration = kind.is_declaration();
     let mut roles = SourceRoles {
-        test_like: default_test_role(relative),
-        generated: generated_marker(bytes).then_some(SourceRoleReason::LeadingGeneratedComment),
+        test_like,
+        generated,
         vendored: None,
-        declaration: kind.is_declaration(),
+        declaration,
+        classifications: Vec::new(),
     };
 
-    apply_roles(&mut roles, relative, &patterns.config_roles);
-    apply_roles(&mut roles, relative, &patterns.invocation_roles);
+    if let Some(reason) = test_like {
+        push_classification(
+            &mut roles,
+            SourceClassificationRole::Test,
+            reason,
+            SourceRoleConfigurationSource::CompiledDefault,
+        );
+    }
+    if let Some(reason) = generated {
+        push_classification(
+            &mut roles,
+            SourceClassificationRole::Generated,
+            reason,
+            SourceRoleConfigurationSource::CompiledDefault,
+        );
+    }
+    if declaration {
+        push_classification(
+            &mut roles,
+            SourceClassificationRole::Declaration,
+            SourceRoleReason::DeclarationExtension,
+            SourceRoleConfigurationSource::CompiledDefault,
+        );
+    }
+
+    apply_roles(
+        &mut roles,
+        relative,
+        &patterns.config_roles,
+        SourceRoleConfigurationSource::Configuration,
+    );
+    apply_roles(
+        &mut roles,
+        relative,
+        &patterns.invocation_roles,
+        SourceRoleConfigurationSource::Invocation,
+    );
     roles
 }
 
-fn apply_roles(roles: &mut SourceRoles, relative: &Path, rules: &[(Gitignore, ScanRole)]) {
+fn apply_roles(
+    roles: &mut SourceRoles,
+    relative: &Path,
+    rules: &[(Gitignore, ScanRole)],
+    configuration_source: SourceRoleConfigurationSource,
+) {
     for (pattern, role) in rules {
         if !pattern
             .matched_path_or_any_parents(relative, false)
@@ -1198,17 +1293,45 @@ fn apply_roles(roles: &mut SourceRoles, relative: &Path, rules: &[(Gitignore, Sc
         {
             continue;
         }
-        match role {
-            ScanRole::Test => roles.test_like = Some(SourceRoleReason::ExplicitTestRole),
-            ScanRole::Production => roles.test_like = None,
-            ScanRole::Generated => roles.generated = Some(SourceRoleReason::ExplicitGeneratedRole),
-            ScanRole::Vendor => roles.vendored = Some(SourceRoleReason::ExplicitVendorRole),
+        let reason = match role {
+            ScanRole::Test => {
+                roles.test_like = Some(SourceRoleReason::ExplicitTestRole);
+                SourceRoleReason::ExplicitTestRole
+            }
+            ScanRole::Production => {
+                roles.test_like = None;
+                SourceRoleReason::ExplicitProductionRole
+            }
+            ScanRole::Generated => {
+                roles.generated = Some(SourceRoleReason::ExplicitGeneratedRole);
+                SourceRoleReason::ExplicitGeneratedRole
+            }
+            ScanRole::Vendor => {
+                roles.vendored = Some(SourceRoleReason::ExplicitVendorRole);
+                SourceRoleReason::ExplicitVendorRole
+            }
             ScanRole::Authored => {
                 roles.generated = None;
                 roles.vendored = None;
+                SourceRoleReason::ExplicitAuthoredRole
             }
-        }
+        };
+        push_classification(roles, (*role).into(), reason, configuration_source);
     }
+}
+
+fn push_classification(
+    roles: &mut SourceRoles,
+    role: SourceClassificationRole,
+    reason: SourceRoleReason,
+    configuration_source: SourceRoleConfigurationSource,
+) {
+    roles.classifications.push(SourceRoleClassification {
+        role,
+        rule_version: SOURCE_CLASSIFICATION_RULE_VERSION.to_owned(),
+        reason,
+        configuration_source,
+    });
 }
 
 fn default_test_role(path: &Path) -> Option<SourceRoleReason> {

@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{EmbeddedSourceUnitId, LogicalSourceId, RepoPath, digest_hex};
 
+pub const SOURCE_CLASSIFICATION_RULE_VERSION: &str = "source-classification.v1";
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SourceKind {
@@ -49,6 +51,8 @@ pub struct SourceRoles {
     pub generated: Option<SourceRoleReason>,
     pub vendored: Option<SourceRoleReason>,
     pub declaration: bool,
+    #[serde(default)]
+    pub classifications: Vec<SourceRoleClassification>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -66,6 +70,46 @@ pub enum ScanRole {
     Generated,
     Vendor,
     Authored,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SourceClassificationRole {
+    Test,
+    Production,
+    Generated,
+    Vendor,
+    Authored,
+    Declaration,
+}
+
+impl From<ScanRole> for SourceClassificationRole {
+    fn from(role: ScanRole) -> Self {
+        match role {
+            ScanRole::Test => Self::Test,
+            ScanRole::Production => Self::Production,
+            ScanRole::Generated => Self::Generated,
+            ScanRole::Vendor => Self::Vendor,
+            ScanRole::Authored => Self::Authored,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SourceRoleConfigurationSource {
+    CompiledDefault,
+    Configuration,
+    Invocation,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceRoleClassification {
+    pub role: SourceClassificationRole,
+    pub rule_version: String,
+    pub reason: SourceRoleReason,
+    pub configuration_source: SourceRoleConfigurationSource,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -359,6 +403,14 @@ pub enum Limitation {
         path: String,
         detail: String,
     },
+    AliasShapeUnsupported {
+        source_id: LogicalSourceId,
+        detail: String,
+    },
+    AbsoluteInternalSpecifierUnsupported {
+        source_id: LogicalSourceId,
+        detail: String,
+    },
     ImporterFormatUnsupported {
         path: String,
         detail: String,
@@ -368,10 +420,6 @@ pub enum Limitation {
         detail: String,
     },
     TsconfigSemanticsUnsupported {
-        path: String,
-        detail: String,
-    },
-    PackageDependencySemanticsUnsupported {
         path: String,
         detail: String,
     },
@@ -411,10 +459,6 @@ pub enum Limitation {
         source_id: LogicalSourceId,
         detail: String,
     },
-    SfcExternalScriptUnresolved {
-        source_id: LogicalSourceId,
-        specifier: String,
-    },
     VueExternalScriptModeConflict {
         source_id: LogicalSourceId,
         target_source_id: LogicalSourceId,
@@ -429,6 +473,234 @@ pub enum Limitation {
         path: String,
         source: EntrySource,
         unavailable_reason: EntryUnavailableReason,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum LimitationFactOwner {
+    Inventory,
+    Js,
+    Resolve,
+    Sfc,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum LimitationScopePolicy {
+    Workspace,
+    ExplicitTargetsOrWorkspace,
+    SourceOwnerPackageOrWorkspace,
+    OwningPackage,
+    OwningPackageOrWorkspace,
+    ConfiguredPackagesOrWorkspace,
+    ManifestOwnerPackageOrWorkspace,
+    WorkspaceFromConfig,
+    ParentAndTargetOwnersOrWorkspace,
+    ImportedTargetsOrPackage,
+    EntryOwnerPackageOrWorkspace,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum LimitationAbsenceEffect {
+    WorkspaceConsumers,
+    CandidateConsumers,
+    PackageConsumers,
+    PackageTargetsAndConsumers,
+    ConfigurationDomain,
+    PublicSurface,
+    PackageIdentityAndDependencyOwner,
+    PackagePrivacy,
+    DependencyOwnerAndInferredWrites,
+    WorkspaceOwnership,
+    PnpmDependencyAndInferredWrites,
+    ScriptAndTemplateBindings,
+    ComponentIdentity,
+    UnreachableModules,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum LimitationGateRelevance {
+    RequiredEvidence,
+    RequiredOwner,
+    NormalizedUnresolvedOrRequiredEvidence,
+    NormalizedOpacityOrRequiredEvidence,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LimitationRegistryEntry {
+    pub reason: &'static str,
+    pub fact_owner: LimitationFactOwner,
+    pub scope: LimitationScopePolicy,
+    pub absence_effect: LimitationAbsenceEffect,
+    pub gate_relevance: LimitationGateRelevance,
+}
+
+macro_rules! define_limitation_registry {
+    (
+        $(
+            $variant:ident => {
+                owner: $owner:ident,
+                scope: $scope:ident,
+                absence: $absence:ident,
+                gate: $gate:ident,
+            }
+        ),+ $(,)?
+    ) => {
+        pub const LIMITATION_REGISTRY: &[LimitationRegistryEntry] = &[
+            $(
+                LimitationRegistryEntry {
+                    reason: stringify!($variant),
+                    fact_owner: LimitationFactOwner::$owner,
+                    scope: LimitationScopePolicy::$scope,
+                    absence_effect: LimitationAbsenceEffect::$absence,
+                    gate_relevance: LimitationGateRelevance::$gate,
+                },
+            )+
+        ];
+
+        impl Limitation {
+            pub const fn registry_entry(&self) -> LimitationRegistryEntry {
+                match self {
+                    $(
+                        Self::$variant { .. } => LimitationRegistryEntry {
+                            reason: stringify!($variant),
+                            fact_owner: LimitationFactOwner::$owner,
+                            scope: LimitationScopePolicy::$scope,
+                            absence_effect: LimitationAbsenceEffect::$absence,
+                            gate_relevance: LimitationGateRelevance::$gate,
+                        },
+                    )+
+                }
+            }
+        }
+    };
+}
+
+define_limitation_registry! {
+    JsModuleUseUnknown => {
+        owner: Js,
+        scope: Workspace,
+        absence: WorkspaceConsumers,
+        gate: RequiredEvidence,
+    },
+    SourcePayloadUnavailable => {
+        owner: Inventory,
+        scope: Workspace,
+        absence: WorkspaceConsumers,
+        gate: RequiredEvidence,
+    },
+    InternalSpecifierUnresolved => {
+        owner: Resolve,
+        scope: ExplicitTargetsOrWorkspace,
+        absence: CandidateConsumers,
+        gate: NormalizedUnresolvedOrRequiredEvidence,
+    },
+    PackageImportsUnsupported => {
+        owner: Resolve,
+        scope: OwningPackage,
+        absence: PackageConsumers,
+        gate: RequiredEvidence,
+    },
+    AliasShapeUnsupported => {
+        owner: Resolve,
+        scope: SourceOwnerPackageOrWorkspace,
+        absence: PackageConsumers,
+        gate: RequiredEvidence,
+    },
+    AbsoluteInternalSpecifierUnsupported => {
+        owner: Resolve,
+        scope: Workspace,
+        absence: WorkspaceConsumers,
+        gate: RequiredEvidence,
+    },
+    ImporterFormatUnsupported => {
+        owner: Resolve,
+        scope: OwningPackageOrWorkspace,
+        absence: PackageTargetsAndConsumers,
+        gate: RequiredEvidence,
+    },
+    PublicSurfaceUnsupported => {
+        owner: Resolve,
+        scope: OwningPackage,
+        absence: PublicSurface,
+        gate: RequiredEvidence,
+    },
+    TsconfigSemanticsUnsupported => {
+        owner: Resolve,
+        scope: ConfiguredPackagesOrWorkspace,
+        absence: ConfigurationDomain,
+        gate: RequiredEvidence,
+    },
+    PackageIdentityUnsupported => {
+        owner: Inventory,
+        scope: Workspace,
+        absence: PackageIdentityAndDependencyOwner,
+        gate: RequiredEvidence,
+    },
+    PackageMetadataUnobservable => {
+        owner: Inventory,
+        scope: ManifestOwnerPackageOrWorkspace,
+        absence: PublicSurface,
+        gate: RequiredEvidence,
+    },
+    PackagePrivacyUnsupported => {
+        owner: Inventory,
+        scope: OwningPackage,
+        absence: PackagePrivacy,
+        gate: RequiredEvidence,
+    },
+    DependencyOwnerAmbiguous => {
+        owner: Inventory,
+        scope: OwningPackageOrWorkspace,
+        absence: DependencyOwnerAndInferredWrites,
+        gate: RequiredEvidence,
+    },
+    WorkspaceOwnershipUnsupported => {
+        owner: Inventory,
+        scope: Workspace,
+        absence: WorkspaceOwnership,
+        gate: RequiredEvidence,
+    },
+    PnpmDependencySemanticsUnsupported => {
+        owner: Inventory,
+        scope: WorkspaceFromConfig,
+        absence: PnpmDependencyAndInferredWrites,
+        gate: RequiredEvidence,
+    },
+    TsconfigPayloadUnavailable => {
+        owner: Inventory,
+        scope: ConfiguredPackagesOrWorkspace,
+        absence: ConfigurationDomain,
+        gate: RequiredEvidence,
+    },
+    SfcDialectUnavailable => {
+        owner: Sfc,
+        scope: Workspace,
+        absence: WorkspaceConsumers,
+        gate: RequiredOwner,
+    },
+    SfcDecompositionUnknown => {
+        owner: Sfc,
+        scope: Workspace,
+        absence: WorkspaceConsumers,
+        gate: RequiredEvidence,
+    },
+    VueExternalScriptModeConflict => {
+        owner: Sfc,
+        scope: ParentAndTargetOwnersOrWorkspace,
+        absence: ScriptAndTemplateBindings,
+        gate: RequiredEvidence,
+    },
+    VueTemplateOpaque => {
+        owner: Sfc,
+        scope: ImportedTargetsOrPackage,
+        absence: ComponentIdentity,
+        gate: NormalizedOpacityOrRequiredEvidence,
+    },
+    ExplicitEntryUnavailable => {
+        owner: Inventory,
+        scope: EntryOwnerPackageOrWorkspace,
+        absence: UnreachableModules,
+        gate: RequiredEvidence,
     },
 }
 

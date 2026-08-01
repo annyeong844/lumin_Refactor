@@ -10,13 +10,15 @@ use std::collections::BTreeMap;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use lumin_evidence::{
-    DeclaredPathUnsupportedReason, EntrySelectionRecord, FindingRecord, GateDecision,
-    GateLifecycle, GateOperationKind, GateOperationResult, GateOperationStatus, GateRecord,
-    GateSignal, OperationRecord, RepoPathProjection, RunEvidence, WriteLease, WriteLeaseKind,
+    ActualWriteSet, DeclaredPathUnsupportedReason, EntrySelectionRecord, FindingRecord,
+    GateDecision, GateLifecycle, GateOperationKind, GateOperationResult, GateOperationStatus,
+    GateRecord, GateSignal, OperationRecord, PhysicalAliasClosureRecord, RepoPathProjection,
+    RunEvidence, SourceClassificationRecord, WriteLease, WriteLeaseKind,
 };
 use lumin_model::{
     AnalysisInputId, AttemptId, AttemptStatus, CapabilityState, FindingDisposition, FindingId,
-    GateDeltaRecord, GateId, Limitation, OperationId, RunId, SourceSpan, SymbolNamespace,
+    GateDeltaRecord, GateId, Limitation, OperationId, PhysicalFileIdentity, RunId,
+    SourceRoleClassification, SourceSpan, SymbolNamespace,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -84,7 +86,17 @@ pub struct FindingCollectionDto {
     pub returned: usize,
     pub truncated: bool,
     pub next_cursor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_classification: Option<SourceClassificationDto>,
     pub items: Vec<FindingDto>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceClassificationDto {
+    pub source_id: String,
+    pub path: RepoPathDto,
+    pub classifications: Vec<SourceRoleClassification>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -155,6 +167,8 @@ pub struct GateMutationResponseDto {
     pub reason: Option<String>,
     pub signals: Vec<GateSignalDto>,
     pub leased_write_set: Vec<WriteLeaseDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual_write_set: Option<ActualWriteSetDto>,
     pub deltas: Vec<GateDeltaRecord>,
 }
 
@@ -163,6 +177,21 @@ pub struct GateMutationResponseDto {
 pub struct WriteLeaseDto {
     pub path: RepoPathDto,
     pub kind: WriteLeaseKind,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActualWriteSetDto {
+    pub paths: Vec<RepoPathDto>,
+    pub baseline_alias_closures: Vec<PhysicalAliasClosureDto>,
+    pub current_alias_closures: Vec<PhysicalAliasClosureDto>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhysicalAliasClosureDto {
+    pub physical_identity: PhysicalFileIdentity,
+    pub members: Vec<RepoPathDto>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -206,6 +235,8 @@ pub struct GateRevisionSummaryDto {
     pub reason: Option<String>,
     pub signals: Vec<GateSignalDto>,
     pub changed_paths: Vec<RepoPathDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual_write_set: Option<ActualWriteSetDto>,
     pub analysis_input_id: Option<AnalysisInputId>,
     pub protected_semantic_input_count: usize,
     pub alias_group_count: usize,
@@ -344,6 +375,10 @@ pub fn gate_mutation_response(result: &GateOperationResult) -> GateMutationRespo
             .iter()
             .map(WriteLeaseDto::from)
             .collect(),
+        actual_write_set: result
+            .actual_write_set
+            .as_ref()
+            .map(ActualWriteSetDto::from),
         deltas: result.deltas.clone(),
     }
 }
@@ -420,6 +455,10 @@ fn gate_show_response_with_selection(
                     .iter()
                     .map(RepoPathDto::from)
                     .collect(),
+                actual_write_set: revision
+                    .actual_write_set
+                    .as_ref()
+                    .map(ActualWriteSetDto::from),
                 analysis_input_id: revision
                     .snapshot
                     .as_ref()
@@ -468,6 +507,33 @@ pub fn to_json(value: &impl Serialize) -> Result<String, ProtocolError> {
     serde_json::to_string(value).map_err(|error| ProtocolError::Serialization(error.to_string()))
 }
 
+impl From<&ActualWriteSet> for ActualWriteSetDto {
+    fn from(actual: &ActualWriteSet) -> Self {
+        Self {
+            paths: actual.paths.iter().map(RepoPathDto::from).collect(),
+            baseline_alias_closures: actual
+                .baseline_alias_closures
+                .iter()
+                .map(PhysicalAliasClosureDto::from)
+                .collect(),
+            current_alias_closures: actual
+                .current_alias_closures
+                .iter()
+                .map(PhysicalAliasClosureDto::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<&PhysicalAliasClosureRecord> for PhysicalAliasClosureDto {
+    fn from(closure: &PhysicalAliasClosureRecord) -> Self {
+        Self {
+            physical_identity: closure.physical_identity.clone(),
+            members: closure.members.iter().map(RepoPathDto::from).collect(),
+        }
+    }
+}
+
 impl From<&FindingRecord> for FindingDto {
     fn from(finding: &FindingRecord) -> Self {
         Self {
@@ -493,6 +559,16 @@ impl From<&RepoPathProjection> for RepoPathDto {
             schema_version: "repo-path.v1",
             canonical_base64: STANDARD.encode(&path.canonical),
             display: path.display.clone(),
+        }
+    }
+}
+
+impl From<&SourceClassificationRecord> for SourceClassificationDto {
+    fn from(record: &SourceClassificationRecord) -> Self {
+        Self {
+            source_id: record.source_id.as_str().to_owned(),
+            path: RepoPathDto::from(&record.path),
+            classifications: record.classifications.clone(),
         }
     }
 }
@@ -780,6 +856,7 @@ mod tests {
             schema_version: "lumin-evidence.v1".to_owned(),
             capabilities: Vec::new(),
             resolution_profiles: Vec::new(),
+            source_classifications: Vec::new(),
             findings,
             limitations: Vec::new(),
         })
