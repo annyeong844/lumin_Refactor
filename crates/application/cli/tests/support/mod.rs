@@ -5,6 +5,8 @@ use std::process::Command;
 
 use serde_json::Value;
 
+mod determinism;
+
 #[cfg(feature = "publication-test-crash")]
 pub mod publication;
 
@@ -23,12 +25,18 @@ pub fn run_with_env(
     arguments: &[&str],
     environment: &[(&str, &str)],
 ) -> Result<ProcessResult, Box<dyn std::error::Error>> {
+    let effective_arguments = determinism::effective_arguments(arguments)?;
     let mut command = Command::new(env!("CARGO_BIN_EXE_lumin"));
-    command.current_dir(root).args(arguments);
+    command.current_dir(root).args(&effective_arguments);
     for (name, value) in environment {
         command.env(name, value);
     }
     let output = command.output()?;
+    let command_succeeded = output.status.success();
+    let stdout = String::from_utf8(output.stdout)?;
+    let stderr = String::from_utf8(output.stderr)?;
+
+    determinism::record_semantic_evidence(root, &effective_arguments, command_succeeded, &stdout)?;
 
     // Corpus child marker: after Command::output returns, if both env vars are
     // set, append the row ID + newline to the marker file.
@@ -53,8 +61,8 @@ pub fn run_with_env(
 
     Ok(ProcessResult {
         status: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8(output.stdout)?,
-        stderr: String::from_utf8(output.stderr)?,
+        stdout,
+        stderr,
     })
 }
 

@@ -15,7 +15,8 @@ and verified progress. It does not redefine product or architecture contracts.
   [`SLICE-001`](specs/001-foundation-slice.md#14-acceptance-criteria).
 - Corpus truth is owned by
   [SLICE-001 Section 9](specs/001-foundation-slice.md#9-truth-corpus); executable
-  mapping is owned by [`lumin-xtask`](tools/xtask/src/corpus.rs).
+  mapping is owned by
+  [`lumin-xtask`](tools/xtask/src/corpus/registry.rs).
 - Architecture and gate behavior remain owned by the documents routed from
   [`WORKBOARD.md`](WORKBOARD.md).
 - Per-change verification and closeout remain owned by
@@ -45,9 +46,9 @@ These are execution-matrix counts, not a percentage estimate of product code.
 | Lane | Applicable | Mapped | Remaining | Verified aggregate |
 | --- | ---: | ---: | ---: | --- |
 | Standard | 86 | 40 | 46 | Current full run: 40 passed, 0 failed, 46 unmapped; every mapped row validated its public-binary marker. |
-| Determinism | 86 | 0 | 86 | No mapped-row aggregate proof yet. |
+| Determinism | 86 | 40 | 46 | Current full run: 40 passed, 0 failed, 46 unmapped; every mapped row validated its public-binary marker and nonempty canonical semantic capture across repeated default jobs and `jobs=1`. |
 | Store crash | 10 | 4 | 6 | Mapping count only; Phase 1 exit still requires the complete lane. |
-| **Total execution obligations** | **182** | **44** | **138** | This total deliberately counts each required lane execution. |
+| **Total execution obligations** | **182** | **84** | **98** | This total deliberately counts each required lane execution. |
 
 Known non-corpus exit gaps:
 
@@ -101,10 +102,10 @@ commands rather than being faked inside `architecture-check`.
 
 Owner routes: ARCH-001 and SLICE-001 AC 5, 6, 22, 24, 33, and 35.
 
-- [ ] Map determinism invocations for all 40 currently mapped standard rows.
-- [ ] Require every later standard-row packet to add its applicable determinism
+- [x] Map determinism invocations for all 40 currently mapped standard rows.
+- [x] Require every later standard-row packet to add its applicable determinism
   invocation in the same packet.
-- [ ] Prove repeated default jobs and `jobs=1` produce identical semantic
+- [x] Prove repeated default jobs and `jobs=1` produce identical semantic
   evidence and finding IDs; exclude only contract-named runtime/store bytes.
 
 Exit: determinism is no longer an end-of-phase retrofit, and its mapped count
