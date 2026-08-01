@@ -351,7 +351,7 @@ fn incomplete_close_withholds_partial_actual_write_attribution()
 -> Result<(), Box<dyn std::error::Error>> {
     use std::os::unix::fs::symlink;
 
-    let root = fixture()?;
+    let root = source_fixture("console.log('lib');\n", "console.log('main');\n")?;
     let gate_id = open_gate(root.path(), "op-incomplete-open", "src/lib.ts")?;
     let outside = tempfile::tempdir()?;
     let outside_source = outside.path().join("outside.ts");
