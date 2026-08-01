@@ -2,6 +2,7 @@ mod query;
 mod retention;
 
 use std::ffi::OsString;
+use std::num::NonZeroUsize;
 use std::path::Path;
 
 use lumin_engine::{
@@ -156,11 +157,21 @@ fn success(stdout: String) -> CommandOutput {
     .into()
 }
 
+fn compute_default_jobs(available: Option<NonZeroUsize>) -> usize {
+    available.map_or(1, |value| value.get().min(8))
+}
+
+/// Falls back to one worker when the quota-aware runtime observation is unavailable.
+fn default_jobs() -> usize {
+    compute_default_jobs(std::thread::available_parallelism().ok())
+}
+
 fn audit(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> {
     let mut includes = Vec::new();
     let mut excludes = Vec::new();
     let mut role_overrides = Vec::new();
-    let mut jobs = std::thread::available_parallelism().map_or(1, usize::from);
+    let mut entries = Vec::new();
+    let mut jobs = default_jobs();
     let mut resolution_profile = None;
     let mut format = "json".to_owned();
 
@@ -168,6 +179,13 @@ fn audit(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> {
         match argument.as_str() {
             "--include" => includes.push(arguments.required_utf8("--include")?),
             "--exclude" => excludes.push(arguments.required_utf8("--exclude")?),
+            "--entry" => {
+                let value = arguments.required_utf8("--entry")?;
+                entries.push(
+                    RepoPath::from_portable(&value)
+                        .map_err(|error| CliError::InvalidRepoPath(error.to_string()))?,
+                );
+            }
             "--role-at" => {
                 let pattern = arguments.required_utf8("--role-at pattern")?;
                 let role = parse_role(&arguments.required_utf8("--role-at role")?)?;
@@ -197,6 +215,7 @@ fn audit(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> {
         includes,
         excludes,
         role_overrides,
+        entries,
         jobs,
         resolution_profile,
     })?;
@@ -451,7 +470,11 @@ fn capabilities(
 fn pre_write(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {
     let mut operation_id = None;
     let mut paths = Vec::new();
-    let mut jobs = std::thread::available_parallelism().map_or(1, usize::from);
+    let mut includes = Vec::new();
+    let mut excludes = Vec::new();
+    let mut role_overrides = Vec::new();
+    let mut entries = Vec::new();
+    let mut jobs = default_jobs();
     let mut resolution_profile = None;
     let mut format = "json".to_owned();
     while let Some(argument) = arguments.next_utf8("pre-write argument")? {
@@ -467,6 +490,20 @@ fn pre_write(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, Cl
                     RepoPath::from_portable(&value)
                         .map_err(|error| CliError::InvalidRepoPath(error.to_string()))?,
                 );
+            }
+            "--entry" => {
+                let value = arguments.required_utf8("--entry")?;
+                entries.push(
+                    RepoPath::from_portable(&value)
+                        .map_err(|error| CliError::InvalidRepoPath(error.to_string()))?,
+                );
+            }
+            "--include" => includes.push(arguments.required_utf8("--include")?),
+            "--exclude" => excludes.push(arguments.required_utf8("--exclude")?),
+            "--role-at" => {
+                let pattern = arguments.required_utf8("--role-at pattern")?;
+                let role = parse_role(&arguments.required_utf8("--role-at role")?)?;
+                role_overrides.push(RoleOverride { pattern, role });
             }
             "--jobs" => {
                 let value = arguments.required_utf8("--jobs")?;
@@ -492,6 +529,10 @@ fn pre_write(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, Cl
         root: root.to_path_buf(),
         operation_id,
         paths,
+        includes,
+        excludes,
+        role_overrides,
+        entries,
         jobs,
         resolution_profile,
     })?;

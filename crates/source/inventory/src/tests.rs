@@ -240,3 +240,484 @@ fn malformed_pnpm_is_a_hard_stop_without_package_workspace_fallback()
     ));
     Ok(())
 }
+
+#[test]
+fn invocation_entries_replace_config_entries() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::write(
+        root.path().join("lumin.json"),
+        r#"{"schemaVersion":"lumin-config.v1","entries":["src/from-config.ts"]}"#,
+    )?;
+    fs::write(
+        root.path().join("src/from-config.ts"),
+        "export const a = 1;",
+    )?;
+    fs::write(
+        root.path().join("src/from-invocation.ts"),
+        "export const b = 2;",
+    )?;
+
+    // With invocation entries, config entries are replaced
+    let invocation_path = RepoPath::from_portable("src/from-invocation.ts")?;
+    let request = InventoryRequest {
+        entries: vec![invocation_path.clone()],
+        ..Default::default()
+    };
+    let inventory = scan(root.path(), &request)?;
+    assert_eq!(inventory.entry_selections.len(), 1);
+    assert_eq!(inventory.entry_selections[0].path, invocation_path);
+    assert_eq!(
+        inventory.entry_selections[0].source,
+        lumin_model::EntrySource::Invocation
+    );
+    Ok(())
+}
+
+#[test]
+fn config_entries_used_when_no_invocation_entries() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::write(
+        root.path().join("lumin.json"),
+        r#"{"schemaVersion":"lumin-config.v1","entries":["src/from-config.ts"]}"#,
+    )?;
+    fs::write(
+        root.path().join("src/from-config.ts"),
+        "export const a = 1;",
+    )?;
+
+    let request = InventoryRequest::default();
+    let inventory = scan(root.path(), &request)?;
+    assert_eq!(inventory.entry_selections.len(), 1);
+    assert_eq!(
+        inventory.entry_selections[0].path,
+        RepoPath::from_portable("src/from-config.ts")?
+    );
+    assert_eq!(
+        inventory.entry_selections[0].source,
+        lumin_model::EntrySource::Configuration
+    );
+    Ok(())
+}
+
+#[test]
+fn entry_dedup_preserves_lexical_order() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::write(root.path().join("src/b.ts"), "export const b = 1;")?;
+    fs::write(root.path().join("src/a.ts"), "export const a = 1;")?;
+
+    let request = InventoryRequest {
+        entries: vec![
+            RepoPath::from_portable("src/b.ts")?,
+            RepoPath::from_portable("src/a.ts")?,
+            RepoPath::from_portable("src/b.ts")?, // duplicate
+        ],
+        ..Default::default()
+    };
+    let inventory = scan(root.path(), &request)?;
+    assert_eq!(inventory.entry_selections.len(), 2);
+    // Sorted lexically
+    assert!(
+        inventory.entry_selections[0].path.display_escaped()
+            <= inventory.entry_selections[1].path.display_escaped()
+    );
+    Ok(())
+}
+
+#[test]
+fn valid_missing_entry_emits_typed_limitation() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let request = InventoryRequest {
+        entries: vec![RepoPath::from_portable("src/missing.ts")?],
+        ..Default::default()
+    };
+    let inventory = scan(root.path(), &request)?;
+    // Entry is recorded but with unavailable_reason
+    assert_eq!(inventory.entry_selections.len(), 1);
+    assert_eq!(
+        inventory.entry_selections[0].unavailable_reason,
+        Some(EntryUnavailableReason::Missing)
+    );
+    assert!(inventory.limitations.iter().any(|limitation| matches!(
+        limitation,
+        Limitation::ExplicitEntryUnavailable {
+            path,
+            unavailable_reason: EntryUnavailableReason::Missing,
+            ..
+        } if path == "src/missing.ts"
+    )));
+    Ok(())
+}
+
+#[test]
+fn excluded_entry_emits_typed_limitation() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("vendor"))?;
+    fs::write(root.path().join("vendor/lib.ts"), "export const v = 1;")?;
+
+    let request = InventoryRequest {
+        entries: vec![RepoPath::from_portable("vendor/lib.ts")?],
+        excludes: vec!["vendor/**".to_owned()],
+        ..Default::default()
+    };
+    let inventory = scan(root.path(), &request)?;
+    // Unavailable entries are still recorded with their reason
+    assert_eq!(inventory.entry_selections.len(), 1);
+    assert_eq!(
+        inventory.entry_selections[0].unavailable_reason,
+        Some(EntryUnavailableReason::Excluded)
+    );
+    assert!(inventory.limitations.iter().any(|limitation| matches!(
+        limitation,
+        Limitation::ExplicitEntryUnavailable {
+            unavailable_reason: EntryUnavailableReason::Excluded,
+            ..
+        }
+    )));
+    Ok(())
+}
+
+#[test]
+fn out_of_domain_entry_emits_typed_limitation() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::write(root.path().join("readme.md"), "# Hello")?;
+
+    let request = InventoryRequest {
+        entries: vec![RepoPath::from_portable("readme.md")?],
+        ..Default::default()
+    };
+    let inventory = scan(root.path(), &request)?;
+    assert_eq!(inventory.entry_selections.len(), 1);
+    assert_eq!(
+        inventory.entry_selections[0].unavailable_reason,
+        Some(EntryUnavailableReason::OutOfDomain)
+    );
+    assert!(inventory.limitations.iter().any(|limitation| matches!(
+        limitation,
+        Limitation::ExplicitEntryUnavailable {
+            unavailable_reason: EntryUnavailableReason::OutOfDomain,
+            ..
+        }
+    )));
+    Ok(())
+}
+
+#[test]
+fn lumin_json_missing_policy_input_observed() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::write(root.path().join("lib.ts"), "export const a = 1;")?;
+
+    let inventory = scan(root.path(), &InventoryRequest::default())?;
+    let lumin_policy = inventory
+        .policy_inputs
+        .iter()
+        .find(|input| input.path.display_escaped() == "lumin.json")
+        .ok_or_else(|| std::io::Error::other("missing lumin.json policy input"))?;
+    assert_eq!(lumin_policy.state, SemanticPolicyState::Missing);
+    assert!(lumin_policy.payload_sha256.is_none());
+    Ok(())
+}
+
+#[test]
+fn lumin_json_present_policy_input_observed() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("lumin.json"),
+        r#"{"schemaVersion":"lumin-config.v1"}"#,
+    )?;
+    fs::write(root.path().join("lib.ts"), "export const a = 1;")?;
+
+    let inventory = scan(root.path(), &InventoryRequest::default())?;
+    let lumin_policy = inventory
+        .policy_inputs
+        .iter()
+        .find(|input| input.path.display_escaped() == "lumin.json")
+        .ok_or_else(|| std::io::Error::other("missing lumin.json policy input"))?;
+    assert_eq!(lumin_policy.state, SemanticPolicyState::Present);
+    assert!(
+        lumin_policy
+            .payload_sha256
+            .as_ref()
+            .is_some_and(|s| !s.is_empty())
+    );
+    assert!(lumin_policy.physical_identity.is_some());
+    Ok(())
+}
+
+#[test]
+fn nested_gitignore_entry_is_ignored_not_available() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    // Scan policy applies repository-owned .gitignore files even without a .git marker.
+    fs::create_dir_all(root.path().join("src"))?;
+    // Create a nested .gitignore that ignores a specific file
+    fs::write(root.path().join("src/.gitignore"), "ignored.ts\n")?;
+    fs::write(
+        root.path().join("src/ignored.ts"),
+        "export const ignored = 1;",
+    )?;
+    fs::write(
+        root.path().join("src/available.ts"),
+        "export const available = 1;",
+    )?;
+
+    // An entry under src/.gitignore must be classified as Ignored
+    let request = InventoryRequest {
+        entries: vec![RepoPath::from_portable("src/ignored.ts")?],
+        ..Default::default()
+    };
+    let inventory = scan(root.path(), &request)?;
+    assert_eq!(inventory.entry_selections.len(), 1);
+    assert_eq!(
+        inventory.entry_selections[0].unavailable_reason,
+        Some(EntryUnavailableReason::Ignored)
+    );
+    // The ignored file must NOT appear in sources (WalkBuilder respects .gitignore with .git)
+    assert!(
+        !inventory
+            .sources
+            .iter()
+            .any(|s| s.path.display_escaped() == "src/ignored.ts")
+    );
+    // The nested .gitignore must appear in policy_inputs
+    let nested = inventory
+        .policy_inputs
+        .iter()
+        .find(|input| input.path.display_escaped() == "src/.gitignore")
+        .ok_or_else(|| std::io::Error::other("missing nested .gitignore policy input"))?;
+    assert_eq!(nested.state, SemanticPolicyState::Present);
+    assert!(nested.payload_sha256.is_some());
+    assert!(nested.physical_identity.is_some());
+    Ok(())
+}
+
+#[test]
+fn nested_gitignore_appears_in_semantic_input_records() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::write(root.path().join("src/.gitignore"), "*.log\n")?;
+    fs::write(root.path().join("src/app.ts"), "export const app = 1;")?;
+
+    let inventory = scan(root.path(), &InventoryRequest::default())?;
+    // Verify the nested .gitignore is captured in policy_inputs
+    let nested = inventory
+        .policy_inputs
+        .iter()
+        .find(|input| input.path.display_escaped() == "src/.gitignore")
+        .ok_or_else(|| std::io::Error::other("missing nested .gitignore policy input"))?;
+    assert_eq!(nested.state, SemanticPolicyState::Present);
+    assert!(nested.physical_identity.is_some());
+    Ok(())
+}
+
+#[test]
+fn explicit_include_reinclude_gitignored_entry() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    // Root .gitignore ignores dist/ files
+    fs::write(root.path().join(".gitignore"), "dist/\n")?;
+    fs::create_dir_all(root.path().join("dist"))?;
+    fs::write(
+        root.path().join("dist/output.ts"),
+        "export const output = 1;",
+    )?;
+    fs::write(root.path().join("src/app.ts"), "export const app = 1;")?;
+
+    // Without includes, entry under dist is Ignored
+    let request_no_include = InventoryRequest {
+        entries: vec![RepoPath::from_portable("dist/output.ts")?],
+        ..Default::default()
+    };
+    let inv1 = scan(root.path(), &request_no_include)?;
+    assert_eq!(
+        inv1.entry_selections[0].unavailable_reason,
+        Some(EntryUnavailableReason::Ignored)
+    );
+
+    // With explicit includes matching the path, entry is reincluded (Available)
+    let request_with_include = InventoryRequest {
+        entries: vec![RepoPath::from_portable("dist/output.ts")?],
+        includes: vec!["dist/**".to_owned()],
+        ..Default::default()
+    };
+    let inv2 = scan(root.path(), &request_with_include)?;
+    assert_eq!(inv2.entry_selections.len(), 1);
+    assert_eq!(inv2.entry_selections[0].unavailable_reason, None);
+    assert!(
+        inv2.sources
+            .iter()
+            .any(|source| source.path.display_escaped() == "dist/output.ts")
+    );
+    Ok(())
+}
+
+#[test]
+fn entry_alone_does_not_override_gitignore() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("build"))?;
+    fs::write(root.path().join(".gitignore"), "build/\n")?;
+    fs::write(root.path().join("build/gen.ts"), "export const gen = 1;")?;
+
+    // Entry pointing at a gitignored file without explicit include is still Ignored
+    let request = InventoryRequest {
+        entries: vec![RepoPath::from_portable("build/gen.ts")?],
+        ..Default::default()
+    };
+    let inventory = scan(root.path(), &request)?;
+    assert_eq!(inventory.entry_selections.len(), 1);
+    assert_eq!(
+        inventory.entry_selections[0].unavailable_reason,
+        Some(EntryUnavailableReason::Ignored)
+    );
+    Ok(())
+}
+
+#[test]
+fn includes_nonempty_nonmatching_entry_is_out_of_domain() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::create_dir_all(root.path().join("other"))?;
+    fs::write(root.path().join("src/app.ts"), "export const app = 1;")?;
+    fs::write(root.path().join("other/lib.ts"), "export const lib = 1;")?;
+
+    // includes only matches src/**, entry under other/ is OutOfDomain
+    let request = InventoryRequest {
+        entries: vec![RepoPath::from_portable("other/lib.ts")?],
+        includes: vec!["src/**".to_owned()],
+        ..Default::default()
+    };
+    let inventory = scan(root.path(), &request)?;
+    assert_eq!(inventory.entry_selections.len(), 1);
+    assert_eq!(
+        inventory.entry_selections[0].unavailable_reason,
+        Some(EntryUnavailableReason::OutOfDomain)
+    );
+    Ok(())
+}
+
+#[test]
+fn validate_caller_entries_rejects_lumin_namespace() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let entry = RepoPath::from_portable(".lumin/state.ts")?;
+    let result = validate_caller_entries(root.path(), &[entry]);
+    assert!(matches!(result, Err(InventoryError::ReservedEntryPath(_))));
+    Ok(())
+}
+
+#[test]
+fn validate_caller_entries_accepts_normal_paths() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::write(root.path().join("src/app.ts"), "export const app = 1;")?;
+    let entry = RepoPath::from_portable("src/app.ts")?;
+    let result = validate_caller_entries(root.path(), &[entry]);
+    assert!(result.is_ok());
+    Ok(())
+}
+
+#[test]
+fn validate_caller_entries_accepts_missing_path_under_existing_parent()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir(root.path().join("src"))?;
+    let entry = RepoPath::from_portable("src/missing.ts")?;
+    assert!(validate_caller_entries(root.path(), &[entry]).is_ok());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn validate_caller_entries_rejects_symlink_escape() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let outside = tempfile::tempdir()?;
+    fs::write(outside.path().join("escape.ts"), "export const x = 1;")?;
+    std::os::unix::fs::symlink(
+        outside.path().join("escape.ts"),
+        root.path().join("escape.ts"),
+    )?;
+    let entry = RepoPath::from_portable("escape.ts")?;
+    let result = validate_caller_entries(root.path(), &[entry]);
+    assert!(matches!(result, Err(InventoryError::EntryEscapesRoot(_))));
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn validate_caller_entries_rejects_parent_alias_escape_for_existing_and_missing_children()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let outside = tempfile::tempdir()?;
+    fs::write(outside.path().join("existing.ts"), "export const x = 1;")?;
+    std::os::unix::fs::symlink(outside.path(), root.path().join("alias"))?;
+
+    for portable in ["alias/existing.ts", "alias/missing.ts"] {
+        let entry = RepoPath::from_portable(portable)?;
+        assert!(matches!(
+            validate_caller_entries(root.path(), &[entry]),
+            Err(InventoryError::EntryEscapesRoot(_))
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn classify_entry_rejects_outside_root_symlink() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let outside = tempfile::tempdir()?;
+    fs::write(outside.path().join("link.ts"), "export const x = 1;")?;
+    std::os::unix::fs::symlink(outside.path().join("link.ts"), root.path().join("link.ts"))?;
+    let ignore = ApplicableIgnore::build(root.path())?;
+    let patterns = PatternSet::compile(root.path(), None, &InventoryRequest::default())?;
+    let path = RepoPath::from_portable("link.ts")?;
+    let classification = classify_entry(root.path(), &path, &patterns, &ignore);
+    assert!(matches!(
+        classification,
+        Err(InventoryError::EntryEscapesRoot(_))
+    ));
+    Ok(())
+}
+
+#[test]
+fn unreadable_gitignore_returns_error() -> Result<(), Box<dyn std::error::Error>> {
+    // On all platforms we test via a directory named .gitignore which cannot be read as a file
+    // This is a portable seam: fs::read on a directory fails with an error.
+    let root = tempfile::tempdir()?;
+    // Create .gitignore as a directory (unreadable as file)
+    fs::create_dir(root.path().join(".gitignore"))?;
+    fs::write(root.path().join("app.ts"), "export const x = 1;")?;
+
+    let result = ApplicableIgnore::build(root.path());
+    // Should error because .gitignore exists but is unreadable (it's a directory)
+    assert!(
+        result.is_err(),
+        "unreadable .gitignore should error, not silently swallow"
+    );
+    Ok(())
+}
+
+#[test]
+fn root_config_symlink_is_malformed() -> Result<(), Box<dyn std::error::Error>> {
+    let _root = tempfile::tempdir()?;
+    // Create a regular file that we'll symlink to
+    let _outside = tempfile::tempdir()?;
+    #[cfg(unix)]
+    {
+        fs::write(
+            _outside.path().join("lumin.json"),
+            r#"{"schemaVersion":"lumin-config.v1"}"#,
+        )?;
+        std::os::unix::fs::symlink(
+            _outside.path().join("lumin.json"),
+            _root.path().join("lumin.json"),
+        )?;
+        let result = scan(_root.path(), &InventoryRequest::default());
+        assert!(
+            matches!(result, Err(InventoryError::MalformedConfiguration(_))),
+            "symlink lumin.json should be rejected as malformed"
+        );
+    }
+    Ok(())
+}

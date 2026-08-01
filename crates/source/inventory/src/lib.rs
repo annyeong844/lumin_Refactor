@@ -11,20 +11,102 @@ use std::path::Path;
 use ignore::WalkBuilder;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use lumin_model::{
-    ConfigObservation, ConfigSyntax, Limitation, PhysicalAliasWriteClosure, PhysicalFileIdentity,
-    RepoPath, RepoPathError, RoleOverride, ScanRole, SemanticConfigSnapshot, SourceKind,
-    SourceRoleReason, SourceRoles, SourceSnapshot,
+    ConfigObservation, ConfigSyntax, EntrySource, EntryUnavailableReason, Limitation,
+    PhysicalAliasWriteClosure, PhysicalFileIdentity, RepoPath, RepoPathError, RoleOverride,
+    ScanRole, SemanticConfigSnapshot, SourceKind, SourceRoleReason, SourceRoles, SourceSnapshot,
+    digest_hex,
 };
 use serde::Deserialize;
 use thiserror::Error;
 
 pub use root::{RepositoryAdmission, repository_admission};
 
+/// Validate caller entries BEFORE audit begins or pre-write opens/reserves a gate.
+/// Reject entries whose lexical first component is the reserved `.lumin` namespace,
+/// or whose existing path or nearest existing parent physically escapes the canonical root.
+/// Returns Err(InventoryError) on invalid entries (maps to CLI exit 2).
+pub fn validate_caller_entries(root: &Path, entries: &[RepoPath]) -> Result<(), InventoryError> {
+    let canonical_root = fs::canonicalize(root)
+        .map_err(|error| InventoryError::RepositoryIdentity(error.to_string()))?;
+    for entry in entries {
+        let relative = entry.to_native_relative();
+        let first_component = relative.iter().next();
+        if first_component.is_some_and(|component| component == ".lumin") {
+            return Err(InventoryError::ReservedEntryPath(entry.display_escaped()));
+        }
+        validate_entry_containment(root, &canonical_root, entry)?;
+    }
+    Ok(())
+}
+
+fn validate_entry_containment(
+    root: &Path,
+    canonical_root: &Path,
+    entry: &RepoPath,
+) -> Result<(), InventoryError> {
+    let mut candidate = root.join(entry.to_native_relative());
+    loop {
+        match fs::symlink_metadata(&candidate) {
+            Ok(_) => {
+                let physical = fs::canonicalize(&candidate).map_err(|error| {
+                    InventoryError::PhysicalIdentity(format!(
+                        "cannot resolve entry {}: {error}",
+                        entry.display_escaped()
+                    ))
+                })?;
+                if !physical.starts_with(canonical_root) {
+                    return Err(InventoryError::EntryEscapesRoot(entry.display_escaped()));
+                }
+                return Ok(());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if candidate == root || !candidate.pop() {
+                    return Err(InventoryError::PhysicalIdentity(format!(
+                        "cannot find an existing parent for entry {}",
+                        entry.display_escaped()
+                    )));
+                }
+            }
+            Err(error) => {
+                return Err(InventoryError::PhysicalIdentity(format!(
+                    "cannot inspect entry {}: {error}",
+                    entry.display_escaped()
+                )));
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct InventoryRequest {
     pub includes: Vec<String>,
     pub excludes: Vec<String>,
     pub role_overrides: Vec<RoleOverride>,
+    pub entries: Vec<RepoPath>,
+}
+
+/// Non-serde internal entry selection result used during inventory.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EntrySelection {
+    pub path: RepoPath,
+    pub source: lumin_model::EntrySource,
+    pub unavailable_reason: Option<EntryUnavailableReason>,
+}
+
+/// Observation state for a semantic policy input (root config, .gitignore files).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SemanticPolicyState {
+    Present,
+    Missing,
+}
+
+/// A single semantic policy input observation: configuration file or .gitignore.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SemanticPolicyInput {
+    pub path: RepoPath,
+    pub state: SemanticPolicyState,
+    pub payload_sha256: Option<String>,
+    pub physical_identity: Option<PhysicalFileIdentity>,
 }
 
 #[derive(Clone, Debug)]
@@ -33,6 +115,8 @@ pub struct InventorySnapshot {
     pub limitations: Vec<Limitation>,
     pub consulted_config_paths: Vec<RepoPath>,
     pub config: SemanticConfigSnapshot,
+    pub entry_selections: Vec<EntrySelection>,
+    pub policy_inputs: Vec<SemanticPolicyInput>,
 }
 
 #[derive(Debug, Error)]
@@ -57,6 +141,10 @@ pub enum InventoryError {
     PhysicalIdentity(String),
     #[error("failed to establish canonical repository identity: {0}")]
     RepositoryIdentity(String),
+    #[error("caller entry path is in the reserved .lumin namespace: {0}")]
+    ReservedEntryPath(String),
+    #[error("caller entry resolves outside repository root: {0}")]
+    EntryEscapesRoot(String),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -138,15 +226,80 @@ struct CollectedFiles {
 
 pub fn scan(root: &Path, request: &InventoryRequest) -> Result<InventorySnapshot, InventoryError> {
     validate_root(root)?;
-    let (config, config_path) = read_root_config(root)?;
+    let (config, config_path, config_policy) = read_root_config(root)?;
     let patterns = PatternSet::compile(root, config.as_ref(), request)?;
-    let mut collected = collect_repository_files(root, &patterns)?;
 
-    if let Some(path) = config_path {
+    // Build hierarchical gitignore matcher before entry classification
+    let ignore = ApplicableIgnore::build(root)?;
+
+    let mut collected = collect_repository_files(root, &patterns, &ignore)?;
+
+    if let Some(path) = config_path.clone() {
         collected.consulted_config_paths.push(path);
     }
     collected.consulted_config_paths.sort();
     collected.consulted_config_paths.dedup();
+
+    // Determine entry selections: caller entries replace config entries
+    let (raw_entries, entry_source) = if !request.entries.is_empty() {
+        (request.entries.clone(), EntrySource::Invocation)
+    } else {
+        let config_entries = config
+            .as_ref()
+            .map(|cfg| cfg.entries.clone())
+            .unwrap_or_default();
+        if config_entries.is_empty() {
+            (Vec::new(), EntrySource::Configuration)
+        } else {
+            let parsed: Result<Vec<RepoPath>, _> = config_entries
+                .iter()
+                .map(|entry| RepoPath::from_portable(entry))
+                .collect();
+            (
+                parsed
+                    .map_err(|error| InventoryError::MalformedConfiguration(error.to_string()))?,
+                EntrySource::Configuration,
+            )
+        }
+    };
+
+    // Lexical sort/dedup
+    let mut deduplicated_entries = raw_entries;
+    deduplicated_entries.sort();
+    deduplicated_entries.dedup();
+
+    // Classify entries and record all (available + unavailable) with reason
+    let mut entry_selections = Vec::new();
+    for entry_path in &deduplicated_entries {
+        let classification = classify_entry(root, entry_path, &patterns, &ignore)?;
+        match classification {
+            EntryClassification::Available => {
+                entry_selections.push(EntrySelection {
+                    path: entry_path.clone(),
+                    source: entry_source,
+                    unavailable_reason: None,
+                });
+            }
+            EntryClassification::Unavailable(unavailable_reason) => {
+                collected
+                    .limitations
+                    .push(Limitation::ExplicitEntryUnavailable {
+                        path: entry_path.display_escaped(),
+                        source: entry_source,
+                        unavailable_reason,
+                    });
+                entry_selections.push(EntrySelection {
+                    path: entry_path.clone(),
+                    source: entry_source,
+                    unavailable_reason: Some(unavailable_reason),
+                });
+            }
+        }
+    }
+
+    // Collect policy inputs: lumin.json + all applicable .gitignore files from matcher
+    let mut policy_inputs = vec![config_policy];
+    policy_inputs.extend(ignore.policy_inputs.iter().cloned());
 
     let sources = collected.sources.into_values().collect::<Vec<_>>();
     let config = package_semantics::build(
@@ -161,7 +314,304 @@ pub fn scan(root: &Path, request: &InventoryRequest) -> Result<InventorySnapshot
         limitations: collected.limitations,
         consulted_config_paths: collected.consulted_config_paths,
         config,
+        entry_selections,
+        policy_inputs,
     })
+}
+
+enum EntryClassification {
+    Available,
+    Unavailable(EntryUnavailableReason),
+}
+
+fn classify_entry(
+    root: &Path,
+    path: &RepoPath,
+    patterns: &PatternSet,
+    ignore: &ApplicableIgnore,
+) -> Result<EntryClassification, InventoryError> {
+    let relative = path.to_native_relative();
+    if is_hard_excluded(&relative) || relative.iter().any(|c| is_hard_excluded(Path::new(c))) {
+        return Ok(EntryClassification::Unavailable(
+            EntryUnavailableReason::HardExcluded,
+        ));
+    }
+    if patterns.excludes.iter().any(|pattern| {
+        pattern
+            .matched_path_or_any_parents(&relative, false)
+            .is_ignore()
+    }) {
+        return Ok(EntryClassification::Unavailable(
+            EntryUnavailableReason::Excluded,
+        ));
+    }
+    let explicitly_included = !patterns.includes.is_empty()
+        && patterns.includes.iter().any(|pattern| {
+            pattern
+                .matched_path_or_any_parents(&relative, false)
+                .is_ignore()
+        });
+    if !patterns.includes.is_empty() && !explicitly_included {
+        return Ok(EntryClassification::Unavailable(
+            EntryUnavailableReason::OutOfDomain,
+        ));
+    }
+    if source_kind(&relative).is_none() {
+        return Ok(EntryClassification::Unavailable(
+            EntryUnavailableReason::OutOfDomain,
+        ));
+    }
+    if !explicitly_included && ignore.is_ignored(&relative, false) {
+        return Ok(EntryClassification::Unavailable(
+            EntryUnavailableReason::Ignored,
+        ));
+    }
+
+    let native = root.join(&relative);
+    let metadata = match fs::symlink_metadata(&native) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(EntryClassification::Unavailable(
+                EntryUnavailableReason::Missing,
+            ));
+        }
+        Err(error) => {
+            return Err(InventoryError::RootIo(format!(
+                "failed to inspect entry {}: {error}",
+                path.display_escaped()
+            )));
+        }
+    };
+    if metadata.file_type().is_symlink() {
+        let canonical_root =
+            fs::canonicalize(root).map_err(|error| InventoryError::RootIo(error.to_string()))?;
+        let target = fs::canonicalize(&native).map_err(|error| {
+            InventoryError::PhysicalIdentity(format!(
+                "failed to resolve entry {}: {error}",
+                path.display_escaped()
+            ))
+        })?;
+        if !target.starts_with(&canonical_root) {
+            return Err(InventoryError::EntryEscapesRoot(path.display_escaped()));
+        }
+        let target_metadata = fs::metadata(&native).map_err(|error| {
+            InventoryError::PhysicalIdentity(format!(
+                "failed to inspect entry target {}: {error}",
+                path.display_escaped()
+            ))
+        })?;
+        return Ok(if target_metadata.is_file() {
+            EntryClassification::Available
+        } else {
+            EntryClassification::Unavailable(EntryUnavailableReason::OutOfDomain)
+        });
+    }
+    Ok(if metadata.is_file() {
+        EntryClassification::Available
+    } else {
+        EntryClassification::Unavailable(EntryUnavailableReason::OutOfDomain)
+    })
+}
+
+/// Hierarchical .gitignore matcher built deterministically from root-to-leaf.
+/// Captures all applicable .gitignore files as policy inputs (with exact bytes/hash/identity).
+/// Skips directories already ignored by an ancestor. Skips symlink directories.
+/// Never swallows read errors.
+#[derive(Clone, Debug)]
+pub struct ApplicableIgnore {
+    matcher: Gitignore,
+    pub policy_inputs: Vec<SemanticPolicyInput>,
+}
+
+impl ApplicableIgnore {
+    /// Build the hierarchical .gitignore matcher. Walks root-to-leaf, building one combined
+    /// Gitignore that respects source-relative ordering/negation.
+    /// Returns error on unreadable .gitignore, read_dir failure, parser/build error, or
+    /// physical identity failure.
+    pub fn build(root: &Path) -> Result<Self, InventoryError> {
+        let mut builder = GitignoreBuilder::new(root);
+        let mut policy_inputs = Vec::new();
+        Self::walk_gitignores(root, root, &mut builder, &mut policy_inputs)?;
+        let matcher = builder
+            .build()
+            .map_err(|error| InventoryError::InvalidPattern(error.to_string()))?;
+        Ok(Self {
+            matcher,
+            policy_inputs,
+        })
+    }
+
+    /// Check if a relative path is ignored by the hierarchical .gitignore.
+    pub fn is_ignored(&self, relative: &Path, is_dir: bool) -> bool {
+        self.matcher
+            .matched_path_or_any_parents(relative, is_dir)
+            .is_ignore()
+    }
+
+    fn walk_gitignores(
+        root: &Path,
+        dir: &Path,
+        builder: &mut GitignoreBuilder,
+        policy_inputs: &mut Vec<SemanticPolicyInput>,
+    ) -> Result<(), InventoryError> {
+        let gitignore_path = dir.join(".gitignore");
+        match fs::read(&gitignore_path) {
+            Ok(bytes) => {
+                let relative = dir.strip_prefix(root).unwrap_or(Path::new(""));
+                let repo_path = gitignore_repo_path(relative)?;
+                let payload_sha256 = digest_hex(&bytes);
+                let physical_identity = physical_file_identity(&gitignore_path)?;
+                policy_inputs.push(SemanticPolicyInput {
+                    path: repo_path,
+                    state: SemanticPolicyState::Present,
+                    payload_sha256: Some(payload_sha256),
+                    physical_identity: Some(physical_identity),
+                });
+                let content = std::str::from_utf8(&bytes).map_err(|error| {
+                    InventoryError::InvalidPattern(format!(
+                        "{} is not valid UTF-8: {error}",
+                        gitignore_path.display()
+                    ))
+                })?;
+                for line in content.lines() {
+                    builder
+                        .add_line(Some(gitignore_path.clone()), line)
+                        .map_err(|error| InventoryError::InvalidPattern(error.to_string()))?;
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(InventoryError::PhysicalIdentity(format!(
+                    "unreadable .gitignore at {}: {error}",
+                    gitignore_path.display()
+                )));
+            }
+        }
+        // Recurse into subdirectories. Skip: hard-excluded dirs, symlink dirs,
+        // and directories that the current builder would ignore.
+        let entries = fs::read_dir(dir).map_err(|error| {
+            InventoryError::RootIo(format!(
+                "failed to read directory {}: {error}",
+                dir.display()
+            ))
+        })?;
+        // Build a snapshot of the current gitignore state to check if subdirs are ignored
+        let current_matcher = builder
+            .build()
+            .map_err(|error| InventoryError::InvalidPattern(error.to_string()))?;
+        // Re-add all lines so far since build() consumes nothing (builder is reusable)
+        // Actually GitignoreBuilder::build() does not consume the builder in the ignore crate;
+        // it clones internal state. So the builder remains valid for further additions.
+        for entry_result in entries {
+            let entry = entry_result.map_err(|error| {
+                InventoryError::RootIo(format!(
+                    "read_dir entry error in {}: {error}",
+                    dir.display()
+                ))
+            })?;
+            let entry_path = entry.path();
+            let file_type = entry.file_type().map_err(|error| {
+                InventoryError::RootIo(format!(
+                    "failed to determine file type for {}: {error}",
+                    entry_path.display()
+                ))
+            })?;
+            // Skip symlink directories
+            if file_type.is_symlink() {
+                continue;
+            }
+            if !file_type.is_dir() {
+                continue;
+            }
+            // Skip hard-excluded directories
+            if is_hard_excluded(&entry_path) {
+                continue;
+            }
+            // Skip directories already ignored by an ancestor .gitignore
+            let dir_relative = entry_path.strip_prefix(root).unwrap_or(Path::new(""));
+            if current_matcher
+                .matched_path_or_any_parents(dir_relative, true)
+                .is_ignore()
+            {
+                continue;
+            }
+            Self::walk_gitignores(root, &entry_path, builder, policy_inputs)?;
+        }
+        Ok(())
+    }
+}
+
+/// Convert a relative directory path to the .gitignore RepoPath.
+fn gitignore_repo_path(relative: &Path) -> Result<RepoPath, InventoryError> {
+    if relative == Path::new("") {
+        RepoPath::from_portable(".gitignore").map_err(|source| InventoryError::InvalidRepoPath {
+            path: ".gitignore".to_owned(),
+            source,
+        })
+    } else {
+        let native_relative = relative.join(".gitignore");
+        RepoPath::from_native_relative(&native_relative).map_err(|source| {
+            InventoryError::InvalidRepoPath {
+                path: native_relative.display().to_string(),
+                source,
+            }
+        })
+    }
+}
+
+fn read_root_config(
+    root: &Path,
+) -> Result<(Option<RootConfig>, Option<RepoPath>, SemanticPolicyInput), InventoryError> {
+    let path = root.join("lumin.json");
+    let repo_path = RepoPath::from_portable("lumin.json")
+        .map_err(|error| InventoryError::MalformedConfiguration(error.to_string()))?;
+    // Check symlink/nonregular before reading
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(InventoryError::MalformedConfiguration(
+                    "lumin.json is a symlink or non-regular file".to_owned(),
+                ));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let policy = SemanticPolicyInput {
+                path: repo_path,
+                state: SemanticPolicyState::Missing,
+                payload_sha256: None,
+                physical_identity: None,
+            };
+            return Ok((None, None, policy));
+        }
+        Err(error) => return Err(InventoryError::MalformedConfiguration(error.to_string())),
+    }
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) => return Err(InventoryError::MalformedConfiguration(error.to_string())),
+    };
+    // Compute observation from the SAME captured bytes — do not re-read
+    let payload_sha256 = digest_hex(&bytes);
+    // Real file identity failure is an error, never `.ok()`
+    let physical_identity = physical_file_identity(&path)?;
+    let policy = SemanticPolicyInput {
+        path: repo_path.clone(),
+        state: SemanticPolicyState::Present,
+        payload_sha256: Some(payload_sha256),
+        physical_identity: Some(physical_identity),
+    };
+    let config: RootConfig = serde_json::from_slice(&bytes)
+        .map_err(|error| InventoryError::MalformedConfiguration(error.to_string()))?;
+    if config.schema_version != "lumin-config.v1" {
+        return Err(InventoryError::MalformedConfiguration(format!(
+            "unsupported schemaVersion {}",
+            config.schema_version
+        )));
+    }
+    for entry in &config.entries {
+        RepoPath::from_portable(entry)
+            .map_err(|error| InventoryError::MalformedConfiguration(error.to_string()))?;
+    }
+    Ok((Some(config), Some(repo_path), policy))
 }
 
 pub fn physical_alias_write_closure(
@@ -401,13 +851,14 @@ fn ensure_contained(
 fn collect_repository_files(
     root: &Path,
     patterns: &PatternSet,
+    ignore: &ApplicableIgnore,
 ) -> Result<CollectedFiles, InventoryError> {
     let mut collected = CollectedFiles::default();
     let mut builder = WalkBuilder::new(root);
     builder
         .hidden(false)
         .parents(false)
-        .git_ignore(true)
+        .git_ignore(false)
         .git_global(false)
         .git_exclude(false)
         .follow_links(false)
@@ -488,7 +939,7 @@ fn collect_repository_files(
         if !is_file {
             continue;
         }
-        collected.observe_file(root, entry.path(), relative, path, patterns)?;
+        collected.observe_file(root, entry.path(), relative, path, patterns, ignore)?;
     }
     Ok(collected)
 }
@@ -501,6 +952,7 @@ impl CollectedFiles {
         relative: &Path,
         path: RepoPath,
         patterns: &PatternSet,
+        ignore: &ApplicableIgnore,
     ) -> Result<(), InventoryError> {
         if let Some(syntax) = config_syntax(relative) {
             self.consulted_config_paths.push(path.clone());
@@ -533,6 +985,9 @@ impl CollectedFiles {
             return Ok(());
         }
         if !patterns.admits(relative) {
+            return Ok(());
+        }
+        if patterns.includes.is_empty() && ignore.is_ignored(relative, false) {
             return Ok(());
         }
         let Some(kind) = source_kind(relative) else {
@@ -623,30 +1078,6 @@ fn validate_root(root: &Path) -> Result<(), InventoryError> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(InventoryError::RootIo(error.to_string())),
     }
-}
-
-fn read_root_config(root: &Path) -> Result<(Option<RootConfig>, Option<RepoPath>), InventoryError> {
-    let path = root.join("lumin.json");
-    let bytes = match fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((None, None)),
-        Err(error) => return Err(InventoryError::MalformedConfiguration(error.to_string())),
-    };
-    let config: RootConfig = serde_json::from_slice(&bytes)
-        .map_err(|error| InventoryError::MalformedConfiguration(error.to_string()))?;
-    if config.schema_version != "lumin-config.v1" {
-        return Err(InventoryError::MalformedConfiguration(format!(
-            "unsupported schemaVersion {}",
-            config.schema_version
-        )));
-    }
-    for entry in &config.entries {
-        RepoPath::from_portable(entry)
-            .map_err(|error| InventoryError::MalformedConfiguration(error.to_string()))?;
-    }
-    let repo_path = RepoPath::from_portable("lumin.json")
-        .map_err(|error| InventoryError::MalformedConfiguration(error.to_string()))?;
-    Ok((Some(config), Some(repo_path)))
 }
 
 impl PatternSet {

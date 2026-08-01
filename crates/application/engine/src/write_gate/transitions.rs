@@ -99,6 +99,8 @@ fn apply_transition(adjusted: &mut AnalysisSnapshot, transition: &WorktreeTransi
     let candidate = seal_analysis_snapshot(
         inputs.into_values().collect(),
         transition.capsule.after_snapshot.evidence.clone(),
+        transition.capsule.after_snapshot.scan_invocation.clone(),
+        transition.capsule.after_snapshot.entry_selections.clone(),
     );
     if candidate != transition.capsule.after_snapshot {
         return false;

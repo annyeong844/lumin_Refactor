@@ -573,6 +573,8 @@ mod tests {
         let snapshot = AnalysisSnapshot {
             analysis_input_id: AnalysisInputId::from_string("analysis-input-1".to_owned()),
             inputs: Vec::new(),
+            scan_invocation: Default::default(),
+            entry_selections: Vec::new(),
             evidence: evidence.clone(),
         };
         Ok(GateRecord {
@@ -587,6 +589,7 @@ mod tests {
             analysis_options: GateAnalysisOptions {
                 jobs: 1,
                 resolution_profile: None,
+                scan_invocation: Default::default(),
             },
             baseline: Some(GateBaseline {
                 analysis_contract: "contract".to_owned(),

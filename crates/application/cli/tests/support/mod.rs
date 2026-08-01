@@ -1,3 +1,5 @@
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
@@ -27,6 +29,28 @@ pub fn run_with_env(
         command.env(name, value);
     }
     let output = command.output()?;
+
+    // Corpus child marker: after Command::output returns, if both env vars are
+    // set, append the row ID + newline to the marker file.
+    let corpus_row = std::env::var("LUMIN_CORPUS_ROW");
+    let corpus_marker = std::env::var("LUMIN_CORPUS_CHILD_MARKER");
+    match (corpus_row.as_deref(), corpus_marker.as_deref()) {
+        (Ok(row), Ok(marker_path)) => {
+            let mut file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(marker_path)?;
+            writeln!(file, "{row}")?;
+        }
+        (Ok(_), Err(_)) | (Err(_), Ok(_)) => {
+            return Err(std::io::Error::other(
+                "LUMIN_CORPUS_ROW and LUMIN_CORPUS_CHILD_MARKER must both be set or both unset",
+            )
+            .into());
+        }
+        (Err(_), Err(_)) => {}
+    }
+
     Ok(ProcessResult {
         status: output.status.code().unwrap_or(-1),
         stdout: String::from_utf8(output.stdout)?,

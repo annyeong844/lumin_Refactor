@@ -31,10 +31,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use lumin_evidence::{
-    AnalysisSnapshot, CapabilityRecord, DEAD_CODE_CAPABILITY_ID, RepoPathProjection, RunEvidence,
-    SemanticInputRecord, SemanticInputState, seal_analysis_snapshot,
+    AnalysisSnapshot, CapabilityRecord, DEAD_CODE_CAPABILITY_ID, EntrySelectionRecord,
+    RepoPathProjection, RunEvidence, ScanInvocationTier, SemanticInputRecord, SemanticInputState,
+    seal_analysis_snapshot,
 };
-use lumin_inventory::{InventoryError, InventoryRequest, InventorySnapshot, repository_admission};
+use lumin_inventory::{
+    InventoryError, InventoryRequest, InventorySnapshot, SemanticPolicyState, repository_admission,
+};
 use lumin_model::{
     AttemptId, AttemptStatus, CapabilityState, ConfigObservation, FileFacts, Limitation,
     ResolutionOutcome, ResolutionProfile, ResolvedSourceUse, RoleOverride, RunId, SfcDialect,
@@ -45,12 +48,15 @@ use lumin_store::{PublishedRun, RepositoryStore, RunCatalogRecord, StoreError};
 use rayon::prelude::*;
 use thiserror::Error;
 
+const WORKER_STACK_BYTES: usize = 4_194_304;
+
 #[derive(Clone, Debug)]
 pub struct AuditRequest {
     pub root: PathBuf,
     pub includes: Vec<String>,
     pub excludes: Vec<String>,
     pub role_overrides: Vec<RoleOverride>,
+    pub entries: Vec<lumin_model::RepoPath>,
     pub jobs: usize,
     pub resolution_profile: Option<ResolutionProfile>,
 }
@@ -97,6 +103,10 @@ pub enum EngineError {
     ResolverDemandStalled(String),
     #[error("pre-write requires at least one declared path")]
     NoDeclaredPaths,
+    #[error("tier projection corrupt: {0}")]
+    TierProjectionCorrupt(String),
+    #[error("tier resolution profile inconsistency: {0}")]
+    TierProfileInconsistency(String),
     #[error("active gate omitted its sealed opening baseline: {0}")]
     GateBaselineMissing(String),
     #[error(
@@ -120,7 +130,12 @@ impl EngineError {
         match self {
             Self::EvidenceQuery(EvidenceQueryError::DuplicateCapabilityId(_)) => 1,
             Self::EvidenceQuery(EvidenceQueryError::DuplicateCollectionId(_)) => 1,
+            Self::Inventory(
+                InventoryError::ReservedEntryPath(_) | InventoryError::EntryEscapesRoot(_),
+            ) => 2,
             Self::NoDeclaredPaths
+            | Self::TierProjectionCorrupt(_)
+            | Self::TierProfileInconsistency(_)
             | Self::EvidenceQuery(_)
             | Self::Store(
                 StoreError::OperationConflict(_)
@@ -153,6 +168,8 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
     if request.jobs == 0 {
         return Err(EngineError::InvalidWorkerCount(0));
     }
+    // Fail closed: validate caller entries BEFORE audit begins an attempt
+    lumin_inventory::validate_caller_entries(&request.root, &request.entries)?;
     let context = open_repository_context(&request.root)?;
     let store = &context.store;
     let mut attempt = store.begin_attempt()?;
@@ -160,6 +177,7 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
         includes: request.includes.clone(),
         excludes: request.excludes.clone(),
         role_overrides: request.role_overrides.clone(),
+        entries: request.entries.clone(),
     };
     let evidence = match capture_repository(
         &context.root,
@@ -239,6 +257,7 @@ struct RepositoryAnalysisSession {
     inventory: InventorySnapshot,
     facts: Vec<FileFacts>,
     sfc_states: BTreeMap<SfcDialect, CapabilityState>,
+    scan_invocation: ScanInvocationTier,
 }
 
 enum RepositoryAnalysisStep {
@@ -252,7 +271,8 @@ fn capture_repository(
     jobs: usize,
     resolution_profile: Option<ResolutionProfile>,
 ) -> Result<RepositoryCapture, EngineError> {
-    let mut session = RepositoryAnalysisSession::start(root, request, jobs)?;
+    let tier = build_scan_invocation_tier(request, resolution_profile);
+    let mut session = RepositoryAnalysisSession::start(root, request, jobs, tier)?;
     loop {
         match session.next_step(resolution_profile)? {
             RepositoryAnalysisStep::NeedsInputs(demands) => {
@@ -265,8 +285,34 @@ fn capture_repository(
     }
 }
 
+/// Build a ScanInvocationTier from the request parameters (exact semantic order).
+fn build_scan_invocation_tier(
+    request: &InventoryRequest,
+    resolution_profile: Option<ResolutionProfile>,
+) -> ScanInvocationTier {
+    let mut entries: Vec<RepoPathProjection> = request
+        .entries
+        .iter()
+        .map(RepoPathProjection::from)
+        .collect();
+    entries.sort();
+    entries.dedup();
+    ScanInvocationTier {
+        includes: request.includes.clone(),
+        excludes: request.excludes.clone(),
+        role_overrides: request.role_overrides.clone(),
+        entries,
+        resolution_profile,
+    }
+}
+
 impl RepositoryAnalysisSession {
-    fn start(root: &Path, request: &InventoryRequest, jobs: usize) -> Result<Self, EngineError> {
+    fn start(
+        root: &Path,
+        request: &InventoryRequest,
+        jobs: usize,
+        scan_invocation: ScanInvocationTier,
+    ) -> Result<Self, EngineError> {
         if jobs == 0 {
             return Err(EngineError::InvalidWorkerCount(0));
         }
@@ -276,6 +322,7 @@ impl RepositoryAnalysisSession {
             inventory,
             facts: extraction.facts,
             sfc_states: extraction.sfc_states,
+            scan_invocation,
         })
     }
 
@@ -387,10 +434,25 @@ impl RepositoryAnalysisSession {
             .iter()
             .map(|source| source.path.clone())
             .collect();
+
+        // Build entry selection records from ALL inventory entries (available + unavailable)
+        let entry_selections: Vec<EntrySelectionRecord> = self
+            .inventory
+            .entry_selections
+            .iter()
+            .map(|entry| EntrySelectionRecord {
+                path: RepoPathProjection::from(&entry.path),
+                source: entry.source,
+                unavailable_reason: entry.unavailable_reason,
+            })
+            .collect();
+
         Ok(RepositoryCapture {
             snapshot: seal_analysis_snapshot(
                 semantic_input_records(root, &self.inventory)?,
                 evidence,
+                self.scan_invocation,
+                entry_selections,
             ),
             source_paths,
             source_adjacency,
@@ -440,6 +502,19 @@ fn semantic_input_records(
             physical_identity,
         });
     }
+    // Convert policy inputs (lumin.json, .gitignore files) to semantic input records
+    for policy_input in &inventory.policy_inputs {
+        let state = match policy_input.state {
+            SemanticPolicyState::Present => SemanticInputState::ConfigPresent,
+            SemanticPolicyState::Missing => SemanticInputState::Missing,
+        };
+        inputs.push(SemanticInputRecord {
+            path: RepoPathProjection::from(&policy_input.path),
+            state,
+            payload_sha256: policy_input.payload_sha256.clone(),
+            physical_identity: policy_input.physical_identity.clone(),
+        });
+    }
     Ok(inputs)
 }
 
@@ -485,6 +560,7 @@ struct ExtractionOutput {
 fn extract_facts(sources: &[SourceSnapshot], jobs: usize) -> Result<ExtractionOutput, EngineError> {
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(jobs)
+        .stack_size(WORKER_STACK_BYTES)
         .thread_name(|index| format!("lumin-worker-{index}"))
         .build()
         .map_err(|error| EngineError::Scheduler(error.to_string()))?;
@@ -927,6 +1003,162 @@ mod tests {
         assert_eq!(evidence.dead_code_state(), CapabilityState::Complete);
         assert_eq!(evidence.findings.len(), 1);
         assert_eq!(evidence.findings[0].exported_name, "dead");
+        Ok(())
+    }
+
+    #[test]
+    fn snapshot_id_varies_with_includes_excludes_and_profile_not_jobs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        fs::create_dir_all(root.path().join("src"))?;
+        fs::write(
+            root.path().join("src/lib.ts"),
+            "export const used = 1; export const dead = 2;",
+        )?;
+        fs::write(
+            root.path().join("src/main.ts"),
+            "import { used } from './lib.js'; console.log(used);",
+        )?;
+
+        let default_request = InventoryRequest::default();
+        let include_request = InventoryRequest {
+            includes: vec!["src/**".to_owned()],
+            ..Default::default()
+        };
+        let exclude_request = InventoryRequest {
+            excludes: vec!["dist/**".to_owned()],
+            ..Default::default()
+        };
+
+        let snap_default = capture_repository(root.path(), &default_request, 1, None)?;
+        let snap_default_4jobs = capture_repository(root.path(), &default_request, 4, None)?;
+        let snap_include = capture_repository(root.path(), &include_request, 1, None)?;
+        let snap_exclude = capture_repository(root.path(), &exclude_request, 1, None)?;
+        let snap_profile = capture_repository(
+            root.path(),
+            &default_request,
+            1,
+            Some(ResolutionProfile::Bundler),
+        )?;
+
+        // Same request with different jobs must produce same snapshot ID
+        assert_eq!(
+            snap_default.snapshot.analysis_input_id, snap_default_4jobs.snapshot.analysis_input_id,
+            "jobs must not affect the analysis_input_id"
+        );
+        // Different includes/excludes/profile must produce different snapshot IDs
+        assert_ne!(
+            snap_default.snapshot.analysis_input_id, snap_include.snapshot.analysis_input_id,
+            "includes must vary the analysis_input_id"
+        );
+        assert_ne!(
+            snap_default.snapshot.analysis_input_id, snap_exclude.snapshot.analysis_input_id,
+            "excludes must vary the analysis_input_id"
+        );
+        assert_ne!(
+            snap_default.snapshot.analysis_input_id, snap_profile.snapshot.analysis_input_id,
+            "resolution profile must vary the analysis_input_id"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn lumin_json_missing_appears_in_semantic_inputs() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        fs::write(root.path().join("lib.ts"), "export const a = 1;")?;
+
+        let capture = capture_repository(root.path(), &InventoryRequest::default(), 1, None)?;
+
+        let lumin_input = capture
+            .snapshot
+            .inputs
+            .iter()
+            .find(|input| input.path.display == "lumin.json")
+            .ok_or_else(|| std::io::Error::other("missing lumin.json semantic input"))?;
+        assert_eq!(lumin_input.state, SemanticInputState::Missing);
+        assert!(lumin_input.payload_sha256.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn lumin_json_present_appears_in_semantic_inputs() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        fs::write(
+            root.path().join("lumin.json"),
+            r#"{"schemaVersion":"lumin-config.v1"}"#,
+        )?;
+        fs::write(root.path().join("lib.ts"), "export const a = 1;")?;
+
+        let capture = capture_repository(root.path(), &InventoryRequest::default(), 1, None)?;
+
+        let lumin_input = capture
+            .snapshot
+            .inputs
+            .iter()
+            .find(|input| input.path.display == "lumin.json")
+            .ok_or_else(|| std::io::Error::other("missing lumin.json semantic input"))?;
+        assert_eq!(lumin_input.state, SemanticInputState::ConfigPresent);
+        assert!(lumin_input.payload_sha256.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn gitignore_appears_in_semantic_inputs() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        fs::write(root.path().join(".gitignore"), "dist/\n")?;
+        fs::write(root.path().join("lib.ts"), "export const a = 1;")?;
+
+        let capture = capture_repository(root.path(), &InventoryRequest::default(), 1, None)?;
+
+        let gitignore_input = capture
+            .snapshot
+            .inputs
+            .iter()
+            .find(|input| input.path.display == ".gitignore")
+            .ok_or_else(|| std::io::Error::other("missing .gitignore semantic input"))?;
+        assert_eq!(gitignore_input.state, SemanticInputState::ConfigPresent);
+        assert!(gitignore_input.payload_sha256.is_some());
+        assert!(gitignore_input.physical_identity.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn configured_entry_availability_appears_in_snapshot() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = tempfile::tempdir()?;
+        fs::create_dir_all(root.path().join("src"))?;
+        fs::write(
+            root.path().join("lumin.json"),
+            r#"{"schemaVersion":"lumin-config.v1","entries":["src/present.ts","src/missing.ts"]}"#,
+        )?;
+        fs::write(root.path().join("src/present.ts"), "export const a = 1;")?;
+        // src/missing.ts intentionally not created
+
+        let capture = capture_repository(root.path(), &InventoryRequest::default(), 1, None)?;
+
+        // Both entries appear in entry_selections
+        assert_eq!(capture.snapshot.entry_selections.len(), 2);
+
+        let present = capture
+            .snapshot
+            .entry_selections
+            .iter()
+            .find(|entry| entry.path.display == "src/present.ts")
+            .ok_or_else(|| std::io::Error::other("missing present entry selection"))?;
+        assert_eq!(present.source, lumin_model::EntrySource::Configuration);
+        assert!(present.unavailable_reason.is_none());
+
+        let missing = capture
+            .snapshot
+            .entry_selections
+            .iter()
+            .find(|entry| entry.path.display == "src/missing.ts")
+            .ok_or_else(|| std::io::Error::other("missing unavailable entry selection"))?;
+        assert_eq!(missing.source, lumin_model::EntrySource::Configuration);
+        assert_eq!(
+            missing.unavailable_reason,
+            Some(lumin_model::EntryUnavailableReason::Missing)
+        );
         Ok(())
     }
 }

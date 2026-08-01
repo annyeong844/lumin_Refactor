@@ -57,6 +57,7 @@ fn persisted_v1_gate_additions_default_when_absent() -> Result<(), Box<dyn std::
         analysis_options: GateAnalysisOptions {
             jobs: 1,
             resolution_profile: None,
+            scan_invocation: Default::default(),
         },
         baseline: Some(baseline),
         protected_semantic_inputs: vec![protected],
@@ -185,6 +186,7 @@ fn pre_write_semantic_read_reservation_blocks_later_write_admission()
     let options = GateAnalysisOptions {
         jobs: 1,
         resolution_profile: None,
+        scan_invocation: Default::default(),
     };
     let reader = store.begin_operation(&reader_operation)?;
     let reader_gate = match reader.reserve_pre_write(
@@ -250,6 +252,7 @@ fn pre_write_finish_rejects_a_baseline_that_omits_a_reserved_input()
     let options = GateAnalysisOptions {
         jobs: 1,
         resolution_profile: None,
+        scan_invocation: Default::default(),
     };
     let operation = store.begin_operation(&operation_id)?;
     let (gate_id, transition_sequence) = match operation.reserve_pre_write(
@@ -314,6 +317,7 @@ fn semantic_read_reservation_blocks_later_write_admission() -> Result<(), Box<dy
     let options = GateAnalysisOptions {
         jobs: 1,
         resolution_profile: None,
+        scan_invocation: Default::default(),
     };
     let opening = store.begin_operation(&opening_operation)?;
     let (gate_id, transition_sequence) = match opening.reserve_pre_write(
@@ -397,6 +401,7 @@ fn physical_alias_writer_cannot_cross_a_pending_semantic_read_reservation()
     let options = GateAnalysisOptions {
         jobs: 1,
         resolution_profile: None,
+        scan_invocation: Default::default(),
     };
     let reader_operation = OperationId::from_string("op-alias-reader".to_owned());
     let reader_source = path("src/new.ts")?;
@@ -459,6 +464,7 @@ fn options() -> GateAnalysisOptions {
     GateAnalysisOptions {
         jobs: 1,
         resolution_profile: None,
+        scan_invocation: Default::default(),
     }
 }
 
@@ -509,6 +515,8 @@ fn empty_snapshot() -> AnalysisSnapshot {
             findings: Vec::new(),
             limitations: Vec::new(),
         },
+        Default::default(),
+        Vec::new(),
     )
 }
 
@@ -630,7 +638,7 @@ fn active_gate_catalog_order_and_revision_increment() -> Result<(), Box<dyn std:
             <= after_b.items[1].opening_transition_sequence
     );
 
-    // Abandon gate_a → revision increments, gate_a disappears
+    // Abandon gate_a ??revision increments, gate_a disappears
     let abandon_op = OperationId::from_string("op-abandon-a".to_owned());
     let session = store.begin_operation(&abandon_op)?;
     session.abandon_gate("abandon-digest", &gate_a, 0, "test abandon")?;
