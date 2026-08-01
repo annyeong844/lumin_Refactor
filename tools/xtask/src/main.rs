@@ -65,7 +65,7 @@ fn main() -> ExitCode {
                  architecture-check\n  \
                  generated-tables --write\n  \
                  path-codec --write\n  \
-                 corpus foundation [--determinism|--store-crash] [--format human|json]"
+                 corpus foundation [--determinism|--store-crash] [--row ID] [--format human|json]"
             );
             ExitCode::from(2)
         }

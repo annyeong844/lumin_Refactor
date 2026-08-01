@@ -582,12 +582,12 @@ fn extract_facts(sources: &[SourceSnapshot], jobs: usize) -> Result<ExtractionOu
         .map_err(|error| EngineError::Scheduler(error.to_string()))?;
     let source_index = lumin_sfc::source_index(sources);
     pool.install(|| {
-        let mut physical_facts = sources
+        let physical_facts = sources
             .par_iter()
             .filter(|source| source.kind.is_js_family())
             .map(lumin_js::extract)
             .collect::<Result<Vec<_>, _>>()?;
-        physical_facts.sort_by(|left, right| left.source_id.cmp(&right.source_id));
+        let physical_facts = reduce_file_facts(physical_facts);
 
         let mut decompositions = sources
             .par_iter()
@@ -639,13 +639,18 @@ fn extract_facts(sources: &[SourceSnapshot], jobs: usize) -> Result<ExtractionOu
 
         let mut facts = physical_facts;
         facts.extend(sfc_facts);
-        facts.sort_by(|left, right| {
-            left.source_id
-                .cmp(&right.source_id)
-                .then_with(|| left.source_unit.cmp(&right.source_unit))
-        });
+        let facts = reduce_file_facts(facts);
         Ok(ExtractionOutput { facts, sfc_states })
     })
+}
+
+fn reduce_file_facts(mut facts: Vec<FileFacts>) -> Vec<FileFacts> {
+    facts.sort_by(|left, right| {
+        left.source_id
+            .cmp(&right.source_id)
+            .then_with(|| left.source_unit.cmp(&right.source_unit))
+    });
+    facts
 }
 
 fn sfc_capability_records(states: &BTreeMap<SfcDialect, CapabilityState>) -> Vec<CapabilityRecord> {
@@ -726,7 +731,7 @@ fn limitation_sort_key(limitation: &Limitation) -> String {
 mod tests {
     use std::fs;
 
-    use lumin_model::{FindingDisposition, ResolutionProfileSource};
+    use lumin_model::{FindingDisposition, LogicalSourceId, RepoPath, ResolutionProfileSource};
 
     use super::*;
 
@@ -747,6 +752,34 @@ mod tests {
         let many = analyze_repository(root.path(), &request, 4, None)?;
         assert_eq!(one, many);
         assert_eq!(one.findings.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn randomized_worker_completion_order_preserves_reduced_facts()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let facts = ["src/z.ts", "src/a.ts", "src/m.ts", "src/n.ts"]
+            .into_iter()
+            .map(|path| {
+                let path = RepoPath::from_portable(path)?;
+                Ok(FileFacts::physical(LogicalSourceId::from_path(&path)))
+            })
+            .collect::<Result<Vec<_>, lumin_model::RepoPathError>>()?;
+        let expected = reduce_file_facts(facts.clone());
+
+        for seed in 1_u64..=128 {
+            let mut state = seed;
+            let mut completion_order = facts.clone();
+            for index in (1..completion_order.len()).rev() {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                let width = u64::try_from(index + 1)?;
+                let swap_index = usize::try_from(state % width)?;
+                completion_order.swap(index, swap_index);
+            }
+            assert_eq!(reduce_file_facts(completion_order), expected, "seed={seed}");
+        }
         Ok(())
     }
 

@@ -39,9 +39,9 @@ Lumin v2는 Rust 네이티브 저장소 분석 엔진이자, 하나의 gate ID�
 
 1. Rust 소스 작업 전에는 외부 legacy Lumin lab의 Rust `pre-write`를 실행하고 invocation-specific advisory를 보존한다. 생성 intent는 stdin으로만 전달하며 저장소 안에 쓰지 않는다.
 2. 구현과 범위 테스트가 끝나면 broad Cargo 검사보다 먼저 같은 advisory로 `post-write`를 실행한다. 누락된 advisory나 scan-range 불일치는 clean으로 해석하지 않는다.
-3. 현재 TODO 전체가 끝난 뒤 locked Cargo 테스트·Clippy·fmt를 통과시키고, 외부 lab에서 `full --rust-analyzer`를 실행한다. audit 출력은 이 저장소 밖에 둔다.
-4. `manifest.rustAnalysis.status`, scan scope, parse/skipped file, `rust-analyzer-health.latest.json.summary.syntaxReviewOpaqueSurfaces`를 먼저 확인한다. 그다음 `checklist-facts.json`, `fix-plan.json`, Rust clone/shape/unused-definition 증거와 Rust 내장 체크리스트를 함께 읽는다. JS/TS artifact를 Rust 부재 증거로 쓰지 않는다.
+3. 현재 TODO 전체가 끝난 뒤 locked Cargo 테스트·Clippy·fmt를 통과시킨다. 전체 Rust build/test/lint와 Windows/Linux 판정은 public CI가 소유한다.
+4. Legacy lab 출력은 manifest가 보고한 scan language와 capability 범위 안에서만 사용한다. Rust를 스캔하지 않은 실행이나 JS/TS artifact를 Rust 부재·품질 증거로 쓰지 않는다.
 5. Grounded 오류·중복·dead 정의·경계 위반은 실제 소스를 정독한 뒤 수정한다. `unknown`/`degraded`를 clean으로 바꾸거나 `ReviewOnly` finding을 숨기거나, 의미적 동치 확인 없이 clone을 합치지 않는다.
-6. Full audit 뒤 수정이 생기면 새 pre/post 쌍으로 별도 변경 트랜잭션을 열고 영향 테스트와 full Rust audit을 다시 실행한다. Grounded 병합 차단/수정 요구가 남지 않을 때만 작업을 종료한다.
+6. Post-write 뒤 수정이 생기면 새 pre/post 쌍으로 별도 변경 트랜잭션을 열고 영향 테스트를 다시 실행한다. Grounded 병합 차단/수정 요구가 남지 않을 때만 작업을 종료한다.
 
 이 워크플로우에서 legacy Lumin은 외부 관측·리뷰 도구일 뿐이며 제품 계약이나 새 구현의 코드 소유자가 아니다.
