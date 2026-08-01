@@ -51,8 +51,8 @@ These are execution-matrix counts, not a percentage estimate of product code.
 
 Known non-corpus exit gaps:
 
-- architecture enforcement still defers path-owner, generated-table,
-  limitation-registry, codec-runtime, and third-party command re-export checks;
+- architecture enforcement still defers generated-table, limitation-registry,
+  codec-runtime, and third-party command re-export checks;
 - Windows/Linux packages and packaged Codex/Claude Code adapters are not yet
   accepted as products;
 - approved performance and memory budgets have not yet been achieved and
@@ -87,7 +87,7 @@ Owner routes: ARCH-000, ARCH-001, ARCH-002, SLICE-001 AC 19, 21, 35, 37, and 38.
   the current fail-closed `UnplannedWrite` behavior until exact evidence exists.
 - [x] Implement the owned relative-directory package/index extension-probe
   precedence required by the `extension-probe-precedence` corpus row.
-- [ ] Enforce path ownership in `architecture-check`.
+- [x] Enforce path ownership in `architecture-check`.
 - [ ] Enforce generated-table ownership and drift in `architecture-check`.
 - [ ] Enforce exhaustive limitation-registry ownership in
   `architecture-check`.

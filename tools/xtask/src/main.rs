@@ -5,6 +5,7 @@
 mod architecture;
 mod corpus;
 mod metadata;
+mod path_owner;
 mod source_policy;
 
 use std::process::ExitCode;

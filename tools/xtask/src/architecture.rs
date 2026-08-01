@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use crate::metadata;
+use crate::path_owner;
 use crate::source_policy;
 
 /// Run the full architecture check.
@@ -45,10 +46,13 @@ pub fn run() -> ExitCode {
     println!("[CHECK] source policy: ScanLock types");
     println!("[CHECK] source policy: global rayon entry points");
     println!("[CHECK] source policy: spec artifact SHA-256 digests");
+    println!("[CHECK] path identity declaration and native-lowering owners");
 
     let effective_root = &metadata_result.workspace_root;
     let source_result =
         source_policy::scan_production_sources(&metadata_result.production_members, effective_root);
+    let path_owner_result =
+        path_owner::scan_path_ownership(&metadata_result.production_members, effective_root);
 
     // Collect results
     let mut all_violations = Vec::new();
@@ -56,7 +60,9 @@ pub fn run() -> ExitCode {
 
     all_violations.extend(metadata_result.violations);
     all_violations.extend(source_result.violations);
+    all_violations.extend(path_owner_result.violations);
     all_tool_errors.extend(source_result.tool_errors);
+    all_tool_errors.extend(path_owner_result.tool_errors);
 
     // Print results
     println!();
@@ -81,7 +87,6 @@ pub fn run() -> ExitCode {
     for d in &source_result.deferred {
         println!("  DEFERRED: {d}");
     }
-    println!("  DEFERRED: path-owner boundary enforcement");
     println!("  DEFERRED: resolver generated table verification");
     println!("  DEFERRED: limitation registry exhaustiveness");
     println!("  DEFERRED: codec DTO/runtime equivalence");
