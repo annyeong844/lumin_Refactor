@@ -380,7 +380,6 @@ name = "lumin-resolve"
 version = "0.1.0"
 dependencies = [
  "lumin-model",
- "serde_json",
  "thiserror",
 ]
 

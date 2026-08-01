@@ -1,21 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::LazyLock;
 
 use lumin_model::{
     ConfigObservation, ConfigSyntax, ConfigValue, Limitation, LogicalSourceId,
     PackageIdentityState, RepoPath, ResolutionProfile, ResolutionProfileSource,
     SelectedResolutionProfile, SemanticConfigSnapshot, SourceKind, SourceSnapshot,
 };
-use serde_json::Value;
 
+use crate::generated_config_policy::{self, FieldClassification};
 use crate::{ConfigDemand, ResolverError};
-
-static RESOLVER_POLICY: LazyLock<Result<Value, String>> = LazyLock::new(|| {
-    serde_json::from_str(include_str!(
-        "../../../../specs/resolver-config-semantics.v1.json"
-    ))
-    .map_err(|error| error.to_string())
-});
 
 #[derive(Clone, Debug)]
 pub(crate) struct ImporterSettings {
@@ -74,7 +66,6 @@ pub(crate) fn select(
     config: &SemanticConfigSnapshot,
     override_profile: Option<ResolutionProfile>,
 ) -> Result<ConfigSelection, ResolverError> {
-    policy()?;
     let mut selection = ConfigSelection::default();
     for source in sources {
         select_importer(source, config, override_profile, &mut selection)?;
@@ -168,12 +159,6 @@ fn select_importer(
         },
     );
     Ok(())
-}
-
-fn policy() -> Result<&'static Value, ResolverError> {
-    RESOLVER_POLICY
-        .as_ref()
-        .map_err(|error| ResolverError::Policy(error.clone()))
 }
 
 fn nearest_config(path: &RepoPath, config: &SemanticConfigSnapshot) -> Option<RepoPath> {
@@ -276,7 +261,7 @@ fn evaluate_config(
             }
         }
     }
-    validate_top_level(root, path, limitations, &mut effective)?;
+    validate_top_level(root, path, limitations, &mut effective);
     if let Some(compiler_options) = document.root.get("compilerOptions") {
         apply_compiler_options(compiler_options, path, limitations, &mut effective)?;
     }
@@ -498,25 +483,17 @@ fn validate_top_level(
     path: &RepoPath,
     limitations: &mut Vec<Limitation>,
     effective: &mut EffectiveConfig,
-) -> Result<(), ResolverError> {
-    let table = policy()?
-        .get("tsconfigTopLevel")
-        .and_then(Value::as_array)
-        .ok_or_else(|| ResolverError::Policy("tsconfigTopLevel table is missing".to_owned()))?;
+) {
     for entry in entries {
         if matches!(entry.key.as_str(), "extends" | "compilerOptions") {
             continue;
         }
-        let policies = table
+        let policies =
+            generated_config_policy::tsconfig_top_level_fields(&entry.key).collect::<Vec<_>>();
+        let Some(matched) = policies
             .iter()
-            .filter(|policy| policy.get("path").and_then(Value::as_str) == Some(&entry.key))
-            .collect::<Vec<_>>();
-        let Some(matched) = policies.iter().find(|policy| {
-            policy
-                .get("shape")
-                .and_then(Value::as_str)
-                .is_some_and(|shape| shape_matches(shape, &entry.value))
-        }) else {
+            .find(|policy| shape_matches(policy.shape, &entry.value))
+        else {
             effective.blocked = true;
             limitations.push(Limitation::TsconfigSemanticsUnsupported {
                 path: path.display_escaped(),
@@ -524,9 +501,7 @@ fn validate_top_level(
             });
             continue;
         };
-        if matched.get("classification").and_then(Value::as_str)
-            == Some("UnsupportedResolutionAffecting")
-        {
+        if matched.classification == FieldClassification::UnsupportedResolutionAffecting {
             effective.blocked = true;
             limitations.push(Limitation::TsconfigSemanticsUnsupported {
                 path: path.display_escaped(),
@@ -537,7 +512,6 @@ fn validate_top_level(
             });
         }
     }
-    Ok(())
 }
 
 fn apply_compiler_options(
@@ -554,13 +528,9 @@ fn apply_compiler_options(
         });
         return Ok(());
     };
-    let table = policy()?
-        .get("compilerOptions")
-        .and_then(Value::as_object)
-        .ok_or_else(|| ResolverError::Policy("compilerOptions table is missing".to_owned()))?;
     let mut modeled = Vec::new();
     for entry in entries {
-        let Some(policy) = table.get(&entry.key) else {
+        let Some(policy) = generated_config_policy::compiler_option(&entry.key) else {
             effective.blocked = true;
             limitations.push(Limitation::TsconfigSemanticsUnsupported {
                 path: config_path.display_escaped(),
@@ -568,11 +538,7 @@ fn apply_compiler_options(
             });
             continue;
         };
-        let shape = policy
-            .get("shape")
-            .and_then(Value::as_str)
-            .ok_or_else(|| ResolverError::Policy(format!("missing shape for {}", entry.key)))?;
-        if !shape_matches(shape, &entry.value) {
+        if !shape_matches(policy.shape, &entry.value) {
             effective.blocked = true;
             limitations.push(Limitation::TsconfigSemanticsUnsupported {
                 path: config_path.display_escaped(),
@@ -580,9 +546,9 @@ fn apply_compiler_options(
             });
             continue;
         }
-        match policy.get("classification").and_then(Value::as_str) {
-            Some("KnownResolutionNeutral") => {}
-            Some("UnsupportedResolutionAffecting") => {
+        match policy.classification {
+            FieldClassification::KnownResolutionNeutral => {}
+            FieldClassification::UnsupportedResolutionAffecting => {
                 effective.blocked = true;
                 limitations.push(Limitation::TsconfigSemanticsUnsupported {
                     path: config_path.display_escaped(),
@@ -592,12 +558,7 @@ fn apply_compiler_options(
                     ),
                 });
             }
-            Some("SupportedAndModeled") => modeled.push(entry),
-            other => {
-                return Err(ResolverError::Policy(format!(
-                    "unknown compiler-option classification {other:?}"
-                )));
-            }
+            FieldClassification::SupportedAndModeled => modeled.push(entry),
         }
     }
     for key in ["baseUrl", "paths", "moduleResolution", "module"] {

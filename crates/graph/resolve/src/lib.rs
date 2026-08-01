@@ -1,4 +1,5 @@
 mod config;
+mod generated_config_policy;
 mod package_surface;
 
 use std::collections::BTreeMap;
@@ -9,6 +10,13 @@ use lumin_model::{
     SemanticConfigSnapshot, SourceSnapshot, SourceUseFact, SymbolNamespace,
 };
 use thiserror::Error;
+
+pub use generated_config_policy::{
+    FieldClassification as ResolverConfigFieldClassification,
+    FieldPolicy as ResolverConfigFieldPolicy, RESOLVER_COMPILER_OPTIONS,
+    RESOLVER_CONFIG_ARTIFACT_SHA256, RESOLVER_CONFIG_TABLE_SHA256, RESOLVER_INVENTORY_OWNED_FIELDS,
+    RESOLVER_PACKAGE_JSON_FIELDS, RESOLVER_TSCONFIG_TOP_LEVEL,
+};
 
 pub const RESOLVER_VERSION: &str = "config-package-resolution.v1";
 
@@ -29,7 +37,7 @@ pub struct ResolverOutput {
 
 #[derive(Debug, Error)]
 pub enum ResolverError {
-    #[error("resolver policy artifact is invalid: {0}")]
+    #[error("resolver generated policy is invalid: {0}")]
     Policy(String),
     #[error("resolver configuration is invalid: {0}")]
     Configuration(String),

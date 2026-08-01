@@ -1,4 +1,5 @@
 mod config_document;
+mod generated_config_policy;
 mod package_semantics;
 mod pnpm_workspace;
 mod root;
@@ -20,6 +21,12 @@ use lumin_model::{
 use serde::Deserialize;
 use thiserror::Error;
 
+pub use generated_config_policy::{
+    FieldClassification as InventoryConfigFieldClassification,
+    FieldPolicy as InventoryConfigFieldPolicy, INVENTORY_CONFIG_ARTIFACT_SHA256,
+    INVENTORY_CONFIG_TABLE_SHA256, INVENTORY_PACKAGE_JSON_FIELDS, INVENTORY_PNPM_WORKSPACE_FIELDS,
+    INVENTORY_RESOLVER_OWNED_FIELDS,
+};
 pub use root::{RepositoryAdmission, repository_admission};
 
 /// Validate caller entries BEFORE audit begins or pre-write opens/reserves a gate.

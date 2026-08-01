@@ -88,7 +88,7 @@ Owner routes: ARCH-000, ARCH-001, ARCH-002, SLICE-001 AC 19, 21, 35, 37, and 38.
 - [x] Implement the owned relative-directory package/index extension-probe
   precedence required by the `extension-probe-precedence` corpus row.
 - [x] Enforce path ownership in `architecture-check`.
-- [ ] Enforce generated-table ownership and drift in `architecture-check`.
+- [x] Enforce generated-table ownership and drift in `architecture-check`.
 - [ ] Enforce exhaustive limitation-registry ownership in
   `architecture-check`.
 - [ ] Enforce the path/root codec runtime boundary in `architecture-check`.
