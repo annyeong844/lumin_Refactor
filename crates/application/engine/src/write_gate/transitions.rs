@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_evidence::{
-    AnalysisSnapshot, GateBaseline, GateRecord, GateSignal, RepoPathProjection,
-    SemanticInputRecord, WorktreeTransition, seal_analysis_snapshot,
+    ActualWriteSet, AnalysisSnapshot, GateBaseline, GateRecord, GateSignal,
+    PhysicalAliasClosureRecord, RepoPathProjection, SemanticInputRecord, WorktreeTransition,
+    seal_analysis_snapshot,
 };
 use lumin_store::ActiveGateLease;
 
@@ -181,5 +182,39 @@ pub(super) fn active_transition_signals(
         Vec::new()
     } else {
         vec![GateSignal::ActiveTransitionPending { paths, gate_ids }]
+    }
+}
+
+pub(super) fn closure_expanded_actual_write_set(
+    preliminary_paths: &[RepoPathProjection],
+    baseline_alias_closures: &[PhysicalAliasClosureRecord],
+    current_alias_closures: &[PhysicalAliasClosureRecord],
+) -> ActualWriteSet {
+    let mut paths = preliminary_paths.iter().cloned().collect::<BTreeSet<_>>();
+    loop {
+        let before = paths.len();
+        for closure in baseline_alias_closures.iter().chain(current_alias_closures) {
+            if closure.members.iter().any(|member| paths.contains(member)) {
+                paths.extend(closure.members.iter().cloned());
+            }
+        }
+        if paths.len() == before {
+            break;
+        }
+    }
+    let baseline_alias_closures = baseline_alias_closures
+        .iter()
+        .filter(|closure| closure.members.iter().any(|member| paths.contains(member)))
+        .cloned()
+        .collect();
+    let current_alias_closures = current_alias_closures
+        .iter()
+        .filter(|closure| closure.members.iter().any(|member| paths.contains(member)))
+        .cloned()
+        .collect();
+    ActualWriteSet {
+        paths: paths.into_iter().collect(),
+        baseline_alias_closures,
+        current_alias_closures,
     }
 }

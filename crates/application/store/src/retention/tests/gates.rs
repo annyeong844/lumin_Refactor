@@ -62,6 +62,7 @@ fn insert_terminal_gate(store: &crate::RepositoryStore) -> Result<GateId, crate:
                 reason: Some("test terminal gate".to_owned()),
                 signals: Vec::new(),
                 changed_paths: Vec::new(),
+                actual_write_set: None,
                 snapshot: None,
                 protected_semantic_inputs: Vec::new(),
                 alias_closures: Vec::new(),

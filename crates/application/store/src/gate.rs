@@ -1,8 +1,9 @@
 use lumin_evidence::{
-    AnalysisSnapshot, GateAnalysisOptions, GateBaseline, GateLifecycle, GateOperationKind,
-    GateOperationResult, GateOperationStatus, GateRecord, GateRevision, GateSignal,
-    OperationRecord, PhysicalAliasClosureRecord, RepoPathProjection, SemanticInputRecord,
-    SemanticReadReservationBinding, TransitionCapsule, WorktreeTransition, WriteLease, gate_policy,
+    ActualWriteSet, AnalysisSnapshot, GateAnalysisOptions, GateBaseline, GateLifecycle,
+    GateOperationKind, GateOperationResult, GateOperationStatus, GateRecord, GateRevision,
+    GateSignal, OperationRecord, PhysicalAliasClosureRecord, RepoPathProjection,
+    SemanticInputRecord, SemanticReadReservationBinding, TransitionCapsule, WorktreeTransition,
+    WriteLease, gate_policy,
 };
 use lumin_model::{GateDeltaRecord, GateId, OperationId};
 use redb::{ReadableTable, TableDefinition, WriteTransaction};
@@ -80,6 +81,7 @@ pub struct PostWriteFinish {
     pub protected_semantic_inputs: Vec<SemanticInputRecord>,
     pub reconciled_baseline: Option<AnalysisSnapshot>,
     pub changed_paths: Vec<RepoPathProjection>,
+    pub actual_write_set: Option<ActualWriteSet>,
     pub alias_closures: Vec<PhysicalAliasClosureRecord>,
     pub reconciled_transition_sequences: Vec<u64>,
     pub signals: Vec<GateSignal>,
@@ -97,7 +99,7 @@ pub enum PreWriteStart {
         gate_id: GateId,
         transition_sequence: u64,
     },
-    Committed(GateOperationResult),
+    Committed(Box<GateOperationResult>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -118,7 +120,7 @@ pub enum SemanticReadReservation {
         gate_ids: Vec<GateId>,
     },
     TransitionCatalogChanged,
-    Committed(GateOperationResult),
+    Committed(Box<GateOperationResult>),
 }
 
 impl RepositoryStore {
@@ -467,6 +469,7 @@ fn completed_pre_write_records(
         reason: None,
         signals: signals.clone(),
         leased_write_set: leased_write_set.clone(),
+        actual_write_set: None,
         deltas: Vec::new(),
     };
     let analysis_options = operation.analysis_options.clone().ok_or_else(|| {
@@ -495,6 +498,7 @@ fn completed_pre_write_records(
             reason: None,
             signals,
             changed_paths: Vec::new(),
+            actual_write_set: None,
             snapshot: None,
             protected_semantic_inputs,
             alias_closures,
@@ -692,6 +696,7 @@ fn rejected_open_result(
         reason: None,
         signals: signals.to_vec(),
         leased_write_set: operation.leased_write_set.clone(),
+        actual_write_set: None,
         deltas: Vec::new(),
     }
 }
@@ -726,6 +731,7 @@ fn rejected_gate(
             reason: None,
             signals: signals.to_vec(),
             changed_paths: Vec::new(),
+            actual_write_set: None,
             snapshot: None,
             protected_semantic_inputs,
             alias_closures: Vec::new(),

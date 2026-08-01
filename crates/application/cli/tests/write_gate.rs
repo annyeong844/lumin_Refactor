@@ -341,6 +341,7 @@ fn protected_input_drift_is_stale() -> Result<(), Box<dyn std::error::Error>> {
         post_json.get("lifecycle").and_then(Value::as_str),
         Some("active")
     );
+    assert!(post_json.get("actualWriteSet").is_none());
     Ok(())
 }
 
@@ -385,6 +386,54 @@ fn unsupported_non_source_path_is_queryable_incomplete() -> Result<(), Box<dyn s
             .pointer("/result/decision")
             .and_then(Value::as_str),
         Some("incomplete")
+    );
+    Ok(())
+}
+
+#[test]
+fn planned_semantic_config_write_is_recaptured_and_attributed()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    fs::write(
+        root.path().join("package.json"),
+        "{\"name\":\"app\",\"type\":\"commonjs\"}\n",
+    )?;
+    let gate_id = open_gate(root.path(), "op-config-open", "package.json")?;
+
+    fs::write(
+        root.path().join("package.json"),
+        "{\"name\":\"app\",\"type\":\"module\"}\n",
+    )?;
+    let post = run(
+        root.path(),
+        &["post-write", &gate_id, "--operation-id", "op-config-close"],
+    )?;
+    assert_status(&post, 0);
+    assert_eq!(field(&post.stdout, "decision")?, "allow");
+    let post_json: Value = serde_json::from_str(&post.stdout)?;
+    assert_eq!(
+        display_paths(&post_json, "/actualWriteSet/paths")?,
+        vec!["package.json"]
+    );
+    assert_alias_group_members(
+        &post_json,
+        "/actualWriteSet/baselineAliasClosures",
+        &["package.json"],
+    )?;
+    assert_alias_group_members(
+        &post_json,
+        "/actualWriteSet/currentAliasClosures",
+        &["package.json"],
+    )?;
+
+    let shown = run(root.path(), &["gate", "show", &gate_id])?;
+    assert_status(&shown, 0);
+    assert_eq!(
+        display_paths(
+            &serde_json::from_str::<Value>(&shown.stdout)?,
+            "/revisions/1/actualWriteSet/paths",
+        )?,
+        vec!["package.json"]
     );
     Ok(())
 }
@@ -598,14 +647,20 @@ fn physical_alias_closure_is_visible_and_rejects_a_late_unleased_alias()
     )?;
     assert_status(&post, 3);
     assert_eq!(field(&post.stdout, "decision")?, "deny");
+    let post_json: Value = serde_json::from_str(&post.stdout)?;
     assert!(
-        serde_json::from_str::<Value>(&post.stdout)?
+        post_json
             .get("signals")
             .and_then(Value::as_array)
             .is_some_and(|signals| signals.iter().any(|signal| {
                 signal.get("kind").and_then(Value::as_str) == Some("unplanned-write")
             }))
     );
+    assert_display_path_set(
+        &post_json,
+        "/actualWriteSet/paths",
+        &["src/alias.ts", "src/late-alias.ts", "src/original.ts"],
+    )?;
     Ok(())
 }
 
@@ -630,6 +685,22 @@ fn physical_alias_members_are_reanalyzed_as_one_leased_payload()
     )?;
     assert_status(&post, 0);
     assert_eq!(field(&post.stdout, "decision")?, "allow");
+    let post_json: Value = serde_json::from_str(&post.stdout)?;
+    assert_display_path_set(
+        &post_json,
+        "/actualWriteSet/paths",
+        &["src/alias.ts", "src/original.ts"],
+    )?;
+    assert_alias_group_members(
+        &post_json,
+        "/actualWriteSet/baselineAliasClosures",
+        &["src/alias.ts", "src/original.ts"],
+    )?;
+    assert_alias_group_members(
+        &post_json,
+        "/actualWriteSet/currentAliasClosures",
+        &["src/alias.ts", "src/original.ts"],
+    )?;
 
     let shown = run(root.path(), &["gate", "show", &gate_id])?;
     assert_status(&shown, 0);
@@ -639,6 +710,65 @@ fn physical_alias_members_are_reanalyzed_as_one_leased_payload()
             .and_then(Value::as_u64),
         Some(1)
     );
+    Ok(())
+}
+
+fn display_paths<'a>(
+    value: &'a Value,
+    pointer: &str,
+) -> Result<Vec<&'a str>, Box<dyn std::error::Error>> {
+    value
+        .pointer(pointer)
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other(format!("missing path array at {pointer}")))?
+        .iter()
+        .map(|path| {
+            path.get("display").and_then(Value::as_str).ok_or_else(|| {
+                std::io::Error::other(format!("path at {pointer} omitted display")).into()
+            })
+        })
+        .collect()
+}
+
+fn assert_alias_group_members(
+    value: &Value,
+    pointer: &str,
+    expected: &[&str],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let groups = value
+        .pointer(pointer)
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other(format!("missing alias groups at {pointer}")))?;
+    let mut expected = expected.to_vec();
+    expected.sort_unstable();
+    assert!(groups.iter().any(|group| {
+        group
+            .get("members")
+            .and_then(Value::as_array)
+            .and_then(|members| {
+                members
+                    .iter()
+                    .map(|member| member.get("display").and_then(Value::as_str))
+                    .collect::<Option<Vec<_>>>()
+            })
+            .is_some_and(|mut members| {
+                members.sort_unstable();
+                members == expected
+            })
+    }));
+    Ok(())
+}
+
+fn assert_display_path_set(
+    value: &Value,
+    pointer: &str,
+    expected: &[&str],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut actual = display_paths(value, pointer)?;
+    actual.sort_unstable();
+    let mut expected = expected.to_vec();
+    expected.sort_unstable();
+    assert_eq!(actual, expected);
     Ok(())
 }
 

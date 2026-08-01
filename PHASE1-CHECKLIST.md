@@ -44,14 +44,13 @@ These are execution-matrix counts, not a percentage estimate of product code.
 
 | Lane | Applicable | Mapped | Remaining | Verified aggregate |
 | --- | ---: | ---: | ---: | --- |
-| Standard | 86 | 38 | 48 | Current full run: 38 passed, 0 failed, 48 unmapped; every mapped row validated its public-binary marker. |
+| Standard | 86 | 39 | 47 | Current full run: 39 passed, 0 failed, 47 unmapped; every mapped row validated its public-binary marker. |
 | Determinism | 86 | 0 | 86 | No mapped-row aggregate proof yet. |
 | Store crash | 10 | 4 | 6 | Mapping count only; Phase 1 exit still requires the complete lane. |
-| **Total execution obligations** | **182** | **42** | **140** | This total deliberately counts each required lane execution. |
+| **Total execution obligations** | **182** | **43** | **139** | This total deliberately counts each required lane execution. |
 
 Known non-corpus exit gaps:
 
-- exact actual-write attribution is not implemented;
 - relative directory package/index extension probing is not implemented;
 - architecture enforcement still defers path-owner, generated-table,
   limitation-registry, codec-runtime, and third-party command re-export checks;
@@ -75,7 +74,7 @@ Owner routes: SLICE-001, repository closeout workflow.
   pass its focused marker-backed behavior test.
 - [x] Complete the current source-role packet's required closeout checks without
   mixing a new feature into the dirty worktree.
-- [x] Run the full standard orchestrator once at the current 38-row mapping and
+- [x] Run the full standard orchestrator once at the then-current mapping and
   record the exact pass/unmapped result here.
 
 Exit: the current packet is closed, and aggregate evidence no longer trails the
@@ -85,7 +84,7 @@ registry count.
 
 Owner routes: ARCH-000, ARCH-001, ARCH-002, SLICE-001 AC 19, 21, 35, 37, and 38.
 
-- [ ] Implement the exact actual-write set and physical-alias attribution; keep
+- [x] Implement the exact actual-write set and physical-alias attribution; keep
   the current fail-closed `UnplannedWrite` behavior until exact evidence exists.
 - [ ] Implement the owned relative-directory package/index extension-probe
   precedence required by the `extension-probe-precedence` corpus row.
@@ -105,7 +104,7 @@ commands rather than being faked inside `architecture-check`.
 
 Owner routes: ARCH-001 and SLICE-001 AC 5, 6, 22, 24, 33, and 35.
 
-- [ ] Map determinism invocations for all 38 currently mapped standard rows.
+- [ ] Map determinism invocations for all 39 currently mapped standard rows.
 - [ ] Require every later standard-row packet to add its applicable determinism
   invocation in the same packet.
 - [ ] Prove repeated default jobs and `jobs=1` produce identical semantic

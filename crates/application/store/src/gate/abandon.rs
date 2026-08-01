@@ -113,6 +113,7 @@ fn apply_abandon(
         reason: Some(reason.clone()),
         signals: Vec::new(),
         changed_paths: Vec::new(),
+        actual_write_set: None,
         snapshot: None,
         protected_semantic_inputs: Vec::new(),
         alias_closures: Vec::new(),
@@ -129,6 +130,7 @@ fn apply_abandon(
         reason: Some(reason),
         signals: Vec::new(),
         leased_write_set: Vec::new(),
+        actual_write_set: None,
         deltas: Vec::new(),
     })
 }
