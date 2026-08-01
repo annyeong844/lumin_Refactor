@@ -1,8 +1,10 @@
 use lumin_model::{PackageSurfaceLane, PackageSurfaceSource, ResolutionOutcome, SymbolNamespace};
 
+use crate::generated_config_policy::{FieldClassification, PackageFieldApplicability};
+
 use super::{
-    PackageContext, PackageResolution, ResolutionRequest, TargetRequest, resolve_base, unresolved,
-    unsupported,
+    PackageContext, PackageResolution, ResolutionRequest, TargetRequest, package_field_policy,
+    reject_applicable_unsupported_fields, resolve_base, unresolved, unsupported,
 };
 
 pub(super) fn resolve(
@@ -13,7 +15,14 @@ pub(super) fn resolve(
         return resolve_type(context, request);
     }
     if request.lane == PackageSurfaceLane::BundlerImport
-        && let Some(result) = reject_bundler_overrides(context, request.specifier)
+        && let Some(result) = reject_applicable_unsupported_fields(
+            context,
+            request.specifier,
+            &[
+                PackageFieldApplicability::BundlerValueWhenExportsAbsentOrNotConsulted,
+                PackageFieldApplicability::BundlerValueFallbackWhenExportsAbsent,
+            ],
+        )
     {
         return result;
     }
@@ -61,12 +70,12 @@ fn resolve_value(
 }
 
 fn resolve_type(context: &PackageContext<'_>, request: ResolutionRequest<'_>) -> PackageResolution {
-    if context.manifest.root.get("typesVersions").is_some() {
-        return unsupported(
-            context.package,
-            request.specifier,
-            "package typesVersions semantics are unsupported",
-        );
+    if let Some(result) = reject_applicable_unsupported_fields(
+        context,
+        request.specifier,
+        &[PackageFieldApplicability::TypeFallbackWhenExportsAbsentOrNotConsulted],
+    ) {
+        return result;
     }
     let mut consulted = Vec::new();
     if let Some(result) = resolve_manifest_fields(
@@ -81,11 +90,6 @@ fn resolve_type(context: &PackageContext<'_>, request: ResolutionRequest<'_>) ->
         ],
         &mut consulted,
     ) {
-        return result;
-    }
-    if request.lane == PackageSurfaceLane::BundlerImport
-        && let Some(result) = reject_bundler_overrides(context, request.specifier)
-    {
         return result;
     }
     let result = if request.lane == PackageSurfaceLane::BundlerImport {
@@ -136,6 +140,20 @@ fn resolve_manifest_fields(
     consulted: &mut Vec<String>,
 ) -> Option<PackageResolution> {
     for (field, source) in fields {
+        let Some(policy) = package_field_policy(field) else {
+            return Some(unsupported(
+                context.package,
+                request.specifier,
+                &format!("package {field} has no generated resolver policy"),
+            ));
+        };
+        if policy.classification != FieldClassification::SupportedAndModeled {
+            return Some(unsupported(
+                context.package,
+                request.specifier,
+                &format!("package {field} is not a modeled resolver field"),
+            ));
+        }
         let Some(value) = context.manifest.root.get(field) else {
             continue;
         };
@@ -213,21 +231,6 @@ fn accept_or_collect(
         }
         _ => Some(result),
     }
-}
-
-fn reject_bundler_overrides(
-    context: &PackageContext<'_>,
-    specifier: &str,
-) -> Option<PackageResolution> {
-    ["browser", "react-native"].into_iter().find_map(|field| {
-        context.manifest.root.get(field).map(|_| {
-            unsupported(
-                context.package,
-                specifier,
-                &format!("package {field} semantics are unsupported"),
-            )
-        })
-    })
 }
 
 pub(super) fn lane_allows_extensionless(lane: PackageSurfaceLane) -> bool {

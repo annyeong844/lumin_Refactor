@@ -509,6 +509,44 @@ fn types_versions_blocks_type_fallback_only_in_affected_package()
 }
 
 #[test]
+fn bundler_value_only_browser_field_does_not_block_type_declaration_companion()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::create_dir_all(root.path().join("packages/lib"))?;
+    fs::write(
+        root.path().join("package.json"),
+        r#"{"name":"app","workspaces":["packages/*"]}"#,
+    )?;
+    fs::write(
+        root.path().join("packages/lib/package.json"),
+        r#"{"name":"@acme/lib","private":true,"browser":"./browser.js","main":"./main.js"}"#,
+    )?;
+    fs::write(
+        root.path().join("packages/lib/main.d.ts"),
+        "export type Shape = string;",
+    )?;
+    fs::write(
+        root.path().join("src/main.ts"),
+        "import type { Shape } from '@acme/lib'; const value: Shape = 'x'; console.log(value);",
+    )?;
+
+    let evidence = analyze_repository(
+        root.path(),
+        &InventoryRequest::default(),
+        1,
+        Some(ResolutionProfile::Bundler),
+    )?;
+
+    assert_eq!(evidence.dead_code_state(), CapabilityState::Complete);
+    assert!(evidence.limitations.iter().all(|limitation| !matches!(
+        limitation,
+        Limitation::PublicSurfaceUnsupported { detail, .. } if detail.contains("browser")
+    )));
+    Ok(())
+}
+
+#[test]
 fn exports_pattern_contributes_public_surface_for_existing_target()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;

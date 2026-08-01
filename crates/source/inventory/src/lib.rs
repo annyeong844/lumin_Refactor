@@ -991,7 +991,7 @@ impl CollectedFiles {
                 return Ok(());
             }
         };
-        let roles = classify_roles(relative, kind, &bytes, patterns);
+        let roles = classify_roles(&path, relative, kind, &bytes, patterns)?;
         self.sources
             .insert(path.clone(), SourceSnapshot::new(path, kind, roles, bytes));
         Ok(())
@@ -1224,11 +1224,12 @@ fn parse_role(value: &str) -> Result<ScanRole, InventoryError> {
 }
 
 fn classify_roles(
+    path: &RepoPath,
     relative: &Path,
     kind: SourceKind,
     bytes: &[u8],
     patterns: &PatternSet,
-) -> SourceRoles {
+) -> Result<SourceRoles, InventoryError> {
     let test_like = default_test_role(relative);
     let generated = generated_marker(bytes).then_some(SourceRoleReason::LeadingGeneratedComment);
     let declaration = kind.is_declaration();
@@ -1267,32 +1268,67 @@ fn classify_roles(
 
     apply_roles(
         &mut roles,
+        path,
         relative,
         &patterns.config_roles,
         SourceRoleConfigurationSource::Configuration,
-    );
+    )?;
     apply_roles(
         &mut roles,
+        path,
         relative,
         &patterns.invocation_roles,
         SourceRoleConfigurationSource::Invocation,
-    );
-    roles
+    )?;
+    Ok(roles)
 }
 
 fn apply_roles(
     roles: &mut SourceRoles,
+    path: &RepoPath,
     relative: &Path,
     rules: &[(Gitignore, ScanRole)],
     configuration_source: SourceRoleConfigurationSource,
-) {
-    for (pattern, role) in rules {
-        if !pattern
-            .matched_path_or_any_parents(relative, false)
-            .is_ignore()
-        {
-            continue;
+) -> Result<(), InventoryError> {
+    let matched = [
+        ScanRole::Test,
+        ScanRole::Production,
+        ScanRole::Generated,
+        ScanRole::Vendor,
+        ScanRole::Authored,
+    ]
+    .into_iter()
+    .filter(|candidate| {
+        rules.iter().any(|(pattern, role)| {
+            role == candidate
+                && pattern
+                    .matched_path_or_any_parents(relative, false)
+                    .is_ignore()
+        })
+    })
+    .collect::<Vec<_>>();
+
+    for (left, right) in [
+        (ScanRole::Test, ScanRole::Production),
+        (ScanRole::Generated, ScanRole::Authored),
+        (ScanRole::Vendor, ScanRole::Authored),
+    ] {
+        if matched.contains(&left) && matched.contains(&right) {
+            let tier = match configuration_source {
+                SourceRoleConfigurationSource::Configuration => "configuration",
+                SourceRoleConfigurationSource::Invocation => "invocation",
+                SourceRoleConfigurationSource::CompiledDefault => "compiled-default",
+            };
+            return Err(InventoryError::MalformedConfiguration(format!(
+                "contradictory {tier} source role declarations for {}: {} conflicts with {}",
+                path.display_escaped(),
+                role_name(left),
+                role_name(right)
+            )));
         }
+    }
+
+    for role in matched {
         let reason = match role {
             ScanRole::Test => {
                 roles.test_like = Some(SourceRoleReason::ExplicitTestRole);
@@ -1316,7 +1352,18 @@ fn apply_roles(
                 SourceRoleReason::ExplicitAuthoredRole
             }
         };
-        push_classification(roles, (*role).into(), reason, configuration_source);
+        push_classification(roles, role.into(), reason, configuration_source);
+    }
+    Ok(())
+}
+
+fn role_name(role: ScanRole) -> &'static str {
+    match role {
+        ScanRole::Test => "test",
+        ScanRole::Production => "production",
+        ScanRole::Generated => "generated",
+        ScanRole::Vendor => "vendor",
+        ScanRole::Authored => "authored",
     }
 }
 

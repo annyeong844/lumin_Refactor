@@ -26,6 +26,25 @@ pub enum FieldClassification {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PackageFieldApplicability {
+    BundlerValueWhenExportsAbsentOrNotConsulted,
+    ExportsEnabledModeled,
+    InternalImportsEnabledUnsupported,
+    ValueFallbackWhenExportsAbsentOrNotConsulted,
+    BundlerValueFallbackWhenExportsAbsent,
+    SideEffectReachability,
+    WorkspacePackageTsconfig,
+    NodeImporterFormat,
+    TypeFallbackWhenExportsAbsentOrNotConsulted,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PackageFieldApplicabilityPolicy {
+    pub path: &'static str,
+    pub applicability: PackageFieldApplicability,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FieldPolicy {
     pub path: &'static str,
     pub shape: &'static str,
@@ -63,6 +82,7 @@ pub struct FieldPolicy {
         &artifacts.resolver_package_fields,
         "FieldClassification",
     )?;
+    render_package_applicability(&mut output, &artifacts.resolver_package_fields)?;
     render_string_array(
         &mut output,
         "RESOLVER_INVENTORY_OWNED_FIELDS",
@@ -201,6 +221,26 @@ fn render_rows(
             row.shape_mismatch_limitation.as_deref(),
         );
         render_optional(output, "applies_when", row.applies_when.as_deref());
+        push_line(output, "    },");
+    }
+    push_line(output, "];\n");
+    Ok(())
+}
+
+fn render_package_applicability(output: &mut String, rows: &[PolicyRow]) -> Result<(), String> {
+    push_line(
+        output,
+        "pub(crate) static RESOLVER_PACKAGE_FIELD_APPLICABILITY: &[PackageFieldApplicabilityPolicy] = &[",
+    );
+    for row in rows {
+        let variant =
+            package_applicability_variant(row.applies_when.as_deref().unwrap_or_default())?;
+        push_line(output, "    PackageFieldApplicabilityPolicy {");
+        push_line(output, &format!("        path: {:?},", row.path));
+        push_line(
+            output,
+            &format!("        applicability: PackageFieldApplicability::{variant},"),
+        );
         push_line(output, "    },");
     }
     push_line(output, "];\n");

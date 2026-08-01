@@ -348,6 +348,7 @@ fn validate_artifacts(artifacts: &Artifacts) -> Vec<String> {
         &["SupportedAndModeled", "UnsupportedResolutionAffecting"],
         &mut violations,
     );
+    validate_package_applicability(&artifacts.resolver_package_fields, &mut violations);
     validate_rows(
         "inventory packageJson.fields",
         &artifacts.inventory_package_fields,
@@ -363,6 +364,56 @@ fn validate_artifacts(artifacts: &Artifacts) -> Vec<String> {
     validate_baseline_count(artifacts, &mut violations);
     validate_owner_partition(artifacts, &mut violations);
     violations
+}
+
+fn validate_package_applicability(rows: &[PolicyRow], violations: &mut Vec<String>) {
+    let mut paths = BTreeSet::new();
+    for row in rows {
+        if !paths.insert(row.path.as_str()) {
+            violations.push(format!(
+                "GENERATED TABLE DUPLICATE PACKAGE FIELD: resolver packageJson.fields repeats {}",
+                row.path
+            ));
+        }
+        match row.applies_when.as_deref() {
+            Some(value) if package_applicability_variant(value).is_ok() => {}
+            Some(value) => violations.push(format!(
+                "GENERATED TABLE UNKNOWN APPLICABILITY: resolver packageJson.fields.{} has {value}",
+                row.path
+            )),
+            None => violations.push(format!(
+                "GENERATED TABLE MISSING APPLICABILITY: resolver packageJson.fields.{}",
+                row.path
+            )),
+        }
+    }
+}
+
+fn package_applicability_variant(value: &str) -> Result<&'static str, String> {
+    match value {
+        "bundler value lane when exports is absent or NotConsultedForProfile" => {
+            Ok("BundlerValueWhenExportsAbsentOrNotConsulted")
+        }
+        "selected profile exports state is enabled-modeled" => Ok("ExportsEnabledModeled"),
+        "an internal # specifier is observed and selected profile imports state is enabled-unsupported" => {
+            Ok("InternalImportsEnabledUnsupported")
+        }
+        "value lane fallback when exports is absent or NotConsultedForProfile" => {
+            Ok("ValueFallbackWhenExportsAbsentOrNotConsulted")
+        }
+        "bundler value lane fallback when exports is absent" => {
+            Ok("BundlerValueFallbackWhenExportsAbsent")
+        }
+        "side-effect reachability is requested in any profile" => Ok("SideEffectReachability"),
+        "a supported workspace-package config extends selects this package" => {
+            Ok("WorkspacePackageTsconfig")
+        }
+        "node16 or nodenext importer-format selection" => Ok("NodeImporterFormat"),
+        "type lane fallback when exports is absent or NotConsultedForProfile" => {
+            Ok("TypeFallbackWhenExportsAbsentOrNotConsulted")
+        }
+        other => Err(format!("unknown package applicability {other}")),
+    }
 }
 
 fn expect_string(

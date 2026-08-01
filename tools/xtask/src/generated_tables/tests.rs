@@ -57,6 +57,32 @@ fn unknown_classification_is_rejected() -> Result<(), Box<dyn std::error::Error>
 }
 
 #[test]
+fn missing_package_applicability_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+    let mut artifacts = load_artifacts(&workspace_root()?).map_err(std::io::Error::other)?;
+    artifacts.resolver_package_fields[0].applies_when = None;
+    let violations = validate_artifacts(&artifacts);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("MISSING APPLICABILITY"))
+    );
+    Ok(())
+}
+
+#[test]
+fn unknown_package_applicability_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+    let mut artifacts = load_artifacts(&workspace_root()?).map_err(std::io::Error::other)?;
+    artifacts.resolver_package_fields[0].applies_when = Some("whenever".to_owned());
+    let violations = validate_artifacts(&artifacts);
+    assert!(
+        violations
+            .iter()
+            .any(|violation| violation.contains("UNKNOWN APPLICABILITY"))
+    );
+    Ok(())
+}
+
+#[test]
 fn generation_is_idempotent_and_drift_is_visible() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
     for relative in [RESOLVER_SPEC, INVENTORY_SPEC] {

@@ -37,21 +37,8 @@ fn parses_single_source_registry() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn missing_model_row_is_a_violation() -> Result<(), Box<dyn std::error::Error>> {
     let (variants, mut rows) = parse_model_contract(MODEL).map_err(std::io::Error::other)?;
+    let spec = spec_rows(&rows);
     rows.pop();
-    let spec = BTreeMap::from([
-        (
-            "Alpha".to_owned(),
-            SpecRow {
-                owner: "lumin-js".to_owned(),
-            },
-        ),
-        (
-            "Beta".to_owned(),
-            SpecRow {
-                owner: "lumin-resolve".to_owned(),
-            },
-        ),
-    ]);
     let members = vec![member("lumin-js"), member("lumin-resolve")];
     let mut violations = Vec::new();
     validate_contract(&variants, &rows, &spec, &members, &mut violations);
@@ -60,6 +47,38 @@ fn missing_model_row_is_a_violation() -> Result<(), Box<dyn std::error::Error>> 
             .iter()
             .any(|violation| violation.contains("Limitation::Beta"))
     );
+    Ok(())
+}
+
+#[test]
+fn scope_absence_and_gate_drift_are_independently_rejected()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (variants, rows) = parse_model_contract(MODEL).map_err(std::io::Error::other)?;
+    let members = vec![member("lumin-js"), member("lumin-resolve")];
+    for (dimension, mutate) in [
+        ("SCOPE DRIFT", 0_usize),
+        ("ABSENCE DRIFT", 1_usize),
+        ("GATE DRIFT", 2_usize),
+    ] {
+        let mut spec = spec_rows(&rows);
+        let alpha = spec
+            .get_mut("Alpha")
+            .ok_or_else(|| std::io::Error::other("Alpha spec row is missing"))?;
+        match mutate {
+            0 => alpha.scope = "WrongScope".to_owned(),
+            1 => alpha.absence = "WrongAbsence".to_owned(),
+            2 => alpha.gate = "WrongGate".to_owned(),
+            _ => unreachable!(),
+        }
+        let mut violations = Vec::new();
+        validate_contract(&variants, &rows, &spec, &members, &mut violations);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains(dimension)),
+            "missing {dimension}: {violations:?}"
+        );
+    }
     Ok(())
 }
 
@@ -152,4 +171,20 @@ fn member(name: &str) -> crate::metadata::WorkspaceMember {
         manifest_path: PathBuf::new(),
         src_root: PathBuf::new(),
     }
+}
+
+fn spec_rows(rows: &[RegistryRow]) -> BTreeMap<String, SpecRow> {
+    rows.iter()
+        .map(|row| {
+            (
+                row.variant.clone(),
+                SpecRow {
+                    owner: owner_package(&row.owner),
+                    scope: row.scope.clone(),
+                    absence: row.absence.clone(),
+                    gate: row.gate.clone(),
+                },
+            )
+        })
+        .collect()
 }

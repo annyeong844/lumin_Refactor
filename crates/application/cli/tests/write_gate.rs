@@ -345,6 +345,50 @@ fn protected_input_drift_is_stale() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn incomplete_close_withholds_partial_actual_write_attribution()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::symlink;
+
+    let root = source_fixture("console.log('lib');\n", "console.log('main');\n")?;
+    let gate_id = open_gate(root.path(), "op-incomplete-open", "src/lib.ts")?;
+    let outside = tempfile::tempdir()?;
+    let outside_source = outside.path().join("outside.ts");
+    fs::write(&outside_source, "export const outside = true;\n")?;
+    fs::remove_file(root.path().join("src/lib.ts"))?;
+    symlink(&outside_source, root.path().join("src/lib.ts"))?;
+
+    let post = run(
+        root.path(),
+        &[
+            "post-write",
+            &gate_id,
+            "--operation-id",
+            "op-incomplete-close",
+        ],
+    )?;
+    assert_status(&post, 4);
+    let post_json: Value = serde_json::from_str(&post.stdout)?;
+    assert_eq!(
+        post_json.get("decision").and_then(Value::as_str),
+        Some("incomplete")
+    );
+    assert_has_signal(&post.stdout, "required-evidence-incomplete")?;
+    assert!(post_json.get("actualWriteSet").is_none());
+
+    let shown = run(root.path(), &["gate", "show", &gate_id])?;
+    assert_status(&shown, 0);
+    let shown_json: Value = serde_json::from_str(&shown.stdout)?;
+    assert!(shown_json.pointer("/revisions/1/actualWriteSet").is_none());
+
+    let operation = run(root.path(), &["operation", "show", "op-incomplete-close"])?;
+    assert_status(&operation, 0);
+    let operation_json: Value = serde_json::from_str(&operation.stdout)?;
+    assert!(operation_json.pointer("/result/actualWriteSet").is_none());
+    Ok(())
+}
+
 #[test]
 fn unsupported_non_source_path_is_queryable_incomplete() -> Result<(), Box<dyn std::error::Error>> {
     let root = fixture()?;
