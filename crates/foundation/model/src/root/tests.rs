@@ -54,6 +54,65 @@ fn rejects_noncanonical_drive_and_trailing_bytes() -> Result<(), Box<dyn std::er
     Ok(())
 }
 
+#[test]
+fn classifies_rooted_utf8_paths_against_frozen_root_vectors()
+-> Result<(), Box<dyn std::error::Error>> {
+    let unix = RepositoryRootIdentity::from_canonical_bytes(&decode_hex(ROOT_VECTORS[0])?)?;
+    assert_eq!(
+        unix.classify_rooted_utf8_path("/repo/config/base.json"),
+        RootedPathRelation::Contained
+    );
+    assert_eq!(
+        unix.classify_rooted_utf8_path("/repository/base.json"),
+        RootedPathRelation::Outside
+    );
+    assert_eq!(
+        unix.classify_rooted_utf8_path("config/base.json"),
+        RootedPathRelation::NotRooted
+    );
+
+    let drive = RepositoryRootIdentity::from_canonical_bytes(&decode_hex(ROOT_VECTORS[1])?)?;
+    for contained in [
+        "c:/repo/base.json",
+        "C:\\repo\\base.json",
+        "/repo/base.json",
+    ] {
+        assert_eq!(
+            drive.classify_rooted_utf8_path(contained),
+            RootedPathRelation::Contained
+        );
+    }
+    assert_eq!(
+        drive.classify_rooted_utf8_path("D:/repo/base.json"),
+        RootedPathRelation::Outside
+    );
+
+    let unc = RepositoryRootIdentity::from_canonical_bytes(&decode_hex(ROOT_VECTORS[2])?)?;
+    assert_eq!(
+        unc.classify_rooted_utf8_path("//server/share/repo/base.json"),
+        RootedPathRelation::Contained
+    );
+    assert_eq!(
+        unc.classify_rooted_utf8_path("//server/other/repo/base.json"),
+        RootedPathRelation::Outside
+    );
+
+    let volume = RepositoryRootIdentity::from_canonical_bytes(&decode_hex(ROOT_VECTORS[3])?)?;
+    assert_eq!(
+        volume.classify_rooted_utf8_path(
+            "//?/Volume{00112233-4455-6677-8899-AABBCCDDEEFF}/repo/base.json"
+        ),
+        RootedPathRelation::Contained
+    );
+    assert_eq!(
+        volume.classify_rooted_utf8_path(
+            "//?/Volume{10112233-4455-6677-8899-aabbccddeeff}/repo/base.json"
+        ),
+        RootedPathRelation::Outside
+    );
+    Ok(())
+}
+
 fn decode_hex(value: &str) -> Result<Vec<u8>, std::num::ParseIntError> {
     (0..value.len())
         .step_by(2)

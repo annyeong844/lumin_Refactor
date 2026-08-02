@@ -7,8 +7,8 @@ use lumin_evidence::{
 };
 use lumin_inventory::InventoryRequest;
 use lumin_model::{
-    GateDeltaRecord, GateId, OperationId, RepoPath, ResolutionProfile, append_length_prefixed,
-    digest_hex,
+    GateDeltaRecord, GateId, OperationId, RepoPath, RepositoryRootIdentity, ResolutionProfile,
+    append_length_prefixed, digest_hex,
 };
 use lumin_store::{
     OperationSession, PostWriteFinish, PostWriteStart, PreWriteFinish, PreWriteStart,
@@ -17,7 +17,7 @@ use lumin_store::{
 
 use super::{
     EngineError, RepositoryAnalysisSession, RepositoryAnalysisStep, RepositoryCapture,
-    open_repository_context,
+    RepositoryContext, open_repository_context,
 };
 
 mod domain;
@@ -116,7 +116,7 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
     let finish = if inspection.signals.is_empty() {
         match analyze_pre_write(
             &operation,
-            &context.root,
+            &context,
             request,
             inspection,
             transition_sequence,
@@ -165,7 +165,7 @@ enum PreWriteAnalysis {
 
 fn analyze_pre_write(
     operation: &OperationSession<'_>,
-    root: &Path,
+    context: &RepositoryContext,
     request: &PreWriteRequest,
     inspection: DeclaredPathInspection,
     transition_sequence: u64,
@@ -178,11 +178,17 @@ fn analyze_pre_write(
         scan_invocation: build_gate_scan_invocation_tier(request),
     };
     let inventory_request = inventory_request_from_tier(&options.scan_invocation)?;
-    let capture = match capture_reserved_repository(root, &options, &inventory_request, |paths| {
-        operation
-            .reserve_pre_write_semantic_inputs(request_digest, gate_id, paths)
-            .map_err(Into::into)
-    }) {
+    let capture = match capture_reserved_repository(
+        &context.root,
+        &context.repository_root,
+        &options,
+        &inventory_request,
+        |paths| {
+            operation
+                .reserve_pre_write_semantic_inputs(request_digest, gate_id, paths)
+                .map_err(Into::into)
+        },
+    ) {
         Ok(ReservedCapture::Finished { capture, .. }) => capture,
         Ok(ReservedCapture::Blocked(signal)) => {
             return Ok(PreWriteAnalysis::Finished(PreWriteFinish {
@@ -207,8 +213,12 @@ fn analyze_pre_write(
             }));
         }
     };
-    let (leased_write_set, alias_closures, mut signals) =
-        expand_write_domain(root, &inspection.observations, inspection.leases, &capture);
+    let (leased_write_set, alias_closures, mut signals) = expand_write_domain(
+        &context.root,
+        &inspection.observations,
+        inspection.leases,
+        &capture,
+    );
     let protected_semantic_inputs = protected_semantic_inputs(&capture, &leased_write_set);
     signals.extend(gate_policy::opening_signals(&capture.snapshot.evidence));
     let baseline = GateBaseline {
@@ -279,6 +289,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
 
     let capture = match capture_reserved_repository(
         &context.root,
+        &context.repository_root,
         &gate.analysis_options,
         &inventory_request,
         |paths| {
@@ -400,6 +411,7 @@ enum ReservedCapture {
 
 fn capture_reserved_repository(
     root: &Path,
+    repository_root: &RepositoryRootIdentity,
     options: &GateAnalysisOptions,
     inventory_request: &InventoryRequest,
     mut reserve: impl FnMut(
@@ -408,6 +420,7 @@ fn capture_reserved_repository(
 ) -> Result<ReservedCapture, EngineError> {
     let mut session = RepositoryAnalysisSession::start(
         root,
+        repository_root.clone(),
         inventory_request,
         options.jobs,
         options.scan_invocation.clone(),
