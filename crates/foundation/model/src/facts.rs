@@ -1,6 +1,11 @@
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 
-use crate::{EmbeddedSourceUnitId, LogicalSourceId, RepoPath, digest_hex};
+use crate::{
+    EmbeddedSourceUnitId, LogicalSourceId, PayloadSnapshotId, PhysicalFileIdentity, RepoPath,
+    digest_hex,
+};
 
 pub const SOURCE_CLASSIFICATION_RULE_VERSION: &str = "source-classification.v1";
 
@@ -149,19 +154,32 @@ pub struct SourceSnapshot {
     pub path: RepoPath,
     pub kind: SourceKind,
     pub roles: SourceRoles,
+    pub physical_identity: PhysicalFileIdentity,
+    pub payload_snapshot_id: PayloadSnapshotId,
     pub payload_sha256: String,
-    pub bytes: Vec<u8>,
+    pub bytes: Arc<[u8]>,
 }
 
 impl SourceSnapshot {
-    pub fn new(path: RepoPath, kind: SourceKind, roles: SourceRoles, bytes: Vec<u8>) -> Self {
+    pub fn new(
+        path: RepoPath,
+        kind: SourceKind,
+        roles: SourceRoles,
+        physical_identity: PhysicalFileIdentity,
+        bytes: impl Into<Arc<[u8]>>,
+    ) -> Self {
         let id = LogicalSourceId::from_path(&path);
+        let bytes = bytes.into();
         let payload_sha256 = digest_hex(&bytes);
+        let payload_snapshot_id =
+            PayloadSnapshotId::for_capture(&physical_identity, &payload_sha256);
         Self {
             id,
             path,
             kind,
             roles,
+            physical_identity,
+            payload_snapshot_id,
             payload_sha256,
             bytes,
         }

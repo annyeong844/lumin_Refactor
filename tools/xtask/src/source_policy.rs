@@ -35,7 +35,7 @@ const SPEC_DIGESTS: &[(&str, &str)] = &[
     ),
 ];
 
-const ENGINE_LIB_SUFFIX: &str = "crates/application/engine/src/lib.rs";
+const ENGINE_SOURCE_PREFIX: &str = "crates/application/engine/src/";
 
 /// Check whether an attribute is provably test-only cfg.
 /// Only `cfg(test)` and `cfg(all(test, ...))` are skipped.
@@ -551,12 +551,12 @@ pub fn scan_production_sources(
 fn validate_pool_builders(builders: &[(String, PoolBuilderInfo)], result: &mut SourcePolicyResult) {
     let engine_builders: Vec<&(String, PoolBuilderInfo)> = builders
         .iter()
-        .filter(|(path, _)| path.replace('\\', "/").contains(ENGINE_LIB_SUFFIX))
+        .filter(|(path, _)| is_engine_source(path))
         .collect();
 
     let non_engine_builders: Vec<&(String, PoolBuilderInfo)> = builders
         .iter()
-        .filter(|(path, _)| !path.replace('\\', "/").contains(ENGINE_LIB_SUFFIX))
+        .filter(|(path, _)| !is_engine_source(path))
         .collect();
 
     // Reject builders outside engine
@@ -571,7 +571,7 @@ fn validate_pool_builders(builders: &[(String, PoolBuilderInfo)], result: &mut S
         0 => {
             result
                 .violations
-                .push("MISSING: no ThreadPoolBuilder::new() in engine lib.rs".to_owned());
+                .push("MISSING: no ThreadPoolBuilder::new() in engine source tree".to_owned());
         }
         1 => {
             let (_, info) = engine_builders[0];
@@ -590,6 +590,10 @@ fn validate_pool_builders(builders: &[(String, PoolBuilderInfo)], result: &mut S
             ));
         }
     }
+}
+
+fn is_engine_source(path: &str) -> bool {
+    path.replace('\\', "/").contains(ENGINE_SOURCE_PREFIX)
 }
 
 fn validate_worker_stack_const(consts: &[WorkerStackConst], result: &mut SourcePolicyResult) {
@@ -980,6 +984,47 @@ mod tests {
         let v = parse_and_visit(source);
         assert_eq!(v.pool_builders.len(), 1);
         assert!(v.pool_builders[0].rooted);
+    }
+
+    #[test]
+    fn pool_builder_owner_is_the_engine_source_tree_not_one_file() {
+        let source = r#"
+            fn f() {
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(2)
+                    .stack_size(WORKER_STACK_BYTES)
+                    .thread_name(|i| format!("w-{i}"))
+                    .build()
+                    .unwrap();
+            }
+        "#;
+        let mut visitor = parse_and_visit(source);
+        let builder = visitor
+            .pool_builders
+            .pop()
+            .expect("canonical builder must be observed");
+        let builders = vec![(
+            "crates/application/engine/src/extraction.rs".to_owned(),
+            builder,
+        )];
+        let mut result = SourcePolicyResult::default();
+        validate_pool_builders(&builders, &mut result);
+        assert!(result.violations.is_empty(), "{:?}", result.violations);
+
+        let mut visitor = parse_and_visit(source);
+        let builder = visitor
+            .pool_builders
+            .pop()
+            .expect("canonical builder must be observed");
+        let builders = vec![("crates/languages/js/src/extraction.rs".to_owned(), builder)];
+        let mut result = SourcePolicyResult::default();
+        validate_pool_builders(&builders, &mut result);
+        assert!(
+            result
+                .violations
+                .iter()
+                .any(|violation| violation.contains("outside engine"))
+        );
     }
 
     #[test]

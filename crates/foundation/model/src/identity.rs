@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{RepoPath, RepositoryRootIdentity};
+use crate::{PhysicalFileIdentity, RepoPath, RepositoryRootIdentity};
 
 macro_rules! string_id {
     ($name:ident) => {
@@ -22,6 +22,7 @@ macro_rules! string_id {
 }
 
 string_id!(LogicalSourceId);
+string_id!(PayloadSnapshotId);
 string_id!(EmbeddedSourceUnitId);
 string_id!(FindingId);
 string_id!(EvidenceId);
@@ -80,6 +81,16 @@ impl LogicalSourceId {
     }
 }
 
+impl PayloadSnapshotId {
+    pub fn for_capture(physical_identity: &PhysicalFileIdentity, payload_sha256: &str) -> Self {
+        let mut bytes = Vec::new();
+        append_length_prefixed(&mut bytes, b"lumin-payload-snapshot-id.v1");
+        append_length_prefixed(&mut bytes, &physical_identity.canonical_bytes());
+        append_length_prefixed(&mut bytes, payload_sha256.as_bytes());
+        Self(format!("payload_{}", digest_hex(&bytes)))
+    }
+}
+
 impl EmbeddedSourceUnitId {
     pub fn for_parent_span(
         parent: &LogicalSourceId,
@@ -125,6 +136,31 @@ pub fn digest_hex(bytes: &[u8]) -> String {
 pub fn append_length_prefixed(output: &mut Vec<u8>, value: &[u8]) {
     output.extend_from_slice(&(value.len() as u64).to_be_bytes());
     output.extend_from_slice(value);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn payload_snapshot_identity_binds_physical_observation_and_exact_payload() {
+        let left = PhysicalFileIdentity::Unix {
+            device: 1,
+            inode: 2,
+        };
+        let right = PhysicalFileIdentity::Unix {
+            device: 1,
+            inode: 3,
+        };
+
+        let baseline = PayloadSnapshotId::for_capture(&left, "payload-a");
+        assert_eq!(baseline, PayloadSnapshotId::for_capture(&left, "payload-a"));
+        assert_ne!(
+            baseline,
+            PayloadSnapshotId::for_capture(&right, "payload-a")
+        );
+        assert_ne!(baseline, PayloadSnapshotId::for_capture(&left, "payload-b"));
+    }
 }
 
 use crate::SymbolNamespace;

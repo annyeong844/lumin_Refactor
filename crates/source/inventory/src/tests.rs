@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::Arc;
 
 #[test]
 fn generated_marker_must_be_in_leading_comment() {
@@ -26,6 +27,77 @@ fn config_identity_observation_preserves_hard_link_alias_identity()
         observe_config_physical_identity(root.path(), &base)?,
         observe_config_physical_identity(root.path(), &alias)?
     );
+    Ok(())
+}
+
+#[test]
+fn hard_link_sources_share_captured_payload_but_keep_logical_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("packages/a/src"))?;
+    fs::create_dir_all(root.path().join("packages/b/src"))?;
+    fs::write(
+        root.path().join("packages/a/src/shared.ts"),
+        "export const shared = 1;",
+    )?;
+    fs::hard_link(
+        root.path().join("packages/a/src/shared.ts"),
+        root.path().join("packages/b/src/shared.ts"),
+    )?;
+
+    let inventory = scan(root.path(), &InventoryRequest::default())?;
+    let left = inventory
+        .sources
+        .iter()
+        .find(|source| source.path.display_escaped() == "packages/a/src/shared.ts")
+        .ok_or_else(|| std::io::Error::other("missing left logical source"))?;
+    let right = inventory
+        .sources
+        .iter()
+        .find(|source| source.path.display_escaped() == "packages/b/src/shared.ts")
+        .ok_or_else(|| std::io::Error::other("missing right logical source"))?;
+
+    assert_ne!(left.id, right.id);
+    assert_eq!(left.physical_identity, right.physical_identity);
+    assert_eq!(left.payload_snapshot_id, right.payload_snapshot_id);
+    assert!(Arc::ptr_eq(&left.bytes, &right.bytes));
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn explicit_case_spelling_is_a_distinct_logical_source_on_case_insensitive_storage()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::write(root.path().join("src/Case.ts"), "export const value = 1;")?;
+    let request = InventoryRequest {
+        entries: vec![
+            RepoPath::from_portable("src/Case.ts")?,
+            RepoPath::from_portable("src/case.ts")?,
+        ],
+        ..Default::default()
+    };
+
+    let inventory = scan(root.path(), &request)?;
+    let aliases = inventory
+        .sources
+        .iter()
+        .filter(|source| {
+            matches!(
+                source.path.display_escaped().as_str(),
+                "src/Case.ts" | "src/case.ts"
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(aliases.len(), 2);
+    assert_ne!(aliases[0].id, aliases[1].id);
+    assert_eq!(aliases[0].physical_identity, aliases[1].physical_identity);
+    assert_eq!(
+        aliases[0].payload_snapshot_id,
+        aliases[1].payload_snapshot_id
+    );
+    assert!(Arc::ptr_eq(&aliases[0].bytes, &aliases[1].bytes));
     Ok(())
 }
 

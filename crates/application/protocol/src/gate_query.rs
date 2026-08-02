@@ -4,18 +4,18 @@ use lumin_evidence::{
     CAPABILITIES_ORDERING_ID, CapabilityRecord, CollectionOrderingId, EVIDENCE_ORDERING_ID,
     EvidencePage, EvidenceQuery, EvidenceQueryScope, EvidenceRecord, FINDINGS_ORDERING_ID,
     FindingExplanation, FindingRecord, FindingRelationRecord, PageAnchor, RELATIONS_ORDERING_ID,
-    SourceClassificationRecord,
+    SourceClassificationRecord, SourceContextRecord, SourceObservationRecord,
 };
 use lumin_model::{
-    BuildIdentity, EvidenceId, FindingId, FindingRelationId, GateId, RepositoryId, RunId,
-    SourceSpan,
+    BuildIdentity, EvidenceId, FindingId, FindingRelationId, GateId, RepositoryId,
+    ResolvedSourceUse, RunId, SelectedResolutionProfile, SourceSpan,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::cursor::{decode_cursor_payload, encode_cursor_payload};
 use crate::{
     CapabilityStateDto, FindingCollectionDto, FindingDto, ProtocolError, RepoPathDto, ScopeDto,
-    SourceClassificationDto,
+    SourceClassificationDto, SourceContextDto, SourceObservationDto,
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -224,6 +224,10 @@ pub fn gate_findings_response(
         truncated: next_cursor.is_some(),
         next_cursor,
         source_classification: None,
+        source_context: None,
+        source_observation: None,
+        resolution_profile: None,
+        resolutions: Vec::new(),
         items: page.items.iter().map(FindingDto::from).collect(),
     })
 }
@@ -256,6 +260,10 @@ pub fn run_findings_response(
         truncated: next_cursor.is_some(),
         next_cursor,
         source_classification: None,
+        source_context: None,
+        source_observation: None,
+        resolution_profile: None,
+        resolutions: Vec::new(),
         items: page.items.iter().map(FindingDto::from).collect(),
     })
 }
@@ -311,6 +319,10 @@ pub fn run_relations_response(
 pub fn run_file_findings_response(
     page: &EvidencePage<FindingRecord>,
     source_classification: Option<&SourceClassificationRecord>,
+    source_context: Option<&SourceContextRecord>,
+    source_observation: Option<&SourceObservationRecord>,
+    resolution_profile: Option<&SelectedResolutionProfile>,
+    resolutions: &[ResolvedSourceUse],
 ) -> Result<FindingCollectionDto, ProtocolError> {
     let next_cursor = encode_next_cursor(page.next_query.as_ref())?;
     Ok(FindingCollectionDto {
@@ -324,6 +336,10 @@ pub fn run_file_findings_response(
         truncated: next_cursor.is_some(),
         next_cursor,
         source_classification: source_classification.map(SourceClassificationDto::from),
+        source_context: source_context.map(SourceContextDto::from),
+        source_observation: source_observation.map(SourceObservationDto::from),
+        resolution_profile: resolution_profile.cloned(),
+        resolutions: resolutions.to_vec(),
         items: page.items.iter().map(FindingDto::from).collect(),
     })
 }

@@ -588,12 +588,20 @@ mod tests {
             RepoPath::from_portable("src/main.ts")?,
             SourceKind::TypeScript,
             SourceRoles::default(),
+            lumin_model::PhysicalFileIdentity::Unix {
+                device: 1,
+                inode: 1,
+            },
             Vec::new(),
         );
         let target = SourceSnapshot::new(
             RepoPath::from_portable("src/lib.ts")?,
             SourceKind::TypeScript,
             SourceRoles::default(),
+            lumin_model::PhysicalFileIdentity::Unix {
+                device: 1,
+                inode: 2,
+            },
             Vec::new(),
         );
         let source_use = SourceUseFact {
@@ -637,12 +645,20 @@ mod tests {
             RepoPath::from_portable("src/main.ts")?,
             SourceKind::TypeScript,
             SourceRoles::default(),
+            lumin_model::PhysicalFileIdentity::Unix {
+                device: 1,
+                inode: 1,
+            },
             Vec::new(),
         );
         let index = SourceSnapshot::new(
             RepoPath::from_portable("src/lib/index.ts")?,
             SourceKind::TypeScript,
             SourceRoles::default(),
+            lumin_model::PhysicalFileIdentity::Unix {
+                device: 1,
+                inode: 2,
+            },
             Vec::new(),
         );
         let mut facts = FileFacts::physical(importer.id.clone());
@@ -693,6 +709,10 @@ mod tests {
             RepoPath::from_portable("src/main.ts")?,
             SourceKind::TypeScript,
             SourceRoles::default(),
+            lumin_model::PhysicalFileIdentity::Unix {
+                device: 1,
+                inode: 1,
+            },
             Vec::new(),
         );
         let mut facts = FileFacts::physical(importer.id.clone());

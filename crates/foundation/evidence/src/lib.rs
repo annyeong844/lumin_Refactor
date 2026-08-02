@@ -9,7 +9,8 @@ use std::collections::BTreeMap;
 
 use lumin_model::{
     BuildIdentity, CapabilityState, EvidenceId, FindingDisposition, FindingId, FindingRelationId,
-    GateId, Limitation, LogicalSourceId, RepoPath, RepositoryId, RunId, SelectedResolutionProfile,
+    GateId, Limitation, LogicalSourceId, PayloadSnapshotId, PhysicalFileIdentity, RepoPath,
+    RepositoryId, ResolvedSourceUse, RunId, SelectedResolutionProfile, SourceKind,
     SourceRoleClassification, SourceSpan, SymbolNamespace, append_length_prefixed, digest_hex,
 };
 use serde::{Deserialize, Serialize};
@@ -235,6 +236,32 @@ pub struct SourceClassificationRecord {
     pub classifications: Vec<SourceRoleClassification>,
 }
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceContextRecord {
+    pub source_id: LogicalSourceId,
+    pub path: RepoPathProjection,
+    pub kind: SourceKind,
+    pub package_root: Option<RepoPathProjection>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceObservationRecord {
+    pub source_id: LogicalSourceId,
+    pub physical_identity: PhysicalFileIdentity,
+    pub payload_snapshot_id: PayloadSnapshotId,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisMetrics {
+    pub logical_source_count: usize,
+    pub physical_source_count: usize,
+    pub payload_snapshot_count: usize,
+    pub js_parse_product_count: usize,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CapabilityRecord {
@@ -250,6 +277,14 @@ pub struct RunEvidence {
     pub resolution_profiles: Vec<SelectedResolutionProfile>,
     #[serde(default)]
     pub source_classifications: Vec<SourceClassificationRecord>,
+    #[serde(default)]
+    pub source_contexts: Vec<SourceContextRecord>,
+    #[serde(default)]
+    pub source_observations: Vec<SourceObservationRecord>,
+    #[serde(default)]
+    pub resolutions: Vec<ResolvedSourceUse>,
+    #[serde(default)]
+    pub metrics: AnalysisMetrics,
     pub findings: Vec<FindingRecord>,
     pub limitations: Vec<Limitation>,
 }
@@ -261,6 +296,32 @@ impl RunEvidence {
             .find(|record| record.capability_id == DEAD_CODE_CAPABILITY_ID)
             .map_or(CapabilityState::Unavailable, |record| record.state)
     }
+
+    pub fn semantic_projection(&self) -> SemanticRunEvidence<'_> {
+        SemanticRunEvidence {
+            schema_version: &self.schema_version,
+            capabilities: &self.capabilities,
+            resolution_profiles: &self.resolution_profiles,
+            source_classifications: &self.source_classifications,
+            source_contexts: &self.source_contexts,
+            resolutions: &self.resolutions,
+            findings: &self.findings,
+            limitations: &self.limitations,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticRunEvidence<'a> {
+    pub schema_version: &'a str,
+    pub capabilities: &'a [CapabilityRecord],
+    pub resolution_profiles: &'a [SelectedResolutionProfile],
+    pub source_classifications: &'a [SourceClassificationRecord],
+    pub source_contexts: &'a [SourceContextRecord],
+    pub resolutions: &'a [ResolvedSourceUse],
+    pub findings: &'a [FindingRecord],
+    pub limitations: &'a [Limitation],
 }
 
 pub fn sort_findings(findings: &mut [FindingRecord]) {

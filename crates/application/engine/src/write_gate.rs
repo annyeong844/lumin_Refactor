@@ -393,7 +393,7 @@ fn finish_failed_close(
 }
 
 enum ReservedCapture {
-    Finished { capture: RepositoryCapture },
+    Finished { capture: Box<RepositoryCapture> },
     Blocked(GateSignal),
     Committed(GateOperationResult),
 }
@@ -449,7 +449,9 @@ fn capture_reserved_repository(
             RepositoryAnalysisStep::Finished(resolver) => {
                 return session
                     .finish(root, resolver)
-                    .map(|capture| ReservedCapture::Finished { capture });
+                    .map(|capture| ReservedCapture::Finished {
+                        capture: Box::new(capture),
+                    });
             }
         }
     }

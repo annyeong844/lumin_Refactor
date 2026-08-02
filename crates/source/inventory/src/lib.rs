@@ -1,3 +1,4 @@
+mod capture;
 mod config_document;
 mod generated_config_policy;
 mod package_semantics;
@@ -8,6 +9,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use ignore::WalkBuilder;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
@@ -235,20 +237,36 @@ struct PatternSet {
 #[derive(Default)]
 struct CollectedFiles {
     sources: BTreeMap<RepoPath, SourceSnapshot>,
+    payloads: BTreeMap<PhysicalFileIdentity, Arc<[u8]>>,
     config_observations: BTreeMap<RepoPath, ConfigObservation>,
     limitations: Vec<Limitation>,
     consulted_config_paths: Vec<RepoPath>,
 }
 
+struct FileObservationContext<'a> {
+    root: &'a Path,
+    canonical_root: &'a Path,
+    patterns: &'a PatternSet,
+    ignore: &'a ApplicableIgnore,
+}
+
 pub fn scan(root: &Path, request: &InventoryRequest) -> Result<InventorySnapshot, InventoryError> {
     validate_root(root)?;
+    let canonical_root = fs::canonicalize(root)
+        .map_err(|error| InventoryError::RepositoryIdentity(error.to_string()))?;
     let (config, config_path, config_policy) = read_root_config(root)?;
     let patterns = PatternSet::compile(root, config.as_ref(), request)?;
 
     // Build hierarchical gitignore matcher before entry classification
     let ignore = ApplicableIgnore::build(root)?;
+    let observation_context = FileObservationContext {
+        root,
+        canonical_root: &canonical_root,
+        patterns: &patterns,
+        ignore: &ignore,
+    };
 
-    let mut collected = collect_repository_files(root, &patterns, &ignore)?;
+    let mut collected = collect_repository_files(&observation_context)?;
 
     if let Some(path) = config_path.clone() {
         collected.consulted_config_paths.push(path);
@@ -290,6 +308,16 @@ pub fn scan(root: &Path, request: &InventoryRequest) -> Result<InventorySnapshot
         let classification = classify_entry(root, entry_path, &patterns, &ignore)?;
         match classification {
             EntryClassification::Available => {
+                if !collected.sources.contains_key(entry_path) {
+                    let relative = native_relative(entry_path)?;
+                    let native_path = root.join(&relative);
+                    collected.observe_file(
+                        &observation_context,
+                        &native_path,
+                        &relative,
+                        entry_path.clone(),
+                    )?;
+                }
                 entry_selections.push(EntrySelection {
                     path: entry_path.clone(),
                     source: entry_source,
@@ -876,12 +904,10 @@ fn ensure_contained(
 }
 
 fn collect_repository_files(
-    root: &Path,
-    patterns: &PatternSet,
-    ignore: &ApplicableIgnore,
+    context: &FileObservationContext<'_>,
 ) -> Result<CollectedFiles, InventoryError> {
     let mut collected = CollectedFiles::default();
-    let mut builder = WalkBuilder::new(root);
+    let mut builder = WalkBuilder::new(context.root);
     builder
         .hidden(false)
         .parents(false)
@@ -898,13 +924,13 @@ fn collect_repository_files(
                 collected
                     .limitations
                     .push(Limitation::SourcePayloadUnavailable {
-                        path: root.display().to_string(),
+                        path: context.root.display().to_string(),
                         detail: error.to_string(),
                     });
                 continue;
             }
         };
-        let Ok(relative) = entry.path().strip_prefix(root) else {
+        let Ok(relative) = entry.path().strip_prefix(context.root) else {
             return Err(InventoryError::RootIo(format!(
                 "walked path escaped root: {}",
                 entry.path().display()
@@ -923,32 +949,28 @@ fn collect_repository_files(
             true
         } else if file_type.is_symlink() {
             match fs::metadata(entry.path()) {
-                Ok(metadata) if metadata.is_file() => {
-                    let canonical_root = fs::canonicalize(root)
-                        .map_err(|error| InventoryError::RootIo(error.to_string()))?;
-                    match fs::canonicalize(entry.path()) {
-                        Ok(target) if target.starts_with(&canonical_root) => true,
-                        Ok(_) => {
-                            collected
-                                .limitations
-                                .push(Limitation::SourcePayloadUnavailable {
-                                    path: path.display_escaped(),
-                                    detail: "source alias resolves outside the repository root"
-                                        .to_owned(),
-                                });
-                            false
-                        }
-                        Err(error) => {
-                            collected
-                                .limitations
-                                .push(Limitation::SourcePayloadUnavailable {
-                                    path: path.display_escaped(),
-                                    detail: error.to_string(),
-                                });
-                            false
-                        }
+                Ok(metadata) if metadata.is_file() => match fs::canonicalize(entry.path()) {
+                    Ok(target) if target.starts_with(context.canonical_root) => true,
+                    Ok(_) => {
+                        collected
+                            .limitations
+                            .push(Limitation::SourcePayloadUnavailable {
+                                path: path.display_escaped(),
+                                detail: "source alias resolves outside the repository root"
+                                    .to_owned(),
+                            });
+                        false
                     }
-                }
+                    Err(error) => {
+                        collected
+                            .limitations
+                            .push(Limitation::SourcePayloadUnavailable {
+                                path: path.display_escaped(),
+                                detail: error.to_string(),
+                            });
+                        false
+                    }
+                },
                 Ok(_) => false,
                 Err(error) => {
                     collected
@@ -966,7 +988,7 @@ fn collect_repository_files(
         if !is_file {
             continue;
         }
-        collected.observe_file(root, entry.path(), relative, path, patterns, ignore)?;
+        collected.observe_file(context, entry.path(), relative, path)?;
     }
     Ok(collected)
 }
@@ -974,45 +996,74 @@ fn collect_repository_files(
 impl CollectedFiles {
     fn observe_file(
         &mut self,
-        root: &Path,
+        context: &FileObservationContext<'_>,
         native_path: &Path,
         relative: &Path,
         path: RepoPath,
-        patterns: &PatternSet,
-        ignore: &ApplicableIgnore,
     ) -> Result<(), InventoryError> {
         if let Some(syntax) = config_syntax(relative) {
             self.consulted_config_paths.push(path.clone());
-            let capture = capture_config(root, &path, syntax)?;
+            let capture = capture_config(context.root, &path, syntax)?;
             if let Some(limitation) = capture.limitation {
                 self.limitations.push(limitation);
             }
             self.config_observations.insert(path, capture.observation);
             return Ok(());
         }
-        if !patterns.admits(relative) {
+        if !context.patterns.admits(relative) {
             return Ok(());
         }
-        if patterns.includes.is_empty() && ignore.is_ignored(relative, false) {
+        if context.patterns.includes.is_empty() && context.ignore.is_ignored(relative, false) {
             return Ok(());
         }
         let Some(kind) = source_kind(relative) else {
             return Ok(());
         };
 
-        let bytes = match fs::read(native_path) {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                self.limitations.push(Limitation::SourcePayloadUnavailable {
-                    path: path.display_escaped(),
-                    detail: error.to_string(),
-                });
-                return Ok(());
-            }
+        let logical_path = path.display_escaped();
+        let mut opened =
+            match capture::OpenedSource::open(context.canonical_root, native_path, &logical_path) {
+                Ok(opened) => opened,
+                Err(error) => {
+                    self.limitations.push(Limitation::SourcePayloadUnavailable {
+                        path: logical_path,
+                        detail: error.to_string(),
+                    });
+                    return Ok(());
+                }
+            };
+        let physical_identity = opened.physical_identity().clone();
+        let bytes = match self.payloads.get(&physical_identity) {
+            Some(bytes) => Arc::clone(bytes),
+            None => match opened.read_payload(&logical_path) {
+                Ok(bytes) => {
+                    self.payloads
+                        .insert(physical_identity.clone(), Arc::clone(&bytes));
+                    bytes
+                }
+                Err(error) => {
+                    self.limitations.push(Limitation::SourcePayloadUnavailable {
+                        path: logical_path,
+                        detail: error.to_string(),
+                    });
+                    return Ok(());
+                }
+            },
         };
-        let roles = classify_roles(&path, relative, kind, &bytes, patterns)?;
-        self.sources
-            .insert(path.clone(), SourceSnapshot::new(path, kind, roles, bytes));
+        if let Err(error) =
+            opened.validate_path(context.canonical_root, native_path, &path.display_escaped())
+        {
+            self.limitations.push(Limitation::SourcePayloadUnavailable {
+                path: path.display_escaped(),
+                detail: error.to_string(),
+            });
+            return Ok(());
+        }
+        let roles = classify_roles(&path, relative, kind, &bytes, context.patterns)?;
+        self.sources.insert(
+            path.clone(),
+            SourceSnapshot::new(path, kind, roles, physical_identity, bytes),
+        );
         Ok(())
     }
 }

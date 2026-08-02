@@ -1,4 +1,5 @@
 mod capability_query;
+mod extraction;
 mod gate_abandon;
 mod gate_query;
 mod retention;
@@ -10,9 +11,9 @@ pub use capability_query::{
 };
 pub use gate_abandon::{AbandonGateRequest, abandon_gate};
 pub use gate_query::{
-    EvidenceQueryError, query_gate_explain, query_gate_findings, query_run_explain,
-    query_run_file_findings, query_run_findings, query_run_relations,
-    query_run_source_classification,
+    EvidenceQueryError, RunSourceEnvelope, query_gate_explain, query_gate_findings,
+    query_run_explain, query_run_file_findings, query_run_findings, query_run_relations,
+    query_run_source_classification, query_run_source_envelope,
 };
 pub use lumin_evidence::{
     GateDecision, GateOperationResult, RecordLookup, RetentionMutationResult, RetentionPlanScope,
@@ -32,9 +33,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use lumin_evidence::{
-    AnalysisSnapshot, CapabilityRecord, DEAD_CODE_CAPABILITY_ID, EntrySelectionRecord,
-    RepoPathProjection, RunEvidence, ScanInvocationTier, SemanticInputRecord, SemanticInputState,
-    SourceClassificationRecord, seal_analysis_snapshot,
+    AnalysisMetrics, AnalysisSnapshot, CapabilityRecord, DEAD_CODE_CAPABILITY_ID,
+    EntrySelectionRecord, RepoPathProjection, RunEvidence, ScanInvocationTier, SemanticInputRecord,
+    SemanticInputState, SourceClassificationRecord, SourceContextRecord, SourceObservationRecord,
+    seal_analysis_snapshot,
 };
 use lumin_inventory::{
     InventoryError, InventoryRequest, InventorySnapshot, SemanticPolicyState, repository_admission,
@@ -46,10 +48,11 @@ use lumin_model::{
 };
 use lumin_resolve::{ConfigDemand, ResolverError, ResolverOutput};
 use lumin_store::{PublishedRun, RepositoryStore, RunCatalogRecord, StoreError};
-use rayon::prelude::*;
 use thiserror::Error;
 
-const WORKER_STACK_BYTES: usize = 4_194_304;
+use extraction::extract_facts;
+#[cfg(test)]
+use extraction::reduce_file_facts;
 
 #[derive(Clone, Debug)]
 pub struct AuditRequest {
@@ -258,6 +261,7 @@ struct RepositoryAnalysisSession {
     inventory: InventorySnapshot,
     facts: Vec<FileFacts>,
     sfc_states: BTreeMap<SfcDialect, CapabilityState>,
+    js_parse_product_count: usize,
     scan_invocation: ScanInvocationTier,
 }
 
@@ -323,6 +327,7 @@ impl RepositoryAnalysisSession {
             inventory,
             facts: extraction.facts,
             sfc_states: extraction.sfc_states,
+            js_parse_product_count: extraction.js_parse_product_count,
             scan_invocation,
         })
     }
@@ -434,11 +439,57 @@ impl RepositoryAnalysisSession {
                 classifications: source.roles.classifications.clone(),
             })
             .collect();
+        let source_contexts = self
+            .inventory
+            .sources
+            .iter()
+            .map(|source| SourceContextRecord {
+                source_id: source.id.clone(),
+                path: RepoPathProjection::from(&source.path),
+                kind: source.kind,
+                package_root: self
+                    .inventory
+                    .config
+                    .source_packages
+                    .get(&source.id)
+                    .map(RepoPathProjection::from),
+            })
+            .collect();
+        let source_observations = self
+            .inventory
+            .sources
+            .iter()
+            .map(|source| SourceObservationRecord {
+                source_id: source.id.clone(),
+                physical_identity: source.physical_identity.clone(),
+                payload_snapshot_id: source.payload_snapshot_id.clone(),
+            })
+            .collect::<Vec<_>>();
+        let physical_source_count = source_observations
+            .iter()
+            .map(|observation| observation.physical_identity.clone())
+            .collect::<BTreeSet<_>>()
+            .len();
+        let payload_snapshot_count = source_observations
+            .iter()
+            .map(|observation| observation.payload_snapshot_id.clone())
+            .collect::<BTreeSet<_>>()
+            .len();
+        let metrics = AnalysisMetrics {
+            logical_source_count: self.inventory.sources.len(),
+            physical_source_count,
+            payload_snapshot_count,
+            js_parse_product_count: self.js_parse_product_count,
+        };
         let evidence = RunEvidence {
             schema_version: "lumin-evidence.v1".to_owned(),
             capabilities,
             resolution_profiles: profiles,
             source_classifications,
+            source_contexts,
+            source_observations,
+            resolutions: resolved,
+            metrics,
             findings,
             limitations,
         };
@@ -484,10 +535,7 @@ fn semantic_input_records(
             path: RepoPathProjection::from(&source.path),
             state: SemanticInputState::Source,
             payload_sha256: Some(source.payload_sha256.clone()),
-            physical_identity: Some(lumin_inventory::observe_physical_file_identity(
-                root,
-                &source.path,
-            )?),
+            physical_identity: Some(source.physical_identity.clone()),
         });
     }
     for observation in inventory.config.observations.values() {
@@ -568,91 +616,6 @@ fn source_adjacency(
     adjacency
 }
 
-struct ExtractionOutput {
-    facts: Vec<FileFacts>,
-    sfc_states: BTreeMap<SfcDialect, CapabilityState>,
-}
-
-fn extract_facts(sources: &[SourceSnapshot], jobs: usize) -> Result<ExtractionOutput, EngineError> {
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(jobs)
-        .stack_size(WORKER_STACK_BYTES)
-        .thread_name(|index| format!("lumin-worker-{index}"))
-        .build()
-        .map_err(|error| EngineError::Scheduler(error.to_string()))?;
-    let source_index = lumin_sfc::source_index(sources);
-    pool.install(|| {
-        let physical_facts = sources
-            .par_iter()
-            .filter(|source| source.kind.is_js_family())
-            .map(lumin_js::extract)
-            .collect::<Result<Vec<_>, _>>()?;
-        let physical_facts = reduce_file_facts(physical_facts);
-
-        let mut decompositions = sources
-            .par_iter()
-            .filter(|source| !source.kind.is_js_family())
-            .map(|source| lumin_sfc::decompose(source, &source_index))
-            .collect::<Result<Vec<_>, _>>()?;
-        decompositions.sort_by(|left, right| left.source_id.cmp(&right.source_id));
-
-        let mut embedded_by_parent = BTreeMap::<_, Vec<FileFacts>>::new();
-        let mut embedded = decompositions
-            .par_iter()
-            .flat_map_iter(|decomposition| {
-                decomposition
-                    .inline_scripts
-                    .iter()
-                    .map(move |unit| (&decomposition.source_id, unit))
-            })
-            .map(|(parent, unit)| {
-                lumin_js::extract_embedded(unit).map(|facts| (parent.clone(), facts))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        embedded.sort_by(|left, right| {
-            left.0
-                .cmp(&right.0)
-                .then_with(|| left.1.source_unit.cmp(&right.1.source_unit))
-        });
-        for (parent, facts) in embedded {
-            embedded_by_parent.entry(parent).or_default().push(facts);
-        }
-
-        let mut sfc_states = BTreeMap::new();
-        for (dialect, _id, initial_state) in lumin_sfc::compiled_dialect_states() {
-            sfc_states.insert(dialect, initial_state);
-        }
-        let mut sfc_facts = Vec::new();
-        for decomposition in decompositions {
-            let parent = decomposition.source_id.clone();
-            let analysis = lumin_sfc::finalize(
-                decomposition,
-                embedded_by_parent.remove(&parent).unwrap_or_default(),
-                &physical_facts,
-            )?;
-            sfc_states
-                .entry(analysis.dialect)
-                .and_modify(|state| *state = less_complete(*state, analysis.state))
-                .or_insert(analysis.state);
-            sfc_facts.extend(analysis.file_facts);
-        }
-
-        let mut facts = physical_facts;
-        facts.extend(sfc_facts);
-        let facts = reduce_file_facts(facts);
-        Ok(ExtractionOutput { facts, sfc_states })
-    })
-}
-
-fn reduce_file_facts(mut facts: Vec<FileFacts>) -> Vec<FileFacts> {
-    facts.sort_by(|left, right| {
-        left.source_id
-            .cmp(&right.source_id)
-            .then_with(|| left.source_unit.cmp(&right.source_unit))
-    });
-    facts
-}
-
 fn sfc_capability_records(states: &BTreeMap<SfcDialect, CapabilityState>) -> Vec<CapabilityRecord> {
     lumin_sfc::compiled_dialect_states()
         .into_iter()
@@ -661,22 +624,6 @@ fn sfc_capability_records(states: &BTreeMap<SfcDialect, CapabilityState>) -> Vec
             state: states.get(&dialect).copied().unwrap_or(initial_state),
         })
         .collect()
-}
-
-fn less_complete(left: CapabilityState, right: CapabilityState) -> CapabilityState {
-    fn rank(state: CapabilityState) -> u8 {
-        match state {
-            CapabilityState::Complete => 0,
-            CapabilityState::Incomplete => 1,
-            CapabilityState::Unavailable => 2,
-            CapabilityState::Failed => 3,
-        }
-    }
-    if rank(left) >= rank(right) {
-        left
-    } else {
-        right
-    }
 }
 
 fn collect_limitations(

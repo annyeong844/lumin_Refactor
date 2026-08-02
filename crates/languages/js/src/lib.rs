@@ -29,56 +29,71 @@ impl std::fmt::Display for JsExtractError {
 
 impl std::error::Error for JsExtractError {}
 
-struct ExtractionInput<'a> {
-    source_id: &'a LogicalSourceId,
-    source_unit: SourceUnitId,
-    kind: SourceKind,
-    bytes: &'a [u8],
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct JsPayloadFacts {
+    exports: Vec<ExportTemplate>,
+    uses: Vec<SourceUseTemplate>,
+    limitation_details: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ExportTemplate {
+    exported_name: String,
+    local_name: Option<String>,
+    namespace: SymbolNamespace,
+    span: SourceSpan,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SourceUseTemplate {
+    specifier: String,
+    imported_name: Option<String>,
+    local_name: Option<String>,
+    namespace: SymbolNamespace,
+    kind: ImportKind,
+    request_kind: ModuleRequestKind,
+    span: SourceSpan,
 }
 
 pub fn extract(snapshot: &SourceSnapshot) -> Result<FileFacts, JsExtractError> {
-    extract_input(ExtractionInput {
-        source_id: &snapshot.id,
-        source_unit: SourceUnitId::Logical(snapshot.id.clone()),
-        kind: snapshot.kind,
-        bytes: &snapshot.bytes,
-    })
+    let payload = parse_payload(snapshot.kind, &snapshot.bytes)?;
+    Ok(bind_payload(
+        &payload,
+        &snapshot.id,
+        SourceUnitId::Logical(snapshot.id.clone()),
+    ))
 }
 
 pub fn extract_embedded(unit: &EmbeddedSourceUnit) -> Result<FileFacts, JsExtractError> {
-    extract_input(ExtractionInput {
-        source_id: &unit.parent_source_id,
-        source_unit: SourceUnitId::Embedded(unit.id.clone()),
-        kind: unit.kind,
-        bytes: &unit.bytes,
-    })
+    let payload = parse_payload(unit.kind, &unit.bytes)?;
+    Ok(bind_payload(
+        &payload,
+        &unit.parent_source_id,
+        SourceUnitId::Embedded(unit.id.clone()),
+    ))
 }
 
-fn extract_input(input: ExtractionInput<'_>) -> Result<FileFacts, JsExtractError> {
-    if !input.kind.is_js_family() {
-        return Err(JsExtractError { kind: input.kind });
+pub fn parse_payload(kind: SourceKind, bytes: &[u8]) -> Result<JsPayloadFacts, JsExtractError> {
+    if !kind.is_js_family() {
+        return Err(JsExtractError { kind });
     }
 
-    let source = match std::str::from_utf8(input.bytes) {
+    let source = match std::str::from_utf8(bytes) {
         Ok(source) => source,
         Err(error) => {
-            return Ok(unknown_file(
-                &input,
-                format!("source is not UTF-8: {error}"),
-            ));
+            return Ok(unknown_payload(format!("source is not UTF-8: {error}")));
         }
     };
 
-    if input.kind == SourceKind::CommonJs || input.kind == SourceKind::Cts {
-        return Ok(unknown_file(
-            &input,
+    if kind == SourceKind::CommonJs || kind == SourceKind::Cts {
+        return Ok(unknown_payload(
             "CommonJS export lowering is not implemented in the first audit increment".to_owned(),
         ));
     }
 
-    let source_type = match source_type(input.kind) {
+    let source_type = match source_type(kind) {
         Ok(source_type) => source_type,
-        Err(detail) => return Ok(unknown_file(&input, detail)),
+        Err(detail) => return Ok(unknown_payload(detail)),
     };
 
     let allocator = Allocator::default();
@@ -90,49 +105,83 @@ fn extract_input(input: ExtractionInput<'_>) -> Result<FileFacts, JsExtractError
             .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join("; ");
-        return Ok(unknown_file(
-            &input,
-            format!("OXC parse did not complete cleanly: {detail}"),
-        ));
+        return Ok(unknown_payload(format!(
+            "OXC parse did not complete cleanly: {detail}"
+        )));
     }
 
-    let mut facts = FileFacts {
-        source_id: input.source_id.clone(),
-        source_unit: input.source_unit.clone(),
+    let mut facts = JsPayloadFacts {
         exports: Vec::new(),
         uses: Vec::new(),
-        limitations: Vec::new(),
+        limitation_details: Vec::new(),
     };
     for statement in &parsed.program.body {
-        lower_statement(statement, &input, &mut facts);
+        lower_statement(statement, &mut facts);
     }
 
     let mut detector = DynamicUseDetector {
-        input: &input,
         uses: Vec::new(),
         unknown_details: Vec::new(),
     };
     detector.visit_program(&parsed.program);
     facts.uses.extend(detector.uses);
-    for detail in detector.unknown_details {
-        facts.limitations.push(Limitation::JsModuleUseUnknown {
-            source_id: input.source_id.clone(),
-            detail,
-        });
-    }
+    facts.limitation_details.extend(detector.unknown_details);
     canonicalize(&mut facts);
     Ok(facts)
 }
 
-fn lower_statement(statement: &Statement<'_>, input: &ExtractionInput<'_>, facts: &mut FileFacts) {
+pub fn bind_payload(
+    payload: &JsPayloadFacts,
+    source_id: &LogicalSourceId,
+    source_unit: SourceUnitId,
+) -> FileFacts {
+    FileFacts {
+        source_id: source_id.clone(),
+        source_unit,
+        exports: payload
+            .exports
+            .iter()
+            .map(|export| ExportFact {
+                source_id: source_id.clone(),
+                exported_name: export.exported_name.clone(),
+                local_name: export.local_name.clone(),
+                namespace: export.namespace,
+                span: export.span.clone(),
+            })
+            .collect(),
+        uses: payload
+            .uses
+            .iter()
+            .map(|source_use| SourceUseFact {
+                importer: source_id.clone(),
+                specifier: source_use.specifier.clone(),
+                imported_name: source_use.imported_name.clone(),
+                local_name: source_use.local_name.clone(),
+                namespace: source_use.namespace,
+                kind: source_use.kind,
+                request_kind: source_use.request_kind,
+                span: source_use.span.clone(),
+            })
+            .collect(),
+        limitations: payload
+            .limitation_details
+            .iter()
+            .map(|detail| Limitation::JsModuleUseUnknown {
+                source_id: source_id.clone(),
+                detail: detail.clone(),
+            })
+            .collect(),
+    }
+}
+
+fn lower_statement(statement: &Statement<'_>, facts: &mut JsPayloadFacts) {
     match statement {
-        Statement::ImportDeclaration(declaration) => lower_import(declaration, input, facts),
+        Statement::ImportDeclaration(declaration) => lower_import(declaration, facts),
         Statement::ExportNamedDeclaration(declaration) => {
-            lower_named_export(declaration, input, facts);
+            lower_named_export(declaration, facts);
         }
         Statement::ExportDefaultDeclaration(declaration) => {
-            facts.exports.push(ExportFact {
-                source_id: input.source_id.clone(),
+            facts.exports.push(ExportTemplate {
                 exported_name: "default".to_owned(),
                 local_name: None,
                 namespace: if matches!(
@@ -147,34 +196,25 @@ fn lower_statement(statement: &Statement<'_>, input: &ExtractionInput<'_>, facts
             });
         }
         Statement::ExportAllDeclaration(declaration) => {
-            facts.limitations.push(Limitation::JsModuleUseUnknown {
-                source_id: input.source_id.clone(),
-                detail: format!(
-                    "export-all from {} requires graph expansion not implemented in this increment",
-                    declaration.source.value
-                ),
-            });
+            facts.limitation_details.push(format!(
+                "export-all from {} requires graph expansion not implemented in this increment",
+                declaration.source.value
+            ));
         }
         Statement::TSExportAssignment(_) | Statement::TSNamespaceExportDeclaration(_) => {
-            facts.limitations.push(Limitation::JsModuleUseUnknown {
-                source_id: input.source_id.clone(),
-                detail: "TypeScript export assignment/namespace export is not lowered".to_owned(),
-            });
+            facts
+                .limitation_details
+                .push("TypeScript export assignment/namespace export is not lowered".to_owned());
         }
         _ => {}
     }
 }
 
-fn lower_import(
-    declaration: &ImportDeclaration<'_>,
-    input: &ExtractionInput<'_>,
-    facts: &mut FileFacts,
-) {
+fn lower_import(declaration: &ImportDeclaration<'_>, facts: &mut JsPayloadFacts) {
     let specifier = declaration.source.value.to_string();
     let declaration_namespace = namespace(declaration.import_kind);
     let Some(specifiers) = &declaration.specifiers else {
-        facts.uses.push(SourceUseFact {
-            importer: input.source_id.clone(),
+        facts.uses.push(SourceUseTemplate {
             specifier,
             imported_name: None,
             local_name: None,
@@ -189,8 +229,7 @@ fn lower_import(
     for import in specifiers {
         match import {
             ImportDeclarationSpecifier::ImportSpecifier(import) => {
-                facts.uses.push(SourceUseFact {
-                    importer: input.source_id.clone(),
+                facts.uses.push(SourceUseTemplate {
                     specifier: specifier.clone(),
                     imported_name: Some(module_export_name(&import.imported)),
                     local_name: Some(import.local.name.to_string()),
@@ -207,8 +246,7 @@ fn lower_import(
                 });
             }
             ImportDeclarationSpecifier::ImportDefaultSpecifier(import) => {
-                facts.uses.push(SourceUseFact {
-                    importer: input.source_id.clone(),
+                facts.uses.push(SourceUseTemplate {
                     specifier: specifier.clone(),
                     imported_name: Some("default".to_owned()),
                     local_name: Some(import.local.name.to_string()),
@@ -219,8 +257,7 @@ fn lower_import(
                 });
             }
             ImportDeclarationSpecifier::ImportNamespaceSpecifier(import) => {
-                facts.uses.push(SourceUseFact {
-                    importer: input.source_id.clone(),
+                facts.uses.push(SourceUseTemplate {
                     specifier: specifier.clone(),
                     imported_name: None,
                     local_name: Some(import.local.name.to_string()),
@@ -234,13 +271,9 @@ fn lower_import(
     }
 }
 
-fn lower_named_export(
-    declaration: &ExportNamedDeclaration<'_>,
-    input: &ExtractionInput<'_>,
-    facts: &mut FileFacts,
-) {
+fn lower_named_export(declaration: &ExportNamedDeclaration<'_>, facts: &mut JsPayloadFacts) {
     if let Some(inner) = &declaration.declaration {
-        lower_declaration(inner, input, facts);
+        lower_declaration(inner, facts);
     }
 
     for export in &declaration.specifiers {
@@ -253,16 +286,14 @@ fn lower_named_export(
         };
         let exported_name = module_export_name(&export.exported);
         let local_name = module_export_name(&export.local);
-        facts.exports.push(ExportFact {
-            source_id: input.source_id.clone(),
+        facts.exports.push(ExportTemplate {
             exported_name,
             local_name: Some(local_name.clone()),
             namespace,
             span: span(export.span),
         });
         if let Some(source) = &declaration.source {
-            facts.uses.push(SourceUseFact {
-                importer: input.source_id.clone(),
+            facts.uses.push(SourceUseTemplate {
                 specifier: source.value.to_string(),
                 imported_name: Some(local_name),
                 local_name: None,
@@ -275,17 +306,12 @@ fn lower_named_export(
     }
 }
 
-fn lower_declaration(
-    declaration: &Declaration<'_>,
-    input: &ExtractionInput<'_>,
-    facts: &mut FileFacts,
-) {
+fn lower_declaration(declaration: &Declaration<'_>, facts: &mut JsPayloadFacts) {
     match declaration {
         Declaration::VariableDeclaration(declaration) => {
             for declarator in &declaration.declarations {
                 for identifier in declarator.id.get_binding_identifiers() {
-                    facts.exports.push(ExportFact {
-                        source_id: input.source_id.clone(),
+                    facts.exports.push(ExportTemplate {
                         exported_name: identifier.name.to_string(),
                         local_name: Some(identifier.name.to_string()),
                         namespace: SymbolNamespace::Value,
@@ -297,7 +323,6 @@ fn lower_declaration(
         Declaration::FunctionDeclaration(declaration) => {
             if let Some(identifier) = &declaration.id {
                 push_named_declaration(
-                    input,
                     facts,
                     identifier.name.as_str(),
                     SymbolNamespace::Value,
@@ -308,7 +333,6 @@ fn lower_declaration(
         Declaration::ClassDeclaration(declaration) => {
             if let Some(identifier) = &declaration.id {
                 push_named_declaration(
-                    input,
                     facts,
                     identifier.name.as_str(),
                     SymbolNamespace::Value,
@@ -317,14 +341,12 @@ fn lower_declaration(
             }
         }
         Declaration::TSTypeAliasDeclaration(declaration) => push_named_declaration(
-            input,
             facts,
             declaration.id.name.as_str(),
             SymbolNamespace::Type,
             declaration.span,
         ),
         Declaration::TSInterfaceDeclaration(declaration) => push_named_declaration(
-            input,
             facts,
             declaration.id.name.as_str(),
             SymbolNamespace::Type,
@@ -332,14 +354,12 @@ fn lower_declaration(
         ),
         Declaration::TSEnumDeclaration(declaration) => {
             push_named_declaration(
-                input,
                 facts,
                 declaration.id.name.as_str(),
                 SymbolNamespace::Value,
                 declaration.span,
             );
             push_named_declaration(
-                input,
                 facts,
                 declaration.id.name.as_str(),
                 SymbolNamespace::Type,
@@ -349,24 +369,20 @@ fn lower_declaration(
         Declaration::TSModuleDeclaration(_)
         | Declaration::TSGlobalDeclaration(_)
         | Declaration::TSImportEqualsDeclaration(_) => {
-            facts.limitations.push(Limitation::JsModuleUseUnknown {
-                source_id: input.source_id.clone(),
-                detail: "TypeScript module/global/import-equals declaration is not lowered"
-                    .to_owned(),
-            });
+            facts.limitation_details.push(
+                "TypeScript module/global/import-equals declaration is not lowered".to_owned(),
+            );
         }
     }
 }
 
 fn push_named_declaration(
-    input: &ExtractionInput<'_>,
-    facts: &mut FileFacts,
+    facts: &mut JsPayloadFacts,
     name: &str,
     namespace: SymbolNamespace,
     declaration_span: Span,
 ) {
-    facts.exports.push(ExportFact {
-        source_id: input.source_id.clone(),
+    facts.exports.push(ExportTemplate {
         exported_name: name.to_owned(),
         local_name: Some(name.to_owned()),
         namespace,
@@ -374,18 +390,16 @@ fn push_named_declaration(
     });
 }
 
-struct DynamicUseDetector<'a> {
-    input: &'a ExtractionInput<'a>,
-    uses: Vec<SourceUseFact>,
+struct DynamicUseDetector {
+    uses: Vec<SourceUseTemplate>,
     unknown_details: Vec<String>,
 }
 
-impl<'a> Visit<'a> for DynamicUseDetector<'_> {
+impl<'a> Visit<'a> for DynamicUseDetector {
     fn visit_import_expression(&mut self, expression: &oxc_ast::ast::ImportExpression<'a>) {
         match &expression.source {
             oxc_ast::ast::Expression::StringLiteral(source) => {
-                self.uses.push(SourceUseFact {
-                    importer: self.input.source_id.clone(),
+                self.uses.push(SourceUseTemplate {
                     specifier: source.value.to_string(),
                     imported_name: None,
                     local_name: None,
@@ -404,8 +418,7 @@ impl<'a> Visit<'a> for DynamicUseDetector<'_> {
 
     fn visit_call_expression(&mut self, expression: &oxc_ast::ast::CallExpression<'a>) {
         if let Some(source) = expression.common_js_require() {
-            self.uses.push(SourceUseFact {
-                importer: self.input.source_id.clone(),
+            self.uses.push(SourceUseTemplate {
                 specifier: source.value.to_string(),
                 imported_name: None,
                 local_name: None,
@@ -492,21 +505,15 @@ fn span(value: Span) -> SourceSpan {
     }
 }
 
-fn unknown_file(input: &ExtractionInput<'_>, detail: String) -> FileFacts {
-    let limitation = Limitation::JsModuleUseUnknown {
-        source_id: input.source_id.clone(),
-        detail,
-    };
-    FileFacts {
-        source_id: input.source_id.clone(),
-        source_unit: input.source_unit.clone(),
+fn unknown_payload(detail: String) -> JsPayloadFacts {
+    JsPayloadFacts {
         exports: Vec::new(),
         uses: Vec::new(),
-        limitations: vec![limitation],
+        limitation_details: vec![detail],
     }
 }
 
-fn canonicalize(facts: &mut FileFacts) {
+fn canonicalize(facts: &mut JsPayloadFacts) {
     facts.exports.sort_by(|left, right| {
         left.namespace
             .cmp(&right.namespace)
@@ -536,6 +543,10 @@ mod tests {
             RepoPath::from_portable("src/main.ts")?,
             SourceKind::TypeScript,
             SourceRoles::default(),
+            lumin_model::PhysicalFileIdentity::Unix {
+                device: 1,
+                inode: 1,
+            },
             b"import { used } from './lib.js'; export const alive = used; export const dead = 1;"
                 .to_vec(),
         );
@@ -549,11 +560,38 @@ mod tests {
     }
 
     #[test]
+    fn one_payload_product_binds_distinct_logical_sources() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let payload = parse_payload(
+            SourceKind::TypeScript,
+            b"import { value } from './dep.js'; export const local = value;",
+        )?;
+        let left_path = RepoPath::from_portable("packages/a/src/shared.ts")?;
+        let right_path = RepoPath::from_portable("packages/b/src/shared.ts")?;
+        let left_id = LogicalSourceId::from_path(&left_path);
+        let right_id = LogicalSourceId::from_path(&right_path);
+
+        let left = bind_payload(&payload, &left_id, SourceUnitId::Logical(left_id.clone()));
+        let right = bind_payload(&payload, &right_id, SourceUnitId::Logical(right_id.clone()));
+
+        assert_ne!(left.source_id, right.source_id);
+        assert!(left.exports.iter().all(|fact| fact.source_id == left_id));
+        assert!(right.exports.iter().all(|fact| fact.source_id == right_id));
+        assert!(left.uses.iter().all(|fact| fact.importer == left_id));
+        assert!(right.uses.iter().all(|fact| fact.importer == right_id));
+        Ok(())
+    }
+
+    #[test]
     fn parse_failure_is_visible_and_not_empty_success() -> Result<(), Box<dyn std::error::Error>> {
         let snapshot = SourceSnapshot::new(
             RepoPath::from_portable("broken.ts")?,
             SourceKind::TypeScript,
             SourceRoles::default(),
+            lumin_model::PhysicalFileIdentity::Unix {
+                device: 1,
+                inode: 1,
+            },
             b"export const = ;".to_vec(),
         );
         let facts = extract(&snapshot)?;
@@ -568,6 +606,10 @@ mod tests {
             RepoPath::from_portable("src/App.vue")?,
             SourceKind::Vue,
             SourceRoles::default(),
+            lumin_model::PhysicalFileIdentity::Unix {
+                device: 1,
+                inode: 1,
+            },
             Vec::new(),
         );
         let bytes = b"import Card from './Card.vue';".to_vec();
@@ -595,6 +637,10 @@ mod tests {
             RepoPath::from_portable("src/App.vue")?,
             SourceKind::Vue,
             SourceRoles::default(),
+            lumin_model::PhysicalFileIdentity::Unix {
+                device: 1,
+                inode: 1,
+            },
             b"<script>export default {}</script>".to_vec(),
         );
         assert!(extract(&snapshot).is_err());
