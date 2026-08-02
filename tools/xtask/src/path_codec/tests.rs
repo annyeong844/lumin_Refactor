@@ -14,7 +14,63 @@ fn frozen_artifact_validates_and_runtime_vectors_hold() -> Result<(), Box<dyn st
         runtime::check(&artifact.value).map_err(std::io::Error::other)?,
         Vec::<String>::new()
     );
+    assert_eq!(
+        oracle::check(&artifact.value).map_err(std::io::Error::other)?,
+        Vec::<String>::new()
+    );
     Ok(())
+}
+
+#[test]
+fn independent_oracle_rejects_changed_endian_and_dto_projection()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut artifact = load_artifact(&workspace_root()?).map_err(std::io::Error::other)?;
+    let mut bytes = decode_hex(
+        artifact.value["goldenVectors"][1]["hex"]
+            .as_str()
+            .ok_or("golden vector hex is missing")?,
+    )
+    .map_err(std::io::Error::other)?;
+    bytes[15..19].copy_from_slice(&3_u32.to_le_bytes());
+    artifact.value["goldenVectors"][1]["hex"] =
+        Value::String(bytes.iter().map(|byte| format!("{byte:02x}")).collect());
+    artifact.value["goldenVectors"][1]["base64"] = Value::String(STANDARD.encode(&bytes));
+    let violations = oracle::check(&artifact.value).map_err(std::io::Error::other)?;
+    assert!(violations.iter().any(|violation| {
+        violation.contains("repo-portable-src-a-ts")
+            && violation.contains("independent decoder rejected")
+    }));
+
+    let mut artifact = load_artifact(&workspace_root()?).map_err(std::io::Error::other)?;
+    artifact.value["rootDtoGoldenVectors"][0]["display"] = Value::String("/other".to_owned());
+    assert!(
+        oracle::check(&artifact.value)
+            .map_err(std::io::Error::other)?
+            .iter()
+            .any(|violation| violation.contains("root DTO projection disagrees"))
+    );
+    Ok(())
+}
+
+#[test]
+fn independent_oracle_rejects_native_io_vector_drift() -> Result<(), Box<dyn std::error::Error>> {
+    let mut artifact = load_artifact(&workspace_root()?).map_err(std::io::Error::other)?;
+    artifact.value["ioGoldenVectors"][3]["nulRecordHex"] = Value::String("f09f988001".to_owned());
+    assert!(
+        oracle::check(&artifact.value)
+            .map_err(std::io::Error::other)?
+            .iter()
+            .any(|violation| violation.contains("paths0-windows-scalar-emoji NUL record"))
+    );
+    Ok(())
+}
+
+#[test]
+fn independent_windows_native_decoder_rejects_cesu8_pairs() {
+    assert!(
+        oracle::decode_native_nul_stream(b"\xed\xa0\xbd\xed\xb8\x80\0", oracle::Platform::Windows,)
+            .is_err()
+    );
 }
 
 #[test]

@@ -19,8 +19,9 @@ use lumin_evidence::{
 };
 use lumin_model::{
     AnalysisInputId, AttemptId, AttemptStatus, CapabilityState, FindingDisposition, FindingId,
-    GateDeltaRecord, GateId, Limitation, OperationId, PhysicalFileIdentity, ResolvedSourceUse,
-    RunId, SelectedResolutionProfile, SourceRoleClassification, SourceSpan, SymbolNamespace,
+    GateDeltaRecord, GateId, Limitation, OperationId, PhysicalFileIdentity, RepositoryRootIdentity,
+    ResolvedSourceUse, RunId, SelectedResolutionProfile, SourceRoleClassification, SourceSpan,
+    SymbolNamespace,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -29,6 +30,7 @@ use thiserror::Error;
 #[serde(rename_all = "camelCase")]
 pub struct AuditResponseDto {
     pub schema_version: &'static str,
+    pub repository_root: RepositoryRootDto,
     pub attempt_id: AttemptId,
     pub run_id: RunId,
     pub sequence: u64,
@@ -312,6 +314,7 @@ pub enum ProtocolError {
 }
 
 pub fn audit_response(
+    repository_root: &RepositoryRootIdentity,
     attempt_id: AttemptId,
     run_id: RunId,
     sequence: u64,
@@ -319,6 +322,7 @@ pub fn audit_response(
 ) -> AuditResponseDto {
     AuditResponseDto {
         schema_version: "lumin.audit.v1",
+        repository_root: RepositoryRootDto::from(repository_root),
         attempt_id,
         run_id,
         sequence,

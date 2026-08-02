@@ -1,7 +1,8 @@
+use std::ffi::OsString;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use serde_json::Value;
 
@@ -25,13 +26,49 @@ pub fn run_with_env(
     arguments: &[&str],
     environment: &[(&str, &str)],
 ) -> Result<ProcessResult, Box<dyn std::error::Error>> {
+    let arguments = arguments.iter().map(OsString::from).collect::<Vec<_>>();
+    if environment.is_empty() {
+        run_os_with_stdin(root, &arguments, &[])
+    } else {
+        run_os_with_stdin_and_env(root, &arguments, None, environment)
+    }
+}
+
+pub fn run_os_with_stdin(
+    root: &Path,
+    arguments: &[OsString],
+    stdin: &[u8],
+) -> Result<ProcessResult, Box<dyn std::error::Error>> {
+    run_os_with_stdin_and_env(root, arguments, Some(stdin), &[])
+}
+
+fn run_os_with_stdin_and_env(
+    root: &Path,
+    arguments: &[OsString],
+    stdin: Option<&[u8]>,
+    environment: &[(&str, &str)],
+) -> Result<ProcessResult, Box<dyn std::error::Error>> {
     let effective_arguments = determinism::effective_arguments(arguments)?;
     let mut command = Command::new(env!("CARGO_BIN_EXE_lumin"));
     command.current_dir(root).args(&effective_arguments);
     for (name, value) in environment {
         command.env(name, value);
     }
-    let output = command.output()?;
+    let output = if let Some(stdin) = stdin {
+        let mut child = command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        child
+            .stdin
+            .take()
+            .ok_or_else(|| std::io::Error::other("child stdin pipe is missing"))?
+            .write_all(stdin)?;
+        child.wait_with_output()?
+    } else {
+        command.output()?
+    };
     let command_succeeded = output.status.success();
     let stdout = String::from_utf8(output.stdout)?;
     let stderr = String::from_utf8(output.stderr)?;

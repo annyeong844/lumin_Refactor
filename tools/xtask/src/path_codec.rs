@@ -10,6 +10,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use syn::visit::Visit;
 
+mod oracle;
 mod runtime;
 #[cfg(test)]
 mod tests;
@@ -76,6 +77,10 @@ pub(crate) fn check_path_codec(workspace_root: &Path) -> PathCodecResult {
         Err(error) => result.tool_errors.push(error),
     }
 
+    match oracle::check(&artifact.value) {
+        Ok(violations) => result.violations.extend(violations),
+        Err(error) => result.tool_errors.push(error),
+    }
     match runtime::check(&artifact.value) {
         Ok(violations) => result.violations.extend(violations),
         Err(error) => result.tool_errors.push(error),

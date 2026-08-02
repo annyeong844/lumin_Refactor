@@ -30,6 +30,7 @@ pub use write_gate::{
 };
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use lumin_evidence::{
@@ -43,8 +44,8 @@ use lumin_inventory::{
 };
 use lumin_model::{
     AttemptId, AttemptStatus, CapabilityState, ConfigObservation, FileFacts, Limitation,
-    ResolutionOutcome, ResolutionProfile, ResolvedSourceUse, RoleOverride, RunId, SfcDialect,
-    SourceSnapshot, digest_hex,
+    RepositoryRootIdentity, ResolutionOutcome, ResolutionProfile, ResolvedSourceUse, RoleOverride,
+    RunId, SfcDialect, SourceSnapshot, digest_hex,
 };
 use lumin_resolve::{ConfigDemand, ResolverError, ResolverOutput};
 use lumin_store::{PublishedRun, RepositoryStore, RunCatalogRecord, StoreError};
@@ -53,6 +54,18 @@ use thiserror::Error;
 use extraction::extract_facts;
 #[cfg(test)]
 use extraction::reduce_file_facts;
+
+pub fn lower_native_repo_path(
+    value: &OsStr,
+) -> Result<lumin_model::RepoPath, lumin_model::RepoPathError> {
+    lumin_inventory::lower_native_repo_path(value)
+}
+
+pub fn decode_native_repo_path_stream(
+    bytes: &[u8],
+) -> Result<Vec<lumin_model::RepoPath>, lumin_model::RepoPathError> {
+    lumin_inventory::decode_native_repo_path_stream(bytes)
+}
 
 #[derive(Clone, Debug)]
 pub struct AuditRequest {
@@ -68,6 +81,7 @@ pub struct AuditRequest {
 #[derive(Clone, Debug)]
 pub struct AuditResult {
     pub published: PublishedRun,
+    pub repository_root: RepositoryRootIdentity,
     pub evidence: RunEvidence,
 }
 
@@ -219,6 +233,7 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
     };
     Ok(AuditResult {
         published,
+        repository_root: context.repository_root.clone(),
         evidence,
     })
 }
@@ -237,16 +252,19 @@ pub fn analyze_repository(
 struct RepositoryContext {
     root: PathBuf,
     repository_id: lumin_model::RepositoryId,
+    repository_root: RepositoryRootIdentity,
     store: RepositoryStore,
 }
 
 fn open_repository_context(root: &Path) -> Result<RepositoryContext, EngineError> {
     let admission = repository_admission(root)?;
     let repository_id = admission.binding.repository_id().clone();
+    let repository_root = admission.binding.root().clone();
     let store = RepositoryStore::open(&admission.canonical_root, &admission.binding)?;
     Ok(RepositoryContext {
         root: admission.canonical_root,
         repository_id,
+        repository_root,
         store,
     })
 }

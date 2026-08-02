@@ -212,7 +212,7 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("source-role-findings-remain-visible", &[inv!("source_role_public", "source_role_findings_remain_visible_and_only_explicit_filtering_narrows")]),
     row_sd!("logical-source-physical-aliases", &[inv!("logical_source_aliases", "logical_source_physical_aliases_keep_context_and_reuse_payload")]),
     row_sd!("physical-alias-write-closure", INV_ALIAS),
-    row_sd!("repo-path-codec-golden-vectors"),
+    row_sd!("repo-path-codec-golden-vectors", &[inv!("repo_path_codec", "repo_path_codec_golden_vectors_round_trip_through_public_binary")]),
     row_sd!("extension-probe-precedence", &[inv!("extension_probe", "relative_extension_and_directory_probes_follow_frozen_precedence")]),
     row_sd!("declaration-type-space", &[inv!("path_and_declaration", "declaration_facts_satisfy_type_space_only")]),
     row_sd!("tsconfig-aliases"),

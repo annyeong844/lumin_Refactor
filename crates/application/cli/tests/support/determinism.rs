@@ -1,3 +1,4 @@
+use std::ffi::{OsStr, OsString};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
@@ -18,12 +19,12 @@ enum JobsPolicy {
 }
 
 pub(super) fn effective_arguments(
-    arguments: &[&str],
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    arguments: &[OsString],
+) -> Result<Vec<OsString>, Box<dyn std::error::Error>> {
     let capture = std::env::var(CAPTURE_ENV);
     let policy = std::env::var(JOBS_POLICY_ENV);
     let policy = match (capture.as_ref(), policy.as_deref()) {
-        (Err(_), Err(_)) => return Ok(arguments.iter().map(|value| (*value).to_owned()).collect()),
+        (Err(_), Err(_)) => return Ok(arguments.to_vec()),
         (Ok(_), Ok("default")) => JobsPolicy::Default,
         (Ok(_), Ok("one")) => JobsPolicy::One,
         (Ok(_), Ok(value)) => {
@@ -44,36 +45,39 @@ pub(super) fn effective_arguments(
 }
 
 fn rewrite_arguments(
-    arguments: &[&str],
+    arguments: &[OsString],
     policy: JobsPolicy,
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    if !matches!(arguments.first().copied(), Some("audit" | "pre-write")) {
-        return Ok(arguments.iter().map(|value| (*value).to_owned()).collect());
+) -> Result<Vec<OsString>, Box<dyn std::error::Error>> {
+    if !arguments
+        .first()
+        .is_some_and(|value| value == OsStr::new("audit") || value == OsStr::new("pre-write"))
+    {
+        return Ok(arguments.to_vec());
     }
 
     let mut effective = Vec::with_capacity(arguments.len() + 2);
     let mut index = 0;
     while index < arguments.len() {
-        if arguments[index] == "--jobs" {
+        if arguments[index] == OsStr::new("--jobs") {
             if arguments.get(index + 1).is_none() {
                 return Err(std::io::Error::other("--jobs is missing its value").into());
             }
             index += 2;
         } else {
-            effective.push(arguments[index].to_owned());
+            effective.push(arguments[index].clone());
             index += 1;
         }
     }
     if matches!(policy, JobsPolicy::One) {
-        effective.push("--jobs".to_owned());
-        effective.push("1".to_owned());
+        effective.push("--jobs".into());
+        effective.push("1".into());
     }
     Ok(effective)
 }
 
 pub(super) fn record_semantic_evidence(
     root: &Path,
-    arguments: &[String],
+    arguments: &[OsString],
     command_succeeded: bool,
     stdout: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -96,7 +100,7 @@ pub(super) fn record_semantic_evidence(
         }
     };
 
-    let evidence = match arguments.first().map(String::as_str) {
+    let evidence = match arguments.first().and_then(|value| value.to_str()) {
         Some("audit") if command_succeeded => lumin_engine::load_latest_run(root)?
             .map(|(_, evidence)| serde_json::to_value(evidence.semantic_projection()))
             .transpose()?

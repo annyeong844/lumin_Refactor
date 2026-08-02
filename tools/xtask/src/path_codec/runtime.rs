@@ -8,6 +8,7 @@ use lumin_model::{RepoPath, RepositoryRootIdentity};
 use lumin_protocol::{RepoPathDto, RepositoryRootDto};
 use serde_json::Value;
 
+use super::oracle;
 use super::{decode_hex, field};
 
 pub(super) fn check(value: &Value) -> Result<Vec<String>, String> {
@@ -28,7 +29,12 @@ pub(super) fn check(value: &Value) -> Result<Vec<String>, String> {
                         violations.push(format!("PATH CODEC RUNTIME: {id} did not round-trip"));
                     }
                     let dto = RepoPathDto::from(&path);
-                    if dto.canonical_base64 != field(row, "base64")? || dto.decode().is_err() {
+                    let projection = oracle::repo_projection(&bytes)?;
+                    if dto.canonical_base64 != projection.canonical_base64
+                        || dto.display != projection.display
+                        || dto.utf8 != projection.utf8
+                        || dto.decode().is_err()
+                    {
                         violations.push(format!("PATH CODEC DTO: {id} did not round-trip"));
                     }
                 }
@@ -73,6 +79,17 @@ fn check_root_dto_vectors(
                 .and_then(Value::as_str)
                 .map(str::to_owned),
         };
+        let projection = oracle::root_projection(
+            vectors
+                .get(root_vector)
+                .ok_or_else(|| format!("{id} references missing {root_vector}"))?,
+        )?;
+        if dto.canonical_base64 != projection.canonical_base64
+            || dto.display != projection.display
+            || dto.readable_address != projection.readable_address
+        {
+            violations.push(format!("ROOT DTO ORACLE: {id} projection disagrees"));
+        }
         match dto.decode() {
             Ok(root)
                 if vectors
