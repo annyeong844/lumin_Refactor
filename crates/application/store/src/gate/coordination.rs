@@ -83,6 +83,10 @@ fn collect_reservation_conflicts(
             lease.conflicts_with_semantic_read(
                 &reservation.path,
                 reservation.physical_identity.as_ref(),
+                reservation
+                    .absence_parent
+                    .as_ref()
+                    .map(|parent| &parent.physical_identity),
             )
         }) {
             paths.push(reservation.path.clone());
@@ -105,7 +109,14 @@ fn collect_conflicts(
             .iter()
             .any(|existing| lease.conflicts_with(existing))
             || existing_inputs.iter().any(|input| {
-                lease.conflicts_with_semantic_read(&input.path, input.physical_identity.as_ref())
+                lease.conflicts_with_semantic_read(
+                    &input.path,
+                    input.physical_identity.as_ref(),
+                    input
+                        .absence_parent
+                        .as_ref()
+                        .map(|parent| &parent.physical_identity),
+                )
             })
         {
             paths.push(lease.path.clone());
@@ -114,7 +125,14 @@ fn collect_conflicts(
     }
     for input in candidate_inputs {
         if existing_leases.iter().any(|lease| {
-            lease.conflicts_with_semantic_read(&input.path, input.physical_identity.as_ref())
+            lease.conflicts_with_semantic_read(
+                &input.path,
+                input.physical_identity.as_ref(),
+                input
+                    .absence_parent
+                    .as_ref()
+                    .map(|parent| &parent.physical_identity),
+            )
         }) {
             paths.push(input.path.clone());
             gate_ids.push(existing_gate_id.clone());

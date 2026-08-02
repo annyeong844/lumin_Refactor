@@ -1,5 +1,5 @@
 use lumin_evidence::{
-    CapabilityRecord, DEAD_CODE_CAPABILITY_ID, RunEvidence, SemanticInputState,
+    CapabilityRecord, DEAD_CODE_CAPABILITY_ID, PathPrefixIdentity, RunEvidence, SemanticInputState,
     seal_analysis_snapshot,
 };
 use lumin_model::{CapabilityState, RepoPath};
@@ -25,6 +25,7 @@ fn persisted_v1_gate_additions_default_when_absent() -> Result<(), Box<dyn std::
         state: SemanticInputState::ConfigPresent,
         payload_sha256: Some("baseline".to_owned()),
         physical_identity: None,
+        absence_parent: None,
     };
     let baseline = GateBaseline {
         analysis_contract: "contract".to_owned(),
@@ -174,6 +175,52 @@ fn persisted_reservation_rejects_conflicting_physical_identities()
         validate_reservation_binding_set(&operation),
         Err(StoreError::Integrity(detail))
             if detail.contains("conflicting physical identities")
+    ));
+    Ok(())
+}
+
+#[test]
+fn persisted_reservation_rejects_direct_and_absence_identities_together()
+-> Result<(), Box<dyn std::error::Error>> {
+    let reserved_path = path("config/base.json")?;
+    let mut binding = reservation(
+        reserved_path.clone(),
+        Some(lumin_model::PhysicalFileIdentity::Unix {
+            device: 7,
+            inode: 11,
+        }),
+    );
+    binding.absence_parent = Some(PathPrefixIdentity {
+        path: path("config")?,
+        physical_identity: lumin_model::PhysicalFileIdentity::Unix {
+            device: 7,
+            inode: 12,
+        },
+    });
+    let operation = OperationRecord {
+        schema_version: "lumin-operation.v1".to_owned(),
+        operation_id: OperationId::from_string("operation-invalid-absence-binding".to_owned()),
+        kind: GateOperationKind::PostWrite,
+        request_digest: "digest".to_owned(),
+        status: GateOperationStatus::Pending,
+        gate_id: GateId::from_string("gate-invalid-absence-binding".to_owned()),
+        target_revision: 1,
+        reason: None,
+        transition_sequence: 0,
+        declared_write_set: Vec::new(),
+        leased_write_set: Vec::new(),
+        semantic_read_reservations: vec![reserved_path],
+        semantic_read_reservation_bindings: vec![binding],
+        interruption_count: 0,
+        operation_liveness: None,
+        analysis_options: None,
+        result: None,
+    };
+
+    assert!(matches!(
+        validate_reservation_binding_set(&operation),
+        Err(StoreError::Integrity(detail))
+            if detail.contains("both direct and absence identities")
     ));
     Ok(())
 }
@@ -501,6 +548,7 @@ fn reservation(
     SemanticReadReservationBinding {
         path,
         physical_identity,
+        absence_parent: None,
     }
 }
 

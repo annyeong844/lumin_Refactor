@@ -800,6 +800,22 @@ fn validate_reservation_binding_set(operation: &OperationRecord) -> Result<(), S
     }
     let mut bindings = operation.semantic_read_reservation_bindings.clone();
     bindings.sort();
+    for binding in &bindings {
+        if binding.physical_identity.is_some() && binding.absence_parent.is_some() {
+            return Err(StoreError::Integrity(format!(
+                "semantic-read reservation has both direct and absence identities: {}",
+                binding.path.display
+            )));
+        }
+        if let Some(parent) = &binding.absence_parent
+            && !binding.path.components.starts_with(&parent.path.components)
+        {
+            return Err(StoreError::Integrity(format!(
+                "semantic-read absence parent is outside its demanded path: {}",
+                binding.path.display
+            )));
+        }
+    }
     for pair in bindings.windows(2) {
         if pair[0].path == pair[1].path && pair[0] != pair[1] {
             return Err(StoreError::Integrity(format!(
@@ -842,6 +858,12 @@ fn validate_captured_reservations(
         if captured.physical_identity != binding.physical_identity {
             return Err(StoreError::Integrity(format!(
                 "{phase} physical identity disagrees with reservation: {}",
+                binding.path.display
+            )));
+        }
+        if captured.absence_parent != binding.absence_parent {
+            return Err(StoreError::Integrity(format!(
+                "{phase} absence parent disagrees with reservation: {}",
                 binding.path.display
             )));
         }

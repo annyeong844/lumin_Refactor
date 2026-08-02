@@ -73,6 +73,8 @@ pub struct SemanticInputRecord {
     pub payload_sha256: Option<String>,
     #[serde(default)]
     pub physical_identity: Option<PhysicalFileIdentity>,
+    #[serde(default)]
+    pub absence_parent: Option<PathPrefixIdentity>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -215,9 +217,12 @@ impl WriteLease {
         &self,
         path: &RepoPathProjection,
         physical_identity: Option<&PhysicalFileIdentity>,
+        absence_parent_identity: Option<&PhysicalFileIdentity>,
     ) -> bool {
         self.covers(path)
             || (physical_identity.is_some() && self.physical_identity.as_ref() == physical_identity)
+            || (absence_parent_identity.is_some()
+                && self.physical_identity.as_ref() == absence_parent_identity)
     }
 }
 
@@ -227,6 +232,8 @@ pub struct SemanticReadReservationBinding {
     pub path: RepoPathProjection,
     #[serde(default)]
     pub physical_identity: Option<PhysicalFileIdentity>,
+    #[serde(default)]
+    pub absence_parent: Option<PathPrefixIdentity>,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -567,6 +574,14 @@ pub fn seal_analysis_snapshot(
             Some(identity) => {
                 framed.push(1);
                 append_length_prefixed(&mut framed, &identity.canonical_bytes());
+            }
+            None => framed.push(0),
+        }
+        match &input.absence_parent {
+            Some(parent) => {
+                framed.push(1);
+                append_length_prefixed(&mut framed, &parent.path.canonical);
+                append_length_prefixed(&mut framed, &parent.physical_identity.canonical_bytes());
             }
             None => framed.push(0),
         }
@@ -987,6 +1002,7 @@ mod tests {
             state: SemanticInputState::ConfigPresent,
             payload_sha256: Some(payload_sha256.to_owned()),
             physical_identity: None,
+            absence_parent: None,
         })
     }
 
@@ -1030,6 +1046,28 @@ mod tests {
             without_invocation.analysis_input_id, with_includes.analysis_input_id,
             "scan invocation tier includes must affect the analysis input ID"
         );
+    }
+
+    #[test]
+    fn missing_input_parent_identity_changes_analysis_input_id()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let missing = |inode| -> Result<SemanticInputRecord, Box<dyn std::error::Error>> {
+            Ok(SemanticInputRecord {
+                path: path("config/missing.json")?,
+                state: SemanticInputState::Missing,
+                payload_sha256: None,
+                physical_identity: None,
+                absence_parent: Some(PathPrefixIdentity {
+                    path: path("config")?,
+                    physical_identity: PhysicalFileIdentity::Unix { device: 7, inode },
+                }),
+            })
+        };
+        let before = snapshot(vec![missing(11)?]);
+        let replaced_parent = snapshot(vec![missing(12)?]);
+
+        assert_ne!(before.analysis_input_id, replaced_parent.analysis_input_id);
+        Ok(())
     }
 
     #[test]

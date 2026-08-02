@@ -23,9 +23,31 @@ fn config_identity_observation_preserves_hard_link_alias_identity()
     let base = RepoPath::from_portable("config/base.json")?;
     let alias = RepoPath::from_portable("config/alias.json")?;
 
+    let base = observe_config_input_identity(root.path(), &base)?;
+    let alias = observe_config_input_identity(root.path(), &alias)?;
+    assert_eq!(base.physical_identity, alias.physical_identity);
+    assert!(base.absence_parent.is_none());
+    assert!(alias.absence_parent.is_none());
+    Ok(())
+}
+
+#[test]
+fn missing_config_identity_is_bound_to_the_nearest_existing_parent()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir(root.path().join("config"))?;
+    let missing = RepoPath::from_portable("config/nested/base.json")?;
+
+    let identity = observe_config_input_identity(root.path(), &missing)?;
+
+    assert!(identity.physical_identity.is_none());
+    let parent = identity
+        .absence_parent
+        .ok_or_else(|| std::io::Error::other("missing config has no parent binding"))?;
+    assert_eq!(parent.path, RepoPath::from_portable("config")?);
     assert_eq!(
-        observe_config_physical_identity(root.path(), &base)?,
-        observe_config_physical_identity(root.path(), &alias)?
+        parent.physical_identity,
+        physical_file_identity(&root.path().join("config"))?
     );
     Ok(())
 }

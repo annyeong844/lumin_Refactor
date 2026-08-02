@@ -225,7 +225,7 @@ fn evaluate_config(
         });
     };
     let document = match observation {
-        ConfigObservation::Present(document) => document,
+        ConfigObservation::Present { document, .. } => document,
         ConfigObservation::Missing { .. } | ConfigObservation::NonRegular { .. } => {
             limitations.push(Limitation::TsconfigSemanticsUnsupported {
                 path: path.display_escaped(),
@@ -259,7 +259,7 @@ fn evaluate_config(
 
     let mut effective = EffectiveConfig::default();
     if let Some(extends) = document.root.get("extends") {
-        match select_extends(path, extends, config, demands, limitations)? {
+        match select_extends(path, extends, config, repository_root, demands, limitations)? {
             ExtendsSelection::Selected(parent) => {
                 effective = evaluate_config(
                     &parent,
@@ -293,6 +293,7 @@ fn select_extends(
     config_path: &RepoPath,
     value: &ConfigValue,
     config: &SemanticConfigSnapshot,
+    repository_root: &RepositoryRootIdentity,
     demands: &mut Vec<ConfigDemand>,
     limitations: &mut Vec<Limitation>,
 ) -> Result<ExtendsSelection, ResolverError> {
@@ -303,13 +304,27 @@ fn select_extends(
         });
         return Ok(ExtendsSelection::Blocked);
     };
+    if specifier.is_empty() || specifier.contains('\0') {
+        return Err(ResolverError::Configuration(format!(
+            "extends must be a nonempty NUL-free string: {}",
+            config_path.display_escaped()
+        )));
+    }
     let normalized = specifier.replace('\\', "/");
-    if rooted_specifier(&normalized) {
-        limitations.push(Limitation::TsconfigSemanticsUnsupported {
-            path: config_path.display_escaped(),
-            detail: format!("rooted extends specifier is unsupported: {specifier}"),
-        });
-        return Ok(ExtendsSelection::Blocked);
+    match repository_root.classify_rooted_utf8_path(&normalized) {
+        RootedPathRelation::Outside => {
+            return Err(ResolverError::Configuration(
+                "extends path escapes the repository root".to_owned(),
+            ));
+        }
+        RootedPathRelation::Contained => {
+            limitations.push(Limitation::TsconfigSemanticsUnsupported {
+                path: config_path.display_escaped(),
+                detail: "rooted extends specifier is unsupported".to_owned(),
+            });
+            return Ok(ExtendsSelection::Blocked);
+        }
+        RootedPathRelation::NotRooted => {}
     }
     if normalized.starts_with("./") || normalized.starts_with("../") {
         return select_relative_extends(
@@ -339,13 +354,18 @@ fn select_relative_extends(
     demands: &mut Vec<ConfigDemand>,
     limitations: &mut Vec<Limitation>,
 ) -> Result<ExtendsSelection, ResolverError> {
-    let base = config_path.parent().unwrap_or_else(RepoPath::empty);
-    let Some(exact) = normalize_from(&base, normalized_specifier) else {
+    if normalized_specifier.split('/').any(str::is_empty) {
         limitations.push(Limitation::TsconfigSemanticsUnsupported {
             path: config_path.display_escaped(),
-            detail: format!("extends escapes the repository root: {original_specifier}"),
+            detail: format!("relative extends contains an empty component: {original_specifier}"),
         });
         return Ok(ExtendsSelection::Blocked);
+    }
+    let base = config_path.parent().unwrap_or_else(RepoPath::empty);
+    let Some(exact) = normalize_from(&base, normalized_specifier) else {
+        return Err(ResolverError::Configuration(format!(
+            "extends escapes the repository root: {original_specifier}"
+        )));
     };
     select_relative_candidate(exact, config, demands, limitations)
 }
@@ -358,6 +378,17 @@ fn select_workspace_extends(
     demands: &mut Vec<ConfigDemand>,
     limitations: &mut Vec<Limitation>,
 ) -> Result<ExtendsSelection, ResolverError> {
+    if config.packages.iter().any(|package| {
+        package.workspace_root.is_some()
+            && matches!(
+                &package.identity,
+                PackageIdentityState::Unsupported {
+                    candidate: Some(identity)
+                } if identity.as_str() == normalized_specifier
+            )
+    }) {
+        return Ok(ExtendsSelection::Blocked);
+    }
     let matches = config
         .packages
         .iter()
@@ -380,8 +411,9 @@ fn select_workspace_extends(
         return Ok(ExtendsSelection::Blocked);
     }
     let package = matches[0];
-    let Some(ConfigObservation::Present(manifest)) =
-        config.observations.get(&package.manifest_path)
+    let Some(ConfigObservation::Present {
+        document: manifest, ..
+    }) = config.observations.get(&package.manifest_path)
     else {
         limitations.push(Limitation::TsconfigSemanticsUnsupported {
             path: config_path.display_escaped(),
@@ -441,7 +473,7 @@ fn select_relative_candidate(
             });
             Ok(ExtendsSelection::NeedsInput)
         }
-        Some(ConfigObservation::Present(_)) => Ok(ExtendsSelection::Selected(exact)),
+        Some(ConfigObservation::Present { .. }) => Ok(ExtendsSelection::Selected(exact)),
         Some(ConfigObservation::Missing { .. } | ConfigObservation::NonRegular { .. }) => {
             if exact
                 .file_name_portable()
@@ -474,7 +506,7 @@ fn select_exact_candidate(
             });
             Ok(ExtendsSelection::NeedsInput)
         }
-        Some(ConfigObservation::Present(_)) => Ok(ExtendsSelection::Selected(path)),
+        Some(ConfigObservation::Present { .. }) => Ok(ExtendsSelection::Selected(path)),
         Some(ConfigObservation::Missing { .. } | ConfigObservation::NonRegular { .. }) => {
             limitations.push(Limitation::TsconfigSemanticsUnsupported {
                 path: path.display_escaped(),
@@ -811,8 +843,9 @@ fn importer_is_esm(
     else {
         return Ok(false);
     };
-    let Some(ConfigObservation::Present(manifest)) =
-        config.observations.get(&package.manifest_path)
+    let Some(ConfigObservation::Present {
+        document: manifest, ..
+    }) = config.observations.get(&package.manifest_path)
     else {
         return Ok(false);
     };
@@ -828,10 +861,6 @@ fn importer_is_esm(
             Err(())
         }
     }
-}
-
-fn rooted_specifier(value: &str) -> bool {
-    value.starts_with('/') || value.starts_with("//") || value.as_bytes().get(1) == Some(&b':')
 }
 
 pub(crate) fn normalize_from(base: &RepoPath, value: &str) -> Option<RepoPath> {
