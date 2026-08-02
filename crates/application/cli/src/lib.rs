@@ -2,6 +2,7 @@ mod query;
 mod retention;
 
 use std::ffi::OsString;
+use std::io::Read;
 use std::num::NonZeroUsize;
 use std::path::Path;
 
@@ -59,6 +60,12 @@ enum CliError {
     EmptyReason,
     #[error("invalid repository path: {0}")]
     InvalidRepoPath(String),
+    #[error("--paths0-from may be provided only once")]
+    DuplicatePaths0From,
+    #[error("--paths0-from supports only stdin ('-')")]
+    InvalidPaths0Source,
+    #[error("cannot read --paths0-from stdin: {0}")]
+    Paths0Read(String),
     #[error(transparent)]
     Engine(#[from] EngineError),
     #[error(transparent)]
@@ -76,7 +83,8 @@ pub fn execute(root: &Path, arguments: Vec<OsString>) -> CommandOutput {
             };
         }
     };
-    execute_with_build_identity(root, arguments, &build_identity)
+    let mut stdin = std::io::stdin().lock();
+    execute_with_input(root, arguments, &build_identity, &mut stdin)
 }
 
 /// Execute with an explicit BuildIdentity, for testing cross-build cursor rejection.
@@ -85,7 +93,17 @@ pub fn execute_with_build_identity(
     arguments: Vec<OsString>,
     build_identity: &BuildIdentity,
 ) -> CommandOutput {
-    match execute_inner(root, arguments, build_identity) {
+    let mut input = std::io::empty();
+    execute_with_input(root, arguments, build_identity, &mut input)
+}
+
+fn execute_with_input(
+    root: &Path,
+    arguments: Vec<OsString>,
+    build_identity: &BuildIdentity,
+    input: &mut dyn Read,
+) -> CommandOutput {
+    match execute_inner(root, arguments, build_identity, input) {
         Ok(output) => output,
         Err(error) => CommandOutput {
             exit_code: error_exit_code(&error),
@@ -127,6 +145,7 @@ fn execute_inner(
     root: &Path,
     arguments: Vec<OsString>,
     build_identity: &BuildIdentity,
+    input: &mut dyn Read,
 ) -> Result<CommandOutput, CliError> {
     let mut arguments = Arguments::new(arguments);
     let command = arguments
@@ -140,7 +159,7 @@ fn execute_inner(
         "related" => query::related(root, &mut arguments).map(success),
         "files" => query::files(root, &mut arguments).map(success),
         "capabilities" => capabilities(root, &mut arguments, build_identity).map(success),
-        "pre-write" => pre_write(root, &mut arguments),
+        "pre-write" => pre_write(root, &mut arguments, input),
         "post-write" => post_write(root, &mut arguments),
         "gate" => gate(root, &mut arguments),
         "operation" => operation(root, &mut arguments),
@@ -180,9 +199,9 @@ fn audit(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> {
             "--include" => includes.push(arguments.required_utf8("--include")?),
             "--exclude" => excludes.push(arguments.required_utf8("--exclude")?),
             "--entry" => {
-                let value = arguments.required_utf8("--entry")?;
+                let value = arguments.required_os("--entry")?;
                 entries.push(
-                    RepoPath::from_portable(&value)
+                    lumin_engine::lower_native_repo_path(&value)
                         .map_err(|error| CliError::InvalidRepoPath(error.to_string()))?,
                 );
             }
@@ -220,6 +239,7 @@ fn audit(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> {
         resolution_profile,
     })?;
     let response = lumin_protocol::audit_response(
+        &result.repository_root,
         result.published.attempt_id,
         result.published.run_id,
         result.published.sequence,
@@ -467,7 +487,11 @@ fn capabilities(
     }
 }
 
-fn pre_write(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {
+fn pre_write(
+    root: &Path,
+    arguments: &mut Arguments,
+    input: &mut dyn Read,
+) -> Result<CommandOutput, CliError> {
     let mut operation_id = None;
     let mut paths = Vec::new();
     let mut includes = Vec::new();
@@ -477,6 +501,7 @@ fn pre_write(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, Cl
     let mut jobs = default_jobs();
     let mut resolution_profile = None;
     let mut format = "json".to_owned();
+    let mut paths0_seen = false;
     while let Some(argument) = arguments.next_utf8("pre-write argument")? {
         match argument.as_str() {
             "--operation-id" => {
@@ -485,16 +510,33 @@ fn pre_write(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, Cl
                 )?);
             }
             "--path" => {
-                let value = arguments.required_utf8("--path")?;
+                let value = arguments.required_os("--path")?;
                 paths.push(
-                    RepoPath::from_portable(&value)
+                    lumin_engine::lower_native_repo_path(&value)
+                        .map_err(|error| CliError::InvalidRepoPath(error.to_string()))?,
+                );
+            }
+            "--paths0-from" => {
+                if paths0_seen {
+                    return Err(CliError::DuplicatePaths0From);
+                }
+                paths0_seen = true;
+                if arguments.required_utf8("--paths0-from")? != "-" {
+                    return Err(CliError::InvalidPaths0Source);
+                }
+                let mut bytes = Vec::new();
+                input
+                    .read_to_end(&mut bytes)
+                    .map_err(|error| CliError::Paths0Read(error.to_string()))?;
+                paths.extend(
+                    lumin_engine::decode_native_repo_path_stream(&bytes)
                         .map_err(|error| CliError::InvalidRepoPath(error.to_string()))?,
                 );
             }
             "--entry" => {
-                let value = arguments.required_utf8("--entry")?;
+                let value = arguments.required_os("--entry")?;
                 entries.push(
-                    RepoPath::from_portable(&value)
+                    lumin_engine::lower_native_repo_path(&value)
                         .map_err(|error| CliError::InvalidRepoPath(error.to_string()))?,
                 );
             }
@@ -870,6 +912,9 @@ fn error_exit_code(error: &CliError) -> i32 {
         | CliError::EmptyIdentifier(_)
         | CliError::EmptyReason
         | CliError::InvalidRepoPath(_)
+        | CliError::DuplicatePaths0From
+        | CliError::InvalidPaths0Source
+        | CliError::Paths0Read(_)
         | CliError::Protocol(_) => 2,
         CliError::Engine(error) => error.lifecycle_exit_code(),
     }
@@ -899,6 +944,12 @@ impl Arguments {
 
     fn required_utf8(&mut self, name: &str) -> Result<String, CliError> {
         self.next_utf8(name)?
+            .ok_or_else(|| CliError::MissingValue(name.to_owned()))
+    }
+
+    fn required_os(&mut self, name: &str) -> Result<OsString, CliError> {
+        self.values
+            .next()
             .ok_or_else(|| CliError::MissingValue(name.to_owned()))
     }
 }

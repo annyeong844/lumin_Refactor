@@ -31,6 +31,14 @@ pub use generated_config_policy::{
 };
 pub use root::{RepositoryAdmission, repository_admission};
 
+pub fn lower_native_repo_path(value: &OsStr) -> Result<RepoPath, RepoPathError> {
+    RepoPath::from_native_relative(Path::new(value))
+}
+
+pub fn decode_native_repo_path_stream(bytes: &[u8]) -> Result<Vec<RepoPath>, RepoPathError> {
+    RepoPath::decode_native_nul_stream(bytes)
+}
+
 /// Validate caller entries BEFORE audit begins or pre-write opens/reserves a gate.
 /// Reject entries whose lexical first component is the reserved `.lumin` namespace,
 /// or whose existing path or nearest existing parent physically escapes the canonical root.
