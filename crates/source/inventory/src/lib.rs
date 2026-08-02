@@ -8,17 +8,18 @@ mod root;
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ignore::WalkBuilder;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use lumin_model::{
-    ConfigObservation, ConfigSyntax, EntrySource, EntryUnavailableReason, Limitation,
-    PhysicalAliasWriteClosure, PhysicalFileIdentity, RepoPath, RepoPathError, RoleOverride,
-    SOURCE_CLASSIFICATION_RULE_VERSION, ScanRole, SemanticConfigSnapshot, SourceClassificationRole,
-    SourceKind, SourceRoleClassification, SourceRoleConfigurationSource, SourceRoleReason,
-    SourceRoles, SourceSnapshot, digest_hex,
+    ConfigAbsenceParent, ConfigObservation, ConfigSyntax, EntrySource, EntryUnavailableReason,
+    Limitation, PhysicalAliasWriteClosure, PhysicalFileIdentity, RepoPath, RepoPathError,
+    RoleOverride, SOURCE_CLASSIFICATION_RULE_VERSION, ScanRole, SemanticConfigSnapshot,
+    SourceClassificationRole, SourceKind, SourceRoleClassification, SourceRoleConfigurationSource,
+    SourceRoleReason, SourceRoles, SourceSnapshot, digest_hex,
 };
 use serde::Deserialize;
 use thiserror::Error;
@@ -852,16 +853,100 @@ pub fn physical_file_identity(path: &Path) -> Result<PhysicalFileIdentity, Inven
     }
 }
 
-pub fn observe_config_physical_identity(
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfigInputIdentity {
+    pub physical_identity: Option<PhysicalFileIdentity>,
+    pub absence_parent: Option<ConfigAbsenceParent>,
+}
+
+pub fn observe_config_input_identity(
     root: &Path,
     path: &RepoPath,
-) -> Result<Option<PhysicalFileIdentity>, InventoryError> {
+) -> Result<ConfigInputIdentity, InventoryError> {
     validate_root(root)?;
+    let canonical_root = fs::canonicalize(root)
+        .map_err(|error| InventoryError::RepositoryIdentity(error.to_string()))?;
     let native = root.join(native_relative(path)?);
     match fs::symlink_metadata(&native) {
-        Ok(_) => physical_file_identity(&native).map(Some),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Ok(metadata) => {
+            match fs::canonicalize(&native) {
+                Ok(canonical) if !canonical.starts_with(&canonical_root) => {
+                    return Err(InventoryError::MalformedConfiguration(format!(
+                        "config path resolves outside the repository root: {}",
+                        path.display_escaped()
+                    )));
+                }
+                Ok(_) => {}
+                Err(_) if metadata.file_type().is_symlink() => {
+                    return Ok(ConfigInputIdentity {
+                        physical_identity: None,
+                        absence_parent: None,
+                    });
+                }
+                Err(error) => {
+                    return Err(InventoryError::PhysicalIdentity(format!(
+                        "cannot resolve config path {}: {error}",
+                        path.display_escaped()
+                    )));
+                }
+            }
+            Ok(ConfigInputIdentity {
+                physical_identity: Some(physical_file_identity(&native)?),
+                absence_parent: None,
+            })
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(ConfigInputIdentity {
+            physical_identity: None,
+            absence_parent: Some(config_absence_parent(
+                root,
+                &canonical_root,
+                path.parent().unwrap_or_else(RepoPath::empty),
+            )?),
+        }),
         Err(error) => Err(InventoryError::PhysicalIdentity(error.to_string())),
+    }
+}
+
+fn config_absence_parent(
+    root: &Path,
+    canonical_root: &Path,
+    mut path: RepoPath,
+) -> Result<ConfigAbsenceParent, InventoryError> {
+    loop {
+        let native = root.join(native_relative(&path)?);
+        match fs::symlink_metadata(&native) {
+            Ok(_) => {
+                let canonical = fs::canonicalize(&native).map_err(|error| {
+                    InventoryError::PhysicalIdentity(format!(
+                        "cannot resolve missing-config parent {}: {error}",
+                        path.display_escaped()
+                    ))
+                })?;
+                if !canonical.starts_with(canonical_root) {
+                    return Err(InventoryError::MalformedConfiguration(format!(
+                        "missing-config parent resolves outside the repository root: {}",
+                        path.display_escaped()
+                    )));
+                }
+                return Ok(ConfigAbsenceParent {
+                    physical_identity: physical_file_identity(&native)?,
+                    path,
+                });
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                path = path.parent().ok_or_else(|| {
+                    InventoryError::PhysicalIdentity(
+                        "repository root disappeared while binding a missing config".to_owned(),
+                    )
+                })?;
+            }
+            Err(error) => {
+                return Err(InventoryError::PhysicalIdentity(format!(
+                    "cannot inspect missing-config parent {}: {error}",
+                    path.display_escaped()
+                )));
+            }
+        }
     }
 }
 
@@ -1099,10 +1184,10 @@ fn config_capture_limitation(
     syntax: ConfigSyntax,
 ) -> Option<Limitation> {
     let path = match observation {
-        ConfigObservation::Unreadable { path, .. } | ConfigObservation::NonRegular { path } => {
+        ConfigObservation::Unreadable { path, .. } | ConfigObservation::NonRegular { path, .. } => {
             path.display_escaped()
         }
-        ConfigObservation::Present(_) | ConfigObservation::Missing { .. } => return None,
+        ConfigObservation::Present { .. } | ConfigObservation::Missing { .. } => return None,
     };
     match (syntax, observation) {
         (ConfigSyntax::StrictJson, ConfigObservation::Unreadable { detail, .. }) => {
@@ -1136,7 +1221,7 @@ fn config_capture_limitation(
             })
         }
         (ConfigSyntax::Jsonc, ConfigObservation::NonRegular { .. })
-        | (_, ConfigObservation::Present(_) | ConfigObservation::Missing { .. }) => None,
+        | (_, ConfigObservation::Present { .. } | ConfigObservation::Missing { .. }) => None,
     }
 }
 
@@ -1147,30 +1232,63 @@ fn observe_config(
 ) -> Result<ConfigObservation, InventoryError> {
     validate_root(root)?;
     let native = root.join(native_relative(path)?);
+    let input_identity = observe_config_input_identity(root, path)?;
+    if let Some(parent) = input_identity.absence_parent {
+        return Ok(ConfigObservation::Missing {
+            path: path.clone(),
+            parent,
+        });
+    }
     let metadata = match fs::symlink_metadata(&native) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(ConfigObservation::Missing { path: path.clone() });
+            return Err(InventoryError::PhysicalIdentity(format!(
+                "config path changed after identity capture: {}",
+                path.display_escaped()
+            )));
         }
         Err(error) => {
             return Ok(ConfigObservation::Unreadable {
                 path: path.clone(),
                 detail: error.to_string(),
+                physical_identity: input_identity.physical_identity,
             });
         }
     };
     if metadata.file_type().is_symlink() || !metadata.is_file() {
-        return Ok(ConfigObservation::NonRegular { path: path.clone() });
+        return Ok(ConfigObservation::NonRegular {
+            path: path.clone(),
+            physical_identity: input_identity.physical_identity,
+        });
     }
-    let bytes = match fs::read(&native) {
-        Ok(bytes) => bytes,
+    let mut file = match fs::File::open(&native) {
+        Ok(file) => file,
         Err(error) => {
             return Ok(ConfigObservation::Unreadable {
                 path: path.clone(),
                 detail: error.to_string(),
+                physical_identity: input_identity.physical_identity,
             });
         }
     };
+    let physical_identity = capture::physical_identity_from_file(&file)?;
+    let mut bytes = Vec::new();
+    if let Err(error) = file.read_to_end(&mut bytes) {
+        return Ok(ConfigObservation::Unreadable {
+            path: path.clone(),
+            detail: error.to_string(),
+            physical_identity: Some(physical_identity),
+        });
+    }
+    let current_identity = observe_config_input_identity(root, path)?;
+    if current_identity.physical_identity.as_ref() != Some(&physical_identity)
+        || current_identity.absence_parent.is_some()
+    {
+        return Err(InventoryError::PhysicalIdentity(format!(
+            "config path changed physical identity during capture: {}",
+            path.display_escaped()
+        )));
+    }
     let parsed = match syntax {
         ConfigSyntax::StrictJson | ConfigSyntax::Jsonc => {
             config_document::parse(path.clone(), &bytes, syntax)
@@ -1180,7 +1298,10 @@ fn observe_config(
     let document = parsed.map_err(|error| {
         InventoryError::MalformedConfiguration(format!("{}: {error}", path.display_escaped()))
     })?;
-    Ok(ConfigObservation::Present(document))
+    Ok(ConfigObservation::Present {
+        document,
+        physical_identity,
+    })
 }
 
 fn config_syntax(path: &Path) -> Option<ConfigSyntax> {

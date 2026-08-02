@@ -35,9 +35,9 @@ use std::path::{Path, PathBuf};
 
 use lumin_evidence::{
     AnalysisMetrics, AnalysisSnapshot, CapabilityRecord, DEAD_CODE_CAPABILITY_ID,
-    EntrySelectionRecord, RepoPathProjection, RunEvidence, ScanInvocationTier, SemanticInputRecord,
-    SemanticInputState, SourceClassificationRecord, SourceContextRecord, SourceObservationRecord,
-    seal_analysis_snapshot,
+    EntrySelectionRecord, PathPrefixIdentity, RepoPathProjection, RunEvidence, ScanInvocationTier,
+    SemanticInputRecord, SemanticInputState, SourceClassificationRecord, SourceContextRecord,
+    SourceObservationRecord, seal_analysis_snapshot,
 };
 use lumin_inventory::{
     InventoryError, InventoryRequest, InventorySnapshot, SemanticPolicyState, repository_admission,
@@ -328,7 +328,7 @@ fn capture_admitted_repository(
                 session.capture_demands(root, demands)?;
             }
             RepositoryAnalysisStep::Finished(resolver) => {
-                return session.finish(root, resolver);
+                return session.finish(resolver);
             }
         }
     }
@@ -435,11 +435,7 @@ impl RepositoryAnalysisSession {
         Ok(())
     }
 
-    fn finish(
-        mut self,
-        root: &Path,
-        resolver: ResolverOutput,
-    ) -> Result<RepositoryCapture, EngineError> {
+    fn finish(mut self, resolver: ResolverOutput) -> Result<RepositoryCapture, EngineError> {
         let ResolverOutput {
             resolved,
             package_surfaces,
@@ -561,7 +557,7 @@ impl RepositoryAnalysisSession {
 
         Ok(RepositoryCapture {
             snapshot: seal_analysis_snapshot(
-                semantic_input_records(root, &self.inventory)?,
+                semantic_input_records(&self.inventory),
                 evidence,
                 self.scan_invocation,
                 entry_selections,
@@ -572,10 +568,7 @@ impl RepositoryAnalysisSession {
     }
 }
 
-fn semantic_input_records(
-    root: &Path,
-    inventory: &InventorySnapshot,
-) -> Result<Vec<SemanticInputRecord>, EngineError> {
+fn semantic_input_records(inventory: &InventorySnapshot) -> Vec<SemanticInputRecord> {
     let mut inputs = Vec::new();
     for source in &inventory.sources {
         inputs.push(SemanticInputRecord {
@@ -583,11 +576,12 @@ fn semantic_input_records(
             state: SemanticInputState::Source,
             payload_sha256: Some(source.payload_sha256.clone()),
             physical_identity: Some(source.physical_identity.clone()),
+            absence_parent: None,
         });
     }
     for observation in inventory.config.observations.values() {
         let (state, payload_sha256) = match observation {
-            ConfigObservation::Present(document) => (
+            ConfigObservation::Present { document, .. } => (
                 SemanticInputState::ConfigPresent,
                 Some(document.payload_sha256.clone()),
             ),
@@ -598,19 +592,17 @@ fn semantic_input_records(
                 Some(digest_hex(detail.as_bytes())),
             ),
         };
-        let physical_identity = if state == SemanticInputState::Missing {
-            None
-        } else {
-            Some(lumin_inventory::observe_physical_file_identity(
-                root,
-                observation.path(),
-            )?)
-        };
         inputs.push(SemanticInputRecord {
             path: RepoPathProjection::from(observation.path()),
             state,
             payload_sha256,
-            physical_identity,
+            physical_identity: observation.physical_identity().cloned(),
+            absence_parent: observation
+                .absence_parent()
+                .map(|parent| PathPrefixIdentity {
+                    path: RepoPathProjection::from(&parent.path),
+                    physical_identity: parent.physical_identity.clone(),
+                }),
         });
     }
     // Convert policy inputs (lumin.json, .gitignore files) to semantic input records
@@ -624,9 +616,10 @@ fn semantic_input_records(
             state,
             payload_sha256: policy_input.payload_sha256.clone(),
             physical_identity: policy_input.physical_identity.clone(),
+            absence_parent: None,
         });
     }
-    Ok(inputs)
+    inputs
 }
 
 fn source_adjacency(

@@ -127,6 +127,7 @@ fn seed_releasable_gate_state(store: &RepositoryStore, gate_id: &GateId) -> Resu
             state: SemanticInputState::ConfigPresent,
             payload_sha256: Some("protected".to_owned()),
             physical_identity: None,
+            absence_parent: None,
         }];
         gate.alias_closures = vec![PhysicalAliasClosureRecord {
             physical_identity: lumin_model::PhysicalFileIdentity::Unix {

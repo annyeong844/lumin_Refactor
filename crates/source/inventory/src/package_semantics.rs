@@ -44,7 +44,7 @@ fn pnpm_workspace_documents(
     observations
         .values()
         .filter_map(|observation| match observation {
-            ConfigObservation::Present(document)
+            ConfigObservation::Present { document, .. }
                 if document.path.file_name_portable() == Some("pnpm-workspace.yaml") =>
             {
                 Some(document)
@@ -58,7 +58,7 @@ fn package_manifests(observations: &BTreeMap<RepoPath, ConfigObservation>) -> Ve
     observations
         .values()
         .filter_map(|observation| match observation {
-            ConfigObservation::Present(document)
+            ConfigObservation::Present { document, .. }
                 if document.path.file_name_portable() == Some("package.json") =>
             {
                 Some(document)
@@ -327,7 +327,7 @@ fn package_fact(
                 path: manifest.path.display_escaped(),
                 detail: "package name does not match package-name.v1".to_owned(),
             });
-            PackageIdentityState::Unsupported
+            PackageIdentityState::Unsupported { candidate: None }
         }
     };
     let privacy_field = generated_config_policy::package_json_field_for_rule("private-package")
@@ -397,7 +397,9 @@ fn reject_duplicate_identities(packages: &mut [PackageFact], limitations: &mut V
                 path: packages[index].manifest_path.display_escaped(),
                 detail: format!("duplicate workspace package identity {identity}"),
             });
-            packages[index].identity = PackageIdentityState::Unsupported;
+            packages[index].identity = PackageIdentityState::Unsupported {
+                candidate: Some(PackageIdentity::new(identity.clone())),
+            };
         }
     }
 }

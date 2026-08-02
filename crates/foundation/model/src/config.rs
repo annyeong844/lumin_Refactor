@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::{LogicalSourceId, RepoPath};
+use crate::{LogicalSourceId, PhysicalFileIdentity, RepoPath};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -65,19 +65,60 @@ pub enum ConfigSyntax {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ConfigObservation {
-    Present(ConfigDocument),
-    Missing { path: RepoPath },
-    NonRegular { path: RepoPath },
-    Unreadable { path: RepoPath, detail: String },
+    Present {
+        document: ConfigDocument,
+        physical_identity: PhysicalFileIdentity,
+    },
+    Missing {
+        path: RepoPath,
+        parent: ConfigAbsenceParent,
+    },
+    NonRegular {
+        path: RepoPath,
+        physical_identity: Option<PhysicalFileIdentity>,
+    },
+    Unreadable {
+        path: RepoPath,
+        detail: String,
+        physical_identity: Option<PhysicalFileIdentity>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfigAbsenceParent {
+    pub path: RepoPath,
+    pub physical_identity: PhysicalFileIdentity,
 }
 
 impl ConfigObservation {
     pub fn path(&self) -> &RepoPath {
         match self {
-            Self::Present(document) => &document.path,
-            Self::Missing { path } | Self::NonRegular { path } | Self::Unreadable { path, .. } => {
-                path
+            Self::Present { document, .. } => &document.path,
+            Self::Missing { path, .. }
+            | Self::NonRegular { path, .. }
+            | Self::Unreadable { path, .. } => path,
+        }
+    }
+
+    pub fn physical_identity(&self) -> Option<&PhysicalFileIdentity> {
+        match self {
+            Self::Present {
+                physical_identity, ..
+            } => Some(physical_identity),
+            Self::NonRegular {
+                physical_identity, ..
             }
+            | Self::Unreadable {
+                physical_identity, ..
+            } => physical_identity.as_ref(),
+            Self::Missing { .. } => None,
+        }
+    }
+
+    pub fn absence_parent(&self) -> Option<&ConfigAbsenceParent> {
+        match self {
+            Self::Missing { parent, .. } => Some(parent),
+            Self::Present { .. } | Self::NonRegular { .. } | Self::Unreadable { .. } => None,
         }
     }
 }
@@ -99,7 +140,7 @@ impl PackageIdentity {
 pub enum PackageIdentityState {
     Missing,
     Valid(PackageIdentity),
-    Unsupported,
+    Unsupported { candidate: Option<PackageIdentity> },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 
 use lumin_evidence::{
     GateAnalysisOptions, GateBaseline, GateOperationResult, GateRecord, GateSignal,
-    OperationRecord, RepoPathProjection, ScanInvocationTier, SemanticReadReservationBinding,
-    gate_policy,
+    OperationRecord, PathPrefixIdentity, RepoPathProjection, ScanInvocationTier,
+    SemanticReadReservationBinding, gate_policy,
 };
 use lumin_inventory::InventoryRequest;
 use lumin_model::{
@@ -32,7 +32,7 @@ use transitions::{
     reconcile_transitions,
 };
 
-const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v4";
+const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v5";
 
 fn analysis_contract_id() -> String {
     let inputs = [
@@ -431,12 +431,17 @@ fn capture_reserved_repository(
                 let reservations = demands
                     .iter()
                     .map(|demand| {
+                        let identity =
+                            lumin_inventory::observe_config_input_identity(root, &demand.path)?;
                         Ok(SemanticReadReservationBinding {
                             path: RepoPathProjection::from(&demand.path),
-                            physical_identity: lumin_inventory::observe_config_physical_identity(
-                                root,
-                                &demand.path,
-                            )?,
+                            physical_identity: identity.physical_identity,
+                            absence_parent: identity.absence_parent.map(|parent| {
+                                PathPrefixIdentity {
+                                    path: RepoPathProjection::from(&parent.path),
+                                    physical_identity: parent.physical_identity,
+                                }
+                            }),
                         })
                     })
                     .collect::<Result<Vec<_>, EngineError>>()?;
@@ -461,7 +466,7 @@ fn capture_reserved_repository(
             }
             RepositoryAnalysisStep::Finished(resolver) => {
                 return session
-                    .finish(root, resolver)
+                    .finish(resolver)
                     .map(|capture| ReservedCapture::Finished {
                         capture: Box::new(capture),
                     });

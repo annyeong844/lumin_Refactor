@@ -718,6 +718,13 @@ mod tests {
             manifest_path.clone(),
             ConfigObservation::Missing {
                 path: manifest_path,
+                parent: lumin_model::ConfigAbsenceParent {
+                    path: RepoPath::from_portable("src/lib")?,
+                    physical_identity: lumin_model::PhysicalFileIdentity::Unix {
+                        device: 1,
+                        inode: 3,
+                    },
+                },
             },
         );
         let second = resolve_all(&sources, &[facts], &config, &repository_root, None)?;
@@ -758,11 +765,17 @@ mod tests {
         let mut config = SemanticConfigSnapshot::default();
         config.observations.insert(
             manifest_path.clone(),
-            ConfigObservation::Present(ConfigDocument {
-                path: manifest_path.clone(),
-                payload_sha256: "digest".to_owned(),
-                root: ConfigValue::Object(Vec::new()),
-            }),
+            ConfigObservation::Present {
+                document: ConfigDocument {
+                    path: manifest_path.clone(),
+                    payload_sha256: "digest".to_owned(),
+                    root: ConfigValue::Object(Vec::new()),
+                },
+                physical_identity: lumin_model::PhysicalFileIdentity::Unix {
+                    device: 1,
+                    inode: 4,
+                },
+            },
         );
 
         let repository_root = test_repository_root()?;

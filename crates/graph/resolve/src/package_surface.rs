@@ -109,7 +109,9 @@ pub(crate) fn resolve_relative_directory(
         }
     };
     match config.observations.get(&manifest_path) {
-        Some(ConfigObservation::Present(manifest)) => {
+        Some(ConfigObservation::Present {
+            document: manifest, ..
+        }) => {
             let Some(package) = config
                 .packages
                 .iter()
@@ -312,7 +314,7 @@ pub(super) fn package_manifest<'a>(
     config: &'a SemanticConfigSnapshot,
 ) -> Option<&'a ConfigDocument> {
     match config.observations.get(&package.manifest_path)? {
-        ConfigObservation::Present(document) => Some(document),
+        ConfigObservation::Present { document, .. } => Some(document),
         ConfigObservation::Missing { .. }
         | ConfigObservation::NonRegular { .. }
         | ConfigObservation::Unreadable { .. } => None,
