@@ -158,8 +158,9 @@ fn tsconfig_aliases_follow_exact_wildcard_base_url_and_extends_precedence()
     );
 
     let unsupported = tempfile::tempdir()?;
-    let contained_base_url = config_path(&unsupported.path().join("rooted"))?;
-    let contained_paths_target = config_path(&unsupported.path().join("outside").join("*"))?;
+    let canonical_unsupported = fs::canonicalize(unsupported.path())?;
+    let contained_base_url = config_path(&canonical_unsupported.join("rooted"))?;
+    let contained_paths_target = config_path(&canonical_unsupported.join("outside").join("*"))?;
     let unsupported_config = serde_json::json!({
         "compilerOptions": {
             "baseUrl": contained_base_url,
