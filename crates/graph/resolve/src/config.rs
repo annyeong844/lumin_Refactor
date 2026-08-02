@@ -545,12 +545,14 @@ fn apply_compiler_options(
             FieldClassification::SupportedAndModeled => modeled.push(entry),
         }
     }
+    let declares_base_url = modeled.iter().any(|entry| entry.key == "baseUrl");
     for key in ["baseUrl", "paths", "moduleResolution", "module"] {
         if let Some(entry) = modeled.iter().find(|entry| entry.key == key) {
             apply_modeled_option(
                 &entry.key,
                 &entry.value,
                 config_path,
+                declares_base_url,
                 limitations,
                 effective,
             )?;
@@ -563,6 +565,7 @@ fn apply_modeled_option(
     key: &str,
     value: &ConfigValue,
     config_path: &RepoPath,
+    declares_base_url: bool,
     limitations: &mut Vec<Limitation>,
     effective: &mut EffectiveConfig,
 ) -> Result<(), ResolverError> {
@@ -588,7 +591,18 @@ fn apply_modeled_option(
         "module" => effective.module = value.as_str().map(|value| value.to_ascii_lowercase()),
         "baseUrl" => {
             let base = config_path.parent().unwrap_or_else(RepoPath::empty);
-            let Some(path) = normalize_from(&base, value.as_str().unwrap_or_default()) else {
+            let value = value.as_str().unwrap_or_default().replace('\\', "/");
+            if rooted_specifier(&value) {
+                effective.base_url = None;
+                effective.blocked = true;
+                limitations.push(Limitation::TsconfigSemanticsUnsupported {
+                    path: config_path.display_escaped(),
+                    detail: "rooted baseUrl syntax is unsupported".to_owned(),
+                });
+                return Ok(());
+            }
+            let Some(path) = normalize_from(&base, &value) else {
+                effective.base_url = None;
                 effective.blocked = true;
                 limitations.push(Limitation::TsconfigSemanticsUnsupported {
                     path: config_path.display_escaped(),
@@ -599,10 +613,12 @@ fn apply_modeled_option(
             effective.base_url = Some(path);
         }
         "paths" => {
-            let base = effective
-                .base_url
-                .clone()
-                .unwrap_or_else(|| config_path.parent().unwrap_or_else(RepoPath::empty));
+            let config_directory = config_path.parent().unwrap_or_else(RepoPath::empty);
+            let base = if declares_base_url {
+                effective.base_url.clone().unwrap_or(config_directory)
+            } else {
+                config_directory
+            };
             match parse_paths(value, &base) {
                 Ok(paths) => effective.paths = Some(paths),
                 Err(detail) => {
@@ -648,7 +664,11 @@ fn parse_paths(value: &ConfigValue, base: &RepoPath) -> Result<PathMappings, Str
                     "paths target {target} has an incompatible star shape"
                 ));
             }
-            let probe = target.replace('*', "lumin-star-probe");
+            let normalized_target = target.replace('\\', "/");
+            if rooted_specifier(&normalized_target) {
+                return Err(format!("paths target {target} uses rooted syntax"));
+            }
+            let probe = normalized_target.replace('*', "lumin-star-probe");
             if normalize_from(base, &probe).is_none() {
                 return Err(format!("paths target {target} escapes the repository root"));
             }

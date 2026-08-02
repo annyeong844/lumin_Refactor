@@ -520,7 +520,6 @@ fn resolve_paths(
     let capture = mapping.pattern.split_once('*').map(|(prefix, suffix)| {
         &specifier[prefix.len()..specifier.len().saturating_sub(suffix.len())]
     });
-    let mut consulted = Vec::new();
     for target in &mapping.targets {
         let target = match capture {
             Some(capture) => target.replacen('*', capture, 1),
@@ -535,13 +534,9 @@ fn resolve_paths(
                     target: target.clone(),
                 });
             }
-            consulted.push(candidate.display_escaped());
         }
     }
-    Some(ResolutionOutcome::Unresolved {
-        specifier: specifier.to_owned(),
-        candidates: consulted,
-    })
+    None
 }
 
 fn has_supported_explicit_extension(file_name: &str) -> bool {

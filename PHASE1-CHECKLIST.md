@@ -45,10 +45,10 @@ These are execution-matrix counts, not a percentage estimate of product code.
 
 | Lane | Applicable | Mapped | Remaining | Verified aggregate |
 | --- | ---: | ---: | ---: | --- |
-| Standard | 86 | 42 | 44 | Full aggregate before the latest two deltas: 40 passed, 0 failed, 46 unmapped. The separately mapped `logical-source-physical-aliases` and `repo-path-codec-golden-vectors` rows both passed with their public-binary markers; P1-70 owns the next full aggregate. |
-| Determinism | 86 | 42 | 44 | Full aggregate before the latest two deltas: 40 passed, 0 failed, 46 unmapped. The two rows separately passed with nonempty canonical semantic captures across repeated default jobs and `jobs=1`; P1-70 owns the next full aggregate. |
+| Standard | 86 | 43 | 43 | Full aggregate before the latest three deltas: 40 passed, 0 failed, 46 unmapped. The separately mapped `logical-source-physical-aliases`, `repo-path-codec-golden-vectors`, and `tsconfig-aliases` rows passed with their public-binary markers; P1-70 owns the next full aggregate. |
+| Determinism | 86 | 43 | 43 | Full aggregate before the latest three deltas: 40 passed, 0 failed, 46 unmapped. The three rows separately passed with nonempty canonical semantic captures across repeated default jobs and `jobs=1`; P1-70 owns the next full aggregate. |
 | Store crash | 10 | 4 | 6 | Mapping count only; Phase 1 exit still requires the complete lane. |
-| **Total execution obligations** | **182** | **88** | **94** | This total deliberately counts each required lane execution. |
+| **Total execution obligations** | **182** | **90** | **92** | This total deliberately counts each required lane execution. |
 
 Known non-corpus exit gaps:
 
