@@ -2,23 +2,25 @@ mod cursor;
 mod gate_query;
 mod path_dto;
 mod retention;
+mod source_query;
 
 pub use gate_query::*;
 pub use path_dto::*;
 pub use retention::*;
+pub use source_query::*;
 
 use std::collections::BTreeMap;
 
 use lumin_evidence::{
-    ActualWriteSet, DeclaredPathUnsupportedReason, EntrySelectionRecord, FindingRecord,
-    GateDecision, GateLifecycle, GateOperationKind, GateOperationResult, GateOperationStatus,
-    GateRecord, GateSignal, OperationRecord, PhysicalAliasClosureRecord, RunEvidence,
-    SourceClassificationRecord, WriteLease, WriteLeaseKind,
+    ActualWriteSet, AnalysisMetrics, DeclaredPathUnsupportedReason, EntrySelectionRecord,
+    FindingRecord, GateDecision, GateLifecycle, GateOperationKind, GateOperationResult,
+    GateOperationStatus, GateRecord, GateSignal, OperationRecord, PhysicalAliasClosureRecord,
+    RunEvidence, SourceClassificationRecord, WriteLease, WriteLeaseKind,
 };
 use lumin_model::{
     AnalysisInputId, AttemptId, AttemptStatus, CapabilityState, FindingDisposition, FindingId,
-    GateDeltaRecord, GateId, Limitation, OperationId, PhysicalFileIdentity, RunId,
-    SourceRoleClassification, SourceSpan, SymbolNamespace,
+    GateDeltaRecord, GateId, Limitation, OperationId, PhysicalFileIdentity, ResolvedSourceUse,
+    RunId, SelectedResolutionProfile, SourceRoleClassification, SourceSpan, SymbolNamespace,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -48,6 +50,7 @@ pub struct OverviewResponseDto {
     pub finding_count: usize,
     pub limitation_count: usize,
     pub limitations: Vec<Limitation>,
+    pub analysis_metrics: AnalysisMetrics,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -88,6 +91,14 @@ pub struct FindingCollectionDto {
     pub next_cursor: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_classification: Option<SourceClassificationDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_context: Option<SourceContextDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_observation: Option<SourceObservationDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution_profile: Option<SelectedResolutionProfile>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub resolutions: Vec<ResolvedSourceUse>,
     pub items: Vec<FindingDto>,
 }
 
@@ -342,6 +353,7 @@ pub fn overview_response(
         finding_count: evidence.findings.len(),
         limitation_count: evidence.limitations.len(),
         limitations: evidence.limitations.clone(),
+        analysis_metrics: evidence.metrics.clone(),
     }
 }
 
@@ -843,6 +855,10 @@ mod tests {
             capabilities: Vec::new(),
             resolution_profiles: Vec::new(),
             source_classifications: Vec::new(),
+            source_contexts: Vec::new(),
+            source_observations: Vec::new(),
+            resolutions: Vec::new(),
+            metrics: Default::default(),
             findings,
             limitations: Vec::new(),
         })

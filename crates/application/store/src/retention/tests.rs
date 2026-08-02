@@ -360,6 +360,10 @@ fn evidence() -> RunEvidence {
         }],
         resolution_profiles: Vec::new(),
         source_classifications: Vec::new(),
+        source_contexts: Vec::new(),
+        source_observations: Vec::new(),
+        resolutions: Vec::new(),
+        metrics: Default::default(),
         findings: Vec::new(),
         limitations: Vec::new(),
     }

@@ -13,6 +13,10 @@ fn source(
         RepoPath::from_portable(path)?,
         kind,
         SourceRoles::default(),
+        lumin_model::PhysicalFileIdentity::Unix {
+            device: 1,
+            inode: 1,
+        },
         text.as_bytes().to_vec(),
     ))
 }

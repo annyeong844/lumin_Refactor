@@ -3,8 +3,11 @@ use std::collections::{BTreeMap, HashSet};
 use lumin_evidence::{
     CollectionOrderingId, EvidencePage, EvidenceQuery, EvidenceQueryScope, FindingExplanation,
     FindingRecord, GateRecord, PageAnchor, RunEvidence, SourceClassificationRecord,
+    SourceContextRecord, SourceObservationRecord,
 };
-use lumin_model::{FindingId, RepoPath, RepositoryId, RunId};
+use lumin_model::{
+    FindingId, RepoPath, RepositoryId, ResolvedSourceUse, RunId, SelectedResolutionProfile,
+};
 use thiserror::Error;
 
 use crate::EngineError;
@@ -35,6 +38,22 @@ pub enum EvidenceQueryError {
     DuplicateSourceClassification(String),
     #[error("source classification identity does not match its persisted path: {0}")]
     SourceClassificationIdentityMismatch(String),
+    #[error("duplicate source context in persisted run evidence: {0}")]
+    DuplicateSourceContext(String),
+    #[error("source context identity does not match its persisted path: {0}")]
+    SourceContextIdentityMismatch(String),
+    #[error("duplicate source observation in persisted run evidence: {0}")]
+    DuplicateSourceObservation(String),
+    #[error("duplicate resolution profile in persisted run evidence: {0}")]
+    DuplicateResolutionProfile(String),
+}
+
+pub struct RunSourceEnvelope<'a> {
+    pub classification: Option<&'a SourceClassificationRecord>,
+    pub context: Option<&'a SourceContextRecord>,
+    pub observation: Option<&'a SourceObservationRecord>,
+    pub resolution_profile: Option<&'a SelectedResolutionProfile>,
+    pub resolutions: Vec<ResolvedSourceUse>,
 }
 
 pub fn query_run_findings(
@@ -171,10 +190,11 @@ pub fn query_run_source_classification<'a>(
     evidence: &'a RunEvidence,
     repo_path: &RepoPath,
 ) -> Result<Option<&'a SourceClassificationRecord>, EngineError> {
-    let mut matches = evidence
-        .source_classifications
-        .iter()
-        .filter(|record| record.path.canonical == repo_path.canonical_bytes());
+    let expected_source_id = lumin_model::LogicalSourceId::from_path(repo_path);
+    let canonical_path = repo_path.canonical_bytes();
+    let mut matches = evidence.source_classifications.iter().filter(|record| {
+        record.source_id == expected_source_id || record.path.canonical == canonical_path
+    });
     let Some(record) = matches.next() else {
         return Ok(None);
     };
@@ -183,14 +203,73 @@ pub fn query_run_source_classification<'a>(
             EvidenceQueryError::DuplicateSourceClassification(repo_path.display_escaped()).into(),
         );
     }
-    let expected_source_id = lumin_model::LogicalSourceId::from_path(repo_path);
-    if record.source_id != expected_source_id {
+    if record.source_id != expected_source_id || record.path.canonical != canonical_path {
         return Err(EvidenceQueryError::SourceClassificationIdentityMismatch(
             repo_path.display_escaped(),
         )
         .into());
     }
     Ok(Some(record))
+}
+
+pub fn query_run_source_envelope<'a>(
+    evidence: &'a RunEvidence,
+    repo_path: &RepoPath,
+) -> Result<RunSourceEnvelope<'a>, EngineError> {
+    let expected_source_id = lumin_model::LogicalSourceId::from_path(repo_path);
+    let canonical_path = repo_path.canonical_bytes();
+    let classification = query_run_source_classification(evidence, repo_path)?;
+
+    let mut contexts = evidence.source_contexts.iter().filter(|record| {
+        record.source_id == expected_source_id || record.path.canonical == canonical_path
+    });
+    let context = contexts.next();
+    if contexts.next().is_some() {
+        return Err(EvidenceQueryError::DuplicateSourceContext(repo_path.display_escaped()).into());
+    }
+    if context.is_some_and(|record| {
+        record.source_id != expected_source_id || record.path.canonical != canonical_path
+    }) {
+        return Err(
+            EvidenceQueryError::SourceContextIdentityMismatch(repo_path.display_escaped()).into(),
+        );
+    }
+
+    let mut observations = evidence
+        .source_observations
+        .iter()
+        .filter(|record| record.source_id == expected_source_id);
+    let observation = observations.next();
+    if observations.next().is_some() {
+        return Err(
+            EvidenceQueryError::DuplicateSourceObservation(repo_path.display_escaped()).into(),
+        );
+    }
+
+    let mut profiles = evidence
+        .resolution_profiles
+        .iter()
+        .filter(|record| record.source_id == expected_source_id);
+    let resolution_profile = profiles.next();
+    if profiles.next().is_some() {
+        return Err(
+            EvidenceQueryError::DuplicateResolutionProfile(repo_path.display_escaped()).into(),
+        );
+    }
+
+    let resolutions = evidence
+        .resolutions
+        .iter()
+        .filter(|record| record.source_use.importer == expected_source_id)
+        .cloned()
+        .collect();
+    Ok(RunSourceEnvelope {
+        classification,
+        context,
+        observation,
+        resolution_profile,
+        resolutions,
+    })
 }
 
 pub fn query_run_relations(
@@ -491,7 +570,9 @@ mod tests {
     };
     use lumin_model::{
         AnalysisInputId, EvidenceId, FindingDisposition, GateId, LogicalSourceId, OperationId,
-        RepoPath, RepositoryId, RunId, SourceSpan, SymbolNamespace,
+        PayloadSnapshotId, PhysicalFileIdentity, RepoPath, RepositoryId, ResolutionProfile,
+        ResolutionProfileSource, RunId, SelectedResolutionProfile, SourceKind, SourceSpan,
+        SymbolNamespace,
     };
 
     use super::*;
@@ -598,6 +679,10 @@ mod tests {
             capabilities: Vec::new(),
             resolution_profiles: Vec::new(),
             source_classifications: Vec::new(),
+            source_contexts: Vec::new(),
+            source_observations: Vec::new(),
+            resolutions: Vec::new(),
+            metrics: Default::default(),
             findings,
             limitations: Vec::new(),
         };
@@ -811,6 +896,10 @@ mod tests {
             capabilities: Vec::new(),
             resolution_profiles: Vec::new(),
             source_classifications: Vec::new(),
+            source_contexts: Vec::new(),
+            source_observations: Vec::new(),
+            resolutions: Vec::new(),
+            metrics: Default::default(),
             findings,
             limitations: Vec::new(),
         })
@@ -899,6 +988,90 @@ mod tests {
             query_run_file_findings(&repo_id, &run_id, &evidence, &other_path, first.next_query,),
             Err(EngineError::EvidenceQuery(
                 EvidenceQueryError::CursorScopeMismatch
+            ))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn source_envelope_rejects_duplicate_and_cross_bound_records()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = RepoPath::from_portable("src/shared.ts")?;
+        let other_path = RepoPath::from_portable("src/other.ts")?;
+        let source_id = LogicalSourceId::from_path(&path);
+        let context = SourceContextRecord {
+            source_id: source_id.clone(),
+            path: RepoPathProjection::from(&path),
+            kind: SourceKind::TypeScript,
+            package_root: None,
+        };
+
+        let mut evidence = run_evidence_with_nested()?;
+        evidence.source_classifications = vec![SourceClassificationRecord {
+            source_id: source_id.clone(),
+            path: RepoPathProjection::from(&other_path),
+            classifications: Vec::new(),
+        }];
+        assert!(matches!(
+            query_run_source_envelope(&evidence, &path),
+            Err(EngineError::EvidenceQuery(
+                EvidenceQueryError::SourceClassificationIdentityMismatch(_)
+            ))
+        ));
+
+        let mut evidence = run_evidence_with_nested()?;
+        evidence.source_contexts = vec![context.clone(), context.clone()];
+        assert!(matches!(
+            query_run_source_envelope(&evidence, &path),
+            Err(EngineError::EvidenceQuery(
+                EvidenceQueryError::DuplicateSourceContext(_)
+            ))
+        ));
+
+        let mut evidence = run_evidence_with_nested()?;
+        evidence.source_contexts = vec![SourceContextRecord {
+            path: RepoPathProjection::from(&other_path),
+            ..context.clone()
+        }];
+        assert!(matches!(
+            query_run_source_envelope(&evidence, &path),
+            Err(EngineError::EvidenceQuery(
+                EvidenceQueryError::SourceContextIdentityMismatch(_)
+            ))
+        ));
+
+        let physical_identity = PhysicalFileIdentity::Unix {
+            device: 1,
+            inode: 2,
+        };
+        let observation = SourceObservationRecord {
+            source_id: source_id.clone(),
+            payload_snapshot_id: PayloadSnapshotId::for_capture(
+                &physical_identity,
+                "payload-sha256",
+            ),
+            physical_identity,
+        };
+        let mut evidence = run_evidence_with_nested()?;
+        evidence.source_observations = vec![observation.clone(), observation];
+        assert!(matches!(
+            query_run_source_envelope(&evidence, &path),
+            Err(EngineError::EvidenceQuery(
+                EvidenceQueryError::DuplicateSourceObservation(_)
+            ))
+        ));
+
+        let profile = SelectedResolutionProfile {
+            source_id,
+            profile: ResolutionProfile::Bundler,
+            source: ResolutionProfileSource::ProductDefault,
+        };
+        let mut evidence = run_evidence_with_nested()?;
+        evidence.resolution_profiles = vec![profile.clone(), profile];
+        assert!(matches!(
+            query_run_source_envelope(&evidence, &path),
+            Err(EngineError::EvidenceQuery(
+                EvidenceQueryError::DuplicateResolutionProfile(_)
             ))
         ));
         Ok(())

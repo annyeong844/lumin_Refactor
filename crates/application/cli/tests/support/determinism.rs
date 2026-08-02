@@ -98,7 +98,7 @@ pub(super) fn record_semantic_evidence(
 
     let evidence = match arguments.first().map(String::as_str) {
         Some("audit") if command_succeeded => lumin_engine::load_latest_run(root)?
-            .map(|(_, evidence)| serde_json::to_value(evidence))
+            .map(|(_, evidence)| serde_json::to_value(evidence.semantic_projection()))
             .transpose()?
             .into_iter()
             .collect(),
@@ -159,14 +159,18 @@ fn gate_evidence(root: &Path, stdout: &str) -> Result<Vec<Value>, Box<dyn std::e
     let gate = lumin_engine::load_gate(root, &GateId::from_string(gate_id.to_owned()))?;
     let mut evidence = Vec::new();
     if let Some(baseline) = gate.baseline {
-        evidence.push(serde_json::to_value(baseline.snapshot.evidence)?);
+        evidence.push(serde_json::to_value(
+            baseline.snapshot.evidence.semantic_projection(),
+        )?);
     }
     for snapshot in gate
         .revisions
         .into_iter()
         .filter_map(|revision| revision.snapshot)
     {
-        evidence.push(serde_json::to_value(snapshot.evidence)?);
+        evidence.push(serde_json::to_value(
+            snapshot.evidence.semantic_projection(),
+        )?);
     }
     Ok(evidence)
 }

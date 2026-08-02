@@ -435,6 +435,10 @@ mod tests {
             repo_path,
             SourceKind::TypeScript,
             roles,
+            lumin_model::PhysicalFileIdentity::Unix {
+                device: 1,
+                inode: 1,
+            },
             b"content".to_vec(),
         ))
     }
