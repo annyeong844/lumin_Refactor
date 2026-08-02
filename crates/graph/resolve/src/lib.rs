@@ -6,8 +6,9 @@ use std::collections::BTreeMap;
 
 use lumin_model::{
     ConfigSyntax, FileFacts, Limitation, LogicalSourceId, PackageSurfaceDeclaration, RepoPath,
-    ResolutionOutcome, ResolutionProfile, ResolvedSourceUse, SelectedResolutionProfile,
-    SemanticConfigSnapshot, SourceSnapshot, SourceUseFact, SymbolNamespace,
+    RepositoryRootIdentity, ResolutionOutcome, ResolutionProfile, ResolvedSourceUse,
+    SelectedResolutionProfile, SemanticConfigSnapshot, SourceSnapshot, SourceUseFact,
+    SymbolNamespace,
 };
 use thiserror::Error;
 
@@ -47,9 +48,11 @@ pub fn resolve_all(
     sources: &[SourceSnapshot],
     facts: &[FileFacts],
     semantic_config: &SemanticConfigSnapshot,
+    repository_root: &RepositoryRootIdentity,
     override_profile: Option<ResolutionProfile>,
 ) -> Result<ResolverOutput, ResolverError> {
-    let mut selection = config::select(sources, semantic_config, override_profile)?;
+    let mut selection =
+        config::select(sources, semantic_config, repository_root, override_profile)?;
     if !selection.demands.is_empty() {
         return Ok(ResolverOutput {
             resolved: Vec::new(),
@@ -268,8 +271,14 @@ fn resolve_bare_specifier(
         let result = package_surface::package_imports_unsupported(source_use, semantic_config);
         return (result.outcome, result.limitation, result.declaration);
     }
-    if let Some(outcome) = resolve_paths(specifier, source_use, sources, settings) {
-        return (outcome, None, None);
+    match resolve_paths(specifier, source_use, sources, settings) {
+        Ok(Some(outcome)) => return (outcome, None, None),
+        Ok(None) => {}
+        Err(reason) => {
+            return unsupported_with_limitation(source_use, reason, |source_id, detail| {
+                Limitation::AliasShapeUnsupported { source_id, detail }
+            });
+        }
     }
     if let Some(base_url) = &settings.base_url
         && let Some(base) = config::normalize_from(base_url, specifier)
@@ -489,9 +498,11 @@ fn resolve_paths(
     source_use: &SourceUseFact,
     sources: &BTreeMap<RepoPath, LogicalSourceId>,
     settings: &config::ImporterSettings,
-) -> Option<ResolutionOutcome> {
-    let mappings = settings.paths.as_ref()?;
-    let mapping = mappings
+) -> Result<Option<ResolutionOutcome>, String> {
+    let Some(mappings) = settings.paths.as_ref() else {
+        return Ok(None);
+    };
+    let Some(mapping) = mappings
         .entries
         .iter()
         .find(|mapping| !mapping.pattern.contains('*') && mapping.pattern == specifier)
@@ -516,32 +527,32 @@ fn resolve_paths(
                         .then_with(|| right.source_order.cmp(&left.source_order))
                 })
                 .map(|(mapping, _)| mapping)
-        })?;
+        })
+    else {
+        return Ok(None);
+    };
     let capture = mapping.pattern.split_once('*').map(|(prefix, suffix)| {
         &specifier[prefix.len()..specifier.len().saturating_sub(suffix.len())]
     });
-    let mut consulted = Vec::new();
     for target in &mapping.targets {
         let target = match capture {
             Some(capture) => target.replacen('*', capture, 1),
             None => target.clone(),
         };
         let Some(base) = config::normalize_from(&mappings.base, &target) else {
-            continue;
+            return Err(format!(
+                "paths mapping for {specifier} escapes the canonical repository root"
+            ));
         };
         for candidate in candidates(&base, source_use.namespace, settings.allow_extensionless) {
             if let Some(target) = sources.get(&candidate) {
-                return Some(ResolutionOutcome::Internal {
+                return Ok(Some(ResolutionOutcome::Internal {
                     target: target.clone(),
-                });
+                }));
             }
-            consulted.push(candidate.display_escaped());
         }
     }
-    Some(ResolutionOutcome::Unresolved {
-        specifier: specifier.to_owned(),
-        candidates: consulted,
-    })
+    Ok(None)
 }
 
 fn has_supported_explicit_extension(file_name: &str) -> bool {
@@ -581,6 +592,16 @@ mod tests {
     };
 
     use super::*;
+
+    fn test_repository_root() -> Result<RepositoryRootIdentity, Box<dyn std::error::Error>> {
+        const UNIX_ROOT_VECTOR: &str =
+            "4c554d52524f4f54000101010000000101000000047265706f0100000000000000010000000000000002";
+        let bytes = (0..UNIX_ROOT_VECTOR.len())
+            .step_by(2)
+            .map(|index| u8::from_str_radix(&UNIX_ROOT_VECTOR[index..index + 2], 16))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(RepositoryRootIdentity::from_canonical_bytes(&bytes)?)
+    }
 
     #[test]
     fn js_candidate_prefers_typescript_source() -> Result<(), Box<dyn std::error::Error>> {
@@ -676,7 +697,14 @@ mod tests {
         let mut config = SemanticConfigSnapshot::default();
         let manifest_path = RepoPath::from_portable("src/lib/package.json")?;
 
-        let first = resolve_all(&sources, std::slice::from_ref(&facts), &config, None)?;
+        let repository_root = test_repository_root()?;
+        let first = resolve_all(
+            &sources,
+            std::slice::from_ref(&facts),
+            &config,
+            &repository_root,
+            None,
+        )?;
         assert_eq!(
             first.demands,
             vec![ConfigDemand {
@@ -692,7 +720,7 @@ mod tests {
                 path: manifest_path,
             },
         );
-        let second = resolve_all(&sources, &[facts], &config, None)?;
+        let second = resolve_all(&sources, &[facts], &config, &repository_root, None)?;
         assert!(second.demands.is_empty());
         assert_eq!(second.resolved.len(), 1);
         assert_eq!(
@@ -737,7 +765,8 @@ mod tests {
             }),
         );
 
-        let selection = resolve_all(&[importer], &[facts], &config, None)?;
+        let repository_root = test_repository_root()?;
+        let selection = resolve_all(&[importer], &[facts], &config, &repository_root, None)?;
 
         assert!(selection.demands.is_empty());
         assert!(matches!(

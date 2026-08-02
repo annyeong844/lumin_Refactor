@@ -215,7 +215,7 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("repo-path-codec-golden-vectors", &[inv!("repo_path_codec", "repo_path_codec_golden_vectors_round_trip_through_public_binary")]),
     row_sd!("extension-probe-precedence", &[inv!("extension_probe", "relative_extension_and_directory_probes_follow_frozen_precedence")]),
     row_sd!("declaration-type-space", &[inv!("path_and_declaration", "declaration_facts_satisfy_type_space_only")]),
-    row_sd!("tsconfig-aliases"),
+    row_sd!("tsconfig-aliases", &[inv!("tsconfig_aliases", "tsconfig_aliases_follow_exact_wildcard_base_url_and_extends_precedence")]),
     row_sd!("tsconfig-extends-specifier-selection"),
     row_sd!("workspace-package-extends-tsconfig-field"),
     row_sd!("tsconfig-module-suffixes-unsupported"),

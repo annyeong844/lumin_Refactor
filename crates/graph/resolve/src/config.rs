@@ -2,8 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_model::{
     ConfigObservation, ConfigSyntax, ConfigValue, Limitation, LogicalSourceId,
-    PackageIdentityState, RepoPath, ResolutionProfile, ResolutionProfileSource,
-    SelectedResolutionProfile, SemanticConfigSnapshot, SourceKind, SourceSnapshot,
+    PackageIdentityState, RepoPath, RepositoryRootIdentity, ResolutionProfile,
+    ResolutionProfileSource, RootedPathRelation, SelectedResolutionProfile, SemanticConfigSnapshot,
+    SourceKind, SourceSnapshot,
 };
 
 use crate::generated_config_policy::{self, FieldClassification};
@@ -64,11 +65,18 @@ enum ExtendsSelection {
 pub(crate) fn select(
     sources: &[SourceSnapshot],
     config: &SemanticConfigSnapshot,
+    repository_root: &RepositoryRootIdentity,
     override_profile: Option<ResolutionProfile>,
 ) -> Result<ConfigSelection, ResolverError> {
     let mut selection = ConfigSelection::default();
     for source in sources {
-        select_importer(source, config, override_profile, &mut selection)?;
+        select_importer(
+            source,
+            config,
+            repository_root,
+            override_profile,
+            &mut selection,
+        )?;
     }
     selection
         .profiles
@@ -81,6 +89,7 @@ pub(crate) fn select(
 fn select_importer(
     source: &SourceSnapshot,
     config: &SemanticConfigSnapshot,
+    repository_root: &RepositoryRootIdentity,
     override_profile: Option<ResolutionProfile>,
     selection: &mut ConfigSelection,
 ) -> Result<(), ResolverError> {
@@ -90,6 +99,7 @@ fn select_importer(
         Some(ref path) => evaluate_config(
             path,
             config,
+            repository_root,
             &mut visiting,
             &mut selection.demands,
             &mut selection.limitations,
@@ -188,6 +198,7 @@ fn nearest_config(path: &RepoPath, config: &SemanticConfigSnapshot) -> Option<Re
 fn evaluate_config(
     path: &RepoPath,
     config: &SemanticConfigSnapshot,
+    repository_root: &RepositoryRootIdentity,
     visiting: &mut BTreeSet<RepoPath>,
     demands: &mut Vec<ConfigDemand>,
     limitations: &mut Vec<Limitation>,
@@ -250,7 +261,14 @@ fn evaluate_config(
     if let Some(extends) = document.root.get("extends") {
         match select_extends(path, extends, config, demands, limitations)? {
             ExtendsSelection::Selected(parent) => {
-                effective = evaluate_config(&parent, config, visiting, demands, limitations)?;
+                effective = evaluate_config(
+                    &parent,
+                    config,
+                    repository_root,
+                    visiting,
+                    demands,
+                    limitations,
+                )?;
             }
             ExtendsSelection::NeedsInput | ExtendsSelection::Blocked => {
                 effective.blocked = true;
@@ -259,7 +277,13 @@ fn evaluate_config(
     }
     validate_top_level(root, path, limitations, &mut effective);
     if let Some(compiler_options) = document.root.get("compilerOptions") {
-        apply_compiler_options(compiler_options, path, limitations, &mut effective)?;
+        apply_compiler_options(
+            compiler_options,
+            path,
+            repository_root,
+            limitations,
+            &mut effective,
+        )?;
     }
     visiting.remove(path);
     Ok(effective)
@@ -501,6 +525,7 @@ fn validate_top_level(
 fn apply_compiler_options(
     value: &ConfigValue,
     config_path: &RepoPath,
+    repository_root: &RepositoryRootIdentity,
     limitations: &mut Vec<Limitation>,
     effective: &mut EffectiveConfig,
 ) -> Result<(), ResolverError> {
@@ -545,12 +570,15 @@ fn apply_compiler_options(
             FieldClassification::SupportedAndModeled => modeled.push(entry),
         }
     }
+    let declares_base_url = modeled.iter().any(|entry| entry.key == "baseUrl");
     for key in ["baseUrl", "paths", "moduleResolution", "module"] {
         if let Some(entry) = modeled.iter().find(|entry| entry.key == key) {
             apply_modeled_option(
                 &entry.key,
                 &entry.value,
                 config_path,
+                repository_root,
+                declares_base_url,
                 limitations,
                 effective,
             )?;
@@ -563,6 +591,8 @@ fn apply_modeled_option(
     key: &str,
     value: &ConfigValue,
     config_path: &RepoPath,
+    repository_root: &RepositoryRootIdentity,
+    declares_base_url: bool,
     limitations: &mut Vec<Limitation>,
     effective: &mut EffectiveConfig,
 ) -> Result<(), ResolverError> {
@@ -588,29 +618,54 @@ fn apply_modeled_option(
         "module" => effective.module = value.as_str().map(|value| value.to_ascii_lowercase()),
         "baseUrl" => {
             let base = config_path.parent().unwrap_or_else(RepoPath::empty);
-            let Some(path) = normalize_from(&base, value.as_str().unwrap_or_default()) else {
-                effective.blocked = true;
-                limitations.push(Limitation::TsconfigSemanticsUnsupported {
-                    path: config_path.display_escaped(),
-                    detail: "baseUrl escapes the repository root".to_owned(),
-                });
-                return Ok(());
+            let value = value.as_str().unwrap_or_default().replace('\\', "/");
+            match repository_root.classify_rooted_utf8_path(&value) {
+                RootedPathRelation::Contained => {
+                    effective.base_url = None;
+                    effective.blocked = true;
+                    limitations.push(Limitation::TsconfigSemanticsUnsupported {
+                        path: config_path.display_escaped(),
+                        detail: "rooted baseUrl syntax is unsupported".to_owned(),
+                    });
+                    return Ok(());
+                }
+                RootedPathRelation::Outside => {
+                    return Err(ResolverError::Configuration(format!(
+                        "baseUrl escapes the repository root in {}",
+                        config_path.display_escaped()
+                    )));
+                }
+                RootedPathRelation::NotRooted => {}
+            }
+            let Some(path) = normalize_from(&base, &value) else {
+                return Err(ResolverError::Configuration(format!(
+                    "baseUrl escapes the repository root in {}",
+                    config_path.display_escaped()
+                )));
             };
             effective.base_url = Some(path);
         }
         "paths" => {
-            let base = effective
-                .base_url
-                .clone()
-                .unwrap_or_else(|| config_path.parent().unwrap_or_else(RepoPath::empty));
-            match parse_paths(value, &base) {
+            let config_directory = config_path.parent().unwrap_or_else(RepoPath::empty);
+            let base = if declares_base_url {
+                effective.base_url.clone().unwrap_or(config_directory)
+            } else {
+                config_directory
+            };
+            match parse_paths(value, &base, repository_root) {
                 Ok(paths) => effective.paths = Some(paths),
-                Err(detail) => {
+                Err(PathMappingsError::Unsupported(detail)) => {
                     effective.blocked = true;
                     limitations.push(Limitation::TsconfigSemanticsUnsupported {
                         path: config_path.display_escaped(),
                         detail,
                     });
+                }
+                Err(PathMappingsError::RootEscape(detail)) => {
+                    return Err(ResolverError::Configuration(format!(
+                        "{detail} in {}",
+                        config_path.display_escaped()
+                    )));
                 }
             }
         }
@@ -623,34 +678,70 @@ fn apply_modeled_option(
     Ok(())
 }
 
-fn parse_paths(value: &ConfigValue, base: &RepoPath) -> Result<PathMappings, String> {
-    let entries = value
-        .as_object()
-        .ok_or_else(|| "paths must be object<string,array<string>>".to_owned())?;
+enum PathMappingsError {
+    Unsupported(String),
+    RootEscape(String),
+}
+
+fn parse_paths(
+    value: &ConfigValue,
+    base: &RepoPath,
+    repository_root: &RepositoryRootIdentity,
+) -> Result<PathMappings, PathMappingsError> {
+    let entries = value.as_object().ok_or_else(|| {
+        PathMappingsError::Unsupported("paths must be object<string,array<string>>".to_owned())
+    })?;
     let mut mappings = Vec::new();
     for (source_order, entry) in entries.iter().enumerate() {
         if entry.key.matches('*').count() > 1 {
-            return Err(format!("paths key {} contains multiple stars", entry.key));
+            return Err(PathMappingsError::Unsupported(format!(
+                "paths key {} contains multiple stars",
+                entry.key
+            )));
         }
         let values = entry
             .value
             .as_array()
             .filter(|values| !values.is_empty())
-            .ok_or_else(|| format!("paths target {} must be a nonempty array", entry.key))?;
+            .ok_or_else(|| {
+                PathMappingsError::Unsupported(format!(
+                    "paths target {} must be a nonempty array",
+                    entry.key
+                ))
+            })?;
         let mut targets = Vec::new();
         for value in values {
-            let target = value
-                .as_str()
-                .ok_or_else(|| format!("paths target {} must contain strings", entry.key))?;
+            let target = value.as_str().ok_or_else(|| {
+                PathMappingsError::Unsupported(format!(
+                    "paths target {} must contain strings",
+                    entry.key
+                ))
+            })?;
             if target.matches('*').count() > 1 || (!entry.key.contains('*') && target.contains('*'))
             {
-                return Err(format!(
+                return Err(PathMappingsError::Unsupported(format!(
                     "paths target {target} has an incompatible star shape"
-                ));
+                )));
             }
-            let probe = target.replace('*', "lumin-star-probe");
+            let normalized_target = target.replace('\\', "/");
+            let probe = normalized_target.replace('*', "lumin-star-probe");
+            match repository_root.classify_rooted_utf8_path(&probe) {
+                RootedPathRelation::Contained => {
+                    return Err(PathMappingsError::Unsupported(
+                        "paths target uses rooted syntax".to_owned(),
+                    ));
+                }
+                RootedPathRelation::Outside => {
+                    return Err(PathMappingsError::RootEscape(
+                        "paths target escapes the repository root".to_owned(),
+                    ));
+                }
+                RootedPathRelation::NotRooted => {}
+            }
             if normalize_from(base, &probe).is_none() {
-                return Err(format!("paths target {target} escapes the repository root"));
+                return Err(PathMappingsError::RootEscape(
+                    "paths target escapes the repository root".to_owned(),
+                ));
             }
             targets.push(target.to_owned());
         }

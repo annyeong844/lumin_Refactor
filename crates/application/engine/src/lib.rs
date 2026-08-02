@@ -197,8 +197,9 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
         role_overrides: request.role_overrides.clone(),
         entries: request.entries.clone(),
     };
-    let evidence = match capture_repository(
+    let evidence = match capture_admitted_repository(
         &context.root,
+        context.repository_root.clone(),
         &inventory_request,
         request.jobs,
         request.resolution_profile,
@@ -245,8 +246,14 @@ pub fn analyze_repository(
     resolution_profile: Option<ResolutionProfile>,
 ) -> Result<RunEvidence, EngineError> {
     let admission = repository_admission(root)?;
-    capture_repository(&admission.canonical_root, request, jobs, resolution_profile)
-        .map(|capture| capture.snapshot.evidence)
+    capture_admitted_repository(
+        &admission.canonical_root,
+        admission.binding.root().clone(),
+        request,
+        jobs,
+        resolution_profile,
+    )
+    .map(|capture| capture.snapshot.evidence)
 }
 
 struct RepositoryContext {
@@ -276,6 +283,7 @@ struct RepositoryCapture {
 }
 
 struct RepositoryAnalysisSession {
+    repository_root: RepositoryRootIdentity,
     inventory: InventorySnapshot,
     facts: Vec<FileFacts>,
     sfc_states: BTreeMap<SfcDialect, CapabilityState>,
@@ -288,14 +296,32 @@ enum RepositoryAnalysisStep {
     Finished(ResolverOutput),
 }
 
+#[cfg(test)]
 fn capture_repository(
     root: &Path,
     request: &InventoryRequest,
     jobs: usize,
     resolution_profile: Option<ResolutionProfile>,
 ) -> Result<RepositoryCapture, EngineError> {
+    let admission = repository_admission(root)?;
+    capture_admitted_repository(
+        &admission.canonical_root,
+        admission.binding.root().clone(),
+        request,
+        jobs,
+        resolution_profile,
+    )
+}
+
+fn capture_admitted_repository(
+    root: &Path,
+    repository_root: RepositoryRootIdentity,
+    request: &InventoryRequest,
+    jobs: usize,
+    resolution_profile: Option<ResolutionProfile>,
+) -> Result<RepositoryCapture, EngineError> {
     let tier = build_scan_invocation_tier(request, resolution_profile);
-    let mut session = RepositoryAnalysisSession::start(root, request, jobs, tier)?;
+    let mut session = RepositoryAnalysisSession::start(root, repository_root, request, jobs, tier)?;
     loop {
         match session.next_step(resolution_profile)? {
             RepositoryAnalysisStep::NeedsInputs(demands) => {
@@ -332,6 +358,7 @@ fn build_scan_invocation_tier(
 impl RepositoryAnalysisSession {
     fn start(
         root: &Path,
+        repository_root: RepositoryRootIdentity,
         request: &InventoryRequest,
         jobs: usize,
         scan_invocation: ScanInvocationTier,
@@ -342,6 +369,7 @@ impl RepositoryAnalysisSession {
         let inventory = lumin_inventory::scan(root, request)?;
         let extraction = extract_facts(&inventory.sources, jobs)?;
         Ok(Self {
+            repository_root,
             inventory,
             facts: extraction.facts,
             sfc_states: extraction.sfc_states,
@@ -358,6 +386,7 @@ impl RepositoryAnalysisSession {
             &self.inventory.sources,
             &self.facts,
             &self.inventory.config,
+            &self.repository_root,
             resolution_profile,
         )?;
         if output.demands.is_empty() {

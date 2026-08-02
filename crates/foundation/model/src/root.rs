@@ -40,6 +40,13 @@ pub struct RepositoryRootIdentity {
     address: RepositoryRootAddress,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RootedPathRelation {
+    NotRooted,
+    Contained,
+    Outside,
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum RepositoryRootAddress {
     UnixAbsolute {
@@ -173,6 +180,22 @@ impl RepositoryRootIdentity {
 
     pub fn readable_address(&self) -> Option<String> {
         render_address(&self.address, true)
+    }
+
+    pub fn classify_rooted_utf8_path(&self, value: &str) -> RootedPathRelation {
+        let normalized = value.replace('\\', "/");
+        let Some(address) = parse_rooted_utf8_address(&normalized, &self.address) else {
+            return if rooted_utf8_syntax(&normalized) {
+                RootedPathRelation::Outside
+            } else {
+                RootedPathRelation::NotRooted
+            };
+        };
+        if rooted_address_is_within(&self.address, &address) {
+            RootedPathRelation::Contained
+        } else {
+            RootedPathRelation::Outside
+        }
     }
 
     fn encode(
@@ -498,6 +521,192 @@ fn render_address(address: &RepositoryRootAddress, portable_only: bool) -> Optio
     }
 }
 
+enum Utf8RootedAddress<'a> {
+    Unix(Vec<&'a str>),
+    WindowsDrive {
+        drive: u8,
+        components: Vec<&'a str>,
+    },
+    WindowsUnc {
+        server: &'a str,
+        share: &'a str,
+        components: Vec<&'a str>,
+    },
+    WindowsVolumeGuid {
+        guid: [u8; 16],
+        components: Vec<&'a str>,
+    },
+}
+
+fn parse_rooted_utf8_address<'a>(
+    value: &'a str,
+    repository: &RepositoryRootAddress,
+) -> Option<Utf8RootedAddress<'a>> {
+    if let Some(rest) = value.strip_prefix("//?/Volume{") {
+        let (guid, components) = rest.split_once("}/")?;
+        return Some(Utf8RootedAddress::WindowsVolumeGuid {
+            guid: parse_guid_body(guid)?,
+            components: normalize_utf8_components(components)?,
+        });
+    }
+    if let Some(rest) = value
+        .strip_prefix("//?/UNC/")
+        .or_else(|| value.strip_prefix("//./UNC/"))
+    {
+        return parse_unc_address(rest);
+    }
+    if let Some(rest) = value
+        .strip_prefix("//?/")
+        .or_else(|| value.strip_prefix("//./"))
+    {
+        return parse_drive_address(rest);
+    }
+    if let Some(rest) = value.strip_prefix("//") {
+        return parse_unc_address(rest);
+    }
+    if value.as_bytes().get(1) == Some(&b':') && value.as_bytes().get(2) == Some(&b'/') {
+        return parse_drive_address(value);
+    }
+    let rest = value.strip_prefix('/')?;
+    let components = normalize_utf8_components(rest)?;
+    match repository {
+        RepositoryRootAddress::UnixAbsolute { .. } => Some(Utf8RootedAddress::Unix(components)),
+        RepositoryRootAddress::WindowsDrive { drive, .. } => {
+            Some(Utf8RootedAddress::WindowsDrive {
+                drive: *drive,
+                components,
+            })
+        }
+        RepositoryRootAddress::WindowsUnc { .. }
+        | RepositoryRootAddress::WindowsVolumeGuid { .. } => None,
+    }
+}
+
+fn rooted_utf8_syntax(value: &str) -> bool {
+    value.starts_with('/') || value.as_bytes().get(1) == Some(&b':')
+}
+
+fn parse_drive_address(value: &str) -> Option<Utf8RootedAddress<'_>> {
+    let bytes = value.as_bytes();
+    if bytes.get(1) != Some(&b':') || bytes.get(2) != Some(&b'/') {
+        return None;
+    }
+    let drive = bytes[0].to_ascii_uppercase();
+    if !drive.is_ascii_uppercase() {
+        return None;
+    }
+    Some(Utf8RootedAddress::WindowsDrive {
+        drive,
+        components: normalize_utf8_components(&value[3..])?,
+    })
+}
+
+fn parse_unc_address(value: &str) -> Option<Utf8RootedAddress<'_>> {
+    let mut parts = value.splitn(3, '/');
+    let server = parts.next()?;
+    let share = parts.next()?;
+    if server.is_empty() || share.is_empty() {
+        return None;
+    }
+    Some(Utf8RootedAddress::WindowsUnc {
+        server,
+        share,
+        components: normalize_utf8_components(parts.next().unwrap_or_default())?,
+    })
+}
+
+fn normalize_utf8_components(value: &str) -> Option<Vec<&str>> {
+    let mut components = Vec::new();
+    for component in value.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => {
+                components.pop();
+            }
+            value if value.contains('\0') => return None,
+            value => components.push(value),
+        }
+    }
+    Some(components)
+}
+
+fn rooted_address_is_within(
+    repository: &RepositoryRootAddress,
+    candidate: &Utf8RootedAddress<'_>,
+) -> bool {
+    let same_address = match (repository, candidate) {
+        (
+            RepositoryRootAddress::UnixAbsolute { components: root },
+            Utf8RootedAddress::Unix(candidate),
+        )
+        | (
+            RepositoryRootAddress::WindowsDrive {
+                components: root, ..
+            },
+            Utf8RootedAddress::WindowsDrive {
+                components: candidate,
+                ..
+            },
+        ) => address_components_start_with(candidate, root),
+        (
+            RepositoryRootAddress::WindowsUnc {
+                server,
+                share,
+                components: root,
+            },
+            Utf8RootedAddress::WindowsUnc {
+                server: candidate_server,
+                share: candidate_share,
+                components: candidate,
+            },
+        ) => {
+            component_matches_utf8(server, candidate_server)
+                && component_matches_utf8(share, candidate_share)
+                && address_components_start_with(candidate, root)
+        }
+        (
+            RepositoryRootAddress::WindowsVolumeGuid {
+                guid,
+                components: root,
+            },
+            Utf8RootedAddress::WindowsVolumeGuid {
+                guid: candidate_guid,
+                components: candidate,
+            },
+        ) => guid == candidate_guid && address_components_start_with(candidate, root),
+        _ => false,
+    };
+    same_address
+        && match (repository, candidate) {
+            (
+                RepositoryRootAddress::WindowsDrive { drive, .. },
+                Utf8RootedAddress::WindowsDrive {
+                    drive: candidate_drive,
+                    ..
+                },
+            ) => drive == candidate_drive,
+            _ => true,
+        }
+}
+
+fn address_components_start_with(candidate: &[&str], root: &[RepoPathComponent]) -> bool {
+    candidate.len() >= root.len()
+        && root
+            .iter()
+            .zip(candidate)
+            .all(|(root, candidate)| component_matches_utf8(root, candidate))
+}
+
+fn component_matches_utf8(component: &RepoPathComponent, value: &str) -> bool {
+    match component {
+        RepoPathComponent::PortableUtf8(component) => component == value,
+        RepoPathComponent::UnixBytes(component) => component == value.as_bytes(),
+        RepoPathComponent::WindowsWtf16(component) => {
+            component.iter().copied().eq(value.encode_utf16())
+        }
+    }
+}
+
 fn render_components(
     prefix: &str,
     components: &[RepoPathComponent],
@@ -535,6 +744,10 @@ fn format_guid(guid: &[u8; 16]) -> String {
 fn parse_volume_guid(value: &OsStr) -> Option<Vec<u8>> {
     let value = value.to_str()?;
     let body = value.strip_prefix("Volume{")?.strip_suffix('}')?;
+    Some(parse_guid_body(body)?.to_vec())
+}
+
+fn parse_guid_body(body: &str) -> Option<[u8; 16]> {
     if body.len() != 36
         || ![8, 13, 18, 23]
             .into_iter()
@@ -543,9 +756,10 @@ fn parse_volume_guid(value: &OsStr) -> Option<Vec<u8>> {
         return None;
     }
     let hex = body.replace('-', "");
-    (0..16)
+    let bytes = (0..16)
         .map(|index| u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16).ok())
-        .collect()
+        .collect::<Option<Vec<_>>>()?;
+    bytes.try_into().ok()
 }
 
 #[cfg(test)]
