@@ -242,7 +242,10 @@ pub static REGISTRY: &[RegistryRow] = &[
         inv!("tsconfig_unsupported_options", "root_dirs::root_dirs_blocks_relative_probes_and_disables_only_affected_absence"),
         inv!("tsconfig_unsupported_options", "root_dirs::root_dirs_prewrite_excludes_candidate_reads_and_retry_is_idempotent"),
     ]),
-    row_sd!("resolver-config-registry"),
+    row_sd!("resolver-config-registry", &[
+        inv!("resolver_config_registry", "supported_and_neutral_fields_follow_registry"),
+        inv!("resolver_config_registry", "registry_failures_block_before_probing_and_override_cannot_hide"),
+    ]),
     row_sd!("resolver-config-registry-artifact"),
     row_sd!("pnpm-workspace-registry-and-precedence"),
     row_sd!("package-field-shape-families"),

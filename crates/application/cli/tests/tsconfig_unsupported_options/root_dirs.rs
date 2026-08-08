@@ -136,10 +136,11 @@ fn root_dirs_prewrite_excludes_candidate_reads_and_retry_is_idempotent()
         ),
     )?;
 
-    let rejected_gate = assert_prewrite_incomplete_retry(
+    let rejected_gate = assert_incomplete_prewrite_retry(
         root.path(),
         "op-root-dirs-reader",
         "packages/affected/src/views/main.ts",
+        &[],
     )?;
     assert_probe_candidates_excluded(&rejected_gate, 2)?;
 
