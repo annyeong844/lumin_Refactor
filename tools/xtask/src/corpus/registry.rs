@@ -230,7 +230,10 @@ pub static REGISTRY: &[RegistryRow] = &[
         inv!("workspace_package_tsconfig", "missing_nonregular_and_cyclic_targets_are_scoped"),
         inv!("workspace_package_tsconfig", "selected_workspace_target_is_reserved_before_capture_and_retry_is_idempotent"),
     ]),
-    row_sd!("tsconfig-module-suffixes-unsupported"),
+    row_sd!("tsconfig-module-suffixes-unsupported", &[
+        inv!("tsconfig_unsupported_options", "module_suffixes_blocks_relative_probes_without_hiding_unaffected_fan_in"),
+        inv!("tsconfig_unsupported_options", "module_suffixes_prewrite_withholds_authorization_and_retry_is_idempotent"),
+    ]),
     row_sd!("tsconfig-custom-conditions-unsupported"),
     row_sd!("tsconfig-root-dirs-unsupported"),
     row_sd!("resolver-config-registry"),

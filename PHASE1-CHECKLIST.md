@@ -45,10 +45,10 @@ These are execution-matrix counts, not a percentage estimate of product code.
 
 | Lane | Applicable | Mapped | Remaining | Verified aggregate |
 | --- | ---: | ---: | ---: | --- |
-| Standard | 86 | 45 | 41 | Last full aggregate: 40 passed, 0 failed, 46 unmapped. The five additional mapped rows—`logical-source-physical-aliases`, `repo-path-codec-golden-vectors`, `tsconfig-aliases`, `tsconfig-extends-specifier-selection`, and `workspace-package-extends-tsconfig-field`—passed with their public-binary markers; P1-70 owns the next full aggregate. |
-| Determinism | 86 | 45 | 41 | Last full aggregate: 40 passed, 0 failed, 46 unmapped. The same five additional rows passed with nonempty canonical semantic captures across repeated default jobs and `jobs=1`; P1-70 owns the next full aggregate. |
+| Standard | 86 | 46 | 40 | Last full aggregate: 40 passed, 0 failed, 46 unmapped. The six additional mapped rows—`logical-source-physical-aliases`, `repo-path-codec-golden-vectors`, `tsconfig-aliases`, `tsconfig-extends-specifier-selection`, `workspace-package-extends-tsconfig-field`, and `tsconfig-module-suffixes-unsupported`—passed with their public-binary markers; P1-70 owns the next full aggregate. |
+| Determinism | 86 | 46 | 40 | Last full aggregate: 40 passed, 0 failed, 46 unmapped. The same six additional rows passed with nonempty canonical semantic captures across repeated default jobs and `jobs=1`; P1-70 owns the next full aggregate. |
 | Store crash | 10 | 4 | 6 | Mapping count only; Phase 1 exit still requires the complete lane. |
-| **Total execution obligations** | **182** | **94** | **88** | This total deliberately counts each required lane execution. |
+| **Total execution obligations** | **182** | **96** | **86** | This total deliberately counts each required lane execution. |
 
 Known non-corpus exit gaps:
 
@@ -102,7 +102,7 @@ commands rather than being faked inside `architecture-check`.
 
 Owner routes: ARCH-001 and SLICE-001 AC 5, 6, 22, 24, 33, and 35.
 
-- [x] Keep determinism invocations paired with all 45 currently mapped standard
+- [x] Keep determinism invocations paired with all 46 currently mapped standard
   rows.
 - [x] Require every later standard-row packet to add its applicable determinism
   invocation in the same packet.
