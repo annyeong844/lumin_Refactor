@@ -129,3 +129,67 @@ fn generation_is_idempotent_and_drift_is_visible() -> Result<(), Box<dyn std::er
     );
     Ok(())
 }
+
+#[test]
+fn artifact_entry_and_generated_row_mutations_are_rejected()
+-> Result<(), Box<dyn std::error::Error>> {
+    let workspace = workspace_root()?;
+    let temp = tempfile::tempdir()?;
+    for relative in [
+        RESOLVER_SPEC,
+        INVENTORY_SPEC,
+        RESOLVER_OUTPUT,
+        INVENTORY_OUTPUT,
+    ] {
+        let target = workspace_path(temp.path(), relative);
+        let parent = target
+            .parent()
+            .ok_or_else(|| std::io::Error::other("contract path has no parent"))?;
+        std::fs::create_dir_all(parent)?;
+        std::fs::copy(workspace_path(&workspace, relative), target)?;
+    }
+
+    let baseline = check_generated_tables(temp.path());
+    assert!(baseline.tool_errors.is_empty());
+    assert!(baseline.violations.is_empty(), "{:?}", baseline.violations);
+
+    let resolver_spec = workspace_path(temp.path(), RESOLVER_SPEC);
+    let mut artifact: Value = serde_json::from_slice(&std::fs::read(&resolver_spec)?)?;
+    let source_hash = artifact
+        .pointer_mut("/nodePackageBaseline/resolverSourceSha256")
+        .ok_or_else(|| std::io::Error::other("resolver source hash is missing"))?;
+    *source_hash = Value::String("0".repeat(64));
+    std::fs::write(&resolver_spec, serde_json::to_vec_pretty(&artifact)?)?;
+    let artifact_drift = check_generated_tables(temp.path());
+    assert!(artifact_drift.tool_errors.is_empty());
+    assert!(
+        artifact_drift
+            .violations
+            .iter()
+            .any(|violation| violation.contains("GENERATED TABLE DRIFT")),
+        "{:?}",
+        artifact_drift.violations,
+    );
+
+    std::fs::copy(workspace_path(&workspace, RESOLVER_SPEC), &resolver_spec)?;
+    let resolver_output = workspace_path(temp.path(), RESOLVER_OUTPUT);
+    let compiled = std::fs::read_to_string(&resolver_output)?;
+    let mutated = compiled.replacen(
+        "        path: \"browser\",",
+        "        path: \"browser-tampered\",",
+        1,
+    );
+    assert_ne!(mutated, compiled);
+    std::fs::write(&resolver_output, mutated)?;
+    let generated_drift = check_generated_tables(temp.path());
+    assert!(generated_drift.tool_errors.is_empty());
+    assert!(
+        generated_drift
+            .violations
+            .iter()
+            .any(|violation| violation.contains("GENERATED TABLE DRIFT")),
+        "{:?}",
+        generated_drift.violations,
+    );
+    Ok(())
+}

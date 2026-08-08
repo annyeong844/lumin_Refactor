@@ -15,6 +15,53 @@ use support::{assert_status, run};
 type FindingView = (String, String, String);
 type LimitationView = (String, String, String);
 
+const FROZEN_ANALYSIS_CONTRACT: &str =
+    "870c273fe1cf694937d1afbc4e9574df5402d780649ad4052447725ba27109a0";
+
+#[test]
+fn resolver_artifact_identity_is_public_and_frozen() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"app","private":true}"#,
+    )?;
+    write(root.path(), "src/main.ts", "export const value = 1;\n")?;
+
+    let opened = run(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-resolver-artifact-identity",
+            "--path",
+            "src/main.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&opened, 0);
+    let opened: Value = serde_json::from_str(&opened.stdout)?;
+    let gate_id = required_string(&opened, "gateId")?;
+
+    let shown = run(root.path(), &["gate", "show", &gate_id])?;
+    assert_status(&shown, 0);
+    let shown: Value = serde_json::from_str(&shown.stdout)?;
+    assert_eq!(
+        shown
+            .pointer("/baseline/analysisContract")
+            .and_then(Value::as_str),
+        Some(FROZEN_ANALYSIS_CONTRACT),
+    );
+    assert_eq!(
+        shown
+            .pointer("/baseline/limitationCount")
+            .and_then(Value::as_u64),
+        Some(0),
+    );
+    Ok(())
+}
+
 #[test]
 fn supported_and_neutral_fields_follow_registry() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
