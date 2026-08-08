@@ -103,6 +103,37 @@ fn module_suffixes_prewrite_withholds_authorization_and_retry_is_idempotent()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     write_workspace_root(root.path())?;
+    write_package(root.path(), "target", "@acme/target")?;
+    module(
+        root.path(),
+        "packages/target/value.native.ts",
+        "suffixUsed",
+        "nativeDead",
+    )?;
+    module(
+        root.path(),
+        "packages/target/value.ts",
+        "suffixUsed",
+        "plainDead",
+    )?;
+
+    let writer = run(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-module-suffixes-candidate-writer",
+            "--path",
+            "packages/target/value.native.ts",
+            "--path",
+            "packages/target/value.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&writer, 0);
+    let writer_gate = field(&writer.stdout, "gateId")?;
+
     write_package(root.path(), "affected", "@acme/affected")?;
     write(
         root.path(),
@@ -112,14 +143,88 @@ fn module_suffixes_prewrite_withholds_authorization_and_retry_is_idempotent()
     write(
         root.path(),
         "packages/affected/main.ts",
-        "export const value = 1;\n",
+        concat!(
+            "import { suffixUsed } from '../target/value';\n",
+            "console.log(suffixUsed);\n",
+        ),
     )?;
 
-    assert_prewrite_incomplete_retry(
+    let rejected_gate = assert_prewrite_incomplete_retry(
         root.path(),
         "op-module-suffixes",
         "packages/affected/main.ts",
-    )
+    )?;
+    let semantic_input_count = rejected_gate
+        .pointer("/baseline/semanticInputCount")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| std::io::Error::other("baseline semantic input count is missing"))?;
+    let protected_input_count = rejected_gate
+        .pointer("/baseline/protectedSemanticInputCount")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| std::io::Error::other("baseline protected input count is missing"))?;
+    assert_eq!(
+        semantic_input_count.checked_sub(protected_input_count),
+        Some(2),
+        "the two relative probe candidates entered the protected read closure",
+    );
+    assert_eq!(
+        rejected_gate
+            .get("protectedSemanticInputCount")
+            .and_then(Value::as_u64),
+        Some(protected_input_count),
+    );
+    assert_eq!(
+        rejected_gate
+            .pointer("/revisions/0/protectedSemanticInputCount")
+            .and_then(Value::as_u64),
+        Some(protected_input_count),
+    );
+
+    write_package(root.path(), "control", "@acme/control")?;
+    write(
+        root.path(),
+        "packages/control/main.ts",
+        concat!(
+            "import { suffixUsed } from '../target/value';\n",
+            "console.log(suffixUsed);\n",
+        ),
+    )?;
+    let control = run(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-module-suffixes-probe-control",
+            "--path",
+            "packages/control/main.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&control, 4);
+    let control: Value = serde_json::from_str(&control.stdout)?;
+    let conflict = control
+        .get("signals")
+        .and_then(Value::as_array)
+        .and_then(|signals| {
+            signals
+                .iter()
+                .find(|signal| signal.get("kind").and_then(Value::as_str) == Some("write-conflict"))
+        })
+        .ok_or_else(|| {
+            std::io::Error::other(format!(
+                "probe control did not observe its target read: {control}"
+            ))
+        })?;
+    assert_eq!(
+        conflict.pointer("/paths/0/display").and_then(Value::as_str),
+        Some("packages/target/value.ts")
+    );
+    assert_eq!(
+        conflict.pointer("/gateIds/0").and_then(Value::as_str),
+        Some(writer_gate.as_str())
+    );
+    Ok(())
 }
 
 #[test]
@@ -262,14 +367,15 @@ fn custom_conditions_prewrite_withholds_authorization_and_retry_is_idempotent()
         root.path(),
         "op-custom-conditions",
         "packages/affected/main.ts",
-    )
+    )?;
+    Ok(())
 }
 
 fn assert_prewrite_incomplete_retry(
     root: &Path,
     operation_id: &str,
     path: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<Value, Box<dyn std::error::Error>> {
     let arguments = [
         "pre-write",
         "--operation-id",
@@ -290,17 +396,109 @@ fn assert_prewrite_incomplete_retry(
     assert!(signals.iter().any(|signal| {
         signal.get("kind").and_then(Value::as_str) == Some("required-evidence-incomplete")
     }));
+    assert!(!signals.iter().any(|signal| {
+        signal.get("kind").and_then(Value::as_str) == Some("semantic-input-conflict")
+    }));
+    assert!(
+        !signals
+            .iter()
+            .any(|signal| { signal.get("kind").and_then(Value::as_str) == Some("write-conflict") })
+    );
     assert!(
         response
             .get("deltas")
             .and_then(Value::as_array)
             .is_some_and(Vec::is_empty)
     );
+    let gate_id = field(&first.stdout, "gateId")?;
+
+    let operation_before = run(root, &["operation", "show", operation_id])?;
+    assert_status(&operation_before, 0);
+    let operation_before: Value = serde_json::from_str(&operation_before.stdout)?;
+    assert_eq!(
+        operation_before.get("kind").and_then(Value::as_str),
+        Some("pre-write")
+    );
+    assert_eq!(
+        operation_before.get("status").and_then(Value::as_str),
+        Some("committed")
+    );
+    assert_eq!(
+        operation_before.get("gateId").and_then(Value::as_str),
+        Some(gate_id.as_str())
+    );
+    assert_eq!(
+        operation_before
+            .get("semanticReadReservations")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(0)
+    );
+    assert_eq!(operation_before.get("result"), Some(&response));
+
+    let gate_before = run(root, &["gate", "show", &gate_id])?;
+    assert_status(&gate_before, 0);
+    let gate_before: Value = serde_json::from_str(&gate_before.stdout)?;
+    assert_eq!(
+        gate_before.get("lifecycle").and_then(Value::as_str),
+        Some("rejected")
+    );
+    assert_eq!(
+        gate_before.get("currentRevision").and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        gate_before
+            .get("revisions")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        gate_before
+            .pointer("/revisions/0/operationId")
+            .and_then(Value::as_str),
+        Some(operation_id)
+    );
+
+    let active_before = run(root, &["gate", "list", "--active"])?;
+    assert_status(&active_before, 0);
+    let active_before: Value = serde_json::from_str(&active_before.stdout)?;
+    assert!(
+        !active_before
+            .get("items")
+            .and_then(Value::as_array)
+            .is_some_and(|items| items.iter().any(|item| {
+                item.get("gateId").and_then(Value::as_str) == Some(gate_id.as_str())
+            }))
+    );
 
     let retry = run(root, &arguments)?;
     assert_status(&retry, 4);
     assert_eq!(retry.stdout, first.stdout);
-    Ok(())
+
+    let operation_after = run(root, &["operation", "show", operation_id])?;
+    assert_status(&operation_after, 0);
+    assert_eq!(
+        serde_json::from_str::<Value>(&operation_after.stdout)?,
+        operation_before,
+        "retry mutated the durable operation snapshot",
+    );
+    let gate_after = run(root, &["gate", "show", &gate_id])?;
+    assert_status(&gate_after, 0);
+    assert_eq!(
+        serde_json::from_str::<Value>(&gate_after.stdout)?,
+        gate_before,
+        "retry mutated the rejected gate revision or lifecycle",
+    );
+    let active_after = run(root, &["gate", "list", "--active"])?;
+    assert_status(&active_after, 0);
+    assert_eq!(
+        serde_json::from_str::<Value>(&active_after.stdout)?,
+        active_before,
+        "retry mutated the active gate catalog",
+    );
+    Ok(gate_before)
 }
 
 fn write_workspace_root(root: &Path) -> std::io::Result<()> {
