@@ -234,7 +234,10 @@ pub static REGISTRY: &[RegistryRow] = &[
         inv!("tsconfig_unsupported_options", "module_suffixes_blocks_relative_probes_without_hiding_unaffected_fan_in"),
         inv!("tsconfig_unsupported_options", "module_suffixes_prewrite_withholds_authorization_and_retry_is_idempotent"),
     ]),
-    row_sd!("tsconfig-custom-conditions-unsupported"),
+    row_sd!("tsconfig-custom-conditions-unsupported", &[
+        inv!("tsconfig_unsupported_options", "custom_conditions_blocks_node_and_default_without_hiding_unaffected_selection"),
+        inv!("tsconfig_unsupported_options", "custom_conditions_prewrite_withholds_authorization_and_retry_is_idempotent"),
+    ]),
     row_sd!("tsconfig-root-dirs-unsupported"),
     row_sd!("resolver-config-registry"),
     row_sd!("resolver-config-registry-artifact"),

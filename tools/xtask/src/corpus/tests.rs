@@ -151,7 +151,7 @@ fn every_mapped_standard_row_has_a_paired_determinism_invocation() {
         .iter()
         .filter(|row| row.is_mapped(CorpusMode::Determinism))
         .count();
-    assert_eq!(standard, 46);
+    assert_eq!(standard, 47);
     assert_eq!(determinism, standard);
 }
 

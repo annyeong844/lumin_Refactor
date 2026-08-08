@@ -115,16 +115,171 @@ fn module_suffixes_prewrite_withholds_authorization_and_retry_is_idempotent()
         "export const value = 1;\n",
     )?;
 
+    assert_prewrite_incomplete_retry(
+        root.path(),
+        "op-module-suffixes",
+        "packages/affected/main.ts",
+    )
+}
+
+#[test]
+fn custom_conditions_blocks_node_and_default_without_hiding_unaffected_selection()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"root","private":true,"type":"module","workspaces":["packages/*"]}"#,
+    )?;
+    write_esm_package(root.path(), "affected", "@acme/affected")?;
+    write_esm_package(root.path(), "clean", "@acme/clean")?;
+    write_condition_package(root.path(), "target", "@acme/target")?;
+    write_condition_package(root.path(), "control", "@acme/control")?;
+
+    write(
+        root.path(),
+        "packages/affected/tsconfig.json",
+        r#"{"compilerOptions":{"customConditions":["custom"]}}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/affected/main.ts",
+        concat!(
+            "import { conditionUsed } from '@acme/target';\n",
+            "console.log(conditionUsed);\n",
+        ),
+    )?;
+    module(
+        root.path(),
+        "packages/target/node.ts",
+        "conditionUsed",
+        "targetNodeDead",
+    )?;
+    module(
+        root.path(),
+        "packages/target/default.ts",
+        "conditionUsed",
+        "targetDefaultDead",
+    )?;
+
+    write(
+        root.path(),
+        "packages/clean/main.ts",
+        concat!(
+            "import { controlUsed } from '@acme/control';\n",
+            "console.log(controlUsed);\n",
+        ),
+    )?;
+    module(
+        root.path(),
+        "packages/control/node.ts",
+        "controlUsed",
+        "controlNodeDead",
+    )?;
+    module(
+        root.path(),
+        "packages/control/default.ts",
+        "controlUsed",
+        "controlDefaultDead",
+    )?;
+
+    for (profile, expected) in [
+        (
+            "bundler",
+            BTreeSet::from([
+                finding("packages/control/default.ts", "controlDefaultDead"),
+                finding("packages/control/node.ts", "controlNodeDead"),
+                finding("packages/control/node.ts", "controlUsed"),
+                finding("packages/target/default.ts", "conditionUsed"),
+                finding("packages/target/default.ts", "targetDefaultDead"),
+                finding("packages/target/node.ts", "conditionUsed"),
+                finding("packages/target/node.ts", "targetNodeDead"),
+            ]),
+        ),
+        (
+            "node16",
+            BTreeSet::from([
+                finding("packages/control/default.ts", "controlDefaultDead"),
+                finding("packages/control/default.ts", "controlUsed"),
+                finding("packages/control/node.ts", "controlNodeDead"),
+                finding("packages/target/default.ts", "conditionUsed"),
+                finding("packages/target/default.ts", "targetDefaultDead"),
+                finding("packages/target/node.ts", "conditionUsed"),
+                finding("packages/target/node.ts", "targetNodeDead"),
+            ]),
+        ),
+    ] {
+        let audit = run(
+            root.path(),
+            &["audit", "--jobs", "1", "--resolution-profile", profile],
+        )?;
+        assert_status(&audit, 0);
+        assert_eq!(field(&audit.stdout, "status")?, "incomplete");
+        let run_id = field(&audit.stdout, "runId")?;
+        let overview = run(root.path(), &["overview", "--run", &run_id])?;
+        assert_status(&overview, 0);
+        let overview: Value = serde_json::from_str(&overview.stdout)?;
+        let limitations = overview
+            .get("limitations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| std::io::Error::other("limitations are missing"))?;
+        assert_eq!(limitations.len(), 1);
+        assert_eq!(
+            limitations[0].get("reason").and_then(Value::as_str),
+            Some("tsconfig-semantics-unsupported")
+        );
+        assert_eq!(
+            limitations[0].get("path").and_then(Value::as_str),
+            Some("packages/affected/tsconfig.json")
+        );
+        assert_eq!(
+            limitations[0].get("detail").and_then(Value::as_str),
+            Some("unsupported resolution-affecting compiler option customConditions")
+        );
+        assert_eq!(finding_set(root.path(), &run_id)?, expected);
+    }
+    Ok(())
+}
+
+#[test]
+fn custom_conditions_prewrite_withholds_authorization_and_retry_is_idempotent()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write_workspace_root(root.path())?;
+    write_package(root.path(), "affected", "@acme/affected")?;
+    write(
+        root.path(),
+        "packages/affected/tsconfig.json",
+        r#"{"compilerOptions":{"customConditions":["custom"]}}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/affected/main.ts",
+        "export const value = 1;\n",
+    )?;
+
+    assert_prewrite_incomplete_retry(
+        root.path(),
+        "op-custom-conditions",
+        "packages/affected/main.ts",
+    )
+}
+
+fn assert_prewrite_incomplete_retry(
+    root: &Path,
+    operation_id: &str,
+    path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let arguments = [
         "pre-write",
         "--operation-id",
-        "op-module-suffixes",
+        operation_id,
         "--path",
-        "packages/affected/main.ts",
+        path,
         "--jobs",
         "1",
     ];
-    let first = run(root.path(), &arguments)?;
+    let first = run(root, &arguments)?;
     assert_status(&first, 4);
     assert_eq!(field(&first.stdout, "decision")?, "incomplete");
     let response: Value = serde_json::from_str(&first.stdout)?;
@@ -142,7 +297,7 @@ fn module_suffixes_prewrite_withholds_authorization_and_retry_is_idempotent()
             .is_some_and(Vec::is_empty)
     );
 
-    let retry = run(root.path(), &arguments)?;
+    let retry = run(root, &arguments)?;
     assert_status(&retry, 4);
     assert_eq!(retry.stdout, first.stdout);
     Ok(())
@@ -161,6 +316,25 @@ fn write_package(root: &Path, directory: &str, name: &str) -> std::io::Result<()
         root,
         &format!("packages/{directory}/package.json"),
         &serde_json::json!({"name":name,"private":true}).to_string(),
+    )
+}
+
+fn write_esm_package(root: &Path, directory: &str, name: &str) -> std::io::Result<()> {
+    write(
+        root,
+        &format!("packages/{directory}/package.json"),
+        &serde_json::json!({"name":name,"private":true,"type":"module"}).to_string(),
+    )
+}
+
+fn write_condition_package(root: &Path, directory: &str, name: &str) -> std::io::Result<()> {
+    let name = serde_json::to_string(name).map_err(std::io::Error::other)?;
+    write(
+        root,
+        &format!("packages/{directory}/package.json"),
+        &format!(
+            r#"{{"name":{name},"private":true,"type":"module","exports":{{"node":"./node.js","default":"./default.js"}}}}"#,
+        ),
     )
 }
 
