@@ -6,6 +6,9 @@ use serde_json::Value;
 
 mod support;
 
+#[path = "tsconfig_unsupported_options/root_dirs.rs"]
+mod root_dirs;
+
 use support::{assert_status, field, run};
 
 type FindingTuple = (String, String, String);
@@ -154,31 +157,7 @@ fn module_suffixes_prewrite_withholds_authorization_and_retry_is_idempotent()
         "op-module-suffixes",
         "packages/affected/main.ts",
     )?;
-    let semantic_input_count = rejected_gate
-        .pointer("/baseline/semanticInputCount")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| std::io::Error::other("baseline semantic input count is missing"))?;
-    let protected_input_count = rejected_gate
-        .pointer("/baseline/protectedSemanticInputCount")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| std::io::Error::other("baseline protected input count is missing"))?;
-    assert_eq!(
-        semantic_input_count.checked_sub(protected_input_count),
-        Some(2),
-        "the two relative probe candidates entered the protected read closure",
-    );
-    assert_eq!(
-        rejected_gate
-            .get("protectedSemanticInputCount")
-            .and_then(Value::as_u64),
-        Some(protected_input_count),
-    );
-    assert_eq!(
-        rejected_gate
-            .pointer("/revisions/0/protectedSemanticInputCount")
-            .and_then(Value::as_u64),
-        Some(protected_input_count),
-    );
+    assert_probe_candidates_excluded(&rejected_gate, 2)?;
 
     write_package(root.path(), "control", "@acme/control")?;
     write(
@@ -202,28 +181,7 @@ fn module_suffixes_prewrite_withholds_authorization_and_retry_is_idempotent()
         ],
     )?;
     assert_status(&control, 4);
-    let control: Value = serde_json::from_str(&control.stdout)?;
-    let conflict = control
-        .get("signals")
-        .and_then(Value::as_array)
-        .and_then(|signals| {
-            signals
-                .iter()
-                .find(|signal| signal.get("kind").and_then(Value::as_str) == Some("write-conflict"))
-        })
-        .ok_or_else(|| {
-            std::io::Error::other(format!(
-                "probe control did not observe its target read: {control}"
-            ))
-        })?;
-    assert_eq!(
-        conflict.pointer("/paths/0/display").and_then(Value::as_str),
-        Some("packages/target/value.ts")
-    );
-    assert_eq!(
-        conflict.pointer("/gateIds/0").and_then(Value::as_str),
-        Some(writer_gate.as_str())
-    );
+    assert_write_conflict(&control.stdout, "packages/target/value.ts", &writer_gate)?;
     Ok(())
 }
 
@@ -499,6 +457,68 @@ fn assert_prewrite_incomplete_retry(
         "retry mutated the active gate catalog",
     );
     Ok(gate_before)
+}
+
+fn assert_probe_candidates_excluded(
+    rejected_gate: &Value,
+    expected_excluded: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let semantic_input_count = rejected_gate
+        .pointer("/baseline/semanticInputCount")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| std::io::Error::other("baseline semantic input count is missing"))?;
+    let protected_input_count = rejected_gate
+        .pointer("/baseline/protectedSemanticInputCount")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| std::io::Error::other("baseline protected input count is missing"))?;
+    assert_eq!(
+        semantic_input_count.checked_sub(protected_input_count),
+        Some(expected_excluded),
+        "relative probe candidates entered the protected read closure",
+    );
+    assert_eq!(
+        rejected_gate
+            .get("protectedSemanticInputCount")
+            .and_then(Value::as_u64),
+        Some(protected_input_count),
+    );
+    assert_eq!(
+        rejected_gate
+            .pointer("/revisions/0/protectedSemanticInputCount")
+            .and_then(Value::as_u64),
+        Some(protected_input_count),
+    );
+    Ok(())
+}
+
+fn assert_write_conflict(
+    stdout: &str,
+    expected_path: &str,
+    expected_gate: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let response: Value = serde_json::from_str(stdout)?;
+    let conflict = response
+        .get("signals")
+        .and_then(Value::as_array)
+        .and_then(|signals| {
+            signals
+                .iter()
+                .find(|signal| signal.get("kind").and_then(Value::as_str) == Some("write-conflict"))
+        })
+        .ok_or_else(|| {
+            std::io::Error::other(format!(
+                "probe control did not observe its target read: {response}"
+            ))
+        })?;
+    assert_eq!(
+        conflict.pointer("/paths/0/display").and_then(Value::as_str),
+        Some(expected_path)
+    );
+    assert_eq!(
+        conflict.pointer("/gateIds/0").and_then(Value::as_str),
+        Some(expected_gate)
+    );
+    Ok(())
 }
 
 fn write_workspace_root(root: &Path) -> std::io::Result<()> {
