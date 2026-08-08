@@ -341,6 +341,7 @@ fn select_extends(
         specifier,
         &normalized,
         config,
+        repository_root,
         demands,
         limitations,
     )
@@ -375,6 +376,7 @@ fn select_workspace_extends(
     original_specifier: &str,
     normalized_specifier: &str,
     config: &SemanticConfigSnapshot,
+    repository_root: &RepositoryRootIdentity,
     demands: &mut Vec<ConfigDemand>,
     limitations: &mut Vec<Limitation>,
 ) -> Result<ExtendsSelection, ResolverError> {
@@ -423,21 +425,47 @@ fn select_workspace_extends(
         });
         return Ok(ExtendsSelection::Blocked);
     };
-    let target = match manifest.root.get("tsconfig") {
+    let field_policy =
+        generated_config_policy::package_json_field_for_rule("workspace-package-tsconfig-field")
+            .filter(|policy| {
+                policy.classification == FieldClassification::SupportedAndModeled
+                    && policy.shape == "nonempty-string"
+                    && policy.shape_mismatch_limitation == Some("TsconfigSemanticsUnsupported")
+            })
+            .ok_or_else(|| {
+                ResolverError::Configuration(
+                    "compiled workspace-package tsconfig policy is inconsistent".to_owned(),
+                )
+            })?;
+    let target = match manifest.root.get(field_policy.path) {
         None => package
             .root
             .join_portable("tsconfig.json")
             .map_err(|error| {
                 ResolverError::Configuration(format!("invalid workspace tsconfig path: {error}"))
             })?,
-        Some(ConfigValue::String(value)) if !value.is_empty() => {
-            let Some(target) = normalize_from(&package.root, &value.replace('\\', "/")) else {
-                limitations.push(Limitation::TsconfigSemanticsUnsupported {
-                    path: package.manifest_path.display_escaped(),
-                    detail: "workspace package tsconfig target escapes the repository root"
-                        .to_owned(),
-                });
-                return Ok(ExtendsSelection::Blocked);
+        Some(ConfigValue::String(value)) if !value.is_empty() && !value.contains('\0') => {
+            let normalized = value.replace('\\', "/");
+            match repository_root.classify_rooted_utf8_path(&normalized) {
+                RootedPathRelation::Outside => {
+                    return Err(ResolverError::Configuration(
+                        "workspace package tsconfig target escapes the repository root".to_owned(),
+                    ));
+                }
+                RootedPathRelation::Contained => {
+                    limitations.push(Limitation::TsconfigSemanticsUnsupported {
+                        path: package.manifest_path.display_escaped(),
+                        detail: "workspace package tsconfig target must be package-relative"
+                            .to_owned(),
+                    });
+                    return Ok(ExtendsSelection::Blocked);
+                }
+                RootedPathRelation::NotRooted => {}
+            }
+            let Some(target) = normalize_from(&package.root, &normalized) else {
+                return Err(ResolverError::Configuration(
+                    "workspace package tsconfig target escapes the repository root".to_owned(),
+                ));
             };
             if !target.is_within(&package.root) {
                 limitations.push(Limitation::TsconfigSemanticsUnsupported {

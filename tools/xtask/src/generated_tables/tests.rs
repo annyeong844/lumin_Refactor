@@ -13,6 +13,15 @@ fn reviewed_artifacts_validate_and_render() -> Result<(), Box<dyn std::error::Er
     let files = render::expected_files(&artifacts).map_err(std::io::Error::other)?;
     assert_eq!(files.len(), 2);
     assert!(files.iter().all(|file| file.content.contains("@generated")));
+    let resolver = files
+        .iter()
+        .find(|file| file.relative_path == RESOLVER_OUTPUT)
+        .ok_or_else(|| std::io::Error::other("resolver generated file is missing"))?;
+    assert!(
+        resolver
+            .content
+            .contains("pub(crate) fn package_json_field_for_rule")
+    );
     Ok(())
 }
 
