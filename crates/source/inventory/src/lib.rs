@@ -144,7 +144,7 @@ pub enum InventoryError {
     InvalidRoot(String),
     #[error("reserved .lumin namespace is not a real directory")]
     ForeignStateNamespace,
-    #[error("malformed lumin.json: {0}")]
+    #[error("malformed configuration: {0}")]
     MalformedConfiguration(String),
     #[error("invalid scan pattern: {0}")]
     InvalidPattern(String),

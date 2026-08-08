@@ -246,9 +246,7 @@ pub static REGISTRY: &[RegistryRow] = &[
         inv!("resolver_config_registry", "supported_and_neutral_fields_follow_registry"),
         inv!("resolver_config_registry", "registry_failures_block_before_probing_and_override_cannot_hide"),
     ]),
-    row_sd!("resolver-config-registry-artifact", &[
-        inv!("resolver_config_registry", "resolver_artifact_identity_is_public_and_frozen"),
-    ]),
+    row_sd!("resolver-config-registry-artifact"),
     row_sd!("pnpm-workspace-registry-and-precedence"),
     row_sd!("package-field-shape-families"),
     row_sd!("workspace-package-exports"),

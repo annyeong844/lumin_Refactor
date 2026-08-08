@@ -237,7 +237,7 @@ fn same_tier_configuration_role_conflicts_are_order_independent_hard_stops()
     assert_eq!(errors[0], errors[1]);
     assert_eq!(
         errors[0],
-        "malformed lumin.json: contradictory configuration source role declarations for src/a.ts: generated conflicts with authored"
+        "malformed configuration: contradictory configuration source role declarations for src/a.ts: generated conflicts with authored"
     );
     Ok(())
 }
@@ -272,7 +272,7 @@ fn same_tier_invocation_role_conflicts_are_order_independent_hard_stops()
     assert_eq!(errors[0], errors[1]);
     assert_eq!(
         errors[0],
-        "malformed lumin.json: contradictory invocation source role declarations for src/a.ts: generated conflicts with authored"
+        "malformed configuration: contradictory invocation source role declarations for src/a.ts: generated conflicts with authored"
     );
     Ok(())
 }

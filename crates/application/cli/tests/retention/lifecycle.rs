@@ -66,7 +66,7 @@ fn latest_attempt_and_completed_closures_survive_stale_confirmation()
         Some("failed")
     );
     assert!(
-        failed_reason.contains("malformed lumin.json"),
+        failed_reason.contains("malformed configuration"),
         "audit failed for an unexpected reason: {failed_reason}"
     );
     assert_eq!(
