@@ -2,6 +2,7 @@
 //!
 //! Exit codes: 0 = all selected rows pass, 1 = behavior failures/unmapped, 2 = tool error.
 
+use std::collections::BTreeSet;
 use std::env;
 use std::fmt;
 use std::fs;
@@ -12,6 +13,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 mod determinism;
 mod registry;
+mod required_checks;
+
+use required_checks::{CheckOutcome, RequiredCheck};
 
 // ---------------------------------------------------------------------------
 // Core types
@@ -93,6 +97,7 @@ pub struct RegistryRow {
     pub standard: Option<&'static [CorpusInvocation]>,
     pub determinism: Option<&'static [CorpusInvocation]>,
     pub store_crash: Option<&'static [CorpusInvocation]>,
+    pub required_checks: &'static [RequiredCheck],
 }
 impl RegistryRow {
     pub fn mode_invocations(&self, mode: CorpusMode) -> Option<&'static [CorpusInvocation]> {
@@ -230,6 +235,14 @@ pub fn validate_registry() -> Result<(), String> {
             return Err(format!(
                 "standard/determinism mapping parity drift in {}",
                 row.id
+            ));
+        }
+        if row.required_checks != required_checks::expected_for_row(row.id) {
+            return Err(format!(
+                "required-check contract drift in {}: expected {:?}, found {:?}",
+                row.id,
+                required_checks::expected_for_row(row.id),
+                row.required_checks,
             ));
         }
     }
@@ -435,6 +448,8 @@ struct RowResult {
     invocations: usize,
     marker_ok: bool,
     semantic_captures: usize,
+    required_checks: &'static [RequiredCheck],
+    required_checks_validated: bool,
 }
 
 fn print_human(res: &[RowResult], mode: CorpusMode) {
@@ -475,6 +490,8 @@ fn print_json(res: &[RowResult], mode: CorpusMode) -> Result<(), String> {
                 "invocations": r.invocations,
                 "markerValidated": r.marker_ok,
                 "semanticCaptures": r.semantic_captures,
+                "requiredChecks": r.required_checks.iter().map(|check| check.name()).collect::<Vec<_>>(),
+                "requiredChecksValidated": r.required_checks_validated,
             })
         })
         .collect();
@@ -542,6 +559,29 @@ pub fn run(args: &[String]) -> ExitCode {
         return ExitCode::from(2);
     }
 
+    let selected_checks: BTreeSet<RequiredCheck> = selected
+        .iter()
+        .filter(|row| row.is_mapped(parsed.mode))
+        .flat_map(|row| row.required_checks.iter().copied())
+        .collect();
+    let check_outcomes = match required_checks::run_required_checks(&ws, &selected_checks) {
+        Ok(outcomes) => outcomes,
+        Err(error) => {
+            eprintln!("[TOOL ERROR] {error}");
+            return ExitCode::from(2);
+        }
+    };
+    for (check, outcome) in &check_outcomes {
+        eprintln!(
+            "[CORPUS] required check {} {}",
+            check.name(),
+            if outcome.passed { "passed" } else { "failed" },
+        );
+        if !outcome.passed {
+            print_required_check_failure(*check, outcome);
+        }
+    }
+
     let (mut results, mut has_fail, mut has_unmap) =
         (Vec::with_capacity(selected.len()), false, false);
     for row in &selected {
@@ -554,6 +594,8 @@ pub fn run(args: &[String]) -> ExitCode {
                 invocations: 0,
                 marker_ok: false,
                 semantic_captures: 0,
+                required_checks: row.required_checks,
+                required_checks_validated: false,
             });
             has_unmap = true;
             continue;
@@ -579,6 +621,14 @@ pub fn run(args: &[String]) -> ExitCode {
                 let _ = std::io::stderr().write_all(&r.stderr);
                 let _ = std::io::stdout().write_all(&r.stdout);
             }
+        }
+        let required_checks_validated = row.required_checks.iter().all(|check| {
+            check_outcomes
+                .get(check)
+                .is_some_and(|outcome| outcome.passed)
+        });
+        if !required_checks_validated {
+            ok = false;
         }
         if parsed.mode == CorpusMode::Determinism && ok && semantic_captures == 0 {
             eprintln!(
@@ -612,6 +662,8 @@ pub fn run(args: &[String]) -> ExitCode {
             invocations: invs.len(),
             marker_ok: m_ok,
             semantic_captures,
+            required_checks: row.required_checks,
+            required_checks_validated,
         });
         eprintln!(
             "[CORPUS] {} row {} {} (semantic captures: {})",
@@ -634,6 +686,16 @@ pub fn run(args: &[String]) -> ExitCode {
         ExitCode::from(1)
     } else {
         ExitCode::from(0)
+    }
+}
+
+fn print_required_check_failure(check: RequiredCheck, outcome: &CheckOutcome) {
+    eprintln!("--- FAIL: required check {} ---", check.name());
+    if !outcome.stdout.is_empty() {
+        eprintln!("{}", outcome.stdout);
+    }
+    if !outcome.stderr.is_empty() {
+        eprintln!("{}", outcome.stderr);
     }
 }
 

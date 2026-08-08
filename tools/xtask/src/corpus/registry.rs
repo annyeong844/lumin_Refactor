@@ -1,4 +1,6 @@
-use super::{CorpusInvocation, FeatureSet, RegistryRow};
+use super::{CorpusInvocation, FeatureSet, RegistryRow, RequiredCheck};
+
+const ARCHITECTURE_CHECK: &[RequiredCheck] = &[RequiredCheck::ArchitectureCheck];
 
 macro_rules! inv {
     ($t:expr, $f:expr) => {
@@ -153,6 +155,7 @@ macro_rules! row_sd {
             standard: Some(&[]),
             determinism: Some(&[]),
             store_crash: None,
+            required_checks: &[],
         }
     };
     ($id:expr, $inv:expr) => {
@@ -161,6 +164,28 @@ macro_rules! row_sd {
             standard: Some($inv),
             determinism: Some($inv),
             store_crash: None,
+            required_checks: &[],
+        }
+    };
+}
+/// Standard + determinism rows whose truth also requires architecture-check.
+macro_rules! row_sd_arch {
+    ($id:expr) => {
+        RegistryRow {
+            id: $id,
+            standard: Some(&[]),
+            determinism: Some(&[]),
+            store_crash: None,
+            required_checks: ARCHITECTURE_CHECK,
+        }
+    };
+    ($id:expr, $inv:expr) => {
+        RegistryRow {
+            id: $id,
+            standard: Some($inv),
+            determinism: Some($inv),
+            store_crash: None,
+            required_checks: ARCHITECTURE_CHECK,
         }
     };
 }
@@ -172,6 +197,7 @@ macro_rules! row_c {
             standard: None,
             determinism: None,
             store_crash: Some(&[]),
+            required_checks: &[],
         }
     };
     ($id:expr, $inv:expr) => {
@@ -180,6 +206,7 @@ macro_rules! row_c {
             standard: None,
             determinism: None,
             store_crash: Some($inv),
+            required_checks: &[],
         }
     };
 }
@@ -191,6 +218,7 @@ macro_rules! row_sdc {
             standard: Some(&[]),
             determinism: Some(&[]),
             store_crash: Some(&[]),
+            required_checks: &[],
         }
     };
     ($id:expr, $inv:expr) => {
@@ -199,6 +227,7 @@ macro_rules! row_sdc {
             standard: Some($inv),
             determinism: Some($inv),
             store_crash: Some(&[]),
+            required_checks: &[],
         }
     };
 }
@@ -246,8 +275,14 @@ pub static REGISTRY: &[RegistryRow] = &[
         inv!("resolver_config_registry", "supported_and_neutral_fields_follow_registry"),
         inv!("resolver_config_registry", "registry_failures_block_before_probing_and_override_cannot_hide"),
     ]),
-    row_sd!("resolver-config-registry-artifact"),
-    row_sd!("pnpm-workspace-registry-and-precedence"),
+    row_sd_arch!("resolver-config-registry-artifact", &[
+        inv!("resolver_config_registry", "resolver_artifact_identity_is_public_and_frozen"),
+    ]),
+    row_sd_arch!("pnpm-workspace-registry-and-precedence", &[
+        inv!("pnpm_workspace_public", "pnpm_precedence_and_missing_packages_are_public"),
+        inv!("pnpm_workspace_public", "package_configs_pinned_forms_emit_typed_limitations"),
+        inv!("pnpm_workspace_public", "malformed_pnpm_hard_stops_without_fallback"),
+    ]),
     row_sd!("package-field-shape-families"),
     row_sd!("workspace-package-exports"),
     row_sd!("bundler-condition-excludes-node", &[inv!("package_condition_public", "bundler_excludes_node_in_value_and_type_lanes")]),
@@ -276,7 +311,7 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("import-meta-glob"),
     row_sd!("cjs-computed"),
     row_sd!("parse-failure-propagation"),
-    row_sd!("limitation-scope-exhaustiveness"),
+    row_sd_arch!("limitation-scope-exhaustiveness"),
     row_sd!("nearest-manifest"),
     row_sd!("parallel-gates", &[inv!("write_gate", "overlapping_gate_is_rejected_and_operation_reuse_is_malformed")]),
     row_sd!("intervening-gate-transitions", &[inv!("write_gate", "transition_retention::disjoint_gates_reconcile_a_terminal_transition_on_retry")]),
@@ -292,11 +327,11 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("gate-semantic-read-closure", INV_SEM_READ),
     row_sd!("gate-semantic-read-closure-warm-cache"),
     row_sd!("cache-gate-context-projection"),
-    row_sd!("capability-availability-authority"),
+    row_sd_arch!("capability-availability-authority"),
     row_sd!("gate-unsealed-observation"),
     row_sd!("gate-analysis-input-reconciliation"),
     row_sd!("gate-final-observation"),
-    row_sd!("gate-lifecycle-effects", INV_GATE_EFFECTS),
+    row_sd_arch!("gate-lifecycle-effects", INV_GATE_EFFECTS),
     row_sd!("gate-immutable-opening-delta"),
     row_sd!("lifecycle-operation-idempotency", INV_IDEMP),
     row_sd!("gate-reopen-after-process-exit", &[inv!("write_gate", "pre_and_post_survive_process_reopen")]),

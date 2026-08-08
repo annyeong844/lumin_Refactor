@@ -151,8 +151,38 @@ fn every_mapped_standard_row_has_a_paired_determinism_invocation() {
         .iter()
         .filter(|row| row.is_mapped(CorpusMode::Determinism))
         .count();
-    assert_eq!(standard, 49);
+    assert_eq!(standard, 51);
     assert_eq!(determinism, standard);
+}
+
+#[test]
+fn structural_rows_require_architecture_check() {
+    let actual: Vec<&str> = REGISTRY
+        .iter()
+        .filter(|row| !row.required_checks.is_empty())
+        .map(|row| row.id)
+        .collect();
+    assert_eq!(
+        actual,
+        vec![
+            "resolver-config-registry-artifact",
+            "pnpm-workspace-registry-and-precedence",
+            "limitation-scope-exhaustiveness",
+            "capability-availability-authority",
+            "gate-lifecycle-effects",
+        ]
+    );
+    for row in REGISTRY
+        .iter()
+        .filter(|row| !row.required_checks.is_empty())
+    {
+        assert_eq!(
+            row.required_checks,
+            &[RequiredCheck::ArchitectureCheck],
+            "{}",
+            row.id,
+        );
+    }
 }
 
 #[test]

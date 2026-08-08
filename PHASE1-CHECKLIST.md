@@ -45,10 +45,10 @@ These are execution-matrix counts, not a percentage estimate of product code.
 
 | Lane | Applicable | Mapped | Remaining | Verified aggregate |
 | --- | ---: | ---: | ---: | --- |
-| Standard | 86 | 49 | 37 | Last full aggregate: 40 passed, 0 failed, 46 unmapped. The nine additional mapped rows—`logical-source-physical-aliases`, `repo-path-codec-golden-vectors`, `tsconfig-aliases`, `tsconfig-extends-specifier-selection`, `workspace-package-extends-tsconfig-field`, `tsconfig-module-suffixes-unsupported`, `tsconfig-custom-conditions-unsupported`, `tsconfig-root-dirs-unsupported`, and `resolver-config-registry`—passed with their public-binary markers; P1-70 owns the next full aggregate. |
-| Determinism | 86 | 49 | 37 | Last full aggregate: 40 passed, 0 failed, 46 unmapped. The same nine additional rows passed with nonempty canonical semantic captures across repeated default jobs and `jobs=1`; P1-70 owns the next full aggregate. |
+| Standard | 86 | 51 | 35 | Last full aggregate: 40 passed, 0 failed, 46 unmapped. The eleven additional mapped rows—`logical-source-physical-aliases`, `repo-path-codec-golden-vectors`, `tsconfig-aliases`, `tsconfig-extends-specifier-selection`, `workspace-package-extends-tsconfig-field`, `tsconfig-module-suffixes-unsupported`, `tsconfig-custom-conditions-unsupported`, `tsconfig-root-dirs-unsupported`, `resolver-config-registry`, `resolver-config-registry-artifact`, and `pnpm-workspace-registry-and-precedence`—passed with their public-binary markers; rows with structural truth also passed their row-owned `architecture-check`; P1-70 owns the next full aggregate. |
+| Determinism | 86 | 51 | 35 | Last full aggregate: 40 passed, 0 failed, 46 unmapped. The same eleven additional rows passed with nonempty canonical semantic captures across repeated default jobs and `jobs=1`; rows with structural truth also passed their row-owned `architecture-check`; P1-70 owns the next full aggregate. |
 | Store crash | 10 | 4 | 6 | Mapping count only; Phase 1 exit still requires the complete lane. |
-| **Total execution obligations** | **182** | **102** | **80** | This total deliberately counts each required lane execution. |
+| **Total execution obligations** | **182** | **106** | **76** | This total deliberately counts each required lane execution. |
 
 Known non-corpus exit gaps:
 
@@ -102,7 +102,7 @@ commands rather than being faked inside `architecture-check`.
 
 Owner routes: ARCH-001 and SLICE-001 AC 5, 6, 22, 24, 33, and 35.
 
-- [x] Keep determinism invocations paired with all 49 currently mapped standard
+- [x] Keep determinism invocations paired with all 51 currently mapped standard
   rows.
 - [x] Require every later standard-row packet to add its applicable determinism
   invocation in the same packet.
