@@ -102,6 +102,12 @@ pub(crate) fn compiler_option(path: &str) -> Option<&'static FieldPolicy> {
         .iter()
         .find(|policy| policy.path == path)
 }
+
+pub(crate) fn package_json_field_for_rule(rule: &str) -> Option<&'static FieldPolicy> {
+    RESOLVER_PACKAGE_JSON_FIELDS
+        .iter()
+        .find(|policy| policy.rule == Some(rule))
+}
 "#,
     );
     Ok(output)
