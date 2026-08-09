@@ -8,7 +8,7 @@ use lumin_model::{
     ConfigDocument, ConfigObservation, ImportKind, Limitation, LogicalSourceId, ModuleRequestKind,
     PackageFact, PackageIdentityState, PackagePrivacy, PackageSurfaceDeclaration,
     PackageSurfaceLane, PackageSurfaceSource, RepoPath, ResolutionOutcome, ResolutionProfile,
-    SemanticConfigSnapshot, SourceSnapshot, SourceUseFact, SymbolNamespace,
+    SemanticConfigSnapshot, SourceSnapshot, SourceUseFact, SymbolNamespace, UnresolvedTargetScope,
 };
 
 use crate::candidates;
@@ -491,6 +491,21 @@ pub(super) fn unresolved(specifier: &str, candidates: Vec<String>) -> PackageRes
         outcome: ResolutionOutcome::Unresolved {
             specifier: specifier.to_owned(),
             candidates,
+            target_scope: Some(UnresolvedTargetScope::ExplicitTargets),
+        },
+        limitation: None,
+        declaration: None,
+    }
+}
+
+pub(super) fn unresolved_no_target(specifier: &str) -> PackageResolution {
+    PackageResolution {
+        outcome: ResolutionOutcome::Unresolved {
+            specifier: specifier.to_owned(),
+            candidates: Vec::new(),
+            target_scope: Some(UnresolvedTargetScope::KnownNoTarget {
+                package: crate::package_name(specifier),
+            }),
         },
         limitation: None,
         declaration: None,

@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use lumin_model::{
     DeltaFact, DeltaFactFamily, DeltaIdentity, DeltaIdentityKind, DeltaKey, DeltaOwnerPayloadValue,
     DeltaValue, FindingDisposition, Limitation, LogicalSourceId, ReviewOnlyReason,
-    append_length_prefixed,
+    UnresolvedTargetScope, append_length_prefixed,
 };
 
 use crate::{Confidence, FindingRecord, RunEvidence, Severity};
@@ -121,7 +121,29 @@ fn limitation_delta(limitation: &Limitation) -> LimitationDelta {
             importer,
             specifier,
             candidates,
-        } if !candidates.is_empty() => {
+            target_scope,
+        } => {
+            let owner_payload = match target_scope {
+                Some(UnresolvedTargetScope::KnownNoTarget { package }) if candidates.is_empty() => {
+                    BTreeMap::from([
+                        (
+                            "targetScope".to_owned(),
+                            DeltaOwnerPayloadValue::unordered(DeltaValue::text("known-no-target")),
+                        ),
+                        (
+                            "package".to_owned(),
+                            DeltaOwnerPayloadValue::unordered(DeltaValue::text(package)),
+                        ),
+                    ])
+                }
+                Some(UnresolvedTargetScope::ExplicitTargets) | None if !candidates.is_empty() => {
+                    BTreeMap::new()
+                }
+                Some(UnresolvedTargetScope::OpaqueWorkspace)
+                | Some(UnresolvedTargetScope::KnownNoTarget { .. })
+                | Some(UnresolvedTargetScope::ExplicitTargets)
+                | None => return LimitationDelta::RequiredEvidenceGap,
+            };
             let normalized_specifier = normalized_unresolved_specifier(specifier);
             let semantic_identity = frame([
                 importer.as_str().as_bytes(),
@@ -142,11 +164,10 @@ fn limitation_delta(limitation: &Limitation) -> LimitationDelta {
                 confidence: lumin_model::ConfidenceRank::High,
                 grounding: lumin_model::GroundingRank::Grounded,
                 evidence_identity: DeltaValue::bytes(semantic_identity),
-                owner_payload: BTreeMap::new(),
+                owner_payload,
             })
         }
-        Limitation::InternalSpecifierUnresolved { .. }
-        | Limitation::JsModuleUseUnknown { .. }
+        Limitation::JsModuleUseUnknown { .. }
         | Limitation::SourcePayloadUnavailable { .. }
         | Limitation::PackageImportsUnsupported { .. }
         | Limitation::AliasShapeUnsupported { .. }
@@ -295,6 +316,7 @@ mod tests {
             importer: LogicalSourceId::from_string("source-1".to_owned()),
             specifier: "./missing".to_owned(),
             candidates: vec!["src/missing.ts".to_owned()],
+            target_scope: Some(UnresolvedTargetScope::ExplicitTargets),
         });
         let fact = match delta {
             LimitationDelta::Fact(fact) => fact,
@@ -334,6 +356,7 @@ mod tests {
                 importer: LogicalSourceId::from_string("source-1".to_owned()),
                 specifier: "./missing".to_owned(),
                 candidates: Vec::new(),
+                target_scope: Some(UnresolvedTargetScope::OpaqueWorkspace),
             }),
             LimitationDelta::RequiredEvidenceGap
         ));
@@ -344,6 +367,30 @@ mod tests {
             }),
             LimitationDelta::RequiredEvidenceGap
         ));
+    }
+
+    #[test]
+    fn known_no_target_is_a_complete_unresolved_fact() -> Result<(), &'static str> {
+        let delta = limitation_delta(&Limitation::InternalSpecifierUnresolved {
+            importer: LogicalSourceId::from_string("source-1".to_owned()),
+            specifier: "@app/ui/blocked".to_owned(),
+            candidates: Vec::new(),
+            target_scope: Some(UnresolvedTargetScope::KnownNoTarget {
+                package: "@app/ui".to_owned(),
+            }),
+        });
+        let fact = match delta {
+            LimitationDelta::Fact(fact) => fact,
+            LimitationDelta::RequiredEvidenceGap => {
+                return Err("known closed export should produce a delta fact");
+            }
+        };
+        assert!(fact.targets.is_empty());
+        assert_eq!(
+            fact.owner_payload.get("package").map(|value| &value.value),
+            Some(&DeltaValue::text("@app/ui"))
+        );
+        Ok(())
     }
 
     fn finding(claim: &str) -> FindingRecord {
@@ -380,6 +427,7 @@ mod tests {
                 "src/missing.js".to_owned(),
                 "src/missing.jsx".to_owned(),
             ],
+            target_scope: Some(UnresolvedTargetScope::ExplicitTargets),
         }) {
             LimitationDelta::Fact(fact) => Ok(fact),
             LimitationDelta::RequiredEvidenceGap => Err("bounded unresolved edge was not a fact"),

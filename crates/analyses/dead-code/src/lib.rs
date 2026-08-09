@@ -7,7 +7,7 @@ use lumin_evidence::{
 use lumin_graph::SymbolGraph;
 use lumin_model::{
     EvidenceId, FindingDisposition, FindingId, Limitation, LogicalSourceId, RepoPath,
-    ReviewOnlyReason, SemanticConfigSnapshot, SourceSnapshot,
+    ReviewOnlyReason, SemanticConfigSnapshot, SourceSnapshot, UnresolvedTargetScope,
 };
 
 pub fn analyze(
@@ -184,13 +184,20 @@ fn blocked_absence_scope(
     let mut blocked_paths = Vec::new();
     for limitation in limitations {
         match limitation {
-            Limitation::InternalSpecifierUnresolved { candidates, .. } => {
-                if candidates.is_empty() {
-                    workspace_blocked = true;
-                } else {
+            Limitation::InternalSpecifierUnresolved {
+                candidates,
+                target_scope,
+                ..
+            } => match target_scope {
+                Some(UnresolvedTargetScope::KnownNoTarget { .. }) if candidates.is_empty() => {}
+                Some(UnresolvedTargetScope::ExplicitTargets) | None if !candidates.is_empty() => {
                     blocked_paths.extend(candidates.iter().cloned());
                 }
-            }
+                Some(UnresolvedTargetScope::OpaqueWorkspace)
+                | Some(UnresolvedTargetScope::KnownNoTarget { .. })
+                | Some(UnresolvedTargetScope::ExplicitTargets)
+                | None => workspace_blocked = true,
+            },
             Limitation::JsModuleUseUnknown { .. }
             | Limitation::SourcePayloadUnavailable { .. }
             | Limitation::PackageIdentityUnsupported { .. }
