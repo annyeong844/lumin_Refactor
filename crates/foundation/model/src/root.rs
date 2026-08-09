@@ -748,18 +748,34 @@ fn parse_volume_guid(value: &OsStr) -> Option<Vec<u8>> {
 }
 
 fn parse_guid_body(body: &str) -> Option<[u8; 16]> {
-    if body.len() != 36
-        || ![8, 13, 18, 23]
-            .into_iter()
-            .all(|index| body.as_bytes()[index] == b'-')
-    {
+    let bytes = body.as_bytes();
+    if bytes.len() != 36 {
         return None;
     }
-    let hex = body.replace('-', "");
-    let bytes = (0..16)
-        .map(|index| u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16).ok())
-        .collect::<Option<Vec<_>>>()?;
-    bytes.try_into().ok()
+    let mut parsed = [0_u8; 16];
+    let mut digit_index = 0;
+    for (index, byte) in bytes.iter().copied().enumerate() {
+        if matches!(index, 8 | 13 | 18 | 23) {
+            if byte != b'-' {
+                return None;
+            }
+            continue;
+        }
+        let digit = match byte {
+            b'0'..=b'9' => byte - b'0',
+            b'a'..=b'f' => byte - b'a' + 10,
+            b'A'..=b'F' => byte - b'A' + 10,
+            _ => return None,
+        };
+        let output = parsed.get_mut(digit_index / 2)?;
+        if digit_index % 2 == 0 {
+            *output = digit << 4;
+        } else {
+            *output |= digit;
+        }
+        digit_index += 1;
+    }
+    (digit_index == 32).then_some(parsed)
 }
 
 #[cfg(test)]

@@ -275,6 +275,40 @@ fn tsconfig_aliases_follow_exact_wildcard_base_url_and_extends_precedence()
     Ok(())
 }
 
+#[test]
+fn non_ascii_volume_guid_base_url_hard_stops_without_aborting()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "tsconfig.json",
+        r#"{"compilerOptions":{"baseUrl":"//?/Volume{0é00000-0000-0000-0000-000000000000}/repo"}}"#,
+    )?;
+    write(root.path(), "main.ts", "export const value = 1;\n")?;
+
+    let audit = run(root.path(), &["audit", "--jobs", "1"])?;
+    assert_status(&audit, 1);
+    assert!(audit.stdout.is_empty());
+    assert!(audit.stderr.contains("baseUrl escapes the repository root"));
+
+    let overview = run(root.path(), &["overview"])?;
+    assert_status(&overview, 0);
+    let overview: Value = serde_json::from_str(&overview.stdout)?;
+    assert_eq!(
+        overview
+            .pointer("/latestAttempt/status")
+            .and_then(Value::as_str),
+        Some("failed")
+    );
+    assert!(
+        overview
+            .pointer("/latestAttempt/failure")
+            .and_then(Value::as_str)
+            .is_some_and(|failure| failure.contains("baseUrl escapes the repository root"))
+    );
+    Ok(())
+}
+
 fn audit_overview(
     root: &Path,
     expected_status: &str,
