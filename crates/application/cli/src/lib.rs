@@ -916,7 +916,6 @@ fn require_json(value: &str) -> Result<(), CliError> {
 
 fn error_exit_code(error: &CliError) -> i32 {
     match error {
-        CliError::Protocol(ProtocolError::CursorStale) => 5,
         CliError::MissingCommand
         | CliError::UnknownArgument(_)
         | CliError::MissingValue(_)
@@ -936,8 +935,20 @@ fn error_exit_code(error: &CliError) -> i32 {
         | CliError::InvalidRepoPath(_)
         | CliError::DuplicatePaths0From
         | CliError::InvalidPaths0Source
-        | CliError::Paths0Read(_)
-        | CliError::Protocol(_) => 2,
+        | CliError::Paths0Read(_) => 2,
+        CliError::Protocol(error) => match error {
+            ProtocolError::CursorStale => 5,
+            ProtocolError::CursorEncoding
+            | ProtocolError::CursorPayload(_)
+            | ProtocolError::CursorScopeMismatch
+            | ProtocolError::CursorAnchorMissing
+            | ProtocolError::GateRevisionMissing(_)
+            | ProtocolError::GateRevisionEvidenceUnavailable(_)
+            | ProtocolError::FindingNotFound(_)
+            | ProtocolError::InvalidRepoPathDto(_)
+            | ProtocolError::InvalidRepositoryRootDto(_)
+            | ProtocolError::Serialization(_) => 2,
+        },
         CliError::Engine(error) => error.lifecycle_exit_code(),
     }
 }

@@ -5,6 +5,29 @@ use serde_json::Value;
 use super::*;
 
 #[test]
+fn protocol_error_exit_codes_are_explicit() {
+    let malformed_or_missing = [
+        ProtocolError::CursorEncoding,
+        ProtocolError::CursorPayload("malformed".to_owned()),
+        ProtocolError::CursorScopeMismatch,
+        ProtocolError::CursorAnchorMissing,
+        ProtocolError::GateRevisionMissing(1),
+        ProtocolError::GateRevisionEvidenceUnavailable(1),
+        ProtocolError::FindingNotFound("finding".to_owned()),
+        ProtocolError::InvalidRepoPathDto("path".to_owned()),
+        ProtocolError::InvalidRepositoryRootDto("root".to_owned()),
+        ProtocolError::Serialization("serialization".to_owned()),
+    ];
+    for error in malformed_or_missing {
+        assert_eq!(error_exit_code(&CliError::Protocol(error)), 2);
+    }
+    assert_eq!(
+        error_exit_code(&CliError::Protocol(ProtocolError::CursorStale)),
+        5
+    );
+}
+
+#[test]
 fn default_jobs_matches_the_frozen_quota_cap() {
     let cases = [
         (None, 1),
