@@ -2,11 +2,14 @@ use std::ffi::OsString;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use serde_json::Value;
 
+mod command;
 mod determinism;
+
+pub use command::lumin_command;
 
 #[cfg(feature = "publication-test-crash")]
 pub mod publication;
@@ -15,19 +18,6 @@ pub struct ProcessResult {
     pub status: i32,
     pub stdout: String,
     pub stderr: String,
-}
-
-pub fn lumin_command(root: &Path) -> Result<Command, std::io::Error> {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_lumin"));
-    command.env_clear().current_dir(root);
-    #[cfg(windows)]
-    command.env(
-        "SystemRoot",
-        std::env::var_os("SystemRoot").ok_or_else(|| {
-            std::io::Error::other("SystemRoot is required to launch the Windows test binary")
-        })?,
-    );
-    Ok(command)
 }
 
 pub fn run(root: &Path, arguments: &[&str]) -> Result<ProcessResult, Box<dyn std::error::Error>> {

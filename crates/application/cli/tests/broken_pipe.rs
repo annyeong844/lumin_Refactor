@@ -7,9 +7,10 @@ use std::process::{Output, Stdio};
 
 use serde_json::Value;
 
-mod support;
+#[path = "support/command.rs"]
+mod command;
 
-use support::lumin_command;
+use command::lumin_command;
 
 #[test]
 fn closed_stdout_consumer_does_not_abort_the_public_cli() -> Result<(), Box<dyn std::error::Error>>
