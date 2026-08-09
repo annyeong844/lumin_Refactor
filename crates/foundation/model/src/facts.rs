@@ -381,6 +381,14 @@ pub struct ResolvedSourceUse {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum UnresolvedTargetScope {
+    ExplicitTargets,
+    KnownNoTarget { package: String },
+    OpaqueWorkspace,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum ResolutionOutcome {
     Internal {
         target: LogicalSourceId,
@@ -394,6 +402,13 @@ pub enum ResolutionOutcome {
     Unresolved {
         specifier: String,
         candidates: Vec<String>,
+        #[serde(
+            default,
+            rename = "targetScope",
+            alias = "target_scope",
+            skip_serializing_if = "Option::is_none"
+        )]
+        target_scope: Option<UnresolvedTargetScope>,
     },
     Unsupported {
         specifier: String,
@@ -416,6 +431,13 @@ pub enum Limitation {
         importer: LogicalSourceId,
         specifier: String,
         candidates: Vec<String>,
+        #[serde(
+            default,
+            rename = "targetScope",
+            alias = "target_scope",
+            skip_serializing_if = "Option::is_none"
+        )]
+        target_scope: Option<UnresolvedTargetScope>,
     },
     PackageImportsUnsupported {
         path: String,
@@ -506,6 +528,7 @@ pub enum LimitationFactOwner {
 pub enum LimitationScopePolicy {
     Workspace,
     ExplicitTargetsOrWorkspace,
+    ExplicitTargetsOrKnownNoTargetOrWorkspace,
     SourceOwnerPackageOrWorkspace,
     OwningPackage,
     OwningPackageOrWorkspace,
@@ -608,7 +631,7 @@ define_limitation_registry! {
     },
     InternalSpecifierUnresolved => {
         owner: Resolve,
-        scope: ExplicitTargetsOrWorkspace,
+        scope: ExplicitTargetsOrKnownNoTargetOrWorkspace,
         absence: CandidateConsumers,
         gate: NormalizedUnresolvedOrRequiredEvidence,
     },

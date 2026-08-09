@@ -134,7 +134,7 @@ fn exact_and_pattern_exports_follow_edge_specific_conditions()
 }
 
 #[test]
-fn unbounded_package_condition_gap_withholds_dead_findings()
+fn closed_package_exports_do_not_withhold_unrelated_dead_findings()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     write(
@@ -150,17 +150,17 @@ fn unbounded_package_condition_gap_withholds_dead_findings()
     write(
         root.path(),
         "packages/ui/package.json",
-        r#"{"name":"@app/ui","private":true,"exports":{".":{"import":"./index.js"}}}"#,
+        r#"{"name":"@app/ui","private":true,"exports":{"./blocked":null}}"#,
     )?;
-    write(
-        root.path(),
-        "packages/ui/index.ts",
-        "export const used = 1;\n",
-    )?;
+    write(root.path(), "src/candidate.ts", "export const dead = 1;\n")?;
     write(
         root.path(),
         "src/main.ts",
-        "import { used } from '@app/ui'; console.log(used);\n",
+        concat!(
+            "import { blocked } from '@app/ui/blocked';\n",
+            "import { missing } from '@app/ui/missing';\n",
+            "console.log(blocked, missing);\n",
+        ),
     )?;
 
     let audit = run(root.path(), &["audit", "--jobs", "1"])?;
@@ -172,40 +172,48 @@ fn unbounded_package_condition_gap_withholds_dead_findings()
     );
     assert_eq!(
         audit_json.get("findingCount").and_then(Value::as_u64),
-        Some(0)
+        Some(1)
     );
     assert_eq!(
         audit_json.get("limitationCount").and_then(Value::as_u64),
-        Some(1)
+        Some(2)
     );
     let run_id = field(&audit.stdout, "runId")?;
 
     let source = file_response(root.path(), &run_id, "src/main.ts")?;
-    let resolution = source
+    let resolutions = source
         .get("resolutions")
         .and_then(Value::as_array)
-        .and_then(|resolutions| resolutions.first())
         .ok_or_else(|| std::io::Error::other("source resolution is missing"))?;
-    assert_eq!(
-        resolution
-            .pointer("/sourceUse/specifier")
-            .and_then(Value::as_str),
-        Some("@app/ui")
-    );
-    assert_eq!(
-        resolution
-            .pointer("/sourceUse/requestKind")
-            .and_then(Value::as_str),
-        Some("static-import")
-    );
-    assert_eq!(
-        resolution.pointer("/outcome/kind").and_then(Value::as_str),
-        Some("unresolved")
-    );
-    assert_eq!(
-        resolution.pointer("/outcome/candidates"),
-        Some(&serde_json::json!([]))
-    );
+    assert_eq!(resolutions.len(), 2);
+    for resolution in resolutions {
+        assert_eq!(
+            resolution
+                .pointer("/sourceUse/requestKind")
+                .and_then(Value::as_str),
+            Some("static-import")
+        );
+        assert_eq!(
+            resolution.pointer("/outcome/kind").and_then(Value::as_str),
+            Some("unresolved")
+        );
+        assert_eq!(
+            resolution.pointer("/outcome/candidates"),
+            Some(&serde_json::json!([]))
+        );
+        assert_eq!(
+            resolution
+                .pointer("/outcome/targetScope/kind")
+                .and_then(Value::as_str),
+            Some("known-no-target")
+        );
+        assert_eq!(
+            resolution
+                .pointer("/outcome/targetScope/package")
+                .and_then(Value::as_str),
+            Some("@app/ui")
+        );
+    }
 
     let overview = run(root.path(), &["overview", "--run", &run_id])?;
     assert_status(&overview, 0);
@@ -214,16 +222,30 @@ fn unbounded_package_condition_gap_withholds_dead_findings()
         .get("limitations")
         .and_then(Value::as_array)
         .ok_or_else(|| std::io::Error::other("limitations are missing"))?;
-    assert_eq!(limitations.len(), 1);
+    assert_eq!(limitations.len(), 2);
+    for limitation in limitations {
+        assert_eq!(
+            limitation.get("reason").and_then(Value::as_str),
+            Some("internal-specifier-unresolved")
+        );
+        assert_eq!(limitation.get("candidates"), Some(&serde_json::json!([])));
+        assert_eq!(
+            limitation
+                .pointer("/targetScope/kind")
+                .and_then(Value::as_str),
+            Some("known-no-target")
+        );
+        assert_eq!(
+            limitation
+                .pointer("/targetScope/package")
+                .and_then(Value::as_str),
+            Some("@app/ui")
+        );
+    }
     assert_eq!(
-        limitations[0].get("reason").and_then(Value::as_str),
-        Some("internal-specifier-unresolved")
+        finding_set(root.path(), &run_id)?,
+        BTreeSet::from([finding("src/candidate.ts", "dead")])
     );
-    assert_eq!(
-        limitations[0].get("candidates"),
-        Some(&serde_json::json!([]))
-    );
-    assert!(finding_set(root.path(), &run_id)?.is_empty());
     Ok(())
 }
 

@@ -8,7 +8,7 @@ use lumin_model::{
     ConfigSyntax, FileFacts, Limitation, LogicalSourceId, PackageSurfaceDeclaration, RepoPath,
     RepositoryRootIdentity, ResolutionOutcome, ResolutionProfile, ResolvedSourceUse,
     SelectedResolutionProfile, SemanticConfigSnapshot, SourceSnapshot, SourceUseFact,
-    SymbolNamespace,
+    SymbolNamespace, UnresolvedTargetScope,
 };
 use thiserror::Error;
 
@@ -19,7 +19,7 @@ pub use generated_config_policy::{
     RESOLVER_PACKAGE_JSON_FIELDS, RESOLVER_TSCONFIG_TOP_LEVEL,
 };
 
-pub const RESOLVER_VERSION: &str = "config-package-resolution.v1";
+pub const RESOLVER_VERSION: &str = "config-package-resolution.v2";
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ConfigDemand {
@@ -111,10 +111,12 @@ pub fn resolve_all(
                 ResolutionOutcome::Unresolved {
                     specifier,
                     candidates,
+                    target_scope,
                 } => Some(Limitation::InternalSpecifierUnresolved {
                     importer: source_use.importer.clone(),
                     specifier: specifier.clone(),
                     candidates: candidates.clone(),
+                    target_scope: target_scope.clone(),
                 }),
                 ResolutionOutcome::Internal { .. }
                 | ResolutionOutcome::External { .. }
@@ -395,6 +397,7 @@ fn resolve_relative_specifier(
         ResolutionOutcome::Unresolved {
             specifier: specifier.to_owned(),
             candidates: unresolved_candidates,
+            target_scope: Some(UnresolvedTargetScope::ExplicitTargets),
         },
         None,
         None,

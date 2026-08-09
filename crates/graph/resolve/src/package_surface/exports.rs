@@ -5,7 +5,7 @@ use lumin_model::{
     PackageSurfaceSource, RepoPath, SymbolNamespace,
 };
 
-use super::{PackageResolution, TargetRequest, resolve_base, unresolved, unsupported};
+use super::{PackageResolution, TargetRequest, resolve_base, unresolved_no_target, unsupported};
 
 pub(super) fn resolve(
     package: &PackageFact,
@@ -24,10 +24,10 @@ pub(super) fn resolve(
         Err(detail) => return unsupported(package, specifier, &detail),
     };
     let Some(selected) = selected else {
-        return unresolved(specifier, Vec::new());
+        return unresolved_no_target(specifier);
     };
     let Some(target) = selected.target else {
-        return unresolved(specifier, Vec::new());
+        return unresolved_no_target(specifier);
     };
     let base = match lower_target(&package.root, &target, selected.capture.as_deref()) {
         Ok(base) => base,
