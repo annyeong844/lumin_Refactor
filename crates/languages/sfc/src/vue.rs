@@ -374,6 +374,13 @@ fn css_references(source: &str, base: usize) -> Result<Vec<SfcResourceUse>, Stri
             cursor += end + 4;
             continue;
         }
+        if bytes
+            .get(cursor)
+            .is_some_and(|byte| matches!(byte, b'\'' | b'"'))
+        {
+            cursor = skip_css_string(source, cursor)?;
+            continue;
+        }
         if starts_ascii_case_insensitive(bytes, cursor, b"@import") {
             let mut value_start = cursor + 7;
             while bytes.get(value_start).is_some_and(u8::is_ascii_whitespace) {
@@ -427,6 +434,30 @@ fn css_references(source: &str, base: usize) -> Result<Vec<SfcResourceUse>, Stri
         cursor += 1;
     }
     Ok(references)
+}
+
+fn skip_css_string(source: &str, mut cursor: usize) -> Result<usize, String> {
+    let bytes = source.as_bytes();
+    let quote = bytes
+        .get(cursor)
+        .copied()
+        .filter(|byte| matches!(byte, b'\'' | b'"'))
+        .ok_or_else(|| "Vue style string start is missing".to_owned())?;
+    cursor += 1;
+    while let Some(byte) = bytes.get(cursor).copied() {
+        if byte == b'\\' {
+            cursor += 1;
+            if cursor < bytes.len() {
+                cursor += 1;
+            }
+            continue;
+        }
+        cursor += 1;
+        if byte == quote {
+            return Ok(cursor);
+        }
+    }
+    Err("Vue style contains an unterminated string".to_owned())
 }
 
 fn css_value(

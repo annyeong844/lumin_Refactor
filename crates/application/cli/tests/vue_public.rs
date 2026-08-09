@@ -172,13 +172,51 @@ fn vue_non_source_asset_does_not_probe_declarations() -> Result<(), Box<dyn std:
         "src/App.vue",
         concat!(
             "<template><div>App</div></template>\n",
-            "<style>.hero { background: url('./hero.svg'); } @import \"./theme.css\";</style>\n",
+            "<style>\n",
+            ".hero { background: url('./hero.svg'); } @import \"./theme.css\";\n",
+            ".copy::before { content: \"url('./ignored.svg')\"; }\n",
+            ".copy::after { content: '@import \"./ignored.css\"'; }\n",
+            ".escaped::before { content: \"say \\\" url('./ignored-escaped.svg')\"; }\n",
+            "</style>\n",
         ),
     )?;
 
     let evidence = audit_evidence(root.path())?;
     assert_complete_vue(&evidence)?;
     assert_empty_findings(root.path(), &evidence.run_id)?;
+
+    let file = run(
+        root.path(),
+        &["files", "--run", &evidence.run_id, "src/App.vue"],
+    )?;
+    assert_status(&file, 0);
+    let file: Value = serde_json::from_str(&file.stdout)?;
+    let resolutions = file
+        .get("resolutions")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("Vue resource resolutions are missing"))?;
+    let observed = resolutions
+        .iter()
+        .map(|resolution| {
+            let specifier = resolution
+                .pointer("/sourceUse/specifier")
+                .and_then(Value::as_str)
+                .ok_or_else(|| std::io::Error::other("resource specifier is missing"))?;
+            let kind = resolution
+                .pointer("/outcome/kind")
+                .and_then(Value::as_str)
+                .ok_or_else(|| std::io::Error::other("resource outcome kind is missing"))?;
+            Ok((specifier.to_owned(), kind.to_owned()))
+        })
+        .collect::<Result<BTreeSet<_>, std::io::Error>>()?;
+    assert_eq!(
+        observed,
+        BTreeSet::from([
+            ("./hero.svg".to_owned(), "non-source-asset".to_owned()),
+            ("./theme.css".to_owned(), "non-source-asset".to_owned()),
+        ]),
+        "CSS string contents became resource edges"
+    );
     Ok(())
 }
 
