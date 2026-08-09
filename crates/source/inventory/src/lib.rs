@@ -1432,17 +1432,11 @@ fn classify_roles(
     let test_like = default_test_role(relative);
     let generated = generated_marker(bytes).then_some(SourceRoleReason::LeadingGeneratedComment);
     let declaration = kind.is_declaration();
-    let mut roles = SourceRoles {
-        test_like,
-        generated,
-        vendored: None,
-        declaration,
-        classifications: Vec::new(),
-    };
+    let mut classifications = Vec::new();
 
     if let Some(reason) = test_like {
         push_classification(
-            &mut roles,
+            &mut classifications,
             SourceClassificationRole::Test,
             reason,
             SourceRoleConfigurationSource::CompiledDefault,
@@ -1450,7 +1444,7 @@ fn classify_roles(
     }
     if let Some(reason) = generated {
         push_classification(
-            &mut roles,
+            &mut classifications,
             SourceClassificationRole::Generated,
             reason,
             SourceRoleConfigurationSource::CompiledDefault,
@@ -1458,7 +1452,7 @@ fn classify_roles(
     }
     if declaration {
         push_classification(
-            &mut roles,
+            &mut classifications,
             SourceClassificationRole::Declaration,
             SourceRoleReason::DeclarationExtension,
             SourceRoleConfigurationSource::CompiledDefault,
@@ -1466,24 +1460,24 @@ fn classify_roles(
     }
 
     apply_roles(
-        &mut roles,
+        &mut classifications,
         path,
         relative,
         &patterns.config_roles,
         SourceRoleConfigurationSource::Configuration,
     )?;
     apply_roles(
-        &mut roles,
+        &mut classifications,
         path,
         relative,
         &patterns.invocation_roles,
         SourceRoleConfigurationSource::Invocation,
     )?;
-    Ok(roles)
+    Ok(SourceRoles::from_classifications(classifications))
 }
 
 fn apply_roles(
-    roles: &mut SourceRoles,
+    classifications: &mut Vec<SourceRoleClassification>,
     path: &RepoPath,
     relative: &Path,
     rules: &[(Gitignore, ScanRole)],
@@ -1529,29 +1523,13 @@ fn apply_roles(
 
     for role in matched {
         let reason = match role {
-            ScanRole::Test => {
-                roles.test_like = Some(SourceRoleReason::ExplicitTestRole);
-                SourceRoleReason::ExplicitTestRole
-            }
-            ScanRole::Production => {
-                roles.test_like = None;
-                SourceRoleReason::ExplicitProductionRole
-            }
-            ScanRole::Generated => {
-                roles.generated = Some(SourceRoleReason::ExplicitGeneratedRole);
-                SourceRoleReason::ExplicitGeneratedRole
-            }
-            ScanRole::Vendor => {
-                roles.vendored = Some(SourceRoleReason::ExplicitVendorRole);
-                SourceRoleReason::ExplicitVendorRole
-            }
-            ScanRole::Authored => {
-                roles.generated = None;
-                roles.vendored = None;
-                SourceRoleReason::ExplicitAuthoredRole
-            }
+            ScanRole::Test => SourceRoleReason::ExplicitTestRole,
+            ScanRole::Production => SourceRoleReason::ExplicitProductionRole,
+            ScanRole::Generated => SourceRoleReason::ExplicitGeneratedRole,
+            ScanRole::Vendor => SourceRoleReason::ExplicitVendorRole,
+            ScanRole::Authored => SourceRoleReason::ExplicitAuthoredRole,
         };
-        push_classification(roles, role.into(), reason, configuration_source);
+        push_classification(classifications, role.into(), reason, configuration_source);
     }
     Ok(())
 }
@@ -1567,12 +1545,12 @@ fn role_name(role: ScanRole) -> &'static str {
 }
 
 fn push_classification(
-    roles: &mut SourceRoles,
+    classifications: &mut Vec<SourceRoleClassification>,
     role: SourceClassificationRole,
     reason: SourceRoleReason,
     configuration_source: SourceRoleConfigurationSource,
 ) {
-    roles.classifications.push(SourceRoleClassification {
+    classifications.push(SourceRoleClassification {
         role,
         rule_version: SOURCE_CLASSIFICATION_RULE_VERSION.to_owned(),
         reason,

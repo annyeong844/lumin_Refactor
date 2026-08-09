@@ -96,7 +96,7 @@ pub fn build(
         };
         let importer_is_test = roles
             .get(&resolved.source_use.importer)
-            .is_some_and(|roles| roles.test_like.is_some());
+            .is_some_and(SourceRoles::is_test_like);
         match resolved.source_use.kind {
             ImportKind::Named | ImportKind::Default | ImportKind::ReExportNamed => {
                 let Some(imported_name) = &resolved.source_use.imported_name else {
@@ -180,22 +180,29 @@ mod tests {
     use super::*;
     use lumin_model::{
         ExportFact, FileFacts, ImportKind, ModuleRequestKind, ResolutionOutcome, ResolvedSourceUse,
-        SourceKind, SourceRoleReason, SourceRoles, SourceSnapshot, SourceSpan, SourceUnitId,
-        SourceUseFact, SymbolNamespace,
+        SOURCE_CLASSIFICATION_RULE_VERSION, SourceClassificationRole, SourceKind,
+        SourceRoleClassification, SourceRoleConfigurationSource, SourceRoleReason, SourceRoles,
+        SourceSnapshot, SourceSpan, SourceUnitId, SourceUseFact, SymbolNamespace,
     };
+
+    fn test_like_roles() -> SourceRoles {
+        SourceRoles::from_classifications(vec![SourceRoleClassification {
+            role: SourceClassificationRole::Test,
+            rule_version: SOURCE_CLASSIFICATION_RULE_VERSION.to_owned(),
+            reason: SourceRoleReason::TestPathRule,
+            configuration_source: SourceRoleConfigurationSource::CompiledDefault,
+        }])
+    }
 
     fn make_source(
         path: &str,
         test_like: bool,
     ) -> Result<SourceSnapshot, Box<dyn std::error::Error>> {
         let repo_path = lumin_model::RepoPath::from_portable(path)?;
-        let roles = SourceRoles {
-            test_like: if test_like {
-                Some(SourceRoleReason::TestPathRule)
-            } else {
-                None
-            },
-            ..Default::default()
+        let roles = if test_like {
+            test_like_roles()
+        } else {
+            SourceRoles::default()
         };
         Ok(SourceSnapshot::new(
             repo_path,

@@ -479,7 +479,7 @@ impl RepositoryAnalysisSession {
             .map(|source| SourceClassificationRecord {
                 source_id: source.id.clone(),
                 path: RepoPathProjection::from(&source.path),
-                classifications: source.roles.classifications.clone(),
+                classifications: source.roles.classifications().to_vec(),
             })
             .collect();
         let source_contexts = self
