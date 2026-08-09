@@ -28,7 +28,7 @@ pub fn analyze(
     let (workspace_blocked, blocked_paths) = blocked_absence_scope(sources, config, limitations);
     let mut findings = Vec::new();
     for export in graph.exports.values() {
-        if export.roles.declaration
+        if export.roles.is_declaration()
             || export.production_exact_fan_in > 0
             || export.production_broad_fan_in > 0
             || export.public_surface_count > 0
@@ -51,10 +51,7 @@ pub fn analyze(
             export.fact.namespace,
             &export.fact.exported_name,
         );
-        let disposition = disposition(
-            export.roles.generated.is_some(),
-            export.roles.vendored.is_some(),
-        );
+        let disposition = disposition(export.roles.is_generated(), export.roles.is_vendored());
         let claim = if export.test_exact_fan_in > 0 || export.test_broad_fan_in > 0 {
             format!(
                 "export `{}` has zero production fan-in and is consumed only by test-like sources",
@@ -425,22 +422,40 @@ mod tests {
     use super::*;
     use lumin_graph::{ExportIdentity, GraphExport, GraphTestReExport, SymbolGraph};
     use lumin_model::{
-        ExportFact, LogicalSourceId, RepoPath, SourceKind, SourceRoleReason, SourceRoles,
-        SourceSnapshot, SourceSpan, SymbolNamespace,
+        ExportFact, LogicalSourceId, RepoPath, SOURCE_CLASSIFICATION_RULE_VERSION,
+        SourceClassificationRole, SourceKind, SourceRoleClassification,
+        SourceRoleConfigurationSource, SourceRoleReason, SourceRoles, SourceSnapshot, SourceSpan,
+        SymbolNamespace,
     };
+
+    fn roles(
+        classifications: impl IntoIterator<Item = (SourceClassificationRole, SourceRoleReason)>,
+    ) -> SourceRoles {
+        SourceRoles::from_classifications(
+            classifications
+                .into_iter()
+                .map(|(role, reason)| SourceRoleClassification {
+                    role,
+                    rule_version: SOURCE_CLASSIFICATION_RULE_VERSION.to_owned(),
+                    reason,
+                    configuration_source: SourceRoleConfigurationSource::CompiledDefault,
+                })
+                .collect(),
+        )
+    }
 
     fn make_source(
         path: &str,
         test_like: bool,
     ) -> Result<SourceSnapshot, Box<dyn std::error::Error>> {
         let repo_path = RepoPath::from_portable(path)?;
-        let roles = SourceRoles {
-            test_like: if test_like {
-                Some(SourceRoleReason::TestPathRule)
-            } else {
-                None
-            },
-            ..Default::default()
+        let roles = if test_like {
+            roles([(
+                SourceClassificationRole::Test,
+                SourceRoleReason::TestPathRule,
+            )])
+        } else {
+            SourceRoles::default()
         };
         Ok(SourceSnapshot::new(
             repo_path,
@@ -514,10 +529,10 @@ mod tests {
             alias_identity.clone(),
             GraphExport {
                 fact: test_re_export_fact.clone(),
-                roles: SourceRoles {
-                    test_like: Some(SourceRoleReason::TestPathRule),
-                    ..Default::default()
-                },
+                roles: roles([(
+                    SourceClassificationRole::Test,
+                    SourceRoleReason::TestPathRule,
+                )]),
                 production_exact_fan_in: 0,
                 test_exact_fan_in: 0,
                 production_broad_fan_in: 0,
@@ -633,10 +648,10 @@ mod tests {
             alias_identity.clone(),
             GraphExport {
                 fact: test_re_export_fact.clone(),
-                roles: SourceRoles {
-                    test_like: Some(SourceRoleReason::TestPathRule),
-                    ..Default::default()
-                },
+                roles: roles([(
+                    SourceClassificationRole::Test,
+                    SourceRoleReason::TestPathRule,
+                )]),
                 production_exact_fan_in: 1,
                 test_exact_fan_in: 0,
                 production_broad_fan_in: 0,
@@ -809,11 +824,16 @@ mod tests {
             alias_identity.clone(),
             GraphExport {
                 fact: test_re_export_fact.clone(),
-                roles: SourceRoles {
-                    test_like: Some(SourceRoleReason::TestPathRule),
-                    generated: Some(SourceRoleReason::TestPathRule),
-                    ..Default::default()
-                },
+                roles: roles([
+                    (
+                        SourceClassificationRole::Test,
+                        SourceRoleReason::TestPathRule,
+                    ),
+                    (
+                        SourceClassificationRole::Generated,
+                        SourceRoleReason::LeadingGeneratedComment,
+                    ),
+                ]),
                 production_exact_fan_in: 0,
                 test_exact_fan_in: 0,
                 production_broad_fan_in: 0,

@@ -195,7 +195,7 @@ fn scans_generated_and_explicit_vendor_roles() -> Result<(), Box<dyn std::error:
         inventory
             .sources
             .iter()
-            .filter(|source| source.roles.generated.is_some())
+            .filter(|source| source.roles.is_generated())
             .count(),
         1
     );
@@ -203,7 +203,7 @@ fn scans_generated_and_explicit_vendor_roles() -> Result<(), Box<dyn std::error:
         inventory
             .sources
             .iter()
-            .filter(|source| source.roles.vendored.is_some())
+            .filter(|source| source.roles.is_vendored())
             .count(),
         1
     );

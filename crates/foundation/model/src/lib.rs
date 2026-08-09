@@ -7,6 +7,9 @@ mod identity;
 mod path;
 mod root;
 
+#[cfg(test)]
+mod facts_tests;
+
 pub use config::*;
 pub use delta::*;
 pub use facts::*;

@@ -1,0 +1,94 @@
+use crate::{
+    SOURCE_CLASSIFICATION_RULE_VERSION, SourceClassificationRole, SourceRoleClassification,
+    SourceRoleConfigurationSource, SourceRoleReason, SourceRoles,
+};
+
+fn classification(
+    role: SourceClassificationRole,
+    reason: SourceRoleReason,
+    configuration_source: SourceRoleConfigurationSource,
+) -> SourceRoleClassification {
+    SourceRoleClassification {
+        role,
+        rule_version: SOURCE_CLASSIFICATION_RULE_VERSION.to_owned(),
+        reason,
+        configuration_source,
+    }
+}
+
+#[test]
+fn effective_roles_are_derived_from_ordered_classifications() {
+    let classifications = vec![
+        classification(
+            SourceClassificationRole::Test,
+            SourceRoleReason::TestPathRule,
+            SourceRoleConfigurationSource::CompiledDefault,
+        ),
+        classification(
+            SourceClassificationRole::Generated,
+            SourceRoleReason::LeadingGeneratedComment,
+            SourceRoleConfigurationSource::CompiledDefault,
+        ),
+        classification(
+            SourceClassificationRole::Authored,
+            SourceRoleReason::ExplicitAuthoredRole,
+            SourceRoleConfigurationSource::Configuration,
+        ),
+        classification(
+            SourceClassificationRole::Production,
+            SourceRoleReason::ExplicitProductionRole,
+            SourceRoleConfigurationSource::Invocation,
+        ),
+        classification(
+            SourceClassificationRole::Vendor,
+            SourceRoleReason::ExplicitVendorRole,
+            SourceRoleConfigurationSource::Invocation,
+        ),
+    ];
+    let roles = SourceRoles::from_classifications(classifications.clone());
+
+    assert_eq!(roles.classifications(), classifications);
+    assert_eq!(roles.test_like_reason(), None);
+    assert_eq!(roles.generated_reason(), None);
+    assert_eq!(
+        roles.vendored_reason(),
+        Some(SourceRoleReason::ExplicitVendorRole)
+    );
+    assert!(!roles.is_test_like());
+    assert!(!roles.is_generated());
+    assert!(roles.is_vendored());
+    assert!(!roles.is_declaration());
+}
+
+#[test]
+fn higher_tier_classification_can_restore_a_cleared_role() {
+    let roles = SourceRoles::from_classifications(vec![
+        classification(
+            SourceClassificationRole::Generated,
+            SourceRoleReason::LeadingGeneratedComment,
+            SourceRoleConfigurationSource::CompiledDefault,
+        ),
+        classification(
+            SourceClassificationRole::Authored,
+            SourceRoleReason::ExplicitAuthoredRole,
+            SourceRoleConfigurationSource::Configuration,
+        ),
+        classification(
+            SourceClassificationRole::Generated,
+            SourceRoleReason::ExplicitGeneratedRole,
+            SourceRoleConfigurationSource::Invocation,
+        ),
+        classification(
+            SourceClassificationRole::Declaration,
+            SourceRoleReason::DeclarationExtension,
+            SourceRoleConfigurationSource::CompiledDefault,
+        ),
+    ]);
+
+    assert_eq!(
+        roles.generated_reason(),
+        Some(SourceRoleReason::ExplicitGeneratedRole)
+    );
+    assert!(roles.is_generated());
+    assert!(roles.is_declaration());
+}

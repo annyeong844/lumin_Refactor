@@ -49,15 +49,67 @@ pub enum SfcDialect {
     Astro,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SourceRoles {
-    pub test_like: Option<SourceRoleReason>,
-    pub generated: Option<SourceRoleReason>,
-    pub vendored: Option<SourceRoleReason>,
-    pub declaration: bool,
-    #[serde(default)]
-    pub classifications: Vec<SourceRoleClassification>,
+    classifications: Vec<SourceRoleClassification>,
+}
+
+impl SourceRoles {
+    pub fn from_classifications(classifications: Vec<SourceRoleClassification>) -> Self {
+        Self { classifications }
+    }
+
+    pub fn classifications(&self) -> &[SourceRoleClassification] {
+        &self.classifications
+    }
+
+    pub fn test_like_reason(&self) -> Option<SourceRoleReason> {
+        self.classifications
+            .iter()
+            .fold(None, |reason, classification| match classification.role {
+                SourceClassificationRole::Test => Some(classification.reason),
+                SourceClassificationRole::Production => None,
+                _ => reason,
+            })
+    }
+
+    pub fn generated_reason(&self) -> Option<SourceRoleReason> {
+        self.classifications
+            .iter()
+            .fold(None, |reason, classification| match classification.role {
+                SourceClassificationRole::Generated => Some(classification.reason),
+                SourceClassificationRole::Authored => None,
+                _ => reason,
+            })
+    }
+
+    pub fn vendored_reason(&self) -> Option<SourceRoleReason> {
+        self.classifications
+            .iter()
+            .fold(None, |reason, classification| match classification.role {
+                SourceClassificationRole::Vendor => Some(classification.reason),
+                SourceClassificationRole::Authored => None,
+                _ => reason,
+            })
+    }
+
+    pub fn is_test_like(&self) -> bool {
+        self.test_like_reason().is_some()
+    }
+
+    pub fn is_generated(&self) -> bool {
+        self.generated_reason().is_some()
+    }
+
+    pub fn is_vendored(&self) -> bool {
+        self.vendored_reason().is_some()
+    }
+
+    pub fn is_declaration(&self) -> bool {
+        self.classifications
+            .iter()
+            .any(|classification| classification.role == SourceClassificationRole::Declaration)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
