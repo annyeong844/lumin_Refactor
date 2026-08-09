@@ -31,6 +31,15 @@ fn protocol_error_exit_codes_are_explicit() {
         1
     );
     assert_eq!(
+        error_exit_code(&CliError::Protocol(
+            ProtocolError::ResponseOrderingMismatch {
+                expected: "findings.v1",
+                observed: "capabilities.v1".to_owned(),
+            }
+        )),
+        1
+    );
+    assert_eq!(
         error_exit_code(&CliError::Protocol(ProtocolError::Serialization(
             "serialization".to_owned()
         ))),

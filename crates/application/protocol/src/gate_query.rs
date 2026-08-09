@@ -510,7 +510,10 @@ fn ordering(query: &EvidenceQuery, expected: &'static str) -> Result<&'static st
     if query.ordering.as_str() == expected {
         Ok(expected)
     } else {
-        Err(ProtocolError::CursorScopeMismatch)
+        Err(ProtocolError::ResponseOrderingMismatch {
+            expected,
+            observed: query.ordering.as_str().to_owned(),
+        })
     }
 }
 
@@ -719,6 +722,35 @@ mod tests {
             gate_findings_response(&page),
             Err(ProtocolError::ResponseCursorAnchorMissing(collection))
                 if collection == "gate/findings"
+        ));
+    }
+
+    #[test]
+    fn response_projection_rejects_mismatched_ordering() {
+        let page = EvidencePage {
+            query: EvidenceQuery {
+                scope: EvidenceQueryScope::GateAttempt {
+                    repository_id: test_repository_id(),
+                    gate_id: GateId::from_string("gate-a".to_owned()),
+                    revision: 1,
+                },
+                finding_id: None,
+                collection_path: "gate/findings".to_owned(),
+                ordering: CollectionOrderingId::capabilities(),
+                page_size: 100,
+                filters: BTreeMap::new(),
+                anchor: None,
+            },
+            scope_total: 1,
+            total: 1,
+            items: vec![finding()],
+            next_query: None,
+        };
+
+        assert!(matches!(
+            gate_findings_response(&page),
+            Err(ProtocolError::ResponseOrderingMismatch { expected, observed })
+                if expected == FINDINGS_ORDERING_ID && observed == CAPABILITIES_ORDERING_ID
         ));
     }
 

@@ -299,6 +299,11 @@ pub enum ProtocolError {
     CursorAnchorMissing,
     #[error("response cursor anchor is unavailable for collection: {0}")]
     ResponseCursorAnchorMissing(String),
+    #[error("response ordering mismatch: expected {expected}, observed {observed}")]
+    ResponseOrderingMismatch {
+        expected: &'static str,
+        observed: String,
+    },
     #[error("gate revision does not exist: {0}")]
     GateRevisionMissing(u64),
     #[error("gate revision has no sealed queryable evidence: {0}")]

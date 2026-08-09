@@ -937,7 +937,9 @@ fn error_exit_code(error: &CliError) -> i32 {
         | CliError::InvalidPaths0Source
         | CliError::Paths0Read(_) => 2,
         CliError::Protocol(error) => match error {
-            ProtocolError::ResponseCursorAnchorMissing(_) | ProtocolError::Serialization(_) => 1,
+            ProtocolError::ResponseCursorAnchorMissing(_)
+            | ProtocolError::ResponseOrderingMismatch { .. }
+            | ProtocolError::Serialization(_) => 1,
             ProtocolError::CursorStale => 5,
             ProtocolError::CursorEncoding
             | ProtocolError::CursorPayload(_)
