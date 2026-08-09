@@ -25,6 +25,12 @@ fn protocol_error_exit_codes_are_explicit() {
         5
     );
     assert_eq!(
+        error_exit_code(&CliError::Protocol(
+            ProtocolError::ResponseCursorAnchorMissing("collection".to_owned())
+        )),
+        1
+    );
+    assert_eq!(
         error_exit_code(&CliError::Protocol(ProtocolError::Serialization(
             "serialization".to_owned()
         ))),
