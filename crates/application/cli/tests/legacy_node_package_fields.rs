@@ -8,15 +8,14 @@ mod support;
 
 use support::{assert_status, field, run};
 
+const VALID_EXPORTS: &str = r#"{"default":"./wrong-exports.js"}"#;
+const VALID_IMPORTS: &str = r##"{"#internal":"./wrong-local.js"}"##;
+
 #[test]
 fn legacy_node_ignores_valid_and_malformed_fields_and_uses_main_and_typings()
 -> Result<(), Box<dyn std::error::Error>> {
     for (case, exports, imports) in [
-        (
-            "valid",
-            r#"{"default":"./wrong-exports.js"}"#,
-            r##"{"#internal":"./wrong-local.js"}"##,
-        ),
+        ("valid", VALID_EXPORTS, VALID_IMPORTS),
         ("malformed", "7", "7"),
     ] {
         let root = package_fixture(exports, imports)?;
@@ -59,70 +58,152 @@ fn legacy_node_ignores_valid_and_malformed_fields_and_uses_main_and_typings()
             Some("#internal")
         );
     }
+    assert_disabled_fields_remain_protected_inputs()?;
     Ok(())
 }
 
 #[test]
 fn enabled_profile_retains_field_applicability_after_legacy_run()
 -> Result<(), Box<dyn std::error::Error>> {
-    let root = package_fixture("7", "7")?;
+    for (case, exports, imports, modeled_exports) in [
+        ("valid", VALID_EXPORTS, VALID_IMPORTS, true),
+        ("malformed", "7", "7", false),
+    ] {
+        let root = package_fixture(exports, imports)?;
 
-    let legacy_run = audit(root.path(), "node", "complete")?;
-    assert_eq!(
-        overview(root.path(), &legacy_run)?.get("limitations"),
-        Some(&serde_json::json!([]))
-    );
+        let legacy_run = audit(root.path(), "node", "complete")?;
+        assert_eq!(
+            overview(root.path(), &legacy_run)?.get("limitations"),
+            Some(&serde_json::json!([])),
+            "legacy node retained an affecting {case} field outcome"
+        );
 
-    let bundler_run = audit(root.path(), "bundler", "incomplete")?;
-    let bundler_overview = overview(root.path(), &bundler_run)?;
-    let limitations = bundler_overview
-        .get("limitations")
-        .and_then(Value::as_array)
-        .ok_or_else(|| std::io::Error::other("overview limitations are missing"))?;
-    let observed = limitations
-        .iter()
-        .map(|limitation| {
-            Ok((
-                required_str(limitation, "/reason")?,
-                required_str(limitation, "/path")?,
-            ))
-        })
-        .collect::<Result<BTreeSet<_>, std::io::Error>>()?;
-    assert_eq!(
-        observed,
-        BTreeSet::from([
-            (
-                "package-imports-unsupported".to_owned(),
-                "package.json".to_owned(),
-            ),
-            (
+        let bundler_run = audit(root.path(), "bundler", "incomplete")?;
+        let bundler_overview = overview(root.path(), &bundler_run)?;
+        let limitations = bundler_overview
+            .get("limitations")
+            .and_then(Value::as_array)
+            .ok_or_else(|| std::io::Error::other("overview limitations are missing"))?;
+        let observed = limitations
+            .iter()
+            .map(|limitation| {
+                Ok((
+                    required_str(limitation, "/reason")?,
+                    required_str(limitation, "/path")?,
+                ))
+            })
+            .collect::<Result<BTreeSet<_>, std::io::Error>>()?;
+        let mut expected = BTreeSet::from([(
+            "package-imports-unsupported".to_owned(),
+            "package.json".to_owned(),
+        )]);
+        if !modeled_exports {
+            expected.insert((
                 "public-surface-unsupported".to_owned(),
                 "packages/lib/package.json".to_owned(),
-            ),
-        ])
-    );
-
-    let source = file_response(root.path(), &bundler_run, "src/main.ts")?;
-    for namespace in ["value", "type"] {
-        let package = resolution(&source, "@acme/lib", namespace)?;
+            ));
+        }
         assert_eq!(
-            package.pointer("/outcome/kind").and_then(Value::as_str),
+            observed, expected,
+            "wrong bundler outcome for {case} fields"
+        );
+
+        let source = file_response(root.path(), &bundler_run, "src/main.ts")?;
+        for namespace in ["value", "type"] {
+            if modeled_exports {
+                assert_internal_target(
+                    &source,
+                    "@acme/lib",
+                    namespace,
+                    &source_id(root.path(), &bundler_run, "packages/lib/wrong-exports.ts")?,
+                )?;
+            } else {
+                let package = resolution(&source, "@acme/lib", namespace)?;
+                assert_eq!(
+                    package.pointer("/outcome/kind").and_then(Value::as_str),
+                    Some("unsupported")
+                );
+                assert_eq!(
+                    package.pointer("/outcome/reason").and_then(Value::as_str),
+                    Some("package exports must match exports-v1")
+                );
+            }
+        }
+        let internal = resolution(&source, "#internal", "value")?;
+        assert_eq!(
+            internal.pointer("/outcome/kind").and_then(Value::as_str),
             Some("unsupported")
         );
         assert_eq!(
-            package.pointer("/outcome/reason").and_then(Value::as_str),
-            Some("package exports must match exports-v1")
+            internal.pointer("/outcome/reason").and_then(Value::as_str),
+            Some("package imports are unsupported")
         );
     }
-    let internal = resolution(&source, "#internal", "value")?;
-    assert_eq!(
-        internal.pointer("/outcome/kind").and_then(Value::as_str),
-        Some("unsupported")
+    Ok(())
+}
+
+fn assert_disabled_fields_remain_protected_inputs() -> Result<(), Box<dyn std::error::Error>> {
+    const CHANGED_EXPORTS: &str = r#"{"default":"./unobserved-exports.js"}"#;
+    const CHANGED_IMPORTS: &str = r##"{"#internal":"./unobserved-local.js"}"##;
+
+    let root = package_fixture(VALID_EXPORTS, VALID_IMPORTS)?;
+    fs::remove_file(root.path().join("packages/lib/wrong-exports.ts"))?;
+    fs::remove_file(root.path().join("wrong-local.ts"))?;
+
+    let (baseline_gate, baseline_input) =
+        open_node_gate(root.path(), "op-disabled-fields-baseline")?;
+    assert_write_paths_allowed(
+        root.path(),
+        "op-disabled-targets-baseline",
+        &["packages/lib/wrong-exports.ts", "wrong-local.ts"],
+    )?;
+    assert_write_paths_conflict(
+        root.path(),
+        "op-disabled-manifests",
+        &["package.json", "packages/lib/package.json"],
+        &baseline_gate,
+    )?;
+    abandon_gate(
+        root.path(),
+        &baseline_gate,
+        "op-abandon-disabled-fields-baseline",
+    )?;
+
+    write_package_manifests(root.path(), CHANGED_EXPORTS, VALID_IMPORTS)?;
+    let (changed_exports_gate, changed_exports_input) =
+        open_node_gate(root.path(), "op-disabled-fields-changed-exports")?;
+    assert_ne!(
+        changed_exports_input, baseline_input,
+        "changing disabled exports reused the previous analysis input identity"
     );
-    assert_eq!(
-        internal.pointer("/outcome/reason").and_then(Value::as_str),
-        Some("package imports are unsupported")
+    assert_write_paths_allowed(
+        root.path(),
+        "op-disabled-targets-changed-exports",
+        &["packages/lib/unobserved-exports.ts", "wrong-local.ts"],
+    )?;
+    abandon_gate(
+        root.path(),
+        &changed_exports_gate,
+        "op-abandon-disabled-fields-changed-exports",
+    )?;
+
+    write_package_manifests(root.path(), CHANGED_EXPORTS, CHANGED_IMPORTS)?;
+    let (changed_imports_gate, changed_imports_input) =
+        open_node_gate(root.path(), "op-disabled-fields-changed-imports")?;
+    assert_ne!(
+        changed_imports_input, changed_exports_input,
+        "changing disabled imports reused the previous analysis input identity"
     );
+    assert_write_paths_allowed(
+        root.path(),
+        "op-disabled-targets-changed-imports",
+        &["packages/lib/unobserved-exports.ts", "unobserved-local.ts"],
+    )?;
+    abandon_gate(
+        root.path(),
+        &changed_imports_gate,
+        "op-abandon-disabled-fields-changed-imports",
+    )?;
     Ok(())
 }
 
@@ -131,25 +212,7 @@ fn package_fixture(
     imports: &str,
 ) -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
-    write(
-        root.path(),
-        "package.json",
-        &format!(
-            r#"{{"name":"app","private":true,"workspaces":["packages/*"],"imports":{imports}}}"#
-        ),
-    )?;
-    write(
-        root.path(),
-        "packages/lib/package.json",
-        &format!(
-            concat!(
-                r#"{{"name":"@acme/lib","private":true,"exports":{},"#,
-                r#""module":"./wrong-module.js","main":"./main.js","#,
-                r#""typings":"./preferred.d.ts","types":"./wrong-types.d.ts"}}"#,
-            ),
-            exports,
-        ),
-    )?;
+    write_package_manifests(root.path(), exports, imports)?;
     write(
         root.path(),
         "packages/lib/main.ts",
@@ -160,8 +223,12 @@ fn package_fixture(
         "packages/lib/preferred.d.ts",
         "export type UsedType = string; export type PreferredDead = number;\n",
     )?;
-    for path in [
+    write(
+        root.path(),
         "packages/lib/wrong-exports.ts",
+        "export const usedValue = 2; export type UsedType = number;\n",
+    )?;
+    for path in [
         "packages/lib/wrong-module.ts",
         "packages/lib/wrong-types.d.ts",
         "wrong-local.ts",
@@ -178,6 +245,142 @@ fn package_fixture(
         ),
     )?;
     Ok(root)
+}
+
+fn write_package_manifests(root: &Path, exports: &str, imports: &str) -> std::io::Result<()> {
+    write(
+        root,
+        "package.json",
+        &format!(
+            r#"{{"name":"app","private":true,"workspaces":["packages/*"],"imports":{imports}}}"#
+        ),
+    )?;
+    write(
+        root,
+        "packages/lib/package.json",
+        &format!(
+            concat!(
+                r#"{{"name":"@acme/lib","private":true,"exports":{},"#,
+                r#""module":"./wrong-module.js","main":"./main.js","#,
+                r#""typings":"./preferred.d.ts","types":"./wrong-types.d.ts"}}"#,
+            ),
+            exports,
+        ),
+    )
+}
+
+fn open_node_gate(
+    root: &Path,
+    operation_id: &str,
+) -> Result<(String, String), Box<dyn std::error::Error>> {
+    let opened = run(
+        root,
+        &[
+            "pre-write",
+            "--operation-id",
+            operation_id,
+            "--path",
+            "src/planned-change.ts",
+            "--resolution-profile",
+            "node",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&opened, 0);
+    assert_eq!(field(&opened.stdout, "decision")?, "allow-with-warnings");
+    let gate_id = field(&opened.stdout, "gateId")?;
+    let shown = run(root, &["gate", "show", &gate_id])?;
+    assert_status(&shown, 0);
+    let shown: Value = serde_json::from_str(&shown.stdout)?;
+    Ok((gate_id, required_str(&shown, "/baseline/analysisInputId")?))
+}
+
+fn assert_write_paths_allowed(
+    root: &Path,
+    operation_id: &str,
+    paths: &[&str],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut arguments = vec!["pre-write", "--operation-id", operation_id];
+    for path in paths {
+        arguments.extend(["--path", path]);
+    }
+    arguments.extend(["--resolution-profile", "node", "--jobs", "1"]);
+    let opened = run(root, &arguments)?;
+    assert_status(&opened, 0);
+    assert_eq!(field(&opened.stdout, "decision")?, "allow-with-warnings");
+    let gate_id = field(&opened.stdout, "gateId")?;
+    let abandon_operation = format!("{operation_id}-abandon");
+    abandon_gate(root, &gate_id, &abandon_operation)
+}
+
+fn assert_write_paths_conflict(
+    root: &Path,
+    operation_id: &str,
+    paths: &[&str],
+    expected_gate_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut arguments = vec!["pre-write", "--operation-id", operation_id];
+    for path in paths {
+        arguments.extend(["--path", path]);
+    }
+    arguments.extend(["--resolution-profile", "node", "--jobs", "1"]);
+    let rejected = run(root, &arguments)?;
+    assert_status(&rejected, 4);
+    assert_eq!(field(&rejected.stdout, "decision")?, "incomplete");
+    let response: Value = serde_json::from_str(&rejected.stdout)?;
+    let conflict = response
+        .get("signals")
+        .and_then(Value::as_array)
+        .and_then(|signals| {
+            signals
+                .iter()
+                .find(|signal| signal.get("kind").and_then(Value::as_str) == Some("write-conflict"))
+        })
+        .ok_or_else(|| std::io::Error::other("write conflict is missing"))?;
+    let observed_paths = conflict
+        .get("paths")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("write conflict paths are missing"))?
+        .iter()
+        .map(|path| required_str(path, "/display"))
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    assert_eq!(
+        observed_paths,
+        paths.iter().map(|path| (*path).to_owned()).collect(),
+        "manifest semantic-read protection was incomplete"
+    );
+    assert_eq!(
+        conflict
+            .get("gateIds")
+            .and_then(Value::as_array)
+            .and_then(|gate_ids| gate_ids.first())
+            .and_then(Value::as_str),
+        Some(expected_gate_id)
+    );
+    Ok(())
+}
+
+fn abandon_gate(
+    root: &Path,
+    gate_id: &str,
+    operation_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let abandoned = run(
+        root,
+        &[
+            "gate",
+            "abandon",
+            gate_id,
+            "--operation-id",
+            operation_id,
+            "--reason",
+            "public gate evidence complete",
+        ],
+    )?;
+    assert_status(&abandoned, 0);
+    assert_eq!(field(&abandoned.stdout, "lifecycle")?, "abandoned");
+    Ok(())
 }
 
 fn audit(
