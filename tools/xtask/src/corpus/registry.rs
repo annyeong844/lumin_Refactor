@@ -291,7 +291,10 @@ pub static REGISTRY: &[RegistryRow] = &[
         inv!("workspace_package_tsconfig", "malformed_and_package_escaping_fields_create_no_hidden_probe"),
         inv!("tsconfig_extends_selection", "workspace_identity_is_exact_and_duplicate_identity_keeps_inventory_ownership"),
     ]),
-    row_sd!("workspace-package-exports"),
+    row_sd!("workspace-package-exports", &[
+        inv!("workspace_package_exports", "exact_and_pattern_exports_follow_edge_specific_conditions"),
+        inv!("workspace_package_exports", "exports_protect_only_selected_public_identities"),
+    ]),
     row_sd!("bundler-condition-excludes-node", &[inv!("package_condition_public", "bundler_excludes_node_in_value_and_type_lanes")]),
     row_sd!("legacy-node-exports-disabled"),
     row_sd!("exports-overlapping-patterns"),

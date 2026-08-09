@@ -45,10 +45,10 @@ These are execution-matrix counts, not a percentage estimate of product code.
 
 | Lane | Applicable | Mapped | Remaining | Verified aggregate |
 | --- | ---: | ---: | ---: | --- |
-| Standard | 86 | 52 | 34 | Last full aggregate: 40 passed, 0 failed, 46 unmapped. All 12 later mappings passed focused public-binary markers; P1-70 owns the next full aggregate. |
-| Determinism | 86 | 52 | 34 | Last full aggregate: 40 passed, 0 failed, 46 unmapped. The same 12 mappings passed focused nonempty semantic-capture comparison across repeated default jobs and `jobs=1`; P1-70 owns the next full aggregate. |
+| Standard | 86 | 53 | 33 | Last full aggregate: 40 passed, 0 failed, 46 unmapped. All 13 later mappings passed focused public-binary markers; P1-70 owns the next full aggregate. |
+| Determinism | 86 | 53 | 33 | Last full aggregate: 40 passed, 0 failed, 46 unmapped. The same 13 mappings passed focused nonempty semantic-capture comparison across repeated default jobs and `jobs=1`; P1-70 owns the next full aggregate. |
 | Store crash | 10 | 4 | 6 | Mapping count only; Phase 1 exit still requires the complete lane. |
-| **Total execution obligations** | **182** | **108** | **74** | This total deliberately counts each required lane execution. |
+| **Total execution obligations** | **182** | **110** | **72** | This total deliberately counts each required lane execution. |
 
 Known non-corpus exit gaps:
 
