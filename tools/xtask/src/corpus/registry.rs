@@ -293,6 +293,7 @@ pub static REGISTRY: &[RegistryRow] = &[
     ]),
     row_sd!("workspace-package-exports", &[
         inv!("workspace_package_exports", "exact_and_pattern_exports_follow_edge_specific_conditions"),
+        inv!("workspace_package_exports", "unbounded_package_condition_gap_withholds_dead_findings"),
         inv!("workspace_package_exports", "exports_protect_only_selected_public_identities"),
     ]),
     row_sd!("bundler-condition-excludes-node", &[inv!("package_condition_public", "bundler_excludes_node_in_value_and_type_lanes")]),

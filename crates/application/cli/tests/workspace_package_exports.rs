@@ -134,6 +134,100 @@ fn exact_and_pattern_exports_follow_edge_specific_conditions()
 }
 
 #[test]
+fn unbounded_package_condition_gap_withholds_dead_findings()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"app","private":true,"type":"commonjs","workspaces":["packages/*"]}"#,
+    )?;
+    write(
+        root.path(),
+        "tsconfig.json",
+        r#"{"compilerOptions":{"moduleResolution":"node16","module":"node16"}}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/ui/package.json",
+        r#"{"name":"@app/ui","private":true,"exports":{".":{"import":"./index.js"}}}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/ui/index.ts",
+        "export const used = 1;\n",
+    )?;
+    write(
+        root.path(),
+        "src/main.ts",
+        "import { used } from '@app/ui'; console.log(used);\n",
+    )?;
+
+    let audit = run(root.path(), &["audit", "--jobs", "1"])?;
+    assert_status(&audit, 0);
+    let audit_json: Value = serde_json::from_str(&audit.stdout)?;
+    assert_eq!(
+        audit_json.get("status").and_then(Value::as_str),
+        Some("incomplete")
+    );
+    assert_eq!(
+        audit_json.get("findingCount").and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        audit_json.get("limitationCount").and_then(Value::as_u64),
+        Some(1)
+    );
+    let run_id = field(&audit.stdout, "runId")?;
+
+    let source = file_response(root.path(), &run_id, "src/main.ts")?;
+    let resolution = source
+        .get("resolutions")
+        .and_then(Value::as_array)
+        .and_then(|resolutions| resolutions.first())
+        .ok_or_else(|| std::io::Error::other("source resolution is missing"))?;
+    assert_eq!(
+        resolution
+            .pointer("/sourceUse/specifier")
+            .and_then(Value::as_str),
+        Some("@app/ui")
+    );
+    assert_eq!(
+        resolution
+            .pointer("/sourceUse/requestKind")
+            .and_then(Value::as_str),
+        Some("static-import")
+    );
+    assert_eq!(
+        resolution.pointer("/outcome/kind").and_then(Value::as_str),
+        Some("unresolved")
+    );
+    assert_eq!(
+        resolution.pointer("/outcome/candidates"),
+        Some(&serde_json::json!([]))
+    );
+
+    let overview = run(root.path(), &["overview", "--run", &run_id])?;
+    assert_status(&overview, 0);
+    let overview: Value = serde_json::from_str(&overview.stdout)?;
+    let limitations = overview
+        .get("limitations")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("limitations are missing"))?;
+    assert_eq!(limitations.len(), 1);
+    assert_eq!(
+        limitations[0].get("reason").and_then(Value::as_str),
+        Some("internal-specifier-unresolved")
+    );
+    assert_eq!(
+        limitations[0].get("candidates"),
+        Some(&serde_json::json!([]))
+    );
+    assert!(finding_set(root.path(), &run_id)?.is_empty());
+    Ok(())
+}
+
+#[test]
 fn exports_protect_only_selected_public_identities() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     write(

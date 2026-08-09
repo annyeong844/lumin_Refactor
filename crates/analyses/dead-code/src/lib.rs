@@ -185,7 +185,11 @@ fn blocked_absence_scope(
     for limitation in limitations {
         match limitation {
             Limitation::InternalSpecifierUnresolved { candidates, .. } => {
-                blocked_paths.extend(candidates.iter().cloned());
+                if candidates.is_empty() {
+                    workspace_blocked = true;
+                } else {
+                    blocked_paths.extend(candidates.iter().cloned());
+                }
             }
             Limitation::JsModuleUseUnknown { .. }
             | Limitation::SourcePayloadUnavailable { .. }
