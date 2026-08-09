@@ -28,8 +28,8 @@ pub struct AttemptEnvelope {
     pub attempt_id: AttemptId,
     pub sequence: u64,
     pub state: AttemptStatus,
-    pub started_unix_millis: u128,
-    pub finished_unix_millis: Option<u128>,
+    pub started_unix_millis: u64,
+    pub finished_unix_millis: Option<u64>,
     pub run_id: Option<RunId>,
     pub failure: Option<String>,
 }

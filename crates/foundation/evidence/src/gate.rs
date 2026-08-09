@@ -360,7 +360,7 @@ pub struct GateRevision {
     pub revision: u64,
     pub operation_id: OperationId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub committed_unix_millis: Option<u128>,
+    pub committed_unix_millis: Option<u64>,
     pub decision: GateDecision,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,

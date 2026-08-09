@@ -16,7 +16,7 @@ pub use retention::{RETENTION_PLAN_ITEMS_ORDERING, RetentionPlanRequest};
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use lumin_evidence::RunEvidence;
 use lumin_model::{AttemptId, RepositoryBinding, RepositoryId, RunId, digest_hex};
@@ -465,11 +465,17 @@ pub(crate) fn nonce_hex() -> Result<String, StoreError> {
     Ok(digest_hex(&bytes)[..32].to_owned())
 }
 
-pub(crate) fn unix_millis() -> Result<u128, StoreError> {
-    SystemTime::now()
+pub(crate) fn unix_millis() -> Result<u64, StoreError> {
+    let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .map_err(|error| StoreError::Io(error.to_string()))
+        .map_err(|error| StoreError::Io(error.to_string()))?;
+    unix_millis_from_duration(duration)
+}
+
+pub(crate) fn unix_millis_from_duration(duration: Duration) -> Result<u64, StoreError> {
+    duration.as_millis().try_into().map_err(|_| {
+        StoreError::Io("Unix millisecond timestamp exceeds the supported u64 range".to_owned())
+    })
 }
 
 fn io_error(error: std::io::Error) -> StoreError {

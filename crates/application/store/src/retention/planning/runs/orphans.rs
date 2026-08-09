@@ -7,7 +7,7 @@ use lumin_evidence::{RetentionItemKind, RetentionPlanItem};
 use lumin_model::digest_hex;
 
 use crate::namespace::NamespaceGuard;
-use crate::{RunCatalogRecord, StoreError, io_error};
+use crate::{RunCatalogRecord, StoreError, io_error, unix_millis_from_duration};
 
 pub(super) fn collect_run_orphans(
     guard: &NamespaceGuard,
@@ -49,9 +49,8 @@ pub(super) fn collect_orphan(
         .modified()
         .map_err(io_error)?
         .duration_since(UNIX_EPOCH)
-        .map_err(|error| StoreError::Io(error.to_string()))?
-        .as_millis();
-    if modified >= u128::from(before_unix_millis) {
+        .map_err(|error| StoreError::Io(error.to_string()))?;
+    if unix_millis_from_duration(modified)? >= before_unix_millis {
         return Ok(());
     }
     let (identity_sha256, byte_count) = directory_payload_identity(path)?;
