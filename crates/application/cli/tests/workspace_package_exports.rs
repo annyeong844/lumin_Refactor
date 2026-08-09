@@ -36,7 +36,7 @@ fn exact_and_pattern_exports_follow_edge_specific_conditions()
         ),
     )?;
     for (path, name) in [
-        ("packages/lib/exact-import.ts", "wrongExactImport"),
+        ("packages/lib/exact-import.ts", "dynamicExact"),
         ("packages/lib/exact-default.ts", "wrongExactDefault"),
         (
             "packages/lib/pattern-require/special.ts",
@@ -46,10 +46,7 @@ fn exact_and_pattern_exports_follow_edge_specific_conditions()
             "packages/lib/pattern-import/special.ts",
             "wrongPatternExactImport",
         ),
-        (
-            "packages/lib/pattern-require/button.ts",
-            "wrongPatternRequire",
-        ),
+        ("packages/lib/pattern-require/button.ts", "usedPattern"),
         (
             "packages/lib/pattern-default/button.ts",
             "wrongPatternDefault",
@@ -72,8 +69,10 @@ fn exact_and_pattern_exports_follow_edge_specific_conditions()
         "src/main.ts",
         concat!(
             "import { usedExact } from '@acme/lib/features/special';\n",
+            "import { usedPattern } from '@acme/lib/features/button';\n",
+            "void import('@acme/lib/features/special');\n",
             "void import('@acme/lib/features/button');\n",
-            "console.log(usedExact);\n",
+            "console.log(usedExact, usedPattern);\n",
         ),
     )?;
 
@@ -84,14 +83,26 @@ fn exact_and_pattern_exports_follow_edge_specific_conditions()
             .get("resolutions")
             .and_then(Value::as_array)
             .map(Vec::len),
-        Some(2)
+        Some(4)
     );
     assert_eq!(
-        resolution_target(&source, "@acme/lib/features/special")?,
+        resolution_target(&source, "@acme/lib/features/special", "static-import")?,
         source_id(root.path(), &run_id, "packages/lib/exact-require.ts")?
     );
     assert_eq!(
-        resolution_target(&source, "@acme/lib/features/button")?,
+        resolution_target(&source, "@acme/lib/features/special", "dynamic-import")?,
+        source_id(root.path(), &run_id, "packages/lib/exact-import.ts")?
+    );
+    assert_eq!(
+        resolution_target(&source, "@acme/lib/features/button", "static-import")?,
+        source_id(
+            root.path(),
+            &run_id,
+            "packages/lib/pattern-require/button.ts",
+        )?
+    );
+    assert_eq!(
+        resolution_target(&source, "@acme/lib/features/button", "dynamic-import")?,
         source_id(
             root.path(),
             &run_id,
@@ -180,7 +191,11 @@ fn source_id(root: &Path, run_id: &str, path: &str) -> Result<String, Box<dyn st
     .map_err(Into::into)
 }
 
-fn resolution_target(source: &Value, specifier: &str) -> Result<String, std::io::Error> {
+fn resolution_target(
+    source: &Value,
+    specifier: &str,
+    request_kind: &str,
+) -> Result<String, std::io::Error> {
     let resolution = source
         .get("resolutions")
         .and_then(Value::as_array)
@@ -190,9 +205,17 @@ fn resolution_target(source: &Value, specifier: &str) -> Result<String, std::io:
                     .pointer("/sourceUse/specifier")
                     .and_then(Value::as_str)
                     == Some(specifier)
+                    && resolution
+                        .pointer("/sourceUse/requestKind")
+                        .and_then(Value::as_str)
+                        == Some(request_kind)
             })
         })
-        .ok_or_else(|| std::io::Error::other(format!("resolution for {specifier} is missing")))?;
+        .ok_or_else(|| {
+            std::io::Error::other(format!(
+                "{request_kind} resolution for {specifier} is missing"
+            ))
+        })?;
     assert_eq!(
         resolution.pointer("/outcome/kind").and_then(Value::as_str),
         Some("internal")
