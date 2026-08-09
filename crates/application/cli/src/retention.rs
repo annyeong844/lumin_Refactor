@@ -5,7 +5,9 @@ use lumin_engine::{
 };
 use lumin_model::{OperationId, PinId, RetentionPlanId, RunId};
 
-use crate::{Arguments, CliError, CommandOutput, CommandSuccess, require_json};
+use crate::{
+    Arguments, CliError, CommandOutput, CommandResultDelivery, CommandSuccess, require_json,
+};
 
 pub(super) fn runs(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {
     let subcommand = arguments
@@ -93,7 +95,7 @@ fn pin(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError
             .ok_or_else(|| CliError::MissingValue("--operation-id".to_owned()))?,
         reason,
     })?;
-    json_success(lumin_protocol::to_json(&lumin_protocol::run_pin_response(
+    mutation_json_success(lumin_protocol::to_json(&lumin_protocol::run_pin_response(
         &pin,
     )))
 }
@@ -116,7 +118,7 @@ fn unpin(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliErr
         operation_id: operation_id
             .ok_or_else(|| CliError::MissingValue("--operation-id".to_owned()))?,
     })?;
-    json_success(lumin_protocol::to_json(&lumin_protocol::run_pin_response(
+    mutation_json_success(lumin_protocol::to_json(&lumin_protocol::run_pin_response(
         &pin,
     )))
 }
@@ -240,17 +242,36 @@ fn mutation_output(
     } else {
         0
     };
-    Ok(CommandSuccess { exit_code, stdout }.into())
+    Ok(CommandSuccess {
+        exit_code,
+        stdout,
+        result_delivery: CommandResultDelivery::RecoverableMutation,
+    }
+    .into())
 }
 
 fn json_success(
     output: Result<String, lumin_protocol::ProtocolError>,
+) -> Result<CommandOutput, CliError> {
+    json_output(output, CommandResultDelivery::ReadOnly)
+}
+
+fn mutation_json_success(
+    output: Result<String, lumin_protocol::ProtocolError>,
+) -> Result<CommandOutput, CliError> {
+    json_output(output, CommandResultDelivery::RecoverableMutation)
+}
+
+fn json_output(
+    output: Result<String, lumin_protocol::ProtocolError>,
+    result_delivery: CommandResultDelivery,
 ) -> Result<CommandOutput, CliError> {
     output
         .map(|stdout| {
             CommandSuccess {
                 exit_code: 0,
                 stdout,
+                result_delivery,
             }
             .into()
         })
