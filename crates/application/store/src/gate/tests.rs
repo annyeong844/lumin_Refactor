@@ -133,6 +133,53 @@ fn persisted_v1_gate_additions_default_when_absent() -> Result<(), Box<dyn std::
 }
 
 #[test]
+fn persisted_write_lease_reconstructs_missing_components_and_rejects_desync()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut directory = lease(path("src")?);
+    directory.kind = lumin_evidence::WriteLeaseKind::Directory;
+    let child = lease(path("src/lib.ts")?);
+
+    let mut legacy_json = serde_json::to_value(&directory)?;
+    legacy_json
+        .pointer_mut("/path")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("write-lease path JSON is not an object")?
+        .remove("components");
+    let restored: WriteLease = serde_json::from_value(legacy_json)?;
+    assert!(restored.covers(&child.path));
+    assert!(restored.conflicts_with(&child));
+
+    let mut components_desync = serde_json::to_value(&directory)?;
+    *components_desync
+        .pointer_mut("/path/components")
+        .ok_or("write-lease components are missing")? = serde_json::json!([]);
+    let components_error = match serde_json::from_value::<WriteLease>(components_desync) {
+        Ok(_) => return Err("contradictory path components were accepted".into()),
+        Err(error) => error,
+    };
+    assert!(
+        components_error
+            .to_string()
+            .contains("components disagree with canonical path")
+    );
+
+    let mut display_desync = serde_json::to_value(&directory)?;
+    *display_desync
+        .pointer_mut("/path/display")
+        .ok_or("write-lease display is missing")? = serde_json::json!("elsewhere");
+    let display_error = match serde_json::from_value::<WriteLease>(display_desync) {
+        Ok(_) => return Err("contradictory path display was accepted".into()),
+        Err(error) => error,
+    };
+    assert!(
+        display_error
+            .to_string()
+            .contains("display disagrees with canonical path")
+    );
+    Ok(())
+}
+
+#[test]
 fn persisted_reservation_rejects_conflicting_physical_identities()
 -> Result<(), Box<dyn std::error::Error>> {
     let reserved_path = path("config/base.json")?;

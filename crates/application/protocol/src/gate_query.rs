@@ -605,7 +605,9 @@ impl From<&CapabilityRecord> for CapabilityStateDto {
 #[cfg(test)]
 mod tests {
     use lumin_evidence::{Confidence, RepoPathProjection, Severity};
-    use lumin_model::{FindingDisposition, LogicalSourceId, RepositoryId, SymbolNamespace};
+    use lumin_model::{
+        FindingDisposition, LogicalSourceId, RepoPath, RepositoryId, SymbolNamespace,
+    };
 
     use super::*;
 
@@ -636,21 +638,21 @@ mod tests {
     #[test]
     fn legacy_missing_nested_fields_remain_explicitly_unavailable()
     -> Result<(), Box<dyn std::error::Error>> {
-        let serialized = r#"{
-            "findingId":"finding-legacy",
-            "ruleId":"dead-code/zero-exact-fan-in.v1",
-            "ownerCapability":"dead-code.v1",
-            "severity":"warning",
-            "confidence":"grounded",
-            "disposition":{"kind":"review-candidate"},
-            "claim":"legacy finding",
-            "sourceId":"source-legacy",
-            "path":{"canonical":[115,114,99],"components":[],"display":"src"},
-            "span":{"start":0,"end":1},
-            "exportedName":"dead",
-            "namespace":"value"
-        }"#;
-        let finding: FindingRecord = serde_json::from_str(serialized)?;
+        let serialized = serde_json::json!({
+            "findingId": "finding-legacy",
+            "ruleId": "dead-code/zero-exact-fan-in.v1",
+            "ownerCapability": "dead-code.v1",
+            "severity": "warning",
+            "confidence": "grounded",
+            "disposition": { "kind": "review-candidate" },
+            "claim": "legacy finding",
+            "sourceId": "source-legacy",
+            "path": RepoPathProjection::from(&RepoPath::from_portable("src")?),
+            "span": { "start": 0, "end": 1 },
+            "exportedName": "dead",
+            "namespace": "value"
+        });
+        let finding: FindingRecord = serde_json::from_value(serialized)?;
         assert!(!finding.nested_collections_available);
         assert!(finding.evidence.is_empty());
         assert!(finding.relations.is_empty());
