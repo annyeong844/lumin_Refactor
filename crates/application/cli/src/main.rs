@@ -53,7 +53,7 @@ fn emit_command_output(
             let _ = stderr.flush();
             return 1;
         }
-        return output.exit_code;
+        return output.delivery_failure_exit_code();
     }
     if !output.stderr.is_empty() {
         if stderr.write_all(output.stderr.as_bytes()).is_err() && output.exit_code == 0 {
@@ -106,6 +106,7 @@ mod tests {
             exit_code: 0,
             stdout: "{\"status\":\"ok\"}".to_owned(),
             stderr: String::new(),
+            result_delivery: lumin_cli::CommandResultDelivery::ReadOnly,
         };
         let mut stdout = FailingWriter(io::ErrorKind::BrokenPipe);
         let mut stderr = Vec::new();
@@ -115,11 +116,27 @@ mod tests {
     }
 
     #[test]
+    fn broken_stdout_pipe_requires_recovery_for_a_committed_mutation() {
+        let output = lumin_cli::CommandOutput {
+            exit_code: 0,
+            stdout: "{\"gateId\":\"gate_1\"}".to_owned(),
+            stderr: String::new(),
+            result_delivery: lumin_cli::CommandResultDelivery::RecoverableMutation,
+        };
+        let mut stdout = FailingWriter(io::ErrorKind::BrokenPipe);
+        let mut stderr = Vec::new();
+
+        assert_eq!(emit_command_output(&output, &mut stdout, &mut stderr), 1);
+        assert!(stderr.is_empty());
+    }
+
+    #[test]
     fn non_pipe_stdout_failure_is_reported_as_an_io_error() -> io::Result<()> {
         let output = lumin_cli::CommandOutput {
             exit_code: 0,
             stdout: "{\"status\":\"ok\"}".to_owned(),
             stderr: String::new(),
+            result_delivery: lumin_cli::CommandResultDelivery::ReadOnly,
         };
         let mut stdout = FailingWriter(io::ErrorKind::WriteZero);
         let mut stderr = Vec::new();
@@ -139,6 +156,7 @@ mod tests {
             exit_code: 5,
             stdout: "{\"status\":\"stale\"}".to_owned(),
             stderr: "review required\n".to_owned(),
+            result_delivery: lumin_cli::CommandResultDelivery::RecoverableMutation,
         };
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();

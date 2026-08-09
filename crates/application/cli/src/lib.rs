@@ -22,6 +22,22 @@ pub struct CommandOutput {
     pub exit_code: i32,
     pub stdout: String,
     pub stderr: String,
+    pub result_delivery: CommandResultDelivery,
+}
+
+impl CommandOutput {
+    pub const fn delivery_failure_exit_code(&self) -> i32 {
+        match self.result_delivery {
+            CommandResultDelivery::ReadOnly => self.exit_code,
+            CommandResultDelivery::RecoverableMutation => 1,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CommandResultDelivery {
+    ReadOnly,
+    RecoverableMutation,
 }
 
 #[derive(Debug, Error)]
@@ -80,6 +96,7 @@ pub fn execute(root: &Path, arguments: Vec<OsString>) -> CommandOutput {
                 exit_code: error_exit_code(&error),
                 stdout: String::new(),
                 stderr: format!("lumin: {error}\n"),
+                result_delivery: CommandResultDelivery::ReadOnly,
             };
         }
     };
@@ -109,6 +126,7 @@ fn execute_with_input(
             exit_code: error_exit_code(&error),
             stdout: String::new(),
             stderr: format!("lumin: {error}\n"),
+            result_delivery: CommandResultDelivery::ReadOnly,
         },
     }
 }
@@ -129,6 +147,7 @@ fn default_build_identity() -> Result<BuildIdentity, CliError> {
 struct CommandSuccess {
     exit_code: i32,
     stdout: String,
+    result_delivery: CommandResultDelivery,
 }
 
 impl From<CommandSuccess> for CommandOutput {
@@ -137,6 +156,7 @@ impl From<CommandSuccess> for CommandOutput {
             exit_code: success.exit_code,
             stdout: success.stdout,
             stderr: String::new(),
+            result_delivery: success.result_delivery,
         }
     }
 }
@@ -172,6 +192,7 @@ fn success(stdout: String) -> CommandOutput {
     CommandSuccess {
         exit_code: 0,
         stdout,
+        result_delivery: CommandResultDelivery::ReadOnly,
     }
     .into()
 }
@@ -811,6 +832,7 @@ fn gate_command_output(result: &GateOperationResult) -> Result<CommandOutput, Cl
     Ok(CommandSuccess {
         exit_code: decision_exit_code(result.decision),
         stdout,
+        result_delivery: CommandResultDelivery::RecoverableMutation,
     }
     .into())
 }
