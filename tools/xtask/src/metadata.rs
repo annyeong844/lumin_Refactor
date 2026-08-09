@@ -5,6 +5,7 @@
 //! third-party owner isolation.
 
 use std::collections::{BTreeSet, HashMap};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -183,6 +184,67 @@ const OWNER_DEPS: &[(&str, &str, &[DepKind])] = &[
     ("oxc_parser", "lumin-js", &[DepKind::Normal, DepKind::Build]),
     ("oxc_span", "lumin-js", &[DepKind::Normal, DepKind::Build]),
 ];
+
+/// Ask Cargo which parent workspace owns this development tool.
+pub fn find_workspace_root() -> Result<PathBuf, String> {
+    locate_workspace_root(Path::new(env!("CARGO_MANIFEST_DIR")))
+}
+
+fn locate_workspace_root(manifest_dir: &Path) -> Result<PathBuf, String> {
+    let member_manifest = manifest_dir.join("Cargo.toml");
+    let member_manifest = std::fs::canonicalize(&member_manifest)
+        .map_err(|error| format!("cannot resolve {}: {error}", member_manifest.display()))?;
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
+    let output = Command::new(cargo)
+        .args([
+            "locate-project",
+            "--workspace",
+            "--message-format",
+            "plain",
+            "--manifest-path",
+        ])
+        .arg(&member_manifest)
+        .output()
+        .map_err(|error| format!("failed to run cargo locate-project: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("cargo locate-project failed: {}", stderr.trim()));
+    }
+
+    let workspace_manifest = std::str::from_utf8(&output.stdout)
+        .map_err(|error| format!("cargo locate-project returned non-UTF-8 output: {error}"))?
+        .trim();
+    if workspace_manifest.is_empty() {
+        return Err("cargo locate-project returned an empty workspace manifest".to_owned());
+    }
+    let workspace_manifest = PathBuf::from(workspace_manifest);
+    let workspace_manifest = std::fs::canonicalize(&workspace_manifest).map_err(|error| {
+        format!(
+            "cannot resolve Cargo workspace manifest {}: {error}",
+            workspace_manifest.display()
+        )
+    })?;
+    if workspace_manifest == member_manifest {
+        return Err(format!(
+            "{} is not attached to a parent Cargo workspace",
+            member_manifest.display()
+        ));
+    }
+    let workspace_root = workspace_manifest.parent().ok_or_else(|| {
+        format!(
+            "Cargo workspace manifest has no parent: {}",
+            workspace_manifest.display()
+        )
+    })?;
+    if !member_manifest.starts_with(workspace_root) {
+        return Err(format!(
+            "Cargo workspace {} does not contain {}",
+            workspace_root.display(),
+            member_manifest.display()
+        ));
+    }
+    Ok(workspace_root.to_path_buf())
+}
 
 /// Run `cargo metadata` and validate workspace structure.
 ///
@@ -462,6 +524,64 @@ pub fn relative_display(base: &Path, target: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_root_comes_from_cargo_ownership() -> Result<(), Box<dyn std::error::Error>> {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let expected = std::fs::canonicalize(
+            manifest_dir
+                .parent()
+                .and_then(Path::parent)
+                .ok_or("xtask manifest directory has no workspace parent")?,
+        )?;
+        assert_eq!(find_workspace_root()?, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn workspace_text_in_package_metadata_is_not_a_workspace() -> std::io::Result<()> {
+        let decoy = tempfile::tempdir()?;
+        std::fs::create_dir_all(decoy.path().join("src"))?;
+        std::fs::write(
+            decoy.path().join("Cargo.toml"),
+            concat!(
+                "[package]\n",
+                "name = \"workspace-text-decoy\"\n",
+                "version = \"0.0.0\"\n",
+                "edition = \"2024\"\n",
+                "description = \"[workspace]\"\n",
+            ),
+        )?;
+        std::fs::write(decoy.path().join("src/lib.rs"), "")?;
+
+        let member = decoy.path().join("tools/xtask");
+        std::fs::create_dir_all(member.join("src"))?;
+        std::fs::write(
+            member.join("Cargo.toml"),
+            concat!(
+                "[package]\n",
+                "name = \"workspace-text-decoy-xtask\"\n",
+                "version = \"0.0.0\"\n",
+                "edition = \"2024\"\n",
+            ),
+        )?;
+        std::fs::write(member.join("src/main.rs"), "fn main() {}\n")?;
+
+        let error = match locate_workspace_root(&member) {
+            Err(error) => error,
+            Ok(root) => {
+                return Err(std::io::Error::other(format!(
+                    "decoy workspace was accepted as {}",
+                    root.display()
+                )));
+            }
+        };
+        assert!(
+            error.contains("is not attached to a parent Cargo workspace"),
+            "unexpected decoy rejection: {error}"
+        );
+        Ok(())
+    }
 
     #[test]
     fn parse_dep_kind_null_is_normal() {
