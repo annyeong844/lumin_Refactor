@@ -25,13 +25,24 @@ impl GateDecision {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum GateEffect {
     Warn,
     Incomplete,
     Block,
     Stale,
+}
+
+impl GateEffect {
+    const fn precedence(self) -> u8 {
+        match self {
+            Self::Warn => 1,
+            Self::Incomplete => 2,
+            Self::Block => 3,
+            Self::Stale => 4,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -746,7 +757,11 @@ pub mod gate_policy {
     }
 
     pub fn decision(signals: &[GateSignal]) -> GateDecision {
-        match signals.iter().filter_map(effect).max() {
+        match signals
+            .iter()
+            .filter_map(effect)
+            .max_by_key(|effect| effect.precedence())
+        {
             Some(GateEffect::Stale) => GateDecision::Stale,
             Some(GateEffect::Block) => GateDecision::Deny,
             Some(GateEffect::Incomplete) => GateDecision::Incomplete,
@@ -919,6 +934,53 @@ mod tests {
 
     use super::*;
     use crate::{CapabilityRecord, DEAD_CODE_CAPABILITY_ID};
+
+    #[test]
+    fn gate_effect_precedence_is_explicit_and_order_independent() {
+        let cases = [
+            (Vec::new(), GateDecision::Allow),
+            (
+                vec![GateSignal::FindingWarnings { count: 1 }],
+                GateDecision::AllowWithWarnings,
+            ),
+            (
+                vec![
+                    GateSignal::FindingWarnings { count: 1 },
+                    GateSignal::RequiredEvidenceIncomplete {
+                        limitation_count: 1,
+                    },
+                ],
+                GateDecision::Incomplete,
+            ),
+            (
+                vec![
+                    GateSignal::FindingWarnings { count: 1 },
+                    GateSignal::RequiredEvidenceIncomplete {
+                        limitation_count: 1,
+                    },
+                    GateSignal::UnplannedWrite { paths: Vec::new() },
+                ],
+                GateDecision::Deny,
+            ),
+            (
+                vec![
+                    GateSignal::FindingWarnings { count: 1 },
+                    GateSignal::RequiredEvidenceIncomplete {
+                        limitation_count: 1,
+                    },
+                    GateSignal::UnplannedWrite { paths: Vec::new() },
+                    GateSignal::AnalysisContractChanged,
+                ],
+                GateDecision::Stale,
+            ),
+        ];
+
+        for (mut signals, expected) in cases {
+            assert_eq!(gate_policy::decision(&signals), expected);
+            signals.reverse();
+            assert_eq!(gate_policy::decision(&signals), expected);
+        }
+    }
 
     #[test]
     fn required_evidence_incompleteness_withholds_actual_write_attribution() {
