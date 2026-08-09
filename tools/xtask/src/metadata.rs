@@ -1,7 +1,8 @@
 //! Workspace metadata parsing and dependency-edge policy enforcement.
 //!
-//! Runs `cargo metadata --format-version 1 --locked` (without `--no-deps`) and
-//! validates workspace members, dependency edges, and third-party owner isolation.
+//! Runs `cargo metadata --format-version 1 --all-features --locked` (without
+//! `--no-deps`) and validates workspace members, dependency edges, and
+//! third-party owner isolation.
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -17,7 +18,7 @@ pub struct WorkspaceMember {
 }
 
 /// Dependency edge kind on the wire: null means normal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DepKind {
     Normal,
     Dev,
@@ -105,6 +106,65 @@ const DEV_EDGES: &[(&str, &str)] = &[("lumin-store", "lumin-inventory")];
 /// Build-dep allowlist: empty.
 const BUILD_EDGES: &[(&str, &str)] = &[];
 
+/// Exact production-to-third-party direct dependency allowlist.
+///
+/// `cargo metadata --all-features` exposes optional edges before this check. A
+/// new crate or dependency kind must remain blocked until its Rule 7 cost and
+/// ownership review adds the exact edge here.
+const THIRD_PARTY_EDGES: &[(&str, &str, DepKind)] = &[
+    // lumin-cli
+    ("lumin-cli", "base64", DepKind::Dev),
+    ("lumin-cli", "serde_json", DepKind::Dev),
+    ("lumin-cli", "tempfile", DepKind::Dev),
+    ("lumin-cli", "thiserror", DepKind::Normal),
+    // lumin-engine
+    ("lumin-engine", "rayon", DepKind::Normal),
+    ("lumin-engine", "tempfile", DepKind::Dev),
+    ("lumin-engine", "thiserror", DepKind::Normal),
+    // lumin-evidence
+    ("lumin-evidence", "serde", DepKind::Normal),
+    // lumin-inventory
+    ("lumin-inventory", "ignore", DepKind::Normal),
+    ("lumin-inventory", "same-file", DepKind::Normal),
+    ("lumin-inventory", "saphyr-parser", DepKind::Normal),
+    ("lumin-inventory", "serde", DepKind::Normal),
+    ("lumin-inventory", "serde_json", DepKind::Normal),
+    ("lumin-inventory", "tempfile", DepKind::Dev),
+    ("lumin-inventory", "thiserror", DepKind::Normal),
+    ("lumin-inventory", "winapi-util", DepKind::Normal),
+    ("lumin-inventory", "windows-sys", DepKind::Normal),
+    // lumin-js
+    ("lumin-js", "oxc_allocator", DepKind::Normal),
+    ("lumin-js", "oxc_ast", DepKind::Normal),
+    ("lumin-js", "oxc_ast_visit", DepKind::Normal),
+    ("lumin-js", "oxc_parser", DepKind::Normal),
+    ("lumin-js", "oxc_span", DepKind::Normal),
+    // lumin-model
+    ("lumin-model", "serde", DepKind::Normal),
+    ("lumin-model", "sha2", DepKind::Normal),
+    ("lumin-model", "thiserror", DepKind::Normal),
+    // lumin-protocol
+    ("lumin-protocol", "base64", DepKind::Normal),
+    ("lumin-protocol", "serde", DepKind::Normal),
+    ("lumin-protocol", "serde_json", DepKind::Normal),
+    ("lumin-protocol", "sha2", DepKind::Normal),
+    ("lumin-protocol", "thiserror", DepKind::Normal),
+    // lumin-resolve
+    ("lumin-resolve", "thiserror", DepKind::Normal),
+    // lumin-sfc
+    ("lumin-sfc", "thiserror", DepKind::Normal),
+    // lumin-store
+    ("lumin-store", "fs2", DepKind::Normal),
+    ("lumin-store", "getrandom", DepKind::Normal),
+    ("lumin-store", "redb", DepKind::Normal),
+    ("lumin-store", "serde", DepKind::Normal),
+    ("lumin-store", "serde_json", DepKind::Normal),
+    ("lumin-store", "tempfile", DepKind::Normal),
+    ("lumin-store", "thiserror", DepKind::Normal),
+    ("lumin-store", "winapi-util", DepKind::Normal),
+    ("lumin-store", "windows-sys", DepKind::Normal),
+];
+
 /// Owner isolation rules for third-party crates.
 /// (third-party prefix, allowed owner crate, allowed kinds)
 const OWNER_DEPS: &[(&str, &str, &[DepKind])] = &[
@@ -129,7 +189,13 @@ const OWNER_DEPS: &[(&str, &str, &[DepKind])] = &[
 /// Returns `Err(String)` for tool/invocation failures (exit 2).
 pub fn analyze_workspace(workspace_root: &Path) -> Result<MetadataResult, String> {
     let output = Command::new("cargo")
-        .args(["metadata", "--format-version", "1", "--locked"])
+        .args([
+            "metadata",
+            "--format-version",
+            "1",
+            "--all-features",
+            "--locked",
+        ])
         .current_dir(workspace_root)
         .output()
         .map_err(|e| format!("failed to run cargo metadata: {e}"))?;
@@ -230,6 +296,7 @@ pub fn analyze_workspace(workspace_root: &Path) -> Result<MetadataResult, String
 
     let direct_edges = extract_direct_edges(resolve, &id_to_name, &member_names);
     validate_edges(&direct_edges, &mut violations);
+    validate_third_party_allowlist_completeness(&direct_edges, THIRD_PARTY_EDGES, &mut violations);
 
     Ok(MetadataResult {
         production_members,
@@ -337,6 +404,16 @@ fn validate_edges(edges: &[DirectEdge], violations: &mut Vec<String>) {
                 ));
             }
         } else {
+            if !THIRD_PARTY_EDGES
+                .iter()
+                .any(|(from, to, kind)| edge.from == *from && edge.to == *to && edge.kind == *kind)
+            {
+                violations.push(format!(
+                    "FORBIDDEN third-party edge: {} -> {} ({:?}) not in canonical allowlist",
+                    edge.from, edge.to, edge.kind
+                ));
+            }
+
             // Third-party edge: check owner isolation rules
             for (dep_prefix, allowed_owner, allowed_kinds) in OWNER_DEPS {
                 if edge.to.starts_with(dep_prefix)
@@ -349,6 +426,27 @@ fn validate_edges(edges: &[DirectEdge], violations: &mut Vec<String>) {
                     ));
                 }
             }
+        }
+    }
+}
+
+fn validate_third_party_allowlist_completeness(
+    edges: &[DirectEdge],
+    allowlist: &[(&str, &str, DepKind)],
+    violations: &mut Vec<String>,
+) {
+    let unique_allowlist = allowlist.iter().copied().collect::<BTreeSet<_>>();
+    if unique_allowlist.len() != allowlist.len() {
+        violations.push("DUPLICATE third-party dependency edge in canonical allowlist".to_owned());
+    }
+
+    for (from, to, kind) in &unique_allowlist {
+        if !edges.iter().any(|edge| {
+            !edge.is_workspace_target && edge.from == *from && edge.to == *to && edge.kind == *kind
+        }) {
+            violations.push(format!(
+                "STALE third-party edge: {from} -> {to} ({kind:?}) is allowlisted but absent"
+            ));
         }
     }
 }
@@ -541,10 +639,9 @@ mod tests {
     }
 
     #[test]
-    fn third_party_edge_no_owner_rule_passes() {
-        // serde_json is not in OWNER_DEPS, so any crate can use it
+    fn approved_third_party_edge_passes() {
         let edges = vec![DirectEdge {
-            from: "lumin-cli".to_owned(),
+            from: "lumin-protocol".to_owned(),
             to: "serde_json".to_owned(),
             kind: DepKind::Normal,
             is_workspace_target: false,
@@ -554,6 +651,84 @@ mod tests {
         assert!(
             violations.is_empty(),
             "unexpected violations: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn unapproved_third_party_crate_or_kind_fails_closed() {
+        let cases = [
+            DirectEdge {
+                from: "lumin-cli".to_owned(),
+                to: "duct".to_owned(),
+                kind: DepKind::Normal,
+                is_workspace_target: false,
+            },
+            DirectEdge {
+                from: "lumin-cli".to_owned(),
+                to: "serde_json".to_owned(),
+                kind: DepKind::Normal,
+                is_workspace_target: false,
+            },
+            DirectEdge {
+                from: "lumin-cli".to_owned(),
+                to: "thiserror".to_owned(),
+                kind: DepKind::Build,
+                is_workspace_target: false,
+            },
+        ];
+
+        for edge in cases {
+            let mut violations = Vec::new();
+            validate_edges(&[edge], &mut violations);
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("FORBIDDEN third-party edge")),
+                "expected an exact third-party edge violation in {violations:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn stale_or_duplicate_third_party_approval_fails_closed() {
+        let edge = DirectEdge {
+            from: "lumin-cli".to_owned(),
+            to: "thiserror".to_owned(),
+            kind: DepKind::Normal,
+            is_workspace_target: false,
+        };
+        let expected = [("lumin-cli", "thiserror", DepKind::Normal)];
+
+        let mut violations = Vec::new();
+        validate_third_party_allowlist_completeness(
+            std::slice::from_ref(&edge),
+            &expected,
+            &mut violations,
+        );
+        assert!(violations.is_empty(), "{violations:?}");
+
+        validate_third_party_allowlist_completeness(&[], &expected, &mut violations);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("STALE third-party edge")),
+            "expected a stale-edge violation in {violations:?}"
+        );
+
+        let mut duplicate_violations = Vec::new();
+        validate_third_party_allowlist_completeness(
+            &[edge],
+            &[
+                ("lumin-cli", "thiserror", DepKind::Normal),
+                ("lumin-cli", "thiserror", DepKind::Normal),
+            ],
+            &mut duplicate_violations,
+        );
+        assert!(
+            duplicate_violations
+                .iter()
+                .any(|violation| violation.contains("DUPLICATE third-party dependency edge")),
+            "expected a duplicate-edge violation in {duplicate_violations:?}"
         );
     }
 
