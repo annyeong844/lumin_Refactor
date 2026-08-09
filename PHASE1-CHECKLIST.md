@@ -45,10 +45,10 @@ These are execution-matrix counts, not a percentage estimate of product code.
 
 | Lane | Applicable | Mapped | Remaining | Verified aggregate |
 | --- | ---: | ---: | ---: | --- |
-| Standard | 86 | 51 | 35 | Last full aggregate: 40 passed, 0 failed, 46 unmapped. The eleven additional mapped rows—`logical-source-physical-aliases`, `repo-path-codec-golden-vectors`, `tsconfig-aliases`, `tsconfig-extends-specifier-selection`, `workspace-package-extends-tsconfig-field`, `tsconfig-module-suffixes-unsupported`, `tsconfig-custom-conditions-unsupported`, `tsconfig-root-dirs-unsupported`, `resolver-config-registry`, `resolver-config-registry-artifact`, and `pnpm-workspace-registry-and-precedence`—passed with their public-binary markers; rows with structural truth also passed their row-owned `architecture-check`; P1-70 owns the next full aggregate. |
-| Determinism | 86 | 51 | 35 | Last full aggregate: 40 passed, 0 failed, 46 unmapped. The same eleven additional rows passed with nonempty canonical semantic captures across repeated default jobs and `jobs=1`; rows with structural truth also passed their row-owned `architecture-check`; P1-70 owns the next full aggregate. |
+| Standard | 86 | 52 | 34 | Last full aggregate: 40 passed, 0 failed, 46 unmapped. All 12 later mappings passed focused public-binary markers; P1-70 owns the next full aggregate. |
+| Determinism | 86 | 52 | 34 | Last full aggregate: 40 passed, 0 failed, 46 unmapped. The same 12 mappings passed focused nonempty semantic-capture comparison across repeated default jobs and `jobs=1`; P1-70 owns the next full aggregate. |
 | Store crash | 10 | 4 | 6 | Mapping count only; Phase 1 exit still requires the complete lane. |
-| **Total execution obligations** | **182** | **106** | **76** | This total deliberately counts each required lane execution. |
+| **Total execution obligations** | **182** | **108** | **74** | This total deliberately counts each required lane execution. |
 
 Known non-corpus exit gaps:
 

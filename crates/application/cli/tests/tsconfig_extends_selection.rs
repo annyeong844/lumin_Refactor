@@ -250,8 +250,19 @@ fn workspace_identity_is_exact_and_duplicate_identity_keeps_inventory_ownership(
         Some(2)
     );
     assert_eq!(
-        limitation_reasons(&overview)?,
-        BTreeSet::from(["package-identity-unsupported".to_owned()])
+        limitation_tuples(&overview)?,
+        BTreeSet::from([
+            (
+                "package-identity-unsupported".to_owned(),
+                "packages/one/package.json".to_owned(),
+                "duplicate workspace package identity @acme/tsconfig".to_owned(),
+            ),
+            (
+                "package-identity-unsupported".to_owned(),
+                "packages/two/package.json".to_owned(),
+                "duplicate workspace package identity @acme/tsconfig".to_owned(),
+            ),
+        ])
     );
     Ok(())
 }
@@ -422,6 +433,27 @@ fn limitation_reasons(overview: &Value) -> Result<BTreeSet<String>, std::io::Err
                 .and_then(Value::as_str)
                 .map(str::to_owned)
                 .ok_or_else(|| std::io::Error::other("limitation reason is missing"))
+        })
+        .collect()
+}
+
+fn limitation_tuples(
+    overview: &Value,
+) -> Result<BTreeSet<(String, String, String)>, std::io::Error> {
+    overview
+        .get("limitations")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("limitations are missing"))?
+        .iter()
+        .map(|limitation| {
+            let required = |field: &str| {
+                limitation
+                    .get(field)
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .ok_or_else(|| std::io::Error::other(format!("limitation {field} is missing")))
+            };
+            Ok((required("reason")?, required("path")?, required("detail")?))
         })
         .collect()
 }
