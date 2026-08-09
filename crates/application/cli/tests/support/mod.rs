@@ -2,11 +2,14 @@ use std::ffi::OsString;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use serde_json::Value;
 
+mod command;
 mod determinism;
+
+pub use command::lumin_command;
 
 #[cfg(feature = "publication-test-crash")]
 pub mod publication;
@@ -49,8 +52,8 @@ fn run_os_with_stdin_and_env(
     environment: &[(&str, &str)],
 ) -> Result<ProcessResult, Box<dyn std::error::Error>> {
     let effective_arguments = determinism::effective_arguments(arguments)?;
-    let mut command = Command::new(env!("CARGO_BIN_EXE_lumin"));
-    command.current_dir(root).args(&effective_arguments);
+    let mut command = lumin_command(root)?;
+    command.args(&effective_arguments);
     for (name, value) in environment {
         command.env(name, value);
     }

@@ -1,11 +1,11 @@
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::support::ProcessResult;
+use crate::support::{ProcessResult, lumin_command};
 
 pub type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -33,9 +33,8 @@ impl PublicationBarrier {
         root: &Path,
         additional: &[&PublicationBarrier],
     ) -> TestResult<PausedAudit> {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_lumin"));
+        let mut command = lumin_command(root)?;
         command
-            .current_dir(root)
             .args(["audit", "--jobs", "1"])
             .env(self.environment, self.address()?)
             .stdout(Stdio::piped())
@@ -60,9 +59,13 @@ impl PublicationBarrier {
                 }
                 None => {
                     if process.has_exited()? {
-                        return Err(std::io::Error::other(
-                            "audit exited before reaching the publication barrier",
-                        )
+                        let output = process.take_output()?;
+                        return Err(std::io::Error::other(format!(
+                            "audit exited before reaching the publication barrier: status={:?}\nstdout={}\nstderr={}",
+                            output.status.code(),
+                            String::from_utf8_lossy(&output.stdout),
+                            String::from_utf8_lossy(&output.stderr),
+                        ))
                         .into());
                     }
                     if started.elapsed() >= BARRIER_WAIT_LIMIT {
