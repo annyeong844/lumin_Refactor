@@ -64,17 +64,14 @@ fn exact_and_pattern_exports_follow_edge_specific_conditions()
         "packages/lib/pattern-import/button.ts",
         "export const dynamicTarget = 1;\n",
     )?;
-    write(
-        root.path(),
-        "src/main.ts",
-        concat!(
-            "import { usedExact } from '@acme/lib/features/special';\n",
-            "import { usedPattern } from '@acme/lib/features/button';\n",
-            "void import('@acme/lib/features/special');\n",
-            "void import('@acme/lib/features/button');\n",
-            "console.log(usedExact, usedPattern);\n",
-        ),
-    )?;
+    let main_source = concat!(
+        "import { usedExact } from '@acme/lib/features/special';\n",
+        "import { usedPattern } from '@acme/lib/features/button';\n",
+        "void import('@acme/lib/features/special');\n",
+        "void import('@acme/lib/features/button');\n",
+        "console.log(usedExact, usedPattern);\n",
+    );
+    write(root.path(), "src/main.ts", main_source)?;
 
     let run_id = audit(root.path())?;
     let source = file_response(root.path(), &run_id, "src/main.ts")?;
@@ -86,15 +83,33 @@ fn exact_and_pattern_exports_follow_edge_specific_conditions()
         Some(4)
     );
     assert_eq!(
-        resolution_target(&source, "@acme/lib/features/special", "static-import")?,
+        resolution_target(
+            &source,
+            "@acme/lib/features/special",
+            "named",
+            "static-import",
+            expected_span(main_source, "usedExact")?,
+        )?,
         source_id(root.path(), &run_id, "packages/lib/exact-require.ts")?
     );
     assert_eq!(
-        resolution_target(&source, "@acme/lib/features/special", "dynamic-import")?,
+        resolution_target(
+            &source,
+            "@acme/lib/features/special",
+            "dynamic-broad",
+            "dynamic-import",
+            expected_span(main_source, "import('@acme/lib/features/special')")?,
+        )?,
         source_id(root.path(), &run_id, "packages/lib/exact-import.ts")?
     );
     assert_eq!(
-        resolution_target(&source, "@acme/lib/features/button", "static-import")?,
+        resolution_target(
+            &source,
+            "@acme/lib/features/button",
+            "named",
+            "static-import",
+            expected_span(main_source, "usedPattern")?,
+        )?,
         source_id(
             root.path(),
             &run_id,
@@ -102,7 +117,13 @@ fn exact_and_pattern_exports_follow_edge_specific_conditions()
         )?
     );
     assert_eq!(
-        resolution_target(&source, "@acme/lib/features/button", "dynamic-import")?,
+        resolution_target(
+            &source,
+            "@acme/lib/features/button",
+            "dynamic-broad",
+            "dynamic-import",
+            expected_span(main_source, "import('@acme/lib/features/button')")?,
+        )?,
         source_id(
             root.path(),
             &run_id,
@@ -194,7 +215,9 @@ fn source_id(root: &Path, run_id: &str, path: &str) -> Result<String, Box<dyn st
 fn resolution_target(
     source: &Value,
     specifier: &str,
+    use_kind: &str,
     request_kind: &str,
+    expected_span: (u64, u64),
 ) -> Result<String, std::io::Error> {
     let resolution = source
         .get("resolutions")
@@ -206,14 +229,26 @@ fn resolution_target(
                     .and_then(Value::as_str)
                     == Some(specifier)
                     && resolution
+                        .pointer("/sourceUse/kind")
+                        .and_then(Value::as_str)
+                        == Some(use_kind)
+                    && resolution
                         .pointer("/sourceUse/requestKind")
                         .and_then(Value::as_str)
                         == Some(request_kind)
+                    && resolution
+                        .pointer("/sourceUse/span/start")
+                        .and_then(Value::as_u64)
+                        == Some(expected_span.0)
+                    && resolution
+                        .pointer("/sourceUse/span/end")
+                        .and_then(Value::as_u64)
+                        == Some(expected_span.1)
             })
         })
         .ok_or_else(|| {
             std::io::Error::other(format!(
-                "{request_kind} resolution for {specifier} is missing"
+                "{use_kind} {request_kind} resolution for {specifier} at {expected_span:?} is missing"
             ))
         })?;
     assert_eq!(
@@ -221,6 +256,14 @@ fn resolution_target(
         Some("internal")
     );
     required_str(resolution, "/outcome/target")
+}
+
+fn expected_span(source: &str, syntax: &str) -> Result<(u64, u64), std::io::Error> {
+    let start = source
+        .find(syntax)
+        .ok_or_else(|| std::io::Error::other(format!("{syntax:?} is missing from fixture")))?;
+    let end = start + syntax.len();
+    Ok((start as u64, end as u64))
 }
 
 fn finding_set(
