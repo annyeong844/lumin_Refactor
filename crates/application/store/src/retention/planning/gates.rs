@@ -52,7 +52,7 @@ pub(super) fn collect(
             });
             continue;
         };
-        if committed >= u128::from(terminal_before_unix_millis) {
+        if committed >= terminal_before_unix_millis {
             continue;
         }
         if let Some(gate_ids) = protected.get(key) {

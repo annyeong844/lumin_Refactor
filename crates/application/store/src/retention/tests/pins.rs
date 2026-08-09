@@ -1,10 +1,58 @@
 use lumin_evidence::{
     RecordLookup, RetentionExclusionReason, RetentionItemKind, RetentionMutationResult,
-    RetentionPlanRecord, RetentionPlanScope, RetentionPlanState,
+    RetentionOperationKind, RetentionOperationRecord, RetentionOperationResult,
+    RetentionOperationStatus, RetentionPlanRecord, RetentionPlanScope, RetentionPlanState,
+    RunPinRecord,
 };
-use lumin_model::{PinId, RetentionPlanId, RunId};
+use lumin_model::{OperationId, PinId, RetentionPlanId, RunId};
 
 use super::*;
+
+#[test]
+fn pin_operation_timestamp_round_trips_at_supported_maximum()
+-> Result<(), Box<dyn std::error::Error>> {
+    let operation = pin_operation_with_timestamp(u64::MAX);
+    let bytes = serde_json::to_vec(&operation)?;
+
+    assert_eq!(
+        serde_json::from_slice::<RetentionOperationRecord>(&bytes)?,
+        operation
+    );
+    Ok(())
+}
+
+#[test]
+fn pin_operation_timestamp_rejects_values_above_supported_maximum()
+-> Result<(), Box<dyn std::error::Error>> {
+    let wire = serde_json::to_string(&pin_operation_with_timestamp(u64::MAX))?;
+    let overflowing = wire.replace(&u64::MAX.to_string(), "18446744073709551616");
+    assert_ne!(overflowing, wire);
+    assert!(serde_json::from_str::<RetentionOperationRecord>(&overflowing).is_err());
+    Ok(())
+}
+
+fn pin_operation_with_timestamp(created_unix_millis: u64) -> RetentionOperationRecord {
+    let operation_id = OperationId::from_string("timestamp-round-trip".to_owned());
+    RetentionOperationRecord {
+        schema_version: "lumin-retention-operation.v1".to_owned(),
+        operation_id: operation_id.clone(),
+        kind: RetentionOperationKind::RunPin,
+        request_digest: "timestamp-round-trip-digest".to_owned(),
+        status: RetentionOperationStatus::Committed,
+        plan_id: None,
+        result: RetentionOperationResult::PinCreated {
+            pin: RunPinRecord {
+                schema_version: "lumin-run-pin.v1".to_owned(),
+                pin_id: PinId::from_string("pin_timestamp_round_trip".to_owned()),
+                run_id: RunId::from_string("run_timestamp_round_trip".to_owned()),
+                reason: "verify timestamp width".to_owned(),
+                created_unix_millis,
+                created_operation_id: operation_id,
+                removed_operation_id: None,
+            },
+        },
+    }
+}
 
 #[test]
 fn independent_pins_keep_a_run_protected_until_each_is_removed()

@@ -44,7 +44,7 @@ pub struct RetentionPlanCollectionDto {
     pub content_identity: RetentionContentIdentity,
     pub scope: RetentionPlanScope,
     pub state: RetentionPlanState,
-    pub created_unix_millis: u128,
+    pub created_unix_millis: u64,
     pub catalog_revision: u64,
     pub ordering: &'static str,
     pub total: usize,

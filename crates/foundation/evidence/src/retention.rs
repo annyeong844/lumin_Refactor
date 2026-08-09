@@ -2,7 +2,7 @@ use lumin_model::{
     GateId, OperationId, PinId, RepositoryId, RetentionContentIdentity, RetentionPlanId,
     RetentionTombstoneIdentity, RunId,
 };
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 use crate::OperationRecord;
 
@@ -140,7 +140,7 @@ pub struct RetentionPlanRecord {
     pub plan_id: RetentionPlanId,
     pub content_identity: RetentionContentIdentity,
     pub scope: RetentionPlanScope,
-    pub created_unix_millis: u128,
+    pub created_unix_millis: u64,
     pub catalog_revision: u64,
     pub state: RetentionPlanState,
     pub items: Vec<RetentionPlanItem>,
@@ -232,18 +232,10 @@ pub struct RunPinRecord {
     pub pin_id: PinId,
     pub run_id: RunId,
     pub reason: String,
-    #[serde(deserialize_with = "deserialize_unix_millis")]
-    pub created_unix_millis: u128,
+    pub created_unix_millis: u64,
     pub created_operation_id: OperationId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub removed_operation_id: Option<OperationId>,
-}
-
-fn deserialize_unix_millis<'de, D>(deserializer: D) -> Result<u128, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    u64::deserialize(deserializer).map(u128::from)
 }
 
 impl RunPinRecord {

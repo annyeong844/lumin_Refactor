@@ -120,7 +120,7 @@ impl<'a> RunCollector<'a> {
         let Some(finished) = envelope.finished_unix_millis else {
             return Ok(());
         };
-        if finished >= u128::from(self.before_unix_millis) {
+        if finished >= self.before_unix_millis {
             return Ok(());
         }
         let is_latest_attempt = self.latest_attempt.as_deref() == Some(child.as_str());
