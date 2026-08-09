@@ -113,6 +113,20 @@ fn classifies_rooted_utf8_paths_against_frozen_root_vectors()
     Ok(())
 }
 
+#[test]
+fn classify_rooted_utf8_path_rejects_non_ascii_volume_guid_without_panicking()
+-> Result<(), Box<dyn std::error::Error>> {
+    let volume = RepositoryRootIdentity::from_canonical_bytes(&decode_hex(ROOT_VECTORS[3])?)?;
+
+    assert_eq!(
+        volume.classify_rooted_utf8_path(
+            "//?/Volume{0é00000-0000-0000-0000-000000000000}/repo/base.json"
+        ),
+        RootedPathRelation::Outside
+    );
+    Ok(())
+}
+
 fn decode_hex(value: &str) -> Result<Vec<u8>, std::num::ParseIntError> {
     (0..value.len())
         .step_by(2)
