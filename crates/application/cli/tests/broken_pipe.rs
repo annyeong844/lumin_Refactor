@@ -63,7 +63,7 @@ fn closed_mutation_result_pipe_requires_operation_recovery()
     let recovered: Value = serde_json::from_slice(&recovered.stdout)?;
     assert_eq!(
         recovered.get("kind").and_then(Value::as_str),
-        Some("gate-open")
+        Some("pre-write")
     );
     assert_eq!(
         recovered.get("status").and_then(Value::as_str),
