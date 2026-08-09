@@ -13,7 +13,7 @@ use lumin_model::{
     RepositoryId, ResolvedSourceUse, RunId, SelectedResolutionProfile, SourceKind,
     SourceRoleClassification, SourceSpan, SymbolNamespace, append_length_prefixed, digest_hex,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
 pub const DEAD_EXPORT_RULE_ID: &str = "dead-code/zero-exact-fan-in.v1";
 pub const DEAD_CODE_CAPABILITY_ID: &str = "dead-code.v1";
@@ -209,13 +209,57 @@ impl FindingRecord {
     }
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoPathProjection {
     pub canonical: Vec<u8>,
-    #[serde(default)]
     pub components: Vec<Vec<u8>>,
     pub display: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RepoPathProjectionWire {
+    canonical: Vec<u8>,
+    #[serde(default, deserialize_with = "deserialize_present_path_components")]
+    components: Option<Vec<Vec<u8>>>,
+    display: String,
+}
+
+fn deserialize_present_path_components<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<Vec<u8>>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Vec::<Vec<u8>>::deserialize(deserializer).map(Some)
+}
+
+impl<'de> Deserialize<'de> for RepoPathProjection {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = RepoPathProjectionWire::deserialize(deserializer)?;
+        let path = RepoPath::from_canonical_bytes(&wire.canonical)
+            .map_err(|error| D::Error::custom(error.to_string()))?;
+        let projection = Self::from(&path);
+        if wire
+            .components
+            .as_ref()
+            .is_some_and(|components| components != &projection.components)
+        {
+            return Err(D::Error::custom(
+                "repo path projection components disagree with canonical path",
+            ));
+        }
+        if wire.display != projection.display {
+            return Err(D::Error::custom(
+                "repo path projection display disagrees with canonical path",
+            ));
+        }
+        Ok(projection)
+    }
 }
 
 impl From<&RepoPath> for RepoPathProjection {
