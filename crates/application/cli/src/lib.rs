@@ -937,6 +937,7 @@ fn error_exit_code(error: &CliError) -> i32 {
         | CliError::InvalidPaths0Source
         | CliError::Paths0Read(_) => 2,
         CliError::Protocol(error) => match error {
+            ProtocolError::Serialization(_) => 1,
             ProtocolError::CursorStale => 5,
             ProtocolError::CursorEncoding
             | ProtocolError::CursorPayload(_)
@@ -946,8 +947,7 @@ fn error_exit_code(error: &CliError) -> i32 {
             | ProtocolError::GateRevisionEvidenceUnavailable(_)
             | ProtocolError::FindingNotFound(_)
             | ProtocolError::InvalidRepoPathDto(_)
-            | ProtocolError::InvalidRepositoryRootDto(_)
-            | ProtocolError::Serialization(_) => 2,
+            | ProtocolError::InvalidRepositoryRootDto(_) => 2,
         },
         CliError::Engine(error) => error.lifecycle_exit_code(),
     }

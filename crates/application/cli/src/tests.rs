@@ -16,7 +16,6 @@ fn protocol_error_exit_codes_are_explicit() {
         ProtocolError::FindingNotFound("finding".to_owned()),
         ProtocolError::InvalidRepoPathDto("path".to_owned()),
         ProtocolError::InvalidRepositoryRootDto("root".to_owned()),
-        ProtocolError::Serialization("serialization".to_owned()),
     ];
     for error in malformed_or_missing {
         assert_eq!(error_exit_code(&CliError::Protocol(error)), 2);
@@ -24,6 +23,12 @@ fn protocol_error_exit_codes_are_explicit() {
     assert_eq!(
         error_exit_code(&CliError::Protocol(ProtocolError::CursorStale)),
         5
+    );
+    assert_eq!(
+        error_exit_code(&CliError::Protocol(ProtocolError::Serialization(
+            "serialization".to_owned()
+        ))),
+        1
     );
 }
 
