@@ -7,8 +7,6 @@ use std::process::{Command, Output, Stdio};
 
 use serde_json::Value;
 
-mod support;
-
 #[test]
 fn closed_stdout_consumer_does_not_abort_the_public_cli() -> Result<(), Box<dyn std::error::Error>>
 {
@@ -54,9 +52,15 @@ fn closed_mutation_result_pipe_requires_operation_recovery()
     );
     assert!(output.stderr.is_empty());
 
-    let recovered = support::run(root.path(), &["operation", "show", OPERATION_ID])?;
-    support::assert_status(&recovered, 0);
-    let recovered: Value = serde_json::from_str(&recovered.stdout)?;
+    let recovered = run_with_captured_stdout(root.path(), &["operation", "show", OPERATION_ID])?;
+    assert_eq!(
+        recovered.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&recovered.stderr)
+    );
+    assert!(recovered.stderr.is_empty());
+    let recovered: Value = serde_json::from_slice(&recovered.stdout)?;
     assert_eq!(
         recovered.get("kind").and_then(Value::as_str),
         Some("gate-open")
@@ -90,5 +94,12 @@ fn run_with_closed_stdout(root: &std::path::Path, arguments: &[&str]) -> std::io
         .args(arguments)
         .stdout(Stdio::from(producer))
         .stderr(Stdio::piped())
+        .output()
+}
+
+fn run_with_captured_stdout(root: &std::path::Path, arguments: &[&str]) -> std::io::Result<Output> {
+    Command::new(env!("CARGO_BIN_EXE_lumin"))
+        .current_dir(root)
+        .args(arguments)
         .output()
 }
