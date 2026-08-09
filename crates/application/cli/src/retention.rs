@@ -69,7 +69,10 @@ pub(super) fn gate_prune(
 }
 
 fn pin(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {
-    let run_id = RunId::from_string(nonempty(arguments.required_utf8("run-id")?, "run-id")?);
+    let run_id = RunId::from_string(nonempty(
+        arguments.required_positional_utf8("run-id")?,
+        "run-id",
+    )?);
     let mut operation_id = None;
     let mut reason = None;
     let mut format = "json".to_owned();
@@ -101,7 +104,10 @@ fn pin(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError
 }
 
 fn unpin(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {
-    let pin_id = PinId::from_string(nonempty(arguments.required_utf8("pin-id")?, "pin-id")?);
+    let pin_id = PinId::from_string(nonempty(
+        arguments.required_positional_utf8("pin-id")?,
+        "pin-id",
+    )?);
     let mut operation_id = None;
     let mut format = "json".to_owned();
     while let Some(argument) = arguments.next_utf8("runs unpin argument")? {
@@ -194,8 +200,10 @@ fn plan(
 }
 
 fn show_plan(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {
-    let plan_id =
-        RetentionPlanId::from_string(nonempty(arguments.required_utf8("plan-id")?, "plan-id")?);
+    let plan_id = RetentionPlanId::from_string(nonempty(
+        arguments.required_positional_utf8("plan-id")?,
+        "plan-id",
+    )?);
     let mut cursor = None;
     let mut format = "json".to_owned();
     while let Some(argument) = arguments.next_utf8("prune plan show argument")? {
@@ -212,8 +220,10 @@ fn show_plan(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, Cl
 }
 
 fn confirm(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {
-    let plan_id =
-        RetentionPlanId::from_string(nonempty(arguments.required_utf8("plan-id")?, "plan-id")?);
+    let plan_id = RetentionPlanId::from_string(nonempty(
+        arguments.required_positional_utf8("plan-id")?,
+        "plan-id",
+    )?);
     let mut operation_id = None;
     let mut format = "json".to_owned();
     while let Some(argument) = arguments.next_utf8("prune confirm argument")? {

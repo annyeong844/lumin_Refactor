@@ -603,7 +603,7 @@ fn pre_write(
 }
 
 fn post_write(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {
-    let gate_id = parse_gate_id(arguments.required_utf8("gate-id")?)?;
+    let gate_id = parse_gate_id(arguments.required_positional_utf8("gate-id")?)?;
     let mut operation_id = None;
     let mut format = "json".to_owned();
     while let Some(argument) = arguments.next_utf8("post-write argument")? {
@@ -644,7 +644,7 @@ fn gate(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliErro
 }
 
 fn gate_show(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {
-    let gate_id = parse_gate_id(arguments.required_utf8("gate-id")?)?;
+    let gate_id = parse_gate_id(arguments.required_positional_utf8("gate-id")?)?;
     let mut revision = None;
     let mut format = "json".to_owned();
     while let Some(argument) = arguments.next_utf8("gate show argument")? {
@@ -682,7 +682,7 @@ fn gate_show(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, Cl
 }
 
 fn gate_findings(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {
-    let gate_id = parse_gate_id(arguments.required_utf8("gate-id")?)?;
+    let gate_id = parse_gate_id(arguments.required_positional_utf8("gate-id")?)?;
     let mut revision = None;
     let mut cursor = None;
     let mut format = "json".to_owned();
@@ -719,7 +719,7 @@ fn gate_findings(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput
 }
 
 fn gate_explain(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {
-    let gate_id = parse_gate_id(arguments.required_utf8("gate-id")?)?;
+    let gate_id = parse_gate_id(arguments.required_positional_utf8("gate-id")?)?;
     let mut revision = None;
     let mut finding_id = None;
     let mut evidence_cursor = None;
@@ -777,7 +777,7 @@ fn gate_explain(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput,
 }
 
 fn gate_abandon(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {
-    let gate_id = parse_gate_id(arguments.required_utf8("gate-id")?)?;
+    let gate_id = parse_gate_id(arguments.required_positional_utf8("gate-id")?)?;
     let mut operation_id = None;
     let mut reason = None;
     let mut format = "json".to_owned();
@@ -816,7 +816,7 @@ fn operation(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, Cl
     if subcommand != "show" {
         return Err(CliError::UnknownArgument(subcommand));
     }
-    let operation_id = parse_operation_id(arguments.required_utf8("operation-id")?)?;
+    let operation_id = parse_operation_id(arguments.required_positional_utf8("operation-id")?)?;
     let format = parse_read_format(arguments, "operation show argument")?;
     require_json(&format)?;
     let operation = lumin_engine::load_lifecycle_operation(root, &operation_id)?;
@@ -967,6 +967,15 @@ impl Arguments {
     fn required_utf8(&mut self, name: &str) -> Result<String, CliError> {
         self.next_utf8(name)?
             .ok_or_else(|| CliError::MissingValue(name.to_owned()))
+    }
+
+    fn required_positional_utf8(&mut self, name: &str) -> Result<String, CliError> {
+        let value = self.required_utf8(name)?;
+        if value.starts_with("--") {
+            Err(CliError::UnknownArgument(value))
+        } else {
+            Ok(value)
+        }
     }
 
     fn required_os(&mut self, name: &str) -> Result<OsString, CliError> {
