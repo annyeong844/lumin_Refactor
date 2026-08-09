@@ -9,12 +9,12 @@ pub(crate) fn parse(
     bytes: &[u8],
     syntax: ConfigSyntax,
 ) -> Result<ConfigDocument, String> {
-    let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
+    let parse_bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
     let normalized;
     let input = match syntax {
-        ConfigSyntax::StrictJson => bytes,
+        ConfigSyntax::StrictJson => parse_bytes,
         ConfigSyntax::Jsonc => {
-            normalized = normalize_jsonc(bytes)?;
+            normalized = normalize_jsonc(parse_bytes)?;
             normalized.as_slice()
         }
         ConfigSyntax::RestrictedYaml => {
@@ -272,6 +272,26 @@ mod tests {
             ConfigSyntax::StrictJson,
         );
         assert!(result.is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn bom_is_parse_only_and_remains_in_payload_identity() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let plain = br#"{"name":"app"}"#;
+        let mut with_bom = Vec::with_capacity(plain.len() + 3);
+        with_bom.extend_from_slice(&[0xef, 0xbb, 0xbf]);
+        with_bom.extend_from_slice(plain);
+
+        for syntax in [ConfigSyntax::StrictJson, ConfigSyntax::Jsonc] {
+            let plain_document = parse(RepoPath::from_portable("package.json")?, plain, syntax)?;
+            let bom_document = parse(RepoPath::from_portable("package.json")?, &with_bom, syntax)?;
+
+            assert_eq!(bom_document.root, plain_document.root);
+            assert_eq!(plain_document.payload_sha256, digest_hex(plain));
+            assert_eq!(bom_document.payload_sha256, digest_hex(&with_bom));
+            assert_ne!(bom_document.payload_sha256, plain_document.payload_sha256);
+        }
         Ok(())
     }
 }

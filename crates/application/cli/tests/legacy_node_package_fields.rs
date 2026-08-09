@@ -142,6 +142,29 @@ fn enabled_profile_retains_field_applicability_after_legacy_run()
     Ok(())
 }
 
+#[test]
+fn manifest_bom_changes_the_protected_input_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let root = package_fixture(VALID_EXPORTS, VALID_IMPORTS)?;
+    let manifest_path = root.path().join("package.json");
+    let manifest = fs::read(&manifest_path)?;
+
+    let (plain_gate, plain_input) = open_node_gate(root.path(), "op-manifest-without-bom")?;
+    abandon_gate(root.path(), &plain_gate, "op-abandon-manifest-without-bom")?;
+
+    let mut with_bom = Vec::with_capacity(manifest.len() + 3);
+    with_bom.extend_from_slice(&[0xef, 0xbb, 0xbf]);
+    with_bom.extend_from_slice(&manifest);
+    fs::write(&manifest_path, with_bom)?;
+
+    let (bom_gate, bom_input) = open_node_gate(root.path(), "op-manifest-with-bom")?;
+    assert_ne!(
+        bom_input, plain_input,
+        "a BOM-only manifest change reused the previous protected input identity"
+    );
+    abandon_gate(root.path(), &bom_gate, "op-abandon-manifest-with-bom")?;
+    Ok(())
+}
+
 fn assert_disabled_fields_remain_protected_inputs() -> Result<(), Box<dyn std::error::Error>> {
     const CHANGED_EXPORTS: &str = r#"{"default":"./unobserved-exports.js"}"#;
     const CHANGED_IMPORTS: &str = r##"{"#internal":"./unobserved-local.js"}"##;
