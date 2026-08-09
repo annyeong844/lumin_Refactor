@@ -3,9 +3,13 @@
 use std::fs;
 use std::os::fd::OwnedFd;
 use std::os::unix::net::UnixStream;
-use std::process::{Command, Output, Stdio};
+use std::process::{Output, Stdio};
 
 use serde_json::Value;
+
+mod support;
+
+use support::lumin_command;
 
 #[test]
 fn closed_stdout_consumer_does_not_abort_the_public_cli() -> Result<(), Box<dyn std::error::Error>>
@@ -89,8 +93,7 @@ fn run_with_closed_stdout(root: &std::path::Path, arguments: &[&str]) -> std::io
     drop(consumer);
     let producer: OwnedFd = producer.into();
 
-    Command::new(env!("CARGO_BIN_EXE_lumin"))
-        .current_dir(root)
+    lumin_command(root)?
         .args(arguments)
         .stdout(Stdio::from(producer))
         .stderr(Stdio::piped())
@@ -98,8 +101,5 @@ fn run_with_closed_stdout(root: &std::path::Path, arguments: &[&str]) -> std::io
 }
 
 fn run_with_captured_stdout(root: &std::path::Path, arguments: &[&str]) -> std::io::Result<Output> {
-    Command::new(env!("CARGO_BIN_EXE_lumin"))
-        .current_dir(root)
-        .args(arguments)
-        .output()
+    lumin_command(root)?.args(arguments).output()
 }
