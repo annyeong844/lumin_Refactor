@@ -3,7 +3,6 @@
 //! Combines workspace metadata validation and AST source-policy scanning.
 //! Exit codes: 0 = pass, 1 = violations, 2 = tool error.
 
-use std::path::PathBuf;
 use std::process::ExitCode;
 
 use crate::generated_tables;
@@ -15,7 +14,7 @@ use crate::source_policy;
 
 /// Run the full architecture check.
 pub fn run() -> ExitCode {
-    let workspace_root = match find_workspace_root() {
+    let workspace_root = match metadata::find_workspace_root() {
         Ok(root) => root,
         Err(e) => {
             eprintln!("[TOOL ERROR] {e}");
@@ -119,30 +118,4 @@ pub fn run() -> ExitCode {
         println!("RESULT: PASS (exit 0)");
         ExitCode::from(0)
     }
-}
-
-/// Find the workspace root by looking for the root Cargo.toml with [workspace].
-pub(crate) fn find_workspace_root() -> Result<PathBuf, String> {
-    // Start from CARGO_MANIFEST_DIR or current directory
-    let start = std::env::var("CARGO_MANIFEST_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| std::env::current_dir().unwrap_or_default());
-
-    let mut dir = start.as_path();
-    loop {
-        let cargo_toml = dir.join("Cargo.toml");
-        if cargo_toml.exists() {
-            // Check if this is a workspace root
-            let content = std::fs::read_to_string(&cargo_toml)
-                .map_err(|e| format!("cannot read {}: {e}", cargo_toml.display()))?;
-            if content.contains("[workspace]") {
-                return Ok(dir.to_path_buf());
-            }
-        }
-        match dir.parent() {
-            Some(parent) => dir = parent,
-            None => break,
-        }
-    }
-    Err("could not find workspace root (no Cargo.toml with [workspace] found)".to_owned())
 }

@@ -19,7 +19,7 @@ fn main() -> ExitCode {
         Some("architecture-check") => architecture::run(),
         Some("corpus") => corpus::run(&args[1..]),
         Some("generated-tables") if args.get(1).map(String::as_str) == Some("--write") => {
-            let workspace_root = match architecture::find_workspace_root() {
+            let workspace_root = match metadata::find_workspace_root() {
                 Ok(root) => root,
                 Err(error) => {
                     eprintln!("[TOOL ERROR] {error}");
@@ -40,7 +40,7 @@ fn main() -> ExitCode {
             }
         }
         Some("path-codec") if args.get(1).map(String::as_str) == Some("--write") => {
-            let workspace_root = match architecture::find_workspace_root() {
+            let workspace_root = match metadata::find_workspace_root() {
                 Ok(root) => root,
                 Err(error) => {
                     eprintln!("[TOOL ERROR] {error}");

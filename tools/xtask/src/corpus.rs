@@ -338,28 +338,6 @@ pub fn validate_marker(path: &Path, row_id: &str, expected: usize) -> Result<(),
 }
 
 // ---------------------------------------------------------------------------
-// Workspace root
-// ---------------------------------------------------------------------------
-
-fn find_workspace_root() -> Result<PathBuf, String> {
-    let manifest_dir =
-        env::var("CARGO_MANIFEST_DIR").map_err(|_| "CARGO_MANIFEST_DIR not set".to_string())?;
-    // xtask is at tools/xtask, so parent twice gives workspace root.
-    let ws = PathBuf::from(&manifest_dir)
-        .parent()
-        .and_then(|p| p.parent())
-        .ok_or_else(|| format!("cannot derive workspace root from {manifest_dir}"))?
-        .to_path_buf();
-    let ct = ws.join("Cargo.toml");
-    let content =
-        fs::read_to_string(&ct).map_err(|e| format!("cannot read {}: {e}", ct.display()))?;
-    if !content.contains("[workspace]") {
-        return Err(format!("{} does not contain [workspace]", ct.display()));
-    }
-    Ok(ws)
-}
-
-// ---------------------------------------------------------------------------
 // Execution
 // ---------------------------------------------------------------------------
 
@@ -533,7 +511,7 @@ pub fn run(args: &[String]) -> ExitCode {
         eprintln!("[REGISTRY ERROR] {e}");
         return ExitCode::from(2);
     }
-    let ws = match find_workspace_root() {
+    let ws = match crate::metadata::find_workspace_root() {
         Ok(r) => r,
         Err(e) => {
             eprintln!("[TOOL ERROR] {e}");
