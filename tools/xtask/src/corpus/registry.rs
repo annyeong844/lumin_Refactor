@@ -296,7 +296,10 @@ pub static REGISTRY: &[RegistryRow] = &[
         inv!("workspace_package_exports", "exports_protect_only_selected_public_identities"),
     ]),
     row_sd!("bundler-condition-excludes-node", &[inv!("package_condition_public", "bundler_excludes_node_in_value_and_type_lanes")]),
-    row_sd!("legacy-node-exports-disabled"),
+    row_sd!("legacy-node-exports-disabled", &[
+        inv!("legacy_node_package_fields", "legacy_node_ignores_valid_and_malformed_fields_and_uses_main_and_typings"),
+        inv!("legacy_node_package_fields", "enabled_profile_retains_field_applicability_after_legacy_run"),
+    ]),
     row_sd!("exports-overlapping-patterns"),
     row_sd!("exports-target-path-lowering"),
     row_sd!("package-types-versions-unsupported", &[inv!("package_unsupported_public", "types_versions_blocks_unspecialized_type_fallback")]),
