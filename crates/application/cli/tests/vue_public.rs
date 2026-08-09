@@ -177,6 +177,8 @@ fn vue_non_source_asset_does_not_probe_declarations() -> Result<(), Box<dyn std:
             ".copy::before { content: \"url('./ignored.svg')\"; }\n",
             ".copy::after { content: '@import \"./ignored.css\"'; }\n",
             ".escaped::before { content: \"say \\\" url('./ignored-escaped.svg')\"; }\n",
+            ".foo\\'bar { background: url('./escaped-selector.svg'); }\n",
+            ".continued::before { content: \"line\\\nurl('./ignored-continuation.svg')\"; }\n",
             "</style>\n",
         ),
     )?;
@@ -212,11 +214,52 @@ fn vue_non_source_asset_does_not_probe_declarations() -> Result<(), Box<dyn std:
     assert_eq!(
         observed,
         BTreeSet::from([
+            (
+                "./escaped-selector.svg".to_owned(),
+                "non-source-asset".to_owned(),
+            ),
             ("./hero.svg".to_owned(), "non-source-asset".to_owned()),
             ("./theme.css".to_owned(), "non-source-asset".to_owned()),
         ]),
         "CSS string contents became resource edges"
     );
+
+    let malformed = tempfile::tempdir()?;
+    write(
+        malformed.path(),
+        "src/main.ts",
+        "import App from './App.vue'; console.log(App);\n",
+    )?;
+    write(
+        malformed.path(),
+        "src/App.vue",
+        concat!(
+            "<template><div>App</div></template>\n",
+            "<style>\n",
+            ".broken { content: \"unterminated\n",
+            "url('./must-not-be-scanned.svg')\"; }\n",
+            "</style>\n",
+        ),
+    )?;
+    let malformed_evidence = audit_evidence(malformed.path())?;
+    assert_eq!(malformed_evidence.audit_status, "incomplete");
+    assert_eq!(
+        capability_state(&malformed_evidence.overview, "sfc/vue.v1"),
+        Some("incomplete")
+    );
+    assert_eq!(
+        capability_state(&malformed_evidence.overview, "dead-code.v1"),
+        Some("incomplete")
+    );
+    let malformed_limitations = limitations(&malformed_evidence.overview)?;
+    assert_eq!(malformed_limitations.len(), 1);
+    assert_eq!(
+        malformed_limitations[0]
+            .get("reason")
+            .and_then(Value::as_str),
+        Some("sfc-decomposition-unknown")
+    );
+    assert_empty_findings(malformed.path(), &malformed_evidence.run_id)?;
     Ok(())
 }
 

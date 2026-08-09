@@ -374,6 +374,10 @@ fn css_references(source: &str, base: usize) -> Result<Vec<SfcResourceUse>, Stri
             cursor += end + 4;
             continue;
         }
+        if bytes.get(cursor) == Some(&b'\\') {
+            cursor = css_escape_end(bytes, cursor);
+            continue;
+        }
         if bytes
             .get(cursor)
             .is_some_and(|byte| matches!(byte, b'\'' | b'"'))
@@ -446,11 +450,11 @@ fn skip_css_string(source: &str, mut cursor: usize) -> Result<usize, String> {
     cursor += 1;
     while let Some(byte) = bytes.get(cursor).copied() {
         if byte == b'\\' {
-            cursor += 1;
-            if cursor < bytes.len() {
-                cursor += 1;
-            }
+            cursor = css_escape_end(bytes, cursor);
             continue;
+        }
+        if matches!(byte, b'\n' | b'\r' | 0x0c) {
+            return Err("Vue style contains an unterminated string".to_owned());
         }
         cursor += 1;
         if byte == quote {
@@ -458,6 +462,15 @@ fn skip_css_string(source: &str, mut cursor: usize) -> Result<usize, String> {
         }
     }
     Err("Vue style contains an unterminated string".to_owned())
+}
+
+fn css_escape_end(bytes: &[u8], cursor: usize) -> usize {
+    let escaped = cursor.saturating_add(1);
+    if bytes.get(escaped) == Some(&b'\r') && bytes.get(escaped + 1) == Some(&b'\n') {
+        escaped + 2
+    } else {
+        escaped.saturating_add(1).min(bytes.len())
+    }
 }
 
 fn css_value(
