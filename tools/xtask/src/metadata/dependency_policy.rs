@@ -600,8 +600,41 @@ fn cargo_home() -> Result<PathBuf, String> {
 }
 
 fn absolute_path(path: &Path) -> Result<PathBuf, String> {
-    std::path::absolute(path)
-        .map_err(|error| format!("cannot make path absolute {}: {error}", path.display()))
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| format!("cannot resolve current directory: {error}"))?
+            .join(path)
+    };
+    let mut normalized = PathBuf::new();
+    let mut normal_depth = 0usize;
+    for component in absolute.components() {
+        match component {
+            std::path::Component::Prefix(_)
+            | std::path::Component::RootDir
+            | std::path::Component::Normal(_) => {
+                if matches!(component, std::path::Component::Normal(_)) {
+                    normal_depth += 1;
+                }
+                normalized.push(component.as_os_str());
+            }
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if normal_depth == 0 || !normalized.pop() {
+                    return Err(format!(
+                        "path escapes the filesystem root: {}",
+                        path.display()
+                    ));
+                }
+                normal_depth -= 1;
+            }
+        }
+    }
+    if !normalized.is_absolute() {
+        return Err(format!("path is not absolute: {}", path.display()));
+    }
+    Ok(normalized)
 }
 
 fn dependency_kind<'a>(

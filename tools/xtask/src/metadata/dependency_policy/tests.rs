@@ -162,6 +162,20 @@ fn absolute_path_normalizes_parent_components() -> Result<(), Box<dyn std::error
     Ok(())
 }
 
+#[test]
+fn absolute_path_rejects_root_escape() -> Result<(), Box<dyn std::error::Error>> {
+    let escaping = Path::new(std::path::MAIN_SEPARATOR_STR)
+        .join("..")
+        .join("outside");
+
+    let error = match absolute_path(&escaping) {
+        Ok(path) => return Err(format!("root escape was accepted as {}", path.display()).into()),
+        Err(error) => error,
+    };
+    assert!(error.contains("escapes the filesystem root"), "{error}");
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test]
 fn registry_root_redirection_inside_cargo_home_is_rejected()
