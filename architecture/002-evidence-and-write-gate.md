@@ -582,6 +582,8 @@ lumin gate prune confirm <plan-id> --operation-id <operation-id>
 
 `lumin operation show` returns the canonical command kind, request digest, mutation status, target IDs/revisions, committed result, and last delivery status. It is the recovery path for every gate or retention lifecycle mutation when a caller retained its operation ID but did not receive stdout. Delivery attempts may append transport metadata; they never create another lifecycle revision, plan, pin change, or deletion.
 
+An identifier whose text begins with `--` remains a valid mutation option value. For a positional lookup, the caller places the end-of-options marker before it, for example `lumin operation show -- --retry-token`; without that marker, a leading option is rejected rather than silently consumed as an identifier.
+
 Pre-write, post-write, gate abandon, run pin/unpin, prune-plan creation, and prune confirmation all require an operation ID before they mutate durable state. The same operation state machine applies to each command: identical ID plus digest joins live work, retries only a proven pre-commit interruption, or returns the one committed result; conflicting reuse is malformed. Read-only list/show/page commands do not require an operation ID.
 
 ### 9.1 Decision and Exit Contract

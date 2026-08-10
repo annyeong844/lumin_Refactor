@@ -359,6 +359,7 @@ Required behavior:
 
 - no request JSON file;
 - caller-retained operation IDs make every gate and retention lifecycle mutation idempotent and recoverable through `lumin operation show`;
+- positional lookup of an identifier beginning with `--` requires the explicit end-of-options marker, so `lumin operation show -- --retry-token` recovers the same ID without letting omitted positional IDs swallow option flags;
 - one durable gate ID returned by pre-write;
 - baseline and close observations built only after owner-reported semantic inputs reach a fixed point, with every added path demanded without reading, conflict-checked, and reserved before inventory capture or owner/cache consumption;
 - language and nearest dependency owner inferred from planned paths;

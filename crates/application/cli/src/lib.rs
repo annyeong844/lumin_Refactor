@@ -984,6 +984,9 @@ impl Arguments {
 
     fn required_positional_utf8(&mut self, name: &str) -> Result<String, CliError> {
         let value = self.required_utf8(name)?;
+        if value == "--" {
+            return self.required_utf8(name);
+        }
         if value.starts_with("--") {
             Err(CliError::UnknownArgument(value))
         } else {
