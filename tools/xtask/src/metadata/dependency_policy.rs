@@ -22,17 +22,18 @@ pub(super) fn validate_dependency_surface(
     workspace_root: &Path,
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
-    let observed = build_observed_policy(metadata, workspace_root, violations)?;
+    let observed = build_observed_policy(metadata, violations)?;
     compare_checked_policy(workspace_root, &observed, violations)?;
     validate_registry_locations(metadata, workspace_root, violations)
 }
 
 fn build_observed_policy(
     metadata: &serde_json::Value,
-    workspace_root: &Path,
     violations: &mut Vec<String>,
 ) -> Result<serde_json::Value, String> {
-    let resolver = workspace_resolver(workspace_root, violations)?;
+    // The isolated Python guard strict-parses the semantic TOML value immediately before
+    // metadata acquisition. Cargo metadata does not expose the workspace resolver.
+    let resolver = "3";
     let packages = required_array(metadata, "packages", "metadata")?;
     let member_values = required_array(metadata, "workspace_members", "metadata")?;
     let nodes = required_array(
@@ -363,38 +364,6 @@ fn canonical_feature_policy(
     features
         .sort_by(|left, right| string_or_empty(left, "name").cmp(string_or_empty(right, "name")));
     Ok(features)
-}
-
-fn workspace_resolver(
-    workspace_root: &Path,
-    violations: &mut Vec<String>,
-) -> Result<&'static str, String> {
-    let path = workspace_root.join("Cargo.toml");
-    let source = std::fs::read_to_string(&path)
-        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-    let mut in_workspace = false;
-    let mut workspace_tables = 0_usize;
-    let mut resolver_lines = Vec::new();
-    for raw_line in source.lines() {
-        let line = raw_line.trim();
-        if line.starts_with('[') {
-            in_workspace = line == "[workspace]";
-            if in_workspace {
-                workspace_tables += 1;
-            }
-            continue;
-        }
-        if in_workspace && line.starts_with("resolver") {
-            resolver_lines.push(line.to_owned());
-        }
-    }
-    if workspace_tables != 1 || resolver_lines != ["resolver = \"3\""] {
-        violations.push(format!(
-            "WORKSPACE RESOLVER DRIFT: expected one exact `[workspace]` `resolver = \"3\"`, found tables={workspace_tables} values={resolver_lines:?}"
-        ));
-        return Ok("invalid");
-    }
-    Ok("3")
 }
 
 fn compare_checked_policy(

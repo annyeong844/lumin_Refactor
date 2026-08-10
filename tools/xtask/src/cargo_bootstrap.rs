@@ -5,11 +5,12 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 const GUARD_PATH: &str = "tools/xtask/bootstrap/source_provenance.py";
-const GUARD_SHA256: &str = "a150ac2b775485c338fd10236db698b3fd2b3d93196154526d83c495788ded58";
+const GUARD_SHA256: &str = "5483cfd3df4a7bc4c8e3f378325c5858f3a0af1ed4120a9b2b95109a16a4d76e";
 const TEST_PATH: &str = "tools/xtask/bootstrap/test_source_provenance.py";
-const TEST_SHA256: &str = "1791b29d9c523c15589a7334188c4ec7ef097dd7eebb2fa9c722e9161d0d5396";
+const TEST_SHA256: &str = "6459820a2ded2474a02d20b8829ee82bb93743706b385173387f80a0a7408aa8";
+const WORKFLOW_DIRECTORY: &str = ".github/workflows";
 const WORKFLOW_PATH: &str = ".github/workflows/ci.yml";
-const WORKFLOW_SHA256: &str = "7f38d74de95b360f00808b422e08581eccfc9668bfa6c1e97648e738771abd21";
+const WORKFLOW_SHA256: &str = "28da16df2f542db7ea435a1b4e4c9ab3eee41670408cbd313d94959cc0c708b3";
 const SETUP_PYTHON: &str = "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0";
 const PYTHON_VERSION: &str = "3.13.14";
 const CARGO_JOBS: &[&str] = &[
@@ -47,9 +48,14 @@ const EXPECTED_RUN_COMMANDS: &[(&str, usize)] = &[
         1,
     ),
     (
-        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- architecture-check",
+        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo build --locked -p lumin-xtask",
         1,
     ),
+    (
+        "python -I -S tools/xtask/bootstrap/source_provenance.py --check-only",
+        1,
+    ),
+    ("target/debug/lumin-xtask architecture-check", 1),
     (
         "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo audit --deny warnings",
         1,
@@ -138,6 +144,7 @@ pub struct CargoBootstrapResult {
 
 pub fn check_cargo_bootstrap(workspace_root: &Path) -> CargoBootstrapResult {
     let mut result = CargoBootstrapResult::default();
+    validate_workflow_directory(workspace_root, &mut result);
     verify_digest(workspace_root, GUARD_PATH, GUARD_SHA256, &mut result);
     verify_digest(workspace_root, TEST_PATH, TEST_SHA256, &mut result);
     verify_digest(workspace_root, WORKFLOW_PATH, WORKFLOW_SHA256, &mut result);
@@ -150,6 +157,56 @@ pub fn check_cargo_bootstrap(workspace_root: &Path) -> CargoBootstrapResult {
             .push(format!("cannot read {WORKFLOW_PATH}: {error}")),
     }
     result
+}
+
+fn validate_workflow_directory(root: &Path, result: &mut CargoBootstrapResult) {
+    let directory = root.join(WORKFLOW_DIRECTORY);
+    let entries = match std::fs::read_dir(&directory) {
+        Ok(entries) => entries,
+        Err(error) => {
+            result.tool_errors.push(format!(
+                "cannot enumerate workflow directory {}: {error}",
+                directory.display()
+            ));
+            return;
+        }
+    };
+    let mut names = Vec::new();
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                result
+                    .tool_errors
+                    .push(format!("cannot read workflow directory entry: {error}"));
+                return;
+            }
+        };
+        let name = match entry.file_name().into_string() {
+            Ok(name) => name,
+            Err(_) => {
+                result
+                    .violations
+                    .push("WORKFLOW SURFACE: non-UTF-8 entry is forbidden".to_owned());
+                continue;
+            }
+        };
+        match entry.file_type() {
+            Ok(file_type) if file_type.is_file() => names.push(name),
+            Ok(_) => result.violations.push(format!(
+                "WORKFLOW SURFACE: redirected or non-file entry is forbidden: {name}"
+            )),
+            Err(error) => result.tool_errors.push(format!(
+                "cannot inspect workflow directory entry {name}: {error}"
+            )),
+        }
+    }
+    names.sort();
+    if names != ["ci.yml"] {
+        result.violations.push(format!(
+            "WORKFLOW SURFACE: expected only ci.yml, found {names:?}"
+        ));
+    }
 }
 
 fn verify_digest(root: &Path, relative: &str, expected: &str, result: &mut CargoBootstrapResult) {
@@ -312,6 +369,33 @@ mod tests {
         let mut violations = Vec::new();
         validate_workflow(GOOD, &mut violations);
         assert!(violations.is_empty(), "{violations:?}");
+    }
+
+    #[test]
+    fn workflow_directory_rejects_additional_or_redirected_entries()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temporary = tempfile::tempdir()?;
+        let workflows = temporary.path().join(WORKFLOW_DIRECTORY);
+        std::fs::create_dir_all(&workflows)?;
+        std::fs::write(workflows.join("ci.yml"), GOOD)?;
+
+        let mut clean = CargoBootstrapResult::default();
+        validate_workflow_directory(temporary.path(), &mut clean);
+        assert!(clean.violations.is_empty(), "{:?}", clean.violations);
+        assert!(clean.tool_errors.is_empty(), "{:?}", clean.tool_errors);
+
+        std::fs::write(workflows.join("bypass.yaml"), "name: bypass\n")?;
+        let mut additional = CargoBootstrapResult::default();
+        validate_workflow_directory(temporary.path(), &mut additional);
+        assert!(
+            additional
+                .violations
+                .iter()
+                .any(|violation| violation.contains("expected only ci.yml")),
+            "{:?}",
+            additional.violations
+        );
+        Ok(())
     }
 
     #[test]

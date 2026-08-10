@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 from pathlib import Path
 import shutil
@@ -33,9 +34,32 @@ class Fixture:
         self.cargo_home = base / "cargo-home"
         self.member.mkdir(parents=True)
         self.cargo_home.mkdir()
+        workflow = self.root / ".github" / "workflows" / "ci.yml"
+        workflow.parent.mkdir(parents=True)
+        shutil.copy2(SCRIPT.parents[3] / ".github" / "workflows" / "ci.yml", workflow)
+        self.write_policy([])
         self.write_root()
         (self.member / "Cargo.toml").write_text(
             '[package]\nname = "fixture-member"\nversion = "0.0.0"\nedition = "2024"\n',
+            encoding="utf-8",
+        )
+
+    def write_policy(self, dependencies: list[dict[str, object]]) -> None:
+        policy = self.root / "tools" / "xtask" / "dependency-surface-policy.v1.json"
+        policy.parent.mkdir(parents=True, exist_ok=True)
+        policy.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "workspaceResolver": "3",
+                    "packages": [
+                        {
+                            "name": "fixture-member",
+                            "dependencies": dependencies,
+                        }
+                    ],
+                }
+            ),
             encoding="utf-8",
         )
 
@@ -64,6 +88,19 @@ class SourceProvenanceTests(unittest.TestCase):
         temporary, fixture = self.fixture()
         with temporary:
             fixture.validate()
+
+    @unittest.skipUnless(os.name == "nt", "Windows extended paths are platform-specific")
+    def test_windows_extended_root_matches_normal_working_directory(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            extended_root = Path("\\\\?\\" + str(fixture.root))
+            PROVENANCE.validate_invocation(
+                extended_root,
+                ("cargo", "--version"),
+                {},
+                fixture.root,
+                fixture.cargo_home,
+            )
 
     def test_import_does_not_write_repository_bytecode(self) -> None:
         self.assertFalse((SCRIPT.parent / "__pycache__").exists())
@@ -148,6 +185,83 @@ class SourceProvenanceTests(unittest.TestCase):
             with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "resolver"):
                 fixture.validate()
 
+    def test_semantic_resolver_formatting_is_accepted(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            (fixture.root / "Cargo.toml").write_text(
+                'workspace.resolver="3" # exact semantic value\n'
+                'workspace.members = ["member"]\n',
+                encoding="utf-8",
+            )
+            fixture.validate()
+
+    def test_authored_requirement_string_is_not_cargo_normalized(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            fixture.write_root(
+                suffix='\n[workspace.dependencies]\nserde = "=1.0.0"\n'
+            )
+            (fixture.member / "Cargo.toml").write_text(
+                '[package]\nname = "fixture-member"\nversion = "0.0.0"\n'
+                '[dependencies]\nserde.workspace = true\n',
+                encoding="utf-8",
+            )
+            fixture.write_policy(
+                [
+                    {
+                        "package": "serde",
+                        "rename": None,
+                        "requirement": "=1.0.0",
+                        "kind": "normal",
+                        "target": None,
+                    }
+                ]
+            )
+            fixture.validate()
+
+            fixture.write_root(
+                suffix='\n[workspace.dependencies]\nserde = "= 1.0.0"\n'
+            )
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "requirements drift"):
+                fixture.validate()
+
+    def test_workflow_drift_and_additional_workflows_are_rejected(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            workflow = fixture.root / ".github" / "workflows" / "ci.yml"
+            original = workflow.read_bytes()
+            workflow.write_bytes(original + b"\n")
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "digest mismatch"):
+                fixture.validate()
+            workflow.write_bytes(original)
+
+            extra = workflow.with_name("escape.yaml")
+            extra.write_text("name: bypass\n", encoding="utf-8")
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "only ci.yml"):
+                fixture.validate()
+
+    def test_workspace_build_scripts_are_rejected(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            (fixture.member / "build.rs").write_text("fn main() {}\n", encoding="utf-8")
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "build script"):
+                fixture.validate()
+
+    @unittest.skipIf(os.name == "nt", "Windows runners may not grant symlink privileges")
+    def test_redirected_workspace_manifest_is_rejected(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            outside = fixture.root.parent / "outside-Cargo.toml"
+            outside.write_text(
+                '[package]\nname = "fixture-member"\nversion = "0.0.0"\n',
+                encoding="utf-8",
+            )
+            manifest = fixture.member / "Cargo.toml"
+            manifest.unlink()
+            manifest.symlink_to(outside)
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "redirected or external"):
+                fixture.validate()
+
     def test_malformed_zero_member_and_escape_inputs_fail_closed(self) -> None:
         temporary, fixture = self.fixture()
         with temporary:
@@ -193,6 +307,17 @@ class SourceProvenanceTests(unittest.TestCase):
             }
             environment["CARGO_HOME"] = str(cargo_home)
             environment["PATH"] = str(binary_directory)
+
+            check_only = subprocess.run(
+                [sys.executable, "-I", "-S", str(SCRIPT), "--check-only"],
+                cwd=root,
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(check_only.returncode, 0, check_only.stderr)
+            self.assertEqual(check_only.stdout, "")
 
             completed = subprocess.run(
                 [sys.executable, "-I", "-S", str(SCRIPT), "--", "cargo", "--version"],

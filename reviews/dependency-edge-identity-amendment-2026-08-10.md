@@ -70,9 +70,20 @@ workspace manifest and rejects:
 - `CARGO_SOURCE_*`, `CARGO_PATHS`, and `CARGO_REGISTRIES_*_INDEX` environment
   overrides (registry authentication variables do not change source identity);
 - `[patch]` or `[replace]` tables in workspace manifests;
+- redirected workspace directories or manifests, and workspace build scripts that could
+  mutate source configuration after admission;
 - Cargo global configuration arguments in either `--config VALUE` or
   `--config=VALUE` form anywhere in the supplied Cargo argument vector;
 - a missing or non-exact root `[workspace].resolver = "3"` declaration.
+
+The bootstrap also requires `.github/workflows` to contain only the reviewed `ci.yml`
+and verifies its exact digest before every guarded Cargo invocation. The architecture
+job builds xtask under the guard, invokes the guard independently again, and then runs
+the built checker directly. The checker invokes the isolated guard once more immediately
+before its nested `cargo metadata`, so build-time mutation cannot enter the metadata
+window. The same semantic TOML pass compares every manifest-authored dependency
+requirement against the checked policy; Cargo's normalized `req` is only a graph-join
+fact and cannot erase distinctions in the authored string.
 
 The exact policy deliberately refuses all such configuration rather than trying to
 prove that a particular replacement is harmless. Public CI runs with this clean source

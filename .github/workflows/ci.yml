@@ -55,8 +55,14 @@ jobs:
       - name: Test source provenance bootstrap
         run: python -I -S tools/xtask/bootstrap/test_source_provenance.py
 
+      - name: Build architecture checker
+        run: python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo build --locked -p lumin-xtask
+
+      - name: Revalidate source provenance independently
+        run: python -I -S tools/xtask/bootstrap/source_provenance.py --check-only
+
       - name: Enforce architecture policy
-        run: python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- architecture-check
+        run: target/debug/lumin-xtask architecture-check
 
   dependency-policy:
     name: Dependency policy

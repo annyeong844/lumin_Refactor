@@ -98,6 +98,7 @@ fn locate_workspace_root(manifest_dir: &Path) -> Result<PathBuf, String> {
 }
 
 pub fn analyze_workspace(workspace_root: &Path) -> Result<MetadataResult, String> {
+    revalidate_source_provenance(workspace_root)?;
     let output = Command::new("cargo")
         .args([
             "metadata",
@@ -117,6 +118,25 @@ pub fn analyze_workspace(workspace_root: &Path) -> Result<MetadataResult, String
     let metadata: serde_json::Value = serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("failed to parse cargo metadata JSON: {error}"))?;
     analyze_metadata(&metadata, workspace_root)
+}
+
+fn revalidate_source_provenance(workspace_root: &Path) -> Result<(), String> {
+    let guard = workspace_root.join("tools/xtask/bootstrap/source_provenance.py");
+    let output = Command::new("python")
+        .args(["-I", "-S"])
+        .arg(&guard)
+        .arg("--check-only")
+        .current_dir(workspace_root)
+        .output()
+        .map_err(|error| format!("failed to revalidate Cargo source provenance: {error}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(format!(
+        "Cargo source provenance changed before metadata: {}",
+        stderr.trim()
+    ))
 }
 
 fn analyze_metadata(

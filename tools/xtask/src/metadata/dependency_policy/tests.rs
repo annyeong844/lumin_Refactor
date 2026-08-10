@@ -364,7 +364,7 @@ fn declared_rename_survives_normalized_binding_collision() -> Result<(), Box<dyn
         }]}
     });
     let mut violations = Vec::new();
-    let authored = build_observed_policy(&base, temporary.path(), &mut violations)?;
+    let authored = build_observed_policy(&base, &mut violations)?;
     assert!(violations.is_empty(), "{violations:?}");
 
     let mut renamed_metadata = base;
@@ -378,8 +378,7 @@ fn declared_rename_survives_normalized_binding_collision() -> Result<(), Box<dyn
         .ok_or("fixture dependency is missing")?;
     replace_field(declaration, "rename", serde_json::json!("same_file"))?;
     let mut renamed_violations = Vec::new();
-    let renamed =
-        build_observed_policy(&renamed_metadata, temporary.path(), &mut renamed_violations)?;
+    let renamed = build_observed_policy(&renamed_metadata, &mut renamed_violations)?;
     assert!(renamed_violations.is_empty(), "{renamed_violations:?}");
     assert_ne!(authored, renamed);
 
@@ -400,11 +399,7 @@ fn declared_rename_survives_normalized_binding_collision() -> Result<(), Box<dyn
         .ok_or("fixture resolution kind is missing")?;
     kinds.push(duplicate_kind);
     let mut ambiguous_violations = Vec::new();
-    let _ = build_observed_policy(
-        &renamed_metadata,
-        temporary.path(),
-        &mut ambiguous_violations,
-    )?;
+    let _ = build_observed_policy(&renamed_metadata, &mut ambiguous_violations)?;
     assert!(
         ambiguous_violations
             .iter()
