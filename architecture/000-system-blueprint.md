@@ -320,14 +320,19 @@ The diagram is conceptual; the enforceable edge list is:
 - `lumin-engine` -> `lumin-model`, `lumin-evidence`, all capability crates it orchestrates, and `lumin-store`.
 - `lumin-cli` -> `lumin-engine`, `lumin-protocol`, `lumin-model`.
 
-CI reads locked, all-features `cargo metadata` and rejects every direct edge from a
-production workspace member unless its complete policy identity is listed. That
-identity is the owner workspace package, Cargo-declared dependency name (including
-any rename), resolved package name, dependency kind, and optional target predicate.
-An approval for one declared name or target predicate cannot authorize a rename,
-an unconditional edge, or a different predicate. Unknown dependency kinds, duplicate
-policy identities, and policy identities absent from the resolved graph fail the
-architecture check.
+CI reads locked, all-features `cargo metadata` and rejects every production workspace
+feature definition or direct edge not listed in the canonical policy. Each production
+member's exact feature-name-to-canonical-activation-set map is listed. Each edge then
+links a declaration identity to a resolution identity. The declaration contains the
+owner workspace package, dependency package name, exact optional rename, version
+requirement, dependency kind, optional target predicate, optionality, default-feature
+setting, and canonical requested-feature set. The resolution contains either the exact
+workspace member or the resolved third-party package name, version, and source. A
+non-workspace path package is rejected. An approval cannot authorize a workspace-feature
+definition, rename, dependency feature/optionality, predicate, kind, version, or source
+change. Unknown dependency kinds, ambiguous declaration-to-resolution joins, duplicate
+policy identities, and policy identities absent from the feature, declared, or resolved
+graph fail the architecture check.
 
 ### 5.1 Development-Tool DAG
 
