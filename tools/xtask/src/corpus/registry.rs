@@ -40,15 +40,12 @@ static INV_BNQ: &[CorpusInvocation] = &[
 ];
 #[rustfmt::skip]
 static INV_COLL: &[CorpusInvocation] = &[
-    inv!("collection_ordering", "related_returns_relation_collection_for_run_finding"),
-    inv!("collection_ordering", "related_missing_run_exits_2"),
+    inv!("bounded_nested_query", "run_findings_pages_102_as_100_plus_2"),
+    inv!("bounded_nested_query", "run_explain_evidence_pages_102_as_100_plus_2"),
+    inv!("bounded_nested_query", "run_explain_relations_pages_101_as_100_plus_1"),
     inv!("collection_ordering", "files_returns_file_findings_collection"),
-    inv!("collection_ordering", "files_zero_match_exits_0_empty"),
-    inv!("collection_ordering", "files_invalid_path_exits_2"),
-    inv!("collection_ordering", "gate_list_requires_active_flag"),
-    inv!("collection_ordering", "gate_list_active_returns_empty_collection"),
-    inv!("collection_ordering", "gate_list_active_shows_open_gate"),
-    inv!("collection_ordering", "gate_list_active_malformed_cursor_exits_2"),
+    inv!("collection_ordering", "gate_list_active_orders_open_gates"),
+    inv!("retention", "pagination::retention_plan_pages_survive_unrelated_repository_mutation_and_reject_cross_plan_cursor"),
 ];
 #[rustfmt::skip]
 static INV_CAP: &[CorpusInvocation] = &[
