@@ -58,7 +58,7 @@ pub(crate) fn decompose(
             .then_with(|| left.specifier.cmp(&right.specifier))
     });
     resource_uses.dedup();
-    limitations.sort_by_key(|limitation| format!("{limitation:?}"));
+    limitations.sort_by(Limitation::canonical_cmp);
     limitations.dedup();
 
     SfcDecomposition {
