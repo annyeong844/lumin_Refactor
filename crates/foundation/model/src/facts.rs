@@ -431,7 +431,7 @@ pub struct ResolvedSourceUse {
     pub outcome: ResolutionOutcome,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum UnresolvedTargetScope {
     ExplicitTargets,
@@ -468,7 +468,7 @@ pub enum ResolutionOutcome {
     },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "kebab-case")]
 pub enum Limitation {
     JsModuleUseUnknown {
@@ -795,6 +795,15 @@ define_limitation_registry! {
         absence: UnreachableModules,
         gate: RequiredEvidence,
     },
+}
+
+impl Limitation {
+    pub fn canonical_cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.registry_entry()
+            .reason
+            .cmp(other.registry_entry().reason)
+            .then_with(|| self.cmp(other))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]

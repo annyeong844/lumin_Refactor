@@ -365,8 +365,6 @@ fn canonicalize(facts: &mut FileFacts) {
             .then_with(|| left.specifier.cmp(&right.specifier))
     });
     facts.uses.dedup();
-    facts
-        .limitations
-        .sort_by_key(|limitation| format!("{limitation:?}"));
+    facts.limitations.sort_by(Limitation::canonical_cmp);
     facts.limitations.dedup();
 }

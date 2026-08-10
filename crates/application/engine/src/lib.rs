@@ -676,7 +676,7 @@ fn collect_limitations(
     for file in facts {
         limitations.extend(file.limitations.iter().cloned());
     }
-    limitations.sort_by_key(limitation_sort_key);
+    limitations.sort_by(Limitation::canonical_cmp);
     limitations.dedup();
     limitations
 }
@@ -708,10 +708,6 @@ pub fn load_latest_overview(root: &Path) -> Result<LatestOverview, EngineError> 
         }),
         completed: snapshot.completed,
     })
-}
-
-fn limitation_sort_key(limitation: &Limitation) -> String {
-    format!("{limitation:?}")
 }
 
 #[cfg(test)]
