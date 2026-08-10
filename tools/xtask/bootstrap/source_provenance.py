@@ -31,6 +31,11 @@ def _resolved(path: Path, *, base: Path | None = None) -> Path:
     return candidate.resolve(strict=False)
 
 
+def _absolute(path: Path, *, base: Path | None = None) -> Path:
+    candidate = path if path.is_absolute() else (base or Path.cwd()) / path
+    return Path(os.path.abspath(candidate))
+
+
 def repository_root() -> Path:
     root = Path(__file__).resolve().parents[3]
     if not (root / "Cargo.toml").is_file():
@@ -43,8 +48,8 @@ def active_cargo_home(environment: Mapping[str, str], cwd: Path) -> Path:
     if configured is not None:
         if not configured:
             raise ProvenanceError("CARGO_HOME must not be empty")
-        return _resolved(Path(configured), base=cwd)
-    return (Path.home() / ".cargo").resolve(strict=False)
+        return _absolute(Path(configured), base=cwd)
+    return _absolute(Path.home() / ".cargo")
 
 
 def ensure_runtime(root: Path) -> None:
@@ -161,6 +166,23 @@ def validate_command(command: Sequence[str]) -> None:
             raise ProvenanceError(f"Cargo global configuration argument is forbidden: {argument}")
 
 
+def validate_registry_root_identity(
+    lexical_home: Path,
+    physical_home: Path,
+    lexical_registry: Path,
+    physical_registry: Path,
+) -> None:
+    if physical_home != lexical_home:
+        raise ProvenanceError(
+            f"Cargo home lexical/physical disagreement: {lexical_home} -> {physical_home}"
+        )
+    if physical_registry != lexical_registry:
+        raise ProvenanceError(
+            "Cargo registry source root lexical/physical disagreement: "
+            f"{lexical_registry} -> {physical_registry}"
+        )
+
+
 def validate_invocation(
     root: Path,
     command: Sequence[str],
@@ -176,16 +198,24 @@ def validate_invocation(
         )
     validate_command(command)
     reject_source_environment(environment)
-    effective_home = (cargo_home or active_cargo_home(environment, canonical_cwd)).resolve(
-        strict=False
+    lexical_home = _absolute(
+        cargo_home or active_cargo_home(environment, canonical_cwd),
+        base=canonical_cwd,
     )
+    effective_home = lexical_home.resolve(strict=False)
     if _is_within(effective_home, canonical_root):
         raise ProvenanceError(
             f"active Cargo home must remain outside the repository: {effective_home}"
         )
-    registry_source = effective_home / "registry" / "src"
+    registry_source = lexical_home / "registry" / "src"
     if registry_source.exists() or registry_source.is_symlink():
         physical_registry = registry_source.resolve(strict=False)
+        validate_registry_root_identity(
+            lexical_home,
+            effective_home,
+            registry_source,
+            physical_registry,
+        )
         if _is_within(physical_registry, canonical_root) or not _is_within(
             physical_registry, effective_home
         ):
@@ -193,7 +223,14 @@ def validate_invocation(
                 "Cargo registry source root escapes its trusted location: "
                 f"{registry_source} -> {physical_registry}"
             )
-    reject_cargo_configuration(canonical_root, effective_home)
+    else:
+        validate_registry_root_identity(
+            lexical_home,
+            effective_home,
+            registry_source,
+            registry_source,
+        )
+    reject_cargo_configuration(canonical_root, lexical_home)
     validate_workspace_manifests(canonical_root)
 
 

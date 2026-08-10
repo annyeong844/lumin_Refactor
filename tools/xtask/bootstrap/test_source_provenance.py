@@ -119,6 +119,18 @@ class SourceProvenanceTests(unittest.TestCase):
                     fixture.root / "cargo-home",
                 )
 
+    def test_registry_root_lexical_physical_disagreement_is_rejected(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            redirected = fixture.cargo_home / "redirected"
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "lexical/physical"):
+                PROVENANCE.validate_registry_root_identity(
+                    fixture.cargo_home,
+                    fixture.cargo_home,
+                    fixture.cargo_home / "registry" / "src",
+                    redirected,
+                )
+
     def test_empty_cargo_home_environment_is_rejected(self) -> None:
         temporary, fixture = self.fixture()
         with temporary:
