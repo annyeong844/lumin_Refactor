@@ -17,7 +17,12 @@ if SPEC is None or SPEC.loader is None:
     raise RuntimeError(f"cannot load {SCRIPT}")
 PROVENANCE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = PROVENANCE
-SPEC.loader.exec_module(PROVENANCE)
+PREVIOUS_DONT_WRITE_BYTECODE = sys.dont_write_bytecode
+try:
+    sys.dont_write_bytecode = True
+    SPEC.loader.exec_module(PROVENANCE)
+finally:
+    sys.dont_write_bytecode = PREVIOUS_DONT_WRITE_BYTECODE
 
 
 class Fixture:
@@ -58,6 +63,9 @@ class SourceProvenanceTests(unittest.TestCase):
         temporary, fixture = self.fixture()
         with temporary:
             fixture.validate()
+
+    def test_import_does_not_write_repository_bytecode(self) -> None:
+        self.assertFalse((SCRIPT.parent / "__pycache__").exists())
 
     def test_both_command_line_config_forms_are_rejected(self) -> None:
         temporary, fixture = self.fixture()

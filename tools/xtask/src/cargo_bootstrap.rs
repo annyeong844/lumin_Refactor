@@ -1,21 +1,134 @@
 //! CI Cargo bootstrap integrity and workflow routing policy.
 
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 const GUARD_PATH: &str = "tools/xtask/bootstrap/source_provenance.py";
 const GUARD_SHA256: &str = "f9129a92f80477a8fa0df2e9583596e2acf172b782c000acfe3ced197d6b350e";
 const TEST_PATH: &str = "tools/xtask/bootstrap/test_source_provenance.py";
-const TEST_SHA256: &str = "7f1d995616d8fc299b22287c28498c701c7aed7308c2a0f412c59c9a76b9c8d8";
+const TEST_SHA256: &str = "836bd7c28565640f1d0ce2353207db20ee4e0591eceec00c3f8fa0e16e3cb841";
 const WORKFLOW_PATH: &str = ".github/workflows/ci.yml";
-const WRAPPER_TOKENS: &[&str] = &[
-    "python",
-    "-I",
-    "-S",
-    "tools/xtask/bootstrap/source_provenance.py",
-    "--",
+const WORKFLOW_SHA256: &str = "7f38d74de95b360f00808b422e08581eccfc9668bfa6c1e97648e738771abd21";
+const SETUP_PYTHON: &str = "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0";
+const PYTHON_VERSION: &str = "3.13.14";
+const CARGO_JOBS: &[&str] = &[
+    "formatting",
+    "architecture-check",
+    "dependency-policy",
+    "platform",
 ];
-const TEST_COMMAND: &str = "python -I -S tools/xtask/bootstrap/test_source_provenance.py";
+const EXPECTED_USES: &[(&str, usize)] = &[
+    (
+        "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0",
+        4,
+    ),
+    (SETUP_PYTHON, 4),
+    (
+        "taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b # v2.83.4",
+        1,
+    ),
+];
+const EXPECTED_RUN_COMMANDS: &[(&str, usize)] = &[
+    (
+        "rustup toolchain install 1.96.0 --profile minimal --component rustfmt --no-self-update",
+        1,
+    ),
+    (
+        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo fmt --all --check",
+        1,
+    ),
+    (
+        "rustup toolchain install 1.96.0 --profile minimal --no-self-update",
+        2,
+    ),
+    (
+        "python -I -S tools/xtask/bootstrap/test_source_provenance.py",
+        1,
+    ),
+    (
+        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- architecture-check",
+        1,
+    ),
+    (
+        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo audit --deny warnings",
+        1,
+    ),
+    (
+        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo deny --locked check bans licenses sources",
+        1,
+    ),
+    (
+        "rustup toolchain install 1.96.0 --profile minimal --component clippy,rustfmt --no-self-update",
+        1,
+    ),
+    ("rustc --version --verbose\ncargo --version", 1),
+    (
+        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy --workspace --all-targets --locked -- -D warnings",
+        1,
+    ),
+    (
+        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy -p lumin-cli --test retention_faults --features retention-test-crash --locked -- -D warnings",
+        1,
+    ),
+    (
+        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy -p lumin-cli --test lifecycle_operation_idempotency --features lifecycle-test-fault --locked -- -D warnings",
+        1,
+    ),
+    (
+        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy -p lumin-cli --test publication_faults --features publication-test-crash --locked -- -D warnings",
+        1,
+    ),
+    (
+        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy -p lumin-cli --test publication_concurrency --features publication-test-crash --locked -- -D warnings",
+        1,
+    ),
+    (
+        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy -p lumin-cli --test publication_retention_race --features publication-test-crash,retention-test-crash --locked -- -D warnings",
+        1,
+    ),
+    (
+        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --workspace --all-targets --locked",
+        1,
+    ),
+    (
+        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus foundation --store-crash --row retention-crash-protocol",
+        1,
+    ),
+    (
+        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus foundation --row lifecycle-operation-idempotency",
+        1,
+    ),
+    (
+        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus foundation --store-crash --row crash-publication",
+        1,
+    ),
+    (
+        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus foundation --store-crash --row concurrent-latest-publication",
+        1,
+    ),
+    (
+        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus foundation --store-crash --row publication-retention-race",
+        1,
+    ),
+    (
+        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --workspace --doc --locked",
+        1,
+    ),
+    (
+        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo build -p lumin-cli --release --locked",
+        1,
+    ),
+    (
+        concat!(
+            "test \"$FORMATTING_RESULT\" = success\n",
+            "test \"$ARCHITECTURE_CHECK_RESULT\" = success\n",
+            "test \"$DEPENDENCY_POLICY_RESULT\" = success\n",
+            "test \"$PLATFORM_RESULT\" = success",
+        ),
+        1,
+    ),
+];
 
 #[derive(Debug, Default)]
 pub struct CargoBootstrapResult {
@@ -27,6 +140,7 @@ pub fn check_cargo_bootstrap(workspace_root: &Path) -> CargoBootstrapResult {
     let mut result = CargoBootstrapResult::default();
     verify_digest(workspace_root, GUARD_PATH, GUARD_SHA256, &mut result);
     verify_digest(workspace_root, TEST_PATH, TEST_SHA256, &mut result);
+    verify_digest(workspace_root, WORKFLOW_PATH, WORKFLOW_SHA256, &mut result);
 
     let workflow = workspace_root.join(WORKFLOW_PATH);
     match std::fs::read_to_string(&workflow) {
@@ -60,62 +174,129 @@ fn verify_digest(root: &Path, relative: &str, expected: &str, result: &mut Cargo
 }
 
 fn validate_workflow(source: &str, violations: &mut Vec<String>) {
-    let mut cargo_commands = 0_usize;
-    let mut bootstrap_test_commands = 0_usize;
+    let runs = extract_run_commands(source, violations);
+    validate_exact_multiset("run", &runs, EXPECTED_RUN_COMMANDS, violations);
+    let uses = extract_scalar_values(source, "uses:");
+    validate_exact_multiset("uses", &uses, EXPECTED_USES, violations);
+    for job in CARGO_JOBS {
+        validate_python_setup(source, job, violations);
+    }
+}
 
-    for (index, raw_line) in source.lines().enumerate() {
-        let line_number = index + 1;
-        let trimmed = raw_line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
+fn extract_run_commands(source: &str, violations: &mut Vec<String>) -> Vec<String> {
+    let lines = source.lines().collect::<Vec<_>>();
+    let mut commands = Vec::new();
+    let mut index = 0_usize;
+    while index < lines.len() {
+        let raw = lines[index];
+        let trimmed = raw.trim();
+        let Some(value) = trimmed.strip_prefix("run:").map(str::trim) else {
+            index += 1;
+            continue;
+        };
+        if value != "|" {
+            if value.is_empty() {
+                violations.push(format!(
+                    "EMPTY WORKFLOW RUN COMMAND: {WORKFLOW_PATH}:{}",
+                    index + 1
+                ));
+            } else {
+                commands.push(value.to_owned());
+            }
+            index += 1;
             continue;
         }
-        let command = trimmed
-            .strip_prefix("run:")
-            .map(str::trim)
-            .unwrap_or(trimmed);
-        if command == TEST_COMMAND {
-            bootstrap_test_commands += 1;
-        }
 
-        let tokens = command.split_whitespace().collect::<Vec<_>>();
-        let cargo_positions = tokens
-            .iter()
-            .enumerate()
-            .filter_map(|(position, token)| (*token == "cargo").then_some(position))
-            .collect::<Vec<_>>();
-        if cargo_positions.is_empty() {
-            continue;
+        let parent_indent = raw.len() - raw.trim_start().len();
+        let mut block = Vec::new();
+        index += 1;
+        while index < lines.len() {
+            let nested = lines[index];
+            if nested.trim().is_empty() {
+                index += 1;
+                continue;
+            }
+            let nested_indent = nested.len() - nested.trim_start().len();
+            if nested_indent <= parent_indent {
+                break;
+            }
+            block.push(nested.trim().to_owned());
+            index += 1;
         }
-        cargo_commands += cargo_positions.len();
-
-        if tokens == ["cargo", "--version"] {
-            continue;
-        }
-        if cargo_positions.len() != 1 {
+        if block.is_empty() {
             violations.push(format!(
-                "UNWRAPPED CARGO: {WORKFLOW_PATH}:{line_number} must contain one exact wrapped Cargo invocation"
+                "EMPTY WORKFLOW RUN BLOCK: {WORKFLOW_PATH}:{}",
+                index + 1
             ));
-            continue;
+        } else {
+            commands.push(block.join("\n"));
         }
-        let cargo_position = cargo_positions[0];
-        if cargo_position != WRAPPER_TOKENS.len()
-            || tokens.get(..cargo_position) != Some(WRAPPER_TOKENS)
-        {
+    }
+    commands
+}
+
+fn extract_scalar_values(source: &str, key: &str) -> Vec<String> {
+    source
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix(key).map(str::trim))
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn validate_exact_multiset(
+    label: &str,
+    observed: &[String],
+    expected: &[(&str, usize)],
+    violations: &mut Vec<String>,
+) {
+    let mut counts = BTreeMap::new();
+    for value in observed {
+        *counts.entry(value.as_str()).or_insert(0_usize) += 1;
+    }
+    let expected_counts = expected.iter().copied().collect::<BTreeMap<_, _>>();
+    for (value, count) in &counts {
+        let allowed = expected_counts.get(value).copied().unwrap_or(0);
+        if *count > allowed {
             violations.push(format!(
-                "UNWRAPPED CARGO: {WORKFLOW_PATH}:{line_number} must start with `{}`",
-                WRAPPER_TOKENS.join(" ")
+                "UNAPPROVED WORKFLOW {label}: `{value}` observed {count}, allowed {allowed}"
             ));
         }
     }
-
-    if cargo_commands == 0 {
-        violations.push(format!(
-            "CARGO WORKFLOW EMPTY: {WORKFLOW_PATH} contains zero Cargo commands"
-        ));
+    for (value, count) in expected_counts {
+        let actual = counts.get(value).copied().unwrap_or(0);
+        if actual < count {
+            violations.push(format!(
+                "MISSING WORKFLOW {label}: `{value}` observed {actual}, required {count}"
+            ));
+        }
     }
-    if bootstrap_test_commands != 1 {
+}
+
+fn validate_python_setup(source: &str, job: &str, violations: &mut Vec<String>) {
+    let lines = source.lines().collect::<Vec<_>>();
+    let marker = format!("  {job}:");
+    let Some(start) = lines.iter().position(|line| *line == marker) else {
+        violations.push(format!("MISSING CARGO WORKFLOW JOB: {job}"));
+        return;
+    };
+    let end = lines
+        .iter()
+        .enumerate()
+        .skip(start + 1)
+        .find_map(|(index, line)| {
+            (line.starts_with("  ") && !line.starts_with("    ") && line.trim_end().ends_with(':'))
+                .then_some(index)
+        })
+        .unwrap_or(lines.len());
+    let block = lines[start..end].join("\n");
+    let snippet = format!(
+        "      - name: Install exact Python\n        uses: {SETUP_PYTHON}\n        with:\n          python-version: \"{PYTHON_VERSION}\""
+    );
+    let count = block.matches(&snippet).count();
+    if count != 1 {
         violations.push(format!(
-            "CARGO BOOTSTRAP TEST ROUTING: {WORKFLOW_PATH} must contain exactly one `{TEST_COMMAND}` command, found {bootstrap_test_commands}"
+            "PYTHON BOOTSTRAP ROUTING: job {job} must contain one exact Python {PYTHON_VERSION} setup, found {count}"
         ));
     }
 }
@@ -124,58 +305,57 @@ fn validate_workflow(source: &str, violations: &mut Vec<String>) {
 mod tests {
     use super::*;
 
-    const GOOD: &str = r#"
-      - name: Test bootstrap
-        run: python -I -S tools/xtask/bootstrap/test_source_provenance.py
-      - name: Version
-        run: cargo --version
-      - name: Test
-        run: python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --locked
-"#;
+    const GOOD: &str = include_str!("../../../.github/workflows/ci.yml");
 
     #[test]
-    fn exact_wrapper_and_version_exception_pass() {
+    fn exact_workflow_surface_passes() {
         let mut violations = Vec::new();
         validate_workflow(GOOD, &mut violations);
         assert!(violations.is_empty(), "{violations:?}");
     }
 
     #[test]
-    fn unwrapped_or_weakened_cargo_fails() {
+    fn reconstructed_delegated_or_weakened_cargo_fails() {
+        let wrapped = "run: python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo fmt --all --check";
         for bad in [
             GOOD.replace(
-                "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --locked",
-                "cargo test --locked",
+                wrapped,
+                "run: |\n          c=cargo\n          $c fmt --all --check",
             ),
-            GOOD.replace("python -I -S", "python -S"),
-            GOOD.replace(
-                "cargo test --locked",
-                "cargo test --locked && cargo build --locked",
-            ),
+            GOOD.replace(wrapped, "run: ./ci/run-cargo.sh"),
+            GOOD.replace(wrapped, "uses: ./ci/local-cargo-action"),
+            GOOD.replace(wrapped, &wrapped.replace("python -I -S", "python -S")),
         ] {
             let mut violations = Vec::new();
             validate_workflow(&bad, &mut violations);
             assert!(
                 violations
                     .iter()
-                    .any(|violation| violation.contains("UNWRAPPED CARGO")),
+                    .any(|violation| violation.contains("UNAPPROVED WORKFLOW")
+                        || violation.contains("MISSING WORKFLOW")),
                 "{violations:?}"
             );
         }
     }
 
     #[test]
-    fn missing_bootstrap_test_command_fails() {
-        let mut violations = Vec::new();
-        validate_workflow(
-            &GOOD.replace(TEST_COMMAND, "python -I -S unrelated.py"),
-            &mut violations,
-        );
-        assert!(
-            violations
-                .iter()
-                .any(|violation| violation.contains("BOOTSTRAP TEST ROUTING")),
-            "{violations:?}"
-        );
+    fn every_cargo_job_requires_exact_python_setup() {
+        for bad in [
+            GOOD.replacen(
+                "      - name: Install exact Python\n        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0\n        with:\n          python-version: \"3.13.14\"\n\n",
+                "",
+                1,
+            ),
+            GOOD.replacen("python-version: \"3.13.14\"", "python-version: \"3.10\"", 1),
+        ] {
+            let mut violations = Vec::new();
+            validate_workflow(&bad, &mut violations);
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("PYTHON BOOTSTRAP ROUTING")),
+                "{violations:?}"
+            );
+        }
     }
 }
