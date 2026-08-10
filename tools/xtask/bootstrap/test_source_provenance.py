@@ -45,6 +45,22 @@ class Fixture:
         )
 
     def write_policy(self, dependencies: list[dict[str, object]]) -> None:
+        normalized_dependencies = []
+        for dependency in dependencies:
+            row = dependency.copy()
+            row.setdefault("optional", False)
+            row.setdefault("usesDefaultFeatures", True)
+            row.setdefault("features", [])
+            row.setdefault(
+                "resolution",
+                {
+                    "kind": "third-party",
+                    "package": row["package"],
+                    "version": "1.0.0",
+                    "source": PROVENANCE.CRATES_IO_SOURCE,
+                },
+            )
+            normalized_dependencies.append(row)
         policy = self.root / "tools" / "xtask" / "dependency-surface-policy.v1.json"
         policy.parent.mkdir(parents=True, exist_ok=True)
         policy.write_text(
@@ -55,7 +71,7 @@ class Fixture:
                     "packages": [
                         {
                             "name": "fixture-member",
-                            "dependencies": dependencies,
+                            "dependencies": normalized_dependencies,
                         }
                     ],
                 }
@@ -169,6 +185,18 @@ class SourceProvenanceTests(unittest.TestCase):
                     redirected,
                 )
 
+    @unittest.skipIf(os.name == "nt", "Windows runners may not grant symlink privileges")
+    def test_absent_registry_source_below_redirected_parent_is_rejected(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            redirected = fixture.cargo_home / "redirected-registry"
+            redirected.mkdir()
+            (fixture.cargo_home / "registry").symlink_to(
+                redirected, target_is_directory=True
+            )
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "lexical/physical"):
+                fixture.validate()
+
     def test_empty_cargo_home_environment_is_rejected(self) -> None:
         temporary, fixture = self.fixture()
         with temporary:
@@ -222,7 +250,68 @@ class SourceProvenanceTests(unittest.TestCase):
             fixture.write_root(
                 suffix='\n[workspace.dependencies]\nserde = "= 1.0.0"\n'
             )
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "requirements drift"):
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "contract drift"):
+                fixture.validate()
+
+    def test_dependency_source_substitutions_are_rejected_before_cargo(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            rogue = fixture.root / "rogue"
+            rogue.mkdir()
+            (rogue / "Cargo.toml").write_text(
+                '[package]\nname = "serde"\nversion = "1.0.0"\n',
+                encoding="utf-8",
+            )
+            (rogue / "build.rs").write_text("fn main() {}\n", encoding="utf-8")
+            (fixture.member / "Cargo.toml").write_text(
+                '[package]\nname = "fixture-member"\nversion = "0.0.0"\n'
+                '[dependencies]\nserde.workspace = true\n',
+                encoding="utf-8",
+            )
+            fixture.write_policy(
+                [
+                    {
+                        "package": "serde",
+                        "rename": None,
+                        "requirement": "=1.0.0",
+                        "kind": "normal",
+                        "target": None,
+                    }
+                ]
+            )
+            substitutions = (
+                'serde = { version = "=1.0.0", path = "rogue" }',
+                'serde = { version = "=1.0.0", git = "https://example.invalid/serde" }',
+                'serde = { version = "=1.0.0", registry = "private" }',
+            )
+            for dependency in substitutions:
+                with self.subTest(dependency=dependency):
+                    fixture.write_root(
+                        suffix=f"\n[workspace.dependencies]\n{dependency}\n"
+                    )
+                    with self.assertRaisesRegex(
+                        PROVENANCE.ProvenanceError,
+                        "workspace member|forbidden source selectors",
+                    ):
+                        fixture.validate()
+
+    def test_root_package_dependencies_are_included_before_cargo(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            rogue = fixture.root / "rogue"
+            rogue.mkdir()
+            (rogue / "Cargo.toml").write_text(
+                '[package]\nname = "rogue"\nversion = "0.0.0"\n',
+                encoding="utf-8",
+            )
+            (rogue / "build.rs").write_text("fn main() {}\n", encoding="utf-8")
+            fixture.write_root(
+                suffix=(
+                    '\n[package]\nname = "root-member"\nversion = "0.0.0"\n'
+                    '[dependencies]\nrogue = { path = "rogue" }\n'
+                )
+            )
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "workspace member"):
                 fixture.validate()
 
     def test_workflow_drift_and_additional_workflows_are_rejected(self) -> None:

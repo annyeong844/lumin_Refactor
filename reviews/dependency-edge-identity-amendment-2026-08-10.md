@@ -72,18 +72,25 @@ workspace manifest and rejects:
 - `[patch]` or `[replace]` tables in workspace manifests;
 - redirected workspace directories or manifests, and workspace build scripts that could
   mutate source configuration after admission;
+- dependency `git` or alternate-registry selectors, any non-member `path` dependency,
+  and any redirected path to a workspace member; a workspace path is admitted only
+  when it resolves directly to the exact explicit member and declared package;
 - Cargo global configuration arguments in either `--config VALUE` or
   `--config=VALUE` form anywhere in the supplied Cargo argument vector;
 - a missing or non-exact root `[workspace].resolver = "3"` declaration.
 
 The bootstrap also requires `.github/workflows` to contain only the reviewed `ci.yml`
 and verifies its exact digest before every guarded Cargo invocation. The architecture
-job builds xtask under the guard, invokes the guard independently again, and then runs
-the built checker directly. The checker invokes the isolated guard once more immediately
-before its nested `cargo metadata`, so build-time mutation cannot enter the metadata
-window. The same semantic TOML pass compares every manifest-authored dependency
-requirement against the checked policy; Cargo's normalized `req` is only a graph-join
-fact and cannot erase distinctions in the authored string.
+job invokes the guard independently before running any repository test code, builds
+xtask under the guard, revalidates independently, and then runs the built checker
+directly. Bootstrap tests run only after that provenance verdict, when their process
+cannot affect a later build or verdict. The checker invokes the isolated guard once more
+immediately before its nested `cargo metadata`, so build-time mutation cannot enter the
+metadata window. The semantic TOML pass treats a root package as Cargo's implicit
+workspace member and compares every member's manifest-authored dependency requirement,
+source kind, optionality, default-feature setting, and requested feature set against the
+checked policy; Cargo's normalized `req` is only a graph-join fact and cannot erase
+distinctions in the authored string.
 
 The exact policy deliberately refuses all such configuration rather than trying to
 prove that a particular replacement is harmless. Public CI runs with this clean source
@@ -96,7 +103,9 @@ The architecture check then reads `cargo metadata --all-features --locked`. It r
 the active Cargo home and repository root physically before trusting package locations.
 Every resolved non-workspace registry package's canonical `manifest_path` must be below
 the canonical active Cargo home `registry/src` and outside the canonical repository
-root. The registry source root itself must be outside the repository. Missing paths,
+root. The registry source root itself must be outside the repository. Its physical
+identity is resolved even when the final `registry/src` leaf does not exist, so a
+redirected existing parent cannot become trusted on first use. Missing paths,
 lexical/physical disagreement, symlink escape, a directory-source manifest, and a
 non-workspace package with no source all fail. This provenance rule covers the complete
 resolved graph, not only direct allowlisted edges, so a replaced transitive crate cannot

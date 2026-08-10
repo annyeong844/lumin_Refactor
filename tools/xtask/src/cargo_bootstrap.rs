@@ -5,12 +5,12 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 const GUARD_PATH: &str = "tools/xtask/bootstrap/source_provenance.py";
-const GUARD_SHA256: &str = "a8818921674c739646ffdfc2ffd113a9eabde9467f4e2e221660ce59a8bd4a54";
+const GUARD_SHA256: &str = "484f1ccb67be2ff43dafba9b5d5ee3af1cc89047397ad7d79b93db66f1af7d40";
 const TEST_PATH: &str = "tools/xtask/bootstrap/test_source_provenance.py";
-const TEST_SHA256: &str = "a560a52e6d7d8e8209c4f56d905871002f674c42dbaa72180a07ce83247736ad";
+const TEST_SHA256: &str = "519753831565b55b7d8b1bc479d1c0411af178187b0ad03a4407e5ef6606ef61";
 const WORKFLOW_DIRECTORY: &str = ".github/workflows";
 const WORKFLOW_PATH: &str = ".github/workflows/ci.yml";
-const WORKFLOW_SHA256: &str = "28da16df2f542db7ea435a1b4e4c9ab3eee41670408cbd313d94959cc0c708b3";
+const WORKFLOW_SHA256: &str = "ee2613425a8ce38597a40c6885bead32d7a787059629a4be50384042f3ccc64a";
 const SETUP_PYTHON: &str = "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0";
 const PYTHON_VERSION: &str = "3.13.14";
 const CARGO_JOBS: &[&str] = &[
@@ -53,7 +53,7 @@ const EXPECTED_RUN_COMMANDS: &[(&str, usize)] = &[
     ),
     (
         "python -I -S tools/xtask/bootstrap/source_provenance.py --check-only",
-        1,
+        2,
     ),
     ("target/debug/lumin-xtask architecture-check", 1),
     (

@@ -52,8 +52,8 @@ jobs:
       - name: Install exact Rust toolchain
         run: rustup toolchain install 1.96.0 --profile minimal --no-self-update
 
-      - name: Test source provenance bootstrap
-        run: python -I -S tools/xtask/bootstrap/test_source_provenance.py
+      - name: Validate source provenance before repository code
+        run: python -I -S tools/xtask/bootstrap/source_provenance.py --check-only
 
       - name: Build architecture checker
         run: python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo build --locked -p lumin-xtask
@@ -63,6 +63,9 @@ jobs:
 
       - name: Enforce architecture policy
         run: target/debug/lumin-xtask architecture-check
+
+      - name: Test source provenance bootstrap after verdict
+        run: python -I -S tools/xtask/bootstrap/test_source_provenance.py
 
   dependency-policy:
     name: Dependency policy

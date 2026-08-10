@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
 import subprocess
 import sys
@@ -16,17 +17,30 @@ MINIMUM_PYTHON = (3, 11)
 CONFIG_NAMES = ("config.toml", "config")
 WORKFLOW_DIRECTORY = Path(".github/workflows")
 WORKFLOW_NAME = "ci.yml"
-WORKFLOW_SHA256 = "28da16df2f542db7ea435a1b4e4c9ab3eee41670408cbd313d94959cc0c708b3"
+WORKFLOW_SHA256 = "ee2613425a8ce38597a40c6885bead32d7a787059629a4be50384042f3ccc64a"
 POLICY_PATH = Path("tools/xtask/dependency-surface-policy.v1.json")
 DEPENDENCY_TABLES = (
     ("dependencies", "normal"),
     ("dev-dependencies", "dev"),
     ("build-dependencies", "build"),
 )
+CRATES_IO_SOURCE = "registry+https://github.com/rust-lang/crates.io-index"
+FORBIDDEN_DEPENDENCY_SOURCE_KEYS = frozenset(
+    {"git", "registry", "branch", "tag", "rev"}
+)
 
 
 class ProvenanceError(RuntimeError):
     """The Cargo invocation cannot produce an architecture verdict."""
+
+
+@dataclass(frozen=True)
+class DependencyContract:
+    requirement: str
+    resolution_kind: str
+    optional: bool
+    uses_default_features: bool
+    features: tuple[str, ...]
 
 
 def _is_within(path: Path, parent: Path) -> bool:
@@ -210,28 +224,142 @@ def _package_and_requirement(alias: str, value: object) -> tuple[str, str]:
     return package, requirement
 
 
+def _dependency_features(alias: str, table: Mapping[str, object] | None) -> tuple[str, ...]:
+    if table is None:
+        return ()
+    raw_features = table.get("features", [])
+    if not isinstance(raw_features, list) or any(
+        not isinstance(feature, str) or not feature for feature in raw_features
+    ):
+        raise ProvenanceError(f"dependency {alias!r} features must be non-empty strings")
+    return tuple(sorted(set(raw_features)))
+
+
+def _dependency_bool(
+    alias: str,
+    table: Mapping[str, object] | None,
+    key: str,
+    default: bool,
+) -> bool:
+    if table is None or key not in table:
+        return default
+    value = table[key]
+    if not isinstance(value, bool):
+        raise ProvenanceError(f"dependency {alias!r} {key} must be a boolean")
+    return value
+
+
+def _dependency_resolution_kind(
+    alias: str,
+    package: str,
+    table: Mapping[str, object] | None,
+    base: Path,
+    workspace_members: Mapping[Path, str],
+) -> str:
+    if table is None:
+        return "third-party"
+    forbidden = sorted(FORBIDDEN_DEPENDENCY_SOURCE_KEYS.intersection(table))
+    if forbidden:
+        raise ProvenanceError(
+            f"dependency {alias!r} uses forbidden source selectors: {forbidden!r}"
+        )
+    if "path" not in table:
+        return "third-party"
+    raw_path = table["path"]
+    if not isinstance(raw_path, str) or not raw_path:
+        raise ProvenanceError(f"dependency {alias!r} path must be a non-empty string")
+    candidate = Path(raw_path)
+    if candidate.is_absolute():
+        raise ProvenanceError(f"dependency {alias!r} path must be repository-relative")
+    lexical = _absolute(base / candidate)
+    try:
+        physical = (base / candidate).resolve(strict=True)
+    except OSError as error:
+        raise ProvenanceError(
+            f"cannot resolve dependency {alias!r} path {raw_path!r}: {error}"
+        ) from error
+    target_package = workspace_members.get(physical)
+    if physical != lexical or target_package is None or target_package != package:
+        raise ProvenanceError(
+            "dependency path must resolve directly to its exact workspace member: "
+            f"{alias!r} ({package}) {lexical} -> {physical}"
+        )
+    return "workspace"
+
+
+def _declared_dependency(
+    alias: str,
+    value: object,
+    base: Path,
+    workspace_members: Mapping[Path, str],
+) -> tuple[str, DependencyContract]:
+    table = value if isinstance(value, dict) else None
+    if table is not None and "workspace" in table:
+        raise ProvenanceError(
+            f"dependency {alias!r} may use workspace inheritance only in a member manifest"
+        )
+    package, requirement = _package_and_requirement(alias, value)
+    return package, DependencyContract(
+        requirement=requirement,
+        resolution_kind=_dependency_resolution_kind(
+            alias, package, table, base, workspace_members
+        ),
+        optional=_dependency_bool(alias, table, "optional", False),
+        uses_default_features=_dependency_bool(
+            alias, table, "default-features", True
+        ),
+        features=_dependency_features(alias, table),
+    )
+
+
 def _authored_dependency(
     alias: str,
     value: object,
     workspace_dependencies: Mapping[str, object],
-) -> tuple[str, str | None, str]:
+    workspace_root: Path,
+    owner_root: Path,
+    workspace_members: Mapping[Path, str],
+) -> tuple[str, str | None, DependencyContract]:
     table = value if isinstance(value, dict) else None
     if table is not None and table.get("workspace") is True:
         if alias not in workspace_dependencies:
             raise ProvenanceError(
                 f"workspace dependency {alias!r} has no [workspace.dependencies] owner"
             )
-        if "package" in table or "version" in table:
+        forbidden_overrides = sorted(
+            {"package", "version", "path"}.intersection(table)
+            | FORBIDDEN_DEPENDENCY_SOURCE_KEYS.intersection(table)
+        )
+        if forbidden_overrides:
             raise ProvenanceError(
-                f"workspace dependency {alias!r} overrides package or version locally"
+                f"workspace dependency {alias!r} overrides source identity locally: "
+                f"{forbidden_overrides!r}"
             )
-        package, requirement = _package_and_requirement(
-            alias, workspace_dependencies[alias]
+        package, contract = _declared_dependency(
+            alias,
+            workspace_dependencies[alias],
+            workspace_root,
+            workspace_members,
+        )
+        if contract.optional:
+            raise ProvenanceError(
+                f"[workspace.dependencies] entry {alias!r} cannot be optional"
+            )
+        local_features = _dependency_features(alias, table)
+        contract = DependencyContract(
+            requirement=contract.requirement,
+            resolution_kind=contract.resolution_kind,
+            optional=_dependency_bool(alias, table, "optional", False),
+            uses_default_features=contract.uses_default_features
+            and _dependency_bool(alias, table, "default-features", True),
+            features=tuple(sorted(set(contract.features) | set(local_features))),
         )
     else:
-        package, requirement = _package_and_requirement(alias, value)
+        package, contract = _declared_dependency(
+            alias, value, owner_root, workspace_members
+        )
     rename = alias if alias != package else None
-    return package, rename, requirement
+    return package, rename, contract
 
 
 def _dependency_table(
@@ -252,38 +380,53 @@ def _dependency_table(
 
 
 def _authored_requirements(
+    workspace_root: Path,
+    manifest_path: Path,
     manifest: Mapping[str, object],
     workspace_dependencies: Mapping[str, object],
-) -> dict[tuple[str, str | None, str, str | None], str]:
+    workspace_members: Mapping[Path, str],
+) -> dict[tuple[str, str | None, str, str | None], DependencyContract]:
     package = _required_table(manifest.get("package"), "workspace package")
     owner = package.get("name")
     if not isinstance(owner, str) or not owner:
         raise ProvenanceError("workspace package name must be a non-empty string")
-    records: dict[tuple[str, str | None, str, str | None], str] = {}
+    records: dict[
+        tuple[str, str | None, str, str | None], DependencyContract
+    ] = {}
 
     def collect(container: Mapping[str, object], kind: str, target: str | None) -> None:
         for table_name, table_kind in DEPENDENCY_TABLES:
             if table_kind != kind:
                 continue
             for alias, value in _dependency_table(owner, container, table_name).items():
-                package_name, rename, requirement = _authored_dependency(
-                    alias, value, workspace_dependencies
+                package_name, rename, contract = _authored_dependency(
+                    alias,
+                    value,
+                    workspace_dependencies,
+                    workspace_root,
+                    manifest_path.parent,
+                    workspace_members,
                 )
                 key = (package_name, rename, kind, target)
                 if key in records:
                     raise ProvenanceError(f"duplicate authored dependency identity: {owner} {key!r}")
-                records[key] = requirement
+                records[key] = contract
 
     for table_name, kind in DEPENDENCY_TABLES:
         table = _dependency_table(owner, manifest, table_name)
         for alias, value in table.items():
-            package_name, rename, requirement = _authored_dependency(
-                alias, value, workspace_dependencies
+            package_name, rename, contract = _authored_dependency(
+                alias,
+                value,
+                workspace_dependencies,
+                workspace_root,
+                manifest_path.parent,
+                workspace_members,
             )
             key = (package_name, rename, kind, None)
             if key in records:
                 raise ProvenanceError(f"duplicate authored dependency identity: {owner} {key!r}")
-            records[key] = requirement
+            records[key] = contract
 
     targets = manifest.get("target", {})
     targets = _required_table(targets, f"workspace package {owner} target table")
@@ -298,7 +441,8 @@ def validate_authored_requirements(
     root: Path,
     resolver: object,
     workspace_dependencies: Mapping[str, object],
-    manifests: Sequence[Mapping[str, object]],
+    manifests: Sequence[tuple[Path, Mapping[str, object]]],
+    workspace_members: Mapping[Path, str],
 ) -> None:
     policy_path = _require_unredirected_file(root / POLICY_PATH, root, "dependency policy")
     try:
@@ -312,14 +456,19 @@ def validate_authored_requirements(
     packages = policy.get("packages")
     if not isinstance(packages, list):
         raise ProvenanceError("dependency policy packages must be an array")
-    expected: dict[str, dict[tuple[str, str | None, str, str | None], str]] = {}
+    expected: dict[
+        str,
+        dict[tuple[str, str | None, str, str | None], DependencyContract],
+    ] = {}
     for package in packages:
         package_table = _required_table(package, "dependency policy package")
         owner = package_table.get("name")
         dependencies = package_table.get("dependencies")
         if not isinstance(owner, str) or not isinstance(dependencies, list):
             raise ProvenanceError("dependency policy package has invalid name or dependencies")
-        rows: dict[tuple[str, str | None, str, str | None], str] = {}
+        rows: dict[
+            tuple[str, str | None, str, str | None], DependencyContract
+        ] = {}
         for dependency in dependencies:
             row = _required_table(dependency, f"dependency policy row for {owner}")
             package_name = row.get("package")
@@ -327,32 +476,71 @@ def validate_authored_requirements(
             kind = row.get("kind")
             target = row.get("target")
             requirement = row.get("requirement")
+            optional = row.get("optional")
+            uses_default_features = row.get("usesDefaultFeatures")
+            features = row.get("features")
+            resolution = row.get("resolution")
             if (
                 not isinstance(package_name, str)
                 or (rename is not None and not isinstance(rename, str))
                 or not isinstance(kind, str)
                 or (target is not None and not isinstance(target, str))
                 or not isinstance(requirement, str)
+                or not isinstance(optional, bool)
+                or not isinstance(uses_default_features, bool)
+                or not isinstance(features, list)
+                or any(not isinstance(feature, str) for feature in features)
+                or not isinstance(resolution, dict)
             ):
                 raise ProvenanceError(f"dependency policy row has invalid identity: {owner}")
+            resolution_kind = resolution.get("kind")
+            if resolution.get("package") != package_name or resolution_kind not in {
+                "workspace",
+                "third-party",
+            }:
+                raise ProvenanceError(
+                    f"dependency policy row has invalid resolution: {owner}/{package_name}"
+                )
+            if (
+                resolution_kind == "third-party"
+                and resolution.get("source") != CRATES_IO_SOURCE
+            ):
+                raise ProvenanceError(
+                    f"dependency policy row has unapproved source: {owner}/{package_name}"
+                )
             key = (package_name, rename, kind, target)
             if key in rows:
                 raise ProvenanceError(f"duplicate dependency policy identity: {owner} {key!r}")
-            rows[key] = requirement
+            rows[key] = DependencyContract(
+                requirement=requirement,
+                resolution_kind=resolution_kind,
+                optional=optional,
+                uses_default_features=uses_default_features,
+                features=tuple(sorted(set(features))),
+            )
         if owner in expected:
             raise ProvenanceError(f"duplicate dependency policy package: {owner}")
         expected[owner] = rows
 
-    observed: dict[str, dict[tuple[str, str | None, str, str | None], str]] = {}
-    for manifest in manifests:
+    observed: dict[
+        str,
+        dict[tuple[str, str | None, str, str | None], DependencyContract],
+    ] = {}
+    for manifest_path, manifest in manifests:
         package = _required_table(manifest.get("package"), "workspace package")
         owner = package.get("name")
         if not isinstance(owner, str) or owner in observed:
             raise ProvenanceError(f"invalid or duplicate workspace package name: {owner!r}")
-        observed[owner] = _authored_requirements(manifest, workspace_dependencies)
+        observed[owner] = _authored_requirements(
+            root,
+            manifest_path,
+            manifest,
+            workspace_dependencies,
+            workspace_members,
+        )
     if observed != expected:
         raise ProvenanceError(
-            f"authored dependency requirements drift: expected {expected!r}, observed {observed!r}"
+            f"authored dependency contract drift: expected {expected!r}, observed {observed!r}"
         )
 
 
@@ -377,8 +565,12 @@ def validate_workspace_manifests(root: Path) -> tuple[Path, ...]:
         raise ProvenanceError("workspace members must be a non-empty explicit list")
 
     manifests: list[Path] = []
-    parsed_manifests: list[Mapping[str, object]] = []
+    parsed_manifests: list[tuple[Path, Mapping[str, object]]] = []
     seen: set[Path] = set()
+    if root_manifest.get("package") is not None:
+        manifests.append(root_manifest_path)
+        parsed_manifests.append((root_manifest_path, root_manifest))
+        seen.add(root_manifest_path)
     for member in members:
         if not isinstance(member, str) or not member:
             raise ProvenanceError("workspace member paths must be non-empty strings")
@@ -412,15 +604,28 @@ def validate_workspace_manifests(root: Path) -> tuple[Path, ...]:
             lexical_member, manifest, f"workspace member {member!r}"
         )
         manifests.append(manifest_path)
-        parsed_manifests.append(manifest)
+        parsed_manifests.append((manifest_path, manifest))
 
     if not manifests:
         raise ProvenanceError("zero workspace member manifests were parsed")
+    workspace_members: dict[Path, str] = {}
+    for manifest_path, manifest in parsed_manifests:
+        package = _required_table(manifest.get("package"), "workspace package")
+        package_name = package.get("name")
+        if not isinstance(package_name, str) or not package_name:
+            raise ProvenanceError(
+                f"workspace package name must be a non-empty string: {manifest_path}"
+            )
+        package_root = manifest_path.parent
+        if package_root in workspace_members or package_name in workspace_members.values():
+            raise ProvenanceError(f"duplicate workspace package identity: {package_name}")
+        workspace_members[package_root] = package_name
     validate_authored_requirements(
         root,
         workspace.get("resolver"),
         workspace_dependencies,
         parsed_manifests,
+        workspace_members,
     )
     return tuple(manifests)
 
@@ -473,27 +678,19 @@ def validate_repository(
             f"active Cargo home must remain outside the repository: {effective_home}"
         )
     registry_source = lexical_home / "registry" / "src"
-    if registry_source.exists() or registry_source.is_symlink():
-        physical_registry = registry_source.resolve(strict=False)
-        validate_registry_root_identity(
-            lexical_home,
-            effective_home,
-            registry_source,
-            physical_registry,
-        )
-        if _is_within(physical_registry, canonical_root) or not _is_within(
-            physical_registry, effective_home
-        ):
-            raise ProvenanceError(
-                "Cargo registry source root escapes its trusted location: "
-                f"{registry_source} -> {physical_registry}"
-            )
-    else:
-        validate_registry_root_identity(
-            lexical_home,
-            effective_home,
-            registry_source,
-            registry_source,
+    physical_registry = registry_source.resolve(strict=False)
+    validate_registry_root_identity(
+        lexical_home,
+        effective_home,
+        registry_source,
+        physical_registry,
+    )
+    if _is_within(physical_registry, canonical_root) or not _is_within(
+        physical_registry, effective_home
+    ):
+        raise ProvenanceError(
+            "Cargo registry source root escapes its trusted location: "
+            f"{registry_source} -> {physical_registry}"
         )
     reject_cargo_configuration(canonical_root, lexical_home)
     validate_workflow_surface(canonical_root)
