@@ -119,6 +119,21 @@ fn run_catalog_cursor_binds_repository_revision_and_anchor()
     Ok(())
 }
 
+#[test]
+fn run_catalog_response_rejects_truncation_without_an_anchor() {
+    assert!(matches!(
+        run_catalog_response(
+            RepositoryId::from_string("repository-runs".to_owned()),
+            7,
+            1,
+            Vec::new(),
+            true,
+        ),
+        Err(ProtocolError::ResponseCursorAnchorMissing(collection))
+            if collection == "run catalog"
+    ));
+}
+
 fn plan_with_items(count: usize) -> RetentionPlanRecord {
     RetentionPlanRecord {
         schema_version: "lumin-retention-plan.v1".to_owned(),

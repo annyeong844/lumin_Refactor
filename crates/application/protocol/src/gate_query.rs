@@ -423,7 +423,9 @@ pub fn active_gates_response(
     truncated: bool,
 ) -> Result<ActiveGatesCollectionDto, ProtocolError> {
     let next_cursor = if truncated {
-        let last = items.last().ok_or(ProtocolError::CursorAnchorMissing)?;
+        let last = items
+            .last()
+            .ok_or_else(|| ProtocolError::ResponseCursorAnchorMissing("active gates".to_owned()))?;
         Some(encode_cursor_payload(&ActiveGatesCursorDto {
             schema_version: ACTIVE_GATES_CURSOR_SCHEMA.to_owned(),
             repository_id: repository_id.clone(),
@@ -508,7 +510,10 @@ fn ordering(query: &EvidenceQuery, expected: &'static str) -> Result<&'static st
     if query.ordering.as_str() == expected {
         Ok(expected)
     } else {
-        Err(ProtocolError::CursorScopeMismatch)
+        Err(ProtocolError::ResponseOrderingMismatch {
+            expected,
+            observed: query.ordering.as_str().to_owned(),
+        })
     }
 }
 
@@ -520,7 +525,7 @@ fn encode_query_cursor(query: &EvidenceQuery) -> Result<String, ProtocolError> {
     let anchor = query
         .anchor
         .as_ref()
-        .ok_or(ProtocolError::CursorAnchorMissing)?;
+        .ok_or_else(|| ProtocolError::ResponseCursorAnchorMissing(query.collection_path.clone()))?;
     match &query.scope {
         EvidenceQueryScope::Binary { build_identity } => encode_cursor_payload(&BinaryCursorDto {
             schema_version: "lumin-binary-cursor.v2".to_owned(),
@@ -690,6 +695,65 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn query_cursor_rejects_response_without_an_anchor() {
+        let query = EvidenceQuery {
+            scope: EvidenceQueryScope::GateAttempt {
+                repository_id: test_repository_id(),
+                gate_id: GateId::from_string("gate-a".to_owned()),
+                revision: 1,
+            },
+            finding_id: None,
+            collection_path: "gate/findings".to_owned(),
+            ordering: CollectionOrderingId::findings(),
+            page_size: 100,
+            filters: BTreeMap::new(),
+            anchor: None,
+        };
+        let page = EvidencePage {
+            query: query.clone(),
+            scope_total: 2,
+            total: 2,
+            items: vec![finding()],
+            next_query: Some(query),
+        };
+
+        assert!(matches!(
+            gate_findings_response(&page),
+            Err(ProtocolError::ResponseCursorAnchorMissing(collection))
+                if collection == "gate/findings"
+        ));
+    }
+
+    #[test]
+    fn response_projection_rejects_mismatched_ordering() {
+        let page = EvidencePage {
+            query: EvidenceQuery {
+                scope: EvidenceQueryScope::GateAttempt {
+                    repository_id: test_repository_id(),
+                    gate_id: GateId::from_string("gate-a".to_owned()),
+                    revision: 1,
+                },
+                finding_id: None,
+                collection_path: "gate/findings".to_owned(),
+                ordering: CollectionOrderingId::capabilities(),
+                page_size: 100,
+                filters: BTreeMap::new(),
+                anchor: None,
+            },
+            scope_total: 1,
+            total: 1,
+            items: vec![finding()],
+            next_query: None,
+        };
+
+        assert!(matches!(
+            gate_findings_response(&page),
+            Err(ProtocolError::ResponseOrderingMismatch { expected, observed })
+                if expected == FINDINGS_ORDERING_ID && observed == CAPABILITIES_ORDERING_ID
+        ));
+    }
+
     fn finding() -> FindingRecord {
         FindingRecord {
             finding_id: FindingId::from_string("finding-a".to_owned()),
@@ -799,5 +863,21 @@ mod active_gate_catalog_tests {
         assert_eq!(value["items"][0]["currentRevision"], 0);
         assert_eq!(value["items"][0]["openingTransitionSequence"], 9);
         Ok(())
+    }
+
+    #[test]
+    fn active_gate_response_rejects_truncation_without_an_anchor() {
+        assert!(matches!(
+            active_gates_response(
+                RepositoryId::from_string("repository-active".to_owned()),
+                2,
+                1,
+                1,
+                Vec::new(),
+                true,
+            ),
+            Err(ProtocolError::ResponseCursorAnchorMissing(collection))
+                if collection == "active gates"
+        ));
     }
 }

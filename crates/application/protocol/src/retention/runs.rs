@@ -67,7 +67,9 @@ pub fn run_catalog_response(
         Some(encode_cursor(
             repository_id.clone(),
             revision,
-            runs.last().ok_or(ProtocolError::CursorAnchorMissing)?,
+            runs.last().ok_or_else(|| {
+                ProtocolError::ResponseCursorAnchorMissing("run catalog".to_owned())
+            })?,
         )?)
     } else {
         None
