@@ -173,6 +173,24 @@ def _reject_manifest_overrides(path: Path, manifest: Mapping[str, object]) -> No
             raise ProvenanceError(f"forbidden [{key}] table in {path}")
 
 
+def _reject_workspace_build_script(
+    package_root: Path,
+    manifest: Mapping[str, object],
+    description: str,
+) -> None:
+    package = manifest.get("package")
+    if package is None:
+        return
+    package = _required_table(package, description)
+    build_script = package_root / "build.rs"
+    if (
+        package.get("build", False) is not False
+        or build_script.exists()
+        or build_script.is_symlink()
+    ):
+        raise ProvenanceError(f"workspace build script is forbidden: {package_root}")
+
+
 def _required_table(value: object, description: str) -> Mapping[str, object]:
     if not isinstance(value, dict):
         raise ProvenanceError(f"{description} is not a TOML table")
@@ -344,6 +362,7 @@ def validate_workspace_manifests(root: Path) -> tuple[Path, ...]:
     )
     root_manifest = _read_manifest(root_manifest_path)
     _reject_manifest_overrides(root_manifest_path, root_manifest)
+    _reject_workspace_build_script(root, root_manifest, "root workspace package")
 
     workspace = root_manifest.get("workspace")
     if not isinstance(workspace, dict):
@@ -389,12 +408,9 @@ def validate_workspace_manifests(root: Path) -> tuple[Path, ...]:
         seen.add(manifest_path)
         manifest = _read_manifest(manifest_path)
         _reject_manifest_overrides(manifest_path, manifest)
-        package = _required_table(manifest.get("package"), f"workspace member {member!r}")
-        build = package.get("build", False)
-        if build is not False or (lexical_member / "build.rs").exists() or (
-            lexical_member / "build.rs"
-        ).is_symlink():
-            raise ProvenanceError(f"workspace build script is forbidden: {lexical_member}")
+        _reject_workspace_build_script(
+            lexical_member, manifest, f"workspace member {member!r}"
+        )
         manifests.append(manifest_path)
         parsed_manifests.append(manifest)
 

@@ -247,6 +247,24 @@ class SourceProvenanceTests(unittest.TestCase):
             with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "build script"):
                 fixture.validate()
 
+    def test_root_workspace_package_build_scripts_are_rejected(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            package = (
+                '\n[package]\nname = "root-member"\nversion = "0.0.0"\n'
+                'edition = "2024"\n'
+            )
+            fixture.write_root(suffix=package)
+            build_script = fixture.root / "build.rs"
+            build_script.write_text("fn main() {}\n", encoding="utf-8")
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "build script"):
+                fixture.validate()
+
+            build_script.unlink()
+            fixture.write_root(suffix=package + 'build = "scripts/build.rs"\n')
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "build script"):
+                fixture.validate()
+
     @unittest.skipIf(os.name == "nt", "Windows runners may not grant symlink privileges")
     def test_redirected_workspace_manifest_is_rejected(self) -> None:
         temporary, fixture = self.fixture()
