@@ -2,12 +2,13 @@
 
 Document role: focused Architecture v1 amendment and freeze gate
 
-Status: frozen at `ba4b1816ae263d07b74f91a54dfa1494a8446060`. The owner design
-review covers architecture-content commit
-`3b27f25ed1b56b0712bc1f07c1f3e6e7d278f4cf`; the independent adversarial
-review covers the exact merged commit and returned `PASS` with no current review
-thread. This freeze authorizes only the dependency-surface implementation defined
-below.
+Status: **REOPENED** by the independent review of
+`720b863ef517edfadbc7a6ed810b17abd28052e4`. The contract below is an amended
+design candidate; implementation and merge remain blocked until the repository owner
+and an independent adversarial reviewer bind their verdicts to its exact candidate
+commit. The earlier freeze at `ba4b1816ae263d07b74f91a54dfa1494a8446060`
+covers only its then-reviewed content and cannot authorize the later bootstrap,
+source-path, workflow-ordering, authored-TOML, or cache-location requirements.
 
 ## Definition
 
@@ -40,6 +41,11 @@ Consequently, any of these changes can reuse an existing approval:
   checked-in files and environment remain clean;
 - change the root `[workspace].resolver` while preserving every package feature map and
   dependency declaration.
+- redirect an already-cached registry package directory or manifest while leaving the
+  Cargo-home registry root itself unredirected, so a checker build consumes substituted
+  bytes before the Rust location verdict exists;
+- use Cargo's compatible `default_features = false` spelling in an older-edition member
+  so a pre-Cargo parser that reads only `default-features` admits a changed feature graph.
 
 These changes alter platforms, the default graph, crate-visible API names, dependency
 code, build cost, or the transitive surface. They are concrete fail-open policy bypasses
@@ -75,22 +81,41 @@ workspace manifest and rejects:
 - dependency `git` or alternate-registry selectors, any non-member `path` dependency,
   and any redirected path to a workspace member; a workspace path is admitted only
   when it resolves directly to the exact explicit member and declared package;
+- the legacy underscore `default_features` dependency key; the canonical checked
+  spelling is exactly `default-features`, so two source spellings cannot share one
+  approval;
 - Cargo global configuration arguments in either `--config VALUE` or
   `--config=VALUE` form anywhere in the supplied Cargo argument vector;
 - a missing or non-exact root `[workspace].resolver = "3"` declaration.
 
 The bootstrap also requires `.github/workflows` to contain only the reviewed `ci.yml`
-and verifies its exact digest before every guarded Cargo invocation. The architecture
-job invokes the guard independently before running any repository test code, builds
-xtask under the guard, revalidates independently, and then runs the built checker
-directly. Bootstrap tests run only after that provenance verdict, when their process
-cannot affect a later build or verdict. The checker invokes the isolated guard once more
-immediately before its nested `cargo metadata`, so build-time mutation cannot enter the
-metadata window. The semantic TOML pass treats a root package as Cargo's implicit
-workspace member and compares every member's manifest-authored dependency requirement,
-source kind, optionality, default-feature setting, and requested feature set against the
-checked policy; Cargo's normalized `req` is only a graph-join fact and cannot erase
-distinctions in the authored string.
+and verifies its exact digest before every guarded Cargo invocation. Before any Cargo
+command may compile repository or dependency code, the guard runs the exact
+non-compiling probe `cargo metadata --all-features --locked --format-version 1` without
+a shell and captures its JSON. Failure, non-JSON output, or an incomplete package surface
+yields no permission to launch the requested command. The metadata workspace-member IDs
+and manifest paths must match the complete manifest set that the guard already parsed.
+For every non-workspace package, the guard requires the exact crates.io source, an
+absolute manifest path lexically below the active Cargo home's `registry/src`, and a
+component-by-component physical path with no symlink, junction, redirected package
+directory, or redirected manifest. The physical package remains below the already
+unredirected registry root and outside the repository. `cargo metadata` may resolve or
+download locked packages, but it does not compile a crate or execute a build script;
+only after this location verdict may the wrapper launch the requested build, test, lint,
+audit, or deny command. `--check-only` performs this same locked metadata-location
+preflight and is not a manifest-only shortcut.
+
+The architecture job invokes that full metadata-backed guard independently before
+running any repository test code, builds xtask under the same guard, revalidates
+independently, and then runs the built checker directly. Bootstrap tests run only after
+that provenance verdict, when their process cannot affect a later build or verdict. The
+checker invokes the isolated guard once more immediately before its nested metadata read,
+so build-time mutation cannot enter the metadata window. The semantic TOML pass treats a
+root package as Cargo's implicit workspace member and compares every member's
+manifest-authored dependency requirement, source kind, optionality, canonical
+default-feature setting, and requested feature set against the checked policy; Cargo's
+normalized `req` is only a graph-join fact and cannot erase distinctions in the authored
+string.
 
 The exact policy deliberately refuses all such configuration rather than trying to
 prove that a particular replacement is harmless. Public CI runs with this clean source
@@ -196,6 +221,8 @@ additional boundary and cannot substitute for the exact edge allowlist.
 3. Every resolved non-workspace registry manifest is physically under the active Cargo
    home registry source cache and outside the repository; directory replacement,
    symlink escape, missing paths, and lexical/physical disagreement fail.
+   This complete-graph verdict runs in the standard-library guard before the first
+   checker build, including against packages already present in the cache.
 4. The root manifest declares the exact canonical `[workspace].resolver = "3"` before
    Cargo runs, and the architecture policy independently matches that same value.
 5. The current locked workspace feature maps and graph, including `lumin-xtask`, match
@@ -206,6 +233,8 @@ additional boundary and cannot substitute for the exact edge allowlist.
 8. Changing a Windows-only approved edge to no target or another predicate fails.
 9. Renaming an approved workspace or third-party dependency fails.
 10. Changing optionality, default-feature use, or the requested feature set fails.
+    The compatible underscore `default_features` source spelling is rejected before
+    Cargo; it cannot alias the canonical `default-features` policy identity.
 11. Changing a third-party resolved version/source or substituting a non-workspace path
    package fails even when name and version appear approved.
 12. A new direct edge fails even when its resolved package already has an approved owner.
@@ -225,6 +254,8 @@ production/development-tool feature maps, and linked declaration/resolution iden
 form the intended approval boundary; that the non-goals do not weaken Rule 7; and that
 the acceptance criteria cover product crates, `lumin-xtask`, direct third-party, and
 transitive packages.
+The verdict must name the exact amended-contract commit and is not inherited from the
+earlier `ba4b181` freeze.
 
 ### Independent adversarial review
 
@@ -249,6 +280,10 @@ and attempt at least these bypasses:
   or path-override configuration;
 - use a symlinked registry source root or package manifest to make repository bytes look
   like Cargo-home registry bytes;
+- redirect one already-cached registry package directory or manifest while keeping the
+  registry root unredirected, and verify rejection before any checker compilation;
+- declare `default_features = false` in an edition-2021 member and verify that the
+  bootstrap rejects the spelling before Cargo may normalize it;
 - replace a transitive package while leaving every direct edge unchanged;
 - change or remove the root workspace resolver while preserving feature maps and edge
   declarations;
@@ -258,8 +293,9 @@ and attempt at least these bypasses:
 - reorder semantically set-valued feature activations, requested feature lists, metadata
   nodes, and dependency-kind entries.
 
-The verdict is `PASS`, `REOPEN`, or a new concrete finding. Author checks, prior code in
-a closed implementation PR, and implementation tests are not independent PASS evidence.
+The verdict is `PASS`, `REOPEN`, or a new concrete finding and must bind the exact
+amended-contract candidate commit. Author checks, the earlier freeze, prior code in an
+implementation PR, and implementation tests are not independent PASS evidence.
 
 ## Verification Commands After Freeze
 
