@@ -2,14 +2,12 @@
 
 Document role: focused Architecture v1 amendment and freeze gate
 
-Status: **FROZEN** at exact architecture-content commit
-`a524095e5e9d1321f24ac0b1b27c26fe40cbbb24`. The repository owner returned
-`PASS` for that exact candidate on 2026-08-10. Independent GitHub review
-`4896677400` then inspected the same commit and returned no actionable thread, the
-review system's clean verdict. This status-only record does not amend the reviewed
-contract. The earlier freeze at `ba4b1816ae263d07b74f91a54dfa1494a8446060`
-covers only its then-reviewed content; implementation is authorized solely by the
-`a524095` freeze.
+Status: **REOPENED** by independent GitHub review `4896677400` of
+`a524095e5e9d1321f24ac0b1b27c26fe40cbbb24`. Its two actionable threads arrived
+after the review object and invalidate the provisional clean interpretation recorded in
+`a273563`. The repository owner's approval of `a524095` does not carry to this amended
+candidate. Implementation and merge remain blocked until new owner and independent
+verdicts bind the next exact architecture-content commit.
 
 ## Definition
 
@@ -47,6 +45,11 @@ Consequently, any of these changes can reuse an existing approval:
   bytes before the Rust location verdict exists;
 - use Cargo's compatible `default_features = false` spelling in an older-edition member
   so a pre-Cargo parser that reads only `default-features` admits a changed feature graph.
+- replace an extracted registry package in place with ordinary directories and files at
+  its expected cache path, preserving every metadata source and path identity while
+  changing the bytes compiled into the checker;
+- point `RUSTC`, `RUSTC_WRAPPER`, or their Cargo configuration environment aliases at
+  an executable that mutates the cache during metadata's compiler-information probe.
 
 These changes alter platforms, the default graph, crate-visible API names, dependency
 code, build cost, or the transitive surface. They are concrete fail-open policy bypasses
@@ -58,9 +61,12 @@ The CI dependency boundary has a pre-Cargo source-provenance stage and a post-me
 location stage. The pre-Cargo stage is the checked-in
 `tools/xtask/bootstrap/source_provenance.py` guard. It requires Python 3.11 or newer,
 uses only the standard library (including `tomllib`), and imports no repository module.
-It is a bootstrap trust guard owned beside xtask, not a product/runtime analysis path.
-A Cargo-built checker cannot replace this stage because replacement code could alter
-the checker before admission.
+Registry byte verification is a separate, directly executed
+`tools/xtask/bootstrap/registry_snapshot.py` program rather than an import; the guard
+verifies that helper's exact digest before launching it with the same `python -I -S`
+interpreter. Both are bootstrap trust artifacts owned beside xtask, not product/runtime
+analysis paths. A Cargo-built checker cannot replace this stage because replacement code
+could alter the checker before admission.
 
 Every CI command that resolves, checks, or builds Cargo dependencies is invoked exactly
 as `python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo ...`. The guard
@@ -76,6 +82,11 @@ workspace manifest and rejects:
   ancestor, and `config.toml` or `config` in the active Cargo home;
 - `CARGO_SOURCE_*`, `CARGO_PATHS`, and `CARGO_REGISTRIES_*_INDEX` environment
   overrides (registry authentication variables do not change source identity);
+- `RUSTC`, `RUSTC_WRAPPER`, `RUSTC_WORKSPACE_WRAPPER`, `RUSTDOC`, `RUSTFLAGS`,
+  `RUSTDOCFLAGS`, `RUSTUP_TOOLCHAIN`, `CARGO_ENCODED_RUSTFLAGS`, every matching
+  `CARGO_BUILD_RUSTC*`/`CARGO_BUILD_RUSTDOC*`/`CARGO_BUILD_RUSTFLAGS`, and target
+  rustflags, linker, or runner configuration environment variable; the pinned workflow
+  and `rust-toolchain.toml` own compiler selection and flags;
 - `[patch]` or `[replace]` tables in workspace manifests;
 - redirected workspace directories or manifests, and workspace build scripts that could
   mutate source configuration after admission;
@@ -90,23 +101,49 @@ workspace manifest and rejects:
 - a missing or non-exact root `[workspace].resolver = "3"` declaration.
 
 The bootstrap also requires `.github/workflows` to contain only the reviewed `ci.yml`
-and verifies its exact digest before every guarded Cargo invocation. Before any Cargo
-command may compile repository or dependency code, the guard runs the exact
-non-compiling probe `cargo metadata --all-features --locked --format-version 1` without
-a shell and captures its JSON. Failure, non-JSON output, or an incomplete package surface
-yields no permission to launch the requested command. The metadata workspace-member IDs
-and manifest paths must match the complete manifest set that the guard already parsed.
-For every non-workspace package, the guard requires the exact crates.io source, an
-absolute manifest path lexically below the active Cargo home's `registry/src`, and a
-component-by-component physical path with no symlink, junction, redirected package
-directory, or redirected manifest. The physical package remains below the already
-unredirected registry root and outside the repository. `cargo metadata` may resolve or
-download locked packages, but it does not compile a crate or execute a build script;
-only after this location verdict may the wrapper launch the requested build, test, lint,
-audit, or deny command. `--check-only` performs this same locked metadata-location
-preflight and is not a manifest-only shortcut.
+and verifies its exact digest before every guarded Cargo invocation. Every Cargo job
+sets `CARGO_HOME` and `CARGO_TARGET_DIR` to its job-private
+`${{ runner.temp }}/lumin-cargo-home` and `${{ runner.temp }}/lumin-target`; no
+repository cache action restores either directory and the guard rejects another CI
+location. Local execution may use its active Cargo home and target, but receives the same
+source-byte verification and no public-CI authority.
 
-The architecture job invokes that full metadata-backed guard independently before
+Before any Cargo command may compile repository or dependency code, the guard first
+rejects compiler/configuration overrides and then runs the exact non-compiling probe
+`cargo metadata --all-features --locked --format-version 1` without a shell in the
+controlled environment. Failure, non-JSON output, or an incomplete package surface
+yields no permission to launch the requested command. The metadata workspace-member IDs
+and manifest paths must match the complete manifest set already parsed by the guard.
+The exact root `Cargo.lock` SHA-256
+`fb453115d14301253b6a1670bee8af05e2d9919b654e37748d47359b87dfd27c`
+is part of the bootstrap policy. Each resolved registry package must have one exact
+crates.io lock row with a SHA-256 checksum, and the metadata registry identity set must
+equal the complete crates.io identity set in that pinned lockfile.
+
+The digest-verified registry helper then authenticates both cached representations for
+every resolved registry package. Its `registry/cache/<registry>/<name>-<version>.crate`
+archive must exist as an unredirected regular file and hash to the lock checksum. The
+helper reads, but never extracts, the gzip tar archive; it rejects absolute, parent,
+duplicate, case-colliding, noncanonical, symbolic-link, hard-link, device, and unsupported
+members. It
+streams a trusted path/content/executable-bit map from regular archive members. The
+corresponding `registry/src/<registry>/<name>-<version>` tree must contain no filesystem
+hard-link alias, be unredirected,
+remain outside the repository, and match that map exactly by relative path, regular-file
+bytes, and executable bit where the host filesystem represents that bit. Missing or
+extra files/directories fail; the sole permitted Cargo-created extra is the unredirected
+regular root `.cargo-ok` marker, whose bytes
+never authorize source content. This layout contract is exact for the pinned Cargo
+1.96.0 floor and fails closed if Cargo changes the representation.
+
+Only after the same guard process receives that byte verdict may it launch the supplied
+build, test, lint, audit, or deny vector with the controlled environment and without a
+shell. A job-private home, no untrusted repository execution before the first verdict,
+archive authentication, and exact extracted-tree comparison prevent a pre-existing
+host cache or in-place replacement from supplying compiler input. `--check-only`
+performs the identical metadata and byte preflight; it is not a manifest-only shortcut.
+
+The architecture job invokes that full metadata-and-byte guard independently before
 running any repository test code, builds xtask under the same guard, revalidates
 independently, and then runs the built checker directly. Bootstrap tests run only after
 that provenance verdict, when their process cannot affect a later build or verdict. The
@@ -213,17 +250,22 @@ additional boundary and cannot substitute for the exact edge allowlist.
 ## Acceptance Criteria
 
 1. Every CI command that resolves, checks, or builds Cargo dependencies runs through the
-   pinned Python 3.11+ standard-library bootstrap wrapper with `-I -S`; unwrapped Cargo,
-   non-isolated Python, missing/old Python, parse failure, zero manifests, shell-based
-   command reconstruction, or workflow drift fails. Only `cargo --version` is exempt.
+   pinned Python 3.11+ standard-library bootstrap wrapper and digest-pinned registry
+   helper with `-I -S`; unwrapped Cargo, non-isolated Python, missing/old Python, parse
+   failure, zero manifests, shell-based command reconstruction, or workflow drift fails.
+   Only `cargo --version` is exempt. Public CI uses only its exact job-private Cargo home
+   and target directory, with neither restored from a cache.
 2. The guard rejects Cargo config files, source/path override variables, every Cargo
    global `--config` argument form, and workspace manifest patch/replace tables before
-   Cargo resolves or builds repository code.
+   Cargo resolves or builds repository code. Compiler, wrapper, documentation, flag,
+   target-linker, target-runner, and toolchain environment overrides also fail before
+   metadata can execute a substituted program.
 3. Every resolved non-workspace registry manifest is physically under the active Cargo
    home registry source cache and outside the repository; directory replacement,
    symlink escape, missing paths, and lexical/physical disagreement fail.
-   This complete-graph verdict runs in the standard-library guard before the first
-   checker build, including against packages already present in the cache.
+   Before the first checker build, its exact `.crate` archive hashes to the checksum in
+   the pinned lockfile and its complete extracted tree matches the authenticated archive
+   path/content/executable-bit map with no unsupported or extra member.
 4. The root manifest declares the exact canonical `[workspace].resolver = "3"` before
    Cargo runs, and the architecture policy independently matches that same value.
 5. The current locked workspace feature maps and graph, including `lumin-xtask`, match
@@ -249,12 +291,13 @@ additional boundary and cannot substitute for the exact edge allowlist.
 
 ### Design review
 
-The repository owner must verify that the isolated pre-Cargo bootstrap, rejected Cargo
-configuration channels, exact workspace resolver, graph-wide loaded-location proof,
-production/development-tool feature maps, and linked declaration/resolution identities
-form the intended approval boundary; that the non-goals do not weaken Rule 7; and that
-the acceptance criteria cover product crates, `lumin-xtask`, direct third-party, and
-transitive packages.
+The repository owner must verify that the isolated pre-Cargo bootstrap, controlled
+compiler environment, job-private Cargo home, archive/extracted-tree byte proof, rejected
+Cargo configuration channels, exact workspace resolver, graph-wide loaded-location
+proof, production/development-tool feature maps, and linked declaration/resolution
+identities form the intended approval boundary; that the non-goals do not weaken Rule 7;
+and that the acceptance criteria cover product crates, `lumin-xtask`, direct third-party,
+and transitive packages.
 The verdict must name the exact amended-contract commit and is not inherited from the
 earlier `ba4b181` freeze.
 
@@ -283,6 +326,11 @@ and attempt at least these bypasses:
   like Cargo-home registry bytes;
 - redirect one already-cached registry package directory or manifest while keeping the
   registry root unredirected, and verify rejection before any checker compilation;
+- modify an ordinary extracted source file in place, add a source file, alter the archive
+  while preserving the tree, and alter the tree while preserving the archive; each must
+  fail against the pinned lock checksum and exact archive map before compilation;
+- inject `RUSTC`, both Rust compiler wrappers, their `CARGO_BUILD_*` aliases, rustflags,
+  a target linker/runner, or `RUSTUP_TOOLCHAIN` and verify that metadata never invokes it;
 - declare `default_features = false` in an edition-2021 member and verify that the
   bootstrap rejects the spelling before Cargo may normalize it;
 - replace a transitive package while leaving every direct edge unchanged;
@@ -296,11 +344,17 @@ and attempt at least these bypasses:
 
 The verdict is `PASS`, `REOPEN`, or a new concrete finding and must bind the exact
 amended-contract candidate commit. Author checks, the earlier freeze, prior code in an
-implementation PR, and implementation tests are not independent PASS evidence.
+implementation PR, and implementation tests are not independent PASS evidence. A review
+object appearing before its inline threads is not a clean verdict; freeze waits until the
+exact review exposes zero inline comments and the reviewer emits its affirmative `PASS`
+text or documented clean-review reaction. Absence observed before that positive signal
+is pending, not clean.
 
 ## Verification Commands After Freeze
 
 ```text
+python -I -S tools/xtask/bootstrap/test_registry_snapshot.py
+python -I -S tools/xtask/bootstrap/test_source_provenance.py
 python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test -p lumin-xtask --locked metadata::tests
 python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run -p lumin-xtask --locked -- architecture-check
 ```
