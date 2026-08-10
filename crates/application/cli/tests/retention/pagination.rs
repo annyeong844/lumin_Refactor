@@ -15,6 +15,7 @@ fn retention_plan_pages_survive_unrelated_repository_mutation_and_reject_cross_p
 
     let root = tempfile::tempdir()?;
     let mut authored_runs = std::collections::BTreeSet::new();
+    let mut authored_run_order = Vec::new();
     let mut latest_run_id = None;
     for index in 0..COMPLETED_RUN_COUNT {
         fs::write(
@@ -23,7 +24,11 @@ fn retention_plan_pages_survive_unrelated_repository_mutation_and_reject_cross_p
         )?;
         let run_id = audit(root.path())?;
         latest_run_id = Some(run_id.clone());
-        assert!(authored_runs.insert(run_id), "audit reused a run ID");
+        assert!(
+            authored_runs.insert(run_id.clone()),
+            "audit reused a run ID"
+        );
+        authored_run_order.push(run_id);
     }
     let latest_run_id =
         latest_run_id.ok_or_else(|| std::io::Error::other("fixture produced no completed run"))?;
@@ -31,6 +36,18 @@ fn retention_plan_pages_survive_unrelated_repository_mutation_and_reject_cross_p
     let catalog = run(root.path(), &["runs", "list"])?;
     assert_status(&catalog, 0);
     let catalog = json(&catalog.stdout)?;
+    assert_eq!(
+        catalog.get("ordering").and_then(Value::as_str),
+        Some("runs.v1")
+    );
+    assert_eq!(
+        catalog.get("total").and_then(Value::as_u64),
+        Some(COMPLETED_RUN_COUNT as u64)
+    );
+    assert_eq!(
+        catalog.get("returned").and_then(Value::as_u64),
+        Some(COMPLETED_RUN_COUNT as u64)
+    );
     let catalog_runs = catalog
         .get("runs")
         .and_then(Value::as_array)
@@ -45,7 +62,7 @@ fn retention_plan_pages_survive_unrelated_repository_mutation_and_reject_cross_p
 
     let mut expected_attempts_and_runs = std::collections::BTreeSet::new();
     let mut catalogued_runs = std::collections::BTreeSet::new();
-    let mut ordered_runs = Vec::new();
+    let mut catalog_ordered_runs = Vec::new();
     let mut latest_attempt_id = None;
     for catalog_run in catalog_runs {
         let attempt_id = required_string(catalog_run, "/attemptId")?;
@@ -58,13 +75,35 @@ fn retention_plan_pages_survive_unrelated_repository_mutation_and_reject_cross_p
             latest_attempt_id = Some(attempt_id.clone());
         }
         assert!(catalogued_runs.insert(run_id.clone()));
-        ordered_runs.push((sequence, attempt_id.clone(), run_id.clone()));
+        catalog_ordered_runs.push((sequence, attempt_id.clone(), run_id.clone()));
         assert!(expected_attempts_and_runs.insert(("attempt".to_owned(), attempt_id)));
         assert!(expected_attempts_and_runs.insert(("run".to_owned(), run_id)));
     }
     let latest_attempt_id = latest_attempt_id
         .ok_or_else(|| std::io::Error::other("latest run has no catalogued attempt"))?;
-    ordered_runs.sort_by_key(|record| record.0);
+    for pair in catalog_ordered_runs.windows(2) {
+        assert!(
+            pair[0].0 > pair[1].0 || (pair[0].0 == pair[1].0 && pair[0].2 < pair[1].2),
+            "runs.v1 order regressed: {:?} then {:?}",
+            pair[0],
+            pair[1]
+        );
+    }
+    let observed_run_order: Vec<&str> = catalog_ordered_runs
+        .iter()
+        .map(|record| record.2.as_str())
+        .collect();
+    let expected_run_order: Vec<&str> = authored_run_order
+        .iter()
+        .rev()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        observed_run_order, expected_run_order,
+        "runs.v1 did not preserve reverse audit publication order"
+    );
+    let mut plan_ordered_runs = catalog_ordered_runs;
+    plan_ordered_runs.sort_by_key(|record| record.0);
     assert_eq!(catalogued_runs, authored_runs);
     assert_eq!(expected_attempts_and_runs.len(), COMPLETED_RUN_COUNT * 2);
     let expected_total = COMPLETED_RUN_COUNT * RETENTION_RECORDS_PER_COMPLETION;
@@ -182,7 +221,7 @@ fn retention_plan_pages_survive_unrelated_repository_mutation_and_reject_cross_p
     assert_eq!(page_count, 2);
     assert_eq!(
         observed_record_order,
-        expected_plan_record_order(&ordered_runs, &latest_attempt_id, &latest_run_id),
+        expected_plan_record_order(&plan_ordered_runs, &latest_attempt_id, &latest_run_id),
         "retention pages did not preserve retention-plan-items.v1 adjacency",
     );
     assert_plan_record_truth(

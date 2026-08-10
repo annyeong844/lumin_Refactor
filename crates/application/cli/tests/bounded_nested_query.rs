@@ -1,11 +1,12 @@
 mod support;
 
 use std::collections::BTreeSet;
+use std::fmt::Debug;
 use std::fs;
 use std::path::Path;
 
 use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use serde_json::Value;
 
 const CURSOR_BINDING_DOMAIN: &[u8] = b"lumin-cursor-binding.v1\0";
@@ -114,6 +115,70 @@ fn finding_id(finding: &Value) -> Result<&str, Box<dyn std::error::Error>> {
         .ok_or_else(|| std::io::Error::other("missing findingId").into())
 }
 
+fn required_str<'a>(
+    value: &'a Value,
+    pointer: &str,
+) -> Result<&'a str, Box<dyn std::error::Error>> {
+    value
+        .pointer(pointer)
+        .and_then(Value::as_str)
+        .ok_or_else(|| std::io::Error::other(format!("missing string at {pointer}")).into())
+}
+
+fn required_u64(value: &Value, pointer: &str) -> Result<u64, Box<dyn std::error::Error>> {
+    value
+        .pointer(pointer)
+        .and_then(Value::as_u64)
+        .ok_or_else(|| std::io::Error::other(format!("missing integer at {pointer}")).into())
+}
+
+fn assert_strictly_increasing<T: Debug + Ord>(keys: &[T], ordering: &str) {
+    for pair in keys.windows(2) {
+        assert!(
+            pair[0] < pair[1],
+            "{ordering} was not strictly increasing: {:?} then {:?}",
+            pair[0],
+            pair[1]
+        );
+    }
+}
+
+type FindingOrderKey = (String, Vec<u8>, u64, u64, String);
+
+fn finding_order_key(value: &Value) -> Result<FindingOrderKey, Box<dyn std::error::Error>> {
+    assert_eq!(required_str(value, "/severity")?, "warning");
+    assert_eq!(required_str(value, "/confidence")?, "grounded");
+    Ok((
+        required_str(value, "/ruleId")?.to_owned(),
+        STANDARD.decode(required_str(value, "/path/canonicalBase64")?)?,
+        required_u64(value, "/span/start")?,
+        required_u64(value, "/span/end")?,
+        required_str(value, "/findingId")?.to_owned(),
+    ))
+}
+
+type EvidenceOrderKey = (String, String, u64, u64, String);
+
+fn evidence_order_key(value: &Value) -> Result<EvidenceOrderKey, Box<dyn std::error::Error>> {
+    Ok((
+        required_str(value, "/kind")?.to_owned(),
+        required_str(value, "/sourceId")?.to_owned(),
+        required_u64(value, "/span/start")?,
+        required_u64(value, "/span/end")?,
+        required_str(value, "/evidenceId")?.to_owned(),
+    ))
+}
+
+type RelationOrderKey = (String, String, String);
+
+fn relation_order_key(value: &Value) -> Result<RelationOrderKey, Box<dyn std::error::Error>> {
+    Ok((
+        required_str(value, "/kind")?.to_owned(),
+        required_str(value, "/targetFindingId")?.to_owned(),
+        required_str(value, "/relationId")?.to_owned(),
+    ))
+}
+
 // ─── Run findings pagination ─────────────────────────────────────────────
 
 #[test]
@@ -157,17 +222,18 @@ fn run_findings_pages_102_as_100_plus_2() -> Result<(), Box<dyn std::error::Erro
     assert_eq!(items(&p2)?.len(), 2);
     assert!(next_cursor(&p2).is_none());
 
-    // Collect all finding IDs and assert exact totals and exactly-once
-    let all_ids: Vec<String> = items(&p1)?
+    // Traverse both pages in response order and verify the complete ordering key.
+    let all_findings: Vec<&Value> = items(&p1)?.iter().chain(items(&p2)?.iter()).collect();
+    let finding_keys = all_findings
         .iter()
-        .chain(items(&p2)?.iter())
-        .map(|item| {
-            item.get("findingId")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        })
-        .collect::<Option<Vec<_>>>()
-        .ok_or_else(|| std::io::Error::other("finding item missing findingId"))?;
+        .map(|item| finding_order_key(item))
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_strictly_increasing(&finding_keys, "findings.v1");
+
+    let all_ids = all_findings
+        .iter()
+        .map(|item| required_str(item, "/findingId").map(str::to_owned))
+        .collect::<Result<Vec<_>, _>>()?;
     assert_eq!(all_ids.len(), 102);
     let unique: BTreeSet<&String> = all_ids.iter().collect();
     assert_eq!(unique.len(), 102, "finding IDs must be exactly-once");
@@ -233,25 +299,21 @@ fn run_explain_evidence_pages_102_as_100_plus_2() -> Result<(), Box<dyn std::err
     assert_eq!(returned(evidence2)?, 2);
     assert!(next_cursor(evidence2).is_none());
 
-    // Collect all evidence IDs across pages and verify exactly-once
-    let ev_ids_1: Vec<String> = items(evidence1)?
+    // Traverse both pages in response order and verify the complete ordering key.
+    let all_evidence: Vec<&Value> = items(evidence1)?
         .iter()
-        .filter_map(|e| {
-            e.get("evidenceId")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        })
+        .chain(items(evidence2)?.iter())
         .collect();
-    let ev_ids_2: Vec<String> = items(evidence2)?
+    let evidence_keys = all_evidence
         .iter()
-        .filter_map(|e| {
-            e.get("evidenceId")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        })
-        .collect();
-    let mut all_ev_ids = ev_ids_1;
-    all_ev_ids.extend(ev_ids_2);
+        .map(|item| evidence_order_key(item))
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_strictly_increasing(&evidence_keys, "evidence.v1");
+
+    let all_ev_ids = all_evidence
+        .iter()
+        .map(|item| required_str(item, "/evidenceId").map(str::to_owned))
+        .collect::<Result<Vec<_>, _>>()?;
     assert_eq!(all_ev_ids.len(), 102);
     let unique_ev: BTreeSet<&String> = all_ev_ids.iter().collect();
     assert_eq!(unique_ev.len(), 102, "evidence IDs must be exactly-once");
@@ -366,14 +428,16 @@ fn run_explain_relations_pages_101_as_100_plus_1() -> Result<(), Box<dyn std::er
         .collect();
     assert_eq!(all_relations.len(), 101);
 
-    let relation_ids: Vec<String> = all_relations
+    let relation_keys = all_relations
         .iter()
-        .filter_map(|r| {
-            r.get("relationId")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        })
-        .collect();
+        .map(|item| relation_order_key(item))
+        .collect::<Result<Vec<_>, _>>()?;
+    assert_strictly_increasing(&relation_keys, "relations.v1");
+
+    let relation_ids = all_relations
+        .iter()
+        .map(|item| required_str(item, "/relationId").map(str::to_owned))
+        .collect::<Result<Vec<_>, _>>()?;
     assert_eq!(relation_ids.len(), 101);
     let unique_rel: BTreeSet<&String> = relation_ids.iter().collect();
     assert_eq!(unique_rel.len(), 101, "relation IDs must be exactly-once");
