@@ -145,6 +145,23 @@ fn registry_location_rejects_repository_and_source_less_packages()
     Ok(())
 }
 
+#[test]
+fn absolute_path_normalizes_parent_components() -> Result<(), Box<dyn std::error::Error>> {
+    let with_parent = PathBuf::from("target")
+        .join("..")
+        .join("isolated-cargo-home");
+    let normalized = absolute_path(&with_parent)?;
+    let expected = absolute_path(Path::new("isolated-cargo-home"))?;
+
+    assert_eq!(normalized, expected);
+    assert!(
+        !normalized
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    );
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test]
 fn registry_root_redirection_inside_cargo_home_is_rejected()

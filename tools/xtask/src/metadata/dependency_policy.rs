@@ -600,12 +600,8 @@ fn cargo_home() -> Result<PathBuf, String> {
 }
 
 fn absolute_path(path: &Path) -> Result<PathBuf, String> {
-    if path.is_absolute() {
-        return Ok(path.to_path_buf());
-    }
-    std::env::current_dir()
-        .map(|cwd| cwd.join(path))
-        .map_err(|error| format!("cannot resolve current directory: {error}"))
+    std::path::absolute(path)
+        .map_err(|error| format!("cannot make path absolute {}: {error}", path.display()))
 }
 
 fn dependency_kind<'a>(

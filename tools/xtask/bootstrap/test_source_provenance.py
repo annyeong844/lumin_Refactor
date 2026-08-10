@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -161,18 +162,52 @@ class SourceProvenanceTests(unittest.TestCase):
                     with self.assertRaises(PROVENANCE.ProvenanceError):
                         fixture.validate()
 
-    def test_real_entrypoint_requires_isolated_mode_and_runs_exact_cargo(self) -> None:
+    def test_real_entrypoint_uses_scrubbed_host_state_and_controlled_cargo(self) -> None:
+        cargo = shutil.which("cargo")
+        self.assertIsNotNone(cargo, "cargo must be available for the bootstrap test")
         root = SCRIPT.parents[3]
-        completed = subprocess.run(
-            [sys.executable, "-I", "-S", str(SCRIPT), "--", "cargo", "--version"],
-            cwd=root,
-            env=os.environ.copy(),
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertTrue(completed.stdout.startswith("cargo "), completed.stdout)
+        with tempfile.TemporaryDirectory() as raw_temporary:
+            temporary = Path(raw_temporary)
+            cargo_home = temporary / "cargo-home"
+            binary_directory = temporary / "bin"
+            cargo_home.mkdir()
+            binary_directory.mkdir()
+            cargo_name = "cargo.exe" if os.name == "nt" else "cargo"
+            shutil.copy2(Path(cargo).resolve(strict=True), binary_directory / cargo_name)
+
+            inherited = (
+                "COMSPEC",
+                "HOME",
+                "PATHEXT",
+                "RUSTUP_HOME",
+                "RUSTUP_TOOLCHAIN",
+                "SYSTEMDRIVE",
+                "SYSTEMROOT",
+                "TEMP",
+                "TMP",
+                "USERPROFILE",
+                "WINDIR",
+            )
+            environment = {
+                name: os.environ[name] for name in inherited if name in os.environ
+            }
+            environment["CARGO_HOME"] = str(cargo_home)
+            environment["PATH"] = str(binary_directory)
+
+            completed = subprocess.run(
+                [sys.executable, "-I", "-S", str(SCRIPT), "--", "cargo", "--version"],
+                cwd=root,
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertTrue(completed.stdout.startswith("cargo "), completed.stdout)
+            self.assertFalse(
+                (root / "%SystemDrive%").exists(),
+                "the isolated bootstrap must not write Windows cache state in the repository",
+            )
 
 
 if __name__ == "__main__":
