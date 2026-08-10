@@ -151,8 +151,22 @@ fn every_mapped_standard_row_has_a_paired_determinism_invocation() {
         .iter()
         .filter(|row| row.is_mapped(CorpusMode::Determinism))
         .count();
-    assert_eq!(standard, 54);
+    assert_eq!(standard, 53);
     assert_eq!(determinism, standard);
+}
+
+#[test]
+fn collection_ordering_remains_unmapped_without_perturbed_traversal_fixture() {
+    let mapped_modes = REGISTRY
+        .iter()
+        .find(|row| row.id == "collection-ordering")
+        .map(|row| {
+            (
+                row.is_mapped(CorpusMode::Standard),
+                row.is_mapped(CorpusMode::Determinism),
+            )
+        });
+    assert_eq!(mapped_modes, Some((false, false)));
 }
 
 #[test]

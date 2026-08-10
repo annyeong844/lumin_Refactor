@@ -39,15 +39,6 @@ static INV_BNQ: &[CorpusInvocation] = &[
     inv!("bounded_nested_query", "run_findings_pages_102_as_100_plus_2"),
 ];
 #[rustfmt::skip]
-static INV_COLL: &[CorpusInvocation] = &[
-    inv!("bounded_nested_query", "run_findings_pages_102_as_100_plus_2"),
-    inv!("bounded_nested_query", "run_explain_evidence_pages_102_as_100_plus_2"),
-    inv!("bounded_nested_query", "run_explain_relations_pages_101_as_100_plus_1"),
-    inv!("collection_ordering", "files_returns_file_findings_collection"),
-    inv!("collection_ordering", "gate_list_active_orders_open_gates"),
-    inv!("retention", "pagination::retention_plan_pages_survive_unrelated_repository_mutation_and_reject_cross_plan_cursor"),
-];
-#[rustfmt::skip]
 static INV_CAP: &[CorpusInvocation] = &[
     inv!("capabilities_pagination", "binary_capabilities_pagination_without_state_directory"),
     inv!("capabilities_pagination", "binary_cursor_works_across_directories"),
@@ -351,7 +342,7 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("required-capability-failure"),
     row_sd!("snapshot-and-latest", &[inv!("publication", "first_failed_attempt_remains_visible_without_a_completed_run")]),
     row_sd!("bounded-nested-query", INV_BNQ),
-    row_sd!("collection-ordering", INV_COLL),
+    row_sd!("collection-ordering"),
     row_sd!("capabilities-pagination", INV_CAP),
     row_sd!("request-path-escape"),
     row_sd!("corrupt-store"),
