@@ -2,14 +2,12 @@
 
 Document role: focused Architecture v1 amendment and freeze gate
 
-Status: **REOPENED** by independent GitHub review `4897477339` of
-`485d2c5b3bde9b4735ae183e363ce26d8cebfd86`. Its six actionable threads identify a
-separate Cargo build directory, environment aliases, compiler-forwarding suffixes, an
-underspecified Windows device-name comparator, the omitted required musl lane, and
-Windows current-directory executable shadowing. The repository owner's approval of
-`485d2c5` does not carry to this amended candidate. Implementation and merge remain
-blocked until new owner and independent verdicts bind the next exact
-architecture-content commit.
+Status: **REOPENED** by independent GitHub review `4898431430` of
+`32a1b8328ce00935a3e162dc560f59bb645dce5e`. Its three actionable threads identify an
+unqualified Windows linker, omitted workspace target kinds, and mutable Cargo profile
+environment settings. The repository owner's approval of `32a1b83` does not carry to
+this amended candidate. Implementation and merge remain blocked until new owner and
+independent verdicts bind the next exact architecture-content commit.
 
 ## Definition
 
@@ -67,6 +65,13 @@ Consequently, any of these changes can reuse an existing approval:
 - place a repository-controlled `python.exe`, `cargo.exe`, `rustc.exe`, or `rustup.exe`
   in the Windows current directory so an unqualified bootstrap command executes it
   before version or provenance checks.
+- place a repository-controlled `link.exe` in the Windows current directory so rustc
+  launches it instead of the MSVC linker after every recorded Rust executable passes;
+- change a workspace library target into a procedural macro while preserving its
+  dependency and feature declarations, allowing repository code to execute while the
+  checker itself is being compiled;
+- set a `CARGO_PROFILE_*` environment variable so the checker or product compiles under
+  a profile different from the frozen root manifest and policy.
 
 These changes alter platforms, the default graph, crate-visible API names, dependency
 code, build cost, or the transitive surface. They are concrete fail-open policy bypasses
@@ -101,8 +106,19 @@ canonical physical regular executable outside the future workspace, then records
 paths as `LUMIN_PYTHON`, `LUMIN_RUSTUP`, `LUMIN_CARGO`, `LUMIN_RUSTC`,
 `LUMIN_RUSTDOC`, `LUMIN_CARGO_FMT`, `LUMIN_RUSTFMT`, `LUMIN_CARGO_CLIPPY`,
 `LUMIN_CLIPPY_DRIVER`, `LUMIN_CARGO_AUDIT`, and `LUMIN_CARGO_DENY` as applicable.
-Checkout runs only after this bootstrap. The workflow never invokes an unqualified
-repository-time Python, Rust, formatting, lint, audit, or deny executable.
+On the Windows runner, that same empty-workspace step invokes only the canonical
+`C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe`, requires one
+Visual Studio 2022 installation with `Microsoft.VisualStudio.Component.VC.Tools.x86.x64`,
+reads its exact default MSVC tools version, and resolves
+`VC\Tools\MSVC\<version>\bin\Hostx64\x64\link.exe` beneath the returned physical
+installation root. The physical regular file must remain outside the future checkout
+and is recorded as `LUMIN_WINDOWS_LINKER` together with its SHA-256 digest; a missing,
+ambiguous, redirected, non-MSVC, or differently located result fails before checkout.
+The guard revalidates both physical identity and digest after checkout. No
+`where link.exe`, PATH lookup, or current-directory executable participates. Checkout
+runs only after this bootstrap.
+The workflow never invokes an unqualified repository-time Python, Rust, linker,
+formatting, lint, audit, or deny executable.
 
 Every CI command that resolves, checks, or builds Cargo dependencies is then invoked
 through absolute `LUMIN_PYTHON -I -S
@@ -128,6 +144,7 @@ manifest and rejects:
 - `CARGO`, `RUSTC`, `RUSTC_WRAPPER`, `RUSTC_WORKSPACE_WRAPPER`, `RUSTDOC`, `RUSTFMT`,
   `CLIPPY_DRIVER`, `RUSTFLAGS`, `RUSTDOCFLAGS`, `RUSTC_BOOTSTRAP`, `RUSTUP_TOOLCHAIN`,
   `CARGO_ENCODED_RUSTFLAGS`, every matching `CARGO_UNSTABLE_*`,
+  every matching `CARGO_PROFILE_*`,
   `CARGO_BUILD_RUSTC*`/`CARGO_BUILD_RUSTDOC*`/`CARGO_BUILD_RUSTFLAGS`,
   `CARGO_BUILD_TARGET`, `CARGO_BUILD_TARGET_DIR`, `CARGO_BUILD_BUILD_DIR`, and target
   rustflags, linker, or runner configuration environment variable; the pinned workflow
@@ -137,6 +154,10 @@ manifest and rejects:
 - `[patch]` or `[replace]` tables in workspace manifests;
 - redirected workspace directories or manifests, and workspace build scripts that could
   mutate source configuration after admission;
+- a workspace target that declares `proc-macro = true` or includes `proc-macro` in its
+  authored crate types; the later complete metadata target snapshot independently
+  rejects every unreviewed target kind, crate type, source, flag, or auto-discovered
+  target;
 - dependency `git` or alternate-registry selectors, any non-member `path` dependency,
   and any redirected path to a workspace member; a workspace path is admitted only
   when it resolves directly to the exact explicit member and declared package;
@@ -190,7 +211,13 @@ Version/host probes confirm the recorded Cargo and Rust identities before metada
 guard rejects a `PATH` entry that is empty, relative, redirected into the checkout, or
 physically below it, and supplies absolute `CARGO`, `RUSTC`, `RUSTDOC`, `RUSTFMT`, and
 `CLIPPY_DRIVER` values from the corresponding recorded tools as its own controlled child
-environment after rejecting inherited overrides. It does
+environment after rejecting inherited overrides. On Windows it also sets
+`CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER` to the revalidated absolute
+`LUMIN_WINDOWS_LINKER`; that one guard-owned value is the only admitted target-linker
+configuration. CI requires `CARGO_INCREMENTAL` to be exactly `0`, local execution admits
+only absence or that exact value, and the guard supplies exact `0` to every child. Every
+other inherited `CARGO_INCREMENTAL` value and every `CARGO_PROFILE_*` variable fails
+before metadata. It does
 not claim to detect a compromised runner, forged pre-checkout toolchain binary, or an
 administrator who changes branch protection and approves a replacement workflow; those
 are outside an in-repository architecture check's possible authority. Inside that
@@ -225,17 +252,27 @@ the unfiltered result; a host-filtered result is expected to omit packages belon
 to other target predicates and cannot own the complete-cache claim.
 
 The digest-pinned metadata helper then compares a stdin envelope containing both
-metadata results and the pinned lock identity/checksum rows against
+metadata results, the strict-parsed root resolver/profile surface, and the pinned lock
+identity/checksum rows against
 `tools/xtask/dependency-surface-policy.v2.json` before any compilation. The guard pins
 that artifact's digest, strict-parses it, rejects unknown or duplicate fields, and
 canonicalizes metadata IDs and paths to stable workspace or registry identities. The
 policy contains these exhaustive, deterministically sorted surfaces:
 
+- one root configuration surface containing the exact workspace resolver and the
+  complete strict-parsed `[profile]` map. Profile names, package/build overrides, keys,
+  scalar types, arrays, and absent-versus-present values are preserved; formatting and
+  comments are not policy. An unknown, missing, additional, or changed profile fact
+  fails before an admitted compilation;
 - one shared definition surface from unfiltered metadata for every workspace and
   registry package, including package identity/checksum, optional `links` and
   `rust_version`, its complete feature-definition map, and every Cargo 1.96 dependency
   field: `name`, `rename`, `req`, `source`, `registry`, stable `path` identity, `kind`,
-  `target`, `optional`, `uses_default_features`, and the requested `features` set;
+  `target`, `optional`, `uses_default_features`, and the requested `features` set. It
+  also includes every `packages[].targets[]` entry with exact `name`, `edition`, `doc`,
+  `doctest`, and `test`; set-canonical `kind`, `crate_types`, and `required-features`;
+  and a physical, unredirected, package-contained `src_path` canonicalized to its stable
+  repository- or registry-package-relative identity;
 - exact Windows MSVC, Linux GNU, and Linux musl lanes from filtered metadata, each
   containing every `resolve.nodes[]` entry with the stable package identity, exact
   enabled feature set, and every dependency binding to a stable destination identity
@@ -243,7 +280,8 @@ policy contains these exhaustive, deterministically sorted surfaces:
 
 Absent values remain distinct from empty values, sets are sorted only where Cargo
 defines order as irrelevant, and any missing, additional, duplicate, or changed package,
-feature, dependency, binding, kind, target, or resolved feature fails. This snapshot
+profile, feature, dependency, binding, target definition, kind, crate type, source path,
+or resolved feature fails. This snapshot
 binds the complete effective-lane all-features transitive interpretation used by the
 admitted command; a proxy, CA override, or altered registry index can at most cause a
 mismatch and cannot
@@ -326,9 +364,11 @@ Before matching edges, the checker requires the canonical root workspace resolve
 including every workspace package's `packages[].features` map. The resolver value is an
 exact policy identity, not an author-environment default. Feature names are exact and
 each activation list is a sorted, deduplicated set. An absent `default` feature is
-distinct from an empty `default` feature. This preserves the declared feature graph,
-transitive registry interpretation, and unification contract even though all-features
-resolution activates every available feature.
+distinct from an empty `default` feature. Target arrays are canonicalized only where
+Cargo defines them as sets; duplicate target identities and source paths fail. This
+preserves the declared feature graph, executable target surface, transitive registry
+interpretation, and unification contract even though all-features resolution activates
+every available feature.
 
 For each direct dependency from any workspace member, the checker then links one
 declaration identity to one resolution identity. `lumin-xtask` remains outside the
@@ -386,8 +426,8 @@ additional boundary and cannot substitute for the exact edge allowlist.
 ## Non-Goals
 
 - This amendment does not approve a new crate, version, source, workspace feature,
-  loaded location, dependency feature, target, optionality, rename, or dependency
-  direction.
+  loaded location, dependency feature, target, target kind, crate type, profile,
+  optionality, rename, or dependency direction.
 - It does not make transitive edges part of the direct-edge allowlist; their separate
   exact definition/resolution snapshot and loaded-location rules prevent drift without
   granting a new direct owner.
@@ -454,6 +494,17 @@ additional boundary and cannot substitute for the exact edge allowlist.
 18. Committed executable names, redirected recorded tools, `CARGO_BUILD_BUILD_DIR`, and
     Cargo environment aliases fail before repository or dependency code executes, and
     both metadata directory fields remain the one admitted target path.
+19. On Windows, the guard supplies rustc only the pre-checkout absolute MSVC
+    `LUMIN_WINDOWS_LINKER`; a same-name repository executable, PATH reordering, missing
+    Visual Studio component, or changed physical or byte linker identity fails before
+    build.
+20. Changing a workspace target's kind, crate type, source path, feature requirement,
+    edition, test/doc flags, or auto-discovered target set fails the v2 snapshot before
+    checker compilation. Workspace procedural-macro declarations fail in the earlier
+    authored-manifest pass as well.
+21. The complete root profile map is exact. Every `CARGO_PROFILE_*` override and every
+    `CARGO_INCREMENTAL` value other than the guard-owned `0` fails before Cargo can
+    compile the checker or product.
 
 ## Required Reviews
 
@@ -461,7 +512,8 @@ additional boundary and cannot substitute for the exact edge allowlist.
 
 The repository owner must verify that the isolated pre-Cargo bootstrap, controlled
 compiler environment, pre-checkout absolute tool identity, job-private Cargo home and
-target/build directory, archive/extracted-tree byte proof, rejected Cargo
+target/build directory, absolute Windows MSVC linker, complete workspace target and root
+profile surfaces, archive/extracted-tree byte proof, rejected Cargo
 argument/configuration/alias channels, subcommand-aware suffix policy, exact portable
 archive grammar and device comparator, required musl lane, exact workspace resolver,
 graph-wide loaded-location proof, complete transitive definition/resolution snapshot,
@@ -522,6 +574,17 @@ and attempt at least these bypasses:
   and `cargo-deny` shadows; verify setup occurs before checkout, fmt/Clippy/audit/deny do
   not use Cargo external dispatch, and every post-checkout child uses the recorded
   physical absolute path outside the repository;
+- commit a same-name `link.exe`, prepend it to PATH, and make the process current
+  directory the checkout; verify the Windows compiler receives only the pre-checkout
+  absolute `Hostx64\x64\link.exe`, while missing, ambiguous, redirected, or non-MSVC
+  discovery fails before build;
+- change a normal workspace library to `proc-macro`, change each remaining target field,
+  add an auto-discovered target, duplicate a target identity or source path, and redirect
+  `src_path`; verify the authored guard or complete v2 target snapshot fails before the
+  checker is compiled;
+- set representative `CARGO_PROFILE_*` variables, change every root profile value and
+  profile override, and set `CARGO_INCREMENTAL` to values other than exact `0`; verify
+  the root profile policy or environment guard rejects each before compilation;
 - create archive members differing by ASCII case, non-ASCII/normalization, separator,
   dot component, trailing dot, `CON`, `CON.txt`, `COM1.anything`, `LPT9`, a non-reserved
   lookalike, or unsupported USTAR record type and verify the exact same decision on
