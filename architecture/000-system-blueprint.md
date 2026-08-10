@@ -320,7 +320,14 @@ The diagram is conceptual; the enforceable edge list is:
 - `lumin-engine` -> `lumin-model`, `lumin-evidence`, all capability crates it orchestrates, and `lumin-store`.
 - `lumin-cli` -> `lumin-engine`, `lumin-protocol`, `lumin-model`.
 
-CI reads `cargo metadata` and rejects workspace dependency edges not listed in the canonical edge policy.
+CI reads locked, all-features `cargo metadata` and rejects every direct edge from a
+production workspace member unless its complete policy identity is listed. That
+identity is the owner workspace package, Cargo-declared dependency name (including
+any rename), resolved package name, dependency kind, and optional target predicate.
+An approval for one declared name or target predicate cannot authorize a rename,
+an unconditional edge, or a different predicate. Unknown dependency kinds, duplicate
+policy identities, and policy identities absent from the resolved graph fail the
+architecture check.
 
 ### 5.1 Development-Tool DAG
 
