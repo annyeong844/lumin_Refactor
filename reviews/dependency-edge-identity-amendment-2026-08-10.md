@@ -2,13 +2,14 @@
 
 Document role: focused Architecture v1 amendment and freeze gate
 
-Status: **REOPENED** by the independent review of
-`720b863ef517edfadbc7a6ed810b17abd28052e4`. The contract below is an amended
-design candidate; implementation and merge remain blocked until the repository owner
-and an independent adversarial reviewer bind their verdicts to its exact candidate
-commit. The earlier freeze at `ba4b1816ae263d07b74f91a54dfa1494a8446060`
-covers only its then-reviewed content and cannot authorize the later bootstrap,
-source-path, workflow-ordering, authored-TOML, or cache-location requirements.
+Status: **FROZEN** at exact architecture-content commit
+`a524095e5e9d1321f24ac0b1b27c26fe40cbbb24`. The repository owner returned
+`PASS` for that exact candidate on 2026-08-10. Independent GitHub review
+`4896677400` then inspected the same commit and returned no actionable thread, the
+review system's clean verdict. This status-only record does not amend the reviewed
+contract. The earlier freeze at `ba4b1816ae263d07b74f91a54dfa1494a8446060`
+covers only its then-reviewed content; implementation is authorized solely by the
+`a524095` freeze.
 
 ## Definition
 
