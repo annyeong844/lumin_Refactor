@@ -2,10 +2,12 @@
 
 Document role: focused Architecture v1 amendment and freeze gate
 
-Status: candidate; implementation is blocked until the exact architecture-content
-commit passes the design review and independent adversarial review below and is merged
-to `main`. That merge freezes this amendment without authorizing any wider dependency
-policy change.
+Status: frozen at `ba4b1816ae263d07b74f91a54dfa1494a8446060`. The owner design
+review covers architecture-content commit
+`3b27f25ed1b56b0712bc1f07c1f3e6e7d278f4cf`; the independent adversarial
+review covers the exact merged commit and returned `PASS` with no current review
+thread. This freeze authorizes only the dependency-surface implementation defined
+below.
 
 ## Definition
 
@@ -246,6 +248,5 @@ python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test -p lumin-x
 python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run -p lumin-xtask --locked -- architecture-check
 ```
 
-Implementation may begin only after both required reviews pass and this amendment is
-merged. The implementation PR must then prove every acceptance criterion without
-weakening the frozen contract.
+The implementation must prove every acceptance criterion without weakening the frozen
+contract.

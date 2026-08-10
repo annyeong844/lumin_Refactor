@@ -5,6 +5,7 @@
 
 use std::process::ExitCode;
 
+use crate::cargo_bootstrap;
 use crate::generated_tables;
 use crate::limitation_registry;
 use crate::metadata;
@@ -25,6 +26,21 @@ pub fn run() -> ExitCode {
     println!("=== lumin-xtask architecture-check ===");
     println!("workspace: {}", workspace_root.display());
     println!();
+
+    println!("[CHECK] isolated Cargo source-provenance bootstrap and CI routing");
+    let bootstrap_result = cargo_bootstrap::check_cargo_bootstrap(&workspace_root);
+    if !bootstrap_result.tool_errors.is_empty() {
+        for error in bootstrap_result.tool_errors {
+            eprintln!("[TOOL ERROR] {error}");
+        }
+        return ExitCode::from(2);
+    }
+    if !bootstrap_result.violations.is_empty() {
+        for violation in bootstrap_result.violations {
+            eprintln!("[VIOLATION] {violation}");
+        }
+        return ExitCode::from(1);
+    }
 
     // Phase 1: Metadata / dependency edge analysis
     println!("[CHECK] cargo metadata dependency edges");

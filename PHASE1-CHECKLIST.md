@@ -93,6 +93,9 @@ Owner routes: ARCH-000, ARCH-001, ARCH-002, SLICE-001 AC 19, 21, 35, 37, and 38.
 - [x] Enforce the path/root codec runtime boundary in `architecture-check`.
 - [x] Enforce the third-party command re-export boundary in
   `architecture-check`.
+- [x] Enforce frozen [REVIEW-003](reviews/dependency-edge-identity-amendment-2026-08-10.md)
+  through its isolated pre-Cargo guard and exact post-metadata dependency/source
+  policy, including the development-tool workspace member.
 
 Exit: no known semantic or structural prerequisite is being hidden by an
 unmapped corpus row. Corpus, package, and benchmark proof stay with their own
