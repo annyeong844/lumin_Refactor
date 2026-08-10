@@ -34,7 +34,34 @@ pub struct DirectEdge {
     pub from: String,
     pub to: String,
     pub kind: DepKind,
+    pub target: Option<String>,
     pub is_workspace_target: bool,
+}
+
+type WorkspaceEdgePolicy = (&'static str, &'static str, Option<&'static str>);
+type ThirdPartyEdgePolicy = (&'static str, &'static str, DepKind, Option<&'static str>);
+
+const WINDOWS_TARGET: &str = "cfg(windows)";
+
+const fn unconditional_workspace_edge(from: &'static str, to: &'static str) -> WorkspaceEdgePolicy {
+    (from, to, None)
+}
+
+const fn unconditional_third_party_edge(
+    from: &'static str,
+    to: &'static str,
+    kind: DepKind,
+) -> ThirdPartyEdgePolicy {
+    (from, to, kind, None)
+}
+
+const fn target_specific_third_party_edge(
+    from: &'static str,
+    to: &'static str,
+    kind: DepKind,
+    target: &'static str,
+) -> ThirdPartyEdgePolicy {
+    (from, to, kind, Some(target))
 }
 
 /// Result of workspace metadata analysis.
@@ -62,108 +89,131 @@ const PRODUCTION_NAMES: &[&str] = &[
 ];
 
 /// Canonical normal-dep allowlist derived from ARCH-000 §5 and current Cargo.toml files.
-const NORMAL_EDGES: &[(&str, &str)] = &[
+const NORMAL_EDGES: &[WorkspaceEdgePolicy] = &[
     // lumin-cli
-    ("lumin-cli", "lumin-engine"),
-    ("lumin-cli", "lumin-model"),
-    ("lumin-cli", "lumin-protocol"),
+    unconditional_workspace_edge("lumin-cli", "lumin-engine"),
+    unconditional_workspace_edge("lumin-cli", "lumin-model"),
+    unconditional_workspace_edge("lumin-cli", "lumin-protocol"),
     // lumin-engine
-    ("lumin-engine", "lumin-dead"),
-    ("lumin-engine", "lumin-evidence"),
-    ("lumin-engine", "lumin-graph"),
-    ("lumin-engine", "lumin-inventory"),
-    ("lumin-engine", "lumin-js"),
-    ("lumin-engine", "lumin-model"),
-    ("lumin-engine", "lumin-resolve"),
-    ("lumin-engine", "lumin-sfc"),
-    ("lumin-engine", "lumin-store"),
+    unconditional_workspace_edge("lumin-engine", "lumin-dead"),
+    unconditional_workspace_edge("lumin-engine", "lumin-evidence"),
+    unconditional_workspace_edge("lumin-engine", "lumin-graph"),
+    unconditional_workspace_edge("lumin-engine", "lumin-inventory"),
+    unconditional_workspace_edge("lumin-engine", "lumin-js"),
+    unconditional_workspace_edge("lumin-engine", "lumin-model"),
+    unconditional_workspace_edge("lumin-engine", "lumin-resolve"),
+    unconditional_workspace_edge("lumin-engine", "lumin-sfc"),
+    unconditional_workspace_edge("lumin-engine", "lumin-store"),
     // lumin-protocol
-    ("lumin-protocol", "lumin-evidence"),
-    ("lumin-protocol", "lumin-model"),
+    unconditional_workspace_edge("lumin-protocol", "lumin-evidence"),
+    unconditional_workspace_edge("lumin-protocol", "lumin-model"),
     // lumin-store
-    ("lumin-store", "lumin-evidence"),
-    ("lumin-store", "lumin-model"),
+    unconditional_workspace_edge("lumin-store", "lumin-evidence"),
+    unconditional_workspace_edge("lumin-store", "lumin-model"),
     // lumin-dead
-    ("lumin-dead", "lumin-evidence"),
-    ("lumin-dead", "lumin-graph"),
-    ("lumin-dead", "lumin-model"),
+    unconditional_workspace_edge("lumin-dead", "lumin-evidence"),
+    unconditional_workspace_edge("lumin-dead", "lumin-graph"),
+    unconditional_workspace_edge("lumin-dead", "lumin-model"),
     // lumin-graph
-    ("lumin-graph", "lumin-model"),
+    unconditional_workspace_edge("lumin-graph", "lumin-model"),
     // lumin-resolve
-    ("lumin-resolve", "lumin-model"),
+    unconditional_workspace_edge("lumin-resolve", "lumin-model"),
     // lumin-inventory
-    ("lumin-inventory", "lumin-model"),
+    unconditional_workspace_edge("lumin-inventory", "lumin-model"),
     // lumin-evidence
-    ("lumin-evidence", "lumin-model"),
+    unconditional_workspace_edge("lumin-evidence", "lumin-model"),
     // lumin-js
-    ("lumin-js", "lumin-model"),
+    unconditional_workspace_edge("lumin-js", "lumin-model"),
     // lumin-sfc
-    ("lumin-sfc", "lumin-model"),
+    unconditional_workspace_edge("lumin-sfc", "lumin-model"),
 ];
 
 /// Canonical dev-dep allowlist: only lumin-store -> lumin-inventory.
-const DEV_EDGES: &[(&str, &str)] = &[("lumin-store", "lumin-inventory")];
+const DEV_EDGES: &[WorkspaceEdgePolicy] = &[unconditional_workspace_edge(
+    "lumin-store",
+    "lumin-inventory",
+)];
 
 /// Build-dep allowlist: empty.
-const BUILD_EDGES: &[(&str, &str)] = &[];
+const BUILD_EDGES: &[WorkspaceEdgePolicy] = &[];
 
 /// Exact production-to-third-party direct dependency allowlist.
 ///
 /// `cargo metadata --all-features` exposes optional edges before this check. A
-/// new crate or dependency kind must remain blocked until its Rule 7 cost and
-/// ownership review adds the exact edge here.
-const THIRD_PARTY_EDGES: &[(&str, &str, DepKind)] = &[
+/// new crate, dependency kind, or target predicate must remain blocked until
+/// its Rule 7 cost and ownership review adds the exact edge here.
+const THIRD_PARTY_EDGES: &[ThirdPartyEdgePolicy] = &[
     // lumin-cli
-    ("lumin-cli", "base64", DepKind::Dev),
-    ("lumin-cli", "serde_json", DepKind::Dev),
-    ("lumin-cli", "tempfile", DepKind::Dev),
-    ("lumin-cli", "thiserror", DepKind::Normal),
+    unconditional_third_party_edge("lumin-cli", "base64", DepKind::Dev),
+    unconditional_third_party_edge("lumin-cli", "serde_json", DepKind::Dev),
+    unconditional_third_party_edge("lumin-cli", "tempfile", DepKind::Dev),
+    unconditional_third_party_edge("lumin-cli", "thiserror", DepKind::Normal),
     // lumin-engine
-    ("lumin-engine", "rayon", DepKind::Normal),
-    ("lumin-engine", "tempfile", DepKind::Dev),
-    ("lumin-engine", "thiserror", DepKind::Normal),
+    unconditional_third_party_edge("lumin-engine", "rayon", DepKind::Normal),
+    unconditional_third_party_edge("lumin-engine", "tempfile", DepKind::Dev),
+    unconditional_third_party_edge("lumin-engine", "thiserror", DepKind::Normal),
     // lumin-evidence
-    ("lumin-evidence", "serde", DepKind::Normal),
+    unconditional_third_party_edge("lumin-evidence", "serde", DepKind::Normal),
     // lumin-inventory
-    ("lumin-inventory", "ignore", DepKind::Normal),
-    ("lumin-inventory", "same-file", DepKind::Normal),
-    ("lumin-inventory", "saphyr-parser", DepKind::Normal),
-    ("lumin-inventory", "serde", DepKind::Normal),
-    ("lumin-inventory", "serde_json", DepKind::Normal),
-    ("lumin-inventory", "tempfile", DepKind::Dev),
-    ("lumin-inventory", "thiserror", DepKind::Normal),
-    ("lumin-inventory", "winapi-util", DepKind::Normal),
-    ("lumin-inventory", "windows-sys", DepKind::Normal),
+    unconditional_third_party_edge("lumin-inventory", "ignore", DepKind::Normal),
+    unconditional_third_party_edge("lumin-inventory", "same-file", DepKind::Normal),
+    unconditional_third_party_edge("lumin-inventory", "saphyr-parser", DepKind::Normal),
+    unconditional_third_party_edge("lumin-inventory", "serde", DepKind::Normal),
+    unconditional_third_party_edge("lumin-inventory", "serde_json", DepKind::Normal),
+    unconditional_third_party_edge("lumin-inventory", "tempfile", DepKind::Dev),
+    unconditional_third_party_edge("lumin-inventory", "thiserror", DepKind::Normal),
+    target_specific_third_party_edge(
+        "lumin-inventory",
+        "winapi-util",
+        DepKind::Normal,
+        WINDOWS_TARGET,
+    ),
+    target_specific_third_party_edge(
+        "lumin-inventory",
+        "windows-sys",
+        DepKind::Normal,
+        WINDOWS_TARGET,
+    ),
     // lumin-js
-    ("lumin-js", "oxc_allocator", DepKind::Normal),
-    ("lumin-js", "oxc_ast", DepKind::Normal),
-    ("lumin-js", "oxc_ast_visit", DepKind::Normal),
-    ("lumin-js", "oxc_parser", DepKind::Normal),
-    ("lumin-js", "oxc_span", DepKind::Normal),
+    unconditional_third_party_edge("lumin-js", "oxc_allocator", DepKind::Normal),
+    unconditional_third_party_edge("lumin-js", "oxc_ast", DepKind::Normal),
+    unconditional_third_party_edge("lumin-js", "oxc_ast_visit", DepKind::Normal),
+    unconditional_third_party_edge("lumin-js", "oxc_parser", DepKind::Normal),
+    unconditional_third_party_edge("lumin-js", "oxc_span", DepKind::Normal),
     // lumin-model
-    ("lumin-model", "serde", DepKind::Normal),
-    ("lumin-model", "sha2", DepKind::Normal),
-    ("lumin-model", "thiserror", DepKind::Normal),
+    unconditional_third_party_edge("lumin-model", "serde", DepKind::Normal),
+    unconditional_third_party_edge("lumin-model", "sha2", DepKind::Normal),
+    unconditional_third_party_edge("lumin-model", "thiserror", DepKind::Normal),
     // lumin-protocol
-    ("lumin-protocol", "base64", DepKind::Normal),
-    ("lumin-protocol", "serde", DepKind::Normal),
-    ("lumin-protocol", "serde_json", DepKind::Normal),
-    ("lumin-protocol", "sha2", DepKind::Normal),
-    ("lumin-protocol", "thiserror", DepKind::Normal),
+    unconditional_third_party_edge("lumin-protocol", "base64", DepKind::Normal),
+    unconditional_third_party_edge("lumin-protocol", "serde", DepKind::Normal),
+    unconditional_third_party_edge("lumin-protocol", "serde_json", DepKind::Normal),
+    unconditional_third_party_edge("lumin-protocol", "sha2", DepKind::Normal),
+    unconditional_third_party_edge("lumin-protocol", "thiserror", DepKind::Normal),
     // lumin-resolve
-    ("lumin-resolve", "thiserror", DepKind::Normal),
+    unconditional_third_party_edge("lumin-resolve", "thiserror", DepKind::Normal),
     // lumin-sfc
-    ("lumin-sfc", "thiserror", DepKind::Normal),
+    unconditional_third_party_edge("lumin-sfc", "thiserror", DepKind::Normal),
     // lumin-store
-    ("lumin-store", "fs2", DepKind::Normal),
-    ("lumin-store", "getrandom", DepKind::Normal),
-    ("lumin-store", "redb", DepKind::Normal),
-    ("lumin-store", "serde", DepKind::Normal),
-    ("lumin-store", "serde_json", DepKind::Normal),
-    ("lumin-store", "tempfile", DepKind::Normal),
-    ("lumin-store", "thiserror", DepKind::Normal),
-    ("lumin-store", "winapi-util", DepKind::Normal),
-    ("lumin-store", "windows-sys", DepKind::Normal),
+    unconditional_third_party_edge("lumin-store", "fs2", DepKind::Normal),
+    unconditional_third_party_edge("lumin-store", "getrandom", DepKind::Normal),
+    unconditional_third_party_edge("lumin-store", "redb", DepKind::Normal),
+    unconditional_third_party_edge("lumin-store", "serde", DepKind::Normal),
+    unconditional_third_party_edge("lumin-store", "serde_json", DepKind::Normal),
+    unconditional_third_party_edge("lumin-store", "tempfile", DepKind::Normal),
+    unconditional_third_party_edge("lumin-store", "thiserror", DepKind::Normal),
+    target_specific_third_party_edge(
+        "lumin-store",
+        "winapi-util",
+        DepKind::Normal,
+        WINDOWS_TARGET,
+    ),
+    target_specific_third_party_edge(
+        "lumin-store",
+        "windows-sys",
+        DepKind::Normal,
+        WINDOWS_TARGET,
+    ),
 ];
 
 /// Owner isolation rules for third-party crates.
@@ -398,10 +448,12 @@ fn extract_direct_edges(
             if let Some(kinds) = dep_kinds {
                 for kind_entry in kinds {
                     let kind = parse_dep_kind(kind_entry["kind"].as_str());
+                    let target = kind_entry["target"].as_str().map(str::to_owned);
                     edges.push(DirectEdge {
                         from: from_name.clone(),
                         to: to_name.clone(),
                         kind,
+                        target,
                         is_workspace_target,
                     });
                 }
@@ -421,9 +473,9 @@ fn parse_dep_kind(wire: Option<&str>) -> DepKind {
 }
 
 fn validate_edges(edges: &[DirectEdge], violations: &mut Vec<String>) {
-    let normal_set: BTreeSet<(&str, &str)> = NORMAL_EDGES.iter().map(|(f, t)| (*f, *t)).collect();
-    let dev_set: BTreeSet<(&str, &str)> = DEV_EDGES.iter().map(|(f, t)| (*f, *t)).collect();
-    let build_set: BTreeSet<(&str, &str)> = BUILD_EDGES.iter().map(|(f, t)| (*f, *t)).collect();
+    let normal_set = NORMAL_EDGES.iter().copied().collect::<BTreeSet<_>>();
+    let dev_set = DEV_EDGES.iter().copied().collect::<BTreeSet<_>>();
+    let build_set = BUILD_EDGES.iter().copied().collect::<BTreeSet<_>>();
 
     for edge in edges {
         // Unknown dep kind is always a hard violation.
@@ -451,28 +503,30 @@ fn validate_edges(edges: &[DirectEdge], violations: &mut Vec<String>) {
 
         // Workspace-to-workspace edge: check canonical allowlist
         if edge.is_workspace_target {
-            let pair = (edge.from.as_str(), edge.to.as_str());
+            let identity = (edge.from.as_str(), edge.to.as_str(), edge.target.as_deref());
             let allowed = match edge.kind {
-                DepKind::Normal => normal_set.contains(&pair),
-                DepKind::Dev => dev_set.contains(&pair),
-                DepKind::Build => build_set.contains(&pair),
+                DepKind::Normal => normal_set.contains(&identity),
+                DepKind::Dev => dev_set.contains(&identity),
+                DepKind::Build => build_set.contains(&identity),
                 DepKind::Unknown => false, // handled above
             };
 
             if !allowed {
                 violations.push(format!(
-                    "FORBIDDEN edge: {} -> {} ({:?}) not in canonical allowlist",
-                    edge.from, edge.to, edge.kind
+                    "FORBIDDEN edge: {} -> {} ({:?}, target={:?}) not in canonical allowlist",
+                    edge.from, edge.to, edge.kind, edge.target
                 ));
             }
         } else {
-            if !THIRD_PARTY_EDGES
-                .iter()
-                .any(|(from, to, kind)| edge.from == *from && edge.to == *to && edge.kind == *kind)
-            {
+            if !THIRD_PARTY_EDGES.iter().any(|(from, to, kind, target)| {
+                edge.from == *from
+                    && edge.to == *to
+                    && edge.kind == *kind
+                    && edge.target.as_deref() == *target
+            }) {
                 violations.push(format!(
-                    "FORBIDDEN third-party edge: {} -> {} ({:?}) not in canonical allowlist",
-                    edge.from, edge.to, edge.kind
+                    "FORBIDDEN third-party edge: {} -> {} ({:?}, target={:?}) not in canonical allowlist",
+                    edge.from, edge.to, edge.kind, edge.target
                 ));
             }
 
@@ -494,7 +548,7 @@ fn validate_edges(edges: &[DirectEdge], violations: &mut Vec<String>) {
 
 fn validate_third_party_allowlist_completeness(
     edges: &[DirectEdge],
-    allowlist: &[(&str, &str, DepKind)],
+    allowlist: &[ThirdPartyEdgePolicy],
     violations: &mut Vec<String>,
 ) {
     let unique_allowlist = allowlist.iter().copied().collect::<BTreeSet<_>>();
@@ -502,12 +556,16 @@ fn validate_third_party_allowlist_completeness(
         violations.push("DUPLICATE third-party dependency edge in canonical allowlist".to_owned());
     }
 
-    for (from, to, kind) in &unique_allowlist {
+    for (from, to, kind, target) in &unique_allowlist {
         if !edges.iter().any(|edge| {
-            !edge.is_workspace_target && edge.from == *from && edge.to == *to && edge.kind == *kind
+            !edge.is_workspace_target
+                && edge.from == *from
+                && edge.to == *to
+                && edge.kind == *kind
+                && edge.target.as_deref() == *target
         }) {
             violations.push(format!(
-                "STALE third-party edge: {from} -> {to} ({kind:?}) is allowlisted but absent"
+                "STALE third-party edge: {from} -> {to} ({kind:?}, target={target:?}) is allowlisted but absent"
             ));
         }
     }
@@ -607,6 +665,7 @@ mod tests {
             from: "lumin-cli".to_owned(),
             to: "lumin-engine".to_owned(),
             kind: DepKind::Unknown,
+            target: None,
             is_workspace_target: true,
         }];
         let mut violations = Vec::new();
@@ -621,6 +680,7 @@ mod tests {
             from: "lumin-cli".to_owned(),
             to: "lumin-xtask".to_owned(),
             kind: DepKind::Normal,
+            target: None,
             is_workspace_target: true,
         }];
         let mut violations = Vec::new();
@@ -635,6 +695,7 @@ mod tests {
             from: "lumin-cli".to_owned(),
             to: "lumin-engine".to_owned(),
             kind: DepKind::Normal,
+            target: None,
             is_workspace_target: true,
         }];
         let mut violations = Vec::new();
@@ -643,11 +704,31 @@ mod tests {
     }
 
     #[test]
+    fn workspace_target_predicate_is_part_of_edge_identity() {
+        let edge = DirectEdge {
+            from: "lumin-cli".to_owned(),
+            to: "lumin-engine".to_owned(),
+            kind: DepKind::Normal,
+            target: Some(WINDOWS_TARGET.to_owned()),
+            is_workspace_target: true,
+        };
+        let mut violations = Vec::new();
+        validate_edges(&[edge], &mut violations);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("FORBIDDEN edge")),
+            "a target-specific workspace edge reused an unconditional approval: {violations:?}"
+        );
+    }
+
+    #[test]
     fn validate_disallowed_normal_edge_fails() {
         let edges = vec![DirectEdge {
             from: "lumin-model".to_owned(),
             to: "lumin-store".to_owned(),
             kind: DepKind::Normal,
+            target: None,
             is_workspace_target: true,
         }];
         let mut violations = Vec::new();
@@ -663,6 +744,7 @@ mod tests {
             from: "lumin-store".to_owned(),
             to: "lumin-inventory".to_owned(),
             kind: DepKind::Dev,
+            target: None,
             is_workspace_target: true,
         }];
         let mut violations = Vec::new();
@@ -674,6 +756,7 @@ mod tests {
             from: "lumin-cli".to_owned(),
             to: "lumin-inventory".to_owned(),
             kind: DepKind::Dev,
+            target: None,
             is_workspace_target: true,
         }];
         let mut violations = Vec::new();
@@ -687,6 +770,7 @@ mod tests {
             from: "lumin-engine".to_owned(),
             to: "lumin-model".to_owned(),
             kind: DepKind::Build,
+            target: None,
             is_workspace_target: true,
         }];
         let mut violations = Vec::new();
@@ -700,6 +784,7 @@ mod tests {
             from: "lumin-engine".to_owned(),
             to: "redb".to_owned(),
             kind: DepKind::Normal,
+            target: None,
             is_workspace_target: false,
         }];
         let mut violations = Vec::new();
@@ -716,6 +801,7 @@ mod tests {
             from: "lumin-store".to_owned(),
             to: "redb".to_owned(),
             kind: DepKind::Normal,
+            target: None,
             is_workspace_target: false,
         }];
         let mut violations = Vec::new();
@@ -732,6 +818,7 @@ mod tests {
             from: "lumin-engine".to_owned(),
             to: "oxc_parser".to_owned(),
             kind: DepKind::Normal,
+            target: None,
             is_workspace_target: false,
         }];
         let mut violations = Vec::new();
@@ -748,6 +835,7 @@ mod tests {
             from: "lumin-js".to_owned(),
             to: "oxc_parser".to_owned(),
             kind: DepKind::Normal,
+            target: None,
             is_workspace_target: false,
         }];
         let mut violations = Vec::new();
@@ -764,6 +852,7 @@ mod tests {
             from: "lumin-protocol".to_owned(),
             to: "serde_json".to_owned(),
             kind: DepKind::Normal,
+            target: None,
             is_workspace_target: false,
         }];
         let mut violations = Vec::new();
@@ -775,24 +864,54 @@ mod tests {
     }
 
     #[test]
+    fn targeted_third_party_approval_rejects_other_target_scopes() {
+        let approved = DirectEdge {
+            from: "lumin-inventory".to_owned(),
+            to: "windows-sys".to_owned(),
+            kind: DepKind::Normal,
+            target: Some(WINDOWS_TARGET.to_owned()),
+            is_workspace_target: false,
+        };
+        let mut approved_violations = Vec::new();
+        validate_edges(std::slice::from_ref(&approved), &mut approved_violations);
+        assert!(approved_violations.is_empty(), "{approved_violations:?}");
+
+        for target in [None, Some("cfg(unix)".to_owned())] {
+            let mut changed = approved.clone();
+            changed.target = target;
+            let mut violations = Vec::new();
+            validate_edges(&[changed], &mut violations);
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("FORBIDDEN third-party edge")),
+                "a different target scope reused the Windows-only approval: {violations:?}"
+            );
+        }
+    }
+
+    #[test]
     fn unapproved_third_party_crate_or_kind_fails_closed() {
         let cases = [
             DirectEdge {
                 from: "lumin-cli".to_owned(),
                 to: "duct".to_owned(),
                 kind: DepKind::Normal,
+                target: None,
                 is_workspace_target: false,
             },
             DirectEdge {
                 from: "lumin-cli".to_owned(),
                 to: "serde_json".to_owned(),
                 kind: DepKind::Normal,
+                target: None,
                 is_workspace_target: false,
             },
             DirectEdge {
                 from: "lumin-cli".to_owned(),
                 to: "thiserror".to_owned(),
                 kind: DepKind::Build,
+                target: None,
                 is_workspace_target: false,
             },
         ];
@@ -815,9 +934,10 @@ mod tests {
             from: "lumin-cli".to_owned(),
             to: "thiserror".to_owned(),
             kind: DepKind::Normal,
+            target: None,
             is_workspace_target: false,
         };
-        let expected = [("lumin-cli", "thiserror", DepKind::Normal)];
+        let expected = [("lumin-cli", "thiserror", DepKind::Normal, None)];
 
         let mut violations = Vec::new();
         validate_third_party_allowlist_completeness(
@@ -839,8 +959,8 @@ mod tests {
         validate_third_party_allowlist_completeness(
             &[edge],
             &[
-                ("lumin-cli", "thiserror", DepKind::Normal),
-                ("lumin-cli", "thiserror", DepKind::Normal),
+                ("lumin-cli", "thiserror", DepKind::Normal, None),
+                ("lumin-cli", "thiserror", DepKind::Normal, None),
             ],
             &mut duplicate_violations,
         );
@@ -849,6 +969,41 @@ mod tests {
                 .iter()
                 .any(|violation| violation.contains("DUPLICATE third-party dependency edge")),
             "expected a duplicate-edge violation in {duplicate_violations:?}"
+        );
+
+        let targeted_edge = DirectEdge {
+            from: "lumin-store".to_owned(),
+            to: "winapi-util".to_owned(),
+            kind: DepKind::Normal,
+            target: Some(WINDOWS_TARGET.to_owned()),
+            is_workspace_target: false,
+        };
+        let targeted_expected = [(
+            "lumin-store",
+            "winapi-util",
+            DepKind::Normal,
+            Some(WINDOWS_TARGET),
+        )];
+        let mut targeted_violations = Vec::new();
+        validate_third_party_allowlist_completeness(
+            std::slice::from_ref(&targeted_edge),
+            &targeted_expected,
+            &mut targeted_violations,
+        );
+        assert!(targeted_violations.is_empty(), "{targeted_violations:?}");
+
+        let mut unconditional_edge = targeted_edge;
+        unconditional_edge.target = None;
+        validate_third_party_allowlist_completeness(
+            &[unconditional_edge],
+            &targeted_expected,
+            &mut targeted_violations,
+        );
+        assert!(
+            targeted_violations
+                .iter()
+                .any(|violation| violation.contains("STALE third-party edge")),
+            "a mismatched target scope satisfied the allowlist: {targeted_violations:?}"
         );
     }
 
@@ -874,6 +1029,29 @@ mod tests {
         assert_eq!(edges[0].from, "lumin-store");
         assert_eq!(edges[0].to, "redb");
         assert_eq!(edges[0].kind, DepKind::Normal);
+        assert_eq!(edges[0].target, None);
+        assert!(!edges[0].is_workspace_target);
+    }
+
+    #[test]
+    fn extract_direct_edges_preserves_target_predicate() {
+        let id_to_name: HashMap<String, String> = [
+            ("inventory-id".to_owned(), "lumin-inventory".to_owned()),
+            ("windows-id".to_owned(), "windows-sys".to_owned()),
+        ]
+        .into_iter()
+        .collect();
+        let member_names: BTreeSet<String> = ["lumin-inventory".to_owned()].into_iter().collect();
+        let nodes: Vec<serde_json::Value> = vec![serde_json::json!({
+            "id": "inventory-id",
+            "deps": [{
+                "pkg": "windows-id",
+                "dep_kinds": [{"kind": null, "target": WINDOWS_TARGET}]
+            }]
+        })];
+        let edges = extract_direct_edges(&nodes, &id_to_name, &member_names);
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].target.as_deref(), Some(WINDOWS_TARGET));
         assert!(!edges[0].is_workspace_target);
     }
 
@@ -897,6 +1075,7 @@ mod tests {
         })];
         let edges = extract_direct_edges(&nodes, &id_to_name, &member_names);
         assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].target, None);
         assert!(edges[0].is_workspace_target);
     }
 
