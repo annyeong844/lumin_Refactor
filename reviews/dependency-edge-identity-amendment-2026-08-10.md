@@ -33,7 +33,11 @@ Consequently, any of these changes can reuse an existing approval:
 - replace an approved registry package with an unreviewed path package that declares
   the same name and version;
 - configure Cargo `replace-with` to load altered checked-in directory-source bytes while
-  metadata continues to report the original registry source and package ID.
+  metadata continues to report the original registry source and package ID;
+- pass the same source replacement through Cargo's global `--config` option while the
+  checked-in files and environment remain clean;
+- change the root `[workspace].resolver` while preserving every package feature map and
+  dependency declaration.
 
 These changes alter platforms, the default graph, crate-visible API names, dependency
 code, build cost, or the transitive surface. They are concrete fail-open policy bypasses
@@ -63,14 +67,17 @@ workspace manifest and rejects:
   ancestor, and `config.toml` or `config` in the active Cargo home;
 - `CARGO_SOURCE_*`, `CARGO_PATHS`, and `CARGO_REGISTRIES_*_INDEX` environment
   overrides (registry authentication variables do not change source identity);
-- `[patch]` or `[replace]` tables in workspace manifests.
+- `[patch]` or `[replace]` tables in workspace manifests;
+- Cargo global configuration arguments in either `--config VALUE` or
+  `--config=VALUE` form anywhere in the supplied Cargo argument vector;
+- a missing or non-exact root `[workspace].resolver = "3"` declaration.
 
 The exact policy deliberately refuses all such configuration rather than trying to
 prove that a particular replacement is harmless. Public CI runs with this clean source
 configuration; an incompatible local environment produces no architecture verdict and
-prints the forbidden source. Python absence, an older interpreter, a parse failure,
-zero parsed workspace manifests, or guard/workflow drift is a hard failure rather than
-permission to run Cargo.
+prints the forbidden source or argument. Python absence, an older interpreter, a parse
+failure, zero parsed workspace manifests, resolver drift, or guard/workflow drift is a
+hard failure rather than permission to run Cargo.
 
 The architecture check then reads `cargo metadata --all-features --locked`. It resolves
 the active Cargo home and repository root physically before trusting package locations.
@@ -82,12 +89,13 @@ non-workspace package with no source all fail. This provenance rule covers the c
 resolved graph, not only direct allowlisted edges, so a replaced transitive crate cannot
 enter through an approved direct dependency.
 
-Before matching edges, the checker compares every workspace package's complete
-`packages[].features` map against either the production or development-tool policy.
-Feature names are exact and each activation list is a sorted, deduplicated set. An
-absent `default` feature is distinct from an empty `default` feature. This preserves the
-declared feature graph even though all-features resolution activates every available
-feature.
+Before matching edges, the checker requires the canonical root workspace resolver
+`"3"` and compares every workspace package's complete `packages[].features` map against
+either the production or development-tool policy. The resolver value is an exact policy
+identity, not an author-environment default. Feature names are exact and each activation
+list is a sorted, deduplicated set. An absent `default` feature is distinct from an empty
+`default` feature. This preserves the declared feature graph and unification contract
+even though all-features resolution activates every available feature.
 
 For each direct dependency from any workspace member, the checker then links one
 declaration identity to one resolution identity. `lumin-xtask` remains outside the
@@ -136,11 +144,11 @@ unnormalized `name`/`rename`. A missing, ambiguous, or disagreeing join fails cl
 Each declaration kind/target pair and each `dep_kinds[]` entry must have exactly one
 counterpart.
 
-The canonical feature, workspace-edge, and third-party-edge policies must match the
-complete metadata surface. Unknown dependency kinds, duplicate policy identities, new
-feature/declared/resolved identities, and stale policy identities fail the architecture
-check. Package-family owner isolation remains an additional boundary and cannot
-substitute for the exact edge allowlist.
+The canonical workspace-resolver, feature, workspace-edge, and third-party-edge policies
+must match the complete manifest and metadata surface. Unknown dependency kinds,
+duplicate policy identities, new feature/declared/resolved identities, and stale policy
+identities fail the architecture check. Package-family owner isolation remains an
+additional boundary and cannot substitute for the exact edge allowlist.
 
 ## Non-Goals
 
@@ -160,36 +168,41 @@ substitute for the exact edge allowlist.
    pinned Python 3.11+ standard-library bootstrap wrapper with `-I -S`; unwrapped Cargo,
    non-isolated Python, missing/old Python, parse failure, zero manifests, shell-based
    command reconstruction, or workflow drift fails. Only `cargo --version` is exempt.
-2. The guard rejects Cargo config files, source/path override variables, and workspace
-   manifest patch/replace tables before Cargo resolves or builds repository code.
+2. The guard rejects Cargo config files, source/path override variables, every Cargo
+   global `--config` argument form, and workspace manifest patch/replace tables before
+   Cargo resolves or builds repository code.
 3. Every resolved non-workspace registry manifest is physically under the active Cargo
    home registry source cache and outside the repository; directory replacement,
    symlink escape, missing paths, and lexical/physical disagreement fail.
-4. The current locked workspace feature maps and graph, including `lumin-xtask`, match
+4. The root manifest declares the exact canonical `[workspace].resolver = "3"` before
+   Cargo runs, and the architecture policy independently matches that same value.
+5. The current locked workspace feature maps and graph, including `lumin-xtask`, match
    every canonical feature and linked declaration/resolution identity without an
    ambiguous join.
-5. Adding or changing any workspace feature or its activation set fails.
-6. Changing a Windows-only approved edge to no target or another predicate fails.
-7. Renaming an approved workspace or third-party dependency fails.
-8. Changing optionality, default-feature use, or the requested feature set fails.
-9. Changing a third-party resolved version/source or substituting a non-workspace path
+6. Changing or removing the workspace resolver fails before Cargo executes.
+7. Adding or changing any workspace feature or its activation set fails.
+8. Changing a Windows-only approved edge to no target or another predicate fails.
+9. Renaming an approved workspace or third-party dependency fails.
+10. Changing optionality, default-feature use, or the requested feature set fails.
+11. Changing a third-party resolved version/source or substituting a non-workspace path
    package fails even when name and version appear approved.
-10. A new direct edge fails even when its resolved package already has an approved owner.
-11. A stale or duplicate feature/declaration/resolution policy identity fails.
-12. Unknown dependency kinds and missing, ambiguous, or disagreeing joins fail rather
+12. A new direct edge fails even when its resolved package already has an approved owner.
+13. A stale or duplicate resolver/feature/declaration/resolution policy identity fails.
+14. Unknown dependency kinds and missing, ambiguous, or disagreeing joins fail rather
    than falling back to a normal edge.
-13. The check remains independent of feature activation order, dependency traversal, and
+15. The check remains independent of feature activation order, dependency traversal, and
    metadata insertion order.
 
 ## Required Reviews
 
 ### Design review
 
-The repository owner must verify that the isolated pre-Cargo bootstrap, graph-wide
-loaded-location proof, production/development-tool feature maps, and linked
-declaration/resolution identities form the intended approval boundary; that the
-non-goals do not weaken Rule 7; and that the acceptance criteria cover product crates,
-`lumin-xtask`, direct third-party, and transitive packages.
+The repository owner must verify that the isolated pre-Cargo bootstrap, rejected Cargo
+configuration channels, exact workspace resolver, graph-wide loaded-location proof,
+production/development-tool feature maps, and linked declaration/resolution identities
+form the intended approval boundary; that the non-goals do not weaken Rule 7; and that
+the acceptance criteria cover product crates, `lumin-xtask`, direct third-party, and
+transitive packages.
 
 ### Independent adversarial review
 
@@ -206,6 +219,7 @@ and attempt at least these bypasses:
 - replace a registry package with a same-name/version non-workspace path package;
 - replace crates.io with an altered checked-in directory source while preserving the
   reported registry source and package ID;
+- inject that replacement through `cargo --config VALUE` or `cargo --config=VALUE`;
 - bypass the wrapper for one dependency-reading Cargo command, remove `-I -S`, run it
   with old Python, reconstruct the command through a shell, or make it import
   repository/replacement-controlled code;
@@ -214,6 +228,8 @@ and attempt at least these bypasses:
 - use a symlinked registry source root or package manifest to make repository bytes look
   like Cargo-home registry bytes;
 - replace a transitive package while leaving every direct edge unchanged;
+- change or remove the root workspace resolver while preserving feature maps and edge
+  declarations;
 - reuse a package approval under another dependency kind;
 - add a duplicate or stale policy identity;
 - create a missing, ambiguous, or disagreeing declaration/resolution join;

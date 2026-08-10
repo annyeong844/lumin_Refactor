@@ -327,27 +327,30 @@ or third-party module, validates provenance, and then launches the exact supplie
 argument vector without a shell. It exists because a Rust checker cannot validate the
 dependencies used to build itself. It rejects repository, ancestor, or
 active-Cargo-home config files, Cargo source or path override environment variables,
-and manifest `[patch]`/`[replace]` tables. Source overrides include `CARGO_SOURCE_*`,
-`CARGO_PATHS`, and registry-index variables. Architecture source policy pins the guard
-and rejects any unwrapped dependency-resolving CI Cargo command; non-resolving
-`cargo --version` is the sole exception. CI then reads locked, all-features
-`cargo metadata`.
+Cargo global `--config` arguments in either value form, and manifest `[patch]`/`[replace]`
+tables. Source overrides include `CARGO_SOURCE_*`, `CARGO_PATHS`, and registry-index
+variables. Before Cargo executes, the guard also requires the exact root
+`[workspace].resolver = "3"`. Architecture source policy pins the guard and rejects any
+unwrapped dependency-resolving CI Cargo command; non-resolving `cargo --version` is the
+sole exception. CI then reads locked, all-features `cargo metadata`.
 Every resolved non-workspace registry package must physically reside beneath the
 canonical active Cargo home `registry/src` and outside the repository; lexical or
 physical disagreement, including symlink and directory-source replacement, fails. The
-architecture check rejects every workspace feature definition or direct edge not
-listed in either the production or development-tool policy. Each workspace member's
-exact feature-name-to-canonical-activation-set map is listed. Each edge then links a
-declaration identity to a resolution identity. The declaration contains the owner
-workspace package, dependency package name, exact optional rename, version requirement,
-dependency kind, optional target predicate, optionality,
+architecture check independently pins the exact workspace resolver and rejects every
+workspace feature definition or direct edge not listed in either the production or
+development-tool policy. Each workspace member's exact
+feature-name-to-canonical-activation-set map is listed. Each edge then links a declaration
+identity to a resolution identity. The declaration contains the owner workspace package,
+dependency package name, exact optional rename, version requirement, dependency kind,
+optional target predicate, optionality,
 default-feature setting, and canonical requested-feature set. The resolution contains
 either the exact workspace member or the resolved third-party package name, version,
 and source. A non-workspace path package is rejected. An approval cannot authorize a
-workspace-feature definition, rename, dependency feature/optionality, predicate, kind,
-version, source, or loaded-location change. Unknown dependency kinds, ambiguous
-declaration-to-resolution joins, duplicate policy identities, and policy identities
-absent from the feature, declared, or resolved graph fail the architecture check.
+workspace-resolver or feature definition, rename, dependency feature/optionality,
+predicate, kind, version, source, or loaded-location change. Unknown dependency kinds,
+ambiguous declaration-to-resolution joins, duplicate policy identities, and policy
+identities absent from the resolver, feature, declared, or resolved graph fail the
+architecture check.
 
 ### 5.1 Development-Tool DAG
 

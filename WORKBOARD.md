@@ -22,7 +22,7 @@ AI agents grounded, queryable evidence before and after they change code.
 | PLAN-001 | active | `PHASE1-CHECKLIST.md` | Owns Phase 1 execution order, dependencies, and verified progress without restating acceptance contracts. |
 | REVIEW-001 | superseded | `reviews/architecture-v1-adversarial-2026-07-15.md` | Records the first adversarial findings and first amendment decisions. |
 | REVIEW-002 | complete, monitoring | `reviews/architecture-v1-independent-verification-2026-07-15.md` | Preserves the exact independent verification and may reopen only on a concrete regression or counterexample. |
-| REVIEW-003 | freeze candidate | `reviews/dependency-edge-identity-amendment-2026-08-10.md` | Reopens only direct-dependency policy identity after a concrete target/rename bypass; implementation waits for its two reviews and merge. |
+| REVIEW-003 | freeze candidate | `reviews/dependency-edge-identity-amendment-2026-08-10.md` | Reopens only dependency-surface policy identity after concrete edge, resolver, and Cargo-source bypasses; implementation waits for its two reviews and merge. |
 
 ## Active Work
 
@@ -46,7 +46,7 @@ implementation history.
   ARCH-002.
 - Any Phase 1 implementation or test: read SLICE-001.
 - Architecture freeze or review resolution: read REVIEW-002, then any focused active
-  amendment it routes, including REVIEW-003 for direct-dependency policy identity.
+  amendment it routes, including REVIEW-003 for dependency-surface policy identity.
 - Repository working rules and close-out discipline: read
   `문서(한글)/AGENTS.ko.md` (canonical) or `AGENTS.md` (English translation).
 
