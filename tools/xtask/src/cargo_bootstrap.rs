@@ -5,9 +5,21 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 const GUARD_PATH: &str = "tools/xtask/bootstrap/source_provenance.py";
-const GUARD_SHA256: &str = "89060d980e0194a9d70990a5454e1f72ae70278ff3c36d18ddefbcc03892b163";
+const GUARD_SHA256: &str = "ad84837d8a9c1240f43fd9dc9b451ce1f262ae9442f0a05310f6ee03fe37404e";
 const TEST_PATH: &str = "tools/xtask/bootstrap/test_source_provenance.py";
-const TEST_SHA256: &str = "c2f56e4b9e8276a534c6bf7c07bef50314f653fac83f02986813b87ba844ecc4";
+const TEST_SHA256: &str = "edb9dc0b8f80e011099a7113cc9ae533f35ecbb9dfa7bc5406d8fa2b706b11a9";
+const METADATA_HELPER_PATH: &str = "tools/xtask/bootstrap/metadata_snapshot.py";
+const METADATA_HELPER_SHA256: &str =
+    "882f2f27958bd6196f6ed657e58039ea1b437507bb129c17e441b1e4c7602864";
+const METADATA_TEST_PATH: &str = "tools/xtask/bootstrap/test_metadata_snapshot.py";
+const METADATA_TEST_SHA256: &str =
+    "66e6728f6e3874d8ad9f0deb1cd6f037183d9c3838ae55f5843ca36059320879";
+const REGISTRY_HELPER_PATH: &str = "tools/xtask/bootstrap/registry_snapshot.py";
+const REGISTRY_HELPER_SHA256: &str =
+    "4a02777fd52f116007ca53d0aa2d4989c447fe27261d64531ee449013dda8857";
+const REGISTRY_TEST_PATH: &str = "tools/xtask/bootstrap/test_registry_snapshot.py";
+const REGISTRY_TEST_SHA256: &str =
+    "a400912dc554f89aacd15aa6b6b50f8e88fc0f363d81b2e90d4d52c0f9285a9e";
 const WORKFLOW_DIRECTORY: &str = ".github/workflows";
 const WORKFLOW_PATH: &str = ".github/workflows/ci.yml";
 const WORKFLOW_SHA256: &str = "4ca2610501059a8ae6eacffd0b93547cb69115c221460eb012b2aa5465dbfc4c";
@@ -166,6 +178,30 @@ pub fn check_cargo_bootstrap(workspace_root: &Path) -> CargoBootstrapResult {
     validate_workflow_directory(workspace_root, &mut result);
     verify_digest(workspace_root, GUARD_PATH, GUARD_SHA256, &mut result);
     verify_digest(workspace_root, TEST_PATH, TEST_SHA256, &mut result);
+    verify_digest(
+        workspace_root,
+        METADATA_HELPER_PATH,
+        METADATA_HELPER_SHA256,
+        &mut result,
+    );
+    verify_digest(
+        workspace_root,
+        METADATA_TEST_PATH,
+        METADATA_TEST_SHA256,
+        &mut result,
+    );
+    verify_digest(
+        workspace_root,
+        REGISTRY_HELPER_PATH,
+        REGISTRY_HELPER_SHA256,
+        &mut result,
+    );
+    verify_digest(
+        workspace_root,
+        REGISTRY_TEST_PATH,
+        REGISTRY_TEST_SHA256,
+        &mut result,
+    );
     verify_digest(workspace_root, WORKFLOW_PATH, WORKFLOW_SHA256, &mut result);
 
     let workflow = workspace_root.join(WORKFLOW_PATH);

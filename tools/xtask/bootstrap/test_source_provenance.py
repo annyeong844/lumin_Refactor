@@ -83,7 +83,11 @@ class Fixture:
                     ).hexdigest(),
                     "rootProfiles": root_manifest.get("profile", {}),
                     "workspacePackage": workspace.get("package", {}),
-                    "workspaceDependencies": workspace.get("dependencies", {}),
+                    "workspaceDependencies": (
+                        PROVENANCE.canonical_workspace_dependency_catalog(
+                            workspace.get("dependencies", {})
+                        )
+                    ),
                     "workspaceLints": workspace.get("lints", {}),
                     "workspaceMemberLints": {
                         "fixture-member": member_manifest.get("lints", {})
@@ -144,6 +148,63 @@ class SourceProvenanceTests(unittest.TestCase):
 
     def test_import_does_not_write_repository_bytecode(self) -> None:
         self.assertFalse((SCRIPT.parent / "__pycache__").exists())
+
+    def test_check_only_runs_dependency_preflight_after_manifest_validation(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            calls: list[tuple[object, tuple[str, ...], object]] = []
+
+            def preflight(validation: object, command: tuple[str, ...], environment: object) -> Path:
+                calls.append((validation, command, environment))
+                return fixture.cargo_home / "cargo"
+
+            environment = {"PATH": str(fixture.cargo_home)}
+            PROVENANCE.validate_check_only(
+                fixture.root,
+                environment,
+                fixture.root,
+                preflight,
+                fixture.cargo_home,
+            )
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][1], ("cargo", "metadata"))
+            self.assertIs(calls[0][2], environment)
+
+    def test_independent_metadata_and_registry_helper_suites(self) -> None:
+        for name in ("test_metadata_snapshot.py", "test_registry_snapshot.py"):
+            with self.subTest(name=name):
+                completed = subprocess.run(
+                    [sys.executable, "-I", "-S", str(SCRIPT.with_name(name))],
+                    cwd=SCRIPT.parents[3],
+                    env=os.environ.copy(),
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_bootstrap_helper_digest_is_exact(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            helper = fixture.root / "tools" / "xtask" / "bootstrap" / "helper.py"
+            helper.parent.mkdir(parents=True)
+            helper.write_text("print('trusted')\n", encoding="utf-8")
+            digest = hashlib.sha256(helper.read_bytes()).hexdigest()
+            self.assertEqual(
+                PROVENANCE._verified_helper(
+                    fixture.root,
+                    Path("tools/xtask/bootstrap/helper.py"),
+                    digest,
+                ),
+                helper,
+            )
+            helper.write_text("print('changed')\n", encoding="utf-8")
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "digest mismatch"):
+                PROVENANCE._verified_helper(
+                    fixture.root,
+                    Path("tools/xtask/bootstrap/helper.py"),
+                    digest,
+                )
 
     def test_both_command_line_config_forms_are_rejected(self) -> None:
         temporary, fixture = self.fixture()
@@ -406,6 +467,24 @@ class SourceProvenanceTests(unittest.TestCase):
             with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "forbidden source selectors"):
                 fixture.validate()
 
+    def test_workspace_dependency_feature_order_is_canonical(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            fixture.write_root(
+                suffix=(
+                    '[workspace.dependencies]\nserde = { version = "=1.0.0", '
+                    'features = ["derive", "std"] }\n'
+                )
+            )
+            fixture.write_policy([])
+            fixture.write_root(
+                suffix=(
+                    '[workspace.dependencies]\nserde = { version = "=1.0.0", '
+                    'features = ["std", "derive", "std"] }\n'
+                )
+            )
+            fixture.validate()
+
     def test_duplicate_policy_json_keys_are_rejected(self) -> None:
         temporary, fixture = self.fixture()
         with temporary:
@@ -626,7 +705,6 @@ class SourceProvenanceTests(unittest.TestCase):
                 "HOME",
                 "PATHEXT",
                 "RUSTUP_HOME",
-                "RUSTUP_TOOLCHAIN",
                 "SYSTEMDRIVE",
                 "SYSTEMROOT",
                 "TEMP",
@@ -639,17 +717,7 @@ class SourceProvenanceTests(unittest.TestCase):
             }
             environment["CARGO_HOME"] = str(cargo_home)
             environment["PATH"] = str(binary_directory)
-
-            check_only = subprocess.run(
-                [sys.executable, "-I", "-S", str(SCRIPT), "--check-only"],
-                cwd=root,
-                env=environment,
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(check_only.returncode, 0, check_only.stderr)
-            self.assertEqual(check_only.stdout, "")
+            self.assertNotIn("RUSTUP_TOOLCHAIN", environment)
 
             completed = subprocess.run(
                 [sys.executable, "-I", "-S", str(SCRIPT), "--", "cargo", "--version"],

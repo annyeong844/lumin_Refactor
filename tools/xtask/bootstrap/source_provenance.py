@@ -7,10 +7,11 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tomllib
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 
 
 MINIMUM_PYTHON = (3, 11)
@@ -19,6 +20,10 @@ WORKFLOW_DIRECTORY = Path(".github/workflows")
 WORKFLOW_NAME = "ci.yml"
 WORKFLOW_SHA256 = "4ca2610501059a8ae6eacffd0b93547cb69115c221460eb012b2aa5465dbfc4c"
 POLICY_PATH = Path("tools/xtask/dependency-surface-policy.v1.json")
+METADATA_HELPER_PATH = Path("tools/xtask/bootstrap/metadata_snapshot.py")
+METADATA_HELPER_SHA256 = "882f2f27958bd6196f6ed657e58039ea1b437507bb129c17e441b1e4c7602864"
+REGISTRY_HELPER_PATH = Path("tools/xtask/bootstrap/registry_snapshot.py")
+REGISTRY_HELPER_SHA256 = "4a02777fd52f116007ca53d0aa2d4989c447fe27261d64531ee449013dda8857"
 DEPENDENCY_TABLES = (
     ("dependencies", "normal"),
     ("dev-dependencies", "dev"),
@@ -80,6 +85,13 @@ class DependencyContract:
     optional: bool
     uses_default_features: bool
     features: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RepositoryValidation:
+    root: Path
+    cargo_home: Path
+    manifests: tuple[Path, ...]
 
 
 def _is_within(path: Path, parent: Path) -> bool:
@@ -310,6 +322,20 @@ def _dependency_features(alias: str, table: Mapping[str, object] | None) -> tupl
     ):
         raise ProvenanceError(f"dependency {alias!r} features must be non-empty strings")
     return tuple(sorted(set(raw_features)))
+
+
+def canonical_workspace_dependency_catalog(
+    dependencies: Mapping[str, object],
+) -> dict[str, object]:
+    catalog: dict[str, object] = {}
+    for alias, value in dependencies.items():
+        if not isinstance(value, dict) or "features" not in value:
+            catalog[alias] = value
+            continue
+        normalized = dict(value)
+        normalized["features"] = list(_dependency_features(alias, value))
+        catalog[alias] = normalized
+    return catalog
 
 
 def _dependency_bool(
@@ -624,10 +650,11 @@ def validate_authored_requirements(
             raise ProvenanceError(
                 f"[workspace.dependencies] entry {alias!r} cannot be optional"
             )
-    if policy.get("workspaceDependencies") != workspace_dependencies:
-        raise ProvenanceError(
-            "workspace dependency catalog contract drift"
-        )
+    observed_workspace_dependencies = canonical_workspace_dependency_catalog(
+        workspace_dependencies
+    )
+    if policy.get("workspaceDependencies") != observed_workspace_dependencies:
+        raise ProvenanceError("workspace dependency catalog contract drift")
     if policy.get("workspaceLints") != workspace_lints:
         raise ProvenanceError("workspace lint map does not match dependency policy")
     expected_member_lints = _required_table(
@@ -880,6 +907,319 @@ def controlled_child_environment(
     return child
 
 
+def _external_executable(
+    name: str, root: Path, environment: Mapping[str, str]
+) -> Path:
+    recorded_name = {"cargo": "LUMIN_CARGO", "rustc": "LUMIN_RUSTC"}.get(name)
+    recorded = _environment_value(environment, recorded_name) if recorded_name else None
+    resolved = recorded or shutil.which(name, path=_environment_value(environment, "PATH"))
+    if resolved is None:
+        raise ProvenanceError(f"required executable is unavailable: {name}")
+    lexical = _absolute(Path(resolved))
+    try:
+        physical = lexical.resolve(strict=True)
+    except OSError as error:
+        raise ProvenanceError(f"cannot resolve executable {name}: {error}") from error
+    if physical != lexical and recorded is None and name in {"cargo", "rustc"}:
+        rustup = shutil.which("rustup", path=_environment_value(environment, "PATH"))
+        if rustup is None:
+            raise ProvenanceError(f"rustup proxy cannot resolve exact tool: {name}")
+        completed = subprocess.run(
+            [rustup, "which", "--toolchain", "1.96.0", name],
+            text=True,
+            capture_output=True,
+            shell=False,
+            check=False,
+            env=dict(environment),
+        )
+        if completed.returncode != 0:
+            raise ProvenanceError(
+                f"rustup cannot resolve exact {name}: {completed.stderr.strip()}"
+            )
+        lexical = _absolute(Path(completed.stdout.strip()))
+        try:
+            physical = lexical.resolve(strict=True)
+        except OSError as error:
+            raise ProvenanceError(f"cannot resolve exact executable {name}: {error}") from error
+    if physical != lexical or not physical.is_file() or _is_within(physical, root):
+        raise ProvenanceError(
+            f"executable is redirected, non-file, or repository-owned: {name} {lexical} -> {physical}"
+        )
+    return physical
+
+
+def _verified_helper(root: Path, path: Path, expected_digest: str) -> Path:
+    helper = _require_unredirected_file(root / path, root, f"bootstrap helper {path}")
+    try:
+        observed_digest = hashlib.sha256(helper.read_bytes()).hexdigest()
+    except OSError as error:
+        raise ProvenanceError(f"cannot hash bootstrap helper {helper}: {error}") from error
+    if observed_digest != expected_digest:
+        raise ProvenanceError(
+            f"bootstrap helper digest mismatch for {path}: "
+            f"expected {expected_digest}, observed {observed_digest}"
+        )
+    return helper
+
+
+def _parse_unique_json(source: str, context: str) -> object:
+    try:
+        return json.loads(source, object_pairs_hook=_unique_json_object)
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise ProvenanceError(f"cannot parse {context}: {error}") from error
+
+
+def _run_json_helper(
+    helper: Path,
+    envelope: Mapping[str, object],
+    environment: Mapping[str, str],
+) -> Mapping[str, object]:
+    completed = subprocess.run(
+        [sys.executable, "-I", "-S", str(helper)],
+        input=json.dumps(envelope, sort_keys=True, separators=(",", ":")),
+        text=True,
+        capture_output=True,
+        shell=False,
+        check=False,
+        env=dict(environment),
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "no diagnostics"
+        raise ProvenanceError(
+            f"bootstrap helper failed ({helper.name}, exit {completed.returncode}): {detail}"
+        )
+    verdict = _parse_unique_json(completed.stdout, f"{helper.name} verdict")
+    if not isinstance(verdict, dict):
+        raise ProvenanceError(f"bootstrap helper verdict is not an object: {helper.name}")
+    return verdict
+
+
+def _run_capture(
+    command: Sequence[str], environment: Mapping[str, str], context: str
+) -> str:
+    completed = subprocess.run(
+        command,
+        text=True,
+        capture_output=True,
+        shell=False,
+        check=False,
+        env=dict(environment),
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "no diagnostics"
+        raise ProvenanceError(
+            f"{context} failed (exit {completed.returncode}): {detail}"
+        )
+    return completed.stdout
+
+
+def _toolchain_host(
+    cargo: Path, rustc: Path, environment: Mapping[str, str]
+) -> str:
+    cargo_version = _run_capture([str(cargo), "-Vv"], environment, "Cargo identity probe")
+    rustc_version = _run_capture([str(rustc), "-vV"], environment, "rustc identity probe")
+    if "release: 1.96.0" not in cargo_version or (
+        "commit-hash: 30a34c6821b57de0aaec83a901aca39f88f6778c"
+        not in cargo_version
+    ):
+        raise ProvenanceError("Cargo identity is not exact release 1.96.0")
+    if "release: 1.96.0" not in rustc_version or (
+        "commit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96"
+        not in rustc_version
+    ):
+        raise ProvenanceError("rustc identity is not exact release 1.96.0")
+    hosts = [
+        line.removeprefix("host: ").strip()
+        for line in rustc_version.splitlines()
+        if line.startswith("host: ")
+    ]
+    cargo_hosts = [
+        line.removeprefix("host: ").strip()
+        for line in cargo_version.splitlines()
+        if line.startswith("host: ")
+    ]
+    if len(hosts) != 1 or cargo_hosts != hosts or hosts[0] not in {
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-gnu",
+    }:
+        raise ProvenanceError(
+            f"Cargo/rustc host mismatch or unsupported host: cargo={cargo_hosts!r}, rustc={hosts!r}"
+        )
+    return hosts[0]
+
+
+def _effective_lane(command: Sequence[str], host: str) -> str:
+    targets: list[str] = []
+    for index, argument in enumerate(command):
+        if argument == "--target" and index + 1 < len(command):
+            targets.append(command[index + 1])
+        elif argument.startswith("--target="):
+            targets.append(argument.partition("=")[2])
+    if not targets:
+        return host
+    if targets == ["x86_64-unknown-linux-musl"] and host == "x86_64-unknown-linux-gnu":
+        return targets[0]
+    raise ProvenanceError(f"unsupported or duplicate Cargo target lane: {targets!r}")
+
+
+def _run_metadata(
+    cargo: Path,
+    environment: Mapping[str, str],
+    lane: str | None,
+) -> Mapping[str, object]:
+    command = [
+        str(cargo),
+        "metadata",
+        "--all-features",
+        "--locked",
+        "--format-version",
+        "1",
+    ]
+    if lane is not None:
+        command.extend(["--filter-platform", lane])
+    output = _run_capture(command, environment, "Cargo metadata preflight")
+    metadata = _parse_unique_json(output, "Cargo metadata preflight output")
+    if not isinstance(metadata, dict):
+        raise ProvenanceError("Cargo metadata preflight output is not an object")
+    return metadata
+
+
+def _lock_registry_checksums(root: Path) -> dict[tuple[str, str, str], str]:
+    lock_path = _require_unredirected_file(root / "Cargo.lock", root, "root Cargo.lock")
+    try:
+        lock = tomllib.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
+        raise ProvenanceError(f"cannot parse root Cargo.lock: {error}") from error
+    packages = lock.get("package")
+    if not isinstance(packages, list):
+        raise ProvenanceError("Cargo.lock package surface is not an array")
+    rows: dict[tuple[str, str, str], str] = {}
+    for raw_package in packages:
+        package = _required_table(raw_package, "Cargo.lock package")
+        source = package.get("source")
+        if source is None:
+            continue
+        name = package.get("name")
+        version = package.get("version")
+        checksum = package.get("checksum")
+        if (
+            source != CRATES_IO_SOURCE
+            or not isinstance(name, str)
+            or not isinstance(version, str)
+            or not isinstance(checksum, str)
+            or len(checksum) != 64
+            or any(character not in "0123456789abcdef" for character in checksum)
+        ):
+            raise ProvenanceError(f"Cargo.lock has an unsupported registry row: {package!r}")
+        key = (name, version, source)
+        if key in rows:
+            raise ProvenanceError(f"Cargo.lock has a duplicate registry row: {key!r}")
+        rows[key] = checksum
+    if not rows:
+        raise ProvenanceError("Cargo.lock contains zero crates.io registry rows")
+    return rows
+
+
+def _registry_envelope(
+    validation: RepositoryValidation,
+    metadata_verdict: Mapping[str, object],
+) -> dict[str, object]:
+    raw_packages = metadata_verdict.get("registryPackages")
+    if not isinstance(raw_packages, list):
+        raise ProvenanceError("metadata helper omitted registryPackages")
+    checksums = _lock_registry_checksums(validation.root)
+    packages: list[dict[str, object]] = []
+    observed_keys: set[tuple[str, str, str]] = set()
+    for raw_package in raw_packages:
+        package = _required_table(raw_package, "metadata registry package")
+        name = package.get("name")
+        version = package.get("version")
+        source = package.get("source")
+        manifest_path = package.get("manifestPath")
+        if not all(isinstance(value, str) for value in (name, version, source, manifest_path)):
+            raise ProvenanceError(f"metadata registry package is malformed: {package!r}")
+        key = (name, version, source)
+        checksum = checksums.get(key)
+        if checksum is None or key in observed_keys:
+            raise ProvenanceError(f"metadata/lock registry identity mismatch: {key!r}")
+        observed_keys.add(key)
+        packages.append(
+            {
+                "name": name,
+                "version": version,
+                "source": source,
+                "checksum": checksum,
+                "manifestPath": manifest_path,
+            }
+        )
+    if observed_keys != set(checksums):
+        raise ProvenanceError("metadata registry identities do not equal Cargo.lock registry rows")
+    packages.sort(key=lambda package: (str(package["name"]), str(package["version"])))
+    return {
+        "schemaVersion": 1,
+        "repositoryRoot": str(validation.root),
+        "cargoHome": str(validation.cargo_home),
+        "packages": packages,
+    }
+
+
+def command_requires_dependency_preflight(command: Sequence[str]) -> bool:
+    return tuple(command) not in {
+        ("cargo", "--version"),
+        ("cargo", "-V"),
+        ("cargo", "-Vv"),
+    }
+
+
+def run_dependency_preflight(
+    validation: RepositoryValidation,
+    command: Sequence[str],
+    environment: Mapping[str, str],
+) -> Path:
+    cargo = _external_executable("cargo", validation.root, environment)
+    rustc = _external_executable("rustc", validation.root, environment)
+    child_environment = controlled_child_environment(command, environment)
+    host = _toolchain_host(cargo, rustc, child_environment)
+    lane = _effective_lane(command, host)
+    unfiltered = _run_metadata(cargo, child_environment, None)
+    filtered = _run_metadata(cargo, child_environment, lane)
+    target_directory = unfiltered.get("target_directory")
+    if not isinstance(target_directory, str):
+        raise ProvenanceError("Cargo metadata omitted target_directory")
+    metadata_helper = _verified_helper(
+        validation.root, METADATA_HELPER_PATH, METADATA_HELPER_SHA256
+    )
+    metadata_verdict = _run_json_helper(
+        metadata_helper,
+        {
+            "schemaVersion": 1,
+            "repositoryRoot": str(validation.root),
+            "cargoHome": str(validation.cargo_home),
+            "targetDirectory": target_directory,
+            "workspaceManifests": [str(path) for path in validation.manifests],
+            "policyPath": str(validation.root / POLICY_PATH),
+            "effectiveLane": lane,
+            "unfiltered": unfiltered,
+            "filtered": filtered,
+        },
+        child_environment,
+    )
+    registry_helper = _verified_helper(
+        validation.root, REGISTRY_HELPER_PATH, REGISTRY_HELPER_SHA256
+    )
+    registry_verdict = _run_json_helper(
+        registry_helper,
+        _registry_envelope(validation, metadata_verdict),
+        child_environment,
+    )
+    if registry_verdict != {
+        "schemaVersion": 1,
+        "packageCount": len(metadata_verdict.get("registryPackages", [])),
+    }:
+        raise ProvenanceError(f"registry helper returned an invalid verdict: {registry_verdict!r}")
+    return cargo
+
+
 def validate_registry_root_identity(
     lexical_home: Path,
     physical_home: Path,
@@ -938,7 +1278,7 @@ def validate_repository(
     environment: Mapping[str, str],
     cwd: Path,
     cargo_home: Path | None = None,
-) -> None:
+) -> RepositoryValidation:
     canonical_root = root.resolve(strict=True)
     canonical_cwd = cwd.resolve(strict=True)
     if not _same_file(canonical_cwd, canonical_root):
@@ -978,7 +1318,8 @@ def validate_repository(
         )
     reject_cargo_configuration(canonical_root, lexical_home)
     validate_workflow_surface(canonical_root)
-    validate_workspace_manifests(canonical_root)
+    manifests = validate_workspace_manifests(canonical_root)
+    return RepositoryValidation(canonical_root, lexical_home, manifests)
 
 
 def validate_invocation(
@@ -987,9 +1328,9 @@ def validate_invocation(
     environment: Mapping[str, str],
     cwd: Path,
     cargo_home: Path | None = None,
-) -> None:
+) -> RepositoryValidation:
     validate_command(command)
-    validate_repository(root, environment, cwd, cargo_home)
+    return validate_repository(root, environment, cwd, cargo_home)
 
 
 def _parse_command(arguments: Sequence[str]) -> tuple[str, ...]:
@@ -998,18 +1339,35 @@ def _parse_command(arguments: Sequence[str]) -> tuple[str, ...]:
     return tuple(arguments[1:])
 
 
+def validate_check_only(
+    root: Path,
+    environment: Mapping[str, str],
+    cwd: Path,
+    preflight: Callable[
+        [RepositoryValidation, Sequence[str], Mapping[str, str]], Path
+    ] = run_dependency_preflight,
+    cargo_home: Path | None = None,
+) -> None:
+    validation = validate_repository(root, environment, cwd, cargo_home)
+    preflight(validation, ("cargo", "metadata"), environment)
+
+
 def main(arguments: Sequence[str] | None = None) -> int:
     try:
         root = repository_root()
         ensure_runtime(root)
         raw_arguments = tuple(sys.argv[1:] if arguments is None else arguments)
         if raw_arguments == ("--check-only",):
-            validate_repository(root, os.environ, Path.cwd())
+            validate_check_only(root, os.environ, Path.cwd())
             return 0
         command = _parse_command(raw_arguments)
-        validate_invocation(root, command, os.environ, Path.cwd())
+        validation = validate_invocation(root, command, os.environ, Path.cwd())
+        cargo = _external_executable("cargo", validation.root, os.environ)
+        if command_requires_dependency_preflight(command):
+            cargo = run_dependency_preflight(validation, command, os.environ)
+        resolved_command = (str(cargo), *command[1:])
         completed = subprocess.run(
-            command,
+            resolved_command,
             shell=False,
             check=False,
             env=controlled_child_environment(command, os.environ),
