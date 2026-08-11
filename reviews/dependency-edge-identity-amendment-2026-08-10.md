@@ -2,9 +2,19 @@
 
 Document role: focused Architecture v1 amendment and freeze gate
 
-Status: **CANDIDATE**. This text has no implementation authority until the repository
-owner approves one exact architecture-content commit and an independent adversarial
-review passes that same commit.
+Status: **FROZEN** for architecture-content commit
+`1854d23f319cd730ac4dd801ccad3e1e39e72a68`.
+
+Freeze record: the repository owner approved that exact candidate on 2026-08-12. A
+read-only independent `gpt-5.6-luna` adversarial review returned `PASS` for the same
+commit after checking command locking and delimiters, native/musl resolution lanes,
+Cargo/Clippy executable identity, environment/config/alias relocation, workspace-member
+containment, declaration identity, loaded sources, transitive-lock ownership, authority
+separation, and the stated non-goals. Its nonblocking implementation cautions require
+Windows-case-insensitive environment matching and a public-CI execution test for the
+direct `PINNED_CARGO_CLIPPY clippy ...` argument order on both supported platforms.
+This later ledger update changes no reviewed contract, non-goal, acceptance criterion,
+or required-review text.
 
 ## Decision
 

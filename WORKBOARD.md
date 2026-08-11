@@ -22,7 +22,7 @@ AI agents grounded, queryable evidence before and after they change code.
 | PLAN-001 | active | `PHASE1-CHECKLIST.md` | Owns Phase 1 execution order, dependencies, and verified progress without restating acceptance contracts. |
 | REVIEW-001 | superseded | `reviews/architecture-v1-adversarial-2026-07-15.md` | Records the first adversarial findings and first amendment decisions. |
 | REVIEW-002 | complete, monitoring | `reviews/architecture-v1-independent-verification-2026-07-15.md` | Preserves the exact independent verification and may reopen only on a concrete regression or counterexample. |
-| REVIEW-003 | candidate, review pending | `reviews/dependency-edge-identity-amendment-2026-08-10.md` | Owns the proportional workspace dependency policy, isolated Cargo admission, and loaded-source boundary. |
+| REVIEW-003 | frozen | `reviews/dependency-edge-identity-amendment-2026-08-10.md` | Owns the proportional workspace dependency policy, isolated Cargo admission, and loaded-source boundary. |
 
 ## Active Work
 
