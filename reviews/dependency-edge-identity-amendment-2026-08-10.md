@@ -2,15 +2,10 @@
 
 Document role: focused Architecture v1 amendment and freeze gate
 
-Status: **REOPENED**. Architecture-content commit
-`ffd6af05f9f08e696eef88b8aa251be1e07282c4` remains the reviewed provenance for the
-preceding contract, but two concrete channels were not closed there: repository runtime
-code can replace the checkout guard or mutate GitHub command files before a later trusted
-invocation, and Cargo can inherit rustdoc flags through encoded or target-qualified
-environment variables. This amendment is not frozen again until the repository owner
-approves one new exact architecture-content commit and an independent adversarial review
-returns a clean verdict for that same commit. Implementation of the reopened boundary is
-forbidden before then.
+Status: **FROZEN** at architecture-content commit
+`99176dbe0fcb62a48493d0287df642ffc0008720`. The repository owner approved that exact
+candidate, and independent GitHub clean verdict `5252326641` binds `99176dbe0f` and
+reports no major issue with zero actionable inline findings for the reopened boundary.
 
 ## Definition
 
