@@ -229,6 +229,105 @@ class SourceProvenanceTests(unittest.TestCase):
                     with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "configuration argument"):
                         fixture.validate(command)
 
+    def test_cargo_relocation_and_compiler_forwarding_are_rejected(self) -> None:
+        commands = (
+            ("cargo", "build", "--manifest-path", "elsewhere/Cargo.toml"),
+            ("cargo", "build", "--manifest-path=elsewhere/Cargo.toml"),
+            ("cargo", "build", "--lockfile-path", "elsewhere/Cargo.lock"),
+            ("cargo", "build", "--target-dir", "elsewhere/target"),
+            ("cargo", "build", "--artifact-dir=elsewhere/artifacts"),
+            ("cargo", "build", "--directory", "elsewhere"),
+            ("cargo", "build", "-C", "elsewhere"),
+            ("cargo", "build", "-Celsewhere"),
+            ("cargo", "build", "-Zunstable-options"),
+            ("cargo", "+stable", "build"),
+            ("cargo", "rustc", "--", "--target", "x86_64-unknown-linux-gnu"),
+            ("cargo", "rustdoc"),
+            ("cargo", "build", "--", "-C", "linker=payload"),
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                with self.assertRaises(PROVENANCE.ProvenanceError):
+                    PROVENANCE.validate_command(command)
+
+    def test_only_exact_musl_release_target_is_accepted(self) -> None:
+        PROVENANCE.validate_command(
+            (
+                "cargo",
+                "build",
+                "--target",
+                PROVENANCE.MUSL_TARGET,
+                "--locked",
+                "-p",
+                "lumin-cli",
+                "--release",
+            )
+        )
+        rejected = (
+            (
+                "cargo",
+                "build",
+                f"--target={PROVENANCE.MUSL_TARGET}",
+                "--release",
+                "--locked",
+                "-p",
+                "lumin-cli",
+            ),
+            (
+                "cargo",
+                "build",
+                "--target",
+                PROVENANCE.MUSL_TARGET,
+                "--release",
+                "--locked",
+                "-p",
+                "other",
+            ),
+            (
+                "cargo",
+                "build",
+                "--target",
+                PROVENANCE.MUSL_TARGET,
+                "--release",
+                "--locked",
+                "-p",
+                "lumin-cli",
+                "--features",
+                "extra",
+            ),
+            (
+                "cargo",
+                "build",
+                "--target",
+                PROVENANCE.MUSL_TARGET,
+                "--release",
+                "--release",
+                "--locked",
+                "-p",
+                "lumin-cli",
+            ),
+        )
+        for command in rejected:
+            with self.subTest(command=command):
+                with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "musl release"):
+                    PROVENANCE.validate_command(command)
+
+    def test_cargo_suffix_policy_is_subcommand_specific(self) -> None:
+        for command in (
+            ("cargo", "clippy", "--workspace", "--", "-D", "warnings"),
+            ("cargo", "test", "--locked", "--", "--test-threads=1"),
+            ("cargo", "run", "--locked", "--", "--user-input"),
+        ):
+            with self.subTest(command=command):
+                PROVENANCE.validate_command(command)
+        for command in (
+            ("cargo", "clippy", "--", "-A", "warnings"),
+            ("cargo", "build", "--", "--user-input"),
+        ):
+            with self.subTest(command=command):
+                with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "suffix"):
+                    PROVENANCE.validate_command(command)
+
     def test_source_environment_is_rejected_without_mutating_process_state(self) -> None:
         temporary, fixture = self.fixture()
         with temporary:

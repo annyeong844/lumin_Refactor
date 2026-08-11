@@ -72,6 +72,16 @@ GITHUB_COMMAND_FILE_ENVIRONMENT = frozenset(
     }
 )
 TERMINAL_CARGO_SUBCOMMANDS = frozenset({"bench", "run", "test"})
+FORBIDDEN_CARGO_RELOCATION_OPTIONS = frozenset(
+    {
+        "--target-dir",
+        "--manifest-path",
+        "--lockfile-path",
+        "--artifact-dir",
+        "--directory",
+    }
+)
+MUSL_TARGET = "x86_64-unknown-linux-musl"
 
 
 class ProvenanceError(RuntimeError):
@@ -899,12 +909,89 @@ def validate_workspace_manifests(root: Path) -> tuple[Path, ...]:
     return tuple(manifests)
 
 
+def _exact_musl_release_command(arguments: Sequence[str]) -> bool:
+    if not arguments or arguments[0] != "build":
+        return False
+    observed: dict[str, int] = {
+        "release": 0,
+        "locked": 0,
+        "package": 0,
+        "target": 0,
+    }
+    cursor = 1
+    while cursor < len(arguments):
+        argument = arguments[cursor]
+        if argument == "--release":
+            observed["release"] += 1
+            cursor += 1
+        elif argument == "--locked":
+            observed["locked"] += 1
+            cursor += 1
+        elif argument == "-p" and cursor + 1 < len(arguments):
+            if arguments[cursor + 1] != "lumin-cli":
+                return False
+            observed["package"] += 1
+            cursor += 2
+        elif argument == "--target" and cursor + 1 < len(arguments):
+            if arguments[cursor + 1] != MUSL_TARGET:
+                return False
+            observed["target"] += 1
+            cursor += 2
+        else:
+            return False
+    return all(count == 1 for count in observed.values())
+
+
 def validate_command(command: Sequence[str]) -> None:
     if not command or command[0] != "cargo":
         raise ProvenanceError("guard command must begin with exact executable name 'cargo'")
+    if tuple(command) in {
+        ("cargo", "--version"),
+        ("cargo", "-V"),
+        ("cargo", "-Vv"),
+    }:
+        return
+    if len(command) < 2:
+        raise ProvenanceError("guarded Cargo command requires an exact subcommand")
+    if command[1].startswith("+"):
+        raise ProvenanceError(f"Cargo toolchain selector is forbidden: {command[1]}")
     for argument in command[1:]:
         if argument == "--config" or argument.startswith("--config="):
-            raise ProvenanceError(f"Cargo global configuration argument is forbidden: {argument}")
+            raise ProvenanceError(
+                f"Cargo global configuration argument is forbidden: {argument}"
+            )
+
+    delimiter = command.index("--") if "--" in command else len(command)
+    cargo_arguments = command[1:delimiter]
+    suffix = tuple(command[delimiter + 1 :]) if delimiter < len(command) else ()
+    if not cargo_arguments or cargo_arguments[0].startswith("-"):
+        raise ProvenanceError("guarded Cargo command requires an exact subcommand")
+    subcommand = cargo_arguments[0]
+    if subcommand in {"rustc", "rustdoc"}:
+        raise ProvenanceError(f"Cargo compiler-forwarding subcommand is forbidden: {subcommand}")
+
+    target_selected = False
+    for argument in cargo_arguments[1:]:
+        if argument in FORBIDDEN_CARGO_RELOCATION_OPTIONS or any(
+            argument.startswith(f"{option}=")
+            for option in FORBIDDEN_CARGO_RELOCATION_OPTIONS
+        ):
+            raise ProvenanceError(f"Cargo relocation argument is forbidden: {argument}")
+        if argument == "-C" or argument.startswith("-C"):
+            raise ProvenanceError(f"Cargo directory argument is forbidden: {argument}")
+        if argument == "-Z" or argument.startswith("-Z"):
+            raise ProvenanceError(f"unstable Cargo argument is forbidden: {argument}")
+        if argument == "--target" or argument.startswith("--target="):
+            target_selected = True
+
+    if target_selected and not _exact_musl_release_command(cargo_arguments):
+        raise ProvenanceError("only the exact lumin-cli musl release target is admitted")
+    if suffix:
+        if subcommand in {"test", "run"}:
+            return
+        if subcommand == "clippy" and suffix == ("-D", "warnings"):
+            return
+        raise ProvenanceError(f"Cargo suffix is forbidden for subcommand {subcommand!r}")
 
 
 def command_may_execute_repository_runtime(command: Sequence[str]) -> bool:

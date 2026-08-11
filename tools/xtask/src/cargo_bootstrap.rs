@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 const GUARD_PATH: &str = "tools/xtask/bootstrap/source_provenance.py";
-const GUARD_SHA256: &str = "a5a53a3010c84ea723040333e2ab7d324a90d46a68b1dd6b24667f0c65531f61";
+const GUARD_SHA256: &str = "e32bf1041c2488a5e944cbb4090bbce25bba763e3c3e30268d648b3cd5071223";
 const TEST_PATH: &str = "tools/xtask/bootstrap/test_source_provenance.py";
-const TEST_SHA256: &str = "9a68d6a74346fe57759b08050805d0b839f0acb967e22ac1177eda7ac5df95fd";
+const TEST_SHA256: &str = "5b4d5711f13857cd86a6c2fa2888d769cc28e3af6e31c8614754c9bc021e54f5";
 const METADATA_HELPER_PATH: &str = "tools/xtask/bootstrap/metadata_snapshot.py";
 const METADATA_HELPER_SHA256: &str =
     "dc23605129c4fe78dd197804fa80466a602de921558880fcb848f1870963fdae";
