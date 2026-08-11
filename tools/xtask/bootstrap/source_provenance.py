@@ -111,12 +111,28 @@ def _same_file(left: Path, right: Path) -> bool:
 
 def _resolved(path: Path, *, base: Path | None = None) -> Path:
     candidate = path if path.is_absolute() else (base or Path.cwd()) / path
-    return candidate.resolve(strict=False)
+    return _portable_windows_path(candidate.resolve(strict=False))
+
+
+def _portable_windows_path(path: Path) -> Path:
+    if os.name != "nt":
+        return path
+    value = str(path)
+    if value.upper().startswith("\\\\?\\UNC\\"):
+        return Path("\\\\" + value[8:])
+    if (
+        value.startswith("\\\\?\\")
+        and len(value) >= 7
+        and value[4].isalpha()
+        and value[5:7] == ":\\"
+    ):
+        return Path(value[4:])
+    return path
 
 
 def _absolute(path: Path, *, base: Path | None = None) -> Path:
     candidate = path if path.is_absolute() else (base or Path.cwd()) / path
-    return Path(os.path.abspath(candidate))
+    return _portable_windows_path(Path(os.path.abspath(candidate)))
 
 
 def _environment_value(
@@ -131,7 +147,7 @@ def _environment_value(
 
 
 def repository_root() -> Path:
-    root = Path(__file__).resolve().parents[3]
+    root = _absolute(Path(__file__).resolve()).parents[3]
     if not (root / "Cargo.toml").is_file():
         raise ProvenanceError(f"repository Cargo.toml is missing under {root}")
     return root
@@ -1279,8 +1295,8 @@ def validate_repository(
     cwd: Path,
     cargo_home: Path | None = None,
 ) -> RepositoryValidation:
-    canonical_root = root.resolve(strict=True)
-    canonical_cwd = cwd.resolve(strict=True)
+    canonical_root = _absolute(root.resolve(strict=True))
+    canonical_cwd = _absolute(cwd.resolve(strict=True))
     if not _same_file(canonical_cwd, canonical_root):
         raise ProvenanceError(
             f"Cargo bootstrap must run from repository root {canonical_root}, got {canonical_cwd}"

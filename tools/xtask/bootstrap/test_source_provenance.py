@@ -134,17 +134,29 @@ class SourceProvenanceTests(unittest.TestCase):
             fixture.validate()
 
     @unittest.skipUnless(os.name == "nt", "Windows extended paths are platform-specific")
-    def test_windows_extended_root_matches_normal_working_directory(self) -> None:
+    def test_windows_extended_root_is_normalized_before_preflight(self) -> None:
         temporary, fixture = self.fixture()
         with temporary:
             extended_root = Path("\\\\?\\" + str(fixture.root))
-            PROVENANCE.validate_invocation(
+            observed: list[object] = []
+
+            def preflight(
+                validation: object, command: tuple[str, ...], environment: object
+            ) -> Path:
+                observed.append(validation)
+                return fixture.cargo_home / "cargo"
+
+            PROVENANCE.validate_check_only(
                 extended_root,
-                ("cargo", "--version"),
                 {},
                 fixture.root,
+                preflight,
                 fixture.cargo_home,
             )
+            self.assertEqual(len(observed), 1)
+            validation = observed[0]
+            self.assertEqual(validation.root, fixture.root.resolve(strict=True))
+            self.assertFalse(str(validation.root).startswith("\\\\?\\"))
 
     def test_import_does_not_write_repository_bytecode(self) -> None:
         self.assertFalse((SCRIPT.parent / "__pycache__").exists())
