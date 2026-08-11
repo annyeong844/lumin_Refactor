@@ -1,1483 +1,1189 @@
-"""Fail-closed Cargo source-provenance bootstrap for repository CI."""
+#!/usr/bin/env python3
+"""Fail-closed Cargo dependency admission for public CI.
+
+The guard owns only the frozen REVIEW-003 surface: workspace membership and
+features, authored direct dependency declarations, their Cargo-resolved direct
+bindings, and loaded registry locations. Cargo.lock remains the sole transitive
+graph pin. The script uses only the Python standard library and never writes the
+checked-in policy.
+"""
 
 from __future__ import annotations
 
-import hashlib
+from collections import Counter
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 import json
 import os
-from dataclasses import dataclass
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tomllib
-from collections.abc import Callable, Mapping, Sequence
+from typing import Any
 
 
 MINIMUM_PYTHON = (3, 11)
-CONFIG_NAMES = ("config.toml", "config")
-WORKFLOW_DIRECTORY = Path(".github/workflows")
-WORKFLOW_NAME = "ci.yml"
-WORKFLOW_SHA256 = "4ca2610501059a8ae6eacffd0b93547cb69115c221460eb012b2aa5465dbfc4c"
-POLICY_PATH = Path("tools/xtask/dependency-surface-policy.v1.json")
-METADATA_HELPER_PATH = Path("tools/xtask/bootstrap/metadata_snapshot.py")
-METADATA_HELPER_SHA256 = "dc23605129c4fe78dd197804fa80466a602de921558880fcb848f1870963fdae"
-REGISTRY_HELPER_PATH = Path("tools/xtask/bootstrap/registry_snapshot.py")
-REGISTRY_HELPER_SHA256 = "4a02777fd52f116007ca53d0aa2d4989c447fe27261d64531ee449013dda8857"
-DEPENDENCY_TABLES = (
-    ("dependencies", "normal"),
-    ("dev-dependencies", "dev"),
-    ("build-dependencies", "build"),
-)
+EXPECTED_PYTHON = (3, 13, 14)
+EXPECTED_CARGO_RELEASE = "1.96.0"
+EXPECTED_CLIPPY_VERSION = "clippy 0.1.96 (ac68faa20c 2026-05-25)"
 CRATES_IO_SOURCE = "registry+https://github.com/rust-lang/crates.io-index"
-FORBIDDEN_DEPENDENCY_SOURCE_KEYS = frozenset(
-    {"git", "registry", "branch", "tag", "rev"}
+POLICY_PATH = Path("tools/xtask/dependency-surface-policy.v2.json")
+CONFIG_NAMES = ("config.toml", "config")
+ALLOWED_SUBCOMMANDS = frozenset(
+    {"build", "check", "test", "clippy", "doc", "run", "bench", "metadata"}
 )
-FORBIDDEN_ENVIRONMENT_EXACT = frozenset(
+FORBIDDEN_ENVIRONMENT = frozenset(
     {
         "CARGO",
+        "CARGO_BUILD_TARGET",
+        "CARGO_PATHS",
         "RUSTC",
         "RUSTC_WRAPPER",
         "RUSTC_WORKSPACE_WRAPPER",
-        "RUSTDOC",
-        "RUSTFMT",
-        "CLIPPY_DRIVER",
-        "RUSTFLAGS",
-        "RUSTDOCFLAGS",
-        "RUSTC_BOOTSTRAP",
         "RUSTUP_TOOLCHAIN",
-        "CARGO_ENCODED_RUSTFLAGS",
-        "CARGO_ENCODED_RUSTDOCFLAGS",
-        "CARGO_BUILD_TARGET",
-        "CARGO_BUILD_TARGET_DIR",
-        "CARGO_BUILD_BUILD_DIR",
     }
 )
-FORBIDDEN_ENVIRONMENT_PREFIXES = (
-    "CARGO_UNSTABLE_",
-    "CARGO_PROFILE_",
-    "CARGO_ALIAS_",
-    "CARGO_BUILD_RUSTC",
-    "CARGO_BUILD_RUSTDOC",
-    "CARGO_BUILD_RUSTFLAGS",
-    "CARGO_TARGET_",
+FORBIDDEN_LONG_OPTIONS = (
+    "--config",
+    "--manifest-path",
+    "--lockfile-path",
+    "--directory",
 )
-GITHUB_COMMAND_FILE_ENVIRONMENT = frozenset(
-    {
-        "GITHUB_ENV",
-        "GITHUB_PATH",
-        "GITHUB_OUTPUT",
-        "GITHUB_STATE",
-        "GITHUB_STEP_SUMMARY",
-    }
+DEPENDENCY_TABLES = (
+    ("dependencies", "normal"),
+    ("build-dependencies", "build"),
+    ("dev-dependencies", "development"),
 )
-TERMINAL_CARGO_SUBCOMMANDS = frozenset({"bench", "run", "test"})
-FORBIDDEN_CARGO_RELOCATION_OPTIONS = frozenset(
-    {
-        "--target-dir",
-        "--manifest-path",
-        "--lockfile-path",
-        "--artifact-dir",
-        "--directory",
-    }
-)
-MUSL_TARGET = "x86_64-unknown-linux-musl"
 
 
 class ProvenanceError(RuntimeError):
-    """The Cargo invocation cannot produce an architecture verdict."""
+    """One owned dependency-admission failure."""
 
 
 @dataclass(frozen=True)
-class DependencyContract:
-    requirement: str
-    resolution_kind: str
-    optional: bool
-    uses_default_features: bool
-    features: tuple[str, ...]
+class Member:
+    name: str
+    path: str
+    directory: Path
+    manifest_path: Path
+    manifest: dict[str, Any]
+    member_class: str
 
 
 @dataclass(frozen=True)
-class RepositoryValidation:
+class Repository:
     root: Path
     cargo_home: Path
-    manifests: tuple[Path, ...]
+    root_manifest: dict[str, Any]
+    members: tuple[Member, ...]
+    workspace_dependencies: tuple[dict[str, Any], ...]
 
 
-def _is_within(path: Path, parent: Path) -> bool:
-    try:
-        path.relative_to(parent)
-    except ValueError:
-        return False
-    return True
+@dataclass(frozen=True)
+class CommandPlan:
+    command: tuple[str, ...]
+    subcommand: str | None
+    explicit_target: str | None
+    resolving: bool
 
 
-def _same_file(left: Path, right: Path) -> bool:
-    try:
-        return os.path.samefile(left, right)
-    except OSError:
-        return left == right
-
-
-def _resolved(path: Path, *, base: Path | None = None) -> Path:
-    candidate = path if path.is_absolute() else (base or Path.cwd()) / path
-    return _portable_windows_path(candidate.resolve(strict=False))
-
-
-def _portable_windows_path(path: Path) -> Path:
-    if os.name != "nt":
-        return path
-    value = str(path)
-    if value.upper().startswith("\\\\?\\UNC\\"):
-        return Path("\\\\" + value[8:])
-    if (
-        value.startswith("\\\\?\\")
-        and len(value) >= 7
-        and value[4].isalpha()
-        and value[5:7] == ":\\"
-    ):
-        return Path(value[4:])
-    return path
-
-
-def _absolute(path: Path, *, base: Path | None = None) -> Path:
-    candidate = path if path.is_absolute() else (base or Path.cwd()) / path
-    return _portable_windows_path(Path(os.path.abspath(candidate)))
-
-
-def _environment_value(
-    environment: Mapping[str, str], name: str
-) -> str | None:
-    matches = [
-        value for raw_name, value in environment.items() if raw_name.upper() == name
-    ]
-    if len(matches) > 1:
-        raise ProvenanceError(f"duplicate case-insensitive environment key: {name}")
-    return matches[0] if matches else None
+@dataclass(frozen=True)
+class MetadataView:
+    raw: dict[str, Any]
+    packages: dict[str, dict[str, Any]]
+    member_ids: dict[str, str]
+    nodes: dict[str, dict[str, Any]]
 
 
 def repository_root() -> Path:
-    root = _absolute(Path(__file__).resolve()).parents[3]
-    if not (root / "Cargo.toml").is_file():
-        raise ProvenanceError(f"repository Cargo.toml is missing under {root}")
-    return root
+    return Path(__file__).absolute().parents[3]
 
 
-def active_cargo_home(environment: Mapping[str, str], cwd: Path) -> Path:
-    configured = _environment_value(environment, "CARGO_HOME")
-    if configured is not None:
-        if not configured:
-            raise ProvenanceError("CARGO_HOME must not be empty")
-        return _absolute(Path(configured), base=cwd)
-    return _absolute(Path.home() / ".cargo")
-
-
-def ensure_runtime(root: Path) -> None:
+def ensure_runtime() -> None:
     if sys.version_info < MINIMUM_PYTHON:
+        raise ProvenanceError("Python 3.11 or newer is required")
+    if sys.version_info[:3] != EXPECTED_PYTHON:
         raise ProvenanceError(
-            f"Python {MINIMUM_PYTHON[0]}.{MINIMUM_PYTHON[1]} or newer is required"
+            f"expected pinned Python {'.'.join(map(str, EXPECTED_PYTHON))}, "
+            f"got {sys.version.split()[0]}"
         )
-    if sys.flags.isolated != 1 or sys.flags.no_site != 1 or not sys.flags.safe_path:
-        raise ProvenanceError("invoke this guard with Python -I -S")
-    for entry in sys.path:
-        if not entry:
-            raise ProvenanceError("empty Python import path is forbidden")
-        if _is_within(_resolved(Path(entry)), root):
+    if not sys.flags.isolated or not sys.flags.no_site:
+        raise ProvenanceError("invoke source_provenance.py with Python -I -S")
+
+
+def _path_key(path: Path) -> str:
+    return os.path.normcase(os.path.abspath(path))
+
+
+def _same_path(left: Path, right: Path) -> bool:
+    return _path_key(left) == _path_key(right)
+
+
+def _inside(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def _absolute(path: Path, base: Path | None = None) -> Path:
+    if not path.is_absolute():
+        path = (base or Path.cwd()) / path
+    return Path(os.path.abspath(path))
+
+
+def _environment(environment: Mapping[str, str], case_insensitive: bool | None = None) -> dict[str, str]:
+    case_insensitive = os.name == "nt" if case_insensitive is None else case_insensitive
+    folded: dict[str, tuple[str, str]] = {}
+    for name, value in environment.items():
+        key = name.casefold() if case_insensitive else name
+        previous = folded.get(key)
+        if previous is not None and previous[0] != name:
             raise ProvenanceError(
-                f"repository-controlled Python import path is forbidden: {entry}"
+                f"ambiguous environment names {previous[0]!r} and {name!r}"
             )
+        folded[key] = (name, value)
+    return {
+        name.upper() if case_insensitive else name: value
+        for name, value in environment.items()
+    }
 
 
-def validate_workflow_surface(root: Path) -> None:
-    directory = root / WORKFLOW_DIRECTORY
+def reject_environment_overrides(
+    environment: Mapping[str, str], case_insensitive: bool | None = None
+) -> None:
+    case_insensitive = os.name == "nt" if case_insensitive is None else case_insensitive
+    _environment(environment, case_insensitive)
+    for original in environment:
+        name = original.upper() if case_insensitive else original
+        if name in FORBIDDEN_ENVIRONMENT:
+            raise ProvenanceError(f"forbidden Cargo/Rust environment override: {original}")
+        if name.startswith("CARGO_SOURCE_") or name.startswith("CARGO_ALIAS_"):
+            raise ProvenanceError(f"forbidden Cargo environment override: {original}")
+        if name.startswith("CARGO_REGISTRIES_") and name.endswith("_INDEX"):
+            raise ProvenanceError(f"forbidden registry index override: {original}")
+
+
+def _env_get(environment: Mapping[str, str], name: str) -> str | None:
+    if os.name != "nt":
+        return environment.get(name)
+    wanted = name.casefold()
+    matches = [(key, value) for key, value in environment.items() if key.casefold() == wanted]
+    if len(matches) > 1:
+        raise ProvenanceError(f"ambiguous environment variable {name}")
+    return matches[0][1] if matches else None
+
+
+def validate_environment(environment: Mapping[str, str], root: Path, cwd: Path) -> Path:
+    reject_environment_overrides(environment)
+
+    raw_home = _env_get(environment, "CARGO_HOME")
+    cargo_home = _absolute(
+        Path(raw_home) if raw_home else Path.home() / ".cargo", base=cwd
+    )
+    physical_home = cargo_home.resolve(strict=False)
+    if not _same_path(cargo_home, physical_home):
+        raise ProvenanceError(f"active Cargo home is redirected: {cargo_home}")
+    if _inside(physical_home, root):
+        raise ProvenanceError(f"active Cargo home is repository-owned: {cargo_home}")
+
+    target_value = _env_get(environment, "CARGO_TARGET_DIR")
+    if target_value:
+        target = _absolute(Path(target_value), base=cwd).resolve(strict=False)
+        if _inside(target, root):
+            raise ProvenanceError(f"Cargo target directory is repository-owned: {target}")
+
+    if _env_get(environment, "GITHUB_ACTIONS") == "true":
+        runner_value = _env_get(environment, "RUNNER_TEMP")
+        if not runner_value:
+            raise ProvenanceError("GitHub Actions requires RUNNER_TEMP")
+        runner = _absolute(Path(runner_value), base=cwd)
+        if not _same_path(runner, runner.resolve(strict=False)) or _inside(runner, root):
+            raise ProvenanceError(f"GitHub runner temp is redirected or unsafe: {runner}")
+        expected_home = runner / "lumin-cargo-home"
+        expected_target = runner / "lumin-target"
+        if not _same_path(cargo_home, expected_home):
+            raise ProvenanceError(
+                f"GitHub Cargo home must be job-private {expected_home}, got {cargo_home}"
+            )
+        if not target_value or not _same_path(
+            _absolute(Path(target_value), base=cwd), expected_target
+        ):
+            raise ProvenanceError(
+                f"GitHub Cargo target must be job-private {expected_target}"
+            )
+    return cargo_home
+
+
+def _unredirected_file(path: Path, root: Path, label: str) -> Path:
+    lexical = _absolute(path)
     try:
-        entries = sorted(directory.iterdir(), key=lambda entry: entry.name)
+        physical = lexical.resolve(strict=True)
     except OSError as error:
-        raise ProvenanceError(f"cannot enumerate workflow directory {directory}: {error}") from error
-    names = [entry.name for entry in entries]
-    if names != [WORKFLOW_NAME]:
-        raise ProvenanceError(
-            f"workflow directory must contain only {WORKFLOW_NAME}, found {names!r}"
-        )
-    workflow = entries[0]
-    if workflow.is_symlink() or not workflow.is_file():
-        raise ProvenanceError(f"workflow must be one unredirected regular file: {workflow}")
+        raise ProvenanceError(f"cannot resolve {label} {lexical}: {error}") from error
+    if not physical.is_file() or not _same_path(lexical, physical):
+        raise ProvenanceError(f"{label} is missing or redirected: {lexical}")
+    if not _inside(physical, root):
+        raise ProvenanceError(f"{label} escapes repository: {lexical}")
+    return physical
+
+
+def _read_toml(path: Path, root: Path, label: str) -> dict[str, Any]:
+    path = _unredirected_file(path, root, label)
     try:
-        digest = hashlib.sha256(workflow.read_bytes()).hexdigest()
-    except OSError as error:
-        raise ProvenanceError(f"cannot read workflow {workflow}: {error}") from error
-    if digest != WORKFLOW_SHA256:
-        raise ProvenanceError(
-            f"workflow digest mismatch for {workflow}: expected {WORKFLOW_SHA256}, got {digest}"
-        )
-
-
-def _reject_path(path: Path, description: str) -> None:
-    if path.exists() or path.is_symlink():
-        raise ProvenanceError(f"forbidden {description}: {path}")
+        value = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
+        raise ProvenanceError(f"cannot parse {label} {path}: {error}") from error
+    if not isinstance(value, dict):
+        raise ProvenanceError(f"{label} must be a TOML table")
+    return value
 
 
 def reject_cargo_configuration(root: Path, cargo_home: Path) -> None:
-    for current, directories, _files in os.walk(root, followlinks=False):
-        directories[:] = [
-            directory for directory in directories if directory not in {".git", "target"}
-        ]
-        if ".cargo" in directories:
-            cargo_dir = Path(current) / ".cargo"
-            for name in CONFIG_NAMES:
-                _reject_path(cargo_dir / name, "repository Cargo configuration")
-    for ancestor in (root, *root.parents):
-        cargo_dir = ancestor / ".cargo"
+    directories = (root, *root.parents)
+    for directory in directories:
         for name in CONFIG_NAMES:
-            _reject_path(cargo_dir / name, "Cargo configuration")
+            candidate = directory / ".cargo" / name
+            if candidate.exists() or candidate.is_symlink():
+                raise ProvenanceError(f"Cargo configuration is forbidden: {candidate}")
     for name in CONFIG_NAMES:
-        _reject_path(cargo_home / name, "Cargo-home configuration")
+        candidate = cargo_home / name
+        if candidate.exists() or candidate.is_symlink():
+            raise ProvenanceError(f"Cargo home configuration is forbidden: {candidate}")
 
 
-def reject_source_environment(environment: Mapping[str, str]) -> None:
-    for raw_name, value in environment.items():
-        name = raw_name.upper()
-        if (
-            name.startswith("CARGO_SOURCE_")
-            or name == "CARGO_PATHS"
-            or (name.startswith("CARGO_REGISTRIES_") and name.endswith("_INDEX"))
+def _table(value: Any, label: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ProvenanceError(f"{label} must be a table")
+    return value
+
+
+def _string(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ProvenanceError(f"{label} must be a nonempty string")
+    return value
+
+
+def _feature_set(value: Any, label: str) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise ProvenanceError(f"{label} must be an array of strings")
+    return sorted(set(value))
+
+
+def _requested_features(table: Mapping[str, Any], label: str) -> list[str] | None:
+    if "features" not in table:
+        return None
+    return _feature_set(table["features"], label)
+
+
+def _feature_map(manifest: Mapping[str, Any], label: str) -> dict[str, list[str]]:
+    raw = manifest.get("features", {})
+    raw = _table(raw, f"{label} [features]")
+    return {
+        _string(name, f"{label} feature name"): _feature_set(
+            value, f"{label} feature {name!r}"
+        )
+        for name, value in sorted(raw.items())
+    }
+
+
+def _default_features(table: Mapping[str, Any], label: str) -> bool:
+    keys = [key for key in ("default-features", "default_features") if key in table]
+    if len(keys) > 1:
+        raise ProvenanceError(f"{label} declares both default-feature spellings")
+    value = table.get(keys[0], True) if keys else True
+    if not isinstance(value, bool):
+        raise ProvenanceError(f"{label} default-features must be boolean")
+    return value
+
+
+def _dependency_value(value: Any, label: str) -> dict[str, Any]:
+    if isinstance(value, str):
+        return {"version": value}
+    return dict(_table(value, label))
+
+
+def _dependency_table(container: Mapping[str, Any], name: str, label: str) -> dict[str, Any]:
+    alternate = name.replace("-", "_")
+    candidates = (name,) if alternate == name else (name, alternate)
+    present = [key for key in candidates if key in container]
+    if len(present) > 1:
+        raise ProvenanceError(f"{label} declares both {name} and {alternate}")
+    if not present:
+        return {}
+    return _table(container[present[0]], f"{label} [{present[0]}]")
+
+
+def _source_spec(
+    alias: str,
+    table: Mapping[str, Any],
+    base: Path,
+    members_by_directory: Mapping[str, Member],
+    label: str,
+) -> tuple[str, str | None, str]:
+    if "git" in table or "registry" in table:
+        raise ProvenanceError(f"{label} uses a forbidden Git or alternate-registry source")
+    package = _string(table.get("package", alias), f"{label} package")
+    path_value = table.get("path")
+    requirement = table.get("version")
+    if requirement is not None and not isinstance(requirement, str):
+        raise ProvenanceError(f"{label} version requirement must be a string")
+    if path_value is None:
+        if requirement is None:
+            raise ProvenanceError(f"{label} crates.io dependency requires an authored version")
+        return package, requirement, "crates-io"
+    path_text = _string(path_value, f"{label} path")
+    lexical = _absolute(base / path_text)
+    try:
+        physical = lexical.resolve(strict=True)
+    except OSError as error:
+        raise ProvenanceError(f"cannot resolve {label} path {lexical}: {error}") from error
+    member = members_by_directory.get(_path_key(physical))
+    if member is None or not _same_path(lexical, physical):
+        raise ProvenanceError(f"{label} path does not resolve to an exact workspace member")
+    if package != member.name:
+        raise ProvenanceError(
+            f"{label} package {package!r} disagrees with workspace member {member.name!r}"
+        )
+    return package, requirement, "workspace"
+
+
+def _catalog_entry(
+    alias: str,
+    value: Any,
+    root: Path,
+    members_by_directory: Mapping[str, Member],
+) -> dict[str, Any]:
+    label = f"workspace dependency {alias!r}"
+    table = _dependency_value(value, label)
+    allowed = {
+        "version", "package", "path", "git", "registry", "branch", "tag", "rev",
+        "default-features", "default_features", "features",
+    }
+    unknown = sorted(set(table) - allowed)
+    if unknown:
+        raise ProvenanceError(f"{label} has unsupported keys: {', '.join(unknown)}")
+    package, requirement, source_kind = _source_spec(
+        alias, table, root, members_by_directory, label
+    )
+    entry: dict[str, Any] = {
+        "alias": alias,
+        "package": package,
+        "requirement": requirement,
+        "defaultFeatures": _default_features(table, label),
+        "features": _requested_features(table, f"{label} features"),
+        "sourceKind": source_kind,
+    }
+    if source_kind == "workspace":
+        target = (_absolute(root / _string(table["path"], f"{label} path"))).resolve()
+        entry["member"] = members_by_directory[_path_key(target)].name
+    return entry
+
+
+def _member_declaration(
+    member: Member,
+    alias: str,
+    value: Any,
+    kind: str,
+    target: str | None,
+    catalog: Mapping[str, dict[str, Any]],
+    members_by_directory: Mapping[str, Member],
+) -> dict[str, Any]:
+    label = f"{member.name} {kind} dependency {alias!r}"
+    table = _dependency_value(value, label)
+    inherited = table.get("workspace") is True
+    if "workspace" in table and table.get("workspace") is not True:
+        raise ProvenanceError(f"{label} workspace flag must be true")
+    if inherited:
+        allowed = {"workspace", "optional", "default-features", "default_features", "features"}
+        unknown = sorted(set(table) - allowed)
+        if unknown:
+            raise ProvenanceError(f"{label} has unsupported inherited keys: {', '.join(unknown)}")
+        base = catalog.get(alias)
+        if base is None:
+            raise ProvenanceError(f"{label} has no matching workspace dependency")
+        package = base["package"]
+        requirement = base["requirement"]
+        default_features = (
+            _default_features(table, label)
+            if "default-features" in table or "default_features" in table
+            else base["defaultFeatures"]
+        )
+        features = _requested_features(table, f"{label} features")
+        effective_features = sorted(set(base["features"] or []) | set(features or []))
+        source_kind = base["sourceKind"]
+        origin = "workspace-inherited"
+    else:
+        allowed = {
+            "version", "package", "path", "git", "registry", "branch", "tag", "rev",
+            "optional", "default-features", "default_features", "features",
+        }
+        unknown = sorted(set(table) - allowed)
+        if unknown:
+            raise ProvenanceError(f"{label} has unsupported keys: {', '.join(unknown)}")
+        package, requirement, source_kind = _source_spec(
+            alias, table, member.directory, members_by_directory, label
+        )
+        default_features = _default_features(table, label)
+        features = _requested_features(table, f"{label} features")
+        effective_features = features or []
+        origin = "member-authored"
+    optional = table.get("optional", False)
+    if not isinstance(optional, bool):
+        raise ProvenanceError(f"{label} optional must be boolean")
+    return {
+        "origin": origin,
+        "kind": kind,
+        "target": target,
+        "alias": alias,
+        "package": package,
+        "requirement": requirement,
+        "optional": optional,
+        "defaultFeatures": default_features,
+        "features": features,
+        "sourceKind": source_kind,
+        "_effectiveFeatures": effective_features,
+    }
+
+
+def _declarations(
+    member: Member,
+    catalog: Mapping[str, dict[str, Any]],
+    members_by_directory: Mapping[str, Member],
+) -> list[dict[str, Any]]:
+    declarations: list[dict[str, Any]] = []
+
+    def add_tables(container: Mapping[str, Any], target: str | None, label: str) -> None:
+        for table_name, kind in DEPENDENCY_TABLES:
+            table = _dependency_table(container, table_name, label)
+            for alias, value in sorted(table.items()):
+                declarations.append(
+                    _member_declaration(
+                        member,
+                        _string(alias, f"{label} dependency alias"),
+                        value,
+                        kind,
+                        target,
+                        catalog,
+                        members_by_directory,
+                    )
+                )
+
+    add_tables(member.manifest, None, member.name)
+    targets = _table(member.manifest.get("target", {}), f"{member.name} [target]")
+    for target, target_value in sorted(targets.items()):
+        target = _string(target, f"{member.name} target predicate")
+        add_tables(_table(target_value, f"{member.name} target {target!r}"), target, member.name)
+    declarations.sort(key=_json_key)
+    keys = [_declaration_key(member.name, declaration) for declaration in declarations]
+    duplicates = [key for key, count in Counter(keys).items() if count > 1]
+    if duplicates:
+        raise ProvenanceError(f"{member.name} has duplicate direct dependency declarations")
+    return declarations
+
+
+def inspect_repository(
+    root: Path, environment: Mapping[str, str], cwd: Path
+) -> Repository:
+    root = _absolute(root)
+    try:
+        physical_root = root.resolve(strict=True)
+        physical_cwd = _absolute(cwd).resolve(strict=True)
+    except OSError as error:
+        raise ProvenanceError(f"cannot resolve repository root: {error}") from error
+    if not _same_path(root, physical_root) or not _same_path(physical_root, physical_cwd):
+        raise ProvenanceError(
+            f"guard must run from the unredirected repository root {physical_root}"
+        )
+    cargo_home = validate_environment(environment, physical_root, physical_cwd)
+    reject_cargo_configuration(physical_root, cargo_home)
+    root_manifest = _read_toml(physical_root / "Cargo.toml", physical_root, "root manifest")
+    _unredirected_file(physical_root / "Cargo.lock", physical_root, "root lockfile")
+    if "package" in root_manifest:
+        raise ProvenanceError("an implicit root workspace package is forbidden")
+    if "patch" in root_manifest or "replace" in root_manifest:
+        raise ProvenanceError("root [patch] and [replace] tables are forbidden")
+    workspace = _table(root_manifest.get("workspace"), "root [workspace]")
+    if workspace.get("resolver") != "3":
+        raise ProvenanceError('root [workspace].resolver must be exactly "3"')
+    raw_members = workspace.get("members")
+    if not isinstance(raw_members, list) or not raw_members:
+        raise ProvenanceError("root [workspace].members must be a nonempty array")
+
+    members: list[Member] = []
+    seen_paths: set[str] = set()
+    seen_names: set[str] = set()
+    for raw_path in raw_members:
+        path = _string(raw_path, "workspace member path")
+        if any(character in path for character in "*?["):
+            raise ProvenanceError(f"workspace member globs are unsupported: {path}")
+        lexical_directory = _absolute(physical_root / path)
+        try:
+            directory = lexical_directory.resolve(strict=True)
+        except OSError as error:
+            raise ProvenanceError(f"cannot resolve workspace member {path}: {error}") from error
+        if not directory.is_dir() or not _inside(directory, physical_root) or not _same_path(
+            lexical_directory, directory
         ):
-            raise ProvenanceError(f"forbidden Cargo source environment variable: {raw_name}")
-        if name == "CARGO_TARGET_DIR":
-            if not value:
-                raise ProvenanceError("CARGO_TARGET_DIR must not be empty")
-            continue
-        if name == "CARGO_INCREMENTAL":
-            if value != "0":
-                raise ProvenanceError("CARGO_INCREMENTAL must be exactly 0 when provided")
-            continue
-        if name in FORBIDDEN_ENVIRONMENT_EXACT or name.startswith(
-            FORBIDDEN_ENVIRONMENT_PREFIXES
+            raise ProvenanceError(f"workspace member is external or redirected: {path}")
+        manifest_path = _unredirected_file(
+            directory / "Cargo.toml", physical_root, f"workspace member {path} manifest"
+        )
+        manifest = _read_toml(manifest_path, physical_root, f"workspace member {path}")
+        if "patch" in manifest or "replace" in manifest:
+            raise ProvenanceError(f"workspace member {path} has forbidden patch/replace")
+        package = _table(manifest.get("package"), f"workspace member {path} [package]")
+        name = _string(package.get("name"), f"workspace member {path} package name")
+        path_key = _path_key(directory)
+        if path_key in seen_paths or name in seen_names:
+            raise ProvenanceError(f"duplicate workspace member path or name: {path} / {name}")
+        seen_paths.add(path_key)
+        seen_names.add(name)
+        members.append(
+            Member(
+                name=name,
+                path=Path(path).as_posix(),
+                directory=directory,
+                manifest_path=manifest_path,
+                manifest=manifest,
+                member_class="development-tool" if name == "lumin-xtask" else "production",
+            )
+        )
+    if sum(member.member_class == "development-tool" for member in members) != 1:
+        raise ProvenanceError("workspace must contain exactly one development tool lumin-xtask")
+
+    members.sort(key=lambda member: member.name)
+    members_by_directory = {_path_key(member.directory): member for member in members}
+    raw_catalog = _table(workspace.get("dependencies", {}), "[workspace.dependencies]")
+    catalog = tuple(
+        _catalog_entry(alias, value, physical_root, members_by_directory)
+        for alias, value in sorted(raw_catalog.items())
+    )
+    return Repository(
+        root=physical_root,
+        cargo_home=cargo_home,
+        root_manifest=root_manifest,
+        members=tuple(members),
+        workspace_dependencies=catalog,
+    )
+
+
+def validate_command(command: Sequence[str]) -> CommandPlan:
+    command = tuple(command)
+    if not command or command[0] != "cargo":
+        raise ProvenanceError("guarded commands must begin with the logical cargo token")
+    if command == ("cargo", "--version"):
+        return CommandPlan(command, None, None, False)
+    if len(command) < 2:
+        raise ProvenanceError("Cargo subcommand is missing")
+    before = command[1 : command.index("--") + 1] if "--" in command[1:] else command[1:]
+    before = before[:-1] if before and before[-1] == "--" else before
+    subcommand = before[0] if before else ""
+    if subcommand.startswith("+"):
+        raise ProvenanceError("rustup +toolchain overrides are forbidden")
+    if subcommand not in ALLOWED_SUBCOMMANDS:
+        raise ProvenanceError(f"Cargo subcommand is not admitted: {subcommand or '<missing>'}")
+    if sum(argument == "--locked" for argument in before) != 1:
+        raise ProvenanceError("dependency-resolving Cargo commands require exactly one pre-delimiter --locked")
+    for index, argument in enumerate(before):
+        if argument.startswith("+"):
+            raise ProvenanceError("rustup +toolchain overrides are forbidden")
+        if argument in FORBIDDEN_LONG_OPTIONS or any(
+            argument.startswith(option + "=") for option in FORBIDDEN_LONG_OPTIONS
         ):
-            raise ProvenanceError(
-                f"forbidden Cargo or compiler environment variable: {raw_name}"
-            )
-        if os.name == "nt" and name in {"LINK", "_LINK_", "LIB"}:
-            raise ProvenanceError(
-                f"inherited MSVC linker environment variable is forbidden: {raw_name}"
-            )
+            raise ProvenanceError(f"Cargo relocation option is forbidden: {argument}")
+        if argument in {"-C", "-Z"} or (
+            len(argument) > 2 and argument[:2] in {"-C", "-Z"}
+        ):
+            raise ProvenanceError(f"Cargo relocation/unstable option is forbidden: {argument}")
+        if argument in FORBIDDEN_LONG_OPTIONS and index + 1 == len(before):
+            raise ProvenanceError(f"Cargo option is missing its value: {argument}")
+    equals_targets = [argument for argument in before if argument.startswith("--target=")]
+    if equals_targets:
+        raise ProvenanceError("Cargo --target=VALUE form is not admitted")
+    targets: list[str] = []
+    for index, argument in enumerate(before):
+        if argument == "--target":
+            if index + 1 >= len(before):
+                raise ProvenanceError("Cargo --target is missing its value")
+            targets.append(before[index + 1])
+    if len(targets) > 1:
+        raise ProvenanceError("duplicate Cargo --target options are forbidden")
+    explicit_target = targets[0] if targets else None
+    if explicit_target not in {None, "x86_64-unknown-linux-musl"}:
+        raise ProvenanceError(f"unsupported Cargo target lane: {explicit_target}")
+    return CommandPlan(command, subcommand, explicit_target, True)
 
 
-def _require_unredirected_file(path: Path, root: Path, description: str) -> Path:
-    lexical = _absolute(path)
+def _pinned_path(
+    environment: Mapping[str, str], name: str, root: Path, basename: str
+) -> Path:
+    raw = _env_get(environment, name)
+    if not raw:
+        raise ProvenanceError(f"missing {name}")
+    path = Path(raw)
+    if not path.is_absolute():
+        raise ProvenanceError(f"{name} must be absolute: {raw}")
     try:
         physical = path.resolve(strict=True)
     except OSError as error:
-        raise ProvenanceError(f"cannot resolve {description} {path}: {error}") from error
-    if physical != lexical or not _is_within(physical, root) or not physical.is_file():
-        raise ProvenanceError(
-            f"redirected or external {description}: {lexical} -> {physical}"
-        )
-    return lexical
-
-
-def _read_manifest(path: Path) -> dict[str, object]:
-    try:
-        with path.open("rb") as manifest:
-            parsed = tomllib.load(manifest)
-    except (OSError, tomllib.TOMLDecodeError) as error:
-        raise ProvenanceError(f"cannot strictly parse {path}: {error}") from error
-    if not isinstance(parsed, dict):
-        raise ProvenanceError(f"manifest root is not a table: {path}")
-    return parsed
-
-
-def _reject_manifest_overrides(path: Path, manifest: Mapping[str, object]) -> None:
-    for key in ("patch", "replace"):
-        if key in manifest:
-            raise ProvenanceError(f"forbidden [{key}] table in {path}")
-
-
-def _reject_workspace_build_script(
-    package_root: Path,
-    manifest: Mapping[str, object],
-    description: str,
-) -> None:
-    package = manifest.get("package")
-    if package is None:
-        return
-    package = _required_table(package, description)
-    build_script = package_root / "build.rs"
-    if (
-        package.get("build", False) is not False
-        or build_script.exists()
-        or build_script.is_symlink()
-    ):
-        raise ProvenanceError(f"workspace build script is forbidden: {package_root}")
-
-
-def _required_table(value: object, description: str) -> Mapping[str, object]:
-    if not isinstance(value, dict):
-        raise ProvenanceError(f"{description} is not a TOML table")
-    return value
-
-
-def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    value: dict[str, object] = {}
-    for key, item in pairs:
-        if key in value:
-            raise ProvenanceError(f"duplicate dependency policy JSON key: {key!r}")
-        value[key] = item
-    return value
-
-
-def _package_and_requirement(alias: str, value: object) -> tuple[str, str]:
-    if isinstance(value, str):
-        return alias, value
-    table = _required_table(value, f"dependency {alias!r}")
-    package = table.get("package", alias)
-    requirement = table.get("version", "*")
-    if not isinstance(package, str) or not package:
-        raise ProvenanceError(f"dependency {alias!r} package must be a non-empty string")
-    if not isinstance(requirement, str):
-        raise ProvenanceError(f"dependency {alias!r} version must be a string")
-    return package, requirement
-
-
-def _dependency_features(alias: str, table: Mapping[str, object] | None) -> tuple[str, ...]:
-    if table is None:
-        return ()
-    raw_features = table.get("features", [])
-    if not isinstance(raw_features, list) or any(
-        not isinstance(feature, str) or not feature for feature in raw_features
-    ):
-        raise ProvenanceError(f"dependency {alias!r} features must be non-empty strings")
-    return tuple(sorted(set(raw_features)))
-
-
-def canonical_workspace_dependency_catalog(
-    dependencies: Mapping[str, object],
-) -> dict[str, object]:
-    catalog: dict[str, object] = {}
-    for alias, value in dependencies.items():
-        if not isinstance(value, dict) or "features" not in value:
-            catalog[alias] = value
-            continue
-        normalized = dict(value)
-        normalized["features"] = list(_dependency_features(alias, value))
-        catalog[alias] = normalized
-    return catalog
-
-
-def _dependency_bool(
-    alias: str,
-    table: Mapping[str, object] | None,
-    key: str,
-    default: bool,
-) -> bool:
-    if table is None or key not in table:
-        return default
-    value = table[key]
-    if not isinstance(value, bool):
-        raise ProvenanceError(f"dependency {alias!r} {key} must be a boolean")
-    return value
-
-
-def _dependency_resolution_kind(
-    alias: str,
-    package: str,
-    table: Mapping[str, object] | None,
-    base: Path,
-    workspace_members: Mapping[Path, str],
-) -> str:
-    if table is None:
-        return "third-party"
-    forbidden = sorted(FORBIDDEN_DEPENDENCY_SOURCE_KEYS.intersection(table))
-    if forbidden:
-        raise ProvenanceError(
-            f"dependency {alias!r} uses forbidden source selectors: {forbidden!r}"
-        )
-    if "path" not in table:
-        return "third-party"
-    raw_path = table["path"]
-    if not isinstance(raw_path, str) or not raw_path:
-        raise ProvenanceError(f"dependency {alias!r} path must be a non-empty string")
-    candidate = Path(raw_path)
-    if candidate.is_absolute():
-        raise ProvenanceError(f"dependency {alias!r} path must be repository-relative")
-    lexical = _absolute(base / candidate)
-    try:
-        physical = (base / candidate).resolve(strict=True)
-    except OSError as error:
-        raise ProvenanceError(
-            f"cannot resolve dependency {alias!r} path {raw_path!r}: {error}"
-        ) from error
-    target_package = workspace_members.get(physical)
-    if physical != lexical or target_package is None or target_package != package:
-        raise ProvenanceError(
-            "dependency path must resolve directly to its exact workspace member: "
-            f"{alias!r} ({package}) {lexical} -> {physical}"
-        )
-    return "workspace"
-
-
-def _declared_dependency(
-    alias: str,
-    value: object,
-    base: Path,
-    workspace_members: Mapping[Path, str],
-) -> tuple[str, DependencyContract]:
-    table = value if isinstance(value, dict) else None
-    if table is not None and "default_features" in table:
-        raise ProvenanceError(
-            f"dependency {alias!r} uses forbidden default_features spelling"
-        )
-    if table is not None and "workspace" in table:
-        raise ProvenanceError(
-            f"dependency {alias!r} may use workspace inheritance only in a member manifest"
-        )
-    package, requirement = _package_and_requirement(alias, value)
-    return package, DependencyContract(
-        requirement=requirement,
-        resolution_kind=_dependency_resolution_kind(
-            alias, package, table, base, workspace_members
-        ),
-        optional=_dependency_bool(alias, table, "optional", False),
-        uses_default_features=_dependency_bool(
-            alias, table, "default-features", True
-        ),
-        features=_dependency_features(alias, table),
-    )
-
-
-def _authored_dependency(
-    alias: str,
-    value: object,
-    workspace_dependencies: Mapping[str, object],
-    workspace_root: Path,
-    owner_root: Path,
-    workspace_members: Mapping[Path, str],
-) -> tuple[str, str | None, DependencyContract]:
-    table = value if isinstance(value, dict) else None
-    if table is not None and table.get("workspace") is True:
-        if alias not in workspace_dependencies:
-            raise ProvenanceError(
-                f"workspace dependency {alias!r} has no [workspace.dependencies] owner"
-            )
-        forbidden_overrides = sorted(
-            {"package", "version", "path"}.intersection(table)
-            | FORBIDDEN_DEPENDENCY_SOURCE_KEYS.intersection(table)
-        )
-        if forbidden_overrides:
-            raise ProvenanceError(
-                f"workspace dependency {alias!r} overrides source identity locally: "
-                f"{forbidden_overrides!r}"
-            )
-        package, contract = _declared_dependency(
-            alias,
-            workspace_dependencies[alias],
-            workspace_root,
-            workspace_members,
-        )
-        if contract.optional:
-            raise ProvenanceError(
-                f"[workspace.dependencies] entry {alias!r} cannot be optional"
-            )
-        local_features = _dependency_features(alias, table)
-        contract = DependencyContract(
-            requirement=contract.requirement,
-            resolution_kind=contract.resolution_kind,
-            optional=_dependency_bool(alias, table, "optional", False),
-            uses_default_features=contract.uses_default_features
-            and _dependency_bool(alias, table, "default-features", True),
-            features=tuple(sorted(set(contract.features) | set(local_features))),
-        )
-    else:
-        package, contract = _declared_dependency(
-            alias, value, owner_root, workspace_members
-        )
-    rename = alias if alias != package else None
-    return package, rename, contract
-
-
-def _dependency_table(
-    owner: str,
-    container: Mapping[str, object],
-    table_name: str,
-) -> Mapping[str, object]:
-    alternate = table_name.replace("-", "_")
-    spellings = (table_name, alternate) if alternate != table_name else (table_name,)
-    values = [name for name in spellings if name in container]
-    if len(values) > 1:
-        raise ProvenanceError(
-            f"workspace package {owner} declares both {table_name} spellings"
-        )
-    if not values:
-        return {}
-    return _required_table(container[values[0]], f"{owner} [{values[0]}]")
-
-
-def _authored_requirements(
-    workspace_root: Path,
-    manifest_path: Path,
-    manifest: Mapping[str, object],
-    workspace_dependencies: Mapping[str, object],
-    workspace_members: Mapping[Path, str],
-) -> dict[tuple[str, str | None, str, str | None], DependencyContract]:
-    package = _required_table(manifest.get("package"), "workspace package")
-    owner = package.get("name")
-    if not isinstance(owner, str) or not owner:
-        raise ProvenanceError("workspace package name must be a non-empty string")
-    records: dict[
-        tuple[str, str | None, str, str | None], DependencyContract
-    ] = {}
-
-    def collect(container: Mapping[str, object], kind: str, target: str | None) -> None:
-        for table_name, table_kind in DEPENDENCY_TABLES:
-            if table_kind != kind:
-                continue
-            for alias, value in _dependency_table(owner, container, table_name).items():
-                package_name, rename, contract = _authored_dependency(
-                    alias,
-                    value,
-                    workspace_dependencies,
-                    workspace_root,
-                    manifest_path.parent,
-                    workspace_members,
-                )
-                key = (package_name, rename, kind, target)
-                if key in records:
-                    raise ProvenanceError(f"duplicate authored dependency identity: {owner} {key!r}")
-                records[key] = contract
-
-    for table_name, kind in DEPENDENCY_TABLES:
-        table = _dependency_table(owner, manifest, table_name)
-        for alias, value in table.items():
-            package_name, rename, contract = _authored_dependency(
-                alias,
-                value,
-                workspace_dependencies,
-                workspace_root,
-                manifest_path.parent,
-                workspace_members,
-            )
-            key = (package_name, rename, kind, None)
-            if key in records:
-                raise ProvenanceError(f"duplicate authored dependency identity: {owner} {key!r}")
-            records[key] = contract
-
-    targets = manifest.get("target", {})
-    targets = _required_table(targets, f"workspace package {owner} target table")
-    for target, target_value in targets.items():
-        target_table = _required_table(target_value, f"workspace target {owner}/{target}")
-        for _table_name, kind in DEPENDENCY_TABLES:
-            collect(target_table, kind, target)
-    return records
-
-
-def _authored_feature_policy(
-    manifest: Mapping[str, object], owner: str
-) -> list[dict[str, object]]:
-    table = _required_table(
-        manifest.get("features", {}), f"workspace package {owner} [features]"
-    )
-    rows: list[dict[str, object]] = []
-    for name, raw_activations in table.items():
-        if not isinstance(name, str) or not name:
-            raise ProvenanceError(
-                f"workspace package {owner} has an invalid feature name: {name!r}"
-            )
-        if not isinstance(raw_activations, list) or any(
-            not isinstance(activation, str) or not activation
-            for activation in raw_activations
-        ):
-            raise ProvenanceError(
-                f"workspace feature {owner}/{name} activations must be non-empty strings"
-            )
-        rows.append(
-            {
-                "name": name,
-                "activations": sorted(set(raw_activations)),
-            }
-        )
-    rows.sort(key=lambda row: str(row["name"]))
-    return rows
-
-
-def _checked_feature_policy(value: object, owner: str) -> list[dict[str, object]]:
-    if not isinstance(value, list):
-        raise ProvenanceError(f"dependency policy features must be an array: {owner}")
-    rows: list[dict[str, object]] = []
-    seen: set[str] = set()
-    for raw_row in value:
-        row = _required_table(raw_row, f"dependency policy feature for {owner}")
-        if set(row) != {"name", "activations"}:
-            raise ProvenanceError(
-                f"dependency policy feature has unknown or missing fields: {owner}"
-            )
-        name = row.get("name")
-        activations = row.get("activations")
-        if (
-            not isinstance(name, str)
-            or not name
-            or name in seen
-            or not isinstance(activations, list)
-            or any(
-                not isinstance(activation, str) or not activation
-                for activation in activations
-            )
-        ):
-            raise ProvenanceError(f"dependency policy feature is invalid: {owner}")
-        seen.add(name)
-        rows.append({"name": name, "activations": sorted(set(activations))})
-    rows.sort(key=lambda row: str(row["name"]))
-    if rows != value:
-        raise ProvenanceError(f"dependency policy features are not canonical: {owner}")
-    return rows
-
-
-def validate_authored_requirements(
-    root: Path,
-    resolver: object,
-    root_profiles: Mapping[str, object],
-    workspace_package: Mapping[str, object],
-    workspace_dependencies: Mapping[str, object],
-    workspace_lints: Mapping[str, object],
-    manifests: Sequence[tuple[Path, Mapping[str, object]]],
-    workspace_members: Mapping[Path, str],
-) -> None:
-    policy_path = _require_unredirected_file(root / POLICY_PATH, root, "dependency policy")
-    try:
-        policy = json.loads(
-            policy_path.read_text(encoding="utf-8"),
-            object_pairs_hook=_unique_json_object,
-        )
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        raise ProvenanceError(f"cannot parse dependency policy {policy_path}: {error}") from error
-    if not isinstance(policy, dict) or policy.get("workspaceResolver") != resolver:
-        raise ProvenanceError(
-            f"workspace resolver does not match dependency policy: {resolver!r}"
-        )
-    lock_path = _require_unredirected_file(root / "Cargo.lock", root, "root Cargo.lock")
-    lock_digest = hashlib.sha256(lock_path.read_bytes()).hexdigest()
-    if policy.get("cargoLockSha256") != lock_digest:
-        raise ProvenanceError(
-            "Cargo.lock digest does not match dependency policy: "
-            f"expected {policy.get('cargoLockSha256')!r}, observed {lock_digest!r}"
-        )
-    if policy.get("rootProfiles") != root_profiles:
-        raise ProvenanceError(
-            "root profile map does not match dependency policy: "
-            f"expected {policy.get('rootProfiles')!r}, observed {root_profiles!r}"
-        )
-    if policy.get("workspacePackage") != workspace_package:
-        raise ProvenanceError(
-            "[workspace.package] does not match dependency policy: "
-            f"expected {policy.get('workspacePackage')!r}, observed {workspace_package!r}"
-        )
-    for alias, value in workspace_dependencies.items():
-        _, contract = _declared_dependency(alias, value, root, workspace_members)
-        if contract.optional:
-            raise ProvenanceError(
-                f"[workspace.dependencies] entry {alias!r} cannot be optional"
-            )
-    observed_workspace_dependencies = canonical_workspace_dependency_catalog(
-        workspace_dependencies
-    )
-    if policy.get("workspaceDependencies") != observed_workspace_dependencies:
-        raise ProvenanceError("workspace dependency catalog contract drift")
-    if policy.get("workspaceLints") != workspace_lints:
-        raise ProvenanceError("workspace lint map does not match dependency policy")
-    expected_member_lints = _required_table(
-        policy.get("workspaceMemberLints"), "dependency policy workspace member lints"
-    )
-    for owner, lints in expected_member_lints.items():
-        _required_table(lints, f"dependency policy lints for {owner}")
-    packages = policy.get("packages")
-    if not isinstance(packages, list):
-        raise ProvenanceError("dependency policy packages must be an array")
-    expected: dict[
-        str,
-        dict[tuple[str, str | None, str, str | None], DependencyContract],
-    ] = {}
-    expected_packages: dict[str, Mapping[str, object]] = {}
-    expected_features: dict[str, list[dict[str, object]]] = {}
-    for package in packages:
-        package_table = _required_table(package, "dependency policy package")
-        owner = package_table.get("name")
-        dependencies = package_table.get("dependencies")
-        authored_package = package_table.get("authoredPackage")
-        if (
-            not isinstance(owner, str)
-            or not isinstance(dependencies, list)
-            or not isinstance(authored_package, dict)
-        ):
-            raise ProvenanceError(
-                "dependency policy package has invalid name, authoredPackage, or dependencies"
-            )
-        rows: dict[
-            tuple[str, str | None, str, str | None], DependencyContract
-        ] = {}
-        for dependency in dependencies:
-            row = _required_table(dependency, f"dependency policy row for {owner}")
-            package_name = row.get("package")
-            rename = row.get("rename")
-            kind = row.get("kind")
-            target = row.get("target")
-            requirement = row.get("requirement")
-            optional = row.get("optional")
-            uses_default_features = row.get("usesDefaultFeatures")
-            features = row.get("features")
-            resolution = row.get("resolution")
-            if (
-                not isinstance(package_name, str)
-                or (rename is not None and not isinstance(rename, str))
-                or not isinstance(kind, str)
-                or (target is not None and not isinstance(target, str))
-                or not isinstance(requirement, str)
-                or not isinstance(optional, bool)
-                or not isinstance(uses_default_features, bool)
-                or not isinstance(features, list)
-                or any(not isinstance(feature, str) for feature in features)
-                or not isinstance(resolution, dict)
-            ):
-                raise ProvenanceError(f"dependency policy row has invalid identity: {owner}")
-            resolution_kind = resolution.get("kind")
-            if resolution.get("package") != package_name or resolution_kind not in {
-                "workspace",
-                "third-party",
-            }:
-                raise ProvenanceError(
-                    f"dependency policy row has invalid resolution: {owner}/{package_name}"
-                )
-            if (
-                resolution_kind == "third-party"
-                and resolution.get("source") != CRATES_IO_SOURCE
-            ):
-                raise ProvenanceError(
-                    f"dependency policy row has unapproved source: {owner}/{package_name}"
-                )
-            key = (package_name, rename, kind, target)
-            if key in rows:
-                raise ProvenanceError(f"duplicate dependency policy identity: {owner} {key!r}")
-            rows[key] = DependencyContract(
-                requirement=requirement,
-                resolution_kind=resolution_kind,
-                optional=optional,
-                uses_default_features=uses_default_features,
-                features=tuple(sorted(set(features))),
-            )
-        if owner in expected:
-            raise ProvenanceError(f"duplicate dependency policy package: {owner}")
-        expected[owner] = rows
-        expected_packages[owner] = authored_package
-        expected_features[owner] = _checked_feature_policy(
-            package_table.get("features"), owner
-        )
-
-    observed: dict[
-        str,
-        dict[tuple[str, str | None, str, str | None], DependencyContract],
-    ] = {}
-    observed_packages: dict[str, Mapping[str, object]] = {}
-    observed_features: dict[str, list[dict[str, object]]] = {}
-    observed_member_lints: dict[str, Mapping[str, object]] = {}
-    for manifest_path, manifest in manifests:
-        package = _required_table(manifest.get("package"), "workspace package")
-        owner = package.get("name")
-        if not isinstance(owner, str) or owner in observed:
-            raise ProvenanceError(f"invalid or duplicate workspace package name: {owner!r}")
-        observed_packages[owner] = package
-        observed_features[owner] = _authored_feature_policy(manifest, owner)
-        observed_member_lints[owner] = _required_table(
-            manifest.get("lints", {}), f"workspace package {owner} [lints]"
-        )
-        observed[owner] = _authored_requirements(
-            root,
-            manifest_path,
-            manifest,
-            workspace_dependencies,
-            workspace_members,
-        )
-    if observed != expected:
-        raise ProvenanceError(
-            f"authored dependency contract drift: expected {expected!r}, observed {observed!r}"
-        )
-    if observed_packages != expected_packages:
-        raise ProvenanceError(
-            "authored workspace package contract drift: "
-            f"expected {expected_packages!r}, observed {observed_packages!r}"
-        )
-    if observed_features != expected_features:
-        raise ProvenanceError(
-            "authored workspace feature contract drift: "
-            f"expected {expected_features!r}, observed {observed_features!r}"
-        )
-    if observed_member_lints != expected_member_lints:
-        raise ProvenanceError(
-            "authored workspace lint contract drift: "
-            f"expected {expected_member_lints!r}, observed {observed_member_lints!r}"
-        )
-
-
-def validate_workspace_manifests(root: Path) -> tuple[Path, ...]:
-    root_manifest_path = _require_unredirected_file(
-        root / "Cargo.toml", root, "root workspace manifest"
-    )
-    root_manifest = _read_manifest(root_manifest_path)
-    _reject_manifest_overrides(root_manifest_path, root_manifest)
-    _reject_workspace_build_script(root, root_manifest, "root workspace package")
-
-    workspace = root_manifest.get("workspace")
-    if not isinstance(workspace, dict):
-        raise ProvenanceError("root Cargo.toml has no [workspace] table")
-    if workspace.get("resolver") != "3":
-        raise ProvenanceError('root [workspace].resolver must be exactly "3"')
-    root_profiles = _required_table(root_manifest.get("profile", {}), "root [profile]")
-    workspace_package = _required_table(
-        workspace.get("package", {}), "[workspace.package]"
-    )
-    workspace_dependencies = _required_table(
-        workspace.get("dependencies", {}), "[workspace.dependencies]"
-    )
-    workspace_lints = _required_table(workspace.get("lints", {}), "[workspace.lints]")
-    members = workspace.get("members")
-    if not isinstance(members, list) or not members:
-        raise ProvenanceError("workspace members must be a non-empty explicit list")
-
-    manifests: list[Path] = []
-    parsed_manifests: list[tuple[Path, Mapping[str, object]]] = []
-    seen: set[Path] = set()
-    if root_manifest.get("package") is not None:
-        manifests.append(root_manifest_path)
-        parsed_manifests.append((root_manifest_path, root_manifest))
-        seen.add(root_manifest_path)
-    for member in members:
-        if not isinstance(member, str) or not member:
-            raise ProvenanceError("workspace member paths must be non-empty strings")
-        member_path = Path(member)
-        if member_path.is_absolute() or any(part in {".", ".."} for part in member_path.parts):
-            raise ProvenanceError(f"workspace member path is not canonical: {member!r}")
-        if any(character in member for character in "*?["):
-            raise ProvenanceError(f"workspace member globs are forbidden: {member!r}")
-        lexical_member = root / member_path
-        try:
-            physical_member = lexical_member.resolve(strict=True)
-        except OSError as error:
-            raise ProvenanceError(f"cannot resolve workspace member {member!r}: {error}") from error
-        if (
-            physical_member != lexical_member
-            or not _is_within(physical_member, root)
-            or not physical_member.is_dir()
-        ):
-            raise ProvenanceError(
-                f"redirected or external workspace member: {lexical_member} -> {physical_member}"
-            )
-        manifest_path = _require_unredirected_file(
-            lexical_member / "Cargo.toml", root, "workspace member manifest"
-        )
-        if manifest_path in seen:
-            raise ProvenanceError(f"duplicate workspace member manifest: {manifest_path}")
-        seen.add(manifest_path)
-        manifest = _read_manifest(manifest_path)
-        _reject_manifest_overrides(manifest_path, manifest)
-        _reject_workspace_build_script(
-            lexical_member, manifest, f"workspace member {member!r}"
-        )
-        manifests.append(manifest_path)
-        parsed_manifests.append((manifest_path, manifest))
-
-    if not manifests:
-        raise ProvenanceError("zero workspace member manifests were parsed")
-    workspace_members: dict[Path, str] = {}
-    for manifest_path, manifest in parsed_manifests:
-        package = _required_table(manifest.get("package"), "workspace package")
-        package_name = package.get("name")
-        if not isinstance(package_name, str) or not package_name:
-            raise ProvenanceError(
-                f"workspace package name must be a non-empty string: {manifest_path}"
-            )
-        package_root = manifest_path.parent
-        if package_root in workspace_members or package_name in workspace_members.values():
-            raise ProvenanceError(f"duplicate workspace package identity: {package_name}")
-        workspace_members[package_root] = package_name
-    validate_authored_requirements(
-        root,
-        workspace.get("resolver"),
-        root_profiles,
-        workspace_package,
-        workspace_dependencies,
-        workspace_lints,
-        parsed_manifests,
-        workspace_members,
-    )
-    return tuple(manifests)
-
-
-def _exact_musl_release_command(arguments: Sequence[str]) -> bool:
-    if not arguments or arguments[0] != "build":
-        return False
-    observed: dict[str, int] = {
-        "release": 0,
-        "locked": 0,
-        "package": 0,
-        "target": 0,
-    }
-    cursor = 1
-    while cursor < len(arguments):
-        argument = arguments[cursor]
-        if argument == "--release":
-            observed["release"] += 1
-            cursor += 1
-        elif argument == "--locked":
-            observed["locked"] += 1
-            cursor += 1
-        elif argument == "-p" and cursor + 1 < len(arguments):
-            if arguments[cursor + 1] != "lumin-cli":
-                return False
-            observed["package"] += 1
-            cursor += 2
-        elif argument == "--target" and cursor + 1 < len(arguments):
-            if arguments[cursor + 1] != MUSL_TARGET:
-                return False
-            observed["target"] += 1
-            cursor += 2
-        else:
-            return False
-    return all(count == 1 for count in observed.values())
-
-
-def validate_command(command: Sequence[str]) -> None:
-    if not command or command[0] != "cargo":
-        raise ProvenanceError("guard command must begin with exact executable name 'cargo'")
-    if tuple(command) in {
-        ("cargo", "--version"),
-        ("cargo", "-V"),
-        ("cargo", "-Vv"),
+        raise ProvenanceError(f"cannot resolve {name} {path}: {error}") from error
+    expected_names = {basename, basename + ".exe"}
+    if not physical.is_file() or physical.name.casefold() not in {
+        value.casefold() for value in expected_names
     }:
-        return
-    if len(command) < 2:
-        raise ProvenanceError("guarded Cargo command requires an exact subcommand")
-    if command[1].startswith("+"):
-        raise ProvenanceError(f"Cargo toolchain selector is forbidden: {command[1]}")
-    for argument in command[1:]:
-        if argument == "--config" or argument.startswith("--config="):
-            raise ProvenanceError(
-                f"Cargo global configuration argument is forbidden: {argument}"
-            )
-
-    delimiter = command.index("--") if "--" in command else len(command)
-    cargo_arguments = command[1:delimiter]
-    suffix = tuple(command[delimiter + 1 :]) if delimiter < len(command) else ()
-    if not cargo_arguments or cargo_arguments[0].startswith("-"):
-        raise ProvenanceError("guarded Cargo command requires an exact subcommand")
-    subcommand = cargo_arguments[0]
-    if subcommand in {"rustc", "rustdoc"}:
-        raise ProvenanceError(f"Cargo compiler-forwarding subcommand is forbidden: {subcommand}")
-
-    target_selected = False
-    for argument in cargo_arguments[1:]:
-        if argument in FORBIDDEN_CARGO_RELOCATION_OPTIONS or any(
-            argument.startswith(f"{option}=")
-            for option in FORBIDDEN_CARGO_RELOCATION_OPTIONS
-        ):
-            raise ProvenanceError(f"Cargo relocation argument is forbidden: {argument}")
-        if argument == "-C" or argument.startswith("-C"):
-            raise ProvenanceError(f"Cargo directory argument is forbidden: {argument}")
-        if argument == "-Z" or argument.startswith("-Z"):
-            raise ProvenanceError(f"unstable Cargo argument is forbidden: {argument}")
-        if argument == "--target" or argument.startswith("--target="):
-            target_selected = True
-
-    if target_selected and not _exact_musl_release_command(cargo_arguments):
-        raise ProvenanceError("only the exact lumin-cli musl release target is admitted")
-    if suffix:
-        if subcommand in {"test", "run"}:
-            return
-        if subcommand == "clippy" and suffix == ("-D", "warnings"):
-            return
-        raise ProvenanceError(f"Cargo suffix is forbidden for subcommand {subcommand!r}")
+        raise ProvenanceError(f"{name} does not name {basename}: {physical}")
+    if not _same_path(path, physical) or _inside(physical, root):
+        raise ProvenanceError(f"{name} is redirected or repository-owned: {path}")
+    return physical
 
 
-def command_may_execute_repository_runtime(command: Sequence[str]) -> bool:
-    return any(argument in TERMINAL_CARGO_SUBCOMMANDS for argument in command[1:])
-
-
-def controlled_child_environment(
-    command: Sequence[str],
-    environment: Mapping[str, str],
-    *,
-    cargo: Path | None = None,
-    rustc: Path | None = None,
-    rustdoc: Path | None = None,
-) -> dict[str, str]:
-    child = dict(environment)
-    if command_may_execute_repository_runtime(command):
-        for raw_name in tuple(child):
-            if raw_name.upper() in GITHUB_COMMAND_FILE_ENVIRONMENT:
-                child.pop(raw_name)
-    for name, path in (("CARGO", cargo), ("RUSTC", rustc), ("RUSTDOC", rustdoc)):
-        if path is not None:
-            child[name] = str(path)
-    if cargo is not None:
-        child["CARGO_INCREMENTAL"] = "0"
-    return child
-
-
-def _external_executable(
-    name: str, root: Path, environment: Mapping[str, str]
-) -> Path:
-    recorded_name = {"cargo": "LUMIN_CARGO", "rustc": "LUMIN_RUSTC"}.get(name)
-    recorded = _environment_value(environment, recorded_name) if recorded_name else None
-    if recorded is None and name in {"cargo", "rustc"}:
-        rustup = shutil.which("rustup", path=_environment_value(environment, "PATH"))
-        if rustup is None:
-            raise ProvenanceError(f"rustup cannot resolve exact tool: {name}")
-        rustup_lexical = _absolute(Path(rustup))
-        try:
-            rustup_physical = rustup_lexical.resolve(strict=True)
-        except OSError as error:
-            raise ProvenanceError(f"cannot resolve rustup executable: {error}") from error
-        if (
-            rustup_physical != rustup_lexical
-            or not rustup_physical.is_file()
-            or _is_within(rustup_physical, root)
-        ):
-            raise ProvenanceError(
-                "rustup is redirected, non-file, or repository-owned: "
-                f"{rustup_lexical} -> {rustup_physical}"
-            )
+def _run_text(command: Sequence[str], environment: Mapping[str, str], label: str) -> str:
+    try:
         completed = subprocess.run(
-            [str(rustup_physical), "which", "--toolchain", "1.96.0", name],
-            text=True,
-            capture_output=True,
+            tuple(command),
             shell=False,
             check=False,
+            capture_output=True,
             env=dict(environment),
         )
-        if completed.returncode != 0:
-            raise ProvenanceError(
-                f"rustup cannot resolve exact {name}: {completed.stderr.strip()}"
-            )
-        resolved = completed.stdout.strip()
+    except OSError as error:
+        raise ProvenanceError(f"cannot run {label}: {error}") from error
+    if completed.returncode != 0:
+        stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+        raise ProvenanceError(f"{label} failed: {stderr or completed.returncode}")
+    try:
+        return completed.stdout.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ProvenanceError(f"{label} returned non-UTF-8 output") from error
+
+
+def pinned_cargo(
+    environment: Mapping[str, str], root: Path
+) -> tuple[Path, str]:
+    cargo = _pinned_path(environment, "PINNED_CARGO", root, "cargo")
+    output = _run_text((str(cargo), "--version", "--verbose"), environment, "pinned Cargo probe")
+    fields = {
+        key.strip(): value.strip()
+        for line in output.splitlines()
+        if ":" in line
+        for key, value in (line.split(":", 1),)
+    }
+    release = fields.get("release")
+    host = fields.get("host")
+    if release != EXPECTED_CARGO_RELEASE:
+        raise ProvenanceError(f"pinned Cargo release mismatch: {release!r}")
+    if host not in {"x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"}:
+        raise ProvenanceError(f"unsupported pinned Cargo host: {host!r}")
+    return cargo, host
+
+
+def pinned_python(environment: Mapping[str, str], root: Path) -> None:
+    raw = _env_get(environment, "PINNED_PYTHON")
+    if not raw or not Path(raw).is_absolute():
+        raise ProvenanceError("PINNED_PYTHON must name an absolute interpreter")
+    # Microsoft Store app-execution aliases cannot be opened or resolved by the
+    # calling process. They are acceptable for local diagnostics only; hosted CI
+    # receives a normal setup-python path and takes the strict branch.
+    if _env_get(environment, "GITHUB_ACTIONS") == "true":
+        python = _pinned_path(environment, "PINNED_PYTHON", root, "python")
+        running = Path(sys.executable).resolve(strict=True)
     else:
-        resolved = recorded or shutil.which(
-            name, path=_environment_value(environment, "PATH")
-        )
-    if resolved is None:
-        raise ProvenanceError(f"required executable is unavailable: {name}")
-    lexical = _absolute(Path(resolved))
-    try:
-        physical = lexical.resolve(strict=True)
-    except OSError as error:
-        raise ProvenanceError(f"cannot resolve executable {name}: {error}") from error
-    if physical != lexical or not physical.is_file() or _is_within(physical, root):
+        python = _absolute(Path(raw))
+        running = _absolute(Path(sys.executable))
+        if python.name.casefold() not in {"python", "python.exe"}:
+            raise ProvenanceError(f"PINNED_PYTHON does not name Python: {python}")
+    if not _same_path(python, running):
         raise ProvenanceError(
-            f"executable is redirected, non-file, or repository-owned: {name} {lexical} -> {physical}"
+            f"running interpreter {sys.executable} differs from PINNED_PYTHON {python}"
         )
-    return physical
 
 
-def _toolchain_sibling(reference: Path, name: str, root: Path) -> Path:
-    suffix = reference.suffix if os.name == "nt" else ""
-    lexical = _absolute(reference.with_name(f"{name}{suffix}"))
-    try:
-        physical = lexical.resolve(strict=True)
-    except OSError as error:
-        raise ProvenanceError(f"cannot resolve exact executable {name}: {error}") from error
-    if physical != lexical or not physical.is_file() or _is_within(physical, root):
-        raise ProvenanceError(
-            f"toolchain executable is redirected, non-file, or repository-owned: "
-            f"{name} {lexical} -> {physical}"
-        )
-    return physical
+def pinned_clippy(environment: Mapping[str, str], root: Path) -> Path:
+    clippy = _pinned_path(environment, "PINNED_CARGO_CLIPPY", root, "cargo-clippy")
+    version = _run_text(
+        (str(clippy), "clippy", "--version"), environment, "pinned cargo-clippy probe"
+    ).strip()
+    if version != EXPECTED_CLIPPY_VERSION:
+        raise ProvenanceError(f"pinned cargo-clippy version mismatch: {version!r}")
+    return clippy
 
 
-def _verified_helper(root: Path, path: Path, expected_digest: str) -> Path:
-    helper = _require_unredirected_file(root / path, root, f"bootstrap helper {path}")
-    try:
-        observed_digest = hashlib.sha256(helper.read_bytes()).hexdigest()
-    except OSError as error:
-        raise ProvenanceError(f"cannot hash bootstrap helper {helper}: {error}") from error
-    if observed_digest != expected_digest:
-        raise ProvenanceError(
-            f"bootstrap helper digest mismatch for {path}: "
-            f"expected {expected_digest}, observed {observed_digest}"
-        )
-    return helper
-
-
-def _parse_unique_json(source: str, context: str) -> object:
-    try:
-        return json.loads(source, object_pairs_hook=_unique_json_object)
-    except (UnicodeError, json.JSONDecodeError) as error:
-        raise ProvenanceError(f"cannot parse {context}: {error}") from error
-
-
-def _run_json_helper(
-    helper: Path,
-    envelope: Mapping[str, object],
-    environment: Mapping[str, str],
-) -> Mapping[str, object]:
-    completed = subprocess.run(
-        [sys.executable, "-I", "-S", str(helper)],
-        input=json.dumps(envelope, sort_keys=True, separators=(",", ":")),
-        text=True,
-        capture_output=True,
-        shell=False,
-        check=False,
-        env=dict(environment),
-    )
-    if completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip() or "no diagnostics"
-        raise ProvenanceError(
-            f"bootstrap helper failed ({helper.name}, exit {completed.returncode}): {detail}"
-        )
-    verdict = _parse_unique_json(completed.stdout, f"{helper.name} verdict")
-    if not isinstance(verdict, dict):
-        raise ProvenanceError(f"bootstrap helper verdict is not an object: {helper.name}")
-    return verdict
-
-
-def _run_capture(
-    command: Sequence[str], environment: Mapping[str, str], context: str
-) -> str:
-    completed = subprocess.run(
-        command,
-        text=True,
-        capture_output=True,
-        shell=False,
-        check=False,
-        env=dict(environment),
-    )
-    if completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip() or "no diagnostics"
-        raise ProvenanceError(
-            f"{context} failed (exit {completed.returncode}): {detail}"
-        )
-    return completed.stdout
-
-
-def _toolchain_host(
-    cargo: Path, rustc: Path, environment: Mapping[str, str]
-) -> str:
-    cargo_version = _run_capture([str(cargo), "-Vv"], environment, "Cargo identity probe")
-    rustc_version = _run_capture([str(rustc), "-vV"], environment, "rustc identity probe")
-    if "release: 1.96.0" not in cargo_version or (
-        "commit-hash: 30a34c6821b57de0aaec83a901aca39f88f6778c"
-        not in cargo_version
-    ):
-        raise ProvenanceError("Cargo identity is not exact release 1.96.0")
-    if "release: 1.96.0" not in rustc_version or (
-        "commit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96"
-        not in rustc_version
-    ):
-        raise ProvenanceError("rustc identity is not exact release 1.96.0")
-    hosts = [
-        line.removeprefix("host: ").strip()
-        for line in rustc_version.splitlines()
-        if line.startswith("host: ")
-    ]
-    cargo_hosts = [
-        line.removeprefix("host: ").strip()
-        for line in cargo_version.splitlines()
-        if line.startswith("host: ")
-    ]
-    if len(hosts) != 1 or cargo_hosts != hosts or hosts[0] not in {
-        "x86_64-pc-windows-msvc",
-        "x86_64-unknown-linux-gnu",
-    }:
-        raise ProvenanceError(
-            f"Cargo/rustc host mismatch or unsupported host: cargo={cargo_hosts!r}, rustc={hosts!r}"
-        )
-    return hosts[0]
-
-
-def _effective_lane(command: Sequence[str], host: str) -> str:
-    targets: list[str] = []
-    for index, argument in enumerate(command):
-        if argument == "--target" and index + 1 < len(command):
-            targets.append(command[index + 1])
-        elif argument.startswith("--target="):
-            targets.append(argument.partition("=")[2])
-    if not targets:
-        return host
-    if targets == ["x86_64-unknown-linux-musl"] and host == "x86_64-unknown-linux-gnu":
-        return targets[0]
-    raise ProvenanceError(f"unsupported or duplicate Cargo target lane: {targets!r}")
-
-
-def _run_metadata(
-    cargo: Path,
-    environment: Mapping[str, str],
-    lane: str | None,
-) -> Mapping[str, object]:
+def _metadata_command(cargo: Path, target: str | None) -> tuple[str, ...]:
     command = [
-        str(cargo),
-        "metadata",
-        "--all-features",
-        "--locked",
-        "--format-version",
-        "1",
+        str(cargo), "metadata", "--format-version", "1", "--all-features", "--locked"
     ]
-    if lane is not None:
-        command.extend(["--filter-platform", lane])
-    output = _run_capture(command, environment, "Cargo metadata preflight")
-    metadata = _parse_unique_json(output, "Cargo metadata preflight output")
-    if not isinstance(metadata, dict):
-        raise ProvenanceError("Cargo metadata preflight output is not an object")
-    return metadata
+    if target is not None:
+        command.extend(("--filter-platform", target))
+    return tuple(command)
 
 
-def _lock_registry_checksums(root: Path) -> dict[tuple[str, str, str], str]:
-    lock_path = _require_unredirected_file(root / "Cargo.lock", root, "root Cargo.lock")
+def run_metadata(
+    cargo: Path,
+    target: str | None,
+    repository: Repository,
+    environment: Mapping[str, str],
+) -> dict[str, Any]:
     try:
-        lock = tomllib.loads(lock_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
-        raise ProvenanceError(f"cannot parse root Cargo.lock: {error}") from error
-    packages = lock.get("package")
-    if not isinstance(packages, list):
-        raise ProvenanceError("Cargo.lock package surface is not an array")
-    rows: dict[tuple[str, str, str], str] = {}
-    for raw_package in packages:
-        package = _required_table(raw_package, "Cargo.lock package")
-        source = package.get("source")
-        if source is None:
-            continue
+        completed = subprocess.run(
+            _metadata_command(cargo, target),
+            cwd=repository.root,
+            env=dict(environment),
+            shell=False,
+            check=False,
+            capture_output=True,
+        )
+    except OSError as error:
+        raise ProvenanceError(f"cannot run pinned Cargo metadata: {error}") from error
+    if completed.returncode != 0:
+        stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+        raise ProvenanceError(f"pinned Cargo metadata failed: {stderr or completed.returncode}")
+    try:
+        value = json.loads(completed.stdout)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ProvenanceError(f"pinned Cargo metadata returned invalid JSON: {error}") from error
+    if not isinstance(value, dict):
+        raise ProvenanceError("pinned Cargo metadata root must be an object")
+    return value
+
+
+def _metadata_view(metadata: dict[str, Any], repository: Repository) -> MetadataView:
+    root_value = metadata.get("workspace_root")
+    if not isinstance(root_value, str) or not _same_path(
+        Path(root_value).resolve(strict=True), repository.root
+    ):
+        raise ProvenanceError("Cargo metadata workspace root mismatch")
+    raw_packages = metadata.get("packages")
+    raw_members = metadata.get("workspace_members")
+    resolve = metadata.get("resolve")
+    if not isinstance(raw_packages, list) or not isinstance(raw_members, list) or not isinstance(resolve, dict):
+        raise ProvenanceError("Cargo metadata package/member/resolve surface is incomplete")
+    packages: dict[str, dict[str, Any]] = {}
+    for package in raw_packages:
+        if not isinstance(package, dict) or not isinstance(package.get("id"), str):
+            raise ProvenanceError("Cargo metadata contains a malformed package")
+        if package["id"] in packages:
+            raise ProvenanceError(f"duplicate Cargo metadata package id: {package['id']}")
+        packages[package["id"]] = package
+    member_ids: dict[str, str] = {}
+    for package_id in raw_members:
+        if not isinstance(package_id, str) or package_id not in packages:
+            raise ProvenanceError("Cargo metadata contains an unknown workspace member id")
+        package = packages[package_id]
         name = package.get("name")
-        version = package.get("version")
-        checksum = package.get("checksum")
-        if (
-            source != CRATES_IO_SOURCE
-            or not isinstance(name, str)
-            or not isinstance(version, str)
-            or not isinstance(checksum, str)
-            or len(checksum) != 64
-            or any(character not in "0123456789abcdef" for character in checksum)
+        if not isinstance(name, str) or name in member_ids:
+            raise ProvenanceError("Cargo metadata contains duplicate/malformed member names")
+        member_ids[name] = package_id
+    expected = {member.name for member in repository.members}
+    if set(member_ids) != expected:
+        raise ProvenanceError(
+            f"Cargo metadata workspace members differ: expected {sorted(expected)}, got {sorted(member_ids)}"
+        )
+    raw_nodes = resolve.get("nodes")
+    if not isinstance(raw_nodes, list):
+        raise ProvenanceError("Cargo metadata resolve.nodes is incomplete")
+    nodes: dict[str, dict[str, Any]] = {}
+    for node in raw_nodes:
+        if not isinstance(node, dict) or not isinstance(node.get("id"), str):
+            raise ProvenanceError("Cargo metadata contains a malformed resolve node")
+        if node["id"] in nodes:
+            raise ProvenanceError(f"duplicate Cargo metadata resolve node: {node['id']}")
+        nodes[node["id"]] = node
+    for member in repository.members:
+        package = packages[member_ids[member.name]]
+        manifest = package.get("manifest_path")
+        if not isinstance(manifest, str) or not _same_path(
+            Path(manifest).resolve(strict=True), member.manifest_path
         ):
-            raise ProvenanceError(f"Cargo.lock has an unsupported registry row: {package!r}")
-        key = (name, version, source)
-        if key in rows:
-            raise ProvenanceError(f"Cargo.lock has a duplicate registry row: {key!r}")
-        rows[key] = checksum
-    if not rows:
-        raise ProvenanceError("Cargo.lock contains zero crates.io registry rows")
-    return rows
+            raise ProvenanceError(f"Cargo metadata manifest mismatch for {member.name}")
+        if package.get("source") is not None:
+            raise ProvenanceError(f"workspace package {member.name} has a non-workspace source")
+        if member_ids[member.name] not in nodes:
+            raise ProvenanceError(f"workspace member {member.name} has no resolve node")
+    return MetadataView(metadata, packages, member_ids, nodes)
 
 
-def _registry_envelope(
-    validation: RepositoryValidation,
-    metadata_verdict: Mapping[str, object],
-) -> dict[str, object]:
-    raw_packages = metadata_verdict.get("registryPackages")
-    if not isinstance(raw_packages, list):
-        raise ProvenanceError("metadata helper omitted registryPackages")
-    checksums = _lock_registry_checksums(validation.root)
-    packages: list[dict[str, object]] = []
-    observed_keys: set[tuple[str, str, str]] = set()
-    for raw_package in raw_packages:
-        package = _required_table(raw_package, "metadata registry package")
-        name = package.get("name")
-        version = package.get("version")
-        source = package.get("source")
-        manifest_path = package.get("manifestPath")
-        if not all(isinstance(value, str) for value in (name, version, source, manifest_path)):
-            raise ProvenanceError(f"metadata registry package is malformed: {package!r}")
-        key = (name, version, source)
-        checksum = checksums.get(key)
-        if checksum is None or key in observed_keys:
-            raise ProvenanceError(f"metadata/lock registry identity mismatch: {key!r}")
-        observed_keys.add(key)
-        packages.append(
+def _loaded_sources(view: MetadataView, repository: Repository) -> None:
+    registry_root = repository.cargo_home / "registry" / "src"
+    try:
+        physical_registry = registry_root.resolve(strict=True)
+    except OSError as error:
+        raise ProvenanceError(f"Cargo registry source root is unavailable: {error}") from error
+    if not physical_registry.is_dir() or not _same_path(registry_root, physical_registry):
+        raise ProvenanceError(f"Cargo registry source root is redirected: {registry_root}")
+    if _inside(physical_registry, repository.root):
+        raise ProvenanceError("Cargo registry source root is inside the repository")
+    member_ids = set(view.member_ids.values())
+    for package_id, package in view.packages.items():
+        if package_id in member_ids:
+            continue
+        if package.get("source") != CRATES_IO_SOURCE:
+            raise ProvenanceError(
+                f"non-workspace package {package.get('name')!r} is not exact crates.io"
+            )
+        manifest_value = package.get("manifest_path")
+        if not isinstance(manifest_value, str):
+            raise ProvenanceError("registry package is missing manifest_path")
+        manifest = Path(manifest_value)
+        if not manifest.is_absolute():
+            raise ProvenanceError(f"registry manifest is not absolute: {manifest}")
+        try:
+            physical_manifest = manifest.resolve(strict=True)
+            physical_package = manifest.parent.resolve(strict=True)
+        except OSError as error:
+            raise ProvenanceError(f"cannot resolve registry manifest {manifest}: {error}") from error
+        if not physical_manifest.is_file() or not _same_path(manifest, physical_manifest):
+            raise ProvenanceError(f"registry manifest is redirected: {manifest}")
+        if not _same_path(manifest.parent, physical_package):
+            raise ProvenanceError(f"registry package directory is redirected: {manifest.parent}")
+        if not _inside(physical_manifest, physical_registry) or _inside(
+            physical_manifest, repository.root
+        ):
+            raise ProvenanceError(f"registry manifest escapes active Cargo home: {manifest}")
+
+
+def _kind(value: Any) -> str:
+    mapping = {None: "normal", "build": "build", "dev": "development"}
+    if value not in mapping:
+        raise ProvenanceError(f"unknown Cargo dependency kind: {value!r}")
+    return mapping[value]
+
+
+def _normalized_alias(alias: str) -> str:
+    return alias.replace("-", "_")
+
+
+def _resolution(package: Mapping[str, Any], view: MetadataView) -> dict[str, Any]:
+    package_id = package.get("id")
+    for member_name, member_id in view.member_ids.items():
+        if package_id == member_id:
+            return {"kind": "workspace", "member": member_name}
+    name = package.get("name")
+    version = package.get("version")
+    source = package.get("source")
+    if not isinstance(name, str) or not isinstance(version, str) or source != CRATES_IO_SOURCE:
+        raise ProvenanceError("resolved third-party package identity is incomplete")
+    return {"kind": "crates-io", "name": name, "version": version, "source": source}
+
+
+def _declaration_key(owner: str, declaration: Mapping[str, Any]) -> tuple[Any, ...]:
+    return (
+        owner,
+        declaration["origin"],
+        declaration["kind"],
+        declaration["target"],
+        declaration["alias"],
+        declaration["package"],
+        declaration["requirement"],
+        declaration["optional"],
+        declaration["defaultFeatures"],
+        None if declaration["features"] is None else tuple(declaration["features"]),
+        declaration["sourceKind"],
+    )
+
+
+def _binding_key(owner: str, declaration: Mapping[str, Any]) -> tuple[Any, ...]:
+    return (
+        owner,
+        _normalized_alias(declaration["alias"]),
+        declaration["kind"],
+        declaration["target"],
+    )
+
+
+def _resolved_bindings(view: MetadataView) -> dict[tuple[Any, ...], dict[str, Any]]:
+    bindings: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for owner, package_id in view.member_ids.items():
+        deps = view.nodes[package_id].get("deps")
+        if not isinstance(deps, list):
+            raise ProvenanceError(f"resolve deps are missing for {owner}")
+        for dependency in deps:
+            if not isinstance(dependency, dict):
+                raise ProvenanceError(f"malformed resolve dependency for {owner}")
+            alias = dependency.get("name")
+            destination = dependency.get("pkg")
+            dep_kinds = dependency.get("dep_kinds")
+            if not isinstance(alias, str) or destination not in view.packages or not isinstance(dep_kinds, list):
+                raise ProvenanceError(f"incomplete resolve dependency for {owner}")
+            for dep_kind in dep_kinds:
+                if not isinstance(dep_kind, dict):
+                    raise ProvenanceError(f"malformed dependency kind for {owner}")
+                target = dep_kind.get("target")
+                if target is not None and not isinstance(target, str):
+                    raise ProvenanceError(f"malformed dependency target for {owner}")
+                key = (owner, alias, _kind(dep_kind.get("kind")), target)
+                if key in bindings:
+                    raise ProvenanceError(f"duplicate resolved direct binding: {key}")
+                bindings[key] = _resolution(view.packages[destination], view)
+    return bindings
+
+
+def _verify_metadata_declarations(
+    repository: Repository,
+    authored: Mapping[str, list[dict[str, Any]]],
+    view: MetadataView,
+) -> None:
+    for member in repository.members:
+        package = view.packages[view.member_ids[member.name]]
+        raw_dependencies = package.get("dependencies")
+        if not isinstance(raw_dependencies, list):
+            raise ProvenanceError(f"metadata dependencies are missing for {member.name}")
+        actual: Counter[tuple[Any, ...]] = Counter()
+        for dependency in raw_dependencies:
+            if not isinstance(dependency, dict):
+                raise ProvenanceError(f"malformed metadata dependency for {member.name}")
+            package_name = dependency.get("name")
+            rename = dependency.get("rename")
+            alias = rename if isinstance(rename, str) else package_name
+            source = dependency.get("source")
+            source_kind = "crates-io" if source == CRATES_IO_SOURCE else "workspace"
+            features = dependency.get("features")
+            target = dependency.get("target")
+            if not isinstance(package_name, str) or not isinstance(alias, str):
+                raise ProvenanceError(f"metadata dependency name is missing for {member.name}")
+            if not isinstance(features, list) or any(not isinstance(value, str) for value in features):
+                raise ProvenanceError(f"metadata dependency features are malformed for {member.name}")
+            actual[
+                (
+                    _normalized_alias(alias), package_name, _kind(dependency.get("kind")), target,
+                    dependency.get("optional"), dependency.get("uses_default_features"),
+                    tuple(sorted(set(features))), source_kind,
+                )
+            ] += 1
+        expected: Counter[tuple[Any, ...]] = Counter(
+            (
+                _normalized_alias(declaration["alias"]), declaration["package"], declaration["kind"],
+                declaration["target"], declaration["optional"], declaration["defaultFeatures"],
+                tuple(declaration["_effectiveFeatures"]), declaration["sourceKind"],
+            )
+            for declaration in authored[member.name]
+        )
+        if actual != expected:
+            raise ProvenanceError(f"Cargo metadata declaration surface differs for {member.name}")
+
+
+def build_policy(repository: Repository, metadata: dict[str, Any]) -> dict[str, Any]:
+    view = _metadata_view(metadata, repository)
+    _loaded_sources(view, repository)
+    catalog = {entry["alias"]: entry for entry in repository.workspace_dependencies}
+    members_by_directory = {_path_key(member.directory): member for member in repository.members}
+    authored = {
+        member.name: _declarations(member, catalog, members_by_directory)
+        for member in repository.members
+    }
+    _verify_metadata_declarations(repository, authored, view)
+    bindings = _resolved_bindings(view)
+    policy_members: list[dict[str, Any]] = []
+    for member in repository.members:
+        dependencies: list[dict[str, Any]] = []
+        for declaration in authored[member.name]:
+            key = _binding_key(member.name, declaration)
+            resolution = bindings.pop(key, None)
+            if resolution is None:
+                raise ProvenanceError(f"unresolved direct dependency binding: {key}")
+            dependency = {
+                key: value
+                for key, value in declaration.items()
+                if not key.startswith("_")
+            }
+            dependency["resolution"] = resolution
+            dependencies.append(dependency)
+        dependencies.sort(key=_json_key)
+        policy_members.append(
             {
-                "name": name,
-                "version": version,
-                "source": source,
-                "checksum": checksum,
-                "manifestPath": manifest_path,
+                "name": member.name,
+                "class": member.member_class,
+                "path": member.path,
+                "features": _feature_map(member.manifest, member.name),
+                "dependencies": dependencies,
             }
         )
-    if observed_keys != set(checksums):
-        raise ProvenanceError("metadata registry identities do not equal Cargo.lock registry rows")
-    packages.sort(key=lambda package: (str(package["name"]), str(package["version"])))
+    if bindings:
+        raise ProvenanceError(f"Cargo metadata has unowned direct bindings: {sorted(bindings)}")
     return {
-        "schemaVersion": 1,
-        "repositoryRoot": str(validation.root),
-        "cargoHome": str(validation.cargo_home),
-        "packages": packages,
+        "schemaVersion": 2,
+        "resolver": "3",
+        "members": policy_members,
+        "workspaceDependencies": list(repository.workspace_dependencies),
     }
 
 
-def command_requires_dependency_preflight(command: Sequence[str]) -> bool:
-    return tuple(command) not in {
-        ("cargo", "--version"),
-        ("cargo", "-V"),
-        ("cargo", "-Vv"),
-    }
+def _target_applies(target: str | None, lane: str) -> bool:
+    if target is None:
+        return True
+    if target == "cfg(windows)":
+        return lane == "x86_64-pc-windows-msvc"
+    raise ProvenanceError(f"unsupported target predicate in frozen policy: {target}")
 
 
-def run_dependency_preflight(
-    validation: RepositoryValidation,
-    command: Sequence[str],
-    environment: Mapping[str, str],
-) -> Path:
-    cargo = _external_executable("cargo", validation.root, environment)
-    rustc = _external_executable("rustc", validation.root, environment)
-    rustdoc = _toolchain_sibling(rustc, "rustdoc", validation.root)
-    child_environment = controlled_child_environment(
-        command,
-        environment,
-        cargo=cargo,
-        rustc=rustc,
-        rustdoc=rustdoc,
-    )
-    host = _toolchain_host(cargo, rustc, child_environment)
-    lane = _effective_lane(command, host)
-    unfiltered = _run_metadata(cargo, child_environment, None)
-    filtered = _run_metadata(cargo, child_environment, lane)
-    target_directory = unfiltered.get("target_directory")
-    if not isinstance(target_directory, str):
-        raise ProvenanceError("Cargo metadata omitted target_directory")
-    metadata_helper = _verified_helper(
-        validation.root, METADATA_HELPER_PATH, METADATA_HELPER_SHA256
-    )
-    metadata_verdict = _run_json_helper(
-        metadata_helper,
-        {
-            "schemaVersion": 1,
-            "repositoryRoot": str(validation.root),
-            "cargoHome": str(validation.cargo_home),
-            "targetDirectory": target_directory,
-            "workspaceManifests": [str(path) for path in validation.manifests],
-            "policyPath": str(validation.root / POLICY_PATH),
-            "effectiveLane": lane,
-            "unfiltered": unfiltered,
-            "filtered": filtered,
-        },
-        child_environment,
-    )
-    registry_helper = _verified_helper(
-        validation.root, REGISTRY_HELPER_PATH, REGISTRY_HELPER_SHA256
-    )
-    registry_verdict = _run_json_helper(
-        registry_helper,
-        _registry_envelope(validation, metadata_verdict),
-        child_environment,
-    )
-    if registry_verdict != {
-        "schemaVersion": 1,
-        "packageCount": len(metadata_verdict.get("registryPackages", [])),
-    }:
-        raise ProvenanceError(f"registry helper returned an invalid verdict: {registry_verdict!r}")
-    return cargo
-
-
-def validate_registry_root_identity(
-    lexical_home: Path,
-    physical_home: Path,
-    lexical_registry: Path,
-    physical_registry: Path,
+def validate_filtered_lane(
+    policy: Mapping[str, Any], metadata: dict[str, Any], repository: Repository, lane: str
 ) -> None:
-    if physical_home != lexical_home:
+    view = _metadata_view(metadata, repository)
+    _loaded_sources(view, repository)
+    actual = _resolved_bindings(view)
+    expected: dict[tuple[Any, ...], dict[str, Any]] = {}
+    members = policy.get("members")
+    if not isinstance(members, list):
+        raise ProvenanceError("policy members are malformed")
+    for member in members:
+        if not isinstance(member, dict) or not isinstance(member.get("dependencies"), list):
+            raise ProvenanceError("policy member dependency surface is malformed")
+        owner = member.get("name")
+        if not isinstance(owner, str):
+            raise ProvenanceError("policy member name is malformed")
+        for declaration in member["dependencies"]:
+            if not isinstance(declaration, dict):
+                raise ProvenanceError("policy dependency declaration is malformed")
+            if _target_applies(declaration.get("target"), lane):
+                expected[_binding_key(owner, declaration)] = declaration.get("resolution")
+    if actual != expected:
+        raise ProvenanceError(f"filtered Cargo metadata direct bindings differ for lane {lane}")
+
+
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ProvenanceError(f"dependency policy repeats JSON key {key!r}")
+        result[key] = value
+    return result
+
+
+def load_policy(root: Path) -> dict[str, Any]:
+    path = _unredirected_file(root / POLICY_PATH, root, "dependency policy")
+    try:
+        policy = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object)
+    except ProvenanceError:
+        raise
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ProvenanceError(f"cannot parse dependency policy {path}: {error}") from error
+    if not isinstance(policy, dict):
+        raise ProvenanceError("dependency policy root must be an object")
+    _validate_policy_shape(policy)
+    return policy
+
+
+def _exact_keys(value: Mapping[str, Any], expected: set[str], label: str) -> None:
+    if set(value) != expected:
         raise ProvenanceError(
-            f"Cargo home lexical/physical disagreement: {lexical_home} -> {physical_home}"
-        )
-    if physical_registry != lexical_registry:
-        raise ProvenanceError(
-            "Cargo registry source root lexical/physical disagreement: "
-            f"{lexical_registry} -> {physical_registry}"
+            f"{label} keys differ: expected {sorted(expected)}, got {sorted(value)}"
         )
 
 
-def validate_private_output_locations(
-    root: Path,
+def _validate_policy_shape(policy: Mapping[str, Any]) -> None:
+    _exact_keys(policy, {"schemaVersion", "resolver", "members", "workspaceDependencies"}, "policy")
+    if policy.get("schemaVersion") != 2 or policy.get("resolver") != "3":
+        raise ProvenanceError("dependency policy schema/resolver mismatch")
+    members = policy.get("members")
+    catalog = policy.get("workspaceDependencies")
+    if not isinstance(members, list) or not members or not isinstance(catalog, list):
+        raise ProvenanceError("dependency policy member/catalog arrays are malformed")
+    for entry in catalog:
+        if not isinstance(entry, dict):
+            raise ProvenanceError("workspace dependency policy entry must be an object")
+        keys = {"alias", "package", "requirement", "defaultFeatures", "features", "sourceKind"}
+        if entry.get("sourceKind") == "workspace":
+            keys.add("member")
+        _exact_keys(entry, keys, "workspace dependency policy entry")
+    for member in members:
+        if not isinstance(member, dict):
+            raise ProvenanceError("member policy entry must be an object")
+        _exact_keys(member, {"name", "class", "path", "features", "dependencies"}, "member policy entry")
+        if member.get("class") not in {"production", "development-tool"}:
+            raise ProvenanceError("member policy class is invalid")
+        if not isinstance(member.get("features"), dict) or not isinstance(member.get("dependencies"), list):
+            raise ProvenanceError("member feature/dependency policy is malformed")
+        for dependency in member["dependencies"]:
+            if not isinstance(dependency, dict):
+                raise ProvenanceError("dependency policy entry must be an object")
+            _exact_keys(
+                dependency,
+                {
+                    "origin", "kind", "target", "alias", "package", "requirement", "optional",
+                    "defaultFeatures", "features", "sourceKind", "resolution",
+                },
+                "dependency policy entry",
+            )
+            resolution = dependency.get("resolution")
+            if not isinstance(resolution, dict):
+                raise ProvenanceError("dependency resolution policy must be an object")
+            if resolution.get("kind") == "workspace":
+                _exact_keys(resolution, {"kind", "member"}, "workspace resolution")
+            elif resolution.get("kind") == "crates-io":
+                _exact_keys(resolution, {"kind", "name", "version", "source"}, "registry resolution")
+            else:
+                raise ProvenanceError("dependency resolution kind is invalid")
+
+
+def _first_difference(expected: Any, actual: Any, path: str = "$") -> str | None:
+    if type(expected) is not type(actual):
+        return f"{path}: expected {type(expected).__name__}, got {type(actual).__name__}"
+    if isinstance(expected, dict):
+        if set(expected) != set(actual):
+            return f"{path}: keys differ"
+        for key in expected:
+            difference = _first_difference(expected[key], actual[key], f"{path}.{key}")
+            if difference:
+                return difference
+        return None
+    if isinstance(expected, list):
+        if len(expected) != len(actual):
+            return f"{path}: expected {len(expected)} entries, got {len(actual)}"
+        for index, (left, right) in enumerate(zip(expected, actual, strict=True)):
+            difference = _first_difference(left, right, f"{path}[{index}]")
+            if difference:
+                return difference
+        return None
+    return None if expected == actual else f"{path}: expected {expected!r}, got {actual!r}"
+
+
+def _json_key(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+def _lane(host: str, explicit_target: str | None) -> str:
+    if explicit_target is not None:
+        if host != "x86_64-unknown-linux-gnu":
+            raise ProvenanceError("Linux musl target is admitted only from the Linux GNU host")
+        return explicit_target
+    return host
+
+
+def dependency_preflight(
+    repository: Repository,
+    cargo: Path,
+    host: str,
+    explicit_target: str | None,
     environment: Mapping[str, str],
-    cwd: Path,
-    cargo_home: Path,
-) -> None:
-    target_value = _environment_value(environment, "CARGO_TARGET_DIR")
-    target = _absolute(Path(target_value), base=cwd) if target_value else None
-    if target is not None and _is_within(target.resolve(strict=False), root):
-        raise ProvenanceError(
-            f"Cargo target directory must remain outside the repository: {target}"
-        )
-
-    if _environment_value(environment, "GITHUB_ACTIONS") != "true":
-        return
-    runner_value = _environment_value(environment, "RUNNER_TEMP")
-    if not runner_value:
-        raise ProvenanceError("GitHub Actions requires an exact RUNNER_TEMP")
-    runner_temp = _absolute(Path(runner_value), base=cwd)
-    physical_runner = runner_temp.resolve(strict=False)
-    if physical_runner != runner_temp or _is_within(physical_runner, root):
-        raise ProvenanceError(
-            f"GitHub runner temp is redirected or repository-owned: {runner_temp}"
-        )
-    expected_home = runner_temp / "lumin-cargo-home"
-    expected_target = runner_temp / "lumin-target"
-    if cargo_home != expected_home:
-        raise ProvenanceError(
-            f"GitHub Cargo home must be job-private {expected_home}, got {cargo_home}"
-        )
-    if target != expected_target:
-        raise ProvenanceError(
-            f"GitHub Cargo target must be job-private {expected_target}, got {target}"
-        )
+    compare_policy: bool = True,
+) -> dict[str, Any]:
+    lane = _lane(host, explicit_target)
+    unfiltered = run_metadata(cargo, None, repository, environment)
+    actual_policy = build_policy(repository, unfiltered)
+    policy = load_policy(repository.root) if compare_policy else actual_policy
+    if compare_policy:
+        difference = _first_difference(policy, actual_policy)
+        if difference:
+            raise ProvenanceError(f"dependency surface policy drift at {difference}")
+    filtered = run_metadata(cargo, lane, repository, environment)
+    validate_filtered_lane(policy, filtered, repository, lane)
+    return actual_policy
 
 
-def validate_repository(
-    root: Path,
+def resolved_command(
+    plan: CommandPlan,
+    cargo: Path,
     environment: Mapping[str, str],
-    cwd: Path,
-    cargo_home: Path | None = None,
-) -> RepositoryValidation:
-    canonical_root = _absolute(root.resolve(strict=True))
-    canonical_cwd = _absolute(cwd.resolve(strict=True))
-    if not _same_file(canonical_cwd, canonical_root):
-        raise ProvenanceError(
-            f"Cargo bootstrap must run from repository root {canonical_root}, got {canonical_cwd}"
-        )
-    reject_source_environment(environment)
-    lexical_home = _absolute(
-        cargo_home or active_cargo_home(environment, canonical_cwd),
-        base=canonical_cwd,
-    )
-    effective_home = lexical_home.resolve(strict=False)
-    if _is_within(effective_home, canonical_root):
-        raise ProvenanceError(
-            f"active Cargo home must remain outside the repository: {effective_home}"
-        )
-    validate_private_output_locations(
-        canonical_root,
-        environment,
-        canonical_cwd,
-        lexical_home,
-    )
-    registry_source = lexical_home / "registry" / "src"
-    physical_registry = registry_source.resolve(strict=False)
-    validate_registry_root_identity(
-        lexical_home,
-        effective_home,
-        registry_source,
-        physical_registry,
-    )
-    if _is_within(physical_registry, canonical_root) or not _is_within(
-        physical_registry, effective_home
-    ):
-        raise ProvenanceError(
-            "Cargo registry source root escapes its trusted location: "
-            f"{registry_source} -> {physical_registry}"
-        )
-    reject_cargo_configuration(canonical_root, lexical_home)
-    validate_workflow_surface(canonical_root)
-    manifests = validate_workspace_manifests(canonical_root)
-    return RepositoryValidation(canonical_root, lexical_home, manifests)
-
-
-def validate_invocation(
     root: Path,
-    command: Sequence[str],
-    environment: Mapping[str, str],
-    cwd: Path,
-    cargo_home: Path | None = None,
-) -> RepositoryValidation:
-    validate_command(command)
-    return validate_repository(root, environment, cwd, cargo_home)
+) -> tuple[str, ...]:
+    if plan.subcommand == "clippy":
+        clippy = pinned_clippy(environment, root)
+        return (str(clippy), "clippy", *plan.command[2:])
+    return (str(cargo), *plan.command[1:])
 
 
 def _parse_command(arguments: Sequence[str]) -> tuple[str, ...]:
@@ -1486,50 +1192,40 @@ def _parse_command(arguments: Sequence[str]) -> tuple[str, ...]:
     return tuple(arguments[1:])
 
 
-def validate_check_only(
-    root: Path,
-    environment: Mapping[str, str],
-    cwd: Path,
-    preflight: Callable[
-        [RepositoryValidation, Sequence[str], Mapping[str, str]], Path
-    ] = run_dependency_preflight,
-    cargo_home: Path | None = None,
-) -> None:
-    validation = validate_repository(root, environment, cwd, cargo_home)
-    preflight(validation, ("cargo", "metadata"), environment)
-
-
 def main(arguments: Sequence[str] | None = None) -> int:
     try:
+        ensure_runtime()
         root = repository_root()
-        ensure_runtime(root)
-        raw_arguments = tuple(sys.argv[1:] if arguments is None else arguments)
-        if raw_arguments == ("--check-only",):
-            validate_check_only(root, os.environ, Path.cwd())
-            return 0
-        command = _parse_command(raw_arguments)
-        validation = validate_invocation(root, command, os.environ, Path.cwd())
-        cargo = _external_executable("cargo", validation.root, os.environ)
-        if command_requires_dependency_preflight(command):
-            cargo = run_dependency_preflight(validation, command, os.environ)
-            rustc = _external_executable("rustc", validation.root, os.environ)
-            rustdoc = _toolchain_sibling(rustc, "rustdoc", validation.root)
+        raw = tuple(sys.argv[1:] if arguments is None else arguments)
+        mode = "command"
+        if raw == ("--check-only",):
+            mode = "check"
+            plan = CommandPlan(("cargo", "metadata", "--locked"), "metadata", None, True)
+        elif raw == ("--print-policy",):
+            mode = "print"
+            plan = CommandPlan(("cargo", "metadata", "--locked"), "metadata", None, True)
         else:
-            rustc = None
-            rustdoc = None
-        resolved_command = (str(cargo), *command[1:])
-        completed = subprocess.run(
-            resolved_command,
-            shell=False,
-            check=False,
-            env=controlled_child_environment(
-                command,
+            plan = validate_command(_parse_command(raw))
+        pinned_python(os.environ, root)
+        repository = inspect_repository(root, os.environ, Path.cwd())
+        cargo, host = pinned_cargo(os.environ, root)
+        if plan.resolving:
+            policy = dependency_preflight(
+                repository,
+                cargo,
+                host,
+                plan.explicit_target,
                 os.environ,
-                cargo=cargo,
-                rustc=rustc,
-                rustdoc=rustdoc,
-            ),
-        )
+                compare_policy=mode != "print",
+            )
+            if mode == "print":
+                print(json.dumps(policy, indent=2, ensure_ascii=False))
+                return 0
+        if mode == "check":
+            print("[source-provenance] dependency admission PASS")
+            return 0
+        command = resolved_command(plan, cargo, os.environ, root)
+        completed = subprocess.run(command, shell=False, check=False, env=os.environ.copy())
         return completed.returncode if completed.returncode >= 0 else 128 - completed.returncode
     except ProvenanceError as error:
         print(f"[source-provenance] {error}", file=sys.stderr)

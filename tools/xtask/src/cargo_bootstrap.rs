@@ -1,171 +1,36 @@
-//! CI Cargo bootstrap integrity and workflow routing policy.
+//! Structural CI routing checks for the separate dependency-admission guard.
+//!
+//! This module prevents accidental workflow drift. It deliberately does not
+//! authenticate repository files, invoke Cargo, or recreate the Python guard's
+//! dependency verdict.
 
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::Path;
 
-const GUARD_PATH: &str = "tools/xtask/bootstrap/source_provenance.py";
-const GUARD_SHA256: &str = "e32bf1041c2488a5e944cbb4090bbce25bba763e3c3e30268d648b3cd5071223";
-const TEST_PATH: &str = "tools/xtask/bootstrap/test_source_provenance.py";
-const TEST_SHA256: &str = "5b4d5711f13857cd86a6c2fa2888d769cc28e3af6e31c8614754c9bc021e54f5";
-const METADATA_HELPER_PATH: &str = "tools/xtask/bootstrap/metadata_snapshot.py";
-const METADATA_HELPER_SHA256: &str =
-    "dc23605129c4fe78dd197804fa80466a602de921558880fcb848f1870963fdae";
-const METADATA_TEST_PATH: &str = "tools/xtask/bootstrap/test_metadata_snapshot.py";
-const METADATA_TEST_SHA256: &str =
-    "dff4a7ac39c3ecf835a2355f4f24b10fa3128fc17f34b9fa2e243876d1d5f517";
-const REGISTRY_HELPER_PATH: &str = "tools/xtask/bootstrap/registry_snapshot.py";
-const REGISTRY_HELPER_SHA256: &str =
-    "4a02777fd52f116007ca53d0aa2d4989c447fe27261d64531ee449013dda8857";
-const REGISTRY_TEST_PATH: &str = "tools/xtask/bootstrap/test_registry_snapshot.py";
-const REGISTRY_TEST_SHA256: &str =
-    "a400912dc554f89aacd15aa6b6b50f8e88fc0f363d81b2e90d4d52c0f9285a9e";
 const WORKFLOW_DIRECTORY: &str = ".github/workflows";
 const WORKFLOW_PATH: &str = ".github/workflows/ci.yml";
-const WORKFLOW_SHA256: &str = "4ca2610501059a8ae6eacffd0b93547cb69115c221460eb012b2aa5465dbfc4c";
-const SETUP_PYTHON: &str = "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0";
-const PYTHON_VERSION: &str = "3.13.14";
 const CHECKOUT: &str = "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0";
-const DEPENDENCY_TOOL_INSTALL: &str =
+const SETUP_PYTHON: &str = "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0";
+const INSTALL_TOOLS: &str =
     "taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b # v2.83.4";
-const STEP_PRIVATE_CARGO_ENV: &str = concat!(
-    "        env:\n",
-    "          CARGO_HOME: ${{ runner.temp }}/lumin-cargo-home\n",
-    "          CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-target",
+const GUARD_PREFIX: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S ",
+    "tools/xtask/bootstrap/source_provenance.py"
 );
-const CARGO_JOBS: &[&str] = &[
-    "formatting",
-    "architecture-check",
-    "bootstrap-tests",
-    "dependency-policy",
-    "platform",
-    "corpus",
-    "documentation",
-    "release",
-];
-const EXPECTED_USES: &[(&str, usize)] = &[
-    (CHECKOUT, 8),
-    (SETUP_PYTHON, 8),
-    (DEPENDENCY_TOOL_INSTALL, 1),
-];
-const TERMINAL_RUNTIME_RUNS: &[(&str, &str)] = &[
-    (
-        "architecture-check",
-        "${{ runner.temp }}/lumin-target/debug/lumin-xtask architecture-check",
-    ),
-    (
-        "bootstrap-tests",
-        "python -I -S tools/xtask/bootstrap/test_source_provenance.py",
-    ),
-    (
-        "platform",
-        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --workspace --all-targets --locked",
-    ),
-    (
-        "corpus",
-        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus ${{ matrix.case.arguments }}",
-    ),
-    (
-        "documentation",
-        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --workspace --doc --locked",
-    ),
-];
-const EXPECTED_RUN_COMMANDS: &[(&str, usize)] = &[
-    (
-        "rustup toolchain install 1.96.0 --profile minimal --component rustfmt --no-self-update",
-        1,
-    ),
-    (
-        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo fmt --all --check",
-        1,
-    ),
-    (
-        "rustup toolchain install 1.96.0 --profile minimal --no-self-update",
-        5,
-    ),
-    (
-        "python -I -S tools/xtask/bootstrap/test_source_provenance.py",
-        1,
-    ),
-    (
-        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo build --locked -p lumin-xtask",
-        1,
-    ),
-    (
-        "python -I -S tools/xtask/bootstrap/source_provenance.py --check-only",
-        2,
-    ),
-    (
-        "${{ runner.temp }}/lumin-target/debug/lumin-xtask architecture-check",
-        1,
-    ),
-    (
-        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo audit --deny warnings",
-        1,
-    ),
-    (
-        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo deny --locked check bans licenses sources",
-        1,
-    ),
-    (
-        "rustup toolchain install 1.96.0 --profile minimal --component clippy,rustfmt --no-self-update",
-        1,
-    ),
-    ("rustc --version --verbose\ncargo --version", 1),
-    (
-        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy --workspace --all-targets --locked -- -D warnings",
-        1,
-    ),
-    (
-        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy -p lumin-cli --test retention_faults --features retention-test-crash --locked -- -D warnings",
-        1,
-    ),
-    (
-        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy -p lumin-cli --test lifecycle_operation_idempotency --features lifecycle-test-fault --locked -- -D warnings",
-        1,
-    ),
-    (
-        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy -p lumin-cli --test publication_faults --features publication-test-crash --locked -- -D warnings",
-        1,
-    ),
-    (
-        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy -p lumin-cli --test publication_concurrency --features publication-test-crash --locked -- -D warnings",
-        1,
-    ),
-    (
-        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy -p lumin-cli --test publication_retention_race --features publication-test-crash,retention-test-crash --locked -- -D warnings",
-        1,
-    ),
-    (
-        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --workspace --all-targets --locked",
-        1,
-    ),
-    (
-        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus ${{ matrix.case.arguments }}",
-        1,
-    ),
-    (
-        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --workspace --doc --locked",
-        1,
-    ),
-    (
-        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo build -p lumin-cli --release --locked",
-        1,
-    ),
-    (
-        concat!(
-            "test \"$FORMATTING_RESULT\" = success\n",
-            "test \"$ARCHITECTURE_CHECK_RESULT\" = success\n",
-            "test \"$BOOTSTRAP_TESTS_RESULT\" = success\n",
-            "test \"$DEPENDENCY_POLICY_RESULT\" = success\n",
-            "test \"$PLATFORM_RESULT\" = success\n",
-            "test \"$CORPUS_RESULT\" = success\n",
-            "test \"$DOCUMENTATION_RESULT\" = success\n",
-            "test \"$RELEASE_RESULT\" = success",
-        ),
-        1,
-    ),
-];
+const TEST_COMMAND: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S ",
+    "tools/xtask/bootstrap/test_source_provenance.py"
+);
+const PRIVATE_CARGO_HOME: &str = "CARGO_HOME: ${{ runner.temp }}/lumin-cargo-home";
+const PRIVATE_TARGET: &str = "CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-target";
+const DIRECT_AUDIT: &str = "& \"$env:PINNED_CARGO_AUDIT\" audit --deny warnings";
+const DIRECT_DENY: &str = "& \"$env:PINNED_CARGO_DENY\" --locked check bans licenses sources";
+const AUDIT_INSTALL: &str = "cargo-audit@0.22.2";
+const DENY_INSTALL: &str = "cargo-deny@0.20.2";
+const STRUCTURAL_CHECK: &str = concat!(
+    "& (Join-Path $env:CARGO_TARGET_DIR ",
+    "'debug/lumin-xtask') architecture-check"
+);
 
 #[derive(Debug, Default)]
 pub struct CargoBootstrapResult {
@@ -176,41 +41,17 @@ pub struct CargoBootstrapResult {
 pub fn check_cargo_bootstrap(workspace_root: &Path) -> CargoBootstrapResult {
     let mut result = CargoBootstrapResult::default();
     validate_workflow_directory(workspace_root, &mut result);
-    verify_digest(workspace_root, GUARD_PATH, GUARD_SHA256, &mut result);
-    verify_digest(workspace_root, TEST_PATH, TEST_SHA256, &mut result);
-    verify_digest(
-        workspace_root,
-        METADATA_HELPER_PATH,
-        METADATA_HELPER_SHA256,
-        &mut result,
-    );
-    verify_digest(
-        workspace_root,
-        METADATA_TEST_PATH,
-        METADATA_TEST_SHA256,
-        &mut result,
-    );
-    verify_digest(
-        workspace_root,
-        REGISTRY_HELPER_PATH,
-        REGISTRY_HELPER_SHA256,
-        &mut result,
-    );
-    verify_digest(
-        workspace_root,
-        REGISTRY_TEST_PATH,
-        REGISTRY_TEST_SHA256,
-        &mut result,
-    );
-    verify_digest(workspace_root, WORKFLOW_PATH, WORKFLOW_SHA256, &mut result);
-
-    let workflow = workspace_root.join(WORKFLOW_PATH);
-    match std::fs::read_to_string(&workflow) {
-        Ok(source) => validate_workflow(&source, &mut result.violations),
-        Err(error) => result
-            .tool_errors
-            .push(format!("cannot read {WORKFLOW_PATH}: {error}")),
-    }
+    let workflow = match std::fs::read_to_string(workspace_root.join(WORKFLOW_PATH)) {
+        Ok(source) => source,
+        Err(error) => {
+            result
+                .tool_errors
+                .push(format!("cannot read {WORKFLOW_PATH}: {error}"));
+            return result;
+        }
+    };
+    validate_workflow(&workflow, &mut result.violations);
+    validate_no_nested_dependency_admission(workspace_root, &mut result);
     result
 }
 
@@ -219,253 +60,409 @@ fn validate_workflow_directory(root: &Path, result: &mut CargoBootstrapResult) {
     let entries = match std::fs::read_dir(&directory) {
         Ok(entries) => entries,
         Err(error) => {
-            result.tool_errors.push(format!(
-                "cannot enumerate workflow directory {}: {error}",
-                directory.display()
-            ));
-            return;
-        }
-    };
-    let mut names = Vec::new();
-    for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(error) => {
-                result
-                    .tool_errors
-                    .push(format!("cannot read workflow directory entry: {error}"));
-                return;
-            }
-        };
-        let name = match entry.file_name().into_string() {
-            Ok(name) => name,
-            Err(_) => {
-                result
-                    .violations
-                    .push("WORKFLOW SURFACE: non-UTF-8 entry is forbidden".to_owned());
-                continue;
-            }
-        };
-        match entry.file_type() {
-            Ok(file_type) if file_type.is_file() => names.push(name),
-            Ok(_) => result.violations.push(format!(
-                "WORKFLOW SURFACE: redirected or non-file entry is forbidden: {name}"
-            )),
-            Err(error) => result.tool_errors.push(format!(
-                "cannot inspect workflow directory entry {name}: {error}"
-            )),
-        }
-    }
-    names.sort();
-    if names != ["ci.yml"] {
-        result.violations.push(format!(
-            "WORKFLOW SURFACE: expected only ci.yml, found {names:?}"
-        ));
-    }
-}
-
-fn verify_digest(root: &Path, relative: &str, expected: &str, result: &mut CargoBootstrapResult) {
-    let path = root.join(relative.replace('/', std::path::MAIN_SEPARATOR_STR));
-    let bytes = match std::fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(error) => {
             result
                 .tool_errors
-                .push(format!("cannot read {relative}: {error}"));
+                .push(format!("cannot enumerate {}: {error}", directory.display()));
             return;
         }
     };
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    let actual = format!("{:x}", hasher.finalize());
-    if actual != expected {
+    let mut workflows = Vec::new();
+    for entry in entries {
+        match entry {
+            Ok(entry) => {
+                let path = entry.path();
+                if matches!(
+                    path.extension().and_then(|value| value.to_str()),
+                    Some("yml" | "yaml")
+                ) {
+                    workflows.push(entry.file_name().to_string_lossy().into_owned());
+                }
+            }
+            Err(error) => result
+                .tool_errors
+                .push(format!("cannot enumerate workflow entry: {error}")),
+        }
+    }
+    workflows.sort();
+    if workflows != ["ci.yml"] {
         result.violations.push(format!(
-            "CARGO BOOTSTRAP DIGEST MISMATCH: {relative} expected {expected} got {actual}"
+            "review every workflow or retain only ci.yml; found {workflows:?}"
         ));
     }
 }
 
 fn validate_workflow(source: &str, violations: &mut Vec<String>) {
-    let runs = extract_run_commands(source, violations);
-    validate_exact_multiset("run", &runs, EXPECTED_RUN_COMMANDS, violations);
-    let uses = extract_scalar_values(source, "uses:");
-    validate_exact_multiset("uses", &uses, EXPECTED_USES, violations);
-    for job in CARGO_JOBS {
-        validate_job_bootstrap(source, job, violations);
+    if source.contains("actions/cache")
+        || source.contains("rust-cache")
+        || source
+            .lines()
+            .any(|line| line.trim_start().starts_with("cache:"))
+    {
+        violations.push("public Cargo jobs must not restore a dependency cache".to_owned());
     }
-    validate_terminal_runtime_boundaries(source, violations);
+    validate_actions(source, violations);
+    let jobs = job_blocks(source);
+    for required in [
+        "formatting",
+        "architecture-check",
+        "bootstrap-tests",
+        "dependency-policy",
+        "platform",
+        "corpus",
+        "documentation",
+        "release",
+        "required",
+    ] {
+        if !jobs.contains_key(required) {
+            violations.push(format!("required CI job is missing: {required}"));
+        }
+    }
+    for (name, block) in &jobs {
+        validate_job(name, block, violations);
+    }
+    validate_architecture_job(&jobs, violations);
+    validate_dependency_job(&jobs, violations);
+    validate_platform_job(&jobs, violations);
+    validate_bootstrap_test_job(&jobs, violations);
 }
 
-fn extract_run_commands(source: &str, violations: &mut Vec<String>) -> Vec<String> {
-    let lines = source.lines().collect::<Vec<_>>();
+fn validate_actions(source: &str, violations: &mut Vec<String>) {
+    let allowed = [CHECKOUT, SETUP_PYTHON, INSTALL_TOOLS];
+    for line in source.lines() {
+        let Some(action) = line.trim().strip_prefix("uses: ") else {
+            continue;
+        };
+        if !allowed.contains(&action) {
+            violations.push(format!("unreviewed or unpinned CI action: {action}"));
+        }
+    }
+}
+
+fn job_blocks(source: &str) -> BTreeMap<String, String> {
+    let mut jobs = BTreeMap::new();
+    let mut in_jobs = false;
+    let mut current: Option<(String, String)> = None;
+    for line in source.lines() {
+        if line == "jobs:" {
+            in_jobs = true;
+            continue;
+        }
+        if !in_jobs {
+            continue;
+        }
+        let indent = line.len() - line.trim_start_matches(' ').len();
+        let trimmed = line.trim();
+        if indent == 2 && trimmed.ends_with(':') {
+            if let Some((name, block)) = current.take() {
+                jobs.insert(name, block);
+            }
+            current = Some((trimmed.trim_end_matches(':').to_owned(), String::new()));
+        } else if let Some((_, block)) = current.as_mut() {
+            block.push_str(line);
+            block.push('\n');
+        }
+    }
+    if let Some((name, block)) = current {
+        jobs.insert(name, block);
+    }
+    jobs
+}
+
+fn validate_job(name: &str, block: &str, violations: &mut Vec<String>) {
+    let guarded = block.contains("tools/xtask/bootstrap/source_provenance.py");
+    if guarded && (!block.contains(PRIVATE_CARGO_HOME) || !block.contains(PRIVATE_TARGET)) {
+        violations.push(format!(
+            "guarded job {name} lacks its job-private Cargo home or target directory"
+        ));
+    }
+    if name != "required" && !block.contains(&format!("uses: {CHECKOUT}")) {
+        violations.push(format!("CI job {name} lacks the pinned checkout action"));
+    }
+    if guarded && !block.contains(&format!("uses: {SETUP_PYTHON}")) {
+        violations.push(format!("guarded job {name} lacks pinned Python setup"));
+    }
+
+    for line in run_commands(block) {
+        if line.contains("tools/xtask/bootstrap/source_provenance.py") {
+            validate_guard_command(name, &line, violations);
+        }
+        if line.contains("test_source_provenance.py") && line != TEST_COMMAND {
+            violations.push(format!(
+                "bootstrap tests in {name} must use the pinned isolated Python command"
+            ));
+        }
+        if is_unwrapped_dependency_command(&line) {
+            violations.push(format!(
+                "dependency-resolving command in {name} bypasses the guard: {line}"
+            ));
+        }
+        if line.starts_with("& \"$env:PINNED_CARGO\"")
+            && line != "& \"$env:PINNED_CARGO\" fmt --all --check"
+        {
+            violations.push(format!(
+                "only non-resolving fmt may invoke PINNED_CARGO directly in {name}: {line}"
+            ));
+        }
+        if !is_reviewed_run_command(&line) {
+            violations.push(format!(
+                "unreviewed or reconstructed run command in {name}: {line}"
+            ));
+        }
+    }
+}
+
+fn run_commands(block: &str) -> Vec<String> {
+    let lines = block.lines().collect::<Vec<_>>();
     let mut commands = Vec::new();
-    let mut index = 0_usize;
+    let mut index = 0;
     while index < lines.len() {
         let raw = lines[index];
         let trimmed = raw.trim();
-        let Some(value) = trimmed.strip_prefix("run:").map(str::trim) else {
+        let value = trimmed
+            .strip_prefix("run: ")
+            .or_else(|| trimmed.strip_prefix("- run: "));
+        let Some(value) = value else {
             index += 1;
             continue;
         };
-        if value != "|" {
-            if value.is_empty() {
-                violations.push(format!(
-                    "EMPTY WORKFLOW RUN COMMAND: {WORKFLOW_PATH}:{}",
-                    index + 1
-                ));
-            } else {
-                commands.push(value.to_owned());
-            }
+        if value == "|" {
+            let run_indent = raw.len() - raw.trim_start_matches(' ').len();
             index += 1;
-            continue;
-        }
-
-        let parent_indent = raw.len() - raw.trim_start().len();
-        let mut block = Vec::new();
-        index += 1;
-        while index < lines.len() {
-            let nested = lines[index];
-            if nested.trim().is_empty() {
+            while index < lines.len() {
+                let command = lines[index];
+                let indent = command.len() - command.trim_start_matches(' ').len();
+                if !command.trim().is_empty() && indent <= run_indent {
+                    break;
+                }
+                if !command.trim().is_empty() {
+                    commands.push(command_text(command));
+                }
                 index += 1;
-                continue;
             }
-            let nested_indent = nested.len() - nested.trim_start().len();
-            if nested_indent <= parent_indent {
-                break;
-            }
-            block.push(nested.trim().to_owned());
-            index += 1;
-        }
-        if block.is_empty() {
-            violations.push(format!(
-                "EMPTY WORKFLOW RUN BLOCK: {WORKFLOW_PATH}:{}",
-                index + 1
-            ));
         } else {
-            commands.push(block.join("\n"));
+            commands.push(command_text(raw));
+            index += 1;
         }
     }
     commands
 }
 
-fn extract_scalar_values(source: &str, key: &str) -> Vec<String> {
-    source
-        .lines()
-        .filter_map(|line| line.trim().strip_prefix(key).map(str::trim))
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-        .collect()
-}
-
-fn validate_exact_multiset(
-    label: &str,
-    observed: &[String],
-    expected: &[(&str, usize)],
-    violations: &mut Vec<String>,
-) {
-    let mut counts = BTreeMap::new();
-    for value in observed {
-        *counts.entry(value.as_str()).or_insert(0_usize) += 1;
+fn command_text(raw: &str) -> String {
+    let mut line = raw.trim();
+    if let Some(value) = line
+        .strip_prefix("run: ")
+        .or_else(|| line.strip_prefix("- run: "))
+    {
+        line = value;
     }
-    let expected_counts = expected.iter().copied().collect::<BTreeMap<_, _>>();
-    for (value, count) in &counts {
-        let allowed = expected_counts.get(value).copied().unwrap_or(0);
-        if *count > allowed {
-            violations.push(format!(
-                "UNAPPROVED WORKFLOW {label}: `{value}` observed {count}, allowed {allowed}"
-            ));
-        }
-    }
-    for (value, count) in expected_counts {
-        let actual = counts.get(value).copied().unwrap_or(0);
-        if actual < count {
-            violations.push(format!(
-                "MISSING WORKFLOW {label}: `{value}` observed {actual}, required {count}"
-            ));
-        }
+    if line.len() >= 2 && line.starts_with('\'') && line.ends_with('\'') {
+        line[1..line.len() - 1].replace("''", "'")
+    } else {
+        line.to_owned()
     }
 }
 
-fn job_block(source: &str, job: &str) -> Option<String> {
-    let lines = source.lines().collect::<Vec<_>>();
-    let marker = format!("  {job}:");
-    let start = lines.iter().position(|line| *line == marker)?;
-    let end = lines
+fn is_reviewed_run_command(line: &str) -> bool {
+    const EXACT: &[&str] = &[
+        "rustup toolchain install 1.96.0 --profile minimal --component rustfmt --no-self-update",
+        "rustup toolchain install 1.96.0 --profile minimal --no-self-update",
+        "rustup toolchain install 1.96.0 --profile minimal --component clippy,rustfmt --no-self-update",
+        "$cargo = rustup which --toolchain 1.96.0 cargo",
+        "$clippy = rustup which --toolchain 1.96.0 cargo-clippy",
+        "$python = & \"$env:SETUP_PYTHON\" -I -S -c \"import pathlib,sys; print(pathlib.Path(sys.executable).resolve(strict=True))\"",
+        "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
+        "$suffix = if ($IsWindows) { '.exe' } else { '' }",
+        "$audit = Join-Path $env:CARGO_HOME \"bin/cargo-audit$suffix\"",
+        "$deny = Join-Path $env:CARGO_HOME \"bin/cargo-deny$suffix\"",
+        "if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $audit) -or !(Test-Path -LiteralPath $deny)) { exit 1 }",
+        "\"PINNED_PYTHON=$python\" >> $env:GITHUB_ENV",
+        "\"PINNED_CARGO=$cargo\" >> $env:GITHUB_ENV",
+        "\"PINNED_CARGO_CLIPPY=$clippy\" >> $env:GITHUB_ENV",
+        "\"PINNED_CARGO_AUDIT=$audit\" >> $env:GITHUB_ENV",
+        "\"PINNED_CARGO_DENY=$deny\" >> $env:GITHUB_ENV",
+        "& \"$env:PINNED_CARGO\" fmt --all --check",
+        TEST_COMMAND,
+        DIRECT_AUDIT,
+        DIRECT_DENY,
+        STRUCTURAL_CHECK,
+    ];
+    line.starts_with(GUARD_PREFIX)
+        || EXACT.contains(&line)
+        || matches!(
+            line,
+            "test \"$FORMATTING_RESULT\" = success"
+                | "test \"$ARCHITECTURE_CHECK_RESULT\" = success"
+                | "test \"$BOOTSTRAP_TESTS_RESULT\" = success"
+                | "test \"$DEPENDENCY_POLICY_RESULT\" = success"
+                | "test \"$PLATFORM_RESULT\" = success"
+                | "test \"$CORPUS_RESULT\" = success"
+                | "test \"$DOCUMENTATION_RESULT\" = success"
+                | "test \"$RELEASE_RESULT\" = success"
+        )
+}
+
+fn validate_guard_command(name: &str, line: &str, violations: &mut Vec<String>) {
+    if !line.starts_with(GUARD_PREFIX) {
+        violations.push(format!(
+            "guard in {name} must use absolute PINNED_PYTHON with -I -S: {line}"
+        ));
+        return;
+    }
+    let suffix = &line[GUARD_PREFIX.len()..];
+    if [";", "|", "`", "$(", "@(", "&"]
         .iter()
-        .enumerate()
-        .skip(start + 1)
-        .find_map(|(index, line)| {
-            (line.starts_with("  ") && !line.starts_with("    ") && line.trim_end().ends_with(':'))
-                .then_some(index)
-        })
-        .unwrap_or(lines.len());
-    Some(lines[start..end].join("\n"))
-}
-
-fn validate_job_bootstrap(source: &str, job: &str, violations: &mut Vec<String>) {
-    let Some(block) = job_block(source, job) else {
-        violations.push(format!("MISSING CARGO WORKFLOW JOB: {job}"));
+        .any(|token| suffix.contains(token))
+    {
+        violations.push(format!(
+            "guard command in {name} contains shell composition: {line}"
+        ));
+        return;
+    }
+    if suffix == " --check-only" {
+        return;
+    }
+    let Some(cargo) = suffix.strip_prefix(" -- cargo ") else {
+        violations.push(format!("unsupported guard command in {name}: {line}"));
         return;
     };
-    let snippet = format!(
-        "      - name: Install exact Python\n        uses: {SETUP_PYTHON}\n        with:\n          python-version: \"{PYTHON_VERSION}\""
-    );
-    let count = block.matches(&snippet).count();
-    if count != 1 {
+    let before_runtime = cargo.split(" -- ").next().unwrap_or(cargo);
+    if before_runtime
+        .split_whitespace()
+        .filter(|token| *token == "--locked")
+        .count()
+        != 1
+    {
         violations.push(format!(
-            "PYTHON BOOTSTRAP ROUTING: job {job} must contain one exact Python {PYTHON_VERSION} setup, found {count}"
+            "guarded Cargo command in {name} needs exactly one pre-delimiter --locked: {line}"
         ));
     }
-    let checkout = format!("        uses: {CHECKOUT}");
-    let checkout_count = block.matches(&checkout).count();
-    if checkout_count != 1 {
+    if cargo.starts_with("audit ") || cargo.starts_with("deny ") {
         violations.push(format!(
-            "FRESH CHECKOUT ROUTING: job {job} must contain one exact checkout, found {checkout_count}"
+            "Cargo plugins in {name} must use their pinned executables directly"
         ));
-    }
-    let run_count = block
-        .lines()
-        .filter(|line| line.trim_start().starts_with("run:"))
-        .count();
-    let private_run_prefix = format!("{STEP_PRIVATE_CARGO_ENV}\n        run:");
-    let private_run_count = block.matches(&private_run_prefix).count();
-    if private_run_count != run_count {
-        violations.push(format!(
-            "STEP-PRIVATE CARGO ROUTING: job {job} must bind all {run_count} run steps to the exact Cargo environment, found {private_run_count}"
-        ));
-    }
-    if job == "dependency-policy" {
-        let private_install =
-            format!("{STEP_PRIVATE_CARGO_ENV}\n        uses: {DEPENDENCY_TOOL_INSTALL}");
-        let install_count = block.matches(&private_install).count();
-        if install_count != 1 {
-            violations.push(format!(
-                "STEP-PRIVATE CARGO ROUTING: job {job} must bind the dependency tool installer to the exact Cargo environment, found {install_count}"
-            ));
-        }
     }
 }
 
-fn validate_terminal_runtime_boundaries(source: &str, violations: &mut Vec<String>) {
-    for (job, command) in TERMINAL_RUNTIME_RUNS {
-        let Some(block) = job_block(source, job) else {
-            continue;
-        };
-        let marker = format!("run: {command}");
-        let lines = block.lines().collect::<Vec<_>>();
-        let Some(terminal) = lines.iter().position(|line| line.trim() == marker) else {
+fn is_unwrapped_dependency_command(line: &str) -> bool {
+    if line.starts_with(GUARD_PREFIX) || line.starts_with("rustup ") {
+        return false;
+    }
+    let lower = line.to_ascii_lowercase();
+    [
+        "cargo build",
+        "cargo check",
+        "cargo test",
+        "cargo clippy",
+        "cargo doc",
+        "cargo run",
+        "cargo bench",
+        "cargo metadata",
+        "cargo audit",
+        "cargo deny",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+fn validate_architecture_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<String>) {
+    let Some(block) = jobs.get("architecture-check") else {
+        return;
+    };
+    let commands = block.lines().map(command_text).collect::<Vec<_>>();
+    let check = commands
+        .iter()
+        .position(|line| line == &format!("{GUARD_PREFIX} --check-only"));
+    let build = commands
+        .iter()
+        .position(|line| line == &format!("{GUARD_PREFIX} -- cargo build --locked -p lumin-xtask"));
+    let structural = commands.iter().position(|line| line == STRUCTURAL_CHECK);
+    if !matches!((check, build, structural), (Some(a), Some(b), Some(c)) if a < b && b < c) {
+        violations.push(
+            "architecture job must expose ordered dependency admission, guarded build, and structural verdict steps"
+                .to_owned(),
+        );
+    }
+    if block.matches("--check-only").count() != 1 {
+        violations.push("architecture job must expose exactly one dependency verdict".to_owned());
+    }
+}
+
+fn validate_dependency_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<String>) {
+    let Some(block) = jobs.get("dependency-policy") else {
+        return;
+    };
+    for command in [DIRECT_AUDIT, DIRECT_DENY] {
+        if !block.lines().any(|line| command_text(line) == command) {
             violations.push(format!(
-                "TRUST EPOCH ROUTING: job {job} is missing exact terminal command `{command}`"
+                "dependency-policy job lacks pinned direct tool command: {command}"
             ));
-            continue;
-        };
-        for later in &lines[terminal + 1..] {
-            let trimmed = later.trim();
-            if trimmed.starts_with("run:") || trimmed.starts_with("uses:") {
-                violations.push(format!(
-                    "TRUST EPOCH ROUTING: job {job} executes `{trimmed}` after terminal runtime"
-                ));
-            }
+        }
+    }
+    if !block.contains("PINNED_CARGO_AUDIT=") || !block.contains("PINNED_CARGO_DENY=") {
+        violations
+            .push("dependency-policy job does not record absolute audit/deny tools".to_owned());
+    }
+    if !block.contains(AUDIT_INSTALL)
+        || !block.contains(DENY_INSTALL)
+        || !block.contains("bin/cargo-audit$suffix")
+        || !block.contains("bin/cargo-deny$suffix")
+    {
+        violations.push(
+            "dependency-policy job must install exact reviewed audit/deny versions and record their Cargo-home paths"
+                .to_owned(),
+        );
+    }
+    if !block.contains(&format!("{GUARD_PREFIX} --check-only")) {
+        violations
+            .push("dependency-policy job lacks dependency admission before audit/deny".to_owned());
+    }
+}
+
+fn validate_platform_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<String>) {
+    let Some(block) = jobs.get("platform") else {
+        return;
+    };
+    if !block.contains("PINNED_CARGO_CLIPPY=") {
+        violations.push("platform job does not record the absolute cargo-clippy tool".to_owned());
+    }
+    if !block.contains(&format!(
+        "{GUARD_PREFIX} -- cargo clippy --workspace --all-targets --locked -- -D warnings"
+    )) {
+        violations
+            .push("platform job lacks the guarded cross-platform Clippy execution".to_owned());
+    }
+}
+
+fn validate_bootstrap_test_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<String>) {
+    let Some(block) = jobs.get("bootstrap-tests") else {
+        return;
+    };
+    if block
+        .lines()
+        .filter(|line| command_text(line) == TEST_COMMAND)
+        .count()
+        != 1
+    {
+        violations.push("bootstrap test suite must run once in its own process job".to_owned());
+    }
+}
+
+fn validate_no_nested_dependency_admission(root: &Path, result: &mut CargoBootstrapResult) {
+    let path = root.join("tools/xtask/src/metadata.rs");
+    let source = match std::fs::read_to_string(&path) {
+        Ok(source) => source,
+        Err(error) => {
+            result
+                .tool_errors
+                .push(format!("cannot read {}: {error}", path.display()));
+            return;
+        }
+    };
+    for forbidden in ["Command::new", "std::process", "source_provenance.py"] {
+        if source.contains(forbidden) {
+            result.violations.push(format!(
+                "structural checker must not recreate dependency admission; metadata.rs contains {forbidden}"
+            ));
         }
     }
 }
@@ -474,150 +471,106 @@ fn validate_terminal_runtime_boundaries(source: &str, violations: &mut Vec<Strin
 mod tests {
     use super::*;
 
-    const GOOD: &str = include_str!("../../../.github/workflows/ci.yml");
+    fn workflow() -> Result<String, Box<dyn std::error::Error>> {
+        let root = crate::metadata::find_workspace_root().map_err(std::io::Error::other)?;
+        Ok(std::fs::read_to_string(root.join(WORKFLOW_PATH))?)
+    }
 
-    #[test]
-    fn exact_workflow_surface_passes() {
+    fn violations(source: &str) -> Vec<String> {
         let mut violations = Vec::new();
-        validate_workflow(GOOD, &mut violations);
-        assert!(violations.is_empty(), "{violations:?}");
+        validate_workflow(source, &mut violations);
+        violations
     }
 
     #[test]
-    fn workflow_directory_rejects_additional_or_redirected_entries()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let temporary = tempfile::tempdir()?;
-        let workflows = temporary.path().join(WORKFLOW_DIRECTORY);
-        std::fs::create_dir_all(&workflows)?;
-        std::fs::write(workflows.join("ci.yml"), GOOD)?;
+    fn checked_workflow_has_no_routing_violation() -> Result<(), Box<dyn std::error::Error>> {
+        let found = violations(&workflow()?);
+        assert!(found.is_empty(), "{found:#?}");
+        Ok(())
+    }
 
-        let mut clean = CargoBootstrapResult::default();
-        validate_workflow_directory(temporary.path(), &mut clean);
-        assert!(clean.violations.is_empty(), "{:?}", clean.violations);
-        assert!(clean.tool_errors.is_empty(), "{:?}", clean.tool_errors);
-
-        std::fs::write(workflows.join("bypass.yaml"), "name: bypass\n")?;
-        let mut additional = CargoBootstrapResult::default();
-        validate_workflow_directory(temporary.path(), &mut additional);
+    #[test]
+    fn removing_one_guard_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+        let guarded = format!("{GUARD_PREFIX} -- cargo build --locked -p lumin-xtask");
+        let source = workflow()?.replace(&guarded, "cargo build --locked -p lumin-xtask");
         assert!(
-            additional
-                .violations
+            violations(&source)
                 .iter()
-                .any(|violation| violation.contains("expected only ci.yml")),
-            "{:?}",
-            additional.violations
+                .any(|violation| violation.contains("bypasses the guard"))
         );
         Ok(())
     }
 
     #[test]
-    fn reconstructed_delegated_or_weakened_cargo_fails() {
-        let wrapped = "run: python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo fmt --all --check";
-        for bad in [
-            GOOD.replace(
-                wrapped,
-                "run: |\n          c=cargo\n          $c fmt --all --check",
-            ),
-            GOOD.replace(wrapped, "run: ./ci/run-cargo.sh"),
-            GOOD.replace(wrapped, "uses: ./ci/local-cargo-action"),
-            GOOD.replace(wrapped, &wrapped.replace("python -I -S", "python -S")),
+    fn dependency_cache_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+        let source = workflow()?.replace(
+            "steps:\n",
+            "steps:\n      - uses: actions/cache@0000000000000000000000000000000000000000\n",
+        );
+        assert!(
+            violations(&source)
+                .iter()
+                .any(|violation| violation.contains("dependency cache"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn reconstructed_or_delegated_cargo_commands_are_rejected()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for command in [
+            "$c = 'cargo'",
+            "& $c test --locked",
+            "./ci-cargo-wrapper.ps1",
         ] {
-            let mut violations = Vec::new();
-            validate_workflow(&bad, &mut violations);
+            let source = workflow()?.replace(
+                "steps:\n",
+                &format!("steps:\n      - run: |\n          {command}\n"),
+            );
             assert!(
-                violations
+                violations(&source)
                     .iter()
-                    .any(|violation| violation.contains("UNAPPROVED WORKFLOW")
-                        || violation.contains("MISSING WORKFLOW")),
-                "{violations:?}"
+                    .any(|violation| violation.contains("reconstructed run command")),
+                "command was accepted: {command}"
             );
         }
+        Ok(())
     }
 
     #[test]
-    fn every_cargo_job_requires_exact_python_setup() {
-        for bad in [
-            GOOD.replacen(
-                "      - name: Install exact Python\n        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0\n        with:\n          python-version: \"3.13.14\"\n\n",
-                "",
-                1,
-            ),
-            GOOD.replacen("python-version: \"3.13.14\"", "python-version: \"3.10\"", 1),
-        ] {
-            let mut violations = Vec::new();
-            validate_workflow(&bad, &mut violations);
-            assert!(
-                violations
-                    .iter()
-                    .any(|violation| violation.contains("PYTHON BOOTSTRAP ROUTING")),
-                "{violations:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn terminal_runtime_is_last_executable_step_in_each_job() {
-        for (job, command) in TERMINAL_RUNTIME_RUNS {
-            let needle = format!("        run: {command}");
-            let replacement = format!(
-                "{needle}\n\n      - name: Forbidden later command\n        run: echo forbidden"
-            );
-            let bad = GOOD.replacen(&needle, &replacement, 1);
-            let mut violations = Vec::new();
-            validate_workflow(&bad, &mut violations);
-            assert!(
-                violations
-                    .iter()
-                    .any(|violation| violation.contains("TRUST EPOCH ROUTING")
-                        && violation.contains(job)),
-                "{job}: {violations:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn every_cargo_job_requires_its_own_checkout() {
-        let checkout = format!("      - name: Check out repository\n        uses: {CHECKOUT}\n\n");
-        let bad = GOOD.replacen(&checkout, "", 1);
-        let mut violations = Vec::new();
-        validate_workflow(&bad, &mut violations);
+    fn guarded_command_cannot_append_a_shell_tail() -> Result<(), Box<dyn std::error::Error>> {
+        let command = format!("{GUARD_PREFIX} -- cargo build --locked -p lumin-xtask");
+        let source = workflow()?.replace(&command, &format!("{command}; Write-Output bypass"));
         assert!(
-            violations
+            violations(&source)
                 .iter()
-                .any(|violation| violation.contains("FRESH CHECKOUT ROUTING")),
-            "{violations:?}"
+                .any(|violation| violation.contains("shell composition"))
         );
+        Ok(())
     }
 
     #[test]
-    fn every_cargo_run_step_requires_job_private_cargo_paths() {
-        let bad = GOOD.replacen(STEP_PRIVATE_CARGO_ENV, "", 1);
-        let mut violations = Vec::new();
-        validate_workflow(&bad, &mut violations);
-        assert!(
-            violations
-                .iter()
-                .any(|violation| violation.contains("STEP-PRIVATE CARGO ROUTING")),
-            "{violations:?}"
+    fn cargo_plugin_dispatch_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+        let source = workflow()?.replace(
+            DIRECT_AUDIT,
+            &format!("{GUARD_PREFIX} -- cargo audit --locked --deny warnings"),
         );
+        assert!(
+            violations(&source)
+                .iter()
+                .any(|violation| violation.contains("pinned executables directly"))
+        );
+        Ok(())
     }
 
     #[test]
-    fn dependency_tool_install_requires_job_private_cargo_paths() {
-        let private_install =
-            format!("{STEP_PRIVATE_CARGO_ENV}\n        uses: {DEPENDENCY_TOOL_INSTALL}");
-        let bad = GOOD.replacen(
-            &private_install,
-            &format!("        uses: {DEPENDENCY_TOOL_INSTALL}"),
-            1,
-        );
-        let mut violations = Vec::new();
-        validate_workflow(&bad, &mut violations);
-        assert!(
-            violations
-                .iter()
-                .any(|violation| violation.contains("STEP-PRIVATE CARGO ROUTING")),
-            "{violations:?}"
-        );
+    fn direct_architecture_command_never_claims_dependency_admission()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = crate::metadata::find_workspace_root().map_err(std::io::Error::other)?;
+        let source = std::fs::read_to_string(root.join("tools/xtask/src/architecture.rs"))?;
+        assert!(source.contains("structural only"));
+        assert!(source.contains("dependency admission not evaluated here"));
+        assert!(!source.contains("cargo metadata dependency edges"));
+        Ok(())
     }
 }

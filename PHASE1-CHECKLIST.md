@@ -97,7 +97,7 @@ Owner routes: ARCH-000, ARCH-001, ARCH-002, SLICE-001 AC 19, 21, 35, 37, and 38.
   [REVIEW-003](reviews/dependency-edge-identity-amendment-2026-08-10.md) boundary
   through exact owner approval and independent adversarial review before further
   bootstrap implementation.
-- [ ] Implement only that frozen dependency boundary, including the development-tool
+- [x] Implement only that frozen dependency boundary, including the development-tool
   member, and remove superseded provenance machinery rather than preserving two
   authorities.
 - [ ] Keep the frozen boundary's focused bootstrap tests process-isolated and its

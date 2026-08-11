@@ -1,0 +1,1576 @@
+{
+  "schemaVersion": 2,
+  "resolver": "3",
+  "members": [
+    {
+      "name": "lumin-cli",
+      "class": "production",
+      "path": "crates/application/cli",
+      "features": {
+        "lifecycle-test-fault": [],
+        "publication-test-crash": [
+          "lumin-engine/publication-test-crash"
+        ],
+        "retention-test-crash": [
+          "lumin-engine/retention-test-crash"
+        ]
+      },
+      "dependencies": [
+        {
+          "origin": "workspace-inherited",
+          "kind": "development",
+          "target": null,
+          "alias": "base64",
+          "package": "base64",
+          "requirement": "=0.22.1",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "base64",
+            "version": "0.22.1",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-engine",
+          "package": "lumin-engine",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-engine"
+          }
+        },
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-model",
+          "package": "lumin-model",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-model"
+          }
+        },
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-protocol",
+          "package": "lumin-protocol",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-protocol"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "development",
+          "target": null,
+          "alias": "serde_json",
+          "package": "serde_json",
+          "requirement": "=1.0.150",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "serde_json",
+            "version": "1.0.150",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "development",
+          "target": null,
+          "alias": "tempfile",
+          "package": "tempfile",
+          "requirement": "=3.27.0",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "tempfile",
+            "version": "3.27.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "thiserror",
+          "package": "thiserror",
+          "requirement": "=2.0.18",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "thiserror",
+            "version": "2.0.18",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        }
+      ]
+    },
+    {
+      "name": "lumin-dead",
+      "class": "production",
+      "path": "crates/analyses/dead-code",
+      "features": {},
+      "dependencies": [
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-evidence",
+          "package": "lumin-evidence",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-evidence"
+          }
+        },
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-graph",
+          "package": "lumin-graph",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-graph"
+          }
+        },
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-model",
+          "package": "lumin-model",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-model"
+          }
+        }
+      ]
+    },
+    {
+      "name": "lumin-engine",
+      "class": "production",
+      "path": "crates/application/engine",
+      "features": {
+        "publication-test-crash": [
+          "lumin-store/publication-test-crash"
+        ],
+        "retention-test-crash": [
+          "lumin-store/retention-test-crash"
+        ]
+      },
+      "dependencies": [
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-dead",
+          "package": "lumin-dead",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-dead"
+          }
+        },
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-evidence",
+          "package": "lumin-evidence",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-evidence"
+          }
+        },
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-graph",
+          "package": "lumin-graph",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-graph"
+          }
+        },
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-inventory",
+          "package": "lumin-inventory",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-inventory"
+          }
+        },
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-js",
+          "package": "lumin-js",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-js"
+          }
+        },
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-model",
+          "package": "lumin-model",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-model"
+          }
+        },
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-resolve",
+          "package": "lumin-resolve",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-resolve"
+          }
+        },
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-sfc",
+          "package": "lumin-sfc",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-sfc"
+          }
+        },
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-store",
+          "package": "lumin-store",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-store"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "rayon",
+          "package": "rayon",
+          "requirement": "=1.11.0",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "rayon",
+            "version": "1.11.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "development",
+          "target": null,
+          "alias": "tempfile",
+          "package": "tempfile",
+          "requirement": "=3.27.0",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "tempfile",
+            "version": "3.27.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "thiserror",
+          "package": "thiserror",
+          "requirement": "=2.0.18",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "thiserror",
+            "version": "2.0.18",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        }
+      ]
+    },
+    {
+      "name": "lumin-evidence",
+      "class": "production",
+      "path": "crates/foundation/evidence",
+      "features": {},
+      "dependencies": [
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-model",
+          "package": "lumin-model",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-model"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "serde",
+          "package": "serde",
+          "requirement": "=1.0.228",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "serde",
+            "version": "1.0.228",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        }
+      ]
+    },
+    {
+      "name": "lumin-graph",
+      "class": "production",
+      "path": "crates/graph/symbols",
+      "features": {},
+      "dependencies": [
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-model",
+          "package": "lumin-model",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-model"
+          }
+        }
+      ]
+    },
+    {
+      "name": "lumin-inventory",
+      "class": "production",
+      "path": "crates/source/inventory",
+      "features": {},
+      "dependencies": [
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "ignore",
+          "package": "ignore",
+          "requirement": "=0.4.26",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "ignore",
+            "version": "0.4.26",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-model",
+          "package": "lumin-model",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-model"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "same-file",
+          "package": "same-file",
+          "requirement": "=1.0.6",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "same-file",
+            "version": "1.0.6",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "saphyr-parser",
+          "package": "saphyr-parser",
+          "requirement": "=0.0.11",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "saphyr-parser",
+            "version": "0.0.11",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "serde",
+          "package": "serde",
+          "requirement": "=1.0.228",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "serde",
+            "version": "1.0.228",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "serde_json",
+          "package": "serde_json",
+          "requirement": "=1.0.150",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "serde_json",
+            "version": "1.0.150",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "development",
+          "target": null,
+          "alias": "tempfile",
+          "package": "tempfile",
+          "requirement": "=3.27.0",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "tempfile",
+            "version": "3.27.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "thiserror",
+          "package": "thiserror",
+          "requirement": "=2.0.18",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "thiserror",
+            "version": "2.0.18",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": "cfg(windows)",
+          "alias": "winapi-util",
+          "package": "winapi-util",
+          "requirement": "=0.1.11",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "winapi-util",
+            "version": "0.1.11",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": "cfg(windows)",
+          "alias": "windows-sys",
+          "package": "windows-sys",
+          "requirement": "=0.61.2",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "windows-sys",
+            "version": "0.61.2",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        }
+      ]
+    },
+    {
+      "name": "lumin-js",
+      "class": "production",
+      "path": "crates/languages/js",
+      "features": {},
+      "dependencies": [
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-model",
+          "package": "lumin-model",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-model"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "oxc_allocator",
+          "package": "oxc_allocator",
+          "requirement": "=0.126.0",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "oxc_allocator",
+            "version": "0.126.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "oxc_ast",
+          "package": "oxc_ast",
+          "requirement": "=0.126.0",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "oxc_ast",
+            "version": "0.126.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "oxc_ast_visit",
+          "package": "oxc_ast_visit",
+          "requirement": "=0.126.0",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "oxc_ast_visit",
+            "version": "0.126.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "oxc_parser",
+          "package": "oxc_parser",
+          "requirement": "=0.126.0",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "oxc_parser",
+            "version": "0.126.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "oxc_span",
+          "package": "oxc_span",
+          "requirement": "=0.126.0",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "oxc_span",
+            "version": "0.126.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        }
+      ]
+    },
+    {
+      "name": "lumin-model",
+      "class": "production",
+      "path": "crates/foundation/model",
+      "features": {},
+      "dependencies": [
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "serde",
+          "package": "serde",
+          "requirement": "=1.0.228",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "serde",
+            "version": "1.0.228",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "sha2",
+          "package": "sha2",
+          "requirement": "=0.10.9",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "sha2",
+            "version": "0.10.9",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "thiserror",
+          "package": "thiserror",
+          "requirement": "=2.0.18",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "thiserror",
+            "version": "2.0.18",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        }
+      ]
+    },
+    {
+      "name": "lumin-protocol",
+      "class": "production",
+      "path": "crates/application/protocol",
+      "features": {},
+      "dependencies": [
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "base64",
+          "package": "base64",
+          "requirement": "=0.22.1",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "base64",
+            "version": "0.22.1",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-evidence",
+          "package": "lumin-evidence",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-evidence"
+          }
+        },
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-model",
+          "package": "lumin-model",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-model"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "serde",
+          "package": "serde",
+          "requirement": "=1.0.228",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "serde",
+            "version": "1.0.228",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "serde_json",
+          "package": "serde_json",
+          "requirement": "=1.0.150",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "serde_json",
+            "version": "1.0.150",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "sha2",
+          "package": "sha2",
+          "requirement": "=0.10.9",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "sha2",
+            "version": "0.10.9",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "thiserror",
+          "package": "thiserror",
+          "requirement": "=2.0.18",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "thiserror",
+            "version": "2.0.18",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        }
+      ]
+    },
+    {
+      "name": "lumin-resolve",
+      "class": "production",
+      "path": "crates/graph/resolve",
+      "features": {},
+      "dependencies": [
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-model",
+          "package": "lumin-model",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-model"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "thiserror",
+          "package": "thiserror",
+          "requirement": "=2.0.18",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "thiserror",
+            "version": "2.0.18",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        }
+      ]
+    },
+    {
+      "name": "lumin-sfc",
+      "class": "production",
+      "path": "crates/languages/sfc",
+      "features": {},
+      "dependencies": [
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-model",
+          "package": "lumin-model",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-model"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "thiserror",
+          "package": "thiserror",
+          "requirement": "=2.0.18",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "thiserror",
+            "version": "2.0.18",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        }
+      ]
+    },
+    {
+      "name": "lumin-store",
+      "class": "production",
+      "path": "crates/application/store",
+      "features": {
+        "publication-test-crash": [],
+        "retention-test-crash": []
+      },
+      "dependencies": [
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "fs2",
+          "package": "fs2",
+          "requirement": "=0.4.3",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "fs2",
+            "version": "0.4.3",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "getrandom",
+          "package": "getrandom",
+          "requirement": "=0.4.3",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "getrandom",
+            "version": "0.4.3",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-evidence",
+          "package": "lumin-evidence",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-evidence"
+          }
+        },
+        {
+          "origin": "member-authored",
+          "kind": "development",
+          "target": null,
+          "alias": "lumin-inventory",
+          "package": "lumin-inventory",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-inventory"
+          }
+        },
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-model",
+          "package": "lumin-model",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-model"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "redb",
+          "package": "redb",
+          "requirement": "=4.1.0",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "redb",
+            "version": "4.1.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "serde",
+          "package": "serde",
+          "requirement": "=1.0.228",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "serde",
+            "version": "1.0.228",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "serde_json",
+          "package": "serde_json",
+          "requirement": "=1.0.150",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "serde_json",
+            "version": "1.0.150",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "tempfile",
+          "package": "tempfile",
+          "requirement": "=3.27.0",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "tempfile",
+            "version": "3.27.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "thiserror",
+          "package": "thiserror",
+          "requirement": "=2.0.18",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "thiserror",
+            "version": "2.0.18",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": "cfg(windows)",
+          "alias": "winapi-util",
+          "package": "winapi-util",
+          "requirement": "=0.1.11",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "winapi-util",
+            "version": "0.1.11",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": "cfg(windows)",
+          "alias": "windows-sys",
+          "package": "windows-sys",
+          "requirement": "=0.61.2",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "windows-sys",
+            "version": "0.61.2",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        }
+      ]
+    },
+    {
+      "name": "lumin-xtask",
+      "class": "development-tool",
+      "path": "tools/xtask",
+      "features": {},
+      "dependencies": [
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "base64",
+          "package": "base64",
+          "requirement": "=0.22.1",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "base64",
+            "version": "0.22.1",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-model",
+          "package": "lumin-model",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-model"
+          }
+        },
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "lumin-protocol",
+          "package": "lumin-protocol",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-protocol"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "serde_json",
+          "package": "serde_json",
+          "requirement": "=1.0.150",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "serde_json",
+            "version": "1.0.150",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "sha2",
+          "package": "sha2",
+          "requirement": "=0.10.9",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "sha2",
+            "version": "0.10.9",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "member-authored",
+          "kind": "normal",
+          "target": null,
+          "alias": "syn",
+          "package": "syn",
+          "requirement": "=2.0.119",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": [
+            "full",
+            "parsing",
+            "visit"
+          ],
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "syn",
+            "version": "2.0.119",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "development",
+          "target": null,
+          "alias": "tempfile",
+          "package": "tempfile",
+          "requirement": "=3.27.0",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "tempfile",
+            "version": "3.27.0",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        }
+      ]
+    }
+  ],
+  "workspaceDependencies": [
+    {
+      "alias": "base64",
+      "package": "base64",
+      "requirement": "=0.22.1",
+      "defaultFeatures": true,
+      "features": null,
+      "sourceKind": "crates-io"
+    },
+    {
+      "alias": "fs2",
+      "package": "fs2",
+      "requirement": "=0.4.3",
+      "defaultFeatures": true,
+      "features": null,
+      "sourceKind": "crates-io"
+    },
+    {
+      "alias": "getrandom",
+      "package": "getrandom",
+      "requirement": "=0.4.3",
+      "defaultFeatures": true,
+      "features": null,
+      "sourceKind": "crates-io"
+    },
+    {
+      "alias": "ignore",
+      "package": "ignore",
+      "requirement": "=0.4.26",
+      "defaultFeatures": true,
+      "features": null,
+      "sourceKind": "crates-io"
+    },
+    {
+      "alias": "oxc_allocator",
+      "package": "oxc_allocator",
+      "requirement": "=0.126.0",
+      "defaultFeatures": true,
+      "features": null,
+      "sourceKind": "crates-io"
+    },
+    {
+      "alias": "oxc_ast",
+      "package": "oxc_ast",
+      "requirement": "=0.126.0",
+      "defaultFeatures": true,
+      "features": null,
+      "sourceKind": "crates-io"
+    },
+    {
+      "alias": "oxc_ast_visit",
+      "package": "oxc_ast_visit",
+      "requirement": "=0.126.0",
+      "defaultFeatures": true,
+      "features": null,
+      "sourceKind": "crates-io"
+    },
+    {
+      "alias": "oxc_parser",
+      "package": "oxc_parser",
+      "requirement": "=0.126.0",
+      "defaultFeatures": true,
+      "features": null,
+      "sourceKind": "crates-io"
+    },
+    {
+      "alias": "oxc_span",
+      "package": "oxc_span",
+      "requirement": "=0.126.0",
+      "defaultFeatures": true,
+      "features": null,
+      "sourceKind": "crates-io"
+    },
+    {
+      "alias": "rayon",
+      "package": "rayon",
+      "requirement": "=1.11.0",
+      "defaultFeatures": true,
+      "features": null,
+      "sourceKind": "crates-io"
+    },
+    {
+      "alias": "redb",
+      "package": "redb",
+      "requirement": "=4.1.0",
+      "defaultFeatures": true,
+      "features": null,
+      "sourceKind": "crates-io"
+    },
+    {
+      "alias": "same-file",
+      "package": "same-file",
+      "requirement": "=1.0.6",
+      "defaultFeatures": true,
+      "features": null,
+      "sourceKind": "crates-io"
+    },
+    {
+      "alias": "saphyr-parser",
+      "package": "saphyr-parser",
+      "requirement": "=0.0.11",
+      "defaultFeatures": true,
+      "features": null,
+      "sourceKind": "crates-io"
+    },
+    {
+      "alias": "serde",
+      "package": "serde",
+      "requirement": "=1.0.228",
+      "defaultFeatures": true,
+      "features": [
+        "derive"
+      ],
+      "sourceKind": "crates-io"
+    },
+    {
+      "alias": "serde_json",
+      "package": "serde_json",
+      "requirement": "=1.0.150",
+      "defaultFeatures": true,
+      "features": null,
+      "sourceKind": "crates-io"
+    },
+    {
+      "alias": "sha2",
+      "package": "sha2",
+      "requirement": "=0.10.9",
+      "defaultFeatures": true,
+      "features": null,
+      "sourceKind": "crates-io"
+    },
+    {
+      "alias": "tempfile",
+      "package": "tempfile",
+      "requirement": "=3.27.0",
+      "defaultFeatures": true,
+      "features": null,
+      "sourceKind": "crates-io"
+    },
+    {
+      "alias": "thiserror",
+      "package": "thiserror",
+      "requirement": "=2.0.18",
+      "defaultFeatures": true,
+      "features": null,
+      "sourceKind": "crates-io"
+    },
+    {
+      "alias": "winapi-util",
+      "package": "winapi-util",
+      "requirement": "=0.1.11",
+      "defaultFeatures": true,
+      "features": null,
+      "sourceKind": "crates-io"
+    },
+    {
+      "alias": "windows-sys",
+      "package": "windows-sys",
+      "requirement": "=0.61.2",
+      "defaultFeatures": true,
+      "features": [
+        "Win32_Foundation",
+        "Win32_Storage_FileSystem"
+      ],
+      "sourceKind": "crates-io"
+    }
+  ]
+}
+

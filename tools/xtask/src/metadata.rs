@@ -1,11 +1,9 @@
-//! Workspace metadata acquisition and dependency-policy orchestration.
+//! Static workspace layout used by the structural architecture checker.
+//!
+//! Dependency admission belongs to the pre-Cargo Python guard. This module
+//! deliberately does not invoke Cargo or reconstruct dependency evidence.
 
-mod dependency_policy;
-
-use std::collections::{BTreeSet, HashMap};
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 #[derive(Debug, Clone)]
 pub struct WorkspaceMember {
@@ -15,257 +13,126 @@ pub struct WorkspaceMember {
     pub src_root: PathBuf,
 }
 
-pub struct MetadataResult {
+pub struct WorkspaceLayout {
     pub production_members: Vec<WorkspaceMember>,
     pub all_members: Vec<WorkspaceMember>,
     pub violations: Vec<String>,
     pub workspace_root: PathBuf,
 }
 
-pub(super) const PRODUCTION_NAMES: &[&str] = &[
-    "lumin-cli",
-    "lumin-dead",
-    "lumin-engine",
-    "lumin-evidence",
-    "lumin-graph",
-    "lumin-inventory",
-    "lumin-js",
-    "lumin-model",
-    "lumin-protocol",
-    "lumin-resolve",
-    "lumin-sfc",
-    "lumin-store",
+const PRODUCTION_MEMBERS: &[(&str, &str)] = &[
+    ("lumin-cli", "crates/application/cli"),
+    ("lumin-dead", "crates/analyses/dead-code"),
+    ("lumin-engine", "crates/application/engine"),
+    ("lumin-evidence", "crates/foundation/evidence"),
+    ("lumin-graph", "crates/graph/symbols"),
+    ("lumin-inventory", "crates/source/inventory"),
+    ("lumin-js", "crates/languages/js"),
+    ("lumin-model", "crates/foundation/model"),
+    ("lumin-protocol", "crates/application/protocol"),
+    ("lumin-resolve", "crates/graph/resolve"),
+    ("lumin-sfc", "crates/languages/sfc"),
+    ("lumin-store", "crates/application/store"),
 ];
 
+const DEVELOPMENT_MEMBERS: &[(&str, &str)] = &[("lumin-xtask", "tools/xtask")];
+
 pub fn find_workspace_root() -> Result<PathBuf, String> {
-    locate_workspace_root(Path::new(env!("CARGO_MANIFEST_DIR")))
-}
-
-fn locate_workspace_root(manifest_dir: &Path) -> Result<PathBuf, String> {
-    let member_manifest = manifest_dir.join("Cargo.toml");
-    let member_manifest = std::fs::canonicalize(&member_manifest)
-        .map_err(|error| format!("cannot resolve {}: {error}", member_manifest.display()))?;
-    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
-    let output = Command::new(cargo)
-        .args([
-            "locate-project",
-            "--workspace",
-            "--message-format",
-            "plain",
-            "--manifest-path",
-        ])
-        .arg(&member_manifest)
-        .output()
-        .map_err(|error| format!("failed to run cargo locate-project: {error}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("cargo locate-project failed: {}", stderr.trim()));
-    }
-
-    let workspace_manifest = std::str::from_utf8(&output.stdout)
-        .map_err(|error| format!("cargo locate-project returned non-UTF-8 output: {error}"))?
-        .trim();
-    if workspace_manifest.is_empty() {
-        return Err("cargo locate-project returned an empty workspace manifest".to_owned());
-    }
-    let workspace_manifest = PathBuf::from(workspace_manifest);
-    let workspace_manifest = std::fs::canonicalize(&workspace_manifest).map_err(|error| {
-        format!(
-            "cannot resolve Cargo workspace manifest {}: {error}",
-            workspace_manifest.display()
-        )
-    })?;
-    if workspace_manifest == member_manifest {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = manifest_dir
+        .parent()
+        .and_then(Path::parent)
+        .ok_or_else(|| "xtask manifest directory has no workspace parent".to_owned())?;
+    let root = std::fs::canonicalize(root)
+        .map_err(|error| format!("cannot resolve workspace root {}: {error}", root.display()))?;
+    let manifest = root.join("Cargo.toml");
+    if !manifest.is_file() {
         return Err(format!(
-            "{} is not attached to a parent Cargo workspace",
-            member_manifest.display()
+            "workspace manifest is missing: {}",
+            manifest.display()
         ));
     }
-    let workspace_root = workspace_manifest.parent().ok_or_else(|| {
-        format!(
-            "Cargo workspace manifest has no parent: {}",
-            workspace_manifest.display()
-        )
-    })?;
-    if !member_manifest.starts_with(workspace_root) {
-        return Err(format!(
-            "Cargo workspace {} does not contain {}",
-            workspace_root.display(),
-            member_manifest.display()
-        ));
-    }
-    Ok(workspace_root.to_path_buf())
+    Ok(root)
 }
 
-pub fn analyze_workspace(workspace_root: &Path) -> Result<MetadataResult, String> {
-    revalidate_source_provenance(workspace_root)?;
-    let output = Command::new("cargo")
-        .args([
-            "metadata",
-            "--format-version",
-            "1",
-            "--all-features",
-            "--locked",
-        ])
-        .current_dir(workspace_root)
-        .output()
-        .map_err(|error| format!("failed to run cargo metadata: {error}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("cargo metadata failed: {stderr}"));
-    }
-
-    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("failed to parse cargo metadata JSON: {error}"))?;
-    analyze_metadata(&metadata, workspace_root)
-}
-
-fn revalidate_source_provenance(workspace_root: &Path) -> Result<(), String> {
-    let guard = workspace_root.join("tools/xtask/bootstrap/source_provenance.py");
-    let output = Command::new("python")
-        .args(["-I", "-S"])
-        .arg(&guard)
-        .arg("--check-only")
-        .current_dir(workspace_root)
-        .output()
-        .map_err(|error| format!("failed to revalidate Cargo source provenance: {error}"))?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    Err(format!(
-        "Cargo source provenance changed before metadata: {}",
-        stderr.trim()
-    ))
-}
-
-fn analyze_metadata(
-    metadata: &serde_json::Value,
-    requested_root: &Path,
-) -> Result<MetadataResult, String> {
-    let metadata_root = metadata
-        .get("workspace_root")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| "missing workspace_root in metadata".to_owned())?;
-    let metadata_root = PathBuf::from(metadata_root);
-    let canonical_requested = std::fs::canonicalize(requested_root).map_err(|error| {
+pub fn inspect_workspace(workspace_root: &Path) -> Result<WorkspaceLayout, String> {
+    let workspace_root = std::fs::canonicalize(workspace_root).map_err(|error| {
         format!(
-            "cannot canonicalize requested workspace {}: {error}",
-            requested_root.display()
+            "cannot canonicalize workspace root {}: {error}",
+            workspace_root.display()
         )
     })?;
-    let canonical_metadata = std::fs::canonicalize(&metadata_root).map_err(|error| {
-        format!(
-            "cannot canonicalize metadata workspace {}: {error}",
-            metadata_root.display()
-        )
-    })?;
-    if canonical_requested != canonical_metadata {
-        return Err(format!(
-            "cargo metadata workspace mismatch: requested {} resolved {}",
-            canonical_requested.display(),
-            canonical_metadata.display()
-        ));
-    }
-
-    let packages = metadata
-        .get("packages")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| "missing packages array".to_owned())?;
-    let member_values = metadata
-        .get("workspace_members")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| "missing workspace_members array".to_owned())?;
-
-    let mut package_by_id = HashMap::new();
-    for package in packages {
-        let id = package
-            .get("id")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| "metadata package has no string id".to_owned())?;
-        if package_by_id.insert(id.to_owned(), package).is_some() {
-            return Err(format!("duplicate package id in metadata: {id}"));
-        }
-    }
-
     let mut violations = Vec::new();
-    let mut member_ids = BTreeSet::new();
-    let mut member_names = BTreeSet::new();
-    for value in member_values {
-        let id = value
-            .as_str()
-            .ok_or_else(|| "workspace member id is not a string".to_owned())?;
-        if !member_ids.insert(id.to_owned()) {
-            violations.push(format!("duplicate workspace member id: {id}"));
-        }
-        let package = package_by_id
-            .get(id)
-            .copied()
-            .ok_or_else(|| format!("workspace member package missing: {id}"))?;
-        let name = package
-            .get("name")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| format!("workspace member has no string name: {id}"))?;
-        if !member_names.insert(name.to_owned()) {
-            violations.push(format!("duplicate workspace member name: {name}"));
-        }
-    }
-
-    let expected_names = PRODUCTION_NAMES
-        .iter()
-        .copied()
-        .chain(std::iter::once("lumin-xtask"))
-        .collect::<BTreeSet<_>>();
-    let actual_names = member_names
-        .iter()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    for missing in expected_names.difference(&actual_names) {
-        violations.push(format!("missing workspace member: {missing}"));
-    }
-    for unexpected in actual_names.difference(&expected_names) {
-        violations.push(format!("unexpected workspace member: {unexpected}"));
-    }
-
-    let mut all_members = Vec::new();
-    for id in &member_ids {
-        let package = package_by_id
-            .get(id)
-            .copied()
-            .ok_or_else(|| format!("workspace member package missing: {id}"))?;
-        let name = package
-            .get("name")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| format!("workspace member has no string name: {id}"))?;
-        let manifest = package
-            .get("manifest_path")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| format!("workspace member has no manifest path: {name}"))?;
-        let manifest_path = PathBuf::from(manifest);
-        let src_root = manifest_path
-            .parent()
-            .map(|parent| parent.join("src"))
-            .ok_or_else(|| format!("workspace manifest has no parent: {manifest}"))?;
-        all_members.push(WorkspaceMember {
-            name: name.to_owned(),
-            manifest_path,
-            src_root,
-        });
-    }
+    let mut production_members = collect_members(
+        &workspace_root,
+        PRODUCTION_MEMBERS,
+        "production",
+        &mut violations,
+    );
+    let development_members = collect_members(
+        &workspace_root,
+        DEVELOPMENT_MEMBERS,
+        "development",
+        &mut violations,
+    );
+    production_members.sort_by(|left, right| left.name.cmp(&right.name));
+    let mut all_members = production_members.clone();
+    all_members.extend(development_members);
     all_members.sort_by(|left, right| left.name.cmp(&right.name));
-    let production_members = all_members
-        .iter()
-        .filter(|member| PRODUCTION_NAMES.contains(&member.name.as_str()))
-        .cloned()
-        .collect::<Vec<_>>();
-
-    dependency_policy::validate_dependency_surface(metadata, &canonical_metadata, &mut violations)?;
-
-    Ok(MetadataResult {
+    Ok(WorkspaceLayout {
         production_members,
         all_members,
         violations,
-        workspace_root: canonical_metadata,
+        workspace_root,
+    })
+}
+
+fn collect_members(
+    root: &Path,
+    members: &[(&str, &str)],
+    class: &str,
+    violations: &mut Vec<String>,
+) -> Vec<WorkspaceMember> {
+    members
+        .iter()
+        .filter_map(|(name, relative)| {
+            let directory = root.join(relative.replace('/', std::path::MAIN_SEPARATOR_STR));
+            let manifest = directory.join("Cargo.toml");
+            let src = directory.join("src");
+            match member_paths(root, name, class, &manifest, &src) {
+                Ok(member) => Some(member),
+                Err(violation) => {
+                    violations.push(violation);
+                    None
+                }
+            }
+        })
+        .collect()
+}
+
+fn member_paths(
+    root: &Path,
+    name: &str,
+    class: &str,
+    manifest: &Path,
+    src: &Path,
+) -> Result<WorkspaceMember, String> {
+    let manifest_path = std::fs::canonicalize(manifest)
+        .map_err(|error| format!("{class} member {name} manifest is unavailable: {error}"))?;
+    let src_root = std::fs::canonicalize(src)
+        .map_err(|error| format!("{class} member {name} source root is unavailable: {error}"))?;
+    if !manifest_path.starts_with(root) || !src_root.starts_with(root) {
+        return Err(format!("{class} member {name} escapes the workspace root"));
+    }
+    if !manifest_path.is_file() || !src_root.is_dir() {
+        return Err(format!(
+            "{class} member {name} has an invalid manifest or source root"
+        ));
+    }
+    Ok(WorkspaceMember {
+        name: (*name).to_owned(),
+        manifest_path,
+        src_root,
     })
 }
 
@@ -281,10 +148,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn workspace_root_comes_from_cargo_ownership() -> Result<(), Box<dyn std::error::Error>> {
-        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    fn workspace_root_is_the_static_xtask_owner() -> Result<(), Box<dyn std::error::Error>> {
         let expected = std::fs::canonicalize(
-            manifest_dir
+            Path::new(env!("CARGO_MANIFEST_DIR"))
                 .parent()
                 .and_then(Path::parent)
                 .ok_or("xtask manifest directory has no workspace parent")?,
@@ -294,60 +160,35 @@ mod tests {
     }
 
     #[test]
-    fn workspace_text_in_package_metadata_is_not_a_workspace() -> std::io::Result<()> {
-        let decoy = tempfile::tempdir()?;
-        std::fs::create_dir_all(decoy.path().join("src"))?;
-        std::fs::write(
-            decoy.path().join("Cargo.toml"),
-            concat!(
-                "[package]\n",
-                "name = \"workspace-text-decoy\"\n",
-                "version = \"0.0.0\"\n",
-                "edition = \"2024\"\n",
-                "description = \"[workspace]\"\n",
-            ),
-        )?;
-        std::fs::write(decoy.path().join("src/lib.rs"), "")?;
-        let member = decoy.path().join("tools/xtask");
-        std::fs::create_dir_all(member.join("src"))?;
-        std::fs::write(
-            member.join("Cargo.toml"),
-            concat!(
-                "[package]\n",
-                "name = \"workspace-text-decoy-xtask\"\n",
-                "version = \"0.0.0\"\n",
-                "edition = \"2024\"\n",
-            ),
-        )?;
-        std::fs::write(member.join("src/main.rs"), "fn main() {}\n")?;
-
-        let error = match locate_workspace_root(&member) {
-            Err(error) => error,
-            Ok(root) => {
-                return Err(std::io::Error::other(format!(
-                    "decoy workspace was accepted as {}",
-                    root.display()
-                )));
-            }
-        };
-        assert!(
-            error.contains("is not attached to a parent Cargo workspace"),
-            "unexpected decoy rejection: {error}"
+    fn structural_layout_contains_twelve_products_and_one_tool()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let layout = inspect_workspace(&find_workspace_root()?)?;
+        assert!(layout.violations.is_empty(), "{:?}", layout.violations);
+        assert_eq!(layout.production_members.len(), 12);
+        assert_eq!(layout.all_members.len(), 13);
+        assert_eq!(
+            layout.all_members.last().map(|member| member.name.as_str()),
+            Some("lumin-xtask")
         );
         Ok(())
     }
 
     #[test]
-    fn relative_display_uses_forward_slash() {
-        let base = PathBuf::from("project");
-        let target = base.join("crates").join("model").join("src").join("lib.rs");
-        let result = relative_display(&base, &target);
-        assert_eq!(result, "crates/model/src/lib.rs");
-        assert!(!result.contains('\\'));
+    fn structural_layout_never_spawns_cargo_or_the_bootstrap() {
+        let source = include_str!("metadata.rs");
+        for forbidden in [
+            ["Command::", "new"].concat(),
+            ["std::", "process"].concat(),
+            ["source_", "provenance.py"].concat(),
+        ] {
+            assert!(!source.contains(&forbidden), "found {forbidden}");
+        }
     }
 
     #[test]
-    fn expected_production_count_is_twelve() {
-        assert_eq!(PRODUCTION_NAMES.len(), 12);
+    fn relative_display_uses_forward_slashes() {
+        let base = PathBuf::from("project");
+        let target = base.join("crates").join("model").join("src").join("lib.rs");
+        assert_eq!(relative_display(&base, &target), "crates/model/src/lib.rs");
     }
 }

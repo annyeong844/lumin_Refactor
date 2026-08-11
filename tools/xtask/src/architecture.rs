@@ -1,6 +1,7 @@
-//! Architecture-check orchestrator.
+//! Structural architecture-check orchestrator.
 //!
-//! Combines workspace metadata validation and AST source-policy scanning.
+//! Cargo dependency admission is a separate pre-Cargo CI verdict owned by the
+//! Python guard. This command never recreates or claims that verdict.
 //! Exit codes: 0 = pass, 1 = violations, 2 = tool error.
 
 use std::process::ExitCode;
@@ -13,7 +14,7 @@ use crate::path_codec;
 use crate::path_owner;
 use crate::source_policy;
 
-/// Run the full architecture check.
+/// Run the repository-owned structural architecture checks.
 pub fn run() -> ExitCode {
     let workspace_root = match metadata::find_workspace_root() {
         Ok(root) => root,
@@ -25,9 +26,10 @@ pub fn run() -> ExitCode {
 
     println!("=== lumin-xtask architecture-check ===");
     println!("workspace: {}", workspace_root.display());
+    println!("scope: structural only; dependency admission is a separate CI guard verdict");
     println!();
 
-    println!("[CHECK] isolated Cargo source-provenance bootstrap and CI routing");
+    println!("[CHECK] CI routing for the separate dependency-admission guard");
     let bootstrap_result = cargo_bootstrap::check_cargo_bootstrap(&workspace_root);
     if !bootstrap_result.tool_errors.is_empty() {
         for error in bootstrap_result.tool_errors {
@@ -42,9 +44,8 @@ pub fn run() -> ExitCode {
         return ExitCode::from(1);
     }
 
-    // Phase 1: Metadata / dependency edge analysis
-    println!("[CHECK] cargo metadata dependency edges");
-    let metadata_result = match metadata::analyze_workspace(&workspace_root) {
+    println!("[CHECK] static workspace source ownership");
+    let workspace = match metadata::inspect_workspace(&workspace_root) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("[TOOL ERROR] {e}");
@@ -54,11 +55,11 @@ pub fn run() -> ExitCode {
 
     println!(
         "  members: {} total, {} production",
-        metadata_result.all_members.len(),
-        metadata_result.production_members.len()
+        workspace.all_members.len(),
+        workspace.production_members.len()
     );
 
-    // Phase 2: AST source policy scanning
+    // Repository-owned source and generated-artifact checks.
     println!("[CHECK] source policy: process Command and third-party re-exports");
     println!("[CHECK] source policy: Rayon ThreadPoolBuilder");
     println!("[CHECK] source policy: ScanLock types");
@@ -69,15 +70,15 @@ pub fn run() -> ExitCode {
     println!("[CHECK] generated configuration tables and owner partitions");
     println!("[CHECK] exhaustive limitation registry and fact owners");
 
-    let effective_root = &metadata_result.workspace_root;
+    let effective_root = &workspace.workspace_root;
     let source_result =
-        source_policy::scan_production_sources(&metadata_result.production_members, effective_root);
+        source_policy::scan_production_sources(&workspace.production_members, effective_root);
     let path_owner_result =
-        path_owner::scan_path_ownership(&metadata_result.production_members, effective_root);
+        path_owner::scan_path_ownership(&workspace.production_members, effective_root);
     let path_codec_result = path_codec::check_path_codec(effective_root);
     let generated_table_result = generated_tables::check_generated_tables(effective_root);
     let limitation_registry_result = limitation_registry::check_limitation_registry(
-        &metadata_result.production_members,
+        &workspace.production_members,
         effective_root,
     );
 
@@ -85,7 +86,7 @@ pub fn run() -> ExitCode {
     let mut all_violations = Vec::new();
     let mut all_tool_errors = Vec::new();
 
-    all_violations.extend(metadata_result.violations);
+    all_violations.extend(workspace.violations);
     all_violations.extend(source_result.violations);
     all_violations.extend(path_owner_result.violations);
     all_violations.extend(path_codec_result.violations);
@@ -125,13 +126,13 @@ pub fn run() -> ExitCode {
 
     // Determine exit code
     if !all_tool_errors.is_empty() {
-        println!("RESULT: TOOL ERROR (exit 2)");
+        println!("RESULT: STRUCTURAL TOOL ERROR (exit 2)");
         ExitCode::from(2)
     } else if !all_violations.is_empty() {
-        println!("RESULT: VIOLATIONS FOUND (exit 1)");
+        println!("RESULT: STRUCTURAL VIOLATIONS FOUND (exit 1)");
         ExitCode::from(1)
     } else {
-        println!("RESULT: PASS (exit 0)");
+        println!("RESULT: STRUCTURAL PASS (exit 0); dependency admission not evaluated here");
         ExitCode::from(0)
     }
 }

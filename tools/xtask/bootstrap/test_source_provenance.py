@@ -1,870 +1,532 @@
-"""Isolated stdlib tests for the Cargo source-provenance bootstrap."""
+#!/usr/bin/env python3
+"""Focused REVIEW-003 bootstrap tests.
+
+This file is executed as its own process. Fixtures use only temporary Cargo
+homes and never inherit a real user's Cargo configuration or registry state.
+"""
 
 from __future__ import annotations
 
+import copy
 import importlib.util
-import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
-import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
+from unittest import mock
 
 
+sys.dont_write_bytecode = True
 SCRIPT = Path(__file__).with_name("source_provenance.py").resolve()
 SPEC = importlib.util.spec_from_file_location("lumin_source_provenance", SCRIPT)
 if SPEC is None or SPEC.loader is None:
     raise RuntimeError(f"cannot load {SCRIPT}")
 PROVENANCE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = PROVENANCE
-PREVIOUS_DONT_WRITE_BYTECODE = sys.dont_write_bytecode
-try:
-    sys.dont_write_bytecode = True
-    SPEC.loader.exec_module(PROVENANCE)
-finally:
-    sys.dont_write_bytecode = PREVIOUS_DONT_WRITE_BYTECODE
+SPEC.loader.exec_module(PROVENANCE)
 
 
 class Fixture:
-    def __init__(self, base: Path) -> None:
-        self.root = base / "repo"
-        self.member = self.root / "member"
-        self.cargo_home = base / "cargo-home"
-        self.member.mkdir(parents=True)
+    def __init__(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.base = Path(self.temporary.name).resolve()
+        self.root = self.base / "repo"
+        self.cargo_home = self.base / "cargo-home"
+        self.target = self.base / "target"
+        self.root.mkdir()
         self.cargo_home.mkdir()
-        workflow = self.root / ".github" / "workflows" / "ci.yml"
-        workflow.parent.mkdir(parents=True)
-        shutil.copy2(SCRIPT.parents[3] / ".github" / "workflows" / "ci.yml", workflow)
-        self.write_root()
+        self.target.mkdir()
         (self.root / "Cargo.lock").write_text("version = 4\n", encoding="utf-8")
-        (self.member / "Cargo.toml").write_text(
-            '[package]\nname = "fixture-member"\nversion = "0.0.0"\nedition = "2024"\n',
+        self.root_manifest = self.root / "Cargo.toml"
+        self.root_manifest.write_text(
+            textwrap.dedent(
+                """\
+                [workspace]
+                resolver = "3"
+                members = ["app", "tools/xtask"]
+
+                [workspace.dependencies]
+                serde = { version = "=1.0.0", features = ["std", "derive"] }
+                unused = "=2.0.0"
+                """
+            ),
             encoding="utf-8",
         )
-        self.write_policy([])
+        self.app = self.root / "app"
+        self.xtask = self.root / "tools" / "xtask"
+        self.app.mkdir()
+        self.xtask.mkdir(parents=True)
+        (self.app / "Cargo.toml").write_text(
+            textwrap.dedent(
+                """\
+                [package]
+                name = "app"
+                version = "0.1.0"
+                edition = "2024"
 
-    def write_policy(self, dependencies: list[dict[str, object]]) -> None:
-        normalized_dependencies = []
-        for dependency in dependencies:
-            row = dependency.copy()
-            row.setdefault("optional", False)
-            row.setdefault("usesDefaultFeatures", True)
-            row.setdefault("features", [])
-            row.setdefault(
-                "resolution",
+                [features]
+                default = []
+                extra = ["serde/derive"]
+
+                [dependencies]
+                serde.workspace = true
+                """
+            ),
+            encoding="utf-8",
+        )
+        (self.xtask / "Cargo.toml").write_text(
+            textwrap.dedent(
+                """\
+                [package]
+                name = "lumin-xtask"
+                version = "0.1.0"
+                edition = "2024"
+
+                [dependencies]
+                app = { path = "../../app" }
+                serde.workspace = true
+                """
+            ),
+            encoding="utf-8",
+        )
+        self.registry_manifest = (
+            self.cargo_home / "registry" / "src" / "index" / "serde-1.0.0" / "Cargo.toml"
+        )
+        self.registry_manifest.parent.mkdir(parents=True)
+        self.registry_manifest.write_text(
+            '[package]\nname = "serde"\nversion = "1.0.0"\n', encoding="utf-8"
+        )
+
+    def __enter__(self) -> "Fixture":
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.temporary.cleanup()
+
+    @property
+    def environment(self) -> dict[str, str]:
+        return {
+            "CARGO_HOME": str(self.cargo_home),
+            "CARGO_TARGET_DIR": str(self.target),
+        }
+
+    def inspect(self) -> PROVENANCE.Repository:
+        return PROVENANCE.inspect_repository(self.root, self.environment, self.root)
+
+    def write_policy(self, policy: dict[str, object]) -> None:
+        path = self.root / PROVENANCE.POLICY_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(policy), encoding="utf-8")
+
+    @staticmethod
+    def dependency(
+        name: str,
+        *,
+        source: str | None,
+        kind: str | None = None,
+        path: str | None = None,
+        features: list[str] | None = None,
+    ) -> dict[str, object]:
+        value: dict[str, object] = {
+            "name": name,
+            "source": source,
+            "req": "*" if source is None else "=1.0.0",
+            "kind": kind,
+            "rename": None,
+            "optional": False,
+            "uses_default_features": True,
+            "features": features or [],
+            "target": None,
+            "registry": None,
+        }
+        if path is not None:
+            value["path"] = path
+        return value
+
+    @staticmethod
+    def resolve_dependency(name: str, package_id: str, kind: str | None = None) -> dict[str, object]:
+        return {
+            "name": name,
+            "pkg": package_id,
+            "dep_kinds": [{"kind": kind, "target": None}],
+        }
+
+    def metadata(self) -> dict[str, object]:
+        app_id = "path+app#app@0.1.0"
+        xtask_id = "path+xtask#lumin-xtask@0.1.0"
+        serde_id = f"{PROVENANCE.CRATES_IO_SOURCE}#serde@1.0.0"
+        return {
+            "workspace_root": str(self.root),
+            "workspace_members": [app_id, xtask_id],
+            "packages": [
                 {
-                    "kind": "third-party",
-                    "package": row["package"],
+                    "id": app_id,
+                    "name": "app",
+                    "version": "0.1.0",
+                    "source": None,
+                    "manifest_path": str(self.app / "Cargo.toml"),
+                    "dependencies": [
+                        self.dependency(
+                            "serde",
+                            source=PROVENANCE.CRATES_IO_SOURCE,
+                            features=["derive", "std"],
+                        )
+                    ],
+                },
+                {
+                    "id": xtask_id,
+                    "name": "lumin-xtask",
+                    "version": "0.1.0",
+                    "source": None,
+                    "manifest_path": str(self.xtask / "Cargo.toml"),
+                    "dependencies": [
+                        self.dependency("app", source=None, path=str(self.app)),
+                        self.dependency(
+                            "serde",
+                            source=PROVENANCE.CRATES_IO_SOURCE,
+                            features=["derive", "std"],
+                        ),
+                    ],
+                },
+                {
+                    "id": serde_id,
+                    "name": "serde",
                     "version": "1.0.0",
                     "source": PROVENANCE.CRATES_IO_SOURCE,
+                    "manifest_path": str(self.registry_manifest),
+                    "dependencies": [],
                 },
-            )
-            normalized_dependencies.append(row)
-        root_manifest = PROVENANCE._read_manifest(self.root / "Cargo.toml")
-        workspace = PROVENANCE._required_table(
-            root_manifest.get("workspace"), "fixture [workspace]"
-        )
-        member_manifest = PROVENANCE._read_manifest(self.member / "Cargo.toml")
-        authored_package = PROVENANCE._required_table(
-            member_manifest.get("package"), "fixture [package]"
-        )
-        policy = self.root / "tools" / "xtask" / "dependency-surface-policy.v1.json"
-        policy.parent.mkdir(parents=True, exist_ok=True)
-        policy.write_text(
-            json.dumps(
-                {
-                    "schemaVersion": 1,
-                    "workspaceResolver": "3",
-                    "cargoLockSha256": hashlib.sha256(
-                        (self.root / "Cargo.lock").read_bytes()
-                    ).hexdigest(),
-                    "rootProfiles": root_manifest.get("profile", {}),
-                    "workspacePackage": workspace.get("package", {}),
-                    "workspaceDependencies": (
-                        PROVENANCE.canonical_workspace_dependency_catalog(
-                            workspace.get("dependencies", {})
-                        )
-                    ),
-                    "workspaceLints": workspace.get("lints", {}),
-                    "workspaceMemberLints": {
-                        "fixture-member": member_manifest.get("lints", {})
+            ],
+            "resolve": {
+                "nodes": [
+                    {
+                        "id": app_id,
+                        "deps": [self.resolve_dependency("serde", serde_id)],
+                        "features": ["default", "extra"],
                     },
-                    "packages": [
-                        {
-                            "name": "fixture-member",
-                            "authoredPackage": authored_package,
-                            "features": PROVENANCE._authored_feature_policy(
-                                member_manifest, "fixture-member"
-                            ),
-                            "dependencies": normalized_dependencies,
-                        }
-                    ],
-                }
-            ),
-            encoding="utf-8",
-        )
+                    {
+                        "id": xtask_id,
+                        "deps": [
+                            self.resolve_dependency("app", app_id),
+                            self.resolve_dependency("serde", serde_id),
+                        ],
+                        "features": [],
+                    },
+                    {"id": serde_id, "deps": [], "features": ["derive", "std"]},
+                ]
+            },
+        }
 
-    def write_root(self, *, resolver: str = "3", suffix: str = "") -> None:
-        (self.root / "Cargo.toml").write_text(
-            f'[workspace]\nresolver = "{resolver}"\nmembers = ["member"]\n{suffix}',
-            encoding="utf-8",
-        )
 
-    def validate(self, command: tuple[str, ...] = ("cargo", "--version"), **environment: str) -> None:
-        PROVENANCE.validate_invocation(
-            self.root,
+class CommandSurfaceTests(unittest.TestCase):
+    def test_native_and_musl_commands_are_exactly_admitted(self) -> None:
+        native = PROVENANCE.validate_command(
+            ("cargo", "test", "--workspace", "--locked", "--", "--target", "fixture")
+        )
+        self.assertIsNone(native.explicit_target)
+        musl = PROVENANCE.validate_command(
+            (
+                "cargo",
+                "build",
+                "--locked",
+                "--target",
+                "x86_64-unknown-linux-musl",
+            )
+        )
+        self.assertEqual(musl.explicit_target, "x86_64-unknown-linux-musl")
+
+    def test_clippy_maps_to_the_direct_driver_with_leading_token(self) -> None:
+        plan = PROVENANCE.validate_command(
+            ("cargo", "clippy", "--workspace", "--locked", "--", "-D", "warnings")
+        )
+        clippy = Path("/trusted/cargo-clippy")
+        with mock.patch.object(PROVENANCE, "pinned_clippy", return_value=clippy):
+            command = PROVENANCE.resolved_command(plan, Path("/trusted/cargo"), {}, Path("/repo"))
+        self.assertEqual(
             command,
-            environment,
-            self.root,
-            self.cargo_home,
-        )
-
-
-class SourceProvenanceTests(unittest.TestCase):
-    def fixture(self) -> tuple[tempfile.TemporaryDirectory[str], Fixture]:
-        temporary = tempfile.TemporaryDirectory()
-        return temporary, Fixture(Path(temporary.name))
-
-    def test_clean_explicit_workspace_is_accepted(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            fixture.validate()
-
-    @unittest.skipUnless(os.name == "nt", "Windows extended paths are platform-specific")
-    def test_windows_extended_root_is_normalized_before_preflight(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            extended_root = Path("\\\\?\\" + str(fixture.root))
-            observed: list[object] = []
-
-            def preflight(
-                validation: object, command: tuple[str, ...], environment: object
-            ) -> Path:
-                observed.append(validation)
-                return fixture.cargo_home / "cargo"
-
-            PROVENANCE.validate_check_only(
-                extended_root,
-                {},
-                fixture.root,
-                preflight,
-                fixture.cargo_home,
-            )
-            self.assertEqual(len(observed), 1)
-            validation = observed[0]
-            self.assertEqual(validation.root, fixture.root.resolve(strict=True))
-            self.assertFalse(str(validation.root).startswith("\\\\?\\"))
-
-    def test_import_does_not_write_repository_bytecode(self) -> None:
-        self.assertFalse((SCRIPT.parent / "__pycache__").exists())
-
-    def test_check_only_runs_dependency_preflight_after_manifest_validation(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            calls: list[tuple[object, tuple[str, ...], object]] = []
-
-            def preflight(validation: object, command: tuple[str, ...], environment: object) -> Path:
-                calls.append((validation, command, environment))
-                return fixture.cargo_home / "cargo"
-
-            environment = {"PATH": str(fixture.cargo_home)}
-            PROVENANCE.validate_check_only(
-                fixture.root,
-                environment,
-                fixture.root,
-                preflight,
-                fixture.cargo_home,
-            )
-            self.assertEqual(len(calls), 1)
-            self.assertEqual(calls[0][1], ("cargo", "metadata"))
-            self.assertIs(calls[0][2], environment)
-
-    def test_independent_metadata_and_registry_helper_suites(self) -> None:
-        for name in ("test_metadata_snapshot.py", "test_registry_snapshot.py"):
-            with self.subTest(name=name):
-                completed = subprocess.run(
-                    [sys.executable, "-I", "-S", str(SCRIPT.with_name(name))],
-                    cwd=SCRIPT.parents[3],
-                    env=os.environ.copy(),
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                )
-                self.assertEqual(completed.returncode, 0, completed.stderr)
-
-    def test_bootstrap_helper_digest_is_exact(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            helper = fixture.root / "tools" / "xtask" / "bootstrap" / "helper.py"
-            helper.parent.mkdir(parents=True)
-            helper.write_text("print('trusted')\n", encoding="utf-8")
-            digest = hashlib.sha256(helper.read_bytes()).hexdigest()
-            self.assertEqual(
-                PROVENANCE._verified_helper(
-                    fixture.root,
-                    Path("tools/xtask/bootstrap/helper.py"),
-                    digest,
-                ),
-                helper,
-            )
-            helper.write_text("print('changed')\n", encoding="utf-8")
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "digest mismatch"):
-                PROVENANCE._verified_helper(
-                    fixture.root,
-                    Path("tools/xtask/bootstrap/helper.py"),
-                    digest,
-                )
-
-    def test_both_command_line_config_forms_are_rejected(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            for command in (
-                ("cargo", "--config", "source.crates-io.replace-with=vendored", "metadata"),
-                ("cargo", "--config=source.crates-io.replace-with=vendored", "metadata"),
-            ):
-                with self.subTest(command=command):
-                    with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "configuration argument"):
-                        fixture.validate(command)
-
-    def test_cargo_relocation_and_compiler_forwarding_are_rejected(self) -> None:
-        commands = (
-            ("cargo", "build", "--manifest-path", "elsewhere/Cargo.toml"),
-            ("cargo", "build", "--manifest-path=elsewhere/Cargo.toml"),
-            ("cargo", "build", "--lockfile-path", "elsewhere/Cargo.lock"),
-            ("cargo", "build", "--target-dir", "elsewhere/target"),
-            ("cargo", "build", "--artifact-dir=elsewhere/artifacts"),
-            ("cargo", "build", "--directory", "elsewhere"),
-            ("cargo", "build", "-C", "elsewhere"),
-            ("cargo", "build", "-Celsewhere"),
-            ("cargo", "build", "-Zunstable-options"),
-            ("cargo", "+stable", "build"),
-            ("cargo", "rustc", "--", "--target", "x86_64-unknown-linux-gnu"),
-            ("cargo", "rustdoc"),
-            ("cargo", "build", "--", "-C", "linker=payload"),
-        )
-        for command in commands:
-            with self.subTest(command=command):
-                with self.assertRaises(PROVENANCE.ProvenanceError):
-                    PROVENANCE.validate_command(command)
-
-    def test_only_exact_musl_release_target_is_accepted(self) -> None:
-        PROVENANCE.validate_command(
             (
-                "cargo",
-                "build",
-                "--target",
-                PROVENANCE.MUSL_TARGET,
+                str(clippy),
+                "clippy",
+                "--workspace",
                 "--locked",
-                "-p",
-                "lumin-cli",
-                "--release",
-            )
+                "--",
+                "-D",
+                "warnings",
+            ),
         )
+
+    def test_mutating_relocating_and_ambiguous_commands_fail(self) -> None:
         rejected = (
-            (
-                "cargo",
-                "build",
-                f"--target={PROVENANCE.MUSL_TARGET}",
-                "--release",
-                "--locked",
-                "-p",
-                "lumin-cli",
-            ),
-            (
-                "cargo",
-                "build",
-                "--target",
-                PROVENANCE.MUSL_TARGET,
-                "--release",
-                "--locked",
-                "-p",
-                "other",
-            ),
-            (
-                "cargo",
-                "build",
-                "--target",
-                PROVENANCE.MUSL_TARGET,
-                "--release",
-                "--locked",
-                "-p",
-                "lumin-cli",
-                "--features",
-                "extra",
-            ),
-            (
-                "cargo",
-                "build",
-                "--target",
-                PROVENANCE.MUSL_TARGET,
-                "--release",
-                "--release",
-                "--locked",
-                "-p",
-                "lumin-cli",
-            ),
+            ("cargo", "test"),
+            ("cargo", "test", "--locked", "--locked"),
+            ("cargo", "test", "--", "--locked"),
+            ("cargo", "update", "--locked"),
+            ("cargo", "install", "--locked"),
+            ("cargo", "vendor", "--locked"),
+            ("cargo", "publish", "--locked"),
+            ("cargo", "fmt", "--locked"),
+            ("cargo", "+stable", "test", "--locked"),
+            ("cargo", "test", "--locked", "--config", "source.x=y"),
+            ("cargo", "test", "--locked", "--config=source.x=y"),
+            ("cargo", "test", "--locked", "--manifest-path=x"),
+            ("cargo", "test", "--locked", "--lockfile-path=x"),
+            ("cargo", "test", "--locked", "-Cother"),
+            ("cargo", "test", "--locked", "-Zunstable"),
+            ("cargo", "test", "--locked", "--target=x86_64-unknown-linux-musl"),
+            ("cargo", "test", "--locked", "--target", "aarch64-unknown-linux-gnu"),
         )
         for command in rejected:
-            with self.subTest(command=command):
-                with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "musl release"):
-                    PROVENANCE.validate_command(command)
-
-    def test_cargo_suffix_policy_is_subcommand_specific(self) -> None:
-        for command in (
-            ("cargo", "clippy", "--workspace", "--", "-D", "warnings"),
-            ("cargo", "test", "--locked", "--", "--test-threads=1"),
-            ("cargo", "run", "--locked", "--", "--user-input"),
-        ):
-            with self.subTest(command=command):
+            with self.subTest(command=command), self.assertRaises(PROVENANCE.ProvenanceError):
                 PROVENANCE.validate_command(command)
-        for command in (
-            ("cargo", "clippy", "--", "-A", "warnings"),
-            ("cargo", "build", "--", "--user-input"),
+
+    def test_windows_environment_matching_is_case_insensitive(self) -> None:
+        for environment in (
+            {"cargo_alias_audit": "test"},
+            {"rustc": "payload"},
+            {"cargo_source_crates_io_replace_with": "other"},
+            {"cargo_registries_crates_io_index": "other"},
+            {"cargo_build_target": "other"},
         ):
-            with self.subTest(command=command):
-                with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "suffix"):
-                    PROVENANCE.validate_command(command)
-
-    def test_source_environment_is_rejected_without_mutating_process_state(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            for name in (
-                "CARGO_SOURCE_CRATES_IO_REPLACE_WITH",
-                "CARGO_PATHS",
-                "CARGO_REGISTRIES_CRATES_IO_INDEX",
+            with self.subTest(environment=environment), self.assertRaises(
+                PROVENANCE.ProvenanceError
             ):
-                with self.subTest(name=name):
-                    with self.assertRaisesRegex(PROVENANCE.ProvenanceError, name):
-                        fixture.validate(**{name: "replacement"})
+                PROVENANCE.reject_environment_overrides(environment, case_insensitive=True)
 
-    def test_compiler_profile_and_alias_environment_is_rejected(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            for name in (
-                "RUSTFLAGS",
-                "CARGO_ENCODED_RUSTFLAGS",
-                "CARGO_ENCODED_RUSTDOCFLAGS",
-                "RUSTC_WRAPPER",
-                "CARGO_BUILD_RUSTC_WRAPPER",
-                "CARGO_PROFILE_RELEASE_PANIC",
-                "CARGO_ALIAS_AUDIT",
-                "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER",
-                "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTDOCFLAGS",
-            ):
-                with self.subTest(name=name):
-                    with self.assertRaisesRegex(PROVENANCE.ProvenanceError, name):
-                        fixture.validate(**{name: "replacement"})
 
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "exactly 0"):
-                fixture.validate(CARGO_INCREMENTAL="1")
-            fixture.validate(CARGO_INCREMENTAL="0")
+class DependencySurfaceTests(unittest.TestCase):
+    def test_policy_is_small_direct_and_includes_the_development_tool(self) -> None:
+        with Fixture() as fixture:
+            policy = PROVENANCE.build_policy(fixture.inspect(), fixture.metadata())
+        self.assertEqual(policy["schemaVersion"], 2)
+        self.assertEqual([member["name"] for member in policy["members"]], ["app", "lumin-xtask"])
+        xtask = policy["members"][1]
+        self.assertEqual(xtask["class"], "development-tool")
+        self.assertEqual(len(xtask["dependencies"]), 2)
+        self.assertIn("unused", [entry["alias"] for entry in policy["workspaceDependencies"]])
+        self.assertNotIn("transitivePackages", policy)
 
-    def test_terminal_runtime_scrubs_github_command_files(self) -> None:
-        environment = {
-            "GITHUB_ENV": "env-file",
-            "github_path": "path-file",
-            "GITHUB_OUTPUT": "output-file",
-            "GitHub_State": "state-file",
-            "GITHUB_STEP_SUMMARY": "summary-file",
-            "UNCHANGED": "value",
-        }
-        for subcommand in ("bench", "run", "test"):
-            with self.subTest(subcommand=subcommand):
-                child = PROVENANCE.controlled_child_environment(
-                    ("cargo", subcommand, "--locked"), environment
+    def test_metadata_traversal_and_feature_set_order_do_not_change_policy(self) -> None:
+        with Fixture() as fixture:
+            repository = fixture.inspect()
+            metadata = fixture.metadata()
+            expected = PROVENANCE.build_policy(repository, metadata)
+            reordered = copy.deepcopy(metadata)
+            reordered["packages"].reverse()
+            reordered["workspace_members"].reverse()
+            reordered["resolve"]["nodes"].reverse()
+            for package in reordered["packages"]:
+                package["dependencies"].reverse()
+                for dependency in package["dependencies"]:
+                    dependency["features"].reverse()
+            for node in reordered["resolve"]["nodes"]:
+                node["deps"].reverse()
+            actual = PROVENANCE.build_policy(repository, reordered)
+        self.assertEqual(actual, expected)
+
+    def test_authored_requirement_remains_exact(self) -> None:
+        with Fixture() as fixture:
+            metadata = fixture.metadata()
+            before = PROVENANCE.build_policy(fixture.inspect(), metadata)
+            source = fixture.root_manifest.read_text(encoding="utf-8")
+            fixture.root_manifest.write_text(
+                source.replace('"=1.0.0"', '"= 1.0.0"'), encoding="utf-8"
+            )
+            after = PROVENANCE.build_policy(fixture.inspect(), metadata)
+        self.assertIsNotNone(PROVENANCE._first_difference(before, after))
+        self.assertEqual(after["workspaceDependencies"][0]["requirement"], "= 1.0.0")
+
+    def test_requested_feature_order_is_set_canonical(self) -> None:
+        with Fixture() as fixture:
+            metadata = fixture.metadata()
+            before = PROVENANCE.build_policy(fixture.inspect(), metadata)
+            source = fixture.root_manifest.read_text(encoding="utf-8")
+            fixture.root_manifest.write_text(
+                source.replace('["std", "derive"]', '["derive", "std"]'),
+                encoding="utf-8",
+            )
+            after = PROVENANCE.build_policy(fixture.inspect(), metadata)
+        self.assertEqual(after, before)
+
+    def test_absent_and_explicit_empty_feature_requests_remain_distinct(self) -> None:
+        with Fixture() as fixture:
+            metadata = fixture.metadata()
+            absent = PROVENANCE.build_policy(fixture.inspect(), metadata)
+            source = fixture.root_manifest.read_text(encoding="utf-8")
+            fixture.root_manifest.write_text(
+                source.replace(
+                    'unused = "=2.0.0"',
+                    'unused = { version = "=2.0.0", features = [] }',
+                ),
+                encoding="utf-8",
+            )
+            explicit_empty = PROVENANCE.build_policy(fixture.inspect(), metadata)
+        self.assertIsNone(absent["workspaceDependencies"][1]["features"])
+        self.assertEqual(explicit_empty["workspaceDependencies"][1]["features"], [])
+        self.assertIsNotNone(PROVENANCE._first_difference(absent, explicit_empty))
+        with Fixture() as fixture:
+            metadata = fixture.metadata()
+            absent = PROVENANCE.build_policy(fixture.inspect(), metadata)
+            manifest = fixture.app / "Cargo.toml"
+            manifest.write_text(
+                manifest.read_text(encoding="utf-8").replace(
+                    "serde.workspace = true",
+                    "serde = { workspace = true, features = [] }",
+                ),
+                encoding="utf-8",
+            )
+            explicit_empty = PROVENANCE.build_policy(fixture.inspect(), metadata)
+        self.assertIsNone(absent["members"][0]["dependencies"][0]["features"])
+        self.assertEqual(explicit_empty["members"][0]["dependencies"][0]["features"], [])
+        self.assertIsNotNone(PROVENANCE._first_difference(absent, explicit_empty))
+
+    def test_member_and_development_tool_declaration_drift_fail(self) -> None:
+        with Fixture() as fixture:
+            metadata = fixture.metadata()
+            for manifest in (fixture.app / "Cargo.toml", fixture.xtask / "Cargo.toml"):
+                original = manifest.read_text(encoding="utf-8")
+                manifest.write_text(
+                    original.replace("serde.workspace = true", "serde = { workspace = true, optional = true }"),
+                    encoding="utf-8",
                 )
-                self.assertEqual(child, {"UNCHANGED": "value"})
-        self.assertEqual(
-            PROVENANCE.controlled_child_environment(
-                ("cargo", "build", "--locked"), environment
+                with self.subTest(manifest=manifest), self.assertRaises(
+                    PROVENANCE.ProvenanceError
+                ):
+                    PROVENANCE.build_policy(fixture.inspect(), metadata)
+                manifest.write_text(original, encoding="utf-8")
+
+    def test_policy_comparison_rejects_feature_and_origin_drift(self) -> None:
+        replacements = (
+            ('default = []', 'default = ["serde/std"]'),
+            (
+                "serde.workspace = true",
+                'serde = { version = "=1.0.0", features = ["derive", "std"] }',
             ),
-            environment,
         )
-
-    def test_controlled_child_environment_binds_authenticated_toolchain(self) -> None:
-        child = PROVENANCE.controlled_child_environment(
-            ("cargo", "build", "--locked"),
-            {"UNCHANGED": "value"},
-            cargo=Path("/trusted/cargo"),
-            rustc=Path("/trusted/rustc"),
-            rustdoc=Path("/trusted/rustdoc"),
-        )
-        self.assertEqual(
-            child,
-            {
-                "UNCHANGED": "value",
-                "CARGO": str(Path("/trusted/cargo")),
-                "RUSTC": str(Path("/trusted/rustc")),
-                "RUSTDOC": str(Path("/trusted/rustdoc")),
-                "CARGO_INCREMENTAL": "0",
-            },
-        )
-
-    def test_repository_and_cargo_home_config_files_are_rejected(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            candidates = (
-                fixture.root / ".cargo" / "config.toml",
-                fixture.member / ".cargo" / "config.toml",
-                fixture.root.parent / ".cargo" / "config",
-                fixture.cargo_home / "config",
-            )
-            for candidate in candidates:
-                with self.subTest(candidate=candidate):
-                    candidate.parent.mkdir(parents=True, exist_ok=True)
-                    candidate.write_text("[source.crates-io]\nreplace-with = 'vendored'\n", encoding="utf-8")
-                    with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "configuration"):
-                        fixture.validate()
-                    candidate.unlink()
-
-    def test_repository_owned_cargo_home_is_rejected(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "Cargo home"):
-                PROVENANCE.validate_invocation(
-                    fixture.root,
-                    ("cargo", "--version"),
-                    {},
-                    fixture.root,
-                    fixture.root / "cargo-home",
+        for old, new in replacements:
+            with Fixture() as fixture:
+                metadata = fixture.metadata()
+                repository = fixture.inspect()
+                fixture.write_policy(PROVENANCE.build_policy(repository, metadata))
+                manifest = fixture.app / "Cargo.toml"
+                manifest.write_text(
+                    manifest.read_text(encoding="utf-8").replace(old, new),
+                    encoding="utf-8",
                 )
-
-    def test_cargo_target_must_remain_outside_repository(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "target directory"):
-                fixture.validate(CARGO_TARGET_DIR=str(fixture.root / "target"))
-
-    def test_github_cargo_locations_are_exactly_job_private(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            runner_temp = fixture.root.parent / "runner-temp"
-            cargo_home = runner_temp / "lumin-cargo-home"
-            target = runner_temp / "lumin-target"
-            cargo_home.mkdir(parents=True)
-            clean = {
-                "GITHUB_ACTIONS": "true",
-                "RUNNER_TEMP": str(runner_temp),
-                "CARGO_HOME": str(cargo_home),
-                "CARGO_TARGET_DIR": str(target),
-            }
-            PROVENANCE.validate_invocation(
-                fixture.root,
-                ("cargo", "--version"),
-                clean,
-                fixture.root,
-            )
-
-            for name, value in (
-                ("CARGO_HOME", str(runner_temp / "other-home")),
-                ("CARGO_TARGET_DIR", str(runner_temp / "other-target")),
-            ):
-                with self.subTest(name=name):
-                    changed = clean | {name: value}
-                    with self.assertRaisesRegex(
-                        PROVENANCE.ProvenanceError, "job-private"
-                    ):
-                        PROVENANCE.validate_invocation(
-                            fixture.root,
-                            ("cargo", "--version"),
-                            changed,
-                            fixture.root,
-                        )
-
-    def test_registry_root_lexical_physical_disagreement_is_rejected(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            redirected = fixture.cargo_home / "redirected"
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "lexical/physical"):
-                PROVENANCE.validate_registry_root_identity(
-                    fixture.cargo_home,
-                    fixture.cargo_home,
-                    fixture.cargo_home / "registry" / "src",
-                    redirected,
-                )
-
-    @unittest.skipIf(os.name == "nt", "Windows runners may not grant symlink privileges")
-    def test_absent_registry_source_below_redirected_parent_is_rejected(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            redirected = fixture.cargo_home / "redirected-registry"
-            redirected.mkdir()
-            (fixture.cargo_home / "registry").symlink_to(
-                redirected, target_is_directory=True
-            )
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "lexical/physical"):
-                fixture.validate()
-
-    def test_empty_cargo_home_environment_is_rejected(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "must not be empty"):
-                PROVENANCE.active_cargo_home({"CARGO_HOME": ""}, fixture.root)
-
-    def test_patch_replace_and_resolver_drift_are_rejected(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            fixture.write_root(suffix='\n[patch.crates-io]\nserde = { path = "vendor/serde" }\n')
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, r"\[patch\]"):
-                fixture.validate()
-            fixture.write_root(resolver="1")
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "resolver"):
-                fixture.validate()
-
-    def test_root_profile_and_workspace_package_drift_are_rejected(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            fixture.write_root(
-                suffix='\n[profile.release]\npanic = "abort"\n'
-            )
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "profile"):
-                fixture.validate()
-
-            fixture.write_root(
-                suffix='\n[workspace.package]\nversion = "9.9.9"\n'
-            )
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "workspace.package"):
-                fixture.validate()
-
-    def test_authored_workspace_package_identity_drift_is_rejected(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            (fixture.member / "Cargo.toml").write_text(
-                '[package]\nname = "fixture-member"\nversion = "9.9.9"\n'
-                'edition = "2024"\n',
-                encoding="utf-8",
-            )
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "package contract drift"):
-                fixture.validate()
-
-    def test_workspace_feature_map_drift_is_rejected_before_cargo(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            (fixture.member / "Cargo.toml").write_text(
-                '[package]\nname = "fixture-member"\nversion = "0.0.0"\n'
-                'edition = "2024"\n[features]\ndefault = ["reviewed"]\n',
-                encoding="utf-8",
-            )
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "feature contract drift"):
-                fixture.validate()
-
-            fixture.write_policy([])
-            fixture.validate()
-
-    def test_workspace_and_member_lint_drift_is_rejected_before_cargo(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            fixture.write_root(
-                suffix='[workspace.lints.rust]\nunsafe_code = "allow"\n'
-            )
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "workspace lint map"):
-                fixture.validate()
-            fixture.write_policy([])
-            fixture.validate()
-
-            (fixture.member / "Cargo.toml").write_text(
-                '[package]\nname = "fixture-member"\nversion = "0.0.0"\n'
-                'edition = "2024"\n[lints]\nworkspace = true\n',
-                encoding="utf-8",
-            )
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "lint contract drift"):
-                fixture.validate()
-            fixture.write_policy([])
-            fixture.validate()
-
-    def test_unused_workspace_dependency_catalog_is_validated(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            fixture.write_root(
-                suffix='[workspace.dependencies]\nunused = "=1.0.0"\n'
-            )
-            with self.assertRaisesRegex(
-                PROVENANCE.ProvenanceError, "dependency catalog contract drift"
-            ):
-                fixture.validate()
-            fixture.write_policy([])
-            fixture.validate()
-
-            fixture.write_root(
-                suffix='[workspace.dependencies]\nunused = { git = "https://invalid" }\n'
-            )
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "forbidden source selectors"):
-                fixture.validate()
-            fixture.write_policy([])
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "forbidden source selectors"):
-                fixture.validate()
-
-    def test_workspace_dependency_feature_order_is_canonical(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            fixture.write_root(
-                suffix=(
-                    '[workspace.dependencies]\nserde = { version = "=1.0.0", '
-                    'features = ["derive", "std"] }\n'
-                )
-            )
-            fixture.write_policy([])
-            fixture.write_root(
-                suffix=(
-                    '[workspace.dependencies]\nserde = { version = "=1.0.0", '
-                    'features = ["std", "derive", "std"] }\n'
-                )
-            )
-            fixture.validate()
-
-    def test_duplicate_policy_json_keys_are_rejected(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            policy = fixture.root / PROVENANCE.POLICY_PATH
-            source = policy.read_text(encoding="utf-8").replace(
-                '"schemaVersion": 1', '"schemaVersion": 1, "schemaVersion": 2', 1
-            )
-            policy.write_text(source, encoding="utf-8")
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "duplicate.*JSON key"):
-                fixture.validate()
-
-    def test_lockfile_drift_is_rejected_before_cargo(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            (fixture.root / "Cargo.lock").write_text(
-                "version = 4\n# changed transitive lock surface\n", encoding="utf-8"
-            )
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "Cargo.lock digest"):
-                fixture.validate()
-
-    def test_underscore_default_features_spelling_is_rejected(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            (fixture.member / "Cargo.toml").write_text(
-                '[package]\nname = "fixture-member"\nversion = "0.0.0"\n'
-                'edition = "2021"\n[dependencies]\n'
-                'serde = { version = "=1.0.0", default_features = false }\n',
-                encoding="utf-8",
-            )
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "default_features"):
-                fixture.validate()
-
-    def test_semantic_resolver_formatting_is_accepted(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            (fixture.root / "Cargo.toml").write_text(
-                'workspace.resolver="3" # exact semantic value\n'
-                'workspace.members = ["member"]\n',
-                encoding="utf-8",
-            )
-            fixture.validate()
-
-    def test_authored_requirement_string_is_not_cargo_normalized(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            fixture.write_root(
-                suffix='\n[workspace.dependencies]\nserde = "=1.0.0"\n'
-            )
-            (fixture.member / "Cargo.toml").write_text(
-                '[package]\nname = "fixture-member"\nversion = "0.0.0"\n'
-                '[dependencies]\nserde.workspace = true\n',
-                encoding="utf-8",
-            )
-            fixture.write_policy(
-                [
-                    {
-                        "package": "serde",
-                        "rename": None,
-                        "requirement": "=1.0.0",
-                        "kind": "normal",
-                        "target": None,
-                    }
-                ]
-            )
-            fixture.validate()
-
-            fixture.write_root(
-                suffix='\n[workspace.dependencies]\nserde = "= 1.0.0"\n'
-            )
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "contract drift"):
-                fixture.validate()
-
-    def test_dependency_source_substitutions_are_rejected_before_cargo(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            rogue = fixture.root / "rogue"
-            rogue.mkdir()
-            (rogue / "Cargo.toml").write_text(
-                '[package]\nname = "serde"\nversion = "1.0.0"\n',
-                encoding="utf-8",
-            )
-            (rogue / "build.rs").write_text("fn main() {}\n", encoding="utf-8")
-            (fixture.member / "Cargo.toml").write_text(
-                '[package]\nname = "fixture-member"\nversion = "0.0.0"\n'
-                '[dependencies]\nserde.workspace = true\n',
-                encoding="utf-8",
-            )
-            fixture.write_policy(
-                [
-                    {
-                        "package": "serde",
-                        "rename": None,
-                        "requirement": "=1.0.0",
-                        "kind": "normal",
-                        "target": None,
-                    }
-                ]
-            )
-            substitutions = (
-                'serde = { version = "=1.0.0", path = "rogue" }',
-                'serde = { version = "=1.0.0", git = "https://example.invalid/serde" }',
-                'serde = { version = "=1.0.0", registry = "private" }',
-            )
-            for dependency in substitutions:
-                with self.subTest(dependency=dependency):
-                    fixture.write_root(
-                        suffix=f"\n[workspace.dependencies]\n{dependency}\n"
+                changed = fixture.inspect()
+                with self.subTest(replacement=new), mock.patch.object(
+                    PROVENANCE,
+                    "run_metadata",
+                    side_effect=[copy.deepcopy(metadata), copy.deepcopy(metadata)],
+                ), self.assertRaises(PROVENANCE.ProvenanceError):
+                    PROVENANCE.dependency_preflight(
+                        changed,
+                        Path("cargo"),
+                        "x86_64-unknown-linux-gnu",
+                        None,
+                        fixture.environment,
                     )
-                    with self.assertRaisesRegex(
-                        PROVENANCE.ProvenanceError,
-                        "workspace member|forbidden source selectors",
-                    ):
-                        fixture.validate()
 
-    def test_root_package_dependencies_are_included_before_cargo(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            rogue = fixture.root / "rogue"
-            rogue.mkdir()
-            (rogue / "Cargo.toml").write_text(
-                '[package]\nname = "rogue"\nversion = "0.0.0"\n',
-                encoding="utf-8",
+    def test_duplicate_and_unresolved_direct_bindings_fail(self) -> None:
+        for mutation in ("duplicate", "remove"):
+            with Fixture() as fixture:
+                metadata = fixture.metadata()
+                app_node = metadata["resolve"]["nodes"][0]
+                if mutation == "duplicate":
+                    app_node["deps"].append(copy.deepcopy(app_node["deps"][0]))
+                else:
+                    app_node["deps"].clear()
+                with self.subTest(mutation=mutation), self.assertRaises(
+                    PROVENANCE.ProvenanceError
+                ):
+                    PROVENANCE.build_policy(fixture.inspect(), metadata)
+
+    def test_filtered_lane_must_match_the_selected_direct_bindings(self) -> None:
+        with Fixture() as fixture:
+            repository = fixture.inspect()
+            metadata = fixture.metadata()
+            policy = PROVENANCE.build_policy(repository, metadata)
+            PROVENANCE.validate_filtered_lane(
+                policy, metadata, repository, "x86_64-unknown-linux-gnu"
             )
-            (rogue / "build.rs").write_text("fn main() {}\n", encoding="utf-8")
-            fixture.write_root(
-                suffix=(
-                    '\n[package]\nname = "root-member"\nversion = "0.0.0"\n'
-                    '[dependencies]\nrogue = { path = "rogue" }\n'
+            changed = copy.deepcopy(policy)
+            changed["members"][0]["dependencies"][0]["target"] = "cfg(windows)"
+            with self.assertRaises(PROVENANCE.ProvenanceError):
+                PROVENANCE.validate_filtered_lane(
+                    changed, metadata, repository, "x86_64-unknown-linux-gnu"
                 )
-            )
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "workspace member"):
-                fixture.validate()
 
-    def test_workflow_drift_and_additional_workflows_are_rejected(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            workflow = fixture.root / ".github" / "workflows" / "ci.yml"
-            original = workflow.read_bytes()
-            workflow.write_bytes(original + b"\n")
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "digest mismatch"):
-                fixture.validate()
-            workflow.write_bytes(original)
+    def test_registry_manifest_must_be_loaded_from_the_active_cargo_home(self) -> None:
+        with Fixture() as fixture:
+            metadata = fixture.metadata()
+            metadata["packages"][2]["manifest_path"] = str(fixture.root / "Cargo.toml")
+            with self.assertRaises(PROVENANCE.ProvenanceError):
+                PROVENANCE.build_policy(fixture.inspect(), metadata)
 
-            extra = workflow.with_name("escape.yaml")
-            extra.write_text("name: bypass\n", encoding="utf-8")
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "only ci.yml"):
-                fixture.validate()
+    def test_root_package_external_member_and_source_override_fail(self) -> None:
+        cases = (
+            ("\n[package]\nname = \"root\"\nversion = \"0.1.0\"\n", None),
+            (None, ('members = ["app", "tools/xtask"]', 'members = ["../outside"]')),
+            (None, ('unused = "=2.0.0"', 'unused = { git = "https://example.invalid/x" }')),
+        )
+        for suffix, replacement in cases:
+            with Fixture() as fixture:
+                source = fixture.root_manifest.read_text(encoding="utf-8")
+                if suffix:
+                    source += suffix
+                if replacement:
+                    source = source.replace(*replacement)
+                fixture.root_manifest.write_text(source, encoding="utf-8")
+                with self.subTest(source=source), self.assertRaises(PROVENANCE.ProvenanceError):
+                    fixture.inspect()
 
-    def test_workspace_build_scripts_are_rejected(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            (fixture.member / "build.rs").write_text("fn main() {}\n", encoding="utf-8")
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "build script"):
-                fixture.validate()
-
-    def test_root_workspace_package_build_scripts_are_rejected(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            package = (
-                '\n[package]\nname = "root-member"\nversion = "0.0.0"\n'
-                'edition = "2024"\n'
-            )
-            fixture.write_root(suffix=package)
-            build_script = fixture.root / "build.rs"
-            build_script.write_text("fn main() {}\n", encoding="utf-8")
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "build script"):
-                fixture.validate()
-
-            build_script.unlink()
-            fixture.write_root(suffix=package + 'build = "scripts/build.rs"\n')
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "build script"):
-                fixture.validate()
-
-    @unittest.skipIf(os.name == "nt", "Windows runners may not grant symlink privileges")
-    def test_redirected_workspace_manifest_is_rejected(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            outside = fixture.root.parent / "outside-Cargo.toml"
-            outside.write_text(
-                '[package]\nname = "fixture-member"\nversion = "0.0.0"\n',
+    def test_cargo_config_patch_and_alternate_registry_fail_before_metadata(self) -> None:
+        with Fixture() as fixture:
+            config = fixture.root / ".cargo" / "config.toml"
+            config.parent.mkdir()
+            config.write_text("[source.crates-io]\nreplace-with='other'\n", encoding="utf-8")
+            with self.assertRaises(PROVENANCE.ProvenanceError):
+                fixture.inspect()
+        with Fixture() as fixture:
+            fixture.root_manifest.write_text(
+                fixture.root_manifest.read_text(encoding="utf-8")
+                + "\n[patch.crates-io]\nserde = { path = 'app' }\n",
                 encoding="utf-8",
             )
-            manifest = fixture.member / "Cargo.toml"
-            manifest.unlink()
-            manifest.symlink_to(outside)
-            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "redirected or external"):
-                fixture.validate()
-
-    def test_malformed_zero_member_and_escape_inputs_fail_closed(self) -> None:
-        temporary, fixture = self.fixture()
-        with temporary:
-            cases = (
-                '[workspace\nresolver = "3"\n',
-                '[workspace]\nresolver = "3"\nmembers = []\n',
-                '[workspace]\nresolver = "3"\nmembers = ["../outside"]\n',
+            with self.assertRaises(PROVENANCE.ProvenanceError):
+                fixture.inspect()
+        with Fixture() as fixture:
+            manifest = fixture.app / "Cargo.toml"
+            manifest.write_text(
+                manifest.read_text(encoding="utf-8").replace(
+                    "serde.workspace = true",
+                    'serde = { version = "=1.0.0", registry = "other" }',
+                ),
+                encoding="utf-8",
             )
-            for source in cases:
-                with self.subTest(source=source):
-                    (fixture.root / "Cargo.toml").write_text(source, encoding="utf-8")
-                    with self.assertRaises(PROVENANCE.ProvenanceError):
-                        fixture.validate()
+            with self.assertRaises(PROVENANCE.ProvenanceError):
+                PROVENANCE.build_policy(fixture.inspect(), fixture.metadata())
 
-    def test_real_entrypoint_uses_scrubbed_host_state_and_controlled_cargo(self) -> None:
-        cargo = shutil.which("cargo")
-        self.assertIsNotNone(cargo, "cargo must be available for the bootstrap test")
-        root = SCRIPT.parents[3]
-        with tempfile.TemporaryDirectory() as raw_temporary:
-            temporary = Path(raw_temporary)
-            cargo_home = temporary / "cargo-home"
-            binary_directory = temporary / "bin"
-            cargo_home.mkdir()
-            binary_directory.mkdir()
-            cargo_name = "cargo.exe" if os.name == "nt" else "cargo"
-            shutil.copy2(Path(cargo).resolve(strict=True), binary_directory / cargo_name)
-
-            inherited = (
-                "COMSPEC",
-                "HOME",
-                "PATHEXT",
-                "RUSTUP_HOME",
-                "SYSTEMDRIVE",
-                "SYSTEMROOT",
-                "TEMP",
-                "TMP",
-                "USERPROFILE",
-                "WINDIR",
-            )
-            environment = {
-                name: os.environ[name] for name in inherited if name in os.environ
-            }
-            environment["CARGO_HOME"] = str(cargo_home)
-            environment["PATH"] = str(binary_directory)
-            environment["LUMIN_CARGO"] = str(binary_directory / cargo_name)
-            self.assertNotIn("RUSTUP_TOOLCHAIN", environment)
-
-            completed = subprocess.run(
-                [sys.executable, "-I", "-S", str(SCRIPT), "--", "cargo", "--version"],
-                cwd=root,
-                env=environment,
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            self.assertEqual(completed.returncode, 0, completed.stderr)
-            self.assertTrue(completed.stdout.startswith("cargo "), completed.stdout)
-            self.assertFalse(
-                (root / "%SystemDrive%").exists(),
-                "the isolated bootstrap must not write Windows cache state in the repository",
-            )
+    def test_duplicate_and_unknown_policy_keys_fail(self) -> None:
+        with Fixture() as fixture:
+            path = fixture.root / PROVENANCE.POLICY_PATH
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('{"schemaVersion":2,"schemaVersion":3}', encoding="utf-8")
+            with self.assertRaises(PROVENANCE.ProvenanceError):
+                PROVENANCE.load_policy(fixture.root)
+            with self.assertRaises(PROVENANCE.ProvenanceError):
+                PROVENANCE._validate_policy_shape(
+                    {
+                        "schemaVersion": 2,
+                        "resolver": "3",
+                        "members": [],
+                        "workspaceDependencies": [],
+                        "unexpected": True,
+                    }
+                )
 
 
 if __name__ == "__main__":
-    unittest.main()
+    unittest.main(verbosity=2)
