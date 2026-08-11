@@ -2,12 +2,12 @@
 
 Document role: focused Architecture v1 amendment and freeze gate
 
-Status: **REOPENED** by independent GitHub review `4898896637` of
-`f2ff139791365fb87802fb916de4f1230d961b5d`. Its two actionable threads identify the
-MSVC linker's uncontrolled native environment and target flags omitted by Cargo
-metadata. The repository owner's approval of `f2ff139` does not carry to this amended
-candidate. Implementation and merge remain blocked until new owner and independent
-verdicts bind the next exact architecture-content commit.
+Status: **FROZEN** at architecture-content commit
+`ffd6af05f9f08e696eef88b8aa251be1e07282c4`. The repository owner approved that exact
+candidate, and independent GitHub clean verdicts `5247796247` and `5251296376` each bind
+`ffd6af05f9` and report no major issue. Later review `4904878282` evaluated the existing
+pre-freeze implementation; its three findings are implementation obligations already
+owned by this contract and do not amend the frozen architecture.
 
 ## Definition
 
