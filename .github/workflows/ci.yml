@@ -22,6 +22,9 @@ jobs:
   formatting:
     name: Formatting
     runs-on: ubuntu-24.04
+    env:
+      CARGO_HOME: ${{ runner.temp }}/lumin-cargo-home
+      CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-target
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -40,6 +43,9 @@ jobs:
   architecture-check:
     name: Architecture check
     runs-on: ubuntu-24.04
+    env:
+      CARGO_HOME: ${{ runner.temp }}/lumin-cargo-home
+      CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-target
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -64,12 +70,30 @@ jobs:
       - name: Enforce architecture policy
         run: target/debug/lumin-xtask architecture-check
 
-      - name: Test source provenance bootstrap after verdict
+  bootstrap-tests:
+    name: Bootstrap tests
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_HOME: ${{ runner.temp }}/lumin-cargo-home
+      CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-target
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install exact Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.14"
+
+      - name: Test source provenance bootstrap
         run: python -I -S tools/xtask/bootstrap/test_source_provenance.py
 
   dependency-policy:
     name: Dependency policy
     runs-on: ubuntu-24.04
+    env:
+      CARGO_HOME: ${{ runner.temp }}/lumin-cargo-home
+      CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-target
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -107,6 +131,9 @@ jobs:
           - name: Windows
             os: windows-2022
     runs-on: ${{ matrix.os }}
+    env:
+      CARGO_HOME: ${{ runner.temp }}/lumin-cargo-home
+      CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-target
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -145,23 +172,94 @@ jobs:
       - name: Test all targets
         run: python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --workspace --all-targets --locked
 
-      - name: Test retention crash corpus in isolated processes
-        run: python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus foundation --store-crash --row retention-crash-protocol
+  corpus:
+    name: ${{ matrix.os }} corpus ${{ matrix.case.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - windows-2022
+        case:
+          - name: retention-crash-protocol
+            arguments: foundation --store-crash --row retention-crash-protocol
+          - name: lifecycle-operation-idempotency
+            arguments: foundation --row lifecycle-operation-idempotency
+          - name: crash-publication
+            arguments: foundation --store-crash --row crash-publication
+          - name: concurrent-latest-publication
+            arguments: foundation --store-crash --row concurrent-latest-publication
+          - name: publication-retention-race
+            arguments: foundation --store-crash --row publication-retention-race
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_HOME: ${{ runner.temp }}/lumin-cargo-home
+      CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-target
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Test lifecycle operation idempotency corpus in isolated processes
-        run: python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus foundation --row lifecycle-operation-idempotency
+      - name: Install exact Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.14"
 
-      - name: Test publication crash corpus in isolated processes
-        run: python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus foundation --store-crash --row crash-publication
+      - name: Install exact Rust toolchain
+        run: rustup toolchain install 1.96.0 --profile minimal --no-self-update
 
-      - name: Test concurrent publication corpus in isolated processes
-        run: python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus foundation --store-crash --row concurrent-latest-publication
+      - name: Run isolated corpus row
+        run: python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus ${{ matrix.case.arguments }}
 
-      - name: Test publication retention race corpus in isolated processes
-        run: python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus foundation --store-crash --row publication-retention-race
+  documentation:
+    name: ${{ matrix.os }} documentation
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - windows-2022
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_HOME: ${{ runner.temp }}/lumin-cargo-home
+      CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-target
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install exact Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.14"
+
+      - name: Install exact Rust toolchain
+        run: rustup toolchain install 1.96.0 --profile minimal --no-self-update
 
       - name: Test documentation
         run: python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --workspace --doc --locked
+
+  release:
+    name: ${{ matrix.os }} release
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - windows-2022
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_HOME: ${{ runner.temp }}/lumin-cargo-home
+      CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-target
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install exact Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.14"
+
+      - name: Install exact Rust toolchain
+        run: rustup toolchain install 1.96.0 --profile minimal --no-self-update
 
       - name: Build release binary
         run: python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo build -p lumin-cli --release --locked
@@ -172,18 +270,30 @@ jobs:
     needs:
       - formatting
       - architecture-check
+      - bootstrap-tests
       - dependency-policy
       - platform
+      - corpus
+      - documentation
+      - release
     runs-on: ubuntu-24.04
     steps:
       - name: Enforce required jobs
         env:
           FORMATTING_RESULT: ${{ needs.formatting.result }}
           ARCHITECTURE_CHECK_RESULT: ${{ needs.architecture-check.result }}
+          BOOTSTRAP_TESTS_RESULT: ${{ needs.bootstrap-tests.result }}
           DEPENDENCY_POLICY_RESULT: ${{ needs.dependency-policy.result }}
           PLATFORM_RESULT: ${{ needs.platform.result }}
+          CORPUS_RESULT: ${{ needs.corpus.result }}
+          DOCUMENTATION_RESULT: ${{ needs.documentation.result }}
+          RELEASE_RESULT: ${{ needs.release.result }}
         run: |
           test "$FORMATTING_RESULT" = success
           test "$ARCHITECTURE_CHECK_RESULT" = success
+          test "$BOOTSTRAP_TESTS_RESULT" = success
           test "$DEPENDENCY_POLICY_RESULT" = success
           test "$PLATFORM_RESULT" = success
+          test "$CORPUS_RESULT" = success
+          test "$DOCUMENTATION_RESULT" = success
+          test "$RELEASE_RESULT" = success

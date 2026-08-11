@@ -5,29 +5,58 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 const GUARD_PATH: &str = "tools/xtask/bootstrap/source_provenance.py";
-const GUARD_SHA256: &str = "047dbea2d72e03667e6525505690fcffb9944a87ab6ef6c92ee969341127a2a7";
+const GUARD_SHA256: &str = "8261dae10032acc9d3cf7f93c097c2d9b6239e331ccff1dbdd70ac4609af03dd";
 const TEST_PATH: &str = "tools/xtask/bootstrap/test_source_provenance.py";
-const TEST_SHA256: &str = "7271a049ae4bdd50dab74b272a143a68a5a457e24cde4ed5177b5fff894ab7b7";
+const TEST_SHA256: &str = "650d91826524cfb3f42572e91785232cac846ef80e3acfca3ce9ab685bec7198";
 const WORKFLOW_DIRECTORY: &str = ".github/workflows";
 const WORKFLOW_PATH: &str = ".github/workflows/ci.yml";
-const WORKFLOW_SHA256: &str = "ee2613425a8ce38597a40c6885bead32d7a787059629a4be50384042f3ccc64a";
+const WORKFLOW_SHA256: &str = "1f288f643a2d5da3f73975981e13c85795d85545d6a5caaa48affbd0863c34ee";
 const SETUP_PYTHON: &str = "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0";
 const PYTHON_VERSION: &str = "3.13.14";
+const CHECKOUT: &str = "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0";
+const JOB_PRIVATE_CARGO_ENV: &str = concat!(
+    "    env:\n",
+    "      CARGO_HOME: ${{ runner.temp }}/lumin-cargo-home\n",
+    "      CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-target",
+);
 const CARGO_JOBS: &[&str] = &[
     "formatting",
     "architecture-check",
+    "bootstrap-tests",
     "dependency-policy",
     "platform",
+    "corpus",
+    "documentation",
+    "release",
 ];
 const EXPECTED_USES: &[(&str, usize)] = &[
-    (
-        "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0",
-        4,
-    ),
-    (SETUP_PYTHON, 4),
+    (CHECKOUT, 8),
+    (SETUP_PYTHON, 8),
     (
         "taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b # v2.83.4",
         1,
+    ),
+];
+const TERMINAL_RUNTIME_RUNS: &[(&str, &str)] = &[
+    (
+        "architecture-check",
+        "target/debug/lumin-xtask architecture-check",
+    ),
+    (
+        "bootstrap-tests",
+        "python -I -S tools/xtask/bootstrap/test_source_provenance.py",
+    ),
+    (
+        "platform",
+        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --workspace --all-targets --locked",
+    ),
+    (
+        "corpus",
+        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus ${{ matrix.case.arguments }}",
+    ),
+    (
+        "documentation",
+        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --workspace --doc --locked",
     ),
 ];
 const EXPECTED_RUN_COMMANDS: &[(&str, usize)] = &[
@@ -41,7 +70,7 @@ const EXPECTED_RUN_COMMANDS: &[(&str, usize)] = &[
     ),
     (
         "rustup toolchain install 1.96.0 --profile minimal --no-self-update",
-        2,
+        5,
     ),
     (
         "python -I -S tools/xtask/bootstrap/test_source_provenance.py",
@@ -98,23 +127,7 @@ const EXPECTED_RUN_COMMANDS: &[(&str, usize)] = &[
         1,
     ),
     (
-        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus foundation --store-crash --row retention-crash-protocol",
-        1,
-    ),
-    (
-        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus foundation --row lifecycle-operation-idempotency",
-        1,
-    ),
-    (
-        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus foundation --store-crash --row crash-publication",
-        1,
-    ),
-    (
-        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus foundation --store-crash --row concurrent-latest-publication",
-        1,
-    ),
-    (
-        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus foundation --store-crash --row publication-retention-race",
+        "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus ${{ matrix.case.arguments }}",
         1,
     ),
     (
@@ -129,8 +142,12 @@ const EXPECTED_RUN_COMMANDS: &[(&str, usize)] = &[
         concat!(
             "test \"$FORMATTING_RESULT\" = success\n",
             "test \"$ARCHITECTURE_CHECK_RESULT\" = success\n",
+            "test \"$BOOTSTRAP_TESTS_RESULT\" = success\n",
             "test \"$DEPENDENCY_POLICY_RESULT\" = success\n",
-            "test \"$PLATFORM_RESULT\" = success",
+            "test \"$PLATFORM_RESULT\" = success\n",
+            "test \"$CORPUS_RESULT\" = success\n",
+            "test \"$DOCUMENTATION_RESULT\" = success\n",
+            "test \"$RELEASE_RESULT\" = success",
         ),
         1,
     ),
@@ -236,8 +253,9 @@ fn validate_workflow(source: &str, violations: &mut Vec<String>) {
     let uses = extract_scalar_values(source, "uses:");
     validate_exact_multiset("uses", &uses, EXPECTED_USES, violations);
     for job in CARGO_JOBS {
-        validate_python_setup(source, job, violations);
+        validate_job_bootstrap(source, job, violations);
     }
+    validate_terminal_runtime_boundaries(source, violations);
 }
 
 fn extract_run_commands(source: &str, violations: &mut Vec<String>) -> Vec<String> {
@@ -330,13 +348,10 @@ fn validate_exact_multiset(
     }
 }
 
-fn validate_python_setup(source: &str, job: &str, violations: &mut Vec<String>) {
+fn job_block(source: &str, job: &str) -> Option<String> {
     let lines = source.lines().collect::<Vec<_>>();
     let marker = format!("  {job}:");
-    let Some(start) = lines.iter().position(|line| *line == marker) else {
-        violations.push(format!("MISSING CARGO WORKFLOW JOB: {job}"));
-        return;
-    };
+    let start = lines.iter().position(|line| *line == marker)?;
     let end = lines
         .iter()
         .enumerate()
@@ -346,7 +361,14 @@ fn validate_python_setup(source: &str, job: &str, violations: &mut Vec<String>) 
                 .then_some(index)
         })
         .unwrap_or(lines.len());
-    let block = lines[start..end].join("\n");
+    Some(lines[start..end].join("\n"))
+}
+
+fn validate_job_bootstrap(source: &str, job: &str, violations: &mut Vec<String>) {
+    let Some(block) = job_block(source, job) else {
+        violations.push(format!("MISSING CARGO WORKFLOW JOB: {job}"));
+        return;
+    };
     let snippet = format!(
         "      - name: Install exact Python\n        uses: {SETUP_PYTHON}\n        with:\n          python-version: \"{PYTHON_VERSION}\""
     );
@@ -355,6 +377,43 @@ fn validate_python_setup(source: &str, job: &str, violations: &mut Vec<String>) 
         violations.push(format!(
             "PYTHON BOOTSTRAP ROUTING: job {job} must contain one exact Python {PYTHON_VERSION} setup, found {count}"
         ));
+    }
+    let checkout = format!("        uses: {CHECKOUT}");
+    let checkout_count = block.matches(&checkout).count();
+    if checkout_count != 1 {
+        violations.push(format!(
+            "FRESH CHECKOUT ROUTING: job {job} must contain one exact checkout, found {checkout_count}"
+        ));
+    }
+    let environment_count = block.matches(JOB_PRIVATE_CARGO_ENV).count();
+    if environment_count != 1 {
+        violations.push(format!(
+            "JOB-PRIVATE CARGO ROUTING: job {job} must contain one exact Cargo environment, found {environment_count}"
+        ));
+    }
+}
+
+fn validate_terminal_runtime_boundaries(source: &str, violations: &mut Vec<String>) {
+    for (job, command) in TERMINAL_RUNTIME_RUNS {
+        let Some(block) = job_block(source, job) else {
+            continue;
+        };
+        let marker = format!("run: {command}");
+        let lines = block.lines().collect::<Vec<_>>();
+        let Some(terminal) = lines.iter().position(|line| line.trim() == marker) else {
+            violations.push(format!(
+                "TRUST EPOCH ROUTING: job {job} is missing exact terminal command `{command}`"
+            ));
+            continue;
+        };
+        for later in &lines[terminal + 1..] {
+            let trimmed = later.trim();
+            if trimmed.starts_with("run:") || trimmed.starts_with("uses:") {
+                violations.push(format!(
+                    "TRUST EPOCH ROUTING: job {job} executes `{trimmed}` after terminal runtime"
+                ));
+            }
+        }
     }
 }
 
@@ -441,5 +500,52 @@ mod tests {
                 "{violations:?}"
             );
         }
+    }
+
+    #[test]
+    fn terminal_runtime_is_last_executable_step_in_each_job() {
+        for (job, command) in TERMINAL_RUNTIME_RUNS {
+            let needle = format!("        run: {command}");
+            let replacement = format!(
+                "{needle}\n\n      - name: Forbidden later command\n        run: echo forbidden"
+            );
+            let bad = GOOD.replacen(&needle, &replacement, 1);
+            let mut violations = Vec::new();
+            validate_workflow(&bad, &mut violations);
+            assert!(
+                violations
+                    .iter()
+                    .any(|violation| violation.contains("TRUST EPOCH ROUTING")
+                        && violation.contains(job)),
+                "{job}: {violations:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_cargo_job_requires_its_own_checkout() {
+        let checkout = format!("      - name: Check out repository\n        uses: {CHECKOUT}\n\n");
+        let bad = GOOD.replacen(&checkout, "", 1);
+        let mut violations = Vec::new();
+        validate_workflow(&bad, &mut violations);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("FRESH CHECKOUT ROUTING")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn every_cargo_job_requires_job_private_cargo_paths() {
+        let bad = GOOD.replacen(JOB_PRIVATE_CARGO_ENV, "", 1);
+        let mut violations = Vec::new();
+        validate_workflow(&bad, &mut violations);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("JOB-PRIVATE CARGO ROUTING")),
+            "{violations:?}"
+        );
     }
 }

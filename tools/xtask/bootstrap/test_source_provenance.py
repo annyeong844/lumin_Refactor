@@ -177,6 +177,28 @@ class SourceProvenanceTests(unittest.TestCase):
                 fixture.validate(CARGO_INCREMENTAL="1")
             fixture.validate(CARGO_INCREMENTAL="0")
 
+    def test_terminal_runtime_scrubs_github_command_files(self) -> None:
+        environment = {
+            "GITHUB_ENV": "env-file",
+            "github_path": "path-file",
+            "GITHUB_OUTPUT": "output-file",
+            "GitHub_State": "state-file",
+            "GITHUB_STEP_SUMMARY": "summary-file",
+            "UNCHANGED": "value",
+        }
+        for subcommand in ("bench", "run", "test"):
+            with self.subTest(subcommand=subcommand):
+                child = PROVENANCE.controlled_child_environment(
+                    ("cargo", subcommand, "--locked"), environment
+                )
+                self.assertEqual(child, {"UNCHANGED": "value"})
+        self.assertEqual(
+            PROVENANCE.controlled_child_environment(
+                ("cargo", "build", "--locked"), environment
+            ),
+            environment,
+        )
+
     def test_repository_and_cargo_home_config_files_are_rejected(self) -> None:
         temporary, fixture = self.fixture()
         with temporary:
@@ -205,6 +227,48 @@ class SourceProvenanceTests(unittest.TestCase):
                     fixture.root,
                     fixture.root / "cargo-home",
                 )
+
+    def test_cargo_target_must_remain_outside_repository(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "target directory"):
+                fixture.validate(CARGO_TARGET_DIR=str(fixture.root / "target"))
+
+    def test_github_cargo_locations_are_exactly_job_private(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            runner_temp = fixture.root.parent / "runner-temp"
+            cargo_home = runner_temp / "lumin-cargo-home"
+            target = runner_temp / "lumin-target"
+            cargo_home.mkdir(parents=True)
+            clean = {
+                "GITHUB_ACTIONS": "true",
+                "RUNNER_TEMP": str(runner_temp),
+                "CARGO_HOME": str(cargo_home),
+                "CARGO_TARGET_DIR": str(target),
+            }
+            PROVENANCE.validate_invocation(
+                fixture.root,
+                ("cargo", "--version"),
+                clean,
+                fixture.root,
+            )
+
+            for name, value in (
+                ("CARGO_HOME", str(runner_temp / "other-home")),
+                ("CARGO_TARGET_DIR", str(runner_temp / "other-target")),
+            ):
+                with self.subTest(name=name):
+                    changed = clean | {name: value}
+                    with self.assertRaisesRegex(
+                        PROVENANCE.ProvenanceError, "job-private"
+                    ):
+                        PROVENANCE.validate_invocation(
+                            fixture.root,
+                            ("cargo", "--version"),
+                            changed,
+                            fixture.root,
+                        )
 
     def test_registry_root_lexical_physical_disagreement_is_rejected(self) -> None:
         temporary, fixture = self.fixture()

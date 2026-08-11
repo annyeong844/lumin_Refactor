@@ -17,7 +17,7 @@ MINIMUM_PYTHON = (3, 11)
 CONFIG_NAMES = ("config.toml", "config")
 WORKFLOW_DIRECTORY = Path(".github/workflows")
 WORKFLOW_NAME = "ci.yml"
-WORKFLOW_SHA256 = "ee2613425a8ce38597a40c6885bead32d7a787059629a4be50384042f3ccc64a"
+WORKFLOW_SHA256 = "1f288f643a2d5da3f73975981e13c85795d85545d6a5caaa48affbd0863c34ee"
 POLICY_PATH = Path("tools/xtask/dependency-surface-policy.v1.json")
 DEPENDENCY_TABLES = (
     ("dependencies", "normal"),
@@ -57,6 +57,16 @@ FORBIDDEN_ENVIRONMENT_PREFIXES = (
     "CARGO_BUILD_RUSTFLAGS",
     "CARGO_TARGET_",
 )
+GITHUB_COMMAND_FILE_ENVIRONMENT = frozenset(
+    {
+        "GITHUB_ENV",
+        "GITHUB_PATH",
+        "GITHUB_OUTPUT",
+        "GITHUB_STATE",
+        "GITHUB_STEP_SUMMARY",
+    }
+)
+TERMINAL_CARGO_SUBCOMMANDS = frozenset({"bench", "run", "test"})
 
 
 class ProvenanceError(RuntimeError):
@@ -97,6 +107,17 @@ def _absolute(path: Path, *, base: Path | None = None) -> Path:
     return Path(os.path.abspath(candidate))
 
 
+def _environment_value(
+    environment: Mapping[str, str], name: str
+) -> str | None:
+    matches = [
+        value for raw_name, value in environment.items() if raw_name.upper() == name
+    ]
+    if len(matches) > 1:
+        raise ProvenanceError(f"duplicate case-insensitive environment key: {name}")
+    return matches[0] if matches else None
+
+
 def repository_root() -> Path:
     root = Path(__file__).resolve().parents[3]
     if not (root / "Cargo.toml").is_file():
@@ -105,7 +126,7 @@ def repository_root() -> Path:
 
 
 def active_cargo_home(environment: Mapping[str, str], cwd: Path) -> Path:
-    configured = environment.get("CARGO_HOME")
+    configured = _environment_value(environment, "CARGO_HOME")
     if configured is not None:
         if not configured:
             raise ProvenanceError("CARGO_HOME must not be empty")
@@ -184,6 +205,10 @@ def reject_source_environment(environment: Mapping[str, str]) -> None:
             or (name.startswith("CARGO_REGISTRIES_") and name.endswith("_INDEX"))
         ):
             raise ProvenanceError(f"forbidden Cargo source environment variable: {raw_name}")
+        if name == "CARGO_TARGET_DIR":
+            if not value:
+                raise ProvenanceError("CARGO_TARGET_DIR must not be empty")
+            continue
         if name == "CARGO_INCREMENTAL":
             if value != "0":
                 raise ProvenanceError("CARGO_INCREMENTAL must be exactly 0 when provided")
@@ -719,6 +744,22 @@ def validate_command(command: Sequence[str]) -> None:
             raise ProvenanceError(f"Cargo global configuration argument is forbidden: {argument}")
 
 
+def command_may_execute_repository_runtime(command: Sequence[str]) -> bool:
+    return any(argument in TERMINAL_CARGO_SUBCOMMANDS for argument in command[1:])
+
+
+def controlled_child_environment(
+    command: Sequence[str], environment: Mapping[str, str]
+) -> dict[str, str]:
+    child = dict(environment)
+    if not command_may_execute_repository_runtime(command):
+        return child
+    for raw_name in tuple(child):
+        if raw_name.upper() in GITHUB_COMMAND_FILE_ENVIRONMENT:
+            child.pop(raw_name)
+    return child
+
+
 def validate_registry_root_identity(
     lexical_home: Path,
     physical_home: Path,
@@ -733,6 +774,42 @@ def validate_registry_root_identity(
         raise ProvenanceError(
             "Cargo registry source root lexical/physical disagreement: "
             f"{lexical_registry} -> {physical_registry}"
+        )
+
+
+def validate_private_output_locations(
+    root: Path,
+    environment: Mapping[str, str],
+    cwd: Path,
+    cargo_home: Path,
+) -> None:
+    target_value = _environment_value(environment, "CARGO_TARGET_DIR")
+    target = _absolute(Path(target_value), base=cwd) if target_value else None
+    if target is not None and _is_within(target.resolve(strict=False), root):
+        raise ProvenanceError(
+            f"Cargo target directory must remain outside the repository: {target}"
+        )
+
+    if _environment_value(environment, "GITHUB_ACTIONS") != "true":
+        return
+    runner_value = _environment_value(environment, "RUNNER_TEMP")
+    if not runner_value:
+        raise ProvenanceError("GitHub Actions requires an exact RUNNER_TEMP")
+    runner_temp = _absolute(Path(runner_value), base=cwd)
+    physical_runner = runner_temp.resolve(strict=False)
+    if physical_runner != runner_temp or _is_within(physical_runner, root):
+        raise ProvenanceError(
+            f"GitHub runner temp is redirected or repository-owned: {runner_temp}"
+        )
+    expected_home = runner_temp / "lumin-cargo-home"
+    expected_target = runner_temp / "lumin-target"
+    if cargo_home != expected_home:
+        raise ProvenanceError(
+            f"GitHub Cargo home must be job-private {expected_home}, got {cargo_home}"
+        )
+    if target != expected_target:
+        raise ProvenanceError(
+            f"GitHub Cargo target must be job-private {expected_target}, got {target}"
         )
 
 
@@ -758,6 +835,12 @@ def validate_repository(
         raise ProvenanceError(
             f"active Cargo home must remain outside the repository: {effective_home}"
         )
+    validate_private_output_locations(
+        canonical_root,
+        environment,
+        canonical_cwd,
+        lexical_home,
+    )
     registry_source = lexical_home / "registry" / "src"
     physical_registry = registry_source.resolve(strict=False)
     validate_registry_root_identity(
@@ -805,7 +888,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
             return 0
         command = _parse_command(raw_arguments)
         validate_invocation(root, command, os.environ, Path.cwd())
-        completed = subprocess.run(command, shell=False, check=False)
+        completed = subprocess.run(
+            command,
+            shell=False,
+            check=False,
+            env=controlled_child_environment(command, os.environ),
+        )
         return completed.returncode if completed.returncode >= 0 else 128 - completed.returncode
     except ProvenanceError as error:
         print(f"[source-provenance] {error}", file=sys.stderr)
