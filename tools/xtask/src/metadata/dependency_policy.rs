@@ -503,14 +503,16 @@ fn rust_policy_view(mut policy: serde_json::Value) -> Result<serde_json::Value, 
     let root = policy
         .as_object_mut()
         .ok_or_else(|| "checked dependency policy root is not an object".to_owned())?;
-    // The digest-pinned Python bootstrap owns strict authored-TOML comparison before Cargo.
-    // Rust owns the independent Cargo metadata projection and must not pretend metadata can
-    // reproduce source spelling or the root profile table that Cargo omits.
+    // The digest-pinned Python bootstrap owns strict authored-TOML comparison and the
+    // host/cross-target filtered graph digests before Cargo. Rust owns the independent
+    // unfiltered metadata projection and must not pretend that one invocation reproduces
+    // source spelling, root profiles, or every supported resolution lane.
     root.remove("rootProfiles");
     root.remove("workspaceDependencies");
     root.remove("workspaceLints");
     root.remove("workspaceMemberLints");
     root.remove("workspacePackage");
+    root.remove("resolutionLaneDigests");
     let packages = root
         .get_mut("packages")
         .and_then(serde_json::Value::as_array_mut)

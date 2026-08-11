@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -290,6 +291,11 @@ class Fixture:
         }
 
     def write_policy(self) -> None:
+        lane_digest = hashlib.sha256(
+            json.dumps(
+                self.resolved_graph(), sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+        ).hexdigest()
         self.policy.write_text(
             json.dumps(
                 {
@@ -304,6 +310,9 @@ class Fixture:
                     "packages": [],
                     "packageDefinitions": self.package_definitions(),
                     "resolvedGraph": self.resolved_graph(),
+                    "resolutionLaneDigests": {
+                        lane: lane_digest for lane in SNAPSHOT.SUPPORTED_LANES
+                    },
                 },
                 sort_keys=True,
                 indent=2,
@@ -378,6 +387,16 @@ class MetadataSnapshotTests(unittest.TestCase):
             envelope = fixture.envelope()
             envelope["filtered"]["packages"][1]["rust_version"] = "9.9"
             with self.assertRaisesRegex(SNAPSHOT.SnapshotError, "filtered metadata package"):
+                SNAPSHOT.validate_snapshot(envelope)
+
+    def test_filtered_resolution_graph_is_bound_to_its_lane(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            envelope = fixture.envelope()
+            envelope["filtered"]["resolve"]["nodes"][1]["features"].append("extra")
+            with self.assertRaisesRegex(
+                SNAPSHOT.SnapshotError, "filtered resolution graph"
+            ):
                 SNAPSHOT.validate_snapshot(envelope)
 
     def test_duplicate_policy_keys_are_rejected(self) -> None:

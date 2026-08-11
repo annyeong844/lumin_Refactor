@@ -31175,6 +31175,11 @@
     ],
     "root": null
   },
+  "resolutionLaneDigests": {
+    "x86_64-pc-windows-msvc": "09bc433b1076c721dabe823ebce953a4ee49d26e9e9df5e32ffad09dedbf8180",
+    "x86_64-unknown-linux-gnu": "d668534e649d938bcb8343bc849f8dc9b7a23fda96ad6fbed7ffea04b7ecca9c",
+    "x86_64-unknown-linux-musl": "d668534e649d938bcb8343bc849f8dc9b7a23fda96ad6fbed7ffea04b7ecca9c"
+  },
   "rootProfiles": {
     "release": {
       "codegen-units": 1,

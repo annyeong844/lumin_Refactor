@@ -90,7 +90,7 @@ fn replace_field(
 }
 
 #[test]
-fn rust_policy_view_excludes_only_authored_toml_fields() -> Result<(), String> {
+fn rust_policy_view_excludes_python_owned_fields() -> Result<(), String> {
     let policy = serde_json::json!({
         "schemaVersion": 1,
         "workspaceResolver": "3",
@@ -102,6 +102,11 @@ fn rust_policy_view_excludes_only_authored_toml_fields() -> Result<(), String> {
         "workspacePackage": {"edition": "2024"},
         "packageDefinitions": [],
         "resolvedGraph": {"nodes": [], "root": null},
+        "resolutionLaneDigests": {
+            "x86_64-pc-windows-msvc": "windows",
+            "x86_64-unknown-linux-gnu": "gnu",
+            "x86_64-unknown-linux-musl": "musl",
+        },
         "packages": [{
             "name": "owner",
             "authoredPackage": {"name": "owner"},

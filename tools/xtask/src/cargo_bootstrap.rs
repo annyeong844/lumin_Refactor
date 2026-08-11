@@ -5,15 +5,15 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 const GUARD_PATH: &str = "tools/xtask/bootstrap/source_provenance.py";
-const GUARD_SHA256: &str = "9188783a4f7ff8584dbe93bd479f3d2eb408c25385940810367fdacee8d53ca2";
+const GUARD_SHA256: &str = "a5a53a3010c84ea723040333e2ab7d324a90d46a68b1dd6b24667f0c65531f61";
 const TEST_PATH: &str = "tools/xtask/bootstrap/test_source_provenance.py";
 const TEST_SHA256: &str = "9a68d6a74346fe57759b08050805d0b839f0acb967e22ac1177eda7ac5df95fd";
 const METADATA_HELPER_PATH: &str = "tools/xtask/bootstrap/metadata_snapshot.py";
 const METADATA_HELPER_SHA256: &str =
-    "882f2f27958bd6196f6ed657e58039ea1b437507bb129c17e441b1e4c7602864";
+    "dc23605129c4fe78dd197804fa80466a602de921558880fcb848f1870963fdae";
 const METADATA_TEST_PATH: &str = "tools/xtask/bootstrap/test_metadata_snapshot.py";
 const METADATA_TEST_SHA256: &str =
-    "66e6728f6e3874d8ad9f0deb1cd6f037183d9c3838ae55f5843ca36059320879";
+    "dff4a7ac39c3ecf835a2355f4f24b10fa3128fc17f34b9fa2e243876d1d5f517";
 const REGISTRY_HELPER_PATH: &str = "tools/xtask/bootstrap/registry_snapshot.py";
 const REGISTRY_HELPER_SHA256: &str =
     "4a02777fd52f116007ca53d0aa2d4989c447fe27261d64531ee449013dda8857";

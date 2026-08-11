@@ -38,6 +38,7 @@ POLICY_FIELDS = frozenset(
         "packages",
         "packageDefinitions",
         "resolvedGraph",
+        "resolutionLaneDigests",
     }
 )
 SUPPORTED_LANES = frozenset(
@@ -559,6 +560,25 @@ def _load_policy(path: Path, repository_root: Path) -> Mapping[str, object]:
     return result
 
 
+def _resolution_lane_digests(policy: Mapping[str, object]) -> Mapping[str, str]:
+    raw = _object(policy["resolutionLaneDigests"], "resolution lane digests")
+    if set(raw) != SUPPORTED_LANES:
+        raise SnapshotError(
+            "resolution lane digest keys differ: "
+            f"expected {sorted(SUPPORTED_LANES)!r}, got {sorted(raw)!r}"
+        )
+    digests: dict[str, str] = {}
+    for lane, value in raw.items():
+        if (
+            not isinstance(value, str)
+            or len(value) != 64
+            or any(character not in "0123456789abcdef" for character in value)
+        ):
+            raise SnapshotError(f"resolution lane digest is invalid: {lane!r}")
+        digests[lane] = value
+    return digests
+
+
 def validate_snapshot(envelope: object) -> dict[str, object]:
     root = _exact_object(envelope, ROOT_FIELDS, "metadata snapshot envelope")
     if root["schemaVersion"] != 1:
@@ -627,12 +647,19 @@ def validate_snapshot(envelope: object) -> dict[str, object]:
         raise SnapshotError("filtered metadata registry surface is not an unfiltered subset")
     if filtered_manifests != manifests:
         raise SnapshotError("filtered metadata workspace manifests differ")
+    filtered_graph_digest = hashlib.sha256(
+        _json_key(filtered_graph).encode("utf-8")
+    ).hexdigest()
+    expected_lane_digest = _resolution_lane_digests(policy)[lane]
+    if filtered_graph_digest != expected_lane_digest:
+        raise SnapshotError(
+            f"filtered resolution graph differs for {lane}: "
+            f"expected {expected_lane_digest}, got {filtered_graph_digest}"
+        )
     return {
         "schemaVersion": 1,
         "effectiveLane": lane,
-        "filteredGraphSha256": hashlib.sha256(
-            _json_key(filtered_graph).encode("utf-8")
-        ).hexdigest(),
+        "filteredGraphSha256": filtered_graph_digest,
         "registryPackages": registry_packages,
     }
 
