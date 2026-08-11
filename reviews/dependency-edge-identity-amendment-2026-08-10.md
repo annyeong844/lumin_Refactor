@@ -110,8 +110,8 @@ Before running metadata, public CI fails closed on:
 - `.cargo/config.toml` or `.cargo/config` in the repository, a Cargo-searched ancestor,
   or the active Cargo home;
 - `CARGO_SOURCE_*`, `CARGO_PATHS`, registry-index overrides, `CARGO`, `RUSTC`,
-  `RUSTC_WRAPPER`, `RUSTC_WORKSPACE_WRAPPER`, or `RUSTUP_TOOLCHAIN` inherited by the
-  guarded CI command;
+  `RUSTC_WRAPPER`, `RUSTC_WORKSPACE_WRAPPER`, `RUSTUP_TOOLCHAIN`, or
+  `CARGO_BUILD_TARGET` inherited by the guarded CI command;
 - `[patch]` or `[replace]` in the root or a workspace member manifest;
 - Git dependencies, alternate registries, or a path dependency that does not resolve
   directly to an exact workspace member;
@@ -119,8 +119,13 @@ Before running metadata, public CI fails closed on:
   `+toolchain` relocation in split, equals, or attached form as applicable;
 - a dependency-resolving Cargo subcommand without exactly one `--locked` before the
   first literal `--`;
-- an explicit Cargo target other than exact `x86_64-unknown-linux-musl` on an admitted
-  Linux GNU host; absence of `--target` selects only the exact Windows MSVC or Linux GNU
+- a Cargo subcommand outside the reviewed workspace set `build`, `check`, `test`,
+  `clippy`, `doc`, `run`, `bench`, and `metadata`; package installation, lockfile
+  mutation, vendoring, publishing, and unlisted external-plugin dispatch are never
+  authorized by a clean workspace preflight;
+- an explicit Cargo target vector other than one two-token
+  `--target x86_64-unknown-linux-musl` on an admitted Linux GNU host; duplicate or equals
+  forms fail, absence of `--target` selects only the exact Windows MSVC or Linux GNU
   toolchain host, and every admitted lane receives matching filtered metadata;
 - a missing or non-exact root `[workspace].resolver = "3"` value;
 - an implicit root package or explicit workspace member omitted from policy comparison;
@@ -287,11 +292,13 @@ feature, edge, or runtime fallback.
    Git, alternate-registry, or repository-contained replacement fails.
 9. Every non-workspace metadata manifest is below the active Cargo registry source and
    outside the repository; unavailable or incomplete metadata cannot authorize launch.
-10. Every dependency-resolving launch contains exactly one pre-delimiter `--locked`;
-    `Cargo.lock`, cargo-deny, and reviewed lockfile diffs remain the sole transitive
-    graph authority, with no second transitive policy.
+10. Every dependency-resolving launch uses one reviewed workspace subcommand and exactly
+    one pre-delimiter `--locked`; install/update/vendor/publish and unlisted plugins fail.
+    `Cargo.lock`, cargo-deny, and reviewed lockfile diffs remain the sole transitive graph
+    authority, with no second transitive policy.
 11. Native Windows/Linux and exact Linux-musl filtered metadata bind the invocation's
-    resolved direct edges. Other explicit targets fail before launch.
+    resolved direct edges. `CARGO_BUILD_TARGET` and every unsupported explicit target
+    fail before launch.
 12. Runtime arguments after `--` are not misparsed as Cargo options, while actual Cargo
     relocation or a missing pre-delimiter `--locked` fails.
 13. The Rust architecture checker performs no nested provenance or Cargo invocation;
@@ -330,6 +337,8 @@ least:
 - a missing or post-delimiter `--locked`, a command that would update `Cargo.lock`, a
   host/filtered-lane disagreement, an unsupported explicit target, a runtime `--target`
   token after `--`, and the exact supported musl target before `--`;
+- `CARGO_BUILD_TARGET`, `cargo install`, `cargo update`, `cargo vendor`, `cargo publish`,
+  and an unlisted external subcommand after an otherwise clean workspace preflight;
 - a checkout-local Cargo shadow or a `PINNED_CARGO` path/version mismatch;
 - a direct Rust architecture-check invocation that attempts to claim dependency-clean
   status; and

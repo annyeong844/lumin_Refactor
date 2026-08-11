@@ -331,12 +331,16 @@ validate the dependencies used to build itself. It rejects repository, ancestor,
 active-Cargo-home config files, Cargo source or path override environment variables,
 Cargo global `--config` arguments in either value form, and manifest `[patch]`/`[replace]`
 tables. Source overrides include `CARGO_SOURCE_*`, `CARGO_PATHS`, and registry-index
-variables. Before Cargo executes, the guard also requires the exact root
+variables; `CARGO_BUILD_TARGET` cannot select an unobserved lane. Before Cargo executes,
+the guard also requires the exact root
 `[workspace].resolver = "3"`. Architecture source policy pins the guard and rejects any
 unwrapped dependency-resolving CI Cargo command; non-resolving `cargo --version` is the
-sole exception. Every dependency-resolving command requires one pre-delimiter `--locked`.
-CI reads locked, all-features metadata both unfiltered and filtered for the exact native
-Windows/Linux or admitted Linux-musl lane; every other explicit target fails.
+sole exception. Every dependency-resolving command uses one reviewed workspace subcommand
+from `build`, `check`, `test`, `clippy`, `doc`, `run`, `bench`, or `metadata` and requires
+one pre-delimiter `--locked`; install, update, vendor, publish, and unlisted external
+subcommands fail. CI reads locked, all-features metadata both unfiltered and filtered for
+the exact native Windows/Linux or admitted Linux-musl lane; every other explicit target
+and inherited `CARGO_BUILD_TARGET` fail.
 Every resolved non-workspace registry package must physically reside beneath the
 canonical active Cargo home `registry/src` and outside the repository; lexical or
 physical disagreement, including symlink and directory-source replacement, fails. The
