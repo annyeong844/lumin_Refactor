@@ -45,7 +45,7 @@ Public CI trusts:
   workflow, guard, policy, manifests, and lockfile;
 - fresh GitHub-hosted runner isolation and pinned setup actions;
 - the exact Rust toolchain selected by `rust-toolchain.toml` and CI setup, including the
-  absolute Cargo executable exported by that setup;
+  absolute Cargo and cargo-clippy executables exported by that setup;
 - Cargo's locked resolution and crates.io checksum verification; and
 - the official crates.io source identity accepted by Cargo and cargo-deny.
 
@@ -77,9 +77,11 @@ dependencies runs as:
 `PINNED_PYTHON` is the absolute interpreter path provisioned by the pinned Python setup
 action. The logical `cargo` token is mapped to the absolute `PINNED_CARGO` exported by
 the exact Rust setup and is never resolved from the checkout or process current
-directory. The sole exception is a non-resolving version probe. `cargo-audit` and
-`cargo-deny` are installed by pinned CI actions and invoked directly rather than through
-Cargo external subcommand lookup.
+directory. For an admitted logical `cargo clippy` vector, the guard instead launches
+absolute `PINNED_CARGO_CLIPPY` with its required leading `clippy` token; Cargo external
+subcommand lookup never participates. The sole exception is a non-resolving version
+probe. `cargo-audit` and `cargo-deny` are installed by pinned CI actions and invoked
+directly rather than through Cargo external subcommand lookup.
 
 For each admitted Cargo invocation, the Python 3.11+ standard-library guard:
 
@@ -103,7 +105,7 @@ Before running metadata, public CI fails closed on:
 
 - Python older than 3.11 or execution without both `-I` and `-S`;
 - a missing, relative, redirected, repository-contained, or wrong-version
-  `PINNED_CARGO` executable;
+  `PINNED_CARGO` or `PINNED_CARGO_CLIPPY` executable;
 - a working directory or root manifest other than the physical repository root;
 - a workspace member directory or manifest outside the physical repository, or any
   lexical/physical disagreement caused by symlink or junction redirection;
@@ -112,11 +114,12 @@ Before running metadata, public CI fails closed on:
 - `CARGO_SOURCE_*`, `CARGO_PATHS`, registry-index overrides, `CARGO`, `RUSTC`,
   `RUSTC_WRAPPER`, `RUSTC_WORKSPACE_WRAPPER`, `RUSTUP_TOOLCHAIN`, or
   `CARGO_BUILD_TARGET` inherited by the guarded CI command;
+- any `CARGO_ALIAS_*` environment variable;
 - `[patch]` or `[replace]` in the root or a workspace member manifest;
 - Git dependencies, alternate registries, or a path dependency that does not resolve
   directly to an exact workspace member;
-- Cargo `--config`, `--manifest-path`, `--lockfile-path`, `-Z`, or rustup
-  `+toolchain` relocation in split, equals, or attached form as applicable;
+- Cargo `--config`, `--manifest-path`, `--lockfile-path`, `-C`, `--directory`, `-Z`, or
+  rustup `+toolchain` relocation in split, equals, or attached form as applicable;
 - a dependency-resolving Cargo subcommand without exactly one `--locked` before the
   first literal `--`;
 - a Cargo subcommand outside the reviewed workspace set `build`, `check`, `test`,
@@ -274,11 +277,12 @@ feature, edge, or runtime fallback.
 ## Acceptance Criteria
 
 1. Public CI installs pinned Python 3.11+ and the exact Rust toolchain, maps logical
-   Cargo to the absolute `PINNED_CARGO`, gives every guarded job a fresh Cargo home, and
-   routes every dependency-resolving command through the isolated no-shell guard.
+   Cargo and Clippy to absolute `PINNED_CARGO` and `PINNED_CARGO_CLIPPY`, gives every
+   guarded job a fresh Cargo home, and routes every dependency-resolving command through
+   the isolated no-shell guard.
 2. Config/source/path/toolchain overrides, manifest relocation, `[patch]`, `[replace]`,
-   Git, alternate-registry, non-member path dependencies, and redirected or external
-   workspace members fail before compilation.
+   Cargo aliases, Git, alternate-registry, non-member path dependencies, and redirected
+   or external workspace members fail before compilation.
 3. The exact workspace resolver, complete member set, and every workspace feature map
    match the canonical policy.
 4. Changing an edge's kind or target predicate fails.
@@ -339,7 +343,8 @@ least:
   token after `--`, and the exact supported musl target before `--`;
 - `CARGO_BUILD_TARGET`, `cargo install`, `cargo update`, `cargo vendor`, `cargo publish`,
   and an unlisted external subcommand after an otherwise clean workspace preflight;
-- a checkout-local Cargo shadow or a `PINNED_CARGO` path/version mismatch;
+- Cargo `-C`/`--directory`, a checkout-local Cargo or cargo-clippy shadow, a
+  `CARGO_ALIAS_*` variable, or a pinned Cargo/Clippy path or version mismatch;
 - a direct Rust architecture-check invocation that attempts to claim dependency-clean
   status; and
 - removal of the guard from one dependency-resolving CI command or restoration of a

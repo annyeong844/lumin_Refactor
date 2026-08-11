@@ -324,15 +324,19 @@ Every CI command that resolves, checks, or builds Cargo dependencies runs throug
 absolute Python interpreter provisioned by the pinned setup action as
 `<PINNED_PYTHON> -I -S tools/xtask/bootstrap/source_provenance.py -- cargo ... --locked`.
 The logical Cargo token maps only to the absolute executable exported by the exact Rust
-setup. This Python 3.11+ standard-library bootstrap asserts isolated/no-site mode,
-imports no repository or third-party module, validates provenance, and then launches the exact
-supplied Cargo argument vector without a shell. It exists because a Rust checker cannot
-validate the dependencies used to build itself. It rejects repository, ancestor, or
-active-Cargo-home config files, Cargo source or path override environment variables,
-Cargo global `--config` arguments in either value form, and manifest `[patch]`/`[replace]`
-tables. Source overrides include `CARGO_SOURCE_*`, `CARGO_PATHS`, and registry-index
-variables; `CARGO_BUILD_TARGET` cannot select an unobserved lane. Before Cargo executes,
-the guard also requires the exact root
+setup. An admitted logical `cargo clippy` vector maps instead to the exact setup's
+absolute cargo-clippy executable with the required leading token, never Cargo external
+subcommand lookup. This Python 3.11+ standard-library bootstrap asserts isolated/no-site
+mode, imports no repository or third-party module, validates provenance, and then
+launches the exact supplied argument vector without a shell. It exists because a Rust
+checker cannot validate the dependencies used to build itself. It rejects repository,
+ancestor, or active-Cargo-home config files, Cargo source or path override environment
+variables,
+Cargo global `--config`, `--manifest-path`, `--lockfile-path`, `-C`, `--directory`, and
+`-Z` arguments in any applicable form, and manifest `[patch]`/`[replace]` tables. Source
+overrides include `CARGO_SOURCE_*`, `CARGO_PATHS`, registry-index variables, and every
+`CARGO_ALIAS_*`; `CARGO_BUILD_TARGET` cannot select an unobserved lane. Before Cargo
+executes, the guard also requires the exact root
 `[workspace].resolver = "3"`. Architecture source policy pins the guard and rejects any
 unwrapped dependency-resolving CI Cargo command; non-resolving `cargo --version` is the
 sole exception. Every dependency-resolving command uses one reviewed workspace subcommand
