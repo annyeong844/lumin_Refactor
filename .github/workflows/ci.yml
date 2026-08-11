@@ -22,10 +22,13 @@ jobs:
   formatting:
     name: Formatting
     runs-on: ubuntu-24.04
-    env:
-      CARGO_HOME: ${{ runner.temp }}/lumin-cargo-home
-      CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-target
     steps:
+      - name: Initialize isolated Cargo paths
+        shell: pwsh
+        run: |
+          "CARGO_HOME=$env:RUNNER_TEMP/lumin-cargo-home" >> $env:GITHUB_ENV
+          "CARGO_TARGET_DIR=$env:RUNNER_TEMP/lumin-target" >> $env:GITHUB_ENV
+
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -47,10 +50,13 @@ jobs:
   architecture-check:
     name: Architecture check
     runs-on: ubuntu-24.04
-    env:
-      CARGO_HOME: ${{ runner.temp }}/lumin-cargo-home
-      CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-target
     steps:
+      - name: Initialize isolated Cargo paths
+        shell: pwsh
+        run: |
+          "CARGO_HOME=$env:RUNNER_TEMP/lumin-cargo-home" >> $env:GITHUB_ENV
+          "CARGO_TARGET_DIR=$env:RUNNER_TEMP/lumin-target" >> $env:GITHUB_ENV
+
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -110,10 +116,13 @@ jobs:
   dependency-policy:
     name: Dependency policy
     runs-on: ubuntu-24.04
-    env:
-      CARGO_HOME: ${{ runner.temp }}/lumin-cargo-home
-      CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-target
     steps:
+      - name: Initialize isolated Cargo paths
+        shell: pwsh
+        run: |
+          "CARGO_HOME=$env:RUNNER_TEMP/lumin-cargo-home" >> $env:GITHUB_ENV
+          "CARGO_TARGET_DIR=$env:RUNNER_TEMP/lumin-target" >> $env:GITHUB_ENV
+
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -175,10 +184,13 @@ jobs:
           - name: Windows
             os: windows-2022
     runs-on: ${{ matrix.os }}
-    env:
-      CARGO_HOME: ${{ runner.temp }}/lumin-cargo-home
-      CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-target
     steps:
+      - name: Initialize isolated Cargo paths
+        shell: pwsh
+        run: |
+          "CARGO_HOME=$env:RUNNER_TEMP/lumin-cargo-home" >> $env:GITHUB_ENV
+          "CARGO_TARGET_DIR=$env:RUNNER_TEMP/lumin-target" >> $env:GITHUB_ENV
+
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -254,10 +266,13 @@ jobs:
           - name: publication-retention-race
             arguments: foundation --store-crash --row publication-retention-race
     runs-on: ${{ matrix.os }}
-    env:
-      CARGO_HOME: ${{ runner.temp }}/lumin-cargo-home
-      CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-target
     steps:
+      - name: Initialize isolated Cargo paths
+        shell: pwsh
+        run: |
+          "CARGO_HOME=$env:RUNNER_TEMP/lumin-cargo-home" >> $env:GITHUB_ENV
+          "CARGO_TARGET_DIR=$env:RUNNER_TEMP/lumin-target" >> $env:GITHUB_ENV
+
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -296,10 +311,13 @@ jobs:
           - ubuntu-24.04
           - windows-2022
     runs-on: ${{ matrix.os }}
-    env:
-      CARGO_HOME: ${{ runner.temp }}/lumin-cargo-home
-      CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-target
     steps:
+      - name: Initialize isolated Cargo paths
+        shell: pwsh
+        run: |
+          "CARGO_HOME=$env:RUNNER_TEMP/lumin-cargo-home" >> $env:GITHUB_ENV
+          "CARGO_TARGET_DIR=$env:RUNNER_TEMP/lumin-target" >> $env:GITHUB_ENV
+
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -338,10 +356,13 @@ jobs:
           - ubuntu-24.04
           - windows-2022
     runs-on: ${{ matrix.os }}
-    env:
-      CARGO_HOME: ${{ runner.temp }}/lumin-cargo-home
-      CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-target
     steps:
+      - name: Initialize isolated Cargo paths
+        shell: pwsh
+        run: |
+          "CARGO_HOME=$env:RUNNER_TEMP/lumin-cargo-home" >> $env:GITHUB_ENV
+          "CARGO_TARGET_DIR=$env:RUNNER_TEMP/lumin-target" >> $env:GITHUB_ENV
+
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 

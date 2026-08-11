@@ -21,8 +21,10 @@ const TEST_COMMAND: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S ",
     "tools/xtask/bootstrap/test_source_provenance.py"
 );
-const PRIVATE_CARGO_HOME: &str = "CARGO_HOME: ${{ runner.temp }}/lumin-cargo-home";
-const PRIVATE_TARGET: &str = "CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-target";
+const PRIVATE_CARGO_HOME: &str =
+    "\"CARGO_HOME=$env:RUNNER_TEMP/lumin-cargo-home\" >> $env:GITHUB_ENV";
+const PRIVATE_TARGET: &str =
+    "\"CARGO_TARGET_DIR=$env:RUNNER_TEMP/lumin-target\" >> $env:GITHUB_ENV";
 const DIRECT_AUDIT: &str = "& \"$env:PINNED_CARGO_AUDIT\" audit --deny warnings";
 const DIRECT_DENY: &str = "& \"$env:PINNED_CARGO_DENY\" --locked check bans licenses sources";
 const AUDIT_INSTALL: &str = "cargo-audit@0.22.2";
@@ -170,9 +172,18 @@ fn job_blocks(source: &str) -> BTreeMap<String, String> {
 
 fn validate_job(name: &str, block: &str, violations: &mut Vec<String>) {
     let guarded = block.contains("tools/xtask/bootstrap/source_provenance.py");
-    if guarded && (!block.contains(PRIVATE_CARGO_HOME) || !block.contains(PRIVATE_TARGET)) {
+    let cargo_job = guarded || block.contains("$env:PINNED_CARGO");
+    let checkout = block.find(&format!("uses: {CHECKOUT}"));
+    let private_home = block.find(PRIVATE_CARGO_HOME);
+    let private_target = block.find(PRIVATE_TARGET);
+    if cargo_job
+        && (!matches!((private_home, checkout), (Some(home), Some(checkout)) if home < checkout)
+            || !matches!((private_target, checkout), (Some(target), Some(checkout)) if target < checkout)
+            || block.matches(PRIVATE_CARGO_HOME).count() != 1
+            || block.matches(PRIVATE_TARGET).count() != 1)
+    {
         violations.push(format!(
-            "guarded job {name} lacks its job-private Cargo home or target directory"
+            "Cargo job {name} must initialize one job-private Cargo home and target directory before checkout"
         ));
     }
     if name != "required" && !block.contains(&format!("uses: {CHECKOUT}")) {
@@ -280,6 +291,8 @@ fn is_reviewed_run_command(line: &str) -> bool {
         "\"PINNED_CARGO_CLIPPY=$clippy\" >> $env:GITHUB_ENV",
         "\"PINNED_CARGO_AUDIT=$audit\" >> $env:GITHUB_ENV",
         "\"PINNED_CARGO_DENY=$deny\" >> $env:GITHUB_ENV",
+        PRIVATE_CARGO_HOME,
+        PRIVATE_TARGET,
         "& \"$env:PINNED_CARGO\" fmt --all --check",
         TEST_COMMAND,
         DIRECT_AUDIT,
@@ -511,6 +524,21 @@ mod tests {
             violations(&source)
                 .iter()
                 .any(|violation| violation.contains("dependency cache"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cargo_paths_must_be_initialized_before_checkout() -> Result<(), Box<dyn std::error::Error>> {
+        let source = workflow()?.replacen(
+            PRIVATE_CARGO_HOME,
+            "\"CARGO_HOME=$env:RUNNER_TEMP/late-home\" >> $env:GITHUB_ENV",
+            1,
+        );
+        assert!(
+            violations(&source)
+                .iter()
+                .any(|violation| violation.contains("before checkout"))
         );
         Ok(())
     }
