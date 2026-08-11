@@ -31184,6 +31184,92 @@
     }
   },
   "schemaVersion": 1,
+  "workspaceDependencies": {
+    "base64": "=0.22.1",
+    "fs2": "=0.4.3",
+    "getrandom": "=0.4.3",
+    "ignore": "=0.4.26",
+    "oxc_allocator": "=0.126.0",
+    "oxc_ast": "=0.126.0",
+    "oxc_ast_visit": "=0.126.0",
+    "oxc_parser": "=0.126.0",
+    "oxc_span": "=0.126.0",
+    "rayon": "=1.11.0",
+    "redb": "=4.1.0",
+    "same-file": "=1.0.6",
+    "saphyr-parser": "=0.0.11",
+    "serde": {
+      "features": [
+        "derive"
+      ],
+      "version": "=1.0.228"
+    },
+    "serde_json": "=1.0.150",
+    "sha2": "=0.10.9",
+    "tempfile": "=3.27.0",
+    "thiserror": "=2.0.18",
+    "winapi-util": "=0.1.11",
+    "windows-sys": {
+      "features": [
+        "Win32_Foundation",
+        "Win32_Storage_FileSystem"
+      ],
+      "version": "=0.61.2"
+    }
+  },
+  "workspaceLints": {
+    "clippy": {
+      "await_holding_lock": "deny",
+      "expect_used": "deny",
+      "panic": "deny",
+      "undocumented_unsafe_blocks": "deny",
+      "unwrap_used": "deny"
+    },
+    "rust": {
+      "unsafe_code": "deny"
+    }
+  },
+  "workspaceMemberLints": {
+    "lumin-cli": {
+      "workspace": true
+    },
+    "lumin-dead": {
+      "workspace": true
+    },
+    "lumin-engine": {
+      "workspace": true
+    },
+    "lumin-evidence": {
+      "workspace": true
+    },
+    "lumin-graph": {
+      "workspace": true
+    },
+    "lumin-inventory": {
+      "workspace": true
+    },
+    "lumin-js": {
+      "workspace": true
+    },
+    "lumin-model": {
+      "workspace": true
+    },
+    "lumin-protocol": {
+      "workspace": true
+    },
+    "lumin-resolve": {
+      "workspace": true
+    },
+    "lumin-sfc": {
+      "workspace": true
+    },
+    "lumin-store": {
+      "workspace": true
+    },
+    "lumin-xtask": {
+      "workspace": true
+    }
+  },
   "workspacePackage": {
     "edition": "2024",
     "license": "MIT",

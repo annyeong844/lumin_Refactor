@@ -89,6 +89,43 @@ fn replace_field(
     Ok(())
 }
 
+#[test]
+fn rust_policy_view_excludes_only_authored_toml_fields() -> Result<(), String> {
+    let policy = serde_json::json!({
+        "schemaVersion": 1,
+        "workspaceResolver": "3",
+        "cargoLockSha256": "lock",
+        "rootProfiles": {"release": {"panic": "abort"}},
+        "workspaceDependencies": {"serde": "=1.0.0"},
+        "workspaceLints": {"rust": {"unsafe_code": "deny"}},
+        "workspaceMemberLints": {"owner": {"workspace": true}},
+        "workspacePackage": {"edition": "2024"},
+        "packageDefinitions": [],
+        "resolvedGraph": {"nodes": [], "root": null},
+        "packages": [{
+            "name": "owner",
+            "authoredPackage": {"name": "owner"},
+            "dependencies": [],
+        }],
+    });
+
+    assert_eq!(
+        rust_policy_view(policy)?,
+        serde_json::json!({
+            "schemaVersion": 1,
+            "workspaceResolver": "3",
+            "cargoLockSha256": "lock",
+            "packageDefinitions": [],
+            "resolvedGraph": {"nodes": [], "root": null},
+            "packages": [{
+                "name": "owner",
+                "dependencies": [],
+            }],
+        })
+    );
+    Ok(())
+}
+
 fn assert_policy_drift(root: &Path, observed: &serde_json::Value) -> Result<(), String> {
     let mut violations = Vec::new();
     compare_checked_policy(root, observed, &mut violations)?;

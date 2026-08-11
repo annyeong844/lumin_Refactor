@@ -507,6 +507,9 @@ fn rust_policy_view(mut policy: serde_json::Value) -> Result<serde_json::Value, 
     // Rust owns the independent Cargo metadata projection and must not pretend metadata can
     // reproduce source spelling or the root profile table that Cargo omits.
     root.remove("rootProfiles");
+    root.remove("workspaceDependencies");
+    root.remove("workspaceLints");
+    root.remove("workspaceMemberLints");
     root.remove("workspacePackage");
     let packages = root
         .get_mut("packages")

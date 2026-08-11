@@ -279,6 +279,15 @@ def _required_table(value: object, description: str) -> Mapping[str, object]:
     return value
 
 
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ProvenanceError(f"duplicate dependency policy JSON key: {key!r}")
+        value[key] = item
+    return value
+
+
 def _package_and_requirement(alias: str, value: object) -> tuple[str, str]:
     if isinstance(value, str):
         return alias, value
@@ -576,12 +585,16 @@ def validate_authored_requirements(
     root_profiles: Mapping[str, object],
     workspace_package: Mapping[str, object],
     workspace_dependencies: Mapping[str, object],
+    workspace_lints: Mapping[str, object],
     manifests: Sequence[tuple[Path, Mapping[str, object]]],
     workspace_members: Mapping[Path, str],
 ) -> None:
     policy_path = _require_unredirected_file(root / POLICY_PATH, root, "dependency policy")
     try:
-        policy = json.loads(policy_path.read_text(encoding="utf-8"))
+        policy = json.loads(
+            policy_path.read_text(encoding="utf-8"),
+            object_pairs_hook=_unique_json_object,
+        )
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise ProvenanceError(f"cannot parse dependency policy {policy_path}: {error}") from error
     if not isinstance(policy, dict) or policy.get("workspaceResolver") != resolver:
@@ -605,6 +618,23 @@ def validate_authored_requirements(
             "[workspace.package] does not match dependency policy: "
             f"expected {policy.get('workspacePackage')!r}, observed {workspace_package!r}"
         )
+    for alias, value in workspace_dependencies.items():
+        _, contract = _declared_dependency(alias, value, root, workspace_members)
+        if contract.optional:
+            raise ProvenanceError(
+                f"[workspace.dependencies] entry {alias!r} cannot be optional"
+            )
+    if policy.get("workspaceDependencies") != workspace_dependencies:
+        raise ProvenanceError(
+            "workspace dependency catalog contract drift"
+        )
+    if policy.get("workspaceLints") != workspace_lints:
+        raise ProvenanceError("workspace lint map does not match dependency policy")
+    expected_member_lints = _required_table(
+        policy.get("workspaceMemberLints"), "dependency policy workspace member lints"
+    )
+    for owner, lints in expected_member_lints.items():
+        _required_table(lints, f"dependency policy lints for {owner}")
     packages = policy.get("packages")
     if not isinstance(packages, list):
         raise ProvenanceError("dependency policy packages must be an array")
@@ -693,6 +723,7 @@ def validate_authored_requirements(
     ] = {}
     observed_packages: dict[str, Mapping[str, object]] = {}
     observed_features: dict[str, list[dict[str, object]]] = {}
+    observed_member_lints: dict[str, Mapping[str, object]] = {}
     for manifest_path, manifest in manifests:
         package = _required_table(manifest.get("package"), "workspace package")
         owner = package.get("name")
@@ -700,6 +731,9 @@ def validate_authored_requirements(
             raise ProvenanceError(f"invalid or duplicate workspace package name: {owner!r}")
         observed_packages[owner] = package
         observed_features[owner] = _authored_feature_policy(manifest, owner)
+        observed_member_lints[owner] = _required_table(
+            manifest.get("lints", {}), f"workspace package {owner} [lints]"
+        )
         observed[owner] = _authored_requirements(
             root,
             manifest_path,
@@ -720,6 +754,11 @@ def validate_authored_requirements(
         raise ProvenanceError(
             "authored workspace feature contract drift: "
             f"expected {expected_features!r}, observed {observed_features!r}"
+        )
+    if observed_member_lints != expected_member_lints:
+        raise ProvenanceError(
+            "authored workspace lint contract drift: "
+            f"expected {expected_member_lints!r}, observed {observed_member_lints!r}"
         )
 
 
@@ -743,6 +782,7 @@ def validate_workspace_manifests(root: Path) -> tuple[Path, ...]:
     workspace_dependencies = _required_table(
         workspace.get("dependencies", {}), "[workspace.dependencies]"
     )
+    workspace_lints = _required_table(workspace.get("lints", {}), "[workspace.lints]")
     members = workspace.get("members")
     if not isinstance(members, list) or not members:
         raise ProvenanceError("workspace members must be a non-empty explicit list")
@@ -809,6 +849,7 @@ def validate_workspace_manifests(root: Path) -> tuple[Path, ...]:
         root_profiles,
         workspace_package,
         workspace_dependencies,
+        workspace_lints,
         parsed_manifests,
         workspace_members,
     )

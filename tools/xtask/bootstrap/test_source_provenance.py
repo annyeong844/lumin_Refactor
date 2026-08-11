@@ -83,6 +83,11 @@ class Fixture:
                     ).hexdigest(),
                     "rootProfiles": root_manifest.get("profile", {}),
                     "workspacePackage": workspace.get("package", {}),
+                    "workspaceDependencies": workspace.get("dependencies", {}),
+                    "workspaceLints": workspace.get("lints", {}),
+                    "workspaceMemberLints": {
+                        "fixture-member": member_manifest.get("lints", {})
+                    },
                     "packages": [
                         {
                             "name": "fixture-member",
@@ -357,6 +362,60 @@ class SourceProvenanceTests(unittest.TestCase):
 
             fixture.write_policy([])
             fixture.validate()
+
+    def test_workspace_and_member_lint_drift_is_rejected_before_cargo(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            fixture.write_root(
+                suffix='[workspace.lints.rust]\nunsafe_code = "allow"\n'
+            )
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "workspace lint map"):
+                fixture.validate()
+            fixture.write_policy([])
+            fixture.validate()
+
+            (fixture.member / "Cargo.toml").write_text(
+                '[package]\nname = "fixture-member"\nversion = "0.0.0"\n'
+                'edition = "2024"\n[lints]\nworkspace = true\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "lint contract drift"):
+                fixture.validate()
+            fixture.write_policy([])
+            fixture.validate()
+
+    def test_unused_workspace_dependency_catalog_is_validated(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            fixture.write_root(
+                suffix='[workspace.dependencies]\nunused = "=1.0.0"\n'
+            )
+            with self.assertRaisesRegex(
+                PROVENANCE.ProvenanceError, "dependency catalog contract drift"
+            ):
+                fixture.validate()
+            fixture.write_policy([])
+            fixture.validate()
+
+            fixture.write_root(
+                suffix='[workspace.dependencies]\nunused = { git = "https://invalid" }\n'
+            )
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "forbidden source selectors"):
+                fixture.validate()
+            fixture.write_policy([])
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "forbidden source selectors"):
+                fixture.validate()
+
+    def test_duplicate_policy_json_keys_are_rejected(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            policy = fixture.root / PROVENANCE.POLICY_PATH
+            source = policy.read_text(encoding="utf-8").replace(
+                '"schemaVersion": 1', '"schemaVersion": 1, "schemaVersion": 2', 1
+            )
+            policy.write_text(source, encoding="utf-8")
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "duplicate.*JSON key"):
+                fixture.validate()
 
     def test_lockfile_drift_is_rejected_before_cargo(self) -> None:
         temporary, fixture = self.fixture()

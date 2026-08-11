@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 const GUARD_PATH: &str = "tools/xtask/bootstrap/source_provenance.py";
-const GUARD_SHA256: &str = "6bf3cd87e6860771a85d5e69160216312c828e5aba1554b5ffa7844cc8705443";
+const GUARD_SHA256: &str = "89060d980e0194a9d70990a5454e1f72ae70278ff3c36d18ddefbcc03892b163";
 const TEST_PATH: &str = "tools/xtask/bootstrap/test_source_provenance.py";
-const TEST_SHA256: &str = "3f09dc47cf6e8f853e52c53131b3a24670ae33f18d7b15359e31c89675b97106";
+const TEST_SHA256: &str = "c2f56e4b9e8276a534c6bf7c07bef50314f653fac83f02986813b87ba844ecc4";
 const WORKFLOW_DIRECTORY: &str = ".github/workflows";
 const WORKFLOW_PATH: &str = ".github/workflows/ci.yml";
 const WORKFLOW_SHA256: &str = "4ca2610501059a8ae6eacffd0b93547cb69115c221460eb012b2aa5465dbfc4c";
