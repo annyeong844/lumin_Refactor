@@ -912,14 +912,23 @@ def command_may_execute_repository_runtime(command: Sequence[str]) -> bool:
 
 
 def controlled_child_environment(
-    command: Sequence[str], environment: Mapping[str, str]
+    command: Sequence[str],
+    environment: Mapping[str, str],
+    *,
+    cargo: Path | None = None,
+    rustc: Path | None = None,
+    rustdoc: Path | None = None,
 ) -> dict[str, str]:
     child = dict(environment)
-    if not command_may_execute_repository_runtime(command):
-        return child
-    for raw_name in tuple(child):
-        if raw_name.upper() in GITHUB_COMMAND_FILE_ENVIRONMENT:
-            child.pop(raw_name)
+    if command_may_execute_repository_runtime(command):
+        for raw_name in tuple(child):
+            if raw_name.upper() in GITHUB_COMMAND_FILE_ENVIRONMENT:
+                child.pop(raw_name)
+    for name, path in (("CARGO", cargo), ("RUSTC", rustc), ("RUSTDOC", rustdoc)):
+        if path is not None:
+            child[name] = str(path)
+    if cargo is not None:
+        child["CARGO_INCREMENTAL"] = "0"
     return child
 
 
@@ -928,20 +937,26 @@ def _external_executable(
 ) -> Path:
     recorded_name = {"cargo": "LUMIN_CARGO", "rustc": "LUMIN_RUSTC"}.get(name)
     recorded = _environment_value(environment, recorded_name) if recorded_name else None
-    resolved = recorded or shutil.which(name, path=_environment_value(environment, "PATH"))
-    if resolved is None:
-        raise ProvenanceError(f"required executable is unavailable: {name}")
-    lexical = _absolute(Path(resolved))
-    try:
-        physical = lexical.resolve(strict=True)
-    except OSError as error:
-        raise ProvenanceError(f"cannot resolve executable {name}: {error}") from error
-    if physical != lexical and recorded is None and name in {"cargo", "rustc"}:
+    if recorded is None and name in {"cargo", "rustc"}:
         rustup = shutil.which("rustup", path=_environment_value(environment, "PATH"))
         if rustup is None:
-            raise ProvenanceError(f"rustup proxy cannot resolve exact tool: {name}")
+            raise ProvenanceError(f"rustup cannot resolve exact tool: {name}")
+        rustup_lexical = _absolute(Path(rustup))
+        try:
+            rustup_physical = rustup_lexical.resolve(strict=True)
+        except OSError as error:
+            raise ProvenanceError(f"cannot resolve rustup executable: {error}") from error
+        if (
+            rustup_physical != rustup_lexical
+            or not rustup_physical.is_file()
+            or _is_within(rustup_physical, root)
+        ):
+            raise ProvenanceError(
+                "rustup is redirected, non-file, or repository-owned: "
+                f"{rustup_lexical} -> {rustup_physical}"
+            )
         completed = subprocess.run(
-            [rustup, "which", "--toolchain", "1.96.0", name],
+            [str(rustup_physical), "which", "--toolchain", "1.96.0", name],
             text=True,
             capture_output=True,
             shell=False,
@@ -952,14 +967,36 @@ def _external_executable(
             raise ProvenanceError(
                 f"rustup cannot resolve exact {name}: {completed.stderr.strip()}"
             )
-        lexical = _absolute(Path(completed.stdout.strip()))
-        try:
-            physical = lexical.resolve(strict=True)
-        except OSError as error:
-            raise ProvenanceError(f"cannot resolve exact executable {name}: {error}") from error
+        resolved = completed.stdout.strip()
+    else:
+        resolved = recorded or shutil.which(
+            name, path=_environment_value(environment, "PATH")
+        )
+    if resolved is None:
+        raise ProvenanceError(f"required executable is unavailable: {name}")
+    lexical = _absolute(Path(resolved))
+    try:
+        physical = lexical.resolve(strict=True)
+    except OSError as error:
+        raise ProvenanceError(f"cannot resolve executable {name}: {error}") from error
     if physical != lexical or not physical.is_file() or _is_within(physical, root):
         raise ProvenanceError(
             f"executable is redirected, non-file, or repository-owned: {name} {lexical} -> {physical}"
+        )
+    return physical
+
+
+def _toolchain_sibling(reference: Path, name: str, root: Path) -> Path:
+    suffix = reference.suffix if os.name == "nt" else ""
+    lexical = _absolute(reference.with_name(f"{name}{suffix}"))
+    try:
+        physical = lexical.resolve(strict=True)
+    except OSError as error:
+        raise ProvenanceError(f"cannot resolve exact executable {name}: {error}") from error
+    if physical != lexical or not physical.is_file() or _is_within(physical, root):
+        raise ProvenanceError(
+            f"toolchain executable is redirected, non-file, or repository-owned: "
+            f"{name} {lexical} -> {physical}"
         )
     return physical
 
@@ -1194,7 +1231,14 @@ def run_dependency_preflight(
 ) -> Path:
     cargo = _external_executable("cargo", validation.root, environment)
     rustc = _external_executable("rustc", validation.root, environment)
-    child_environment = controlled_child_environment(command, environment)
+    rustdoc = _toolchain_sibling(rustc, "rustdoc", validation.root)
+    child_environment = controlled_child_environment(
+        command,
+        environment,
+        cargo=cargo,
+        rustc=rustc,
+        rustdoc=rustdoc,
+    )
     host = _toolchain_host(cargo, rustc, child_environment)
     lane = _effective_lane(command, host)
     unfiltered = _run_metadata(cargo, child_environment, None)
@@ -1381,12 +1425,23 @@ def main(arguments: Sequence[str] | None = None) -> int:
         cargo = _external_executable("cargo", validation.root, os.environ)
         if command_requires_dependency_preflight(command):
             cargo = run_dependency_preflight(validation, command, os.environ)
+            rustc = _external_executable("rustc", validation.root, os.environ)
+            rustdoc = _toolchain_sibling(rustc, "rustdoc", validation.root)
+        else:
+            rustc = None
+            rustdoc = None
         resolved_command = (str(cargo), *command[1:])
         completed = subprocess.run(
             resolved_command,
             shell=False,
             check=False,
-            env=controlled_child_environment(command, os.environ),
+            env=controlled_child_environment(
+                command,
+                os.environ,
+                cargo=cargo,
+                rustc=rustc,
+                rustdoc=rustdoc,
+            ),
         )
         return completed.returncode if completed.returncode >= 0 else 128 - completed.returncode
     except ProvenanceError as error:

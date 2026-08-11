@@ -285,6 +285,25 @@ class SourceProvenanceTests(unittest.TestCase):
             environment,
         )
 
+    def test_controlled_child_environment_binds_authenticated_toolchain(self) -> None:
+        child = PROVENANCE.controlled_child_environment(
+            ("cargo", "build", "--locked"),
+            {"UNCHANGED": "value"},
+            cargo=Path("/trusted/cargo"),
+            rustc=Path("/trusted/rustc"),
+            rustdoc=Path("/trusted/rustdoc"),
+        )
+        self.assertEqual(
+            child,
+            {
+                "UNCHANGED": "value",
+                "CARGO": str(Path("/trusted/cargo")),
+                "RUSTC": str(Path("/trusted/rustc")),
+                "RUSTDOC": str(Path("/trusted/rustdoc")),
+                "CARGO_INCREMENTAL": "0",
+            },
+        )
+
     def test_repository_and_cargo_home_config_files_are_rejected(self) -> None:
         temporary, fixture = self.fixture()
         with temporary:
@@ -729,6 +748,7 @@ class SourceProvenanceTests(unittest.TestCase):
             }
             environment["CARGO_HOME"] = str(cargo_home)
             environment["PATH"] = str(binary_directory)
+            environment["LUMIN_CARGO"] = str(binary_directory / cargo_name)
             self.assertNotIn("RUSTUP_TOOLCHAIN", environment)
 
             completed = subprocess.run(
