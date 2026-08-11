@@ -15,7 +15,9 @@ hermetic build system, or an in-repository root of trust.
 The bootstrap guard owns this dependency-policy verdict before a CI Cargo command may
 compile repository or dependency code. `lumin-xtask architecture-check` owns the
 remaining repository architecture checks and does not spawn Cargo to authenticate the
-dependencies used to build itself.
+dependencies used to build itself. The public architecture verdict is the conjunction
+of those two reviewed CI steps; the Rust command alone does not claim dependency
+admission.
 
 ## Problem
 
@@ -42,7 +44,8 @@ Public CI trusts:
 - protected review and the reviewed Git commit as the authority for changes to the
   workflow, guard, policy, manifests, and lockfile;
 - fresh GitHub-hosted runner isolation and pinned setup actions;
-- the exact Rust toolchain selected by `rust-toolchain.toml` and CI setup;
+- the exact Rust toolchain selected by `rust-toolchain.toml` and CI setup, including the
+  absolute Cargo executable exported by that setup;
 - Cargo's locked resolution and crates.io checksum verification; and
 - the official crates.io source identity accepted by Cargo and cargo-deny.
 
@@ -68,11 +71,13 @@ Every public-CI command that resolves, checks, builds, tests, documents, or lint
 dependencies runs as:
 
 ```text
-<PINNED_PYTHON> -I -S tools/xtask/bootstrap/source_provenance.py -- cargo ...
+<PINNED_PYTHON> -I -S tools/xtask/bootstrap/source_provenance.py -- cargo ... --locked
 ```
 
 `PINNED_PYTHON` is the absolute interpreter path provisioned by the pinned Python setup
-action. The sole exception is a non-resolving version probe. `cargo-audit` and
+action. The logical `cargo` token is mapped to the absolute `PINNED_CARGO` exported by
+the exact Rust setup and is never resolved from the checkout or process current
+directory. The sole exception is a non-resolving version probe. `cargo-audit` and
 `cargo-deny` are installed by pinned CI actions and invoked directly rather than through
 Cargo external subcommand lookup.
 
@@ -80,10 +85,11 @@ For each admitted Cargo invocation, the Python 3.11+ standard-library guard:
 
 1. validates its environment, repository root, command surface, manifests, lockfile,
    and checked-in policy without importing repository modules;
-2. runs exact locked, all-features Cargo metadata with the selected CI toolchain and no
-   shell;
-3. compares the complete workspace feature and direct-dependency surface with the
-   policy;
+2. runs exact locked, all-features Cargo metadata both unfiltered and filtered for the
+   invocation's admitted native or Linux-musl resolution lane, using `PINNED_CARGO` and
+   no shell;
+3. compares the complete workspace feature and direct-dependency surface, plus the
+   selected lane's resolved direct bindings, with the policy;
 4. verifies the resolved source and loaded location rules below; and
 5. only then launches the original Cargo command without a shell.
 
@@ -96,7 +102,11 @@ change.
 Before running metadata, public CI fails closed on:
 
 - Python older than 3.11 or execution without both `-I` and `-S`;
+- a missing, relative, redirected, repository-contained, or wrong-version
+  `PINNED_CARGO` executable;
 - a working directory or root manifest other than the physical repository root;
+- a workspace member directory or manifest outside the physical repository, or any
+  lexical/physical disagreement caused by symlink or junction redirection;
 - `.cargo/config.toml` or `.cargo/config` in the repository, a Cargo-searched ancestor,
   or the active Cargo home;
 - `CARGO_SOURCE_*`, `CARGO_PATHS`, registry-index overrides, `CARGO`, `RUSTC`,
@@ -107,6 +117,11 @@ Before running metadata, public CI fails closed on:
   directly to an exact workspace member;
 - Cargo `--config`, `--manifest-path`, `--lockfile-path`, `-Z`, or rustup
   `+toolchain` relocation in split, equals, or attached form as applicable;
+- a dependency-resolving Cargo subcommand without exactly one `--locked` before the
+  first literal `--`;
+- an explicit Cargo target other than exact `x86_64-unknown-linux-musl` on an admitted
+  Linux GNU host; absence of `--target` selects only the exact Windows MSVC or Linux GNU
+  toolchain host, and every admitted lane receives matching filtered metadata;
 - a missing or non-exact root `[workspace].resolver = "3"` value;
 - an implicit root package or explicit workspace member omitted from policy comparison;
   or
@@ -114,9 +129,10 @@ Before running metadata, public CI fails closed on:
   members, or an incomplete metadata result.
 
 Cargo option parsing ends at the first literal `--`; later tokens are test-harness or
-launched-program input and cannot be reclassified as Cargo `--target` or relocation
-options. The required Linux musl release target remains an admitted distribution lane;
-this amendment neither schedules nor replaces its package acceptance owner.
+launched-program input and cannot be reclassified as Cargo `--target`, `--locked`, or
+relocation options. The required Linux musl release target remains an admitted
+distribution lane; this amendment neither schedules nor replaces its package acceptance
+owner.
 
 Local runs use the same semantic checks but are diagnostic only. Public CI remains merge
 authority because local Cargo homes and host state are not controlled evidence.
@@ -140,6 +156,7 @@ The authored declaration identity is:
 ```text
 (
   owner workspace member,
+  declaration origin (workspace-inherited or member-authored),
   dependency kind,
   exact optional target predicate,
   exact authored alias,
@@ -152,10 +169,11 @@ The authored declaration identity is:
 )
 ```
 
-The guard reads the authored alias and requirement from strict-parsed TOML rather than
-reconstructing them from Cargo-normalized names. Absent values remain distinct from
-present empty values. Feature activation and request lists are sets and are sorted and
-deduplicated; strings whose Cargo meaning is not set-like remain exact.
+The guard reads the declaration origin, authored alias, and requirement from
+strict-parsed TOML rather than reconstructing them from Cargo-normalized names. Absent
+values remain distinct from present empty values. Feature activation and request lists
+are sets and are sorted and deduplicated; strings whose Cargo meaning is not set-like
+remain exact.
 
 The linked resolution identity is:
 
@@ -174,11 +192,17 @@ does not duplicate every transitive package definition, target, feature, or reso
 lane. A lockfile change is an explicit reviewed dependency change and remains subject to
 `--locked`, cargo-deny, and the existing dependency-cost review.
 
+Unfiltered metadata owns the complete locked package and declaration superset. Metadata
+filtered for the exact admitted host or musl lane owns that invocation's resolved direct
+bindings. The filtered result may select a subset of approved declarations, but it may
+not introduce a destination, kind, target binding, or feature definition absent from the
+canonical policy and unfiltered result.
+
 ### 4. Resolved source and loaded location
 
-The authoritative dependency-policy job uses a fresh job-private Cargo home and does not
-restore a dependency cache. Cargo downloads locked registry packages and performs its
-normal checksum verification.
+Every guarded public-CI job uses a fresh job-private Cargo home and does not restore a
+dependency cache. Cargo downloads locked registry packages and performs its normal
+checksum verification.
 
 For every non-workspace package in metadata, the guard requires:
 
@@ -198,11 +222,16 @@ that boundary.
 
 ### 5. Ownership and CI routing
 
-The Python bootstrap owns dependency admission. The Rust architecture checker must not
-spawn Cargo or call the bootstrap again to recreate a stronger verdict after it has
-started. Its source-policy check verifies that the reviewed workflow routes every
-dependency-resolving Cargo command through the guard and that audit/deny use their pinned
-direct tools.
+The Python bootstrap owns resolver, workspace-feature, direct-edge, resolved-source, and
+loaded-location admission. The Rust architecture checker must not spawn Cargo or call the
+bootstrap again to recreate a stronger verdict after it has started. Its source-policy
+check verifies that the reviewed workflow routes every dependency-resolving Cargo
+command through the guard and that audit/deny use their pinned direct tools.
+
+The required architecture job exposes guard success and structural-checker success as
+two distinct required steps; both must pass. No mutable metadata handoff grants the Rust
+process dependency authority. A direct local `lumin-xtask architecture-check` run may
+report only its structural scope and must not label dependency admission clean.
 
 That workflow check prevents accidental routing drift; it is not a cryptographic defense
 against a pull request that changes the workflow and checker together. Protected review
@@ -239,11 +268,12 @@ feature, edge, or runtime fallback.
 
 ## Acceptance Criteria
 
-1. Public CI installs pinned Python 3.11+ and the exact Rust toolchain, uses a fresh
-   dependency-policy Cargo home, and routes every dependency-resolving Cargo command
-   through the isolated no-shell guard.
+1. Public CI installs pinned Python 3.11+ and the exact Rust toolchain, maps logical
+   Cargo to the absolute `PINNED_CARGO`, gives every guarded job a fresh Cargo home, and
+   routes every dependency-resolving command through the isolated no-shell guard.
 2. Config/source/path/toolchain overrides, manifest relocation, `[patch]`, `[replace]`,
-   Git, alternate-registry, and non-member path dependencies fail before compilation.
+   Git, alternate-registry, non-member path dependencies, and redirected or external
+   workspace members fail before compilation.
 3. The exact workspace resolver, complete member set, and every workspace feature map
    match the canonical policy.
 4. Changing an edge's kind or target predicate fails.
@@ -257,15 +287,19 @@ feature, edge, or runtime fallback.
    Git, alternate-registry, or repository-contained replacement fails.
 9. Every non-workspace metadata manifest is below the active Cargo registry source and
    outside the repository; unavailable or incomplete metadata cannot authorize launch.
-10. `Cargo.lock`, `--locked`, cargo-deny, and reviewed lockfile diffs remain the sole
-    transitive graph authority; no second transitive policy is required.
-11. Runtime arguments after `--` are not misparsed as Cargo options, while actual Cargo
-    relocation before `--` fails and the required musl target remains admissible.
-12. The Rust architecture checker performs no nested provenance or Cargo invocation;
-    guard success plus checker success form the CI architecture verdict.
-13. Reordering Cargo metadata nodes, feature sets, or dependency-kind entries does not
+10. Every dependency-resolving launch contains exactly one pre-delimiter `--locked`;
+    `Cargo.lock`, cargo-deny, and reviewed lockfile diffs remain the sole transitive
+    graph authority, with no second transitive policy.
+11. Native Windows/Linux and exact Linux-musl filtered metadata bind the invocation's
+    resolved direct edges. Other explicit targets fail before launch.
+12. Runtime arguments after `--` are not misparsed as Cargo options, while actual Cargo
+    relocation or a missing pre-delimiter `--locked` fails.
+13. The Rust architecture checker performs no nested provenance or Cargo invocation;
+    distinct guard success plus structural-checker success form the CI architecture
+    verdict, and the direct Rust command makes no dependency-clean claim.
+14. Reordering Cargo metadata nodes, feature sets, or dependency-kind entries does not
     change the verdict.
-14. A normal validation run never edits the policy, manifests, lockfile, Cargo home
+15. A normal validation run never edits the policy, manifests, lockfile, Cargo home
     configuration, or repository source.
 
 ## Required Reviews
@@ -289,12 +323,18 @@ least:
   Cargo config replacement, environment source override, and both `--config` forms;
 - a changed resolver, missing member, implicit root package, unused workspace dependency,
   duplicate JSON key, stale policy row, duplicate edge, and ambiguous declaration join;
+- an external or redirected workspace member and a same-package dependency changed
+  between workspace inheritance and member-authored declaration;
 - a registry manifest outside the active Cargo home or inside the repository;
 - metadata and feature/dependency traversal reordering;
-- a runtime `--target` token after `--` and the exact supported musl Cargo target before
-  `--`; and
+- a missing or post-delimiter `--locked`, a command that would update `Cargo.lock`, a
+  host/filtered-lane disagreement, an unsupported explicit target, a runtime `--target`
+  token after `--`, and the exact supported musl target before `--`;
+- a checkout-local Cargo shadow or a `PINNED_CARGO` path/version mismatch;
+- a direct Rust architecture-check invocation that attempts to claim dependency-clean
+  status; and
 - removal of the guard from one dependency-resolving CI command or restoration of a
-  dependency cache in the authoritative policy job.
+  dependency cache in any guarded public-CI job.
 
 The reviewer must also verify that the document does not claim hermeticity, hostile-code
 containment, archive-byte authentication, or self-authentication. The verdict is
