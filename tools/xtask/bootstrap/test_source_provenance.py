@@ -37,12 +37,12 @@ class Fixture:
         workflow = self.root / ".github" / "workflows" / "ci.yml"
         workflow.parent.mkdir(parents=True)
         shutil.copy2(SCRIPT.parents[3] / ".github" / "workflows" / "ci.yml", workflow)
-        self.write_policy([])
         self.write_root()
         (self.member / "Cargo.toml").write_text(
             '[package]\nname = "fixture-member"\nversion = "0.0.0"\nedition = "2024"\n',
             encoding="utf-8",
         )
+        self.write_policy([])
 
     def write_policy(self, dependencies: list[dict[str, object]]) -> None:
         normalized_dependencies = []
@@ -61,6 +61,14 @@ class Fixture:
                 },
             )
             normalized_dependencies.append(row)
+        root_manifest = PROVENANCE._read_manifest(self.root / "Cargo.toml")
+        workspace = PROVENANCE._required_table(
+            root_manifest.get("workspace"), "fixture [workspace]"
+        )
+        member_manifest = PROVENANCE._read_manifest(self.member / "Cargo.toml")
+        authored_package = PROVENANCE._required_table(
+            member_manifest.get("package"), "fixture [package]"
+        )
         policy = self.root / "tools" / "xtask" / "dependency-surface-policy.v1.json"
         policy.parent.mkdir(parents=True, exist_ok=True)
         policy.write_text(
@@ -68,9 +76,12 @@ class Fixture:
                 {
                     "schemaVersion": 1,
                     "workspaceResolver": "3",
+                    "rootProfiles": root_manifest.get("profile", {}),
+                    "workspacePackage": workspace.get("package", {}),
                     "packages": [
                         {
                             "name": "fixture-member",
+                            "authoredPackage": authored_package,
                             "dependencies": normalized_dependencies,
                         }
                     ],
@@ -144,6 +155,28 @@ class SourceProvenanceTests(unittest.TestCase):
                     with self.assertRaisesRegex(PROVENANCE.ProvenanceError, name):
                         fixture.validate(**{name: "replacement"})
 
+    def test_compiler_profile_and_alias_environment_is_rejected(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            for name in (
+                "RUSTFLAGS",
+                "CARGO_ENCODED_RUSTFLAGS",
+                "CARGO_ENCODED_RUSTDOCFLAGS",
+                "RUSTC_WRAPPER",
+                "CARGO_BUILD_RUSTC_WRAPPER",
+                "CARGO_PROFILE_RELEASE_PANIC",
+                "CARGO_ALIAS_AUDIT",
+                "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER",
+                "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTDOCFLAGS",
+            ):
+                with self.subTest(name=name):
+                    with self.assertRaisesRegex(PROVENANCE.ProvenanceError, name):
+                        fixture.validate(**{name: "replacement"})
+
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "exactly 0"):
+                fixture.validate(CARGO_INCREMENTAL="1")
+            fixture.validate(CARGO_INCREMENTAL="0")
+
     def test_repository_and_cargo_home_config_files_are_rejected(self) -> None:
         temporary, fixture = self.fixture()
         with temporary:
@@ -211,6 +244,44 @@ class SourceProvenanceTests(unittest.TestCase):
                 fixture.validate()
             fixture.write_root(resolver="1")
             with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "resolver"):
+                fixture.validate()
+
+    def test_root_profile_and_workspace_package_drift_are_rejected(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            fixture.write_root(
+                suffix='\n[profile.release]\npanic = "abort"\n'
+            )
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "profile"):
+                fixture.validate()
+
+            fixture.write_root(
+                suffix='\n[workspace.package]\nversion = "9.9.9"\n'
+            )
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "workspace.package"):
+                fixture.validate()
+
+    def test_authored_workspace_package_identity_drift_is_rejected(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            (fixture.member / "Cargo.toml").write_text(
+                '[package]\nname = "fixture-member"\nversion = "9.9.9"\n'
+                'edition = "2024"\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "package contract drift"):
+                fixture.validate()
+
+    def test_underscore_default_features_spelling_is_rejected(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            (fixture.member / "Cargo.toml").write_text(
+                '[package]\nname = "fixture-member"\nversion = "0.0.0"\n'
+                'edition = "2021"\n[dependencies]\n'
+                'serde = { version = "=1.0.0", default_features = false }\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "default_features"):
                 fixture.validate()
 
     def test_semantic_resolver_formatting_is_accepted(self) -> None:

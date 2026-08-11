@@ -28,6 +28,35 @@ CRATES_IO_SOURCE = "registry+https://github.com/rust-lang/crates.io-index"
 FORBIDDEN_DEPENDENCY_SOURCE_KEYS = frozenset(
     {"git", "registry", "branch", "tag", "rev"}
 )
+FORBIDDEN_ENVIRONMENT_EXACT = frozenset(
+    {
+        "CARGO",
+        "RUSTC",
+        "RUSTC_WRAPPER",
+        "RUSTC_WORKSPACE_WRAPPER",
+        "RUSTDOC",
+        "RUSTFMT",
+        "CLIPPY_DRIVER",
+        "RUSTFLAGS",
+        "RUSTDOCFLAGS",
+        "RUSTC_BOOTSTRAP",
+        "RUSTUP_TOOLCHAIN",
+        "CARGO_ENCODED_RUSTFLAGS",
+        "CARGO_ENCODED_RUSTDOCFLAGS",
+        "CARGO_BUILD_TARGET",
+        "CARGO_BUILD_TARGET_DIR",
+        "CARGO_BUILD_BUILD_DIR",
+    }
+)
+FORBIDDEN_ENVIRONMENT_PREFIXES = (
+    "CARGO_UNSTABLE_",
+    "CARGO_PROFILE_",
+    "CARGO_ALIAS_",
+    "CARGO_BUILD_RUSTC",
+    "CARGO_BUILD_RUSTDOC",
+    "CARGO_BUILD_RUSTFLAGS",
+    "CARGO_TARGET_",
+)
 
 
 class ProvenanceError(RuntimeError):
@@ -147,7 +176,7 @@ def reject_cargo_configuration(root: Path, cargo_home: Path) -> None:
 
 
 def reject_source_environment(environment: Mapping[str, str]) -> None:
-    for raw_name in environment:
+    for raw_name, value in environment.items():
         name = raw_name.upper()
         if (
             name.startswith("CARGO_SOURCE_")
@@ -155,6 +184,20 @@ def reject_source_environment(environment: Mapping[str, str]) -> None:
             or (name.startswith("CARGO_REGISTRIES_") and name.endswith("_INDEX"))
         ):
             raise ProvenanceError(f"forbidden Cargo source environment variable: {raw_name}")
+        if name == "CARGO_INCREMENTAL":
+            if value != "0":
+                raise ProvenanceError("CARGO_INCREMENTAL must be exactly 0 when provided")
+            continue
+        if name in FORBIDDEN_ENVIRONMENT_EXACT or name.startswith(
+            FORBIDDEN_ENVIRONMENT_PREFIXES
+        ):
+            raise ProvenanceError(
+                f"forbidden Cargo or compiler environment variable: {raw_name}"
+            )
+        if os.name == "nt" and name in {"LINK", "_LINK_", "LIB"}:
+            raise ProvenanceError(
+                f"inherited MSVC linker environment variable is forbidden: {raw_name}"
+            )
 
 
 def _require_unredirected_file(path: Path, root: Path, description: str) -> Path:
@@ -294,6 +337,10 @@ def _declared_dependency(
     workspace_members: Mapping[Path, str],
 ) -> tuple[str, DependencyContract]:
     table = value if isinstance(value, dict) else None
+    if table is not None and "default_features" in table:
+        raise ProvenanceError(
+            f"dependency {alias!r} uses forbidden default_features spelling"
+        )
     if table is not None and "workspace" in table:
         raise ProvenanceError(
             f"dependency {alias!r} may use workspace inheritance only in a member manifest"
@@ -440,6 +487,8 @@ def _authored_requirements(
 def validate_authored_requirements(
     root: Path,
     resolver: object,
+    root_profiles: Mapping[str, object],
+    workspace_package: Mapping[str, object],
     workspace_dependencies: Mapping[str, object],
     manifests: Sequence[tuple[Path, Mapping[str, object]]],
     workspace_members: Mapping[Path, str],
@@ -453,6 +502,16 @@ def validate_authored_requirements(
         raise ProvenanceError(
             f"workspace resolver does not match dependency policy: {resolver!r}"
         )
+    if policy.get("rootProfiles") != root_profiles:
+        raise ProvenanceError(
+            "root profile map does not match dependency policy: "
+            f"expected {policy.get('rootProfiles')!r}, observed {root_profiles!r}"
+        )
+    if policy.get("workspacePackage") != workspace_package:
+        raise ProvenanceError(
+            "[workspace.package] does not match dependency policy: "
+            f"expected {policy.get('workspacePackage')!r}, observed {workspace_package!r}"
+        )
     packages = policy.get("packages")
     if not isinstance(packages, list):
         raise ProvenanceError("dependency policy packages must be an array")
@@ -460,12 +519,20 @@ def validate_authored_requirements(
         str,
         dict[tuple[str, str | None, str, str | None], DependencyContract],
     ] = {}
+    expected_packages: dict[str, Mapping[str, object]] = {}
     for package in packages:
         package_table = _required_table(package, "dependency policy package")
         owner = package_table.get("name")
         dependencies = package_table.get("dependencies")
-        if not isinstance(owner, str) or not isinstance(dependencies, list):
-            raise ProvenanceError("dependency policy package has invalid name or dependencies")
+        authored_package = package_table.get("authoredPackage")
+        if (
+            not isinstance(owner, str)
+            or not isinstance(dependencies, list)
+            or not isinstance(authored_package, dict)
+        ):
+            raise ProvenanceError(
+                "dependency policy package has invalid name, authoredPackage, or dependencies"
+            )
         rows: dict[
             tuple[str, str | None, str, str | None], DependencyContract
         ] = {}
@@ -521,16 +588,19 @@ def validate_authored_requirements(
         if owner in expected:
             raise ProvenanceError(f"duplicate dependency policy package: {owner}")
         expected[owner] = rows
+        expected_packages[owner] = authored_package
 
     observed: dict[
         str,
         dict[tuple[str, str | None, str, str | None], DependencyContract],
     ] = {}
+    observed_packages: dict[str, Mapping[str, object]] = {}
     for manifest_path, manifest in manifests:
         package = _required_table(manifest.get("package"), "workspace package")
         owner = package.get("name")
         if not isinstance(owner, str) or owner in observed:
             raise ProvenanceError(f"invalid or duplicate workspace package name: {owner!r}")
+        observed_packages[owner] = package
         observed[owner] = _authored_requirements(
             root,
             manifest_path,
@@ -541,6 +611,11 @@ def validate_authored_requirements(
     if observed != expected:
         raise ProvenanceError(
             f"authored dependency contract drift: expected {expected!r}, observed {observed!r}"
+        )
+    if observed_packages != expected_packages:
+        raise ProvenanceError(
+            "authored workspace package contract drift: "
+            f"expected {expected_packages!r}, observed {observed_packages!r}"
         )
 
 
@@ -557,6 +632,10 @@ def validate_workspace_manifests(root: Path) -> tuple[Path, ...]:
         raise ProvenanceError("root Cargo.toml has no [workspace] table")
     if workspace.get("resolver") != "3":
         raise ProvenanceError('root [workspace].resolver must be exactly "3"')
+    root_profiles = _required_table(root_manifest.get("profile", {}), "root [profile]")
+    workspace_package = _required_table(
+        workspace.get("package", {}), "[workspace.package]"
+    )
     workspace_dependencies = _required_table(
         workspace.get("dependencies", {}), "[workspace.dependencies]"
     )
@@ -623,6 +702,8 @@ def validate_workspace_manifests(root: Path) -> tuple[Path, ...]:
     validate_authored_requirements(
         root,
         workspace.get("resolver"),
+        root_profiles,
+        workspace_package,
         workspace_dependencies,
         parsed_manifests,
         workspace_members,

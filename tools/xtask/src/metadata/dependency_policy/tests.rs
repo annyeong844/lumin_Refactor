@@ -253,6 +253,14 @@ fn every_safety_dimension_is_part_of_policy_identity() -> Result<(), Box<dyn std
     replace_field(&mut resolver, "workspaceResolver", serde_json::json!("1"))?;
     assert_policy_drift(&root, &resolver)?;
 
+    let mut package_identity = expected.clone();
+    let identity = package_mut(&mut package_identity, "lumin-cli")?
+        .get_mut("definition")
+        .and_then(|definition| definition.get_mut("identity"))
+        .ok_or("lumin-cli package identity is missing")?;
+    replace_field(identity, "version", serde_json::json!("9.9.9"))?;
+    assert_policy_drift(&root, &package_identity)?;
+
     let mut feature_map = expected.clone();
     let feature = package_mut(&mut feature_map, "lumin-cli")?
         .get_mut("features")
@@ -326,6 +334,12 @@ fn declared_rename_survives_normalized_binding_collision() -> Result<(), Box<dyn
         temporary.path().join("Cargo.toml"),
         "[workspace]\nresolver = \"3\"\nmembers = []\n",
     )?;
+    let owner = temporary.path().join("owner");
+    std::fs::create_dir_all(&owner)?;
+    std::fs::write(
+        owner.join("Cargo.toml"),
+        "[package]\nname = 'lumin-inventory'\nversion = '0.1.0'\nedition = '2024'\n",
+    )?;
     let base = serde_json::json!({
         "workspace_members": ["owner-id"],
         "packages": [
@@ -333,7 +347,23 @@ fn declared_rename_survives_normalized_binding_collision() -> Result<(), Box<dyn
                 "id": "owner-id",
                 "name": "lumin-inventory",
                 "version": "0.1.0",
-                "manifest_path": temporary.path().join("owner/Cargo.toml"),
+                "manifest_path": owner.join("Cargo.toml"),
+                "edition": "2024",
+                "rust_version": "1.96",
+                "authors": [],
+                "description": null,
+                "homepage": null,
+                "documentation": null,
+                "readme": null,
+                "keywords": [],
+                "categories": [],
+                "license": "MIT",
+                "license_file": null,
+                "repository": null,
+                "links": null,
+                "publish": [],
+                "default_run": null,
+                "metadata": null,
                 "features": {},
                 "dependencies": [{
                     "name": "same-file",
@@ -364,7 +394,7 @@ fn declared_rename_survives_normalized_binding_collision() -> Result<(), Box<dyn
         }]}
     });
     let mut violations = Vec::new();
-    let authored = build_observed_policy(&base, &mut violations)?;
+    let authored = build_observed_policy(&base, temporary.path(), &mut violations)?;
     assert!(violations.is_empty(), "{violations:?}");
 
     let mut renamed_metadata = base;
@@ -378,7 +408,8 @@ fn declared_rename_survives_normalized_binding_collision() -> Result<(), Box<dyn
         .ok_or("fixture dependency is missing")?;
     replace_field(declaration, "rename", serde_json::json!("same_file"))?;
     let mut renamed_violations = Vec::new();
-    let renamed = build_observed_policy(&renamed_metadata, &mut renamed_violations)?;
+    let renamed =
+        build_observed_policy(&renamed_metadata, temporary.path(), &mut renamed_violations)?;
     assert!(renamed_violations.is_empty(), "{renamed_violations:?}");
     assert_ne!(authored, renamed);
 
@@ -399,7 +430,11 @@ fn declared_rename_survives_normalized_binding_collision() -> Result<(), Box<dyn
         .ok_or("fixture resolution kind is missing")?;
     kinds.push(duplicate_kind);
     let mut ambiguous_violations = Vec::new();
-    let _ = build_observed_policy(&renamed_metadata, &mut ambiguous_violations)?;
+    let _ = build_observed_policy(
+        &renamed_metadata,
+        temporary.path(),
+        &mut ambiguous_violations,
+    )?;
     assert!(
         ambiguous_violations
             .iter()

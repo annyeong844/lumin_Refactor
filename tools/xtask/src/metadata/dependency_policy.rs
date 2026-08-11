@@ -22,13 +22,14 @@ pub(super) fn validate_dependency_surface(
     workspace_root: &Path,
     violations: &mut Vec<String>,
 ) -> Result<(), String> {
-    let observed = build_observed_policy(metadata, violations)?;
+    let observed = build_observed_policy(metadata, workspace_root, violations)?;
     compare_checked_policy(workspace_root, &observed, violations)?;
     validate_registry_locations(metadata, workspace_root, violations)
 }
 
 fn build_observed_policy(
     metadata: &serde_json::Value,
+    workspace_root: &Path,
     violations: &mut Vec<String>,
 ) -> Result<serde_json::Value, String> {
     // The isolated Python guard strict-parses the semantic TOML value immediately before
@@ -124,6 +125,7 @@ fn build_observed_policy(
         policy_packages.push(serde_json::json!({
             "name": owner,
             "class": class,
+            "definition": workspace_package_definition(package, workspace_root)?,
             "features": features,
             "dependencies": dependency_policies,
         }));
@@ -136,6 +138,93 @@ fn build_observed_policy(
         "workspaceResolver": resolver,
         "packages": policy_packages,
     }))
+}
+
+fn workspace_package_definition(
+    package: &serde_json::Value,
+    workspace_root: &Path,
+) -> Result<serde_json::Value, String> {
+    let name = required_string(package, "name", "workspace package")?;
+    let version = required_string(package, "version", "workspace package")?;
+    let manifest = stable_workspace_path(
+        required_string(package, "manifest_path", "workspace package")?,
+        workspace_root,
+        &format!("workspace package {name} manifest"),
+    )?;
+    let readme = stable_optional_workspace_path(
+        required_field(package, "readme", "workspace package")?,
+        workspace_root,
+        &format!("workspace package {name} readme"),
+    )?;
+    let license_file = stable_optional_workspace_path(
+        required_field(package, "license_file", "workspace package")?,
+        workspace_root,
+        &format!("workspace package {name} license file"),
+    )?;
+
+    Ok(serde_json::json!({
+        "identity": {
+            "name": name,
+            "version": version,
+            "manifest": manifest,
+        },
+        "edition": required_field(package, "edition", "workspace package")?.clone(),
+        "rustVersion": required_field(package, "rust_version", "workspace package")?.clone(),
+        "authors": required_field(package, "authors", "workspace package")?.clone(),
+        "description": required_field(package, "description", "workspace package")?.clone(),
+        "homepage": required_field(package, "homepage", "workspace package")?.clone(),
+        "documentation": required_field(package, "documentation", "workspace package")?.clone(),
+        "readme": readme,
+        "keywords": required_field(package, "keywords", "workspace package")?.clone(),
+        "categories": required_field(package, "categories", "workspace package")?.clone(),
+        "license": required_field(package, "license", "workspace package")?.clone(),
+        "licenseFile": license_file,
+        "repository": required_field(package, "repository", "workspace package")?.clone(),
+        "links": required_field(package, "links", "workspace package")?.clone(),
+        "publish": required_field(package, "publish", "workspace package")?.clone(),
+        "defaultRun": required_field(package, "default_run", "workspace package")?.clone(),
+        "metadata": required_field(package, "metadata", "workspace package")?.clone(),
+    }))
+}
+
+fn stable_workspace_path(
+    raw: &str,
+    workspace_root: &Path,
+    context: &str,
+) -> Result<String, String> {
+    let path = Path::new(raw);
+    let canonical_root = std::fs::canonicalize(workspace_root).map_err(|error| {
+        format!(
+            "cannot canonicalize workspace root {}: {error}",
+            workspace_root.display()
+        )
+    })?;
+    let canonical = std::fs::canonicalize(path)
+        .map_err(|error| format!("cannot canonicalize {context} {}: {error}", path.display()))?;
+    if !canonical.starts_with(&canonical_root) {
+        return Err(format!(
+            "{context} escapes workspace {}: {}",
+            canonical_root.display(),
+            canonical.display()
+        ));
+    }
+    Ok(super::relative_display(&canonical_root, &canonical))
+}
+
+fn stable_optional_workspace_path(
+    value: &serde_json::Value,
+    workspace_root: &Path,
+    context: &str,
+) -> Result<serde_json::Value, String> {
+    match value {
+        serde_json::Value::Null => Ok(serde_json::Value::Null),
+        serde_json::Value::String(path) => Ok(serde_json::Value::String(stable_workspace_path(
+            path,
+            workspace_root,
+            context,
+        )?)),
+        _ => Err(format!("{context} is neither null nor a string")),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -384,6 +473,7 @@ fn compare_checked_policy(
             path.display()
         )
     })?;
+    let expected = rust_policy_view(expected)?;
     if expected == *observed {
         return Ok(());
     }
@@ -395,6 +485,28 @@ fn compare_checked_policy(
         "DEPENDENCY SURFACE POLICY DRIFT: {difference}; expected digest {expected_digest}, observed {observed_digest}"
     ));
     Ok(())
+}
+
+fn rust_policy_view(mut policy: serde_json::Value) -> Result<serde_json::Value, String> {
+    let root = policy
+        .as_object_mut()
+        .ok_or_else(|| "checked dependency policy root is not an object".to_owned())?;
+    // The digest-pinned Python bootstrap owns strict authored-TOML comparison before Cargo.
+    // Rust owns the independent Cargo metadata projection and must not pretend metadata can
+    // reproduce source spelling or the root profile table that Cargo omits.
+    root.remove("rootProfiles");
+    root.remove("workspacePackage");
+    let packages = root
+        .get_mut("packages")
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or_else(|| "checked dependency policy packages is not an array".to_owned())?;
+    for package in packages {
+        package
+            .as_object_mut()
+            .ok_or_else(|| "checked dependency policy package is not an object".to_owned())?
+            .remove("authoredPackage");
+    }
+    Ok(policy)
 }
 
 fn validate_registry_locations(

@@ -137,7 +137,48 @@
             "source": "registry+https://github.com/rust-lang/crates.io-index"
           }
         }
-      ]
+      ],
+      "authoredPackage": {
+        "name": "lumin-cli",
+        "version": {
+          "workspace": true
+        },
+        "edition": {
+          "workspace": true
+        },
+        "rust-version": {
+          "workspace": true
+        },
+        "license": {
+          "workspace": true
+        },
+        "publish": {
+          "workspace": true
+        }
+      },
+      "definition": {
+        "identity": {
+          "name": "lumin-cli",
+          "version": "0.1.0",
+          "manifest": "crates/application/cli/Cargo.toml"
+        },
+        "edition": "2024",
+        "rustVersion": "1.96",
+        "authors": [],
+        "description": null,
+        "homepage": null,
+        "documentation": null,
+        "readme": null,
+        "keywords": [],
+        "categories": [],
+        "license": "MIT",
+        "licenseFile": null,
+        "repository": null,
+        "links": null,
+        "publish": [],
+        "defaultRun": null,
+        "metadata": null
+      }
     },
     {
       "name": "lumin-dead",
@@ -189,7 +230,48 @@
             "package": "lumin-model"
           }
         }
-      ]
+      ],
+      "authoredPackage": {
+        "name": "lumin-dead",
+        "version": {
+          "workspace": true
+        },
+        "edition": {
+          "workspace": true
+        },
+        "rust-version": {
+          "workspace": true
+        },
+        "license": {
+          "workspace": true
+        },
+        "publish": {
+          "workspace": true
+        }
+      },
+      "definition": {
+        "identity": {
+          "name": "lumin-dead",
+          "version": "0.1.0",
+          "manifest": "crates/analyses/dead-code/Cargo.toml"
+        },
+        "edition": "2024",
+        "rustVersion": "1.96",
+        "authors": [],
+        "description": null,
+        "homepage": null,
+        "documentation": null,
+        "readme": null,
+        "keywords": [],
+        "categories": [],
+        "license": "MIT",
+        "licenseFile": null,
+        "repository": null,
+        "links": null,
+        "publish": [],
+        "defaultRun": null,
+        "metadata": null
+      }
     },
     {
       "name": "lumin-engine",
@@ -395,7 +477,48 @@
             "source": "registry+https://github.com/rust-lang/crates.io-index"
           }
         }
-      ]
+      ],
+      "authoredPackage": {
+        "name": "lumin-engine",
+        "version": {
+          "workspace": true
+        },
+        "edition": {
+          "workspace": true
+        },
+        "rust-version": {
+          "workspace": true
+        },
+        "license": {
+          "workspace": true
+        },
+        "publish": {
+          "workspace": true
+        }
+      },
+      "definition": {
+        "identity": {
+          "name": "lumin-engine",
+          "version": "0.1.0",
+          "manifest": "crates/application/engine/Cargo.toml"
+        },
+        "edition": "2024",
+        "rustVersion": "1.96",
+        "authors": [],
+        "description": null,
+        "homepage": null,
+        "documentation": null,
+        "readme": null,
+        "keywords": [],
+        "categories": [],
+        "license": "MIT",
+        "licenseFile": null,
+        "repository": null,
+        "links": null,
+        "publish": [],
+        "defaultRun": null,
+        "metadata": null
+      }
     },
     {
       "name": "lumin-evidence",
@@ -436,7 +559,48 @@
             "source": "registry+https://github.com/rust-lang/crates.io-index"
           }
         }
-      ]
+      ],
+      "authoredPackage": {
+        "name": "lumin-evidence",
+        "version": {
+          "workspace": true
+        },
+        "edition": {
+          "workspace": true
+        },
+        "rust-version": {
+          "workspace": true
+        },
+        "license": {
+          "workspace": true
+        },
+        "publish": {
+          "workspace": true
+        }
+      },
+      "definition": {
+        "identity": {
+          "name": "lumin-evidence",
+          "version": "0.1.0",
+          "manifest": "crates/foundation/evidence/Cargo.toml"
+        },
+        "edition": "2024",
+        "rustVersion": "1.96",
+        "authors": [],
+        "description": null,
+        "homepage": null,
+        "documentation": null,
+        "readme": null,
+        "keywords": [],
+        "categories": [],
+        "license": "MIT",
+        "licenseFile": null,
+        "repository": null,
+        "links": null,
+        "publish": [],
+        "defaultRun": null,
+        "metadata": null
+      }
     },
     {
       "name": "lumin-graph",
@@ -458,7 +622,48 @@
             "package": "lumin-model"
           }
         }
-      ]
+      ],
+      "authoredPackage": {
+        "name": "lumin-graph",
+        "version": {
+          "workspace": true
+        },
+        "edition": {
+          "workspace": true
+        },
+        "rust-version": {
+          "workspace": true
+        },
+        "license": {
+          "workspace": true
+        },
+        "publish": {
+          "workspace": true
+        }
+      },
+      "definition": {
+        "identity": {
+          "name": "lumin-graph",
+          "version": "0.1.0",
+          "manifest": "crates/graph/symbols/Cargo.toml"
+        },
+        "edition": "2024",
+        "rustVersion": "1.96",
+        "authors": [],
+        "description": null,
+        "homepage": null,
+        "documentation": null,
+        "readme": null,
+        "keywords": [],
+        "categories": [],
+        "license": "MIT",
+        "licenseFile": null,
+        "repository": null,
+        "links": null,
+        "publish": [],
+        "defaultRun": null,
+        "metadata": null
+      }
     },
     {
       "name": "lumin-inventory",
@@ -638,7 +843,48 @@
             "source": "registry+https://github.com/rust-lang/crates.io-index"
           }
         }
-      ]
+      ],
+      "authoredPackage": {
+        "name": "lumin-inventory",
+        "version": {
+          "workspace": true
+        },
+        "edition": {
+          "workspace": true
+        },
+        "rust-version": {
+          "workspace": true
+        },
+        "license": {
+          "workspace": true
+        },
+        "publish": {
+          "workspace": true
+        }
+      },
+      "definition": {
+        "identity": {
+          "name": "lumin-inventory",
+          "version": "0.1.0",
+          "manifest": "crates/source/inventory/Cargo.toml"
+        },
+        "edition": "2024",
+        "rustVersion": "1.96",
+        "authors": [],
+        "description": null,
+        "homepage": null,
+        "documentation": null,
+        "readme": null,
+        "keywords": [],
+        "categories": [],
+        "license": "MIT",
+        "licenseFile": null,
+        "repository": null,
+        "links": null,
+        "publish": [],
+        "defaultRun": null,
+        "metadata": null
+      }
     },
     {
       "name": "lumin-js",
@@ -745,7 +991,48 @@
             "source": "registry+https://github.com/rust-lang/crates.io-index"
           }
         }
-      ]
+      ],
+      "authoredPackage": {
+        "name": "lumin-js",
+        "version": {
+          "workspace": true
+        },
+        "edition": {
+          "workspace": true
+        },
+        "rust-version": {
+          "workspace": true
+        },
+        "license": {
+          "workspace": true
+        },
+        "publish": {
+          "workspace": true
+        }
+      },
+      "definition": {
+        "identity": {
+          "name": "lumin-js",
+          "version": "0.1.0",
+          "manifest": "crates/languages/js/Cargo.toml"
+        },
+        "edition": "2024",
+        "rustVersion": "1.96",
+        "authors": [],
+        "description": null,
+        "homepage": null,
+        "documentation": null,
+        "readme": null,
+        "keywords": [],
+        "categories": [],
+        "license": "MIT",
+        "licenseFile": null,
+        "repository": null,
+        "links": null,
+        "publish": [],
+        "defaultRun": null,
+        "metadata": null
+      }
     },
     {
       "name": "lumin-model",
@@ -805,7 +1092,48 @@
             "source": "registry+https://github.com/rust-lang/crates.io-index"
           }
         }
-      ]
+      ],
+      "authoredPackage": {
+        "name": "lumin-model",
+        "version": {
+          "workspace": true
+        },
+        "edition": {
+          "workspace": true
+        },
+        "rust-version": {
+          "workspace": true
+        },
+        "license": {
+          "workspace": true
+        },
+        "publish": {
+          "workspace": true
+        }
+      },
+      "definition": {
+        "identity": {
+          "name": "lumin-model",
+          "version": "0.1.0",
+          "manifest": "crates/foundation/model/Cargo.toml"
+        },
+        "edition": "2024",
+        "rustVersion": "1.96",
+        "authors": [],
+        "description": null,
+        "homepage": null,
+        "documentation": null,
+        "readme": null,
+        "keywords": [],
+        "categories": [],
+        "license": "MIT",
+        "licenseFile": null,
+        "repository": null,
+        "links": null,
+        "publish": [],
+        "defaultRun": null,
+        "metadata": null
+      }
     },
     {
       "name": "lumin-protocol",
@@ -929,7 +1257,48 @@
             "source": "registry+https://github.com/rust-lang/crates.io-index"
           }
         }
-      ]
+      ],
+      "authoredPackage": {
+        "name": "lumin-protocol",
+        "version": {
+          "workspace": true
+        },
+        "edition": {
+          "workspace": true
+        },
+        "rust-version": {
+          "workspace": true
+        },
+        "license": {
+          "workspace": true
+        },
+        "publish": {
+          "workspace": true
+        }
+      },
+      "definition": {
+        "identity": {
+          "name": "lumin-protocol",
+          "version": "0.1.0",
+          "manifest": "crates/application/protocol/Cargo.toml"
+        },
+        "edition": "2024",
+        "rustVersion": "1.96",
+        "authors": [],
+        "description": null,
+        "homepage": null,
+        "documentation": null,
+        "readme": null,
+        "keywords": [],
+        "categories": [],
+        "license": "MIT",
+        "licenseFile": null,
+        "repository": null,
+        "links": null,
+        "publish": [],
+        "defaultRun": null,
+        "metadata": null
+      }
     },
     {
       "name": "lumin-resolve",
@@ -968,7 +1337,48 @@
             "source": "registry+https://github.com/rust-lang/crates.io-index"
           }
         }
-      ]
+      ],
+      "authoredPackage": {
+        "name": "lumin-resolve",
+        "version": {
+          "workspace": true
+        },
+        "edition": {
+          "workspace": true
+        },
+        "rust-version": {
+          "workspace": true
+        },
+        "license": {
+          "workspace": true
+        },
+        "publish": {
+          "workspace": true
+        }
+      },
+      "definition": {
+        "identity": {
+          "name": "lumin-resolve",
+          "version": "0.1.0",
+          "manifest": "crates/graph/resolve/Cargo.toml"
+        },
+        "edition": "2024",
+        "rustVersion": "1.96",
+        "authors": [],
+        "description": null,
+        "homepage": null,
+        "documentation": null,
+        "readme": null,
+        "keywords": [],
+        "categories": [],
+        "license": "MIT",
+        "licenseFile": null,
+        "repository": null,
+        "links": null,
+        "publish": [],
+        "defaultRun": null,
+        "metadata": null
+      }
     },
     {
       "name": "lumin-sfc",
@@ -1007,7 +1417,48 @@
             "source": "registry+https://github.com/rust-lang/crates.io-index"
           }
         }
-      ]
+      ],
+      "authoredPackage": {
+        "name": "lumin-sfc",
+        "version": {
+          "workspace": true
+        },
+        "edition": {
+          "workspace": true
+        },
+        "rust-version": {
+          "workspace": true
+        },
+        "license": {
+          "workspace": true
+        },
+        "publish": {
+          "workspace": true
+        }
+      },
+      "definition": {
+        "identity": {
+          "name": "lumin-sfc",
+          "version": "0.1.0",
+          "manifest": "crates/languages/sfc/Cargo.toml"
+        },
+        "edition": "2024",
+        "rustVersion": "1.96",
+        "authors": [],
+        "description": null,
+        "homepage": null,
+        "documentation": null,
+        "readme": null,
+        "keywords": [],
+        "categories": [],
+        "license": "MIT",
+        "licenseFile": null,
+        "repository": null,
+        "links": null,
+        "publish": [],
+        "defaultRun": null,
+        "metadata": null
+      }
     },
     {
       "name": "lumin-store",
@@ -1226,7 +1677,48 @@
             "source": "registry+https://github.com/rust-lang/crates.io-index"
           }
         }
-      ]
+      ],
+      "authoredPackage": {
+        "name": "lumin-store",
+        "version": {
+          "workspace": true
+        },
+        "edition": {
+          "workspace": true
+        },
+        "rust-version": {
+          "workspace": true
+        },
+        "license": {
+          "workspace": true
+        },
+        "publish": {
+          "workspace": true
+        }
+      },
+      "definition": {
+        "identity": {
+          "name": "lumin-store",
+          "version": "0.1.0",
+          "manifest": "crates/application/store/Cargo.toml"
+        },
+        "edition": "2024",
+        "rustVersion": "1.96",
+        "authors": [],
+        "description": null,
+        "homepage": null,
+        "documentation": null,
+        "readme": null,
+        "keywords": [],
+        "categories": [],
+        "license": "MIT",
+        "licenseFile": null,
+        "repository": null,
+        "links": null,
+        "publish": [],
+        "defaultRun": null,
+        "metadata": null
+      }
     },
     {
       "name": "lumin-xtask",
@@ -1352,7 +1844,63 @@
             "source": "registry+https://github.com/rust-lang/crates.io-index"
           }
         }
-      ]
+      ],
+      "authoredPackage": {
+        "name": "lumin-xtask",
+        "version": {
+          "workspace": true
+        },
+        "edition": {
+          "workspace": true
+        },
+        "rust-version": {
+          "workspace": true
+        },
+        "license": {
+          "workspace": true
+        },
+        "publish": {
+          "workspace": true
+        }
+      },
+      "definition": {
+        "identity": {
+          "name": "lumin-xtask",
+          "version": "0.1.0",
+          "manifest": "tools/xtask/Cargo.toml"
+        },
+        "edition": "2024",
+        "rustVersion": "1.96",
+        "authors": [],
+        "description": null,
+        "homepage": null,
+        "documentation": null,
+        "readme": null,
+        "keywords": [],
+        "categories": [],
+        "license": "MIT",
+        "licenseFile": null,
+        "repository": null,
+        "links": null,
+        "publish": [],
+        "defaultRun": null,
+        "metadata": null
+      }
     }
-  ]
+  ],
+  "rootProfiles": {
+    "release": {
+      "codegen-units": 1,
+      "lto": "thin",
+      "panic": "abort",
+      "strip": "symbols"
+    }
+  },
+  "workspacePackage": {
+    "version": "0.1.0",
+    "edition": "2024",
+    "rust-version": "1.96",
+    "license": "MIT",
+    "publish": false
+  }
 }
