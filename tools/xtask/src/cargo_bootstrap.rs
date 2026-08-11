@@ -5,19 +5,21 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 const GUARD_PATH: &str = "tools/xtask/bootstrap/source_provenance.py";
-const GUARD_SHA256: &str = "8261dae10032acc9d3cf7f93c097c2d9b6239e331ccff1dbdd70ac4609af03dd";
+const GUARD_SHA256: &str = "2dc98cd1e80cb4827d4daadc132c82ff96714db4ee06addda56abfceb3dbabd6";
 const TEST_PATH: &str = "tools/xtask/bootstrap/test_source_provenance.py";
 const TEST_SHA256: &str = "650d91826524cfb3f42572e91785232cac846ef80e3acfca3ce9ab685bec7198";
 const WORKFLOW_DIRECTORY: &str = ".github/workflows";
 const WORKFLOW_PATH: &str = ".github/workflows/ci.yml";
-const WORKFLOW_SHA256: &str = "1f288f643a2d5da3f73975981e13c85795d85545d6a5caaa48affbd0863c34ee";
+const WORKFLOW_SHA256: &str = "4ca2610501059a8ae6eacffd0b93547cb69115c221460eb012b2aa5465dbfc4c";
 const SETUP_PYTHON: &str = "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0";
 const PYTHON_VERSION: &str = "3.13.14";
 const CHECKOUT: &str = "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0";
-const JOB_PRIVATE_CARGO_ENV: &str = concat!(
-    "    env:\n",
-    "      CARGO_HOME: ${{ runner.temp }}/lumin-cargo-home\n",
-    "      CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-target",
+const DEPENDENCY_TOOL_INSTALL: &str =
+    "taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b # v2.83.4";
+const STEP_PRIVATE_CARGO_ENV: &str = concat!(
+    "        env:\n",
+    "          CARGO_HOME: ${{ runner.temp }}/lumin-cargo-home\n",
+    "          CARGO_TARGET_DIR: ${{ runner.temp }}/lumin-target",
 );
 const CARGO_JOBS: &[&str] = &[
     "formatting",
@@ -32,15 +34,12 @@ const CARGO_JOBS: &[&str] = &[
 const EXPECTED_USES: &[(&str, usize)] = &[
     (CHECKOUT, 8),
     (SETUP_PYTHON, 8),
-    (
-        "taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b # v2.83.4",
-        1,
-    ),
+    (DEPENDENCY_TOOL_INSTALL, 1),
 ];
 const TERMINAL_RUNTIME_RUNS: &[(&str, &str)] = &[
     (
         "architecture-check",
-        "target/debug/lumin-xtask architecture-check",
+        "${{ runner.temp }}/lumin-target/debug/lumin-xtask architecture-check",
     ),
     (
         "bootstrap-tests",
@@ -84,7 +83,10 @@ const EXPECTED_RUN_COMMANDS: &[(&str, usize)] = &[
         "python -I -S tools/xtask/bootstrap/source_provenance.py --check-only",
         2,
     ),
-    ("target/debug/lumin-xtask architecture-check", 1),
+    (
+        "${{ runner.temp }}/lumin-target/debug/lumin-xtask architecture-check",
+        1,
+    ),
     (
         "python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo audit --deny warnings",
         1,
@@ -385,11 +387,26 @@ fn validate_job_bootstrap(source: &str, job: &str, violations: &mut Vec<String>)
             "FRESH CHECKOUT ROUTING: job {job} must contain one exact checkout, found {checkout_count}"
         ));
     }
-    let environment_count = block.matches(JOB_PRIVATE_CARGO_ENV).count();
-    if environment_count != 1 {
+    let run_count = block
+        .lines()
+        .filter(|line| line.trim_start().starts_with("run:"))
+        .count();
+    let private_run_prefix = format!("{STEP_PRIVATE_CARGO_ENV}\n        run:");
+    let private_run_count = block.matches(&private_run_prefix).count();
+    if private_run_count != run_count {
         violations.push(format!(
-            "JOB-PRIVATE CARGO ROUTING: job {job} must contain one exact Cargo environment, found {environment_count}"
+            "STEP-PRIVATE CARGO ROUTING: job {job} must bind all {run_count} run steps to the exact Cargo environment, found {private_run_count}"
         ));
+    }
+    if job == "dependency-policy" {
+        let private_install =
+            format!("{STEP_PRIVATE_CARGO_ENV}\n        uses: {DEPENDENCY_TOOL_INSTALL}");
+        let install_count = block.matches(&private_install).count();
+        if install_count != 1 {
+            violations.push(format!(
+                "STEP-PRIVATE CARGO ROUTING: job {job} must bind the dependency tool installer to the exact Cargo environment, found {install_count}"
+            ));
+        }
     }
 }
 
@@ -537,14 +554,33 @@ mod tests {
     }
 
     #[test]
-    fn every_cargo_job_requires_job_private_cargo_paths() {
-        let bad = GOOD.replacen(JOB_PRIVATE_CARGO_ENV, "", 1);
+    fn every_cargo_run_step_requires_job_private_cargo_paths() {
+        let bad = GOOD.replacen(STEP_PRIVATE_CARGO_ENV, "", 1);
         let mut violations = Vec::new();
         validate_workflow(&bad, &mut violations);
         assert!(
             violations
                 .iter()
-                .any(|violation| violation.contains("JOB-PRIVATE CARGO ROUTING")),
+                .any(|violation| violation.contains("STEP-PRIVATE CARGO ROUTING")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn dependency_tool_install_requires_job_private_cargo_paths() {
+        let private_install =
+            format!("{STEP_PRIVATE_CARGO_ENV}\n        uses: {DEPENDENCY_TOOL_INSTALL}");
+        let bad = GOOD.replacen(
+            &private_install,
+            &format!("        uses: {DEPENDENCY_TOOL_INSTALL}"),
+            1,
+        );
+        let mut violations = Vec::new();
+        validate_workflow(&bad, &mut violations);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("STEP-PRIVATE CARGO ROUTING")),
             "{violations:?}"
         );
     }

@@ -17,7 +17,7 @@ MINIMUM_PYTHON = (3, 11)
 CONFIG_NAMES = ("config.toml", "config")
 WORKFLOW_DIRECTORY = Path(".github/workflows")
 WORKFLOW_NAME = "ci.yml"
-WORKFLOW_SHA256 = "1f288f643a2d5da3f73975981e13c85795d85545d6a5caaa48affbd0863c34ee"
+WORKFLOW_SHA256 = "4ca2610501059a8ae6eacffd0b93547cb69115c221460eb012b2aa5465dbfc4c"
 POLICY_PATH = Path("tools/xtask/dependency-surface-policy.v1.json")
 DEPENDENCY_TABLES = (
     ("dependencies", "normal"),
