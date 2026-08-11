@@ -2,12 +2,12 @@
 
 Document role: focused Architecture v1 amendment and freeze gate
 
-Status: **REOPENED** by independent GitHub review `4898431430` of
-`32a1b8328ce00935a3e162dc560f59bb645dce5e`. Its three actionable threads identify an
-unqualified Windows linker, omitted workspace target kinds, and mutable Cargo profile
-environment settings. The repository owner's approval of `32a1b83` does not carry to
-this amended candidate. Implementation and merge remain blocked until new owner and
-independent verdicts bind the next exact architecture-content commit.
+Status: **REOPENED** by independent GitHub review `4898896637` of
+`f2ff139791365fb87802fb916de4f1230d961b5d`. Its two actionable threads identify the
+MSVC linker's uncontrolled native environment and target flags omitted by Cargo
+metadata. The repository owner's approval of `f2ff139` does not carry to this amended
+candidate. Implementation and merge remain blocked until new owner and independent
+verdicts bind the next exact architecture-content commit.
 
 ## Definition
 
@@ -72,6 +72,10 @@ Consequently, any of these changes can reuse an existing approval:
   checker itself is being compiled;
 - set a `CARGO_PROFILE_*` environment variable so the checker or product compiles under
   a profile different from the frozen root manifest and policy.
+- keep the absolute MSVC linker but inject an object or option through `LINK`/`_LINK_`,
+  or redirect its object/library/PDB lookup through `LIB`;
+- change an authored target's `harness` or `bench` flag, which Cargo 1.96 metadata omits,
+  while preserving every metadata target object.
 
 These changes alter platforms, the default graph, crate-visible API names, dependency
 code, build cost, or the transitive surface. They are concrete fail-open policy bypasses
@@ -112,11 +116,25 @@ Visual Studio 2022 installation with `Microsoft.VisualStudio.Component.VC.Tools.
 reads its exact default MSVC tools version, and resolves
 `VC\Tools\MSVC\<version>\bin\Hostx64\x64\link.exe` beneath the returned physical
 installation root. The physical regular file must remain outside the future checkout
-and is recorded as `LUMIN_WINDOWS_LINKER` together with its SHA-256 digest; a missing,
-ambiguous, redirected, non-MSVC, or differently located result fails before checkout.
-The guard revalidates both physical identity and digest after checkout. No
-`where link.exe`, PATH lookup, or current-directory executable participates. Checkout
-runs only after this bootstrap.
+and is recorded as `LUMIN_WINDOWS_LINKER` together with its SHA-256 digest. A physical
+regular `cvtres.exe` must exist in that exact linker directory and is recorded as
+`LUMIN_WINDOWS_CVTRES` with its digest, so the linker never falls back to PATH for its
+resource converter. A missing, ambiguous, redirected, non-MSVC, or differently located
+result fails before checkout.
+Using absolute `C:\Windows\System32\cmd.exe /d`, the same step invokes the physical
+installation's `Common7\Tools\VsDevCmd.bat` for exact `x64` host and target while the
+workspace is empty. It captures one `LIB` path list after clearing inherited `LINK`,
+`_LINK_`, and `LIB`; empty or physically duplicate components fail, and every component
+must be an absolute, unredirected existing directory physically below that Visual Studio
+installation's selected MSVC library root
+or physical `C:\Program Files (x86)\Windows Kits` library root and outside the future
+checkout. Both roots must be unredirected. The exact ordered list is recorded as
+`LUMIN_WINDOWS_LIB`. The job also creates and records one
+job-private `LUMIN_WINDOWS_TMP` outside the future checkout. The guard revalidates the
+linker's physical identity and digest, the same-directory resource converter, every
+library directory, and the temporary directory after checkout. No `where link.exe`,
+PATH lookup, current-directory executable, inherited library path, or inherited linker
+argument participates. Checkout runs only after this bootstrap.
 The workflow never invokes an unqualified repository-time Python, Rust, linker,
 formatting, lint, audit, or deny executable.
 
@@ -151,6 +169,9 @@ manifest and rejects:
   and `rust-toolchain.toml` own compiler selection, flags, target, and output location;
 - every `CARGO_ALIAS_*` variable, so neither a built-in nor an external logical command
   can acquire hidden Cargo arguments after the guard validates its vector;
+- on Windows, every case-insensitive inherited `LINK`, `_LINK_`, or `LIB` key. The guard
+  removes `LINK` and `_LINK_`, replaces `LIB` only with `LUMIN_WINDOWS_LIB`, and replaces
+  `TMP` and `TEMP` only with the job-private `LUMIN_WINDOWS_TMP` in its child environment;
 - `[patch]` or `[replace]` tables in workspace manifests;
 - redirected workspace directories or manifests, and workspace build scripts that could
   mutate source configuration after admission;
@@ -214,10 +235,13 @@ physically below it, and supplies absolute `CARGO`, `RUSTC`, `RUSTDOC`, `RUSTFMT
 environment after rejecting inherited overrides. On Windows it also sets
 `CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER` to the revalidated absolute
 `LUMIN_WINDOWS_LINKER`; that one guard-owned value is the only admitted target-linker
-configuration. CI requires `CARGO_INCREMENTAL` to be exactly `0`, local execution admits
-only absence or that exact value, and the guard supplies exact `0` to every child. Every
-other inherited `CARGO_INCREMENTAL` value and every `CARGO_PROFILE_*` variable fails
-before metadata. It does
+configuration. It supplies the revalidated `LUMIN_WINDOWS_LIB`, removes `LINK` and
+`_LINK_`, and supplies the job-private temporary directory under both `TMP` and `TEMP`.
+Windows environment-key comparisons are ASCII case-insensitive, so alternate casing
+cannot preserve an inherited linker channel. CI requires `CARGO_INCREMENTAL` to be
+exactly `0`, local execution admits only absence or that exact value, and the guard
+supplies exact `0` to every child. Every other inherited `CARGO_INCREMENTAL` value and
+every `CARGO_PROFILE_*` variable fails before metadata. It does
 not claim to detect a compromised runner, forged pre-checkout toolchain binary, or an
 administrator who changes branch protection and approves a replacement workflow; those
 are outside an in-repository architecture check's possible authority. Inside that
@@ -252,8 +276,8 @@ the unfiltered result; a host-filtered result is expected to omit packages belon
 to other target predicates and cannot own the complete-cache claim.
 
 The digest-pinned metadata helper then compares a stdin envelope containing both
-metadata results, the strict-parsed root resolver/profile surface, and the pinned lock
-identity/checksum rows against
+metadata results, the strict-parsed root resolver/profile and workspace-authored target
+surfaces, and the pinned lock identity/checksum rows against
 `tools/xtask/dependency-surface-policy.v2.json` before any compilation. The guard pins
 that artifact's digest, strict-parses it, rejects unknown or duplicate fields, and
 canonicalizes metadata IDs and paths to stable workspace or registry identities. The
@@ -264,6 +288,16 @@ policy contains these exhaustive, deterministically sorted surfaces:
   scalar types, arrays, and absent-versus-present values are preserved; formatting and
   comments are not policy. An unknown, missing, additional, or changed profile fact
   fails before an admitted compilation;
+- one authored target surface from every strict-parsed workspace manifest, including an
+  implicit root package. It preserves absent-versus-present `autolib`, `autobins`,
+  `autoexamples`, `autotests`, `autobenches`, and `default-run` package keys and every
+  Cargo 1.96-supported key in `[lib]`, `[[bin]]`, `[[example]]`, `[[test]]`, and
+  `[[bench]]`: `name`, `path`, `test`, `doctest`, `bench`, `doc`, `proc-macro`,
+  `harness`, `crate-type`, `required-features`, and `edition`. Unsupported keys fail.
+  Each table joins unambiguously to its metadata target by stable package, kind, name,
+  and physical source identity; inferred targets are owned by the metadata surface.
+  Declaration tables are sorted by that identity, set-valued fields are canonicalized,
+  and duplicate or unjoined declarations fail;
 - one shared definition surface from unfiltered metadata for every workspace and
   registry package, including package identity/checksum, optional `links` and
   `rust_version`, its complete feature-definition map, and every Cargo 1.96 dependency
@@ -361,8 +395,9 @@ enter through an approved direct dependency.
 
 Before matching edges, the checker requires the canonical root workspace resolver
 `"3"` and compares the complete v2 package-definition and resolved-graph snapshots,
-including every workspace package's `packages[].features` map. The resolver value is an
-exact policy identity, not an author-environment default. Feature names are exact and
+including every workspace package's authored target declarations and
+`packages[].features` map. The resolver value is an exact policy identity, not an
+author-environment default. Feature names are exact and
 each activation list is a sorted, deduplicated set. An absent `default` feature is
 distinct from an empty `default` feature. Target arrays are canonicalized only where
 Cargo defines them as sets; duplicate target identities and source paths fail. This
@@ -496,12 +531,15 @@ additional boundary and cannot substitute for the exact edge allowlist.
     both metadata directory fields remain the one admitted target path.
 19. On Windows, the guard supplies rustc only the pre-checkout absolute MSVC
     `LUMIN_WINDOWS_LINKER`; a same-name repository executable, PATH reordering, missing
-    Visual Studio component, or changed physical or byte linker identity fails before
-    build.
+    Visual Studio component, changed physical or byte linker/resource-converter
+    identity, inherited `LINK`/`_LINK_`, untrusted `LIB`, or a checkout temporary path
+    fails before build. The admitted library and temporary paths remain the recorded
+    trusted host and job-private surfaces.
 20. Changing a workspace target's kind, crate type, source path, feature requirement,
-    edition, test/doc flags, or auto-discovered target set fails the v2 snapshot before
-    checker compilation. Workspace procedural-macro declarations fail in the earlier
-    authored-manifest pass as well.
+    edition, test/doc/bench/harness flags, declaration presence, package auto-discovery
+    controls, or auto-discovered target set fails the authored or metadata v2 snapshot
+    before checker compilation. Workspace procedural-macro declarations fail in the
+    earlier authored-manifest pass as well.
 21. The complete root profile map is exact. Every `CARGO_PROFILE_*` override and every
     `CARGO_INCREMENTAL` value other than the guard-owned `0` fails before Cargo can
     compile the checker or product.
@@ -513,7 +551,8 @@ additional boundary and cannot substitute for the exact edge allowlist.
 The repository owner must verify that the isolated pre-Cargo bootstrap, controlled
 compiler environment, pre-checkout absolute tool identity, job-private Cargo home and
 target/build directory, absolute Windows MSVC linker, complete workspace target and root
-profile surfaces, archive/extracted-tree byte proof, rejected Cargo
+profile surfaces, controlled linker-native environment and resource converter,
+archive/extracted-tree byte proof, rejected Cargo
 argument/configuration/alias channels, subcommand-aware suffix policy, exact portable
 archive grammar and device comparator, required musl lane, exact workspace resolver,
 graph-wide loaded-location proof, complete transitive definition/resolution snapshot,
@@ -576,10 +615,14 @@ and attempt at least these bypasses:
   physical absolute path outside the repository;
 - commit a same-name `link.exe`, prepend it to PATH, and make the process current
   directory the checkout; verify the Windows compiler receives only the pre-checkout
-  absolute `Hostx64\x64\link.exe`, while missing, ambiguous, redirected, or non-MSVC
-  discovery fails before build;
+  absolute `Hostx64\x64\link.exe` and its same-directory authenticated `cvtres.exe`.
+  Set mixed-case `LINK`, `_LINK_`, and `LIB`, inject checkout objects and library paths,
+  and redirect `TMP`/`TEMP`; verify only the recorded trusted library directories and
+  job-private temporary directory reach the linker, while missing, ambiguous,
+  redirected, or non-MSVC discovery fails before build;
 - change a normal workspace library to `proc-macro`, change each remaining target field,
-  add an auto-discovered target, duplicate a target identity or source path, and redirect
+  toggle `harness`/`bench`, change each package auto-discovery key, add an auto-discovered
+  target, duplicate or unjoin a target declaration or source path, and redirect
   `src_path`; verify the authored guard or complete v2 target snapshot fails before the
   checker is compiled;
 - set representative `CARGO_PROFILE_*` variables, change every root profile value and
