@@ -162,29 +162,41 @@ boundary. After validation it returns the launched tool's exit status. The archi
 source policy pins the bootstrap order, absolute-tool routing, guard, and helpers and
 rejects unwrapped dependency-resolving commands.
 
-The checkout guard is trusted only during the job's initial untainted epoch. A job
-becomes tainted when it first executes a repository-authored binary, Python or shell
-program, test harness, doctest, benchmark, corpus runner, or other runtime code. After
-that point the job may not launch the guard, Cargo, a compiler, an architecture verdict,
-or another repository program. It terminates without exporting `GITHUB_ENV`,
-`GITHUB_PATH`, `GITHUB_OUTPUT`, a Cargo home, target directory, checkout, generated
-source, executable, or checker to another job. A terminal packaging job may upload only
-the release artifact it was created to produce; that artifact is never compiler,
-checker, or test input to another CI job.
+The authenticated bootstrap consists only of the digest-pinned
+`source_provenance.py`, `metadata_snapshot.py`, and `registry_snapshot.py` processes
+running under the already authenticated interpreter. Executing those three production
+bootstrap programs does not taint their own invocation; their test programs and every
+other repository-authored Python or shell program are ordinary repository runtime code.
 
-Every command that would otherwise follow a tainting step runs in a fresh
+A job's trusted epoch ends when the authenticated guard launches a terminal command
+that may execute non-bootstrap repository runtime code: a product or xtask binary, test
+harness, doctest, benchmark, corpus runner, or an owner-defined isolated test partition.
+The terminal command may complete the closed runtime batch selected by its one exact
+reviewed invocation. This policy does not pretend that mutually untrusted executables
+inside that batch are a security sandbox. Their only authority is the batch's test
+pass/fail evidence; neither the batch nor any file it mutates can authorize later
+dependency provenance, compilation, architecture, packaging, or another test batch.
+The guard removes `GITHUB_ENV`, `GITHUB_PATH`, `GITHUB_OUTPUT`, `GITHUB_STATE`, and
+`GITHUB_STEP_SUMMARY` from the terminal child environment. When that one command
+returns, the job terminates and may not launch the guard, Cargo, a compiler, an
+architecture verdict, or another repository program.
+
+Every command that would otherwise follow a terminal runtime batch runs in a fresh
 GitHub-hosted job and fresh checkout. That job repeats the empty-workspace tool setup,
 uses new job-private Cargo home, target, build, and temporary directories, and admits the
 checkout before its first repository execution. Jobs may depend only on predecessor
 success conclusions and immutable workflow inputs, not predecessor files or environment
-command channels. The final required-check aggregator performs no checkout and executes
-no repository command; it accepts only the exact reviewed set of successful job results.
-The architecture job builds and revalidates the checker before executing it, emits its
-verdict, and terminates. Bootstrap tests, workspace tests, corpus runners, doctests, and
-other repository-runtime commands each end their own trust epoch; none precedes another
-Cargo or provenance command in the same job. This job boundary, rather than a mutable
-launcher stored beside the checkout, reauthenticates the original guard and interpreter
-for every later command.
+command channels. No Cargo home, target directory, checkout, generated source,
+executable, or checker crosses this boundary. A terminal packaging job may upload only
+the release artifact it was created to produce; that artifact is never compiler,
+checker, or test input to another CI job. The final required-check aggregator performs
+no checkout and executes no repository command; it accepts only the exact reviewed set
+of successful job results. The architecture job builds and revalidates the checker
+before executing it, emits its verdict, and terminates. Bootstrap tests, workspace test
+batches, corpus runners, doctests, and other terminal runtime commands do not precede
+another Cargo or provenance command in the same job. This job boundary, rather than a
+mutable launcher stored beside the checkout, reauthenticates the original guard and
+interpreter for every later trusted command.
 
 For each untainted invocation, the guard strict-parses every workspace manifest and
 rejects:
@@ -506,6 +518,12 @@ additional boundary and cannot substitute for the exact edge allowlist.
   dependency-cost review; it adds a fail-closed direct-edge boundary around them.
 - It does not link `lumin-xtask` into the production DAG; it removes only the checker’s
   exemption from exact dependency identity review.
+- It does not sandbox intentionally hostile test executables from other executables in
+  the same exact terminal test or corpus invocation. Test-runner process partitions,
+  environment scrubbing, deterministic barriers, and durable-state assertions prevent
+  accidental false evidence; adversarial runtime containment is not a dependency-edge
+  approval responsibility. A terminal batch therefore grants no later provenance,
+  compilation, packaging, or cross-job artifact authority.
 
 ## Acceptance Criteria
 
@@ -579,11 +597,15 @@ additional boundary and cannot substitute for the exact edge allowlist.
 21. The complete root profile map is exact. Every `CARGO_PROFILE_*` override and every
     `CARGO_INCREMENTAL` value other than the guard-owned `0` fails before Cargo can
     compile the checker or product.
-22. Once a CI job executes repository runtime code, it performs no later provenance,
-    Cargo, compiler, checker, or repository command. Every later command begins in a
-    fresh job and checkout with fresh private state; cross-job inputs contain no mutable
-    checkout, environment command file, Cargo cache, target tree, generated source, or
-    executable. The required-check aggregator executes no repository code.
+22. The three authenticated production bootstrap programs are explicitly exempt from
+    their own taint rule. Once their one exact terminal invocation starts a non-bootstrap
+    repository runtime batch, its child environment contains no GitHub command-file
+    channel and the job performs no later provenance, Cargo, compiler, checker, or
+    repository command. The batch owns only test pass/fail evidence. Every later trusted
+    command begins in a fresh job and checkout with fresh private state; cross-job inputs
+    contain no mutable checkout, environment command file, Cargo cache, target tree,
+    generated source, checker, or executable. The required-check aggregator executes no
+    repository code.
 23. `RUSTDOCFLAGS`, `CARGO_ENCODED_RUSTDOCFLAGS`, every
     `CARGO_BUILD_RUSTDOCFLAGS*`, and every
     `CARGO_TARGET_<TRIPLE>_RUSTDOCFLAGS` spelling fail before metadata, documentation,
@@ -628,11 +650,16 @@ and attempt at least these bypasses:
 - bypass the wrapper for one dependency-reading Cargo command, remove `-I -S`, run it
   with old Python, reconstruct the command through a shell, or make it import
   repository/replacement-controlled code;
+- execute each of the three authenticated production bootstrap programs and verify that
+  the explicit bootstrap exception permits their one admitted Cargo/helper launch while
+  bootstrap tests and every unlisted repository program remain non-exempt;
 - make a workspace test overwrite the checkout guard and append alternate tool paths to
-  `GITHUB_ENV`, `GITHUB_PATH`, and `GITHUB_OUTPUT`; verify no later trusted invocation
-  exists in that job, the next command begins from a fresh job and checkout, and no
-  mutable file, environment command channel, cache, generated source, or executable
-  crosses that boundary;
+  GitHub command files; verify those file paths are absent from its child environment,
+  no later trusted invocation exists in that job, the next command begins from a fresh
+  job and checkout, and no mutable file, environment command channel, cache, generated
+  source, checker, or executable crosses that boundary. Attempt intra-batch executable
+  tampering as well and verify the verdict makes no adversarial sandbox claim or grants
+  the batch any authority beyond its own test pass/fail result;
 - place a source replacement in repository, ancestor, Cargo-home, environment, patch,
   or path-override configuration;
 - use a symlinked registry source root or package manifest to make repository bytes look
