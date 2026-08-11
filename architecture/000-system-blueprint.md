@@ -320,12 +320,13 @@ The diagram is conceptual; the enforceable edge list is:
 - `lumin-engine` -> `lumin-model`, `lumin-evidence`, all capability crates it orchestrates, and `lumin-store`.
 - `lumin-cli` -> `lumin-engine`, `lumin-protocol`, `lumin-model`.
 
-Every CI command that resolves, checks, or builds Cargo dependencies runs through
-`python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo ...`. This Python
-3.11+ standard-library bootstrap asserts isolated/no-site mode, imports no repository
-or third-party module, validates provenance, and then launches the exact supplied Cargo
-argument vector without a shell. It exists because a Rust checker cannot validate the
-dependencies used to build itself. It rejects repository, ancestor, or
+Every CI command that resolves, checks, or builds Cargo dependencies runs through the
+absolute Python interpreter provisioned by the pinned setup action as
+`<PINNED_PYTHON> -I -S tools/xtask/bootstrap/source_provenance.py -- cargo ...`. This
+Python 3.11+ standard-library bootstrap asserts isolated/no-site mode, imports no
+repository or third-party module, validates provenance, and then launches the exact
+supplied Cargo argument vector without a shell. It exists because a Rust checker cannot
+validate the dependencies used to build itself. It rejects repository, ancestor, or
 active-Cargo-home config files, Cargo source or path override environment variables,
 Cargo global `--config` arguments in either value form, and manifest `[patch]`/`[replace]`
 tables. Source overrides include `CARGO_SOURCE_*`, `CARGO_PATHS`, and registry-index

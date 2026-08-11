@@ -93,14 +93,15 @@ Owner routes: ARCH-000, ARCH-001, ARCH-002, SLICE-001 AC 19, 21, 35, 37, and 38.
 - [x] Enforce the path/root codec runtime boundary in `architecture-check`.
 - [x] Enforce the third-party command re-export boundary in
   `architecture-check`.
-- [ ] Resolve [REVIEW-003](reviews/dependency-edge-identity-amendment-2026-08-10.md)'s
-  checker/metadata trust-epoch contradiction through one newly frozen amendment
-  before further bootstrap implementation.
-- [ ] Enforce the resulting REVIEW-003 boundary across authenticated tool dispatch,
-  immutable metadata handoff, exact dependency/source policy, and the
-  development-tool workspace member.
-- [ ] Run the three bootstrap adversarial suites in separate terminal CI
-  partitions and keep the resulting Windows/Linux boundary checks blocking.
+- [ ] Freeze the proportional
+  [REVIEW-003](reviews/dependency-edge-identity-amendment-2026-08-10.md) boundary
+  through exact owner approval and independent adversarial review before further
+  bootstrap implementation.
+- [ ] Implement only that frozen dependency boundary, including the development-tool
+  member, and remove superseded provenance machinery rather than preserving two
+  authorities.
+- [ ] Keep the frozen boundary's focused bootstrap tests process-isolated and its
+  Windows/Linux dependency-policy verdict blocking in public CI.
 
 Exit: no known semantic or structural prerequisite is being hidden by an
 unmapped corpus row. Corpus, package, and benchmark proof stay with their own
