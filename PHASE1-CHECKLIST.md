@@ -100,7 +100,7 @@ Owner routes: ARCH-000, ARCH-001, ARCH-002, SLICE-001 AC 19, 21, 35, 37, and 38.
 - [x] Implement only that frozen dependency boundary, including the development-tool
   member, and remove superseded provenance machinery rather than preserving two
   authorities.
-- [ ] Keep the frozen boundary's focused bootstrap tests process-isolated and its
+- [x] Keep the frozen boundary's focused bootstrap tests process-isolated and its
   Windows/Linux dependency-policy verdict blocking in public CI.
 
 Exit: no known semantic or structural prerequisite is being hidden by an
