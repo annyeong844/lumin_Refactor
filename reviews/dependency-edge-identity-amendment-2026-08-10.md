@@ -2,12 +2,15 @@
 
 Document role: focused Architecture v1 amendment and freeze gate
 
-Status: **FROZEN** at architecture-content commit
-`ffd6af05f9f08e696eef88b8aa251be1e07282c4`. The repository owner approved that exact
-candidate, and independent GitHub clean verdicts `5247796247` and `5251296376` each bind
-`ffd6af05f9` and report no major issue. Later review `4904878282` evaluated the existing
-pre-freeze implementation; its three findings are implementation obligations already
-owned by this contract and do not amend the frozen architecture.
+Status: **REOPENED**. Architecture-content commit
+`ffd6af05f9f08e696eef88b8aa251be1e07282c4` remains the reviewed provenance for the
+preceding contract, but two concrete channels were not closed there: repository runtime
+code can replace the checkout guard or mutate GitHub command files before a later trusted
+invocation, and Cargo can inherit rustdoc flags through encoded or target-qualified
+environment variables. This amendment is not frozen again until the repository owner
+approves one new exact architecture-content commit and an independent adversarial review
+returns a clean verdict for that same commit. Implementation of the reopened boundary is
+forbidden before then.
 
 ## Definition
 
@@ -76,6 +79,11 @@ Consequently, any of these changes can reuse an existing approval:
   or redirect its object/library/PDB lookup through `LIB`;
 - change an authored target's `harness` or `bench` flag, which Cargo 1.96 metadata omits,
   while preserving every metadata target object.
+- let a repository test overwrite the checkout's `source_provenance.py` or append a
+  replacement `LUMIN_PYTHON` to `GITHUB_ENV`, then launch a later Cargo command through
+  the now repository-controlled guard in the same job;
+- inject rustdoc arguments through `CARGO_ENCODED_RUSTDOCFLAGS` or
+  `CARGO_TARGET_<TRIPLE>_RUSTDOCFLAGS` while the generic rustflags channels remain clean.
 
 These changes alter platforms, the default graph, crate-visible API names, dependency
 code, build cost, or the transitive surface. They are concrete fail-open policy bypasses
@@ -152,8 +160,34 @@ It asserts Python isolated and no-site flags before reading the repository; this
 current/script paths, `PYTHON*` overrides, user site, and `sitecustomize` from its import
 boundary. After validation it returns the launched tool's exit status. The architecture
 source policy pins the bootstrap order, absolute-tool routing, guard, and helpers and
-rejects unwrapped dependency-resolving commands. The guard strict-parses every workspace
-manifest and rejects:
+rejects unwrapped dependency-resolving commands.
+
+The checkout guard is trusted only during the job's initial untainted epoch. A job
+becomes tainted when it first executes a repository-authored binary, Python or shell
+program, test harness, doctest, benchmark, corpus runner, or other runtime code. After
+that point the job may not launch the guard, Cargo, a compiler, an architecture verdict,
+or another repository program. It terminates without exporting `GITHUB_ENV`,
+`GITHUB_PATH`, `GITHUB_OUTPUT`, a Cargo home, target directory, checkout, generated
+source, executable, or checker to another job. A terminal packaging job may upload only
+the release artifact it was created to produce; that artifact is never compiler,
+checker, or test input to another CI job.
+
+Every command that would otherwise follow a tainting step runs in a fresh
+GitHub-hosted job and fresh checkout. That job repeats the empty-workspace tool setup,
+uses new job-private Cargo home, target, build, and temporary directories, and admits the
+checkout before its first repository execution. Jobs may depend only on predecessor
+success conclusions and immutable workflow inputs, not predecessor files or environment
+command channels. The final required-check aggregator performs no checkout and executes
+no repository command; it accepts only the exact reviewed set of successful job results.
+The architecture job builds and revalidates the checker before executing it, emits its
+verdict, and terminates. Bootstrap tests, workspace tests, corpus runners, doctests, and
+other repository-runtime commands each end their own trust epoch; none precedes another
+Cargo or provenance command in the same job. This job boundary, rather than a mutable
+launcher stored beside the checkout, reauthenticates the original guard and interpreter
+for every later command.
+
+For each untainted invocation, the guard strict-parses every workspace manifest and
+rejects:
 
 - `.cargo/config.toml` or `.cargo/config` in the repository or any Cargo-searched
   ancestor, and `config.toml` or `config` in the active Cargo home;
@@ -161,12 +195,14 @@ manifest and rejects:
   overrides (registry authentication variables do not change source identity);
 - `CARGO`, `RUSTC`, `RUSTC_WRAPPER`, `RUSTC_WORKSPACE_WRAPPER`, `RUSTDOC`, `RUSTFMT`,
   `CLIPPY_DRIVER`, `RUSTFLAGS`, `RUSTDOCFLAGS`, `RUSTC_BOOTSTRAP`, `RUSTUP_TOOLCHAIN`,
-  `CARGO_ENCODED_RUSTFLAGS`, every matching `CARGO_UNSTABLE_*`,
+  `CARGO_ENCODED_RUSTFLAGS`, `CARGO_ENCODED_RUSTDOCFLAGS`, every matching
+  `CARGO_UNSTABLE_*`,
   every matching `CARGO_PROFILE_*`,
   `CARGO_BUILD_RUSTC*`/`CARGO_BUILD_RUSTDOC*`/`CARGO_BUILD_RUSTFLAGS`,
   `CARGO_BUILD_TARGET`, `CARGO_BUILD_TARGET_DIR`, `CARGO_BUILD_BUILD_DIR`, and target
-  rustflags, linker, or runner configuration environment variable; the pinned workflow
-  and `rust-toolchain.toml` own compiler selection, flags, target, and output location;
+  rustflags, rustdoc flags (including every `CARGO_TARGET_<TRIPLE>_RUSTDOCFLAGS`),
+  linker, or runner configuration environment variable; the pinned workflow and
+  `rust-toolchain.toml` own compiler selection, flags, target, and output location;
 - every `CARGO_ALIAS_*` variable, so neither a built-in nor an external logical command
   can acquire hidden Cargo arguments after the guard validates its vector;
 - on Windows, every case-insensitive inherited `LINK`, `_LINK_`, or `LIB` key. The guard
@@ -543,13 +579,23 @@ additional boundary and cannot substitute for the exact edge allowlist.
 21. The complete root profile map is exact. Every `CARGO_PROFILE_*` override and every
     `CARGO_INCREMENTAL` value other than the guard-owned `0` fails before Cargo can
     compile the checker or product.
+22. Once a CI job executes repository runtime code, it performs no later provenance,
+    Cargo, compiler, checker, or repository command. Every later command begins in a
+    fresh job and checkout with fresh private state; cross-job inputs contain no mutable
+    checkout, environment command file, Cargo cache, target tree, generated source, or
+    executable. The required-check aggregator executes no repository code.
+23. `RUSTDOCFLAGS`, `CARGO_ENCODED_RUSTDOCFLAGS`, every
+    `CARGO_BUILD_RUSTDOCFLAGS*`, and every
+    `CARGO_TARGET_<TRIPLE>_RUSTDOCFLAGS` spelling fail before metadata, documentation,
+    or doctest execution.
 
 ## Required Reviews
 
 ### Design review
 
-The repository owner must verify that the isolated pre-Cargo bootstrap, controlled
-compiler environment, pre-checkout absolute tool identity, job-private Cargo home and
+The repository owner must verify that the isolated pre-Cargo bootstrap, fresh-job trust
+epochs after repository runtime execution, controlled compiler and rustdoc environment,
+pre-checkout absolute tool identity, job-private Cargo home and
 target/build directory, absolute Windows MSVC linker, complete workspace target and root
 profile surfaces, controlled linker-native environment and resource converter,
 archive/extracted-tree byte proof, rejected Cargo
@@ -582,6 +628,11 @@ and attempt at least these bypasses:
 - bypass the wrapper for one dependency-reading Cargo command, remove `-I -S`, run it
   with old Python, reconstruct the command through a shell, or make it import
   repository/replacement-controlled code;
+- make a workspace test overwrite the checkout guard and append alternate tool paths to
+  `GITHUB_ENV`, `GITHUB_PATH`, and `GITHUB_OUTPUT`; verify no later trusted invocation
+  exists in that job, the next command begins from a fresh job and checkout, and no
+  mutable file, environment command channel, cache, generated source, or executable
+  crosses that boundary;
 - place a source replacement in repository, ancestor, Cargo-home, environment, patch,
   or path-override configuration;
 - use a symlinked registry source root or package manifest to make repository bytes look
@@ -593,6 +644,9 @@ and attempt at least these bypasses:
   fail against the pinned lock checksum and exact archive map before compilation;
 - inject `RUSTC`, both Rust compiler wrappers, their `CARGO_BUILD_*` aliases, rustflags,
   a target linker/runner, or `RUSTUP_TOOLCHAIN` and verify that metadata never invokes it;
+- inject `CARGO_ENCODED_RUSTDOCFLAGS` and mixed-case
+  `CARGO_TARGET_<TRIPLE>_RUSTDOCFLAGS` variables and verify that neither `cargo doc` nor
+  doctests receive them;
 - pass `--target-dir` in split and equals forms, set `CARGO_BUILD_TARGET_DIR`, and pass
   `cargo +stable` or a custom linked toolchain; verify that no metadata or build command
   receives the override;
