@@ -509,6 +509,67 @@ def _authored_requirements(
     return records
 
 
+def _authored_feature_policy(
+    manifest: Mapping[str, object], owner: str
+) -> list[dict[str, object]]:
+    table = _required_table(
+        manifest.get("features", {}), f"workspace package {owner} [features]"
+    )
+    rows: list[dict[str, object]] = []
+    for name, raw_activations in table.items():
+        if not isinstance(name, str) or not name:
+            raise ProvenanceError(
+                f"workspace package {owner} has an invalid feature name: {name!r}"
+            )
+        if not isinstance(raw_activations, list) or any(
+            not isinstance(activation, str) or not activation
+            for activation in raw_activations
+        ):
+            raise ProvenanceError(
+                f"workspace feature {owner}/{name} activations must be non-empty strings"
+            )
+        rows.append(
+            {
+                "name": name,
+                "activations": sorted(set(raw_activations)),
+            }
+        )
+    rows.sort(key=lambda row: str(row["name"]))
+    return rows
+
+
+def _checked_feature_policy(value: object, owner: str) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        raise ProvenanceError(f"dependency policy features must be an array: {owner}")
+    rows: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for raw_row in value:
+        row = _required_table(raw_row, f"dependency policy feature for {owner}")
+        if set(row) != {"name", "activations"}:
+            raise ProvenanceError(
+                f"dependency policy feature has unknown or missing fields: {owner}"
+            )
+        name = row.get("name")
+        activations = row.get("activations")
+        if (
+            not isinstance(name, str)
+            or not name
+            or name in seen
+            or not isinstance(activations, list)
+            or any(
+                not isinstance(activation, str) or not activation
+                for activation in activations
+            )
+        ):
+            raise ProvenanceError(f"dependency policy feature is invalid: {owner}")
+        seen.add(name)
+        rows.append({"name": name, "activations": sorted(set(activations))})
+    rows.sort(key=lambda row: str(row["name"]))
+    if rows != value:
+        raise ProvenanceError(f"dependency policy features are not canonical: {owner}")
+    return rows
+
+
 def validate_authored_requirements(
     root: Path,
     resolver: object,
@@ -526,6 +587,13 @@ def validate_authored_requirements(
     if not isinstance(policy, dict) or policy.get("workspaceResolver") != resolver:
         raise ProvenanceError(
             f"workspace resolver does not match dependency policy: {resolver!r}"
+        )
+    lock_path = _require_unredirected_file(root / "Cargo.lock", root, "root Cargo.lock")
+    lock_digest = hashlib.sha256(lock_path.read_bytes()).hexdigest()
+    if policy.get("cargoLockSha256") != lock_digest:
+        raise ProvenanceError(
+            "Cargo.lock digest does not match dependency policy: "
+            f"expected {policy.get('cargoLockSha256')!r}, observed {lock_digest!r}"
         )
     if policy.get("rootProfiles") != root_profiles:
         raise ProvenanceError(
@@ -545,6 +613,7 @@ def validate_authored_requirements(
         dict[tuple[str, str | None, str, str | None], DependencyContract],
     ] = {}
     expected_packages: dict[str, Mapping[str, object]] = {}
+    expected_features: dict[str, list[dict[str, object]]] = {}
     for package in packages:
         package_table = _required_table(package, "dependency policy package")
         owner = package_table.get("name")
@@ -614,18 +683,23 @@ def validate_authored_requirements(
             raise ProvenanceError(f"duplicate dependency policy package: {owner}")
         expected[owner] = rows
         expected_packages[owner] = authored_package
+        expected_features[owner] = _checked_feature_policy(
+            package_table.get("features"), owner
+        )
 
     observed: dict[
         str,
         dict[tuple[str, str | None, str, str | None], DependencyContract],
     ] = {}
     observed_packages: dict[str, Mapping[str, object]] = {}
+    observed_features: dict[str, list[dict[str, object]]] = {}
     for manifest_path, manifest in manifests:
         package = _required_table(manifest.get("package"), "workspace package")
         owner = package.get("name")
         if not isinstance(owner, str) or owner in observed:
             raise ProvenanceError(f"invalid or duplicate workspace package name: {owner!r}")
         observed_packages[owner] = package
+        observed_features[owner] = _authored_feature_policy(manifest, owner)
         observed[owner] = _authored_requirements(
             root,
             manifest_path,
@@ -641,6 +715,11 @@ def validate_authored_requirements(
         raise ProvenanceError(
             "authored workspace package contract drift: "
             f"expected {expected_packages!r}, observed {observed_packages!r}"
+        )
+    if observed_features != expected_features:
+        raise ProvenanceError(
+            "authored workspace feature contract drift: "
+            f"expected {expected_features!r}, observed {observed_features!r}"
         )
 
 

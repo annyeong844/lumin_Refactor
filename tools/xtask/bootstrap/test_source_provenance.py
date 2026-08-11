@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -38,6 +39,7 @@ class Fixture:
         workflow.parent.mkdir(parents=True)
         shutil.copy2(SCRIPT.parents[3] / ".github" / "workflows" / "ci.yml", workflow)
         self.write_root()
+        (self.root / "Cargo.lock").write_text("version = 4\n", encoding="utf-8")
         (self.member / "Cargo.toml").write_text(
             '[package]\nname = "fixture-member"\nversion = "0.0.0"\nedition = "2024"\n',
             encoding="utf-8",
@@ -76,12 +78,18 @@ class Fixture:
                 {
                     "schemaVersion": 1,
                     "workspaceResolver": "3",
+                    "cargoLockSha256": hashlib.sha256(
+                        (self.root / "Cargo.lock").read_bytes()
+                    ).hexdigest(),
                     "rootProfiles": root_manifest.get("profile", {}),
                     "workspacePackage": workspace.get("package", {}),
                     "packages": [
                         {
                             "name": "fixture-member",
                             "authoredPackage": authored_package,
+                            "features": PROVENANCE._authored_feature_policy(
+                                member_manifest, "fixture-member"
+                            ),
                             "dependencies": normalized_dependencies,
                         }
                     ],
@@ -334,6 +342,29 @@ class SourceProvenanceTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "package contract drift"):
+                fixture.validate()
+
+    def test_workspace_feature_map_drift_is_rejected_before_cargo(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            (fixture.member / "Cargo.toml").write_text(
+                '[package]\nname = "fixture-member"\nversion = "0.0.0"\n'
+                'edition = "2024"\n[features]\ndefault = ["reviewed"]\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "feature contract drift"):
+                fixture.validate()
+
+            fixture.write_policy([])
+            fixture.validate()
+
+    def test_lockfile_drift_is_rejected_before_cargo(self) -> None:
+        temporary, fixture = self.fixture()
+        with temporary:
+            (fixture.root / "Cargo.lock").write_text(
+                "version = 4\n# changed transitive lock surface\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(PROVENANCE.ProvenanceError, "Cargo.lock digest"):
                 fixture.validate()
 
     def test_underscore_default_features_spelling_is_rejected(self) -> None:

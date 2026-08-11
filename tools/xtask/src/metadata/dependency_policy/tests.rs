@@ -39,6 +39,44 @@ fn dependency_mut<'a>(
         .ok_or_else(|| format!("policy dependency is missing: {owner} -> {package_name}"))
 }
 
+fn package_definition_mut<'a>(
+    policy: &'a mut serde_json::Value,
+    name: &str,
+) -> Result<&'a mut serde_json::Value, String> {
+    policy
+        .get_mut("packageDefinitions")
+        .and_then(serde_json::Value::as_array_mut)
+        .and_then(|definitions| {
+            definitions.iter_mut().find(|definition| {
+                definition
+                    .get("identity")
+                    .and_then(|identity| identity.get("name"))
+                    .and_then(serde_json::Value::as_str)
+                    == Some(name)
+            })
+        })
+        .ok_or_else(|| format!("policy package definition is missing: {name}"))
+}
+
+fn resolved_node_mut<'a>(
+    policy: &'a mut serde_json::Value,
+    name: &str,
+) -> Result<&'a mut serde_json::Value, String> {
+    policy
+        .get_mut("resolvedGraph")
+        .and_then(|graph| graph.get_mut("nodes"))
+        .and_then(serde_json::Value::as_array_mut)
+        .and_then(|nodes| {
+            nodes.iter_mut().find(|node| {
+                node.get("package")
+                    .and_then(|package| package.get("name"))
+                    .and_then(serde_json::Value::as_str)
+                    == Some(name)
+            })
+        })
+        .ok_or_else(|| format!("policy resolved node is missing: {name}"))
+}
+
 fn replace_field(
     value: &mut serde_json::Value,
     field: &str,
@@ -253,6 +291,41 @@ fn every_safety_dimension_is_part_of_policy_identity() -> Result<(), Box<dyn std
     replace_field(&mut resolver, "workspaceResolver", serde_json::json!("1"))?;
     assert_policy_drift(&root, &resolver)?;
 
+    let mut lock = expected.clone();
+    replace_field(
+        &mut lock,
+        "cargoLockSha256",
+        serde_json::json!("0".repeat(64)),
+    )?;
+    assert_policy_drift(&root, &lock)?;
+
+    let definition_count = expected
+        .get("packageDefinitions")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::len)
+        .ok_or("package definitions are missing")?;
+    let workspace_count = expected
+        .get("packages")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::len)
+        .ok_or("workspace package policy is missing")?;
+    assert!(definition_count > workspace_count);
+
+    let mut transitive_definition = expected.clone();
+    let identity = package_definition_mut(&mut transitive_definition, "rayon-core")?
+        .get_mut("identity")
+        .ok_or("rayon-core identity is missing")?;
+    replace_field(identity, "version", serde_json::json!("999.0.0"))?;
+    assert_policy_drift(&root, &transitive_definition)?;
+
+    let mut transitive_resolution = expected.clone();
+    replace_field(
+        resolved_node_mut(&mut transitive_resolution, "rayon-core")?,
+        "features",
+        serde_json::json!(["unreviewed"]),
+    )?;
+    assert_policy_drift(&root, &transitive_resolution)?;
+
     let mut package_identity = expected.clone();
     let identity = package_mut(&mut package_identity, "lumin-cli")?
         .get_mut("definition")
@@ -334,12 +407,39 @@ fn declared_rename_survives_normalized_binding_collision() -> Result<(), Box<dyn
         temporary.path().join("Cargo.toml"),
         "[workspace]\nresolver = \"3\"\nmembers = []\n",
     )?;
+    std::fs::write(temporary.path().join("Cargo.lock"), "version = 4\n")?;
     let owner = temporary.path().join("owner");
-    std::fs::create_dir_all(&owner)?;
+    let owner_source = owner.join("src/lib.rs");
+    std::fs::create_dir_all(owner_source.parent().ok_or("owner source has no parent")?)?;
     std::fs::write(
         owner.join("Cargo.toml"),
         "[package]\nname = 'lumin-inventory'\nversion = '0.1.0'\nedition = '2024'\n",
     )?;
+    std::fs::write(&owner_source, "")?;
+    let registry = temporary.path().join("registry/same-file");
+    let registry_source = registry.join("src/lib.rs");
+    std::fs::create_dir_all(
+        registry_source
+            .parent()
+            .ok_or("registry source has no parent")?,
+    )?;
+    std::fs::write(
+        registry.join("Cargo.toml"),
+        "[package]\nname = 'same-file'\nversion = '1.0.6'\nedition = '2021'\n",
+    )?;
+    std::fs::write(&registry_source, "")?;
+    let transitive_registry = temporary.path().join("registry/transitive-helper");
+    let transitive_source = transitive_registry.join("src/lib.rs");
+    std::fs::create_dir_all(
+        transitive_source
+            .parent()
+            .ok_or("transitive source has no parent")?,
+    )?;
+    std::fs::write(
+        transitive_registry.join("Cargo.toml"),
+        "[package]\nname = 'transitive-helper'\nversion = '2.0.1'\nedition = '2021'\n",
+    )?;
+    std::fs::write(&transitive_source, "")?;
     let base = serde_json::json!({
         "workspace_members": ["owner-id"],
         "packages": [
@@ -365,15 +465,27 @@ fn declared_rename_survives_normalized_binding_collision() -> Result<(), Box<dyn
                 "default_run": null,
                 "metadata": null,
                 "features": {},
+                "targets": [{
+                    "kind": ["lib"],
+                    "crate_types": ["lib"],
+                    "name": "lumin_inventory",
+                    "src_path": owner_source,
+                    "edition": "2024",
+                    "doc": true,
+                    "doctest": true,
+                    "test": true
+                }],
                 "dependencies": [{
                     "name": "same-file",
+                    "source": REGISTRY_SOURCE,
                     "rename": null,
                     "req": "=1.0.6",
                     "kind": null,
                     "target": null,
                     "optional": false,
                     "uses_default_features": true,
-                    "features": []
+                    "features": [],
+                    "registry": null
                 }]
             },
             {
@@ -381,21 +493,142 @@ fn declared_rename_survives_normalized_binding_collision() -> Result<(), Box<dyn
                 "name": "same-file",
                 "version": "1.0.6",
                 "source": REGISTRY_SOURCE,
-                "manifest_path": temporary.path().join("registry/same-file/Cargo.toml")
+                "manifest_path": registry.join("Cargo.toml"),
+                "links": null,
+                "rust_version": null,
+                "features": {},
+                "dependencies": [{
+                    "name": "transitive-helper",
+                    "source": REGISTRY_SOURCE,
+                    "rename": null,
+                    "req": "^2.0",
+                    "kind": null,
+                    "target": null,
+                    "optional": false,
+                    "uses_default_features": true,
+                    "features": [],
+                    "registry": null
+                }],
+                "targets": [{
+                    "kind": ["lib"],
+                    "crate_types": ["lib"],
+                    "name": "same_file",
+                    "src_path": registry_source,
+                    "edition": "2021",
+                    "doc": true,
+                    "doctest": true,
+                    "test": true
+                }]
+            },
+            {
+                "id": "transitive-id",
+                "name": "transitive-helper",
+                "version": "2.0.1",
+                "source": REGISTRY_SOURCE,
+                "manifest_path": transitive_registry.join("Cargo.toml"),
+                "links": null,
+                "rust_version": null,
+                "features": {},
+                "dependencies": [],
+                "targets": [{
+                    "kind": ["lib"],
+                    "crate_types": ["lib"],
+                    "name": "transitive_helper",
+                    "src_path": transitive_source,
+                    "edition": "2021",
+                    "doc": true,
+                    "doctest": true,
+                    "test": true
+                }]
             }
         ],
-        "resolve": {"nodes": [{
-            "id": "owner-id",
-            "deps": [{
-                "name": "same_file",
-                "pkg": "registry-id",
-                "dep_kinds": [{"kind": null, "target": null}]
-            }]
-        }]}
+        "resolve": {
+            "root": null,
+            "nodes": [
+                {
+                    "id": "owner-id",
+                    "dependencies": ["registry-id"],
+                    "deps": [{
+                        "name": "same_file",
+                        "pkg": "registry-id",
+                        "dep_kinds": [{"kind": null, "target": null}]
+                    }],
+                    "features": []
+                },
+                {
+                    "id": "registry-id",
+                    "dependencies": ["transitive-id"],
+                    "deps": [{
+                        "name": "transitive_helper",
+                        "pkg": "transitive-id",
+                        "dep_kinds": [{"kind": null, "target": null}]
+                    }],
+                    "features": []
+                },
+                {
+                    "id": "transitive-id",
+                    "dependencies": [],
+                    "deps": [],
+                    "features": []
+                }
+            ]
+        }
     });
     let mut violations = Vec::new();
     let authored = build_observed_policy(&base, temporary.path(), &mut violations)?;
     assert!(violations.is_empty(), "{violations:?}");
+
+    let mut reordered_metadata = base.clone();
+    reordered_metadata
+        .get_mut("packages")
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or("fixture packages are missing")?
+        .reverse();
+    reordered_metadata
+        .get_mut("resolve")
+        .and_then(|resolve| resolve.get_mut("nodes"))
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or("fixture resolve nodes are missing")?
+        .reverse();
+    let mut reordered_violations = Vec::new();
+    let reordered = build_observed_policy(
+        &reordered_metadata,
+        temporary.path(),
+        &mut reordered_violations,
+    )?;
+    assert!(reordered_violations.is_empty(), "{reordered_violations:?}");
+    assert_eq!(reordered, authored);
+
+    let mut changed_transitive_metadata = base.clone();
+    let transitive_package = changed_transitive_metadata
+        .get_mut("packages")
+        .and_then(serde_json::Value::as_array_mut)
+        .and_then(|packages| {
+            packages.iter_mut().find(|package| {
+                package.get("name").and_then(serde_json::Value::as_str) == Some("transitive-helper")
+            })
+        })
+        .ok_or("transitive fixture package is missing")?;
+    replace_field(transitive_package, "version", serde_json::json!("2.0.2"))?;
+    let mut changed_transitive_violations = Vec::new();
+    let changed_transitive = build_observed_policy(
+        &changed_transitive_metadata,
+        temporary.path(),
+        &mut changed_transitive_violations,
+    )?;
+    assert!(
+        changed_transitive_violations.is_empty(),
+        "{changed_transitive_violations:?}"
+    );
+    assert_eq!(authored.get("packages"), changed_transitive.get("packages"));
+    assert_ne!(
+        authored.get("packageDefinitions"),
+        changed_transitive.get("packageDefinitions")
+    );
+    assert_ne!(
+        authored.get("resolvedGraph"),
+        changed_transitive.get("resolvedGraph")
+    );
 
     let mut renamed_metadata = base;
     let declaration = renamed_metadata
@@ -430,16 +663,21 @@ fn declared_rename_survives_normalized_binding_collision() -> Result<(), Box<dyn
         .ok_or("fixture resolution kind is missing")?;
     kinds.push(duplicate_kind);
     let mut ambiguous_violations = Vec::new();
-    let _ = build_observed_policy(
+    let error = match build_observed_policy(
         &renamed_metadata,
         temporary.path(),
         &mut ambiguous_violations,
-    )?;
+    ) {
+        Ok(policy) => {
+            return Err(
+                format!("duplicate resolved dependency kinds produced policy {policy}").into(),
+            );
+        }
+        Err(error) => error,
+    };
     assert!(
-        ambiguous_violations
-            .iter()
-            .any(|violation| violation.contains("AMBIGUOUS dependency join")),
-        "{ambiguous_violations:?}"
+        error.contains("duplicate resolved dependency kind"),
+        "{error}; violations: {ambiguous_violations:?}"
     );
     Ok(())
 }

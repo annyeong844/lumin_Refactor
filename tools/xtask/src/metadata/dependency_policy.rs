@@ -1,5 +1,7 @@
 //! Exact workspace dependency-surface and registry-location policy.
 
+mod graph_snapshot;
+
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
@@ -37,11 +39,8 @@ fn build_observed_policy(
     let resolver = "3";
     let packages = required_array(metadata, "packages", "metadata")?;
     let member_values = required_array(metadata, "workspace_members", "metadata")?;
-    let nodes = required_array(
-        required_field(metadata, "resolve", "metadata")?,
-        "nodes",
-        "metadata.resolve",
-    )?;
+    let resolve = required_field(metadata, "resolve", "metadata")?;
+    let nodes = required_array(resolve, "nodes", "metadata.resolve")?;
 
     let mut package_by_id = HashMap::new();
     for package in packages {
@@ -68,6 +67,16 @@ fn build_observed_policy(
             return Err(format!("duplicate resolve node id: {id}"));
         }
     }
+
+    let graph_snapshot = graph_snapshot::build(
+        packages,
+        nodes,
+        required_field(resolve, "root", "metadata.resolve")?,
+        &package_by_id,
+        &member_ids,
+        workspace_root,
+        violations,
+    )?;
 
     let mut member_packages = member_ids
         .iter()
@@ -136,6 +145,9 @@ fn build_observed_policy(
     Ok(serde_json::json!({
         "schemaVersion": 1,
         "workspaceResolver": resolver,
+        "cargoLockSha256": file_sha256(&workspace_root.join("Cargo.lock"))?,
+        "packageDefinitions": graph_snapshot.package_definitions,
+        "resolvedGraph": graph_snapshot.resolved_graph,
         "packages": policy_packages,
     }))
 }
@@ -766,6 +778,18 @@ fn dependency_sort_key(value: &serde_json::Value) -> String {
 fn json_digest(value: &serde_json::Value) -> Result<String, String> {
     let bytes = serde_json::to_vec(value)
         .map_err(|error| format!("cannot serialize dependency policy: {error}"))?;
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn file_sha256(path: &Path) -> Result<String, String> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        format!(
+            "cannot read {} for dependency policy: {error}",
+            path.display()
+        )
+    })?;
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     Ok(format!("{:x}", hasher.finalize()))
