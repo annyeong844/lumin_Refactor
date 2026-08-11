@@ -619,7 +619,11 @@ def validate_command(command: Sequence[str]) -> CommandPlan:
 
 
 def _pinned_path(
-    environment: Mapping[str, str], name: str, root: Path, basename: str
+    environment: Mapping[str, str],
+    name: str,
+    root: Path,
+    basename: str,
+    alternate_basenames: Sequence[str] = (),
 ) -> Path:
     raw = _env_get(environment, name)
     if not raw:
@@ -631,7 +635,11 @@ def _pinned_path(
         physical = path.resolve(strict=True)
     except OSError as error:
         raise ProvenanceError(f"cannot resolve {name} {path}: {error}") from error
-    expected_names = {basename, basename + ".exe"}
+    expected_names = {
+        name
+        for stem in (basename, *alternate_basenames)
+        for name in (stem, stem + ".exe")
+    }
     if not physical.is_file() or physical.name.casefold() not in {
         value.casefold() for value in expected_names
     }:
@@ -689,7 +697,13 @@ def pinned_python(environment: Mapping[str, str], root: Path) -> None:
     # calling process. They are acceptable for local diagnostics only; hosted CI
     # receives a normal setup-python path and takes the strict branch.
     if _env_get(environment, "GITHUB_ACTIONS") == "true":
-        python = _pinned_path(environment, "PINNED_PYTHON", root, "python")
+        python = _pinned_path(
+            environment,
+            "PINNED_PYTHON",
+            root,
+            "python",
+            ("python3", "python3.13"),
+        )
         running = Path(sys.executable).resolve(strict=True)
     else:
         python = _absolute(Path(raw))

@@ -295,6 +295,24 @@ class CommandSurfaceTests(unittest.TestCase):
             ):
                 PROVENANCE.reject_environment_overrides(environment, case_insensitive=True)
 
+    def test_pinned_python_path_accepts_the_versioned_unix_basename(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_temporary:
+            temporary = Path(raw_temporary).resolve()
+            root = temporary / "repo"
+            binary = temporary / "bin" / "python3.13"
+            root.mkdir()
+            binary.parent.mkdir()
+            binary.write_bytes(b"")
+            expected = binary.resolve(strict=True)
+            resolved = PROVENANCE._pinned_path(
+                {"PINNED_PYTHON": str(binary)},
+                "PINNED_PYTHON",
+                root,
+                "python",
+                ("python3", "python3.13"),
+            )
+        self.assertEqual(resolved, expected)
+
 
 class DependencySurfaceTests(unittest.TestCase):
     def test_policy_is_small_direct_and_includes_the_development_tool(self) -> None:

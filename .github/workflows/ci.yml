@@ -153,9 +153,11 @@ jobs:
           $python = & "$env:SETUP_PYTHON" -I -S -c "import pathlib,sys; print(pathlib.Path(sys.executable).resolve(strict=True))"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $cargo = rustup which --toolchain 1.96.0 cargo
-          $audit = Join-Path $env:CARGO_HOME "bin/cargo-audit$suffix"
-          $deny = Join-Path $env:CARGO_HOME "bin/cargo-deny$suffix"
-          if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $audit) -or !(Test-Path -LiteralPath $deny)) { exit 1 }
+          $auditCommand = (Get-Command cargo-audit -CommandType Application -ErrorAction Stop).Source
+          $denyCommand = (Get-Command cargo-deny -CommandType Application -ErrorAction Stop).Source
+          $audit = (Resolve-Path -LiteralPath $auditCommand -ErrorAction Stop).ProviderPath
+          $deny = (Resolve-Path -LiteralPath $denyCommand -ErrorAction Stop).ProviderPath
+          if ($LASTEXITCODE -ne 0 -or [IO.Path]::GetFileName($audit) -cne "cargo-audit$suffix" -or [IO.Path]::GetFileName($deny) -cne "cargo-deny$suffix") { exit 1 }
           "PINNED_PYTHON=$python" >> $env:GITHUB_ENV
           "PINNED_CARGO=$cargo" >> $env:GITHUB_ENV
           "PINNED_CARGO_AUDIT=$audit" >> $env:GITHUB_ENV

@@ -283,9 +283,11 @@ fn is_reviewed_run_command(line: &str) -> bool {
         "$python = & \"$env:SETUP_PYTHON\" -I -S -c \"import pathlib,sys; print(pathlib.Path(sys.executable).resolve(strict=True))\"",
         "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }",
         "$suffix = if ($IsWindows) { '.exe' } else { '' }",
-        "$audit = Join-Path $env:CARGO_HOME \"bin/cargo-audit$suffix\"",
-        "$deny = Join-Path $env:CARGO_HOME \"bin/cargo-deny$suffix\"",
-        "if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $audit) -or !(Test-Path -LiteralPath $deny)) { exit 1 }",
+        "$auditCommand = (Get-Command cargo-audit -CommandType Application -ErrorAction Stop).Source",
+        "$denyCommand = (Get-Command cargo-deny -CommandType Application -ErrorAction Stop).Source",
+        "$audit = (Resolve-Path -LiteralPath $auditCommand -ErrorAction Stop).ProviderPath",
+        "$deny = (Resolve-Path -LiteralPath $denyCommand -ErrorAction Stop).ProviderPath",
+        "if ($LASTEXITCODE -ne 0 -or [IO.Path]::GetFileName($audit) -cne \"cargo-audit$suffix\" -or [IO.Path]::GetFileName($deny) -cne \"cargo-deny$suffix\") { exit 1 }",
         "\"PINNED_PYTHON=$python\" >> $env:GITHUB_ENV",
         "\"PINNED_CARGO=$cargo\" >> $env:GITHUB_ENV",
         "\"PINNED_CARGO_CLIPPY=$clippy\" >> $env:GITHUB_ENV",
@@ -417,11 +419,21 @@ fn validate_dependency_job(jobs: &BTreeMap<String, String>, violations: &mut Vec
     }
     if !block.contains(AUDIT_INSTALL)
         || !block.contains(DENY_INSTALL)
-        || !block.contains("bin/cargo-audit$suffix")
-        || !block.contains("bin/cargo-deny$suffix")
+        || !block.contains("Get-Command cargo-audit -CommandType Application")
+        || !block.contains("Get-Command cargo-deny -CommandType Application")
+        || !block.contains("Resolve-Path -LiteralPath $auditCommand")
+        || !block.contains("Resolve-Path -LiteralPath $denyCommand")
     {
         violations.push(
-            "dependency-policy job must install exact reviewed audit/deny versions and record their Cargo-home paths"
+            "dependency-policy job must install exact reviewed audit/deny versions and record their resolved executable paths"
+                .to_owned(),
+        );
+    }
+    let install = block.find(&format!("uses: {INSTALL_TOOLS}"));
+    let record = block.find("$auditCommand = (Get-Command cargo-audit");
+    if !matches!((install, record), (Some(install), Some(record)) if install < record) {
+        violations.push(
+            "dependency-policy tools must be installed before their executable paths are recorded"
                 .to_owned(),
         );
     }
