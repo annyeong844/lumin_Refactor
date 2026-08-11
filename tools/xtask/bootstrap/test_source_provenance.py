@@ -313,6 +313,12 @@ class CommandSurfaceTests(unittest.TestCase):
             )
         self.assertEqual(resolved, expected)
 
+    def test_child_processes_receive_the_exact_pinned_toolchain(self) -> None:
+        environment = {"PATH": "/trusted/bin"}
+        child = PROVENANCE.pinned_toolchain_environment(environment)
+        self.assertNotIn("RUSTUP_TOOLCHAIN", environment)
+        self.assertEqual(child["RUSTUP_TOOLCHAIN"], "1.96.0")
+
 
 class DependencySurfaceTests(unittest.TestCase):
     def test_policy_is_small_direct_and_includes_the_development_tool(self) -> None:

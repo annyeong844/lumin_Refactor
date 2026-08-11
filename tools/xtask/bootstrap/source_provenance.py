@@ -1200,6 +1200,12 @@ def resolved_command(
     return (str(cargo), *plan.command[1:])
 
 
+def pinned_toolchain_environment(environment: Mapping[str, str]) -> dict[str, str]:
+    child = dict(environment)
+    child["RUSTUP_TOOLCHAIN"] = EXPECTED_CARGO_RELEASE
+    return child
+
+
 def _parse_command(arguments: Sequence[str]) -> tuple[str, ...]:
     if not arguments or arguments[0] != "--" or len(arguments) == 1:
         raise ProvenanceError("usage: source_provenance.py -- cargo <arguments>")
@@ -1223,13 +1229,14 @@ def main(arguments: Sequence[str] | None = None) -> int:
         pinned_python(os.environ, root)
         repository = inspect_repository(root, os.environ, Path.cwd())
         cargo, host = pinned_cargo(os.environ, root)
+        child_environment = pinned_toolchain_environment(os.environ)
         if plan.resolving:
             policy = dependency_preflight(
                 repository,
                 cargo,
                 host,
                 plan.explicit_target,
-                os.environ,
+                child_environment,
                 compare_policy=mode != "print",
             )
             if mode == "print":
@@ -1238,8 +1245,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
         if mode == "check":
             print("[source-provenance] dependency admission PASS")
             return 0
-        command = resolved_command(plan, cargo, os.environ, root)
-        completed = subprocess.run(command, shell=False, check=False, env=os.environ.copy())
+        command = resolved_command(plan, cargo, child_environment, root)
+        completed = subprocess.run(command, shell=False, check=False, env=child_environment)
         return completed.returncode if completed.returncode >= 0 else 128 - completed.returncode
     except ProvenanceError as error:
         print(f"[source-provenance] {error}", file=sys.stderr)
