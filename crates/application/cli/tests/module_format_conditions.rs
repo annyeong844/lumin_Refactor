@@ -14,6 +14,7 @@ const COMMONJS_EXPORT_LIMITATION: &str =
 const MTS_SOURCE: &str = concat!(
     "import { mtsStatic } from '@acme/lib/mts-static';\n",
     "export * from '@acme/lib/mts-export';\n",
+    "export {} from '@acme/lib/mts-empty-export';\n",
     "const esmRequired = require('@acme/lib/esm-require');\n",
     "console.log(mtsStatic, esmRequired);\n",
 );
@@ -24,8 +25,10 @@ const MJS_SOURCE: &str = concat!(
 const CTS_SOURCE: &str = concat!(
     "import { ctsStatic } from '@acme/lib/cts-static';\n",
     "export * from '@acme/lib/cts-export';\n",
+    "export {} from '@acme/lib/cts-empty-export';\n",
+    "import equalsLib = require('@acme/lib/cts-import-equals');\n",
     "void import('@acme/lib/cjs-dynamic');\n",
-    "console.log(ctsStatic);\n",
+    "console.log(ctsStatic, equalsLib);\n",
 );
 const CJS_SOURCE: &str = concat!(
     "const cjsRequired = require('@acme/lib/cjs-require');\n",
@@ -47,9 +50,12 @@ const NEAREST_DEFAULT_SOURCE: &str = concat!(
 const TARGET_CASES: &[&str] = &[
     "mts-static",
     "mts-export",
+    "mts-empty-export",
     "mjs-static",
     "cts-static",
     "cts-export",
+    "cts-empty-export",
+    "cts-import-equals",
     "cjs-require",
     "root-module",
     "nearest-commonjs",
@@ -159,6 +165,16 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
             "import",
         ),
         (
+            "apps/ext-esm/main.mts",
+            MTS_SOURCE,
+            "@acme/lib/mts-empty-export",
+            "side-effect",
+            "static-import",
+            "export {} from '@acme/lib/mts-empty-export';",
+            "mts-empty-export",
+            "import",
+        ),
+        (
             "apps/ext-cjs/main.cts",
             CTS_SOURCE,
             "@acme/lib/cts-static",
@@ -176,6 +192,26 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
             "static-import",
             "export * from '@acme/lib/cts-export';",
             "cts-export",
+            "require",
+        ),
+        (
+            "apps/ext-cjs/main.cts",
+            CTS_SOURCE,
+            "@acme/lib/cts-empty-export",
+            "side-effect",
+            "static-import",
+            "export {} from '@acme/lib/cts-empty-export';",
+            "cts-empty-export",
+            "require",
+        ),
+        (
+            "apps/ext-cjs/main.cts",
+            CTS_SOURCE,
+            "@acme/lib/cts-import-equals",
+            "namespace",
+            "require",
+            "import equalsLib = require('@acme/lib/cts-import-equals');",
+            "cts-import-equals",
             "require",
         ),
         (

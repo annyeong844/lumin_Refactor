@@ -333,9 +333,10 @@ fn scope_kind(kind: AstKind<'_>) -> Option<RequireScopeKind> {
         AstKind::Function(_) | AstKind::ArrowFunctionExpression(_) => {
             Some(RequireScopeKind::FunctionParameters)
         }
-        AstKind::FunctionBody(_) | AstKind::StaticBlock(_) | AstKind::TSModuleDeclaration(_) => {
-            Some(RequireScopeKind::VarEnvironment)
-        }
+        AstKind::FunctionBody(_)
+        | AstKind::StaticBlock(_)
+        | AstKind::TSModuleDeclaration(_)
+        | AstKind::TSGlobalDeclaration(_) => Some(RequireScopeKind::VarEnvironment),
         AstKind::BlockStatement(_)
         | AstKind::ForStatement(_)
         | AstKind::ForInStatement(_)
@@ -551,6 +552,16 @@ impl<'a> Visit<'a> for RequireScopeCollector {
                 );
                 return;
             }
+            AstKind::TSGlobalDeclaration(declaration) => {
+                self.push_scope(
+                    RequireScopeKind::VarEnvironment,
+                    NameBindings::default(),
+                    false,
+                    self.current_strict() || declaration.body.has_use_strict_directive(),
+                    true,
+                );
+                return;
+            }
             _ => {}
         }
         if let Some(kind) = scope_kind(kind) {
@@ -593,7 +604,7 @@ impl<'a> Visit<'a> for RequireScopeCollector {
     }
 
     fn visit_call_expression(&mut self, expression: &oxc_ast::ast::CallExpression<'a>) {
-        if expression.callee.is_specific_id("eval") {
+        if !expression.optional && expression.callee.is_specific_id("eval") {
             self.record_eval_call();
         }
         walk::walk_call_expression(self, expression);

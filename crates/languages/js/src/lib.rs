@@ -183,6 +183,9 @@ pub fn bind_payload(
 fn lower_statement(statement: &Statement<'_>, facts: &mut JsPayloadFacts) {
     match statement {
         Statement::ImportDeclaration(declaration) => lower_import(declaration, facts),
+        Statement::TSImportEqualsDeclaration(declaration) => {
+            lower_import_equals(declaration, facts);
+        }
         Statement::ExportNamedDeclaration(declaration) => {
             lower_named_export(declaration, facts);
         }
@@ -319,6 +322,45 @@ fn lower_named_export(declaration: &ExportNamedDeclaration<'_>, facts: &mut JsPa
             });
         }
     }
+
+    if declaration.specifiers.is_empty()
+        && let Some(source) = &declaration.source
+    {
+        facts.uses.push(SourceUseTemplate {
+            specifier: source.value.to_string(),
+            imported_name: None,
+            local_name: None,
+            namespace: namespace(declaration.export_kind),
+            kind: ImportKind::SideEffect,
+            request_kind: ModuleRequestKind::StaticImport,
+            span: span(declaration.span),
+        });
+    }
+}
+
+fn lower_import_equals(
+    declaration: &oxc_ast::ast::TSImportEqualsDeclaration<'_>,
+    facts: &mut JsPayloadFacts,
+) {
+    if declaration.import_kind == ImportOrExportKind::Value
+        && let oxc_ast::ast::TSModuleReference::ExternalModuleReference(reference) =
+            &declaration.module_reference
+    {
+        facts.uses.push(SourceUseTemplate {
+            specifier: reference.expression.value.to_string(),
+            imported_name: None,
+            local_name: Some(declaration.id.name.to_string()),
+            namespace: SymbolNamespace::Value,
+            kind: ImportKind::Namespace,
+            request_kind: ModuleRequestKind::Require,
+            span: span(declaration.span),
+        });
+        return;
+    }
+
+    facts.limitation_details.push(
+        "non-external or type-only TypeScript import-equals declaration is not lowered".to_owned(),
+    );
 }
 
 fn lower_declaration(declaration: &Declaration<'_>, facts: &mut JsPayloadFacts) {
@@ -381,12 +423,13 @@ fn lower_declaration(declaration: &Declaration<'_>, facts: &mut JsPayloadFacts) 
                 declaration.span,
             );
         }
-        Declaration::TSModuleDeclaration(_)
-        | Declaration::TSGlobalDeclaration(_)
-        | Declaration::TSImportEqualsDeclaration(_) => {
-            facts.limitation_details.push(
-                "TypeScript module/global/import-equals declaration is not lowered".to_owned(),
-            );
+        Declaration::TSImportEqualsDeclaration(declaration) => {
+            lower_import_equals(declaration, facts);
+        }
+        Declaration::TSModuleDeclaration(_) | Declaration::TSGlobalDeclaration(_) => {
+            facts
+                .limitation_details
+                .push("TypeScript module/global declaration is not lowered".to_owned());
         }
     }
 }
@@ -863,6 +906,58 @@ mod tests {
     }
 
     #[test]
+    fn commonjs_optional_eval_preserves_grounded_require_edges()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let payload = parse_payload(
+            SourceKind::CommonJs,
+            b"eval?.('noop'); require('@acme/real');",
+        )?;
+        assert_eq!(payload.uses.len(), 1);
+        assert_eq!(payload.uses[0].specifier, "@acme/real");
+        assert_eq!(
+            payload.limitation_details,
+            vec![
+                "CommonJS export lowering is not implemented in the first audit increment"
+                    .to_owned(),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn lowers_empty_reexport_and_external_import_equals_requests()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let payload = parse_payload(
+            SourceKind::Cts,
+            concat!(
+                "export {} from '@acme/empty';\n",
+                "import lib = require('@acme/import-equals');\n",
+                "console.log(lib);\n",
+            )
+            .as_bytes(),
+        )?;
+        assert_eq!(payload.uses.len(), 2);
+        assert_eq!(payload.uses[0].specifier, "@acme/empty");
+        assert_eq!(payload.uses[0].kind, ImportKind::SideEffect);
+        assert_eq!(
+            payload.uses[0].request_kind,
+            ModuleRequestKind::StaticImport
+        );
+        assert_eq!(payload.uses[1].specifier, "@acme/import-equals");
+        assert_eq!(payload.uses[1].kind, ImportKind::Namespace);
+        assert_eq!(payload.uses[1].request_kind, ModuleRequestKind::Require);
+        assert_eq!(payload.uses[1].local_name.as_deref(), Some("lib"));
+        assert_eq!(
+            payload.limitation_details,
+            vec![
+                "CommonJS export lowering is not implemented in the first audit increment"
+                    .to_owned(),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn commonjs_body_var_does_not_shadow_default_parameter_require()
     -> Result<(), Box<dyn std::error::Error>> {
         let payload = parse_payload(
@@ -919,6 +1014,30 @@ mod tests {
         let payload = parse_payload(
             SourceKind::Cts,
             b"declare const require: NodeRequire; require('@acme/real');",
+        )?;
+        assert_eq!(payload.uses.len(), 1);
+        assert_eq!(payload.uses[0].specifier, "@acme/real");
+        assert_eq!(
+            payload.limitation_details,
+            vec![
+                "CommonJS export lowering is not implemented in the first audit increment"
+                    .to_owned(),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cts_ambient_global_require_declaration_keeps_runtime_loader_edge()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let payload = parse_payload(
+            SourceKind::Cts,
+            concat!(
+                "export {};\n",
+                "declare global { var require: NodeRequire; }\n",
+                "require('@acme/real');\n",
+            )
+            .as_bytes(),
         )?;
         assert_eq!(payload.uses.len(), 1);
         assert_eq!(payload.uses[0].specifier, "@acme/real");
