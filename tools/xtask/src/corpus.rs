@@ -80,6 +80,20 @@ pub enum OutputFormat {
     Json,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CorpusSelection {
+    AllApplicable,
+    MappedOnly,
+}
+impl CorpusSelection {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::AllApplicable => "all-applicable",
+            Self::MappedOnly => "mapped-only",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CorpusInvocation {
     pub target: &'static str,
@@ -125,10 +139,16 @@ pub struct CorpusArgs {
     pub mode: CorpusMode,
     pub format: OutputFormat,
     pub row: Option<String>,
+    pub selection: CorpusSelection,
 }
 
 pub fn parse_args(args: &[String]) -> Result<CorpusArgs, String> {
-    let (mut mode, mut format, mut row) = (CorpusMode::Standard, OutputFormat::Human, None);
+    let (mut mode, mut format, mut row, mut selection) = (
+        CorpusMode::Standard,
+        OutputFormat::Human,
+        None,
+        CorpusSelection::AllApplicable,
+    );
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -165,11 +185,25 @@ pub fn parse_args(args: &[String]) -> Result<CorpusArgs, String> {
                     return Err("--row may be provided only once".to_owned());
                 }
             }
+            "--mapped-only" => {
+                if selection == CorpusSelection::MappedOnly {
+                    return Err("--mapped-only may be provided only once".to_owned());
+                }
+                selection = CorpusSelection::MappedOnly;
+            }
             o => return Err(format!("unknown argument: {o}")),
         }
         i += 1;
     }
-    Ok(CorpusArgs { mode, format, row })
+    if selection == CorpusSelection::MappedOnly && row.is_some() {
+        return Err("--mapped-only cannot be combined with --row".to_owned());
+    }
+    Ok(CorpusArgs {
+        mode,
+        format,
+        row,
+        selection,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -430,13 +464,24 @@ struct RowResult {
     required_checks_validated: bool,
 }
 
-fn print_human(res: &[RowResult], mode: CorpusMode) {
+fn print_human(
+    res: &[RowResult],
+    mode: CorpusMode,
+    selection: CorpusSelection,
+    applicable_rows: usize,
+) {
     let (mapped, passed) = (
         res.iter().filter(|r| r.mapped).count(),
         res.iter().filter(|r| r.passed).count(),
     );
     let (unmapped, failed) = (res.len() - mapped, mapped - passed);
     println!("\n=== corpus foundation: {mode} ===");
+    if selection == CorpusSelection::MappedOnly {
+        println!(
+            "selection: mapped-only ({} of {applicable_rows} applicable rows)",
+            res.len()
+        );
+    }
     println!(
         "total: {}  mapped: {mapped}  passed: {passed}  unmapped: {unmapped}  failed: {failed}\n",
         res.len()
@@ -457,7 +502,12 @@ fn print_human(res: &[RowResult], mode: CorpusMode) {
     }
 }
 
-fn print_json(res: &[RowResult], mode: CorpusMode) -> Result<(), String> {
+fn print_json(
+    res: &[RowResult],
+    mode: CorpusMode,
+    selection: CorpusSelection,
+    applicable_rows: usize,
+) -> Result<(), String> {
     let rows: Vec<serde_json::Value> = res
         .iter()
         .map(|r| {
@@ -479,6 +529,8 @@ fn print_json(res: &[RowResult], mode: CorpusMode) -> Result<(), String> {
     );
     let s = serde_json::json!({
         "mode": mode.to_string(),
+        "selection": selection.as_str(),
+        "applicableRows": applicable_rows,
         "totalRows": res.len(),
         "mapped": mapped,
         "passed": passed,
@@ -489,6 +541,21 @@ fn print_json(res: &[RowResult], mode: CorpusMode) -> Result<(), String> {
     let text = serde_json::to_string_pretty(&s).map_err(|e| format!("json serialization: {e}"))?;
     println!("{text}");
     Ok(())
+}
+
+fn selected_rows(args: &CorpusArgs) -> Vec<&'static RegistryRow> {
+    REGISTRY
+        .iter()
+        .filter(|registry_row| {
+            registry_row.is_applicable(args.mode)
+                && args
+                    .row
+                    .as_deref()
+                    .is_none_or(|selected| selected == registry_row.id)
+                && (args.selection == CorpusSelection::AllApplicable
+                    || registry_row.is_mapped(args.mode))
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -518,16 +585,11 @@ pub fn run(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let selected: Vec<&RegistryRow> = REGISTRY
+    let applicable_rows = REGISTRY
         .iter()
-        .filter(|registry_row| {
-            registry_row.is_applicable(parsed.mode)
-                && parsed
-                    .row
-                    .as_deref()
-                    .is_none_or(|selected| selected == registry_row.id)
-        })
-        .collect();
+        .filter(|registry_row| registry_row.is_applicable(parsed.mode))
+        .count();
+    let selected = selected_rows(&parsed);
 
     if selected.is_empty() {
         eprintln!(
@@ -652,9 +714,11 @@ pub fn run(args: &[String]) -> ExitCode {
         );
     }
     match parsed.format {
-        OutputFormat::Human => print_human(&results, parsed.mode),
+        OutputFormat::Human => {
+            print_human(&results, parsed.mode, parsed.selection, applicable_rows)
+        }
         OutputFormat::Json => {
-            if let Err(e) = print_json(&results, parsed.mode) {
+            if let Err(e) = print_json(&results, parsed.mode, parsed.selection, applicable_rows) {
                 eprintln!("[TOOL ERROR] {e}");
                 return ExitCode::from(2);
             }

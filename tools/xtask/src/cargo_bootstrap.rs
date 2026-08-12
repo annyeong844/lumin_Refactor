@@ -33,6 +33,17 @@ const STRUCTURAL_CHECK: &str = concat!(
     "& (Join-Path $env:CARGO_TARGET_DIR ",
     "'debug/lumin-xtask') architecture-check"
 );
+const CORPUS_RUN: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
+    "-- cargo run --locked -p lumin-xtask -- corpus ${{ matrix.case.arguments }}"
+);
+const MAPPED_CORPUS_CASES: &[(&str, &str)] = &[
+    ("mapped-standard", "foundation --mapped-only"),
+    (
+        "mapped-determinism",
+        "foundation --determinism --mapped-only",
+    ),
+];
 
 #[derive(Debug, Default)]
 pub struct CargoBootstrapResult {
@@ -125,7 +136,9 @@ fn validate_workflow(source: &str, violations: &mut Vec<String>) {
     validate_architecture_job(&jobs, violations);
     validate_dependency_job(&jobs, violations);
     validate_platform_job(&jobs, violations);
+    validate_corpus_job(&jobs, violations);
     validate_bootstrap_test_job(&jobs, violations);
+    validate_required_job(&jobs, violations);
 }
 
 fn validate_actions(source: &str, violations: &mut Vec<String>) {
@@ -458,6 +471,100 @@ fn validate_platform_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<S
     }
 }
 
+fn validate_corpus_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<String>) {
+    let Some(block) = jobs.get("corpus") else {
+        return;
+    };
+    let lines = block.lines().map(str::trim).collect::<Vec<_>>();
+    let os_start = lines.iter().position(|line| *line == "os:");
+    let case_start = lines.iter().position(|line| *line == "case:");
+    let runs_on = lines
+        .iter()
+        .position(|line| *line == "runs-on: ${{ matrix.os }}");
+    let (os_lines, case_lines) = match (os_start, case_start, runs_on) {
+        (Some(os), Some(case), Some(runs_on)) if os < case && case < runs_on => {
+            (&lines[os + 1..case], &lines[case + 1..runs_on])
+        }
+        _ => {
+            violations.push(
+                "corpus job must use the reviewed os-by-case matrix before matrix.os routing"
+                    .to_owned(),
+            );
+            (&[][..], &[][..])
+        }
+    };
+    for (name, arguments) in MAPPED_CORPUS_CASES {
+        let name_line = format!("- name: {name}");
+        let arguments_line = format!("arguments: {arguments}");
+        let count = case_lines
+            .windows(2)
+            .filter(|pair| pair[0] == name_line && pair[1] == arguments_line)
+            .count();
+        if count != 1 {
+            violations.push(format!(
+                "corpus job must contain exactly one {name} mapped aggregate case"
+            ));
+        }
+    }
+    for platform in ["- ubuntu-24.04", "- windows-2022"] {
+        if os_lines.iter().filter(|line| **line == platform).count() != 1 {
+            violations.push(format!(
+                "corpus job must execute mapped aggregates on {platform}"
+            ));
+        }
+    }
+    if lines.iter().any(|line| {
+        matches!(*line, "include:" | "exclude:")
+            || line.starts_with("if:")
+            || line.starts_with("continue-on-error:")
+    }) {
+        violations.push(
+            "corpus job cannot conditionally skip or exclude required matrix partitions".to_owned(),
+        );
+    }
+    if block
+        .lines()
+        .filter(|line| command_text(line) == CORPUS_RUN)
+        .count()
+        != 1
+    {
+        violations.push(
+            "corpus job must route every matrix partition through one guarded runner".to_owned(),
+        );
+    }
+}
+
+fn validate_required_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<String>) {
+    let Some(block) = jobs.get("required") else {
+        return;
+    };
+    for required_line in [
+        "if: ${{ always() }}",
+        "- corpus",
+        "CORPUS_RESULT: ${{ needs.corpus.result }}",
+        "test \"$CORPUS_RESULT\" = success",
+    ] {
+        if block
+            .lines()
+            .map(str::trim)
+            .filter(|line| *line == required_line)
+            .count()
+            != 1
+        {
+            violations.push(format!(
+                "Required job must bind the complete corpus result exactly once: {required_line}"
+            ));
+        }
+    }
+    if block
+        .lines()
+        .map(str::trim)
+        .any(|line| line.starts_with("continue-on-error:"))
+    {
+        violations.push("Required job cannot tolerate a failed required check".to_owned());
+    }
+}
+
 fn validate_bootstrap_test_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<String>) {
     let Some(block) = jobs.get("bootstrap-tests") else {
         return;
@@ -600,6 +707,45 @@ mod tests {
                 .iter()
                 .any(|violation| violation.contains("pinned executables directly"))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn mapped_standard_and_determinism_corpus_cases_are_required()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for (name, arguments) in MAPPED_CORPUS_CASES {
+            let case = format!("          - name: {name}\n            arguments: {arguments}\n");
+            let source = workflow()?;
+            assert!(source.contains(&case), "missing fixture case {name}");
+            let changed = source.replacen(&case, "", 1);
+            assert!(
+                violations(&changed)
+                    .iter()
+                    .any(|violation| violation.contains(name)),
+                "removed case was accepted: {name}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn required_job_cannot_drop_the_corpus_result() -> Result<(), Box<dyn std::error::Error>> {
+        let source = workflow()?;
+        for changed in [
+            source.replacen("      - corpus\n", "", 1),
+            source.replacen(
+                "    name: Required\n",
+                "    name: Required\n    continue-on-error: true\n",
+                1,
+            ),
+            source.replacen("    if: ${{ always() }}\n", "    if: ${{ false }}\n", 1),
+        ] {
+            assert!(
+                violations(&changed)
+                    .iter()
+                    .any(|violation| violation.contains("Required job"))
+            );
+        }
         Ok(())
     }
 
