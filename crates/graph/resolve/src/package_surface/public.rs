@@ -1,17 +1,19 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_model::{
-    ConfigDocument, ConfigValue, ImportKind, LogicalSourceId, PackageFact, PackageIdentityState,
-    PackagePrivacy, PackageSurfaceLane, RepoPath, SemanticConfigSnapshot, SourceSnapshot,
-    SymbolNamespace,
+    ConfigDocument, ConfigValue, ImportKind, Limitation, LogicalSourceId, PackageFact,
+    PackageIdentityState, PackagePrivacy, PackageSurfaceLane, PhysicalPathRedirect, RepoPath,
+    SemanticConfigSnapshot, SourceSnapshot, SymbolNamespace,
 };
 
 use super::{
     PackageContext, PublicSurfaceOutput, ResolutionRequest, package_manifest, resolve_request,
+    verify_physical_package_containment,
 };
 
 pub(super) fn collect(
     sources: &[SourceSnapshot],
+    physical_path_redirects: &[PhysicalPathRedirect],
     source_by_path: &BTreeMap<RepoPath, LogicalSourceId>,
     config: &SemanticConfigSnapshot,
 ) -> PublicSurfaceOutput {
@@ -33,6 +35,7 @@ pub(super) fn collect(
             package,
             manifest,
             sources: source_by_path,
+            physical_path_redirects,
         };
         for lane in [
             PackageSurfaceLane::BundlerImport,
@@ -41,7 +44,23 @@ pub(super) fn collect(
             PackageSurfaceLane::NodeRequire,
         ] {
             for namespace in [SymbolNamespace::Value, SymbolNamespace::Type] {
-                for request in public_requests(package, manifest, lane, namespace, sources) {
+                let requests = public_requests(
+                    package,
+                    manifest,
+                    lane,
+                    namespace,
+                    sources,
+                    physical_path_redirects,
+                );
+                output
+                    .limitations
+                    .extend(requests.physical_errors.into_iter().map(|detail| {
+                        Limitation::PublicSurfaceUnsupported {
+                            path: package.manifest_path.display_escaped(),
+                            detail,
+                        }
+                    }));
+                for request in requests.items {
                     let result = resolve_request(
                         &context,
                         ResolutionRequest {
@@ -72,17 +91,25 @@ struct PublicRequest {
     key: String,
 }
 
+#[derive(Default)]
+struct PublicRequests {
+    items: Vec<PublicRequest>,
+    physical_errors: BTreeSet<String>,
+}
+
 fn public_requests(
     package: &PackageFact,
     manifest: &ConfigDocument,
     lane: PackageSurfaceLane,
     namespace: SymbolNamespace,
     sources: &[SourceSnapshot],
-) -> Vec<PublicRequest> {
+    physical_path_redirects: &[PhysicalPathRedirect],
+) -> PublicRequests {
     let PackageIdentityState::Valid(identity) = &package.identity else {
-        return Vec::new();
+        return PublicRequests::default();
     };
     let mut keys = BTreeSet::from([".".to_owned()]);
+    let mut physical_errors = BTreeSet::new();
     if lane != PackageSurfaceLane::LegacyNode
         && let Some(ConfigValue::Object(entries)) = manifest.root.get("exports")
         && matches!(
@@ -95,12 +122,20 @@ fn public_requests(
                 keys.insert(entry.key.clone());
                 continue;
             }
-            keys.extend(pattern_public_keys(
-                package, entry, lane, namespace, sources,
-            ));
+            let pattern = pattern_public_keys(
+                package,
+                entry,
+                lane,
+                namespace,
+                sources,
+                physical_path_redirects,
+            );
+            keys.extend(pattern.keys);
+            physical_errors.extend(pattern.physical_errors);
         }
     }
-    keys.into_iter()
+    let items = keys
+        .into_iter()
         .filter_map(|key| {
             let specifier = if key == "." {
                 identity.as_str().to_owned()
@@ -109,7 +144,17 @@ fn public_requests(
             };
             Some(PublicRequest { specifier, key })
         })
-        .collect()
+        .collect();
+    PublicRequests {
+        items,
+        physical_errors,
+    }
+}
+
+#[derive(Default)]
+struct PatternPublicKeys {
+    keys: BTreeSet<String>,
+    physical_errors: BTreeSet<String>,
 }
 
 fn pattern_public_keys(
@@ -118,19 +163,27 @@ fn pattern_public_keys(
     lane: PackageSurfaceLane,
     namespace: SymbolNamespace,
     sources: &[SourceSnapshot],
-) -> BTreeSet<String> {
-    let mut keys = BTreeSet::new();
+    physical_path_redirects: &[PhysicalPathRedirect],
+) -> PatternPublicKeys {
+    let mut output = PatternPublicKeys::default();
     let Ok(Some(selected)) = super::exports::select_subpath_value(&entry.value, lane, namespace)
     else {
-        return keys;
+        return output;
     };
     let Some(target) = selected.target else {
-        return keys;
+        return output;
     };
     if !target.contains('*') {
-        keys.insert(entry.key.replacen('*', "lumin-pattern", 1));
-        return keys;
+        output
+            .keys
+            .insert(entry.key.replacen('*', "lumin-pattern", 1));
+        return output;
     }
+    output.physical_errors.extend(pattern_physical_errors(
+        package,
+        &target,
+        physical_path_redirects,
+    ));
     for source in sources {
         let Some(relative) = source.path.portable_relative_to(&package.root) else {
             continue;
@@ -146,11 +199,51 @@ fn pattern_public_keys(
             };
             let key = entry.key.replacen('*', &capture, 1);
             if super::exports::validate_subpath_key(&key).is_ok() {
-                keys.insert(key);
+                output.keys.insert(key);
             }
         }
     }
-    keys
+    output
+}
+
+fn pattern_physical_errors(
+    package: &PackageFact,
+    target: &str,
+    physical_path_redirects: &[PhysicalPathRedirect],
+) -> BTreeSet<String> {
+    let Some((_, suffix)) = target.split_once('*') else {
+        return BTreeSet::new();
+    };
+    let mut errors = BTreeSet::new();
+    for redirect in physical_path_redirects
+        .iter()
+        .filter(|redirect| redirect.path.is_within(&package.root))
+    {
+        let Some(relative) = redirect.path.portable_relative_to(&package.root) else {
+            continue;
+        };
+        let candidates = [
+            format!("./{relative}"),
+            format!("./{relative}/lumin-pattern{suffix}"),
+        ];
+        for candidate in candidates {
+            let Some(capture) = super::exports::pattern_capture(target, &candidate) else {
+                continue;
+            };
+            let Ok(lowered) = super::exports::lower_target(&package.root, target, Some(&capture))
+            else {
+                continue;
+            };
+            if let Err(detail) = verify_physical_package_containment(
+                &package.root,
+                &lowered,
+                physical_path_redirects,
+            ) {
+                errors.insert(detail);
+            }
+        }
+    }
+    errors
 }
 
 fn host_variants(

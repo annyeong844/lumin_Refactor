@@ -86,6 +86,37 @@ pub struct PhysicalAliasWriteClosure {
     pub members: Vec<RepoPath>,
 }
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum PhysicalPathRedirectTarget {
+    Repository(RepoPath),
+    OutsideRepository,
+    Unavailable,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct PhysicalPathRedirect {
+    pub path: RepoPath,
+    pub target: PhysicalPathRedirectTarget,
+    pub target_identity_sha256: String,
+}
+
+impl PhysicalPathRedirect {
+    pub fn semantic_sha256(&self) -> String {
+        let mut framed = Vec::new();
+        crate::append_length_prefixed(&mut framed, self.path.canonical_bytes());
+        crate::append_length_prefixed(&mut framed, self.target_identity_sha256.as_bytes());
+        match &self.target {
+            PhysicalPathRedirectTarget::Repository(target) => {
+                framed.push(1);
+                crate::append_length_prefixed(&mut framed, target.canonical_bytes());
+            }
+            PhysicalPathRedirectTarget::OutsideRepository => framed.push(2),
+            PhysicalPathRedirectTarget::Unavailable => framed.push(3),
+        }
+        crate::digest_hex(&framed)
+    }
+}
+
 impl RepoPath {
     pub fn empty() -> Self {
         let mut canonical = Vec::new();

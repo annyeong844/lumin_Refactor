@@ -1,6 +1,8 @@
 use super::*;
 use std::sync::Arc;
 
+mod physical_path_redirect;
+
 #[test]
 fn generated_marker_must_be_in_leading_comment() {
     assert!(generated_marker(b"// @generated\nexport const value = 1;"));

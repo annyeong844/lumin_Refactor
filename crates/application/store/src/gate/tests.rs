@@ -26,6 +26,7 @@ fn persisted_v1_gate_additions_default_when_absent() -> Result<(), Box<dyn std::
         payload_sha256: Some("baseline".to_owned()),
         physical_identity: None,
         absence_parent: None,
+        physical_redirect_sha256: None,
     };
     let baseline = GateBaseline {
         analysis_contract: "contract".to_owned(),

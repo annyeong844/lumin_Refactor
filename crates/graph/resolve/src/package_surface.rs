@@ -2,13 +2,14 @@ mod exports;
 mod fallback;
 mod public;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_model::{
     ConfigDocument, ConfigObservation, ImportKind, Limitation, LogicalSourceId, ModuleRequestKind,
     PackageFact, PackageIdentityState, PackagePrivacy, PackageSurfaceDeclaration,
-    PackageSurfaceLane, PackageSurfaceSource, RepoPath, ResolutionOutcome, ResolutionProfile,
-    SemanticConfigSnapshot, SourceSnapshot, SourceUseFact, SymbolNamespace, UnresolvedTargetScope,
+    PackageSurfaceLane, PackageSurfaceSource, PhysicalPathRedirect, PhysicalPathRedirectTarget,
+    RepoPath, ResolutionOutcome, ResolutionProfile, SemanticConfigSnapshot, SourceSnapshot,
+    SourceUseFact, SymbolNamespace, UnresolvedTargetScope,
 };
 
 use crate::candidates;
@@ -34,6 +35,7 @@ pub(super) struct PackageContext<'a> {
     pub package: &'a PackageFact,
     pub manifest: &'a ConfigDocument,
     pub sources: &'a BTreeMap<RepoPath, LogicalSourceId>,
+    pub physical_path_redirects: &'a [PhysicalPathRedirect],
 }
 
 #[derive(Clone, Copy)]
@@ -57,6 +59,7 @@ pub(super) struct TargetRequest<'a> {
 pub(crate) fn resolve(
     source_use: &SourceUseFact,
     sources: &BTreeMap<RepoPath, LogicalSourceId>,
+    physical_path_redirects: &[PhysicalPathRedirect],
     settings: &ImporterSettings,
     config: &SemanticConfigSnapshot,
 ) -> Option<PackageResolution> {
@@ -67,6 +70,7 @@ pub(crate) fn resolve(
         package,
         manifest,
         sources,
+        physical_path_redirects,
     };
     let mut result = resolve_request(
         &context,
@@ -91,6 +95,7 @@ pub(crate) fn resolve_relative_directory(
     base: &RepoPath,
     source_use: &SourceUseFact,
     sources: &BTreeMap<RepoPath, LogicalSourceId>,
+    physical_path_redirects: &[PhysicalPathRedirect],
     settings: &ImporterSettings,
     config: &SemanticConfigSnapshot,
 ) -> PackageResolution {
@@ -131,6 +136,7 @@ pub(crate) fn resolve_relative_directory(
                 package,
                 manifest,
                 sources,
+                physical_path_redirects,
             };
             let mut result = fallback::resolve(
                 &context,
@@ -240,10 +246,11 @@ pub(crate) fn package_imports_unsupported(
 
 pub(crate) fn collect_public_surfaces(
     sources: &[SourceSnapshot],
+    physical_path_redirects: &[PhysicalPathRedirect],
     source_by_path: &BTreeMap<RepoPath, LogicalSourceId>,
     config: &SemanticConfigSnapshot,
 ) -> PublicSurfaceOutput {
-    public::collect(sources, source_by_path, config)
+    public::collect(sources, physical_path_redirects, source_by_path, config)
 }
 
 struct PackageRequest {
@@ -356,13 +363,12 @@ pub(super) fn resolve_request(
         && let Some(exports) = context.manifest.root.get("exports")
     {
         return exports::resolve(
-            context.package,
+            context,
             request.specifier,
             request.key,
             request.namespace,
             request.lane,
             exports,
-            context.sources,
         );
     }
     if request.key != "." {
@@ -413,6 +419,7 @@ fn resolve_legacy_subpath(
             allow_directory: allow_extensionless,
         },
         context.sources,
+        context.physical_path_redirects,
     );
     result.declaration = None;
     result
@@ -452,6 +459,7 @@ pub(super) fn resolve_base(
     package: &PackageFact,
     request: TargetRequest<'_>,
     sources: &BTreeMap<RepoPath, LogicalSourceId>,
+    physical_path_redirects: &[PhysicalPathRedirect],
 ) -> PackageResolution {
     let mut paths = candidates(
         &request.base,
@@ -464,26 +472,79 @@ pub(super) fn resolve_base(
         paths.extend(candidates(&index, request.namespace, true));
     }
     paths.dedup();
-    if let Some(target) = paths.iter().find_map(|path| sources.get(path)) {
-        return PackageResolution {
-            outcome: ResolutionOutcome::Internal {
-                target: target.clone(),
-            },
-            limitation: None,
-            declaration: Some(PackageSurfaceDeclaration {
-                package_root: package.root.clone(),
-                manifest_path: package.manifest_path.clone(),
-                request: request.specifier.to_owned(),
-                namespace: request.namespace,
-                source: request.source,
-                target: target.clone(),
-            }),
-        };
+    for path in &paths {
+        if let Err(detail) =
+            verify_physical_package_containment(&package.root, path, physical_path_redirects)
+        {
+            return unsupported(package, request.specifier, &detail);
+        }
+        if let Some(target) = sources.get(path) {
+            return PackageResolution {
+                outcome: ResolutionOutcome::Internal {
+                    target: target.clone(),
+                },
+                limitation: None,
+                declaration: Some(PackageSurfaceDeclaration {
+                    package_root: package.root.clone(),
+                    manifest_path: package.manifest_path.clone(),
+                    request: request.specifier.to_owned(),
+                    namespace: request.namespace,
+                    source: request.source,
+                    target: target.clone(),
+                }),
+            };
+        }
     }
     unresolved(
         request.specifier,
         paths.iter().map(RepoPath::display_escaped).collect(),
     )
+}
+
+pub(super) fn verify_physical_package_containment(
+    package_root: &RepoPath,
+    candidate: &RepoPath,
+    physical_path_redirects: &[PhysicalPathRedirect],
+) -> Result<(), String> {
+    let mut current = candidate.clone();
+    let mut visited = BTreeSet::new();
+    loop {
+        if !visited.insert(current.clone()) {
+            return Err("package target physical redirect cycle is unsupported".to_owned());
+        }
+        let Some(redirect) = physical_path_redirects
+            .iter()
+            .filter(|redirect| current.is_within(&redirect.path))
+            .max_by_key(|redirect| redirect.path.components_len())
+        else {
+            return current
+                .is_within(package_root)
+                .then_some(())
+                .ok_or_else(|| "package target physically escapes the package root".to_owned());
+        };
+        let target = match &redirect.target {
+            PhysicalPathRedirectTarget::Repository(target) => target,
+            PhysicalPathRedirectTarget::OutsideRepository => {
+                return Err("package target physically escapes the repository root".to_owned());
+            }
+            PhysicalPathRedirectTarget::Unavailable => {
+                return Err("package target physical containment is unavailable".to_owned());
+            }
+        };
+        if !target.is_within(package_root) {
+            return Err("package target physically escapes the package root".to_owned());
+        }
+        let suffix = current
+            .portable_relative_to(&redirect.path)
+            .ok_or_else(|| "package target physical suffix is not portable".to_owned())?;
+        let mut resolved = target.clone();
+        for component in suffix.split('/').filter(|component| !component.is_empty()) {
+            resolved = resolved
+                .join_portable(component)
+                .map_err(|_| "package target physical suffix is invalid".to_owned())?;
+        }
+        current = resolved;
+    }
 }
 
 pub(super) fn unresolved(specifier: &str, candidates: Vec<String>) -> PackageResolution {
@@ -527,5 +588,43 @@ pub(super) fn unsupported(
             detail: detail.to_owned(),
         }),
         declaration: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn physical_redirects_must_remain_inside_the_package() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let package = RepoPath::from_portable("packages/lib")?;
+        let candidate = RepoPath::from_portable("packages/lib/link/index.ts")?;
+        let link = RepoPath::from_portable("packages/lib/link")?;
+
+        let contained = PhysicalPathRedirect {
+            path: link.clone(),
+            target: PhysicalPathRedirectTarget::Repository(RepoPath::from_portable(
+                "packages/lib/real",
+            )?),
+            target_identity_sha256: "contained".to_owned(),
+        };
+        assert!(verify_physical_package_containment(&package, &candidate, &[contained]).is_ok());
+
+        for target in [
+            PhysicalPathRedirectTarget::Repository(RepoPath::from_portable("shared")?),
+            PhysicalPathRedirectTarget::OutsideRepository,
+            PhysicalPathRedirectTarget::Unavailable,
+        ] {
+            let redirect = PhysicalPathRedirect {
+                path: link.clone(),
+                target,
+                target_identity_sha256: "rejected".to_owned(),
+            };
+            assert!(
+                verify_physical_package_containment(&package, &candidate, &[redirect]).is_err()
+            );
+        }
+        Ok(())
     }
 }

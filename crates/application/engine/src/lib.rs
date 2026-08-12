@@ -384,6 +384,7 @@ impl RepositoryAnalysisSession {
     ) -> Result<RepositoryAnalysisStep, EngineError> {
         let output = lumin_resolve::resolve_all(
             &self.inventory.sources,
+            &self.inventory.physical_path_redirects,
             &self.facts,
             &self.inventory.config,
             &self.repository_root,
@@ -577,6 +578,7 @@ fn semantic_input_records(inventory: &InventorySnapshot) -> Vec<SemanticInputRec
             payload_sha256: Some(source.payload_sha256.clone()),
             physical_identity: Some(source.physical_identity.clone()),
             absence_parent: None,
+            physical_redirect_sha256: None,
         });
     }
     for observation in inventory.config.observations.values() {
@@ -603,6 +605,7 @@ fn semantic_input_records(inventory: &InventorySnapshot) -> Vec<SemanticInputRec
                     path: RepoPathProjection::from(&parent.path),
                     physical_identity: parent.physical_identity.clone(),
                 }),
+            physical_redirect_sha256: None,
         });
     }
     // Convert policy inputs (lumin.json, .gitignore files) to semantic input records
@@ -617,7 +620,24 @@ fn semantic_input_records(inventory: &InventorySnapshot) -> Vec<SemanticInputRec
             payload_sha256: policy_input.payload_sha256.clone(),
             physical_identity: policy_input.physical_identity.clone(),
             absence_parent: None,
+            physical_redirect_sha256: None,
         });
+    }
+    for redirect in &inventory.physical_path_redirects {
+        let path = RepoPathProjection::from(&redirect.path);
+        let sha256 = redirect.semantic_sha256();
+        if let Some(input) = inputs.iter_mut().find(|input| input.path == path) {
+            input.physical_redirect_sha256 = Some(sha256);
+        } else {
+            inputs.push(SemanticInputRecord {
+                path,
+                state: SemanticInputState::PathRedirect,
+                payload_sha256: None,
+                physical_identity: None,
+                absence_parent: None,
+                physical_redirect_sha256: Some(sha256),
+            });
+        }
     }
     inputs
 }

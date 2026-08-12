@@ -5,10 +5,10 @@ mod package_surface;
 use std::collections::BTreeMap;
 
 use lumin_model::{
-    ConfigSyntax, FileFacts, Limitation, LogicalSourceId, PackageSurfaceDeclaration, RepoPath,
-    RepositoryRootIdentity, ResolutionOutcome, ResolutionProfile, ResolvedSourceUse,
-    SelectedResolutionProfile, SemanticConfigSnapshot, SourceSnapshot, SourceUseFact,
-    SymbolNamespace, UnresolvedTargetScope,
+    ConfigSyntax, FileFacts, Limitation, LogicalSourceId, PackageSurfaceDeclaration,
+    PhysicalPathRedirect, RepoPath, RepositoryRootIdentity, ResolutionOutcome, ResolutionProfile,
+    ResolvedSourceUse, SelectedResolutionProfile, SemanticConfigSnapshot, SourceSnapshot,
+    SourceUseFact, SymbolNamespace, UnresolvedTargetScope,
 };
 use thiserror::Error;
 
@@ -19,7 +19,7 @@ pub use generated_config_policy::{
     RESOLVER_PACKAGE_JSON_FIELDS, RESOLVER_TSCONFIG_TOP_LEVEL,
 };
 
-pub const RESOLVER_VERSION: &str = "config-package-resolution.v2";
+pub const RESOLVER_VERSION: &str = "config-package-resolution.v3";
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ConfigDemand {
@@ -46,6 +46,7 @@ pub enum ResolverError {
 
 pub fn resolve_all(
     sources: &[SourceSnapshot],
+    physical_path_redirects: &[PhysicalPathRedirect],
     facts: &[FileFacts],
     semantic_config: &SemanticConfigSnapshot,
     repository_root: &RepositoryRootIdentity,
@@ -87,8 +88,12 @@ pub fn resolve_all(
         });
     }
 
-    let public_surfaces =
-        package_surface::collect_public_surfaces(sources, &source_by_path, semantic_config);
+    let public_surfaces = package_surface::collect_public_surfaces(
+        sources,
+        physical_path_redirects,
+        &source_by_path,
+        semantic_config,
+    );
     let mut package_surfaces = public_surfaces.declarations;
     selection.limitations.extend(public_surfaces.limitations);
     let mut resolved = Vec::new();
@@ -104,6 +109,7 @@ pub fn resolve_all(
                 importer_path,
                 source_use,
                 &source_by_path,
+                physical_path_redirects,
                 settings,
                 semantic_config,
             );
@@ -208,6 +214,7 @@ fn resolve_one(
     importer_path: &RepoPath,
     source_use: &SourceUseFact,
     sources: &BTreeMap<RepoPath, LogicalSourceId>,
+    physical_path_redirects: &[PhysicalPathRedirect],
     settings: &config::ImporterSettings,
     semantic_config: &SemanticConfigSnapshot,
 ) -> (
@@ -237,13 +244,21 @@ fn resolve_one(
         );
     }
     if !specifier.starts_with("./") && !specifier.starts_with("../") {
-        return resolve_bare_specifier(specifier, source_use, sources, settings, semantic_config);
+        return resolve_bare_specifier(
+            specifier,
+            source_use,
+            sources,
+            physical_path_redirects,
+            settings,
+            semantic_config,
+        );
     }
     resolve_relative_specifier(
         specifier,
         source_use,
         importer_path,
         sources,
+        physical_path_redirects,
         settings,
         semantic_config,
     )
@@ -253,6 +268,7 @@ fn resolve_bare_specifier(
     specifier: &str,
     source_use: &SourceUseFact,
     sources: &BTreeMap<RepoPath, LogicalSourceId>,
+    physical_path_redirects: &[PhysicalPathRedirect],
     settings: &config::ImporterSettings,
     semantic_config: &SemanticConfigSnapshot,
 ) -> (
@@ -296,7 +312,13 @@ fn resolve_bare_specifier(
             );
         }
     }
-    if let Some(result) = package_surface::resolve(source_use, sources, settings, semantic_config) {
+    if let Some(result) = package_surface::resolve(
+        source_use,
+        sources,
+        physical_path_redirects,
+        settings,
+        semantic_config,
+    ) {
         return (result.outcome, result.limitation, result.declaration);
     }
     let bare_identity = package_name(specifier);
@@ -314,6 +336,7 @@ fn resolve_relative_specifier(
     source_use: &SourceUseFact,
     importer_path: &RepoPath,
     sources: &BTreeMap<RepoPath, LogicalSourceId>,
+    physical_path_redirects: &[PhysicalPathRedirect],
     settings: &config::ImporterSettings,
     semantic_config: &SemanticConfigSnapshot,
 ) -> (
@@ -378,6 +401,7 @@ fn resolve_relative_specifier(
             &base,
             source_use,
             sources,
+            physical_path_redirects,
             settings,
             semantic_config,
         );
@@ -653,6 +677,7 @@ mod tests {
             &[(target.path.clone(), target.id.clone())]
                 .into_iter()
                 .collect(),
+            &[],
             &settings,
             &config,
         );
@@ -703,6 +728,7 @@ mod tests {
         let repository_root = test_repository_root()?;
         let first = resolve_all(
             &sources,
+            &[],
             std::slice::from_ref(&facts),
             &config,
             &repository_root,
@@ -730,7 +756,7 @@ mod tests {
                 },
             },
         );
-        let second = resolve_all(&sources, &[facts], &config, &repository_root, None)?;
+        let second = resolve_all(&sources, &[], &[facts], &config, &repository_root, None)?;
         assert!(second.demands.is_empty());
         assert_eq!(second.resolved.len(), 1);
         assert_eq!(
@@ -782,7 +808,7 @@ mod tests {
         );
 
         let repository_root = test_repository_root()?;
-        let selection = resolve_all(&[importer], &[facts], &config, &repository_root, None)?;
+        let selection = resolve_all(&[importer], &[], &[facts], &config, &repository_root, None)?;
 
         assert!(selection.demands.is_empty());
         assert!(matches!(
