@@ -312,7 +312,9 @@ pub static REGISTRY: &[RegistryRow] = &[
     ]),
     row_sd!("package-types-versions-unsupported", &[inv!("package_unsupported_public", "types_versions_blocks_unspecialized_type_fallback")]),
     row_sd!("package-exports-unsupported-shapes", &[inv!("package_unsupported_public", "unsupported_exports_shapes_never_select_fallbacks")]),
-    row_sd!("module-format-conditions"),
+    row_sd!("module-format-conditions", &[
+        inv!("module_format_conditions", "node_profiles_select_conditions_from_importer_format_and_edge_syntax"),
+    ]),
     row_sd!("public-condition-union"),
     row_sd!("package-fields-no-exports"),
     row_sd!("resolution-profile-selection"),

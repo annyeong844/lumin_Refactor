@@ -1,0 +1,426 @@
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs;
+use std::path::Path;
+
+use serde_json::{Map, Value, json};
+
+mod support;
+
+use support::{assert_status, field, run};
+
+const COMMONJS_EXPORT_LIMITATION: &str =
+    "CommonJS export lowering is not implemented in the first audit increment";
+
+const MTS_SOURCE: &str = concat!(
+    "import { mtsStatic } from '@acme/lib/mts-static';\n",
+    "const esmRequired = require('@acme/lib/esm-require');\n",
+    "console.log(mtsStatic, esmRequired);\n",
+);
+const MJS_SOURCE: &str = concat!(
+    "import { mjsStatic } from '@acme/lib/mjs-static';\n",
+    "console.log(mjsStatic);\n",
+);
+const CTS_SOURCE: &str = concat!(
+    "import { ctsStatic } from '@acme/lib/cts-static';\n",
+    "void import('@acme/lib/cjs-dynamic');\n",
+    "console.log(ctsStatic);\n",
+);
+const CJS_SOURCE: &str = concat!(
+    "const cjsRequired = require('@acme/lib/cjs-require');\n",
+    "console.log(cjsRequired);\n",
+);
+const ROOT_SOURCE: &str = concat!(
+    "import { rootStatic } from '@acme/lib/root-module';\n",
+    "console.log(rootStatic);\n",
+);
+const NEAREST_COMMONJS_SOURCE: &str = concat!(
+    "import { nearestCommonJs } from '@acme/lib/nearest-commonjs';\n",
+    "console.log(nearestCommonJs);\n",
+);
+const NEAREST_DEFAULT_SOURCE: &str = concat!(
+    "import { nearestDefault } from '@acme/lib/nearest-default';\n",
+    "console.log(nearestDefault);\n",
+);
+
+const TARGET_CASES: &[&str] = &[
+    "mts-static",
+    "mjs-static",
+    "cts-static",
+    "cjs-require",
+    "root-module",
+    "nearest-commonjs",
+    "nearest-default",
+    "esm-require",
+    "cjs-dynamic",
+];
+
+#[test]
+fn node_profiles_select_conditions_from_importer_format_and_edge_syntax()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    for profile in ["node16", "nodenext"] {
+        verify_profile(root.path(), profile)?;
+    }
+    Ok(())
+}
+
+fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let audit = run(
+        root,
+        &["audit", "--jobs", "1", "--resolution-profile", profile],
+    )?;
+    assert_status(&audit, 0);
+    let audit_json: Value = serde_json::from_str(&audit.stdout)?;
+    assert_eq!(
+        audit_json.get("status").and_then(Value::as_str),
+        Some("incomplete")
+    );
+    assert_eq!(
+        audit_json.get("limitationCount").and_then(Value::as_u64),
+        Some(2)
+    );
+    let run_id = field(&audit.stdout, "runId")?;
+
+    let overview = run(root, &["overview", "--run", &run_id])?;
+    assert_status(&overview, 0);
+    let overview: Value = serde_json::from_str(&overview.stdout)?;
+    let limitations = overview
+        .get("limitations")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("limitations are missing"))?;
+    assert_eq!(limitations.len(), 2);
+    assert!(limitations.iter().all(|limitation| {
+        limitation.get("reason").and_then(Value::as_str) == Some("js-module-use-unknown")
+            && limitation.get("detail").and_then(Value::as_str) == Some(COMMONJS_EXPORT_LIMITATION)
+    }));
+
+    let expected_profile = if profile == "nodenext" {
+        "node-next"
+    } else {
+        profile
+    };
+    let profiles = overview
+        .get("resolutionProfiles")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("resolutionProfiles are missing"))?;
+    assert!(!profiles.is_empty());
+    assert!(profiles.iter().all(|selected| {
+        selected.get("profile").and_then(Value::as_str) == Some(expected_profile)
+            && selected.pointer("/source/kind").and_then(Value::as_str) == Some("invocation")
+    }));
+
+    let expectations = [
+        (
+            "apps/ext-esm/main.mts",
+            MTS_SOURCE,
+            "@acme/lib/mts-static",
+            "named",
+            "static-import",
+            "mtsStatic",
+            "mts-static",
+            "import",
+        ),
+        (
+            "apps/ext-esm/main.mjs",
+            MJS_SOURCE,
+            "@acme/lib/mjs-static",
+            "named",
+            "static-import",
+            "mjsStatic",
+            "mjs-static",
+            "import",
+        ),
+        (
+            "apps/ext-cjs/main.cts",
+            CTS_SOURCE,
+            "@acme/lib/cts-static",
+            "named",
+            "static-import",
+            "ctsStatic",
+            "cts-static",
+            "require",
+        ),
+        (
+            "apps/ext-cjs/main.cjs",
+            CJS_SOURCE,
+            "@acme/lib/cjs-require",
+            "dynamic-broad",
+            "require",
+            "require('@acme/lib/cjs-require')",
+            "cjs-require",
+            "require",
+        ),
+        (
+            "root-main.ts",
+            ROOT_SOURCE,
+            "@acme/lib/root-module",
+            "named",
+            "static-import",
+            "rootStatic",
+            "root-module",
+            "import",
+        ),
+        (
+            "apps/nearest-commonjs/main.ts",
+            NEAREST_COMMONJS_SOURCE,
+            "@acme/lib/nearest-commonjs",
+            "named",
+            "static-import",
+            "nearestCommonJs",
+            "nearest-commonjs",
+            "require",
+        ),
+        (
+            "apps/nearest-default/main.ts",
+            NEAREST_DEFAULT_SOURCE,
+            "@acme/lib/nearest-default",
+            "named",
+            "static-import",
+            "nearestDefault",
+            "nearest-default",
+            "require",
+        ),
+        (
+            "apps/ext-esm/main.mts",
+            MTS_SOURCE,
+            "@acme/lib/esm-require",
+            "dynamic-broad",
+            "require",
+            "require('@acme/lib/esm-require')",
+            "esm-require",
+            "require",
+        ),
+        (
+            "apps/ext-cjs/main.cts",
+            CTS_SOURCE,
+            "@acme/lib/cjs-dynamic",
+            "dynamic-broad",
+            "dynamic-import",
+            "import('@acme/lib/cjs-dynamic')",
+            "cjs-dynamic",
+            "import",
+        ),
+    ];
+
+    let source_paths = expectations
+        .iter()
+        .map(|expectation| expectation.0)
+        .collect::<BTreeSet<_>>();
+    let mut sources = BTreeMap::new();
+    for path in source_paths {
+        let source = file_response(root, &run_id, path)?;
+        assert_eq!(
+            source
+                .pointer("/resolutionProfile/profile")
+                .and_then(Value::as_str),
+            Some(expected_profile)
+        );
+        assert_eq!(
+            source
+                .pointer("/resolutionProfile/source/kind")
+                .and_then(Value::as_str),
+            Some("invocation")
+        );
+        let expected_count = expectations
+            .iter()
+            .filter(|expectation| expectation.0 == path)
+            .count();
+        assert_eq!(
+            source
+                .get("resolutions")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(expected_count),
+            "unexpected resolution count for {path}"
+        );
+        sources.insert(path, source);
+    }
+
+    let mut targets = BTreeMap::new();
+    for expectation in expectations {
+        let target_path = target_path(expectation.6, expectation.7);
+        if !targets.contains_key(&target_path) {
+            targets.insert(target_path.clone(), source_id(root, &run_id, &target_path)?);
+        }
+        let target = resolution_target(
+            sources
+                .get(expectation.0)
+                .ok_or_else(|| std::io::Error::other("source response is missing"))?,
+            expectation.2,
+            expectation.3,
+            expectation.4,
+            expected_span(expectation.1, expectation.5)?,
+        )?;
+        assert_eq!(
+            target,
+            *targets
+                .get(&target_path)
+                .ok_or_else(|| std::io::Error::other("target identity is missing"))?,
+            "wrong condition target for {} in {} under {profile}",
+            expectation.2,
+            expectation.0,
+        );
+    }
+    Ok(())
+}
+
+fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"root-app","private":true,"type":"module","workspaces":["apps/*","packages/*"]}"#,
+    )?;
+    write(
+        root.path(),
+        "apps/ext-esm/package.json",
+        r#"{"name":"@acme/ext-esm","private":true,"type":"commonjs"}"#,
+    )?;
+    write(
+        root.path(),
+        "apps/ext-cjs/package.json",
+        r#"{"name":"@acme/ext-cjs","private":true,"type":"module"}"#,
+    )?;
+    write(
+        root.path(),
+        "apps/nearest-commonjs/package.json",
+        r#"{"name":"@acme/nearest-commonjs","private":true,"type":"commonjs"}"#,
+    )?;
+    write(
+        root.path(),
+        "apps/nearest-default/package.json",
+        r#"{"name":"@acme/nearest-default","private":true}"#,
+    )?;
+
+    let mut exports = Map::new();
+    for case in TARGET_CASES {
+        exports.insert(
+            format!("./{case}"),
+            json!({
+                "import": format!("./targets/{case}-import.js"),
+                "require": format!("./targets/{case}-require.js"),
+            }),
+        );
+        for lane in ["import", "require"] {
+            write(
+                root.path(),
+                &target_path(case, lane),
+                &format!("export const {}_{} = 1;\n", case.replace('-', "_"), lane),
+            )?;
+        }
+    }
+    write(
+        root.path(),
+        "packages/lib/package.json",
+        &json!({
+            "name": "@acme/lib",
+            "private": true,
+            "exports": Value::Object(exports),
+        })
+        .to_string(),
+    )?;
+
+    for (path, source) in [
+        ("apps/ext-esm/main.mts", MTS_SOURCE),
+        ("apps/ext-esm/main.mjs", MJS_SOURCE),
+        ("apps/ext-cjs/main.cts", CTS_SOURCE),
+        ("apps/ext-cjs/main.cjs", CJS_SOURCE),
+        ("root-main.ts", ROOT_SOURCE),
+        ("apps/nearest-commonjs/main.ts", NEAREST_COMMONJS_SOURCE),
+        ("apps/nearest-default/main.ts", NEAREST_DEFAULT_SOURCE),
+    ] {
+        write(root.path(), path, source)?;
+    }
+    Ok(root)
+}
+
+fn target_path(case: &str, lane: &str) -> String {
+    format!("packages/lib/targets/{case}-{lane}.ts")
+}
+
+fn write(root: &Path, path: &str, contents: &str) -> Result<(), std::io::Error> {
+    let path = root.join(path);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, contents)
+}
+
+fn file_response(
+    root: &Path,
+    run_id: &str,
+    path: &str,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let output = run(root, &["files", "--run", run_id, path])?;
+    assert_status(&output, 0);
+    Ok(serde_json::from_str(&output.stdout)?)
+}
+
+fn source_id(root: &Path, run_id: &str, path: &str) -> Result<String, Box<dyn std::error::Error>> {
+    required_str(
+        &file_response(root, run_id, path)?,
+        "/sourceContext/sourceId",
+    )
+    .map_err(Into::into)
+}
+
+fn resolution_target(
+    source: &Value,
+    specifier: &str,
+    use_kind: &str,
+    request_kind: &str,
+    expected_span: (u64, u64),
+) -> Result<String, std::io::Error> {
+    let resolution = source
+        .get("resolutions")
+        .and_then(Value::as_array)
+        .and_then(|resolutions| {
+            resolutions.iter().find(|resolution| {
+                resolution
+                    .pointer("/sourceUse/specifier")
+                    .and_then(Value::as_str)
+                    == Some(specifier)
+                    && resolution
+                        .pointer("/sourceUse/kind")
+                        .and_then(Value::as_str)
+                        == Some(use_kind)
+                    && resolution
+                        .pointer("/sourceUse/requestKind")
+                        .and_then(Value::as_str)
+                        == Some(request_kind)
+                    && resolution
+                        .pointer("/sourceUse/span/start")
+                        .and_then(Value::as_u64)
+                        == Some(expected_span.0)
+                    && resolution
+                        .pointer("/sourceUse/span/end")
+                        .and_then(Value::as_u64)
+                        == Some(expected_span.1)
+            })
+        })
+        .ok_or_else(|| {
+            std::io::Error::other(format!(
+                "{use_kind} {request_kind} resolution for {specifier} at {expected_span:?} is missing"
+            ))
+        })?;
+    assert_eq!(
+        resolution.pointer("/outcome/kind").and_then(Value::as_str),
+        Some("internal")
+    );
+    required_str(resolution, "/outcome/target")
+}
+
+fn expected_span(source: &str, syntax: &str) -> Result<(u64, u64), std::io::Error> {
+    let start = source
+        .find(syntax)
+        .ok_or_else(|| std::io::Error::other(format!("{syntax:?} is missing from fixture")))?;
+    Ok((start as u64, (start + syntax.len()) as u64))
+}
+
+fn required_str(value: &Value, pointer: &str) -> Result<String, std::io::Error> {
+    value
+        .pointer(pointer)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| std::io::Error::other(format!("missing string {pointer}")))
+}

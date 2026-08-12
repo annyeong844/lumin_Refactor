@@ -4,7 +4,7 @@ Status: active
 
 Owner: PLAN-001
 
-Revision: 2026-08-12
+Revision: 2026-08-13
 
 ## Purpose and Ownership
 
@@ -45,10 +45,10 @@ These are execution-matrix counts, not a percentage estimate of product code.
 
 | Lane | Applicable | Mapped | Remaining | Verified aggregate |
 | --- | ---: | ---: | ---: | --- |
-| Standard | 86 | 55 | 31 | Clean-HEAD `corpus::tests::mode_counts`: 55 mapped, 31 unmapped. Required public CI mapped aggregate: 55 passed, 0 failed. |
-| Determinism | 86 | 55 | 31 | Clean-HEAD `corpus::tests::mode_counts`: 55 mapped, 31 unmapped. Required public CI mapped aggregate: 55 passed, 0 failed. |
+| Standard | 86 | 56 | 30 | Focused `corpus::tests::mode_counts`: 56 mapped, 30 unmapped; `module-format-conditions`: 1 passed, 0 failed. Last required public CI mapped aggregate: 55 passed, 0 failed. |
+| Determinism | 86 | 56 | 30 | Focused `corpus::tests::mode_counts`: 56 mapped, 30 unmapped; `module-format-conditions`: 1 passed with 2 semantic captures, 0 failed. Last required public CI mapped aggregate: 55 passed, 0 failed. |
 | Store crash | 10 | 4 | 6 | Mapping count only; Phase 1 exit still requires the complete lane. |
-| **Total execution obligations** | **182** | **114** | **68** | This total deliberately counts each required lane execution. |
+| **Total execution obligations** | **182** | **116** | **66** | This total deliberately counts each required lane execution. |
 
 Known non-corpus exit gaps:
 

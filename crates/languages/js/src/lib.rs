@@ -85,12 +85,6 @@ pub fn parse_payload(kind: SourceKind, bytes: &[u8]) -> Result<JsPayloadFacts, J
         }
     };
 
-    if kind == SourceKind::CommonJs || kind == SourceKind::Cts {
-        return Ok(unknown_payload(
-            "CommonJS export lowering is not implemented in the first audit increment".to_owned(),
-        ));
-    }
-
     let source_type = match source_type(kind) {
         Ok(source_type) => source_type,
         Err(detail) => return Ok(unknown_payload(detail)),
@@ -115,6 +109,11 @@ pub fn parse_payload(kind: SourceKind, bytes: &[u8]) -> Result<JsPayloadFacts, J
         uses: Vec::new(),
         limitation_details: Vec::new(),
     };
+    if matches!(kind, SourceKind::CommonJs | SourceKind::Cts) {
+        facts.limitation_details.push(
+            "CommonJS export lowering is not implemented in the first audit increment".to_owned(),
+        );
+    }
     for statement in &parsed.program.body {
         lower_statement(statement, &mut facts);
     }
@@ -597,6 +596,56 @@ mod tests {
         let facts = extract(&snapshot)?;
         assert!(facts.exports.is_empty());
         assert_eq!(facts.limitations.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn commonjs_source_uses_remain_observable() -> Result<(), Box<dyn std::error::Error>> {
+        for (kind, source, expected_uses) in [
+            (
+                SourceKind::Cts,
+                concat!(
+                    "import { value } from '@acme/static';\n",
+                    "void import('@acme/dynamic');\n",
+                    "const loaded = require('@acme/require');\n",
+                    "console.log(value, loaded);\n",
+                ),
+                3,
+            ),
+            (
+                SourceKind::CommonJs,
+                concat!(
+                    "void import('@acme/dynamic');\n",
+                    "const loaded = require('@acme/require');\n",
+                    "console.log(loaded);\n",
+                ),
+                2,
+            ),
+        ] {
+            let payload = parse_payload(kind, source.as_bytes())?;
+            assert_eq!(payload.uses.len(), expected_uses);
+            assert_eq!(
+                payload.limitation_details,
+                vec![
+                    "CommonJS export lowering is not implemented in the first audit increment"
+                        .to_owned()
+                ]
+            );
+            assert!(payload.uses.iter().any(|source_use| {
+                source_use.specifier == "@acme/dynamic"
+                    && source_use.request_kind == ModuleRequestKind::DynamicImport
+            }));
+            assert!(payload.uses.iter().any(|source_use| {
+                source_use.specifier == "@acme/require"
+                    && source_use.request_kind == ModuleRequestKind::Require
+            }));
+            if kind == SourceKind::Cts {
+                assert!(payload.uses.iter().any(|source_use| {
+                    source_use.specifier == "@acme/static"
+                        && source_use.request_kind == ModuleRequestKind::StaticImport
+                }));
+            }
+        }
         Ok(())
     }
 
