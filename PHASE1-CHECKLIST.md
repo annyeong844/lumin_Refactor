@@ -117,7 +117,7 @@ Owner routes: ARCH-001 and SLICE-001 AC 5, 6, 22, 24, 33, and 35.
   invocation in the same packet.
 - [x] Prove repeated default jobs and `jobs=1` produce identical semantic
   evidence and finding IDs; exclude only contract-named runtime/store bytes.
-- [ ] Make required public CI execute every currently mapped standard and
+- [x] Make required public CI execute every currently mapped standard and
   determinism row; registry pairing alone is not merge evidence.
 
 Exit: determinism is no longer an end-of-phase retrofit, and its mapped count
