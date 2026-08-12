@@ -13,6 +13,7 @@ const COMMONJS_EXPORT_LIMITATION: &str =
 
 const MTS_SOURCE: &str = concat!(
     "import { mtsStatic } from '@acme/lib/mts-static';\n",
+    "export * from '@acme/lib/mts-export';\n",
     "const esmRequired = require('@acme/lib/esm-require');\n",
     "console.log(mtsStatic, esmRequired);\n",
 );
@@ -22,6 +23,7 @@ const MJS_SOURCE: &str = concat!(
 );
 const CTS_SOURCE: &str = concat!(
     "import { ctsStatic } from '@acme/lib/cts-static';\n",
+    "export * from '@acme/lib/cts-export';\n",
     "void import('@acme/lib/cjs-dynamic');\n",
     "console.log(ctsStatic);\n",
 );
@@ -44,8 +46,10 @@ const NEAREST_DEFAULT_SOURCE: &str = concat!(
 
 const TARGET_CASES: &[&str] = &[
     "mts-static",
+    "mts-export",
     "mjs-static",
     "cts-static",
+    "cts-export",
     "cjs-require",
     "root-module",
     "nearest-commonjs",
@@ -77,7 +81,7 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
     );
     assert_eq!(
         audit_json.get("limitationCount").and_then(Value::as_u64),
-        Some(2)
+        Some(4)
     );
     let run_id = field(&audit.stdout, "runId")?;
 
@@ -88,11 +92,25 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
         .get("limitations")
         .and_then(Value::as_array)
         .ok_or_else(|| std::io::Error::other("limitations are missing"))?;
-    assert_eq!(limitations.len(), 2);
+    assert_eq!(limitations.len(), 4);
     assert!(limitations.iter().all(|limitation| {
         limitation.get("reason").and_then(Value::as_str) == Some("js-module-use-unknown")
-            && limitation.get("detail").and_then(Value::as_str) == Some(COMMONJS_EXPORT_LIMITATION)
     }));
+    assert_eq!(
+        limitation_detail_count(limitations, COMMONJS_EXPORT_LIMITATION),
+        2
+    );
+    for specifier in ["@acme/lib/mts-export", "@acme/lib/cts-export"] {
+        assert_eq!(
+            limitation_detail_count(
+                limitations,
+                &format!(
+                    "export-all from {specifier} requires graph expansion not implemented in this increment"
+                ),
+            ),
+            1
+        );
+    }
 
     let expected_profile = if profile == "nodenext" {
         "node-next"
@@ -131,6 +149,16 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
             "import",
         ),
         (
+            "apps/ext-esm/main.mts",
+            MTS_SOURCE,
+            "@acme/lib/mts-export",
+            "re-export-all",
+            "static-import",
+            "export * from '@acme/lib/mts-export';",
+            "mts-export",
+            "import",
+        ),
+        (
             "apps/ext-cjs/main.cts",
             CTS_SOURCE,
             "@acme/lib/cts-static",
@@ -138,6 +166,16 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
             "static-import",
             "ctsStatic",
             "cts-static",
+            "require",
+        ),
+        (
+            "apps/ext-cjs/main.cts",
+            CTS_SOURCE,
+            "@acme/lib/cts-export",
+            "re-export-all",
+            "static-import",
+            "export * from '@acme/lib/cts-export';",
+            "cts-export",
             "require",
         ),
         (
@@ -336,6 +374,13 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
 
 fn target_path(case: &str, lane: &str) -> String {
     format!("packages/lib/targets/{case}-{lane}.ts")
+}
+
+fn limitation_detail_count(limitations: &[Value], detail: &str) -> usize {
+    limitations
+        .iter()
+        .filter(|limitation| limitation.get("detail").and_then(Value::as_str) == Some(detail))
+        .count()
 }
 
 fn write(root: &Path, path: &str, contents: &str) -> Result<(), std::io::Error> {

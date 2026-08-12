@@ -118,9 +118,14 @@ pub fn parse_payload(kind: SourceKind, bytes: &[u8]) -> Result<JsPayloadFacts, J
         lower_statement(statement, &mut facts);
     }
 
+    let mut require_binding_detector = RequireBindingDetector { found: false };
+    require_binding_detector.visit_program(&parsed.program);
+
     let mut detector = DynamicUseDetector {
         uses: Vec::new(),
         unknown_details: Vec::new(),
+        require_binding_shadowed: require_binding_detector.found,
+        shadowed_require_reported: false,
     };
     detector.visit_program(&parsed.program);
     facts.uses.extend(detector.uses);
@@ -195,6 +200,15 @@ fn lower_statement(statement: &Statement<'_>, facts: &mut JsPayloadFacts) {
             });
         }
         Statement::ExportAllDeclaration(declaration) => {
+            facts.uses.push(SourceUseTemplate {
+                specifier: declaration.source.value.to_string(),
+                imported_name: None,
+                local_name: None,
+                namespace: namespace(declaration.export_kind),
+                kind: ImportKind::ReExportAll,
+                request_kind: ModuleRequestKind::StaticImport,
+                span: span(declaration.span),
+            });
             facts.limitation_details.push(format!(
                 "export-all from {} requires graph expansion not implemented in this increment",
                 declaration.source.value
@@ -389,9 +403,34 @@ fn push_named_declaration(
     });
 }
 
+struct RequireBindingDetector {
+    found: bool,
+}
+
+impl<'a> Visit<'a> for RequireBindingDetector {
+    fn visit_binding_identifier(&mut self, identifier: &oxc_ast::ast::BindingIdentifier<'a>) {
+        if identifier.name == "require" {
+            self.found = true;
+        }
+    }
+}
+
 struct DynamicUseDetector {
     uses: Vec<SourceUseTemplate>,
     unknown_details: Vec<String>,
+    require_binding_shadowed: bool,
+    shadowed_require_reported: bool,
+}
+
+impl DynamicUseDetector {
+    fn report_shadowed_require(&mut self) {
+        if !self.shadowed_require_reported {
+            self.unknown_details.push(
+                "local require binding makes CommonJS module-use attribution opaque".to_owned(),
+            );
+            self.shadowed_require_reported = true;
+        }
+    }
 }
 
 impl<'a> Visit<'a> for DynamicUseDetector {
@@ -416,7 +455,9 @@ impl<'a> Visit<'a> for DynamicUseDetector {
     }
 
     fn visit_call_expression(&mut self, expression: &oxc_ast::ast::CallExpression<'a>) {
-        if let Some(source) = expression.common_js_require() {
+        if expression.callee.is_specific_id("require") && self.require_binding_shadowed {
+            self.report_shadowed_require();
+        } else if let Some(source) = expression.common_js_require() {
             self.uses.push(SourceUseTemplate {
                 specifier: source.value.to_string(),
                 imported_name: None,
@@ -606,11 +647,12 @@ mod tests {
                 SourceKind::Cts,
                 concat!(
                     "import { value } from '@acme/static';\n",
+                    "export * from '@acme/export-all';\n",
                     "void import('@acme/dynamic');\n",
                     "const loaded = require('@acme/require');\n",
                     "console.log(value, loaded);\n",
                 ),
-                3,
+                4,
             ),
             (
                 SourceKind::CommonJs,
@@ -624,12 +666,11 @@ mod tests {
         ] {
             let payload = parse_payload(kind, source.as_bytes())?;
             assert_eq!(payload.uses.len(), expected_uses);
-            assert_eq!(
-                payload.limitation_details,
-                vec![
-                    "CommonJS export lowering is not implemented in the first audit increment"
+            assert!(
+                payload.limitation_details.contains(
+                    &"CommonJS export lowering is not implemented in the first audit increment"
                         .to_owned()
-                ]
+                )
             );
             assert!(payload.uses.iter().any(|source_use| {
                 source_use.specifier == "@acme/dynamic"
@@ -644,8 +685,35 @@ mod tests {
                     source_use.specifier == "@acme/static"
                         && source_use.request_kind == ModuleRequestKind::StaticImport
                 }));
+                assert!(payload.uses.iter().any(|source_use| {
+                    source_use.specifier == "@acme/export-all"
+                        && source_use.kind == ImportKind::ReExportAll
+                        && source_use.request_kind == ModuleRequestKind::StaticImport
+                }));
+                assert!(payload.limitation_details.contains(&
+                    "export-all from @acme/export-all requires graph expansion not implemented in this increment"
+                        .to_owned()
+                ));
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn commonjs_shadowed_require_is_opaque() -> Result<(), Box<dyn std::error::Error>> {
+        let payload = parse_payload(
+            SourceKind::CommonJs,
+            b"function load(require) { return require('@acme/shadowed'); }",
+        )?;
+        assert!(payload.uses.is_empty());
+        assert_eq!(
+            payload.limitation_details,
+            vec![
+                "CommonJS export lowering is not implemented in the first audit increment"
+                    .to_owned(),
+                "local require binding makes CommonJS module-use attribution opaque".to_owned(),
+            ]
+        );
         Ok(())
     }
 
