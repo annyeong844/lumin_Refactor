@@ -8,9 +8,14 @@ use oxc_ast::ast::{
     Declaration, ExportNamedDeclaration, ImportDeclaration, ImportDeclarationSpecifier,
     ImportOrExportKind, ModuleExportName, Statement,
 };
+use oxc_ast::ast_kind::AstKind;
 use oxc_ast_visit::{Visit, walk};
 use oxc_parser::Parser;
 use oxc_span::{SourceType, Span};
+
+mod require_scope;
+
+use require_scope::RequireScopeTracker;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct JsExtractError {
@@ -118,13 +123,10 @@ pub fn parse_payload(kind: SourceKind, bytes: &[u8]) -> Result<JsPayloadFacts, J
         lower_statement(statement, &mut facts);
     }
 
-    let mut require_attribution_detector = RequireAttributionDetector { opaque: false };
-    require_attribution_detector.visit_program(&parsed.program);
-
     let mut detector = DynamicUseDetector {
         uses: Vec::new(),
         unknown_details: Vec::new(),
-        require_attribution_opaque: require_attribution_detector.opaque,
+        require_scopes: RequireScopeTracker::analyze(&parsed.program),
         opaque_require_reported: false,
     };
     detector.visit_program(&parsed.program);
@@ -403,54 +405,18 @@ fn push_named_declaration(
     });
 }
 
-struct RequireAttributionDetector {
-    opaque: bool,
-}
-
-impl<'a> Visit<'a> for RequireAttributionDetector {
-    fn visit_binding_identifier(&mut self, identifier: &oxc_ast::ast::BindingIdentifier<'a>) {
-        if identifier.name == "require" {
-            self.opaque = true;
-        }
-    }
-
-    fn visit_simple_assignment_target(
-        &mut self,
-        target: &oxc_ast::ast::SimpleAssignmentTarget<'a>,
-    ) {
-        let direct_write = matches!(
-            target,
-            oxc_ast::ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier)
-                if identifier.name == "require"
-        );
-        let wrapped_write = target
-            .get_expression()
-            .is_some_and(|expression| expression.is_specific_id("require"));
-        if direct_write || wrapped_write {
-            self.opaque = true;
-        }
-        walk::walk_simple_assignment_target(self, target);
-    }
-
-    fn visit_assignment_target_property_identifier(
-        &mut self,
-        property: &oxc_ast::ast::AssignmentTargetPropertyIdentifier<'a>,
-    ) {
-        if property.binding.name == "require" {
-            self.opaque = true;
-        }
-        walk::walk_assignment_target_property_identifier(self, property);
-    }
-}
-
 struct DynamicUseDetector {
     uses: Vec<SourceUseTemplate>,
     unknown_details: Vec<String>,
-    require_attribution_opaque: bool,
+    require_scopes: RequireScopeTracker,
     opaque_require_reported: bool,
 }
 
 impl DynamicUseDetector {
+    fn require_is_opaque(&self) -> bool {
+        self.require_scopes.require_is_opaque()
+    }
+
     fn report_opaque_require(&mut self) {
         if !self.opaque_require_reported {
             self.unknown_details.push(
@@ -463,6 +429,14 @@ impl DynamicUseDetector {
 }
 
 impl<'a> Visit<'a> for DynamicUseDetector {
+    fn enter_node(&mut self, kind: AstKind<'a>) {
+        self.require_scopes.enter_node(kind);
+    }
+
+    fn leave_node(&mut self, kind: AstKind<'a>) {
+        self.require_scopes.leave_node(kind);
+    }
+
     fn visit_import_expression(&mut self, expression: &oxc_ast::ast::ImportExpression<'a>) {
         match &expression.source {
             oxc_ast::ast::Expression::StringLiteral(source) => {
@@ -484,7 +458,7 @@ impl<'a> Visit<'a> for DynamicUseDetector {
     }
 
     fn visit_call_expression(&mut self, expression: &oxc_ast::ast::CallExpression<'a>) {
-        if expression.callee.is_specific_id("require") && self.require_attribution_opaque {
+        if expression.callee.is_specific_id("require") && self.require_is_opaque() {
             self.report_opaque_require();
         } else if let Some(source) = expression.common_js_require() {
             self.uses.push(SourceUseTemplate {
@@ -748,6 +722,33 @@ mod tests {
     }
 
     #[test]
+    fn commonjs_mixed_require_scopes_preserve_grounded_edges()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let payload = parse_payload(
+            SourceKind::CommonJs,
+            concat!(
+                "const real = require('@acme/real');\n",
+                "function load(require) { return require('@acme/local'); }\n",
+                "console.log(real, load);\n",
+            )
+            .as_bytes(),
+        )?;
+        assert_eq!(payload.uses.len(), 1);
+        assert_eq!(payload.uses[0].specifier, "@acme/real");
+        assert_eq!(payload.uses[0].request_kind, ModuleRequestKind::Require);
+        assert_eq!(
+            payload.limitation_details,
+            vec![
+                "CommonJS export lowering is not implemented in the first audit increment"
+                    .to_owned(),
+                "local require binding or write makes CommonJS module-use attribution opaque"
+                    .to_owned(),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn commonjs_reassigned_require_is_opaque() -> Result<(), Box<dyn std::error::Error>> {
         for source in [
             "require = customLoader; require('@acme/reassigned');",
@@ -765,6 +766,72 @@ mod tests {
                 ]
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn commonjs_dynamic_require_scope_cannot_hide_outer_writes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for source in [
+            "with (loaders) { require = customLoader; } require('@acme/outer');",
+            "function mutate() { eval('require = customLoader'); } require('@acme/outer');",
+        ] {
+            let payload = parse_payload(SourceKind::CommonJs, source.as_bytes())?;
+            assert!(payload.uses.is_empty());
+            assert_eq!(
+                payload.limitation_details,
+                vec![
+                    "CommonJS export lowering is not implemented in the first audit increment"
+                        .to_owned(),
+                    "local require binding or write makes CommonJS module-use attribution opaque"
+                        .to_owned(),
+                ]
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn commonjs_dynamic_lookup_only_hides_its_own_require_call()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let payload = parse_payload(
+            SourceKind::CommonJs,
+            concat!(
+                "const real = require('@acme/real');\n",
+                "with (loaders) { require('@acme/dynamic'); }\n",
+            )
+            .as_bytes(),
+        )?;
+        assert_eq!(payload.uses.len(), 1);
+        assert_eq!(payload.uses[0].specifier, "@acme/real");
+        assert_eq!(
+            payload.limitation_details,
+            vec![
+                "CommonJS export lowering is not implemented in the first audit increment"
+                    .to_owned(),
+                "local require binding or write makes CommonJS module-use attribution opaque"
+                    .to_owned(),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn commonjs_block_function_require_is_opaque() -> Result<(), Box<dyn std::error::Error>> {
+        let payload = parse_payload(
+            SourceKind::CommonJs,
+            b"if (enabled) { function require() {} } require('@acme/annex-b');",
+        )?;
+        assert!(payload.uses.is_empty());
+        assert_eq!(
+            payload.limitation_details,
+            vec![
+                "CommonJS export lowering is not implemented in the first audit increment"
+                    .to_owned(),
+                "local require binding or write makes CommonJS module-use attribution opaque"
+                    .to_owned(),
+            ]
+        );
         Ok(())
     }
 
