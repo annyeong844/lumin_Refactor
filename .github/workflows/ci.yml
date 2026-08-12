@@ -257,6 +257,10 @@ jobs:
           - ubuntu-24.04
           - windows-2022
         case:
+          - name: mapped-standard
+            arguments: foundation --mapped-only
+          - name: mapped-determinism
+            arguments: foundation --determinism --mapped-only
           - name: retention-crash-protocol
             arguments: foundation --store-crash --row retention-crash-protocol
           - name: lifecycle-operation-idempotency
@@ -300,7 +304,7 @@ jobs:
           "PINNED_PYTHON=$python" >> $env:GITHUB_ENV
           "PINNED_CARGO=$cargo" >> $env:GITHUB_ENV
 
-      - name: Run isolated corpus row
+      - name: Run corpus partition
         shell: pwsh
         run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus ${{ matrix.case.arguments }}'
 

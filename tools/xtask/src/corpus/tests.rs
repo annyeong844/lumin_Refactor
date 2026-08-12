@@ -6,6 +6,7 @@ fn parse_default() -> Result<(), String> {
     assert_eq!(a.mode, CorpusMode::Standard);
     assert_eq!(a.format, OutputFormat::Human);
     assert_eq!(a.row, None);
+    assert_eq!(a.selection, CorpusSelection::AllApplicable);
     Ok(())
 }
 
@@ -54,6 +55,52 @@ fn duplicate_or_missing_row_is_rejected() {
         ])
         .is_err()
     );
+}
+
+#[test]
+fn mapped_only_is_aggregate_only() -> Result<(), String> {
+    let args = parse_args(&["--determinism".into(), "--mapped-only".into()])?;
+    assert_eq!(args.mode, CorpusMode::Determinism);
+    assert_eq!(args.selection, CorpusSelection::MappedOnly);
+    assert!(parse_args(&["--mapped-only".into(), "--mapped-only".into()]).is_err());
+    assert!(parse_args(&["--mapped-only".into(), "--row".into(), "plain-esm".into(),]).is_err());
+    Ok(())
+}
+
+#[test]
+fn mapped_only_selects_every_and_only_mapped_row() {
+    for mode in [CorpusMode::Standard, CorpusMode::Determinism] {
+        let args = CorpusArgs {
+            mode,
+            format: OutputFormat::Human,
+            row: None,
+            selection: CorpusSelection::MappedOnly,
+        };
+        let selected = selected_rows(&args);
+        let expected = REGISTRY.iter().filter(|row| row.is_mapped(mode)).count();
+        assert_eq!(selected.len(), expected);
+        assert!(!selected.is_empty());
+        assert!(selected.iter().all(|row| row.is_mapped(mode)));
+    }
+}
+
+#[test]
+fn all_applicable_selection_retains_unmapped_rows() {
+    for mode in [CorpusMode::Standard, CorpusMode::Determinism] {
+        let args = CorpusArgs {
+            mode,
+            format: OutputFormat::Human,
+            row: None,
+            selection: CorpusSelection::AllApplicable,
+        };
+        let selected = selected_rows(&args);
+        let expected = REGISTRY
+            .iter()
+            .filter(|row| row.is_applicable(mode))
+            .count();
+        assert_eq!(selected.len(), expected);
+        assert!(selected.iter().any(|row| !row.is_mapped(mode)));
+    }
 }
 
 #[test]
