@@ -1,251 +1,381 @@
-# REVIEW-003: Dependency-Edge Identity Amendment
+# REVIEW-003: Dependency-Surface Policy Amendment
 
 Document role: focused Architecture v1 amendment and freeze gate
 
-Status: candidate; implementation is blocked until the exact architecture-content
-commit passes the design review and independent adversarial review below and is merged
-to `main`. That merge freezes this amendment without authorizing any wider dependency
-policy change.
+Status: **FROZEN** for architecture-content commit
+`1854d23f319cd730ac4dd801ccad3e1e39e72a68`.
 
-## Definition
+Freeze record: the repository owner approved that exact candidate on 2026-08-12. A
+read-only independent `gpt-5.6-luna` adversarial review returned `PASS` for the same
+commit after checking command locking and delimiters, native/musl resolution lanes,
+Cargo/Clippy executable identity, environment/config/alias relocation, workspace-member
+containment, declaration identity, loaded sources, transitive-lock ownership, authority
+separation, and the stated non-goals. Its nonblocking implementation cautions require
+Windows-case-insensitive environment matching and a public-CI execution test for the
+direct `PINNED_CARGO_CLIPPY clippy ...` argument order on both supported platforms.
+This later ledger update changes no reviewed contract, non-goal, acceptance criterion,
+or required-review text.
 
-The canonical dependency-surface policy freezes every workspace feature definition and
-binds each manifest declaration to its resolved package so neither production nor its
-checker can reuse a narrow approval for a materially different graph.
+## Decision
 
-## Concrete Counterexample
+Lumin freezes the workspace resolver, workspace feature maps, dependency declarations,
+and their resolved direct packages. It does not build a second package manager, a
+hermetic build system, or an in-repository root of trust.
 
-The frozen architecture required a canonical dependency-edge policy, but named only a
-workspace edge at the enforcement sentence. The current architecture check compares
-only owner package, resolved package name, and dependency kind. Cargo metadata carries
-additional declaration and resolution facts that materially change an approval.
+The bootstrap guard owns this dependency-policy verdict before a CI Cargo command may
+compile repository or dependency code. `lumin-xtask architecture-check` owns the
+remaining repository architecture checks and does not spawn Cargo to authenticate the
+dependencies used to build itself. The public architecture verdict is the conjunction
+of those two reviewed CI steps; the Rust command alone does not claim dependency
+admission.
 
-Consequently, any of these changes can reuse an existing approval:
+## Problem
 
-- move a Windows-only `windows-sys` or `winapi-util` dependency to an unconditional
-  dependency, or place it under a different `cfg(...)` predicate;
-- rename an approved dependency while resolving it to the same package;
-- change an approved edge between optional and unconditional, toggle default features,
-  or request a different feature set;
-- change a production workspace feature definition to activate or forward another
-  dependency feature while all-features resolution remains unchanged;
-- add or alter a `lumin-xtask` dependency under the development-tool exemption;
-- replace an approved registry package with an unreviewed path package that declares
-  the same name and version;
-- configure Cargo `replace-with` to load altered checked-in directory-source bytes while
-  metadata continues to report the original registry source and package ID;
-- pass the same source replacement through Cargo's global `--config` option while the
-  checked-in files and environment remain clean;
-- change the root `[workspace].resolver` while preserving every package feature map and
-  dependency declaration.
+An approval identified only by owner package, resolved package name, and dependency kind
+can be reused after a material graph change. Concrete examples are:
 
-These changes alter platforms, the default graph, crate-visible API names, dependency
-code, build cost, or the transitive surface. They are concrete fail-open policy bypasses
-and therefore reopen only this part of ARCH-000.
+- moving a Windows-only dependency to an unconditional edge;
+- renaming a dependency while retaining the same resolved package;
+- changing optionality, default-feature use, or requested features;
+- changing a workspace feature activation while all features happen to be enabled;
+- substituting a path, Git, or alternate-registry package for an approved crates.io or
+  workspace dependency;
+- changing a `lumin-xtask` dependency under a development-tool exemption; or
+- changing `[workspace].resolver` and therefore Cargo feature unification.
 
-## Amended Contract
+Those are dependency-policy failures. A compromised hosted runner, malicious compiler,
+host linker injection, adversarial test sandboxing, and byte-for-byte authentication of
+Cargo's extracted registry cache are different problems and are not claimed here.
 
-The CI dependency boundary has a pre-Cargo source-provenance stage and a post-metadata
-location stage. The pre-Cargo stage is the checked-in
-`tools/xtask/bootstrap/source_provenance.py` guard. It requires Python 3.11 or newer,
-uses only the standard library (including `tomllib`), and imports no repository module.
-It is a bootstrap trust guard owned beside xtask, not a product/runtime analysis path.
-A Cargo-built checker cannot replace this stage because replacement code could alter
-the checker before admission.
+## Trust Boundary
 
-Every CI command that resolves, checks, or builds Cargo dependencies is invoked exactly
-as `python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo ...`. The guard
-asserts Python isolated and no-site flags before reading the repository; this excludes
-current/script paths, `PYTHON*` overrides, user site, and `sitecustomize` from its import
-boundary. After validation it launches the exact supplied Cargo argument vector without
-a shell and returns its exit status. The architecture source policy pins the guard and
-rejects unwrapped dependency-resolving CI Cargo commands; `cargo --version`, which does
-not read the graph or build code, is the sole exception. The guard strict-parses every
-workspace manifest and rejects:
+Public CI trusts:
 
-- `.cargo/config.toml` or `.cargo/config` in the repository or any Cargo-searched
-  ancestor, and `config.toml` or `config` in the active Cargo home;
-- `CARGO_SOURCE_*`, `CARGO_PATHS`, and `CARGO_REGISTRIES_*_INDEX` environment
-  overrides (registry authentication variables do not change source identity);
-- `[patch]` or `[replace]` tables in workspace manifests;
-- Cargo global configuration arguments in either `--config VALUE` or
-  `--config=VALUE` form anywhere in the supplied Cargo argument vector;
-- a missing or non-exact root `[workspace].resolver = "3"` declaration.
+- protected review and the reviewed Git commit as the authority for changes to the
+  workflow, guard, policy, manifests, and lockfile;
+- fresh GitHub-hosted runner isolation and pinned setup actions;
+- the exact Rust toolchain selected by `rust-toolchain.toml` and CI setup, including the
+  absolute Cargo and cargo-clippy executables exported by that setup;
+- Cargo's locked resolution and crates.io checksum verification; and
+- the official crates.io source identity accepted by Cargo and cargo-deny.
 
-The exact policy deliberately refuses all such configuration rather than trying to
-prove that a particular replacement is harmless. Public CI runs with this clean source
-configuration; an incompatible local environment produces no architecture verdict and
-prints the forbidden source or argument. Python absence, an older interpreter, a parse
-failure, zero parsed workspace manifests, resolver drift, or guard/workflow drift is a
-hard failure rather than permission to run Cargo.
+The repository does not claim that a mutable guard can cryptographically authenticate
+itself or a policy changed in the same pull request. Machine checks expose drift and
+make the reviewed surface exact; protected review authorizes an intentional policy
+change. A coherent compromise of the named external trust roots is outside this
+in-repository architecture boundary.
 
-The architecture check then reads `cargo metadata --all-features --locked`. It resolves
-the active Cargo home and repository root physically before trusting package locations.
-Every resolved non-workspace registry package's canonical `manifest_path` must be below
-the canonical active Cargo home `registry/src` and outside the canonical repository
-root. The registry source root itself must be outside the repository. Missing paths,
-lexical/physical disagreement, symlink escape, a directory-source manifest, and a
-non-workspace package with no source all fail. This provenance rule covers the complete
-resolved graph, not only direct allowlisted edges, so a replaced transitive crate cannot
-enter through an approved direct dependency.
+The following inputs are untrusted until the guard admits them:
 
-Before matching edges, the checker requires the canonical root workspace resolver
-`"3"` and compares every workspace package's complete `packages[].features` map against
-either the production or development-tool policy. The resolver value is an exact policy
-identity, not an author-environment default. Feature names are exact and each activation
-list is a sorted, deduplicated set. An absent `default` feature is distinct from an empty
-`default` feature. This preserves the declared feature graph and unification contract
-even though all-features resolution activates every available feature.
+- workspace manifests and `Cargo.lock`;
+- repository, ancestor, and active-Cargo-home Cargo configuration;
+- Cargo source, path, registry, toolchain, and compiler-selection environment overrides;
+- the Cargo argument vector; and
+- the checked-in dependency policy.
 
-For each direct dependency from any workspace member, the checker then links one
-declaration identity to one resolution identity. `lumin-xtask` remains outside the
-production Cargo DAG, but its separate development-tool allowlist is exhaustive rather
-than skipped.
+## Contract
 
-The declaration identity is:
+### 1. Authoritative CI flow
+
+Every public-CI command that resolves, checks, builds, tests, documents, or lints Cargo
+dependencies runs as:
+
+```text
+<PINNED_PYTHON> -I -S tools/xtask/bootstrap/source_provenance.py -- cargo ... --locked
+```
+
+`PINNED_PYTHON` is the absolute interpreter path provisioned by the pinned Python setup
+action. The logical `cargo` token is mapped to the absolute `PINNED_CARGO` exported by
+the exact Rust setup and is never resolved from the checkout or process current
+directory. For an admitted logical `cargo clippy` vector, the guard instead launches
+absolute `PINNED_CARGO_CLIPPY` with its required leading `clippy` token; Cargo external
+subcommand lookup never participates. The sole exception is a non-resolving version
+probe. `cargo-audit` and `cargo-deny` are installed by pinned CI actions and invoked
+directly rather than through Cargo external subcommand lookup.
+
+For each admitted Cargo invocation, the Python 3.11+ standard-library guard:
+
+1. validates its environment, repository root, command surface, manifests, lockfile,
+   and checked-in policy without importing repository modules;
+2. runs exact locked, all-features Cargo metadata both unfiltered and filtered for the
+   invocation's admitted native or Linux-musl resolution lane, using `PINNED_CARGO` and
+   no shell;
+3. compares the complete workspace feature and direct-dependency surface, plus the
+   selected lane's resolved direct bindings, with the policy;
+4. verifies the resolved source and loaded location rules below; and
+5. only then launches the original Cargo command without a shell.
+
+Normal validation never rewrites the policy. A maintenance mode may print a canonical
+candidate policy to stdout, but updating the checked-in artifact is an explicit reviewed
+change.
+
+### 2. Input admission
+
+Before running metadata, public CI fails closed on:
+
+- Python older than 3.11 or execution without both `-I` and `-S`;
+- a missing, relative, redirected, repository-contained, or wrong-version
+  `PINNED_CARGO` or `PINNED_CARGO_CLIPPY` executable;
+- a working directory or root manifest other than the physical repository root;
+- a workspace member directory or manifest outside the physical repository, or any
+  lexical/physical disagreement caused by symlink or junction redirection;
+- `.cargo/config.toml` or `.cargo/config` in the repository, a Cargo-searched ancestor,
+  or the active Cargo home;
+- `CARGO_SOURCE_*`, `CARGO_PATHS`, registry-index overrides, `CARGO`, `RUSTC`,
+  `RUSTC_WRAPPER`, `RUSTC_WORKSPACE_WRAPPER`, `RUSTUP_TOOLCHAIN`, or
+  `CARGO_BUILD_TARGET` inherited by the guarded CI command;
+- any `CARGO_ALIAS_*` environment variable;
+- `[patch]` or `[replace]` in the root or a workspace member manifest;
+- Git dependencies, alternate registries, or a path dependency that does not resolve
+  directly to an exact workspace member;
+- Cargo `--config`, `--manifest-path`, `--lockfile-path`, `-C`, `--directory`, `-Z`, or
+  rustup `+toolchain` relocation in split, equals, or attached form as applicable;
+- a dependency-resolving Cargo subcommand without exactly one `--locked` before the
+  first literal `--`;
+- a Cargo subcommand outside the reviewed workspace set `build`, `check`, `test`,
+  `clippy`, `doc`, `run`, `bench`, and `metadata`; package installation, lockfile
+  mutation, vendoring, publishing, and unlisted external-plugin dispatch are never
+  authorized by a clean workspace preflight;
+- an explicit Cargo target vector other than one two-token
+  `--target x86_64-unknown-linux-musl` on an admitted Linux GNU host; duplicate or equals
+  forms fail, absence of `--target` selects only the exact Windows MSVC or Linux GNU
+  toolchain host, and every admitted lane receives matching filtered metadata;
+- a missing or non-exact root `[workspace].resolver = "3"` value;
+- an implicit root package or explicit workspace member omitted from policy comparison;
+  or
+- parse failure, duplicate policy JSON keys, unknown policy fields, zero workspace
+  members, or an incomplete metadata result.
+
+Cargo option parsing ends at the first literal `--`; later tokens are test-harness or
+launched-program input and cannot be reclassified as Cargo `--target`, `--locked`, or
+relocation options. The required Linux musl release target remains an admitted
+distribution lane; this amendment neither schedules nor replaces its package acceptance
+owner.
+
+Local runs use the same semantic checks but are diagnostic only. Public CI remains merge
+authority because local Cargo homes and host state are not controlled evidence.
+
+### 3. Canonical policy identity
+
+`tools/xtask/dependency-surface-policy.v2.json` is a small, human-reviewable artifact.
+It contains only:
+
+- schema version and exact workspace resolver;
+- the exact workspace-member set, with each member classified as production or the
+  single development tool `lumin-xtask`;
+- every member's exact feature-name to canonical activation-set map;
+- the complete `[workspace.dependencies]` catalog, including currently unused entries;
+  and
+- every direct normal, build, and development dependency declaration linked to one
+  resolved destination.
+
+The authored declaration identity is:
 
 ```text
 (
-  owner workspace package,
-  packages[].dependencies[].name,
-  packages[].dependencies[].rename,
-  packages[].dependencies[].req,
-  packages[].dependencies[].kind,
-  packages[].dependencies[].target,
-  packages[].dependencies[].optional,
-  packages[].dependencies[].uses_default_features,
-  canonical_set(packages[].dependencies[].features)
+  owner workspace member,
+  declaration origin (workspace-inherited or member-authored),
+  dependency kind,
+  exact optional target predicate,
+  exact authored alias,
+  dependency package name,
+  exact authored version requirement,
+  optionality,
+  default-feature setting,
+  canonical requested-feature set,
+  source kind
 )
 ```
 
-`name` is the dependency package name and `rename` is the exact optional manifest
-rename. They remain separate; `resolve.nodes[].deps[].name` is only a normalized join
-fact and cannot own the declared alias. The requested feature list is sorted and
-deduplicated as a set so manifest ordering is not policy. Every other string is exact;
-absence is distinct from every value, and the checker does not invent target-predicate
-or version-requirement equivalence.
+The guard reads the declaration origin, authored alias, and requirement from
+strict-parsed TOML rather than reconstructing them from Cargo-normalized names. Absent
+values remain distinct from present empty values. Feature activation and request lists
+are sets and are sorted and deduplicated; strings whose Cargo meaning is not set-like
+remain exact.
 
 The linked resolution identity is:
 
 ```text
-workspace dependency: (exact workspace member package)
-third-party dependency: (resolved package name, version, source)
+workspace dependency: (exact destination workspace member)
+third-party dependency: (exact crates.io package name, version, source)
 ```
 
-For a workspace dependency, membership and the exact destination member distinguish it
-from a same-named external package. For a third-party dependency, source is required and
-must match the exact approved registry source after the graph-wide loaded-location
-check. An allowlist entry cannot authorize a package by name, version, or reported
-source alone.
+Every manifest declaration and every resolved direct binding has exactly one policy
+counterpart. Missing, additional, duplicate, stale, ambiguous, or disagreeing identities
+fail. Unknown dependency kinds fail. `lumin-xtask` has a separate class but receives the
+same exact checks; development-only is not an exemption.
 
-The checker joins declarations to `resolve.nodes[].deps[]` using the exact owner,
-destination package, kind, target, and Cargo-normalized binding only after retaining the
-unnormalized `name`/`rename`. A missing, ambiguous, or disagreeing join fails closed.
-Each declaration kind/target pair and each `dep_kinds[]` entry must have exactly one
-counterpart.
+`Cargo.lock` is the canonical transitive package/version/source/checksum pin. The policy
+does not duplicate every transitive package definition, target, feature, or resolution
+lane. A lockfile change is an explicit reviewed dependency change and remains subject to
+`--locked`, cargo-deny, and the existing dependency-cost review.
 
-The canonical workspace-resolver, feature, workspace-edge, and third-party-edge policies
-must match the complete manifest and metadata surface. Unknown dependency kinds,
-duplicate policy identities, new feature/declared/resolved identities, and stale policy
-identities fail the architecture check. Package-family owner isolation remains an
-additional boundary and cannot substitute for the exact edge allowlist.
+Unfiltered metadata owns the complete locked package and declaration superset. Metadata
+filtered for the exact admitted host or musl lane owns that invocation's resolved direct
+bindings. The filtered result may select a subset of approved declarations, but it may
+not introduce a destination, kind, target binding, or feature definition absent from the
+canonical policy and unfiltered result.
+
+### 4. Resolved source and loaded location
+
+Every guarded public-CI job uses a fresh job-private Cargo home and does not restore a
+dependency cache. Cargo downloads locked registry packages and performs its normal
+checksum verification.
+
+For every non-workspace package in metadata, the guard requires:
+
+- the official crates.io registry source;
+- an absolute manifest path under the active Cargo home's `registry/src`; and
+- lexical and physical registry/package paths that agree without symlink or junction
+  redirection, with the package physically outside the repository.
+
+A missing source, directory source, Git source, alternate registry, non-workspace path
+package, repository-contained manifest, or path outside the active registry source
+fails. Workspace path dependencies must resolve to the exact admitted member.
+
+The guard does not parse `.crate` archives, compare extracted trees byte for byte,
+authenticate registry index transport, or attest host filesystem internals. Fresh hosted
+jobs, Cargo checksum verification, the lockfile, and the named external trust roots own
+that boundary.
+
+### 5. Ownership and CI routing
+
+The Python bootstrap owns resolver, workspace-feature, direct-edge, resolved-source, and
+loaded-location admission. The Rust architecture checker must not spawn Cargo or call the
+bootstrap again to recreate a stronger verdict after it has started. Its source-policy
+check verifies that the reviewed workflow routes every dependency-resolving Cargo
+command through the guard and that audit/deny use their pinned direct tools.
+
+The required architecture job exposes guard success and structural-checker success as
+two distinct required steps; both must pass. No mutable metadata handoff grants the Rust
+process dependency authority. A direct local `lumin-xtask architecture-check` run may
+report only its structural scope and must not label dependency admission clean.
+
+That workflow check prevents accidental routing drift; it is not a cryptographic defense
+against a pull request that changes the workflow and checker together. Protected review
+owns that authorization.
+
+Test suites that can contaminate module-load configuration, process-global state, DOM
+mode, or sockets remain separate processes under Rule 15. This amendment does not turn
+ordinary test batches into security sandboxes or require one executable per CI job.
+
+### 6. Failure semantics
+
+Missing, malformed, stale, unsupported, ambiguous, or incomplete policy evidence yields
+no dependency verdict and no guarded Cargo launch. The guard prints the first owned
+reason and exits nonzero. It never converts unavailable metadata or an unknown manifest
+shape into an empty dependency set.
 
 ## Non-Goals
 
-- This amendment does not approve a new crate, version, source, workspace feature,
-  loaded location, dependency feature, target, optionality, rename, or dependency
-  direction.
-- It does not make transitive edges part of the direct-edge allowlist; the separate
-  loaded-location rule still validates every transitive package.
-- It does not replace `Cargo.lock`, cargo-deny version/source policy, or the existing
-  dependency-cost review; it adds a fail-closed direct-edge boundary around them.
-- It does not link `lumin-xtask` into the production DAG; it removes only the checker’s
-  exemption from exact dependency identity review.
+- Hermetic, reproducible, or hostile-runner builds.
+- Compiler, linker, SDK, temporary-directory, or every Cargo environment-channel
+  attestation.
+- A custom crates.io archive extractor, registry-index mirror, or extracted-tree
+  authenticator.
+- A duplicate snapshot of the complete transitive graph already pinned by `Cargo.lock`.
+- Freezing unrelated Cargo package fields, targets, profiles, lints, or benchmark flags
+  under a dependency-edge owner.
+- Preventing malicious repository runtime code from attacking another process in the
+  same CI job.
+- Making an in-repository digest or checker its own external trust root.
+- Owning the Linux musl packaging schedule or public binary smoke tests.
+
+These exclusions narrow the claim; they do not authorize a new dependency, source,
+feature, edge, or runtime fallback.
 
 ## Acceptance Criteria
 
-1. Every CI command that resolves, checks, or builds Cargo dependencies runs through the
-   pinned Python 3.11+ standard-library bootstrap wrapper with `-I -S`; unwrapped Cargo,
-   non-isolated Python, missing/old Python, parse failure, zero manifests, shell-based
-   command reconstruction, or workflow drift fails. Only `cargo --version` is exempt.
-2. The guard rejects Cargo config files, source/path override variables, every Cargo
-   global `--config` argument form, and workspace manifest patch/replace tables before
-   Cargo resolves or builds repository code.
-3. Every resolved non-workspace registry manifest is physically under the active Cargo
-   home registry source cache and outside the repository; directory replacement,
-   symlink escape, missing paths, and lexical/physical disagreement fail.
-4. The root manifest declares the exact canonical `[workspace].resolver = "3"` before
-   Cargo runs, and the architecture policy independently matches that same value.
-5. The current locked workspace feature maps and graph, including `lumin-xtask`, match
-   every canonical feature and linked declaration/resolution identity without an
-   ambiguous join.
-6. Changing or removing the workspace resolver fails before Cargo executes.
-7. Adding or changing any workspace feature or its activation set fails.
-8. Changing a Windows-only approved edge to no target or another predicate fails.
-9. Renaming an approved workspace or third-party dependency fails.
-10. Changing optionality, default-feature use, or the requested feature set fails.
-11. Changing a third-party resolved version/source or substituting a non-workspace path
-   package fails even when name and version appear approved.
-12. A new direct edge fails even when its resolved package already has an approved owner.
-13. A stale or duplicate resolver/feature/declaration/resolution policy identity fails.
-14. Unknown dependency kinds and missing, ambiguous, or disagreeing joins fail rather
-   than falling back to a normal edge.
-15. The check remains independent of feature activation order, dependency traversal, and
-   metadata insertion order.
+1. Public CI installs pinned Python 3.11+ and the exact Rust toolchain, maps logical
+   Cargo and Clippy to absolute `PINNED_CARGO` and `PINNED_CARGO_CLIPPY`, gives every
+   guarded job a fresh Cargo home, and routes every dependency-resolving command through
+   the isolated no-shell guard.
+2. Config/source/path/toolchain overrides, manifest relocation, `[patch]`, `[replace]`,
+   Cargo aliases, Git, alternate-registry, non-member path dependencies, and redirected
+   or external workspace members fail before compilation.
+3. The exact workspace resolver, complete member set, and every workspace feature map
+   match the canonical policy.
+4. Changing an edge's kind or target predicate fails.
+5. Changing an authored alias or version requirement fails even if Cargo normalizes it
+   to the same binding or resolves the same package.
+6. Changing optionality, default-feature use, or requested features fails independent
+   of feature-list order.
+7. A new, removed, duplicated, stale, ambiguous, or unresolved direct edge fails for
+   production members and `lumin-xtask` alike.
+8. A third-party edge binds exact crates.io name, version, and source; a same-name path,
+   Git, alternate-registry, or repository-contained replacement fails.
+9. Every non-workspace metadata manifest is below the active Cargo registry source and
+   outside the repository; unavailable or incomplete metadata cannot authorize launch.
+10. Every dependency-resolving launch uses one reviewed workspace subcommand and exactly
+    one pre-delimiter `--locked`; install/update/vendor/publish and unlisted plugins fail.
+    `Cargo.lock`, cargo-deny, and reviewed lockfile diffs remain the sole transitive graph
+    authority, with no second transitive policy.
+11. Native Windows/Linux and exact Linux-musl filtered metadata bind the invocation's
+    resolved direct edges. `CARGO_BUILD_TARGET` and every unsupported explicit target
+    fail before launch.
+12. Runtime arguments after `--` are not misparsed as Cargo options, while actual Cargo
+    relocation or a missing pre-delimiter `--locked` fails.
+13. The Rust architecture checker performs no nested provenance or Cargo invocation;
+    distinct guard success plus structural-checker success form the CI architecture
+    verdict, and the direct Rust command makes no dependency-clean claim.
+14. Reordering Cargo metadata nodes, feature sets, or dependency-kind entries does not
+    change the verdict.
+15. A normal validation run never edits the policy, manifests, lockfile, Cargo home
+    configuration, or repository source.
 
 ## Required Reviews
 
 ### Design review
 
-The repository owner must verify that the isolated pre-Cargo bootstrap, rejected Cargo
-configuration channels, exact workspace resolver, graph-wide loaded-location proof,
-production/development-tool feature maps, and linked declaration/resolution identities
-form the intended approval boundary; that the non-goals do not weaken Rule 7; and that
-the acceptance criteria cover product crates, `lumin-xtask`, direct third-party, and
-transitive packages.
+The repository owner must approve the exact candidate commit and confirm that the trust
+boundary, direct-edge identity, transitive-lock ownership, development-tool treatment,
+failure semantics, and non-goals match the intended Rule 7 enforcement. Directional
+approval or an earlier commit is not a freeze verdict.
 
 ### Independent adversarial review
 
-An independent reviewer must bind its verdict to the exact architecture-content commit
-and attempt at least these bypasses:
+An independent reviewer must bind its verdict to that same exact commit and attempt at
+least:
 
-- remove or change the Windows target predicate;
-- rename a hyphenated dependency while preserving its normalized binding and resolved
-  package;
-- alter a workspace feature activation while preserving the all-features resolved
-  graph;
-- add or alter an xtask dependency while relying on its development-tool status;
-- change optionality, default-feature use, or requested features;
-- replace a registry package with a same-name/version non-workspace path package;
-- replace crates.io with an altered checked-in directory source while preserving the
-  reported registry source and package ID;
-- inject that replacement through `cargo --config VALUE` or `cargo --config=VALUE`;
-- bypass the wrapper for one dependency-reading Cargo command, remove `-I -S`, run it
-  with old Python, reconstruct the command through a shell, or make it import
-  repository/replacement-controlled code;
-- place a source replacement in repository, ancestor, Cargo-home, environment, patch,
-  or path-override configuration;
-- use a symlinked registry source root or package manifest to make repository bytes look
-  like Cargo-home registry bytes;
-- replace a transitive package while leaving every direct edge unchanged;
-- change or remove the root workspace resolver while preserving feature maps and edge
-  declarations;
-- reuse a package approval under another dependency kind;
-- add a duplicate or stale policy identity;
-- create a missing, ambiguous, or disagreeing declaration/resolution join;
-- reorder semantically set-valued feature activations, requested feature lists, metadata
-  nodes, and dependency-kind entries.
+- target-predicate removal, dependency rename, requirement change, optionality change,
+  default-feature change, requested-feature change, and workspace-feature change;
+- the same changes on `lumin-xtask`;
+- a same-name workspace/non-workspace path substitution, Git source, alternate registry,
+  Cargo config replacement, environment source override, and both `--config` forms;
+- a changed resolver, missing member, implicit root package, unused workspace dependency,
+  duplicate JSON key, stale policy row, duplicate edge, and ambiguous declaration join;
+- an external or redirected workspace member and a same-package dependency changed
+  between workspace inheritance and member-authored declaration;
+- a registry manifest outside the active Cargo home or inside the repository;
+- metadata and feature/dependency traversal reordering;
+- a missing or post-delimiter `--locked`, a command that would update `Cargo.lock`, a
+  host/filtered-lane disagreement, an unsupported explicit target, a runtime `--target`
+  token after `--`, and the exact supported musl target before `--`;
+- `CARGO_BUILD_TARGET`, `cargo install`, `cargo update`, `cargo vendor`, `cargo publish`,
+  and an unlisted external subcommand after an otherwise clean workspace preflight;
+- Cargo `-C`/`--directory`, a checkout-local Cargo or cargo-clippy shadow, a
+  `CARGO_ALIAS_*` variable, or a pinned Cargo/Clippy path or version mismatch;
+- a direct Rust architecture-check invocation that attempts to claim dependency-clean
+  status; and
+- removal of the guard from one dependency-resolving CI command or restoration of a
+  dependency cache in any guarded public-CI job.
 
-The verdict is `PASS`, `REOPEN`, or a new concrete finding. Author checks, prior code in
-a closed implementation PR, and implementation tests are not independent PASS evidence.
+The reviewer must also verify that the document does not claim hermeticity, hostile-code
+containment, archive-byte authentication, or self-authentication. The verdict is
+`PASS`, `REOPEN`, or a new concrete finding. Author tests and an earlier clean review are
+not independent evidence.
 
-## Verification Commands After Freeze
+## Verification After Freeze
+
+The implementation plan must preserve focused checks for the guard and policy before
+running broader Cargo validation. At minimum:
 
 ```text
-python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test -p lumin-xtask --locked metadata::tests
-python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run -p lumin-xtask --locked -- architecture-check
+<PINNED_PYTHON> -I -S tools/xtask/bootstrap/test_source_provenance.py
+<PINNED_PYTHON> -I -S tools/xtask/bootstrap/source_provenance.py --check-only
+<PINNED_PYTHON> -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test -p lumin-xtask --locked metadata::tests
+<PINNED_PYTHON> -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run -p lumin-xtask --locked -- architecture-check
 ```
 
-Implementation may begin only after both required reviews pass and this amendment is
-merged. The implementation PR must then prove every acceptance criterion without
-weakening the frozen contract.
+Exact commands may be narrowed by the frozen implementation plan, but no test may claim
+PASS for an acceptance criterion outside its observable surface.

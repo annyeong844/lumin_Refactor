@@ -23,36 +23,117 @@ jobs:
     name: Formatting
     runs-on: ubuntu-24.04
     steps:
+      - name: Initialize isolated Cargo paths
+        shell: pwsh
+        run: |
+          "CARGO_HOME=$env:RUNNER_TEMP/lumin-cargo-home" >> $env:GITHUB_ENV
+          "CARGO_TARGET_DIR=$env:RUNNER_TEMP/lumin-target" >> $env:GITHUB_ENV
+
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Install exact Rust toolchain
+        shell: pwsh
         run: rustup toolchain install 1.96.0 --profile minimal --component rustfmt --no-self-update
 
+      - name: Record trusted Cargo
+        shell: pwsh
+        run: |
+          $cargo = rustup which --toolchain 1.96.0 cargo
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "PINNED_CARGO=$cargo" >> $env:GITHUB_ENV
+
       - name: Verify formatting
-        run: cargo fmt --all --check
+        shell: pwsh
+        run: '& "$env:PINNED_CARGO" fmt --all --check'
 
   architecture-check:
     name: Architecture check
     runs-on: ubuntu-24.04
     steps:
+      - name: Initialize isolated Cargo paths
+        shell: pwsh
+        run: |
+          "CARGO_HOME=$env:RUNNER_TEMP/lumin-cargo-home" >> $env:GITHUB_ENV
+          "CARGO_TARGET_DIR=$env:RUNNER_TEMP/lumin-target" >> $env:GITHUB_ENV
+
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      - name: Install exact Python
+        id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.14"
+
       - name: Install exact Rust toolchain
+        shell: pwsh
         run: rustup toolchain install 1.96.0 --profile minimal --no-self-update
 
-      - name: Enforce architecture policy
-        run: cargo run --locked -p lumin-xtask -- architecture-check
+      - name: Record trusted tools
+        shell: pwsh
+        env:
+          SETUP_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: |
+          $python = & "$env:SETUP_PYTHON" -I -S -c "import pathlib,sys; print(pathlib.Path(sys.executable).resolve(strict=True))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $cargo = rustup which --toolchain 1.96.0 cargo
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "PINNED_PYTHON=$python" >> $env:GITHUB_ENV
+          "PINNED_CARGO=$cargo" >> $env:GITHUB_ENV
 
-  dependency-policy:
-    name: Dependency policy
+      - name: Validate dependency admission
+        shell: pwsh
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py --check-only'
+
+      - name: Build structural checker
+        shell: pwsh
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo build --locked -p lumin-xtask'
+
+      - name: Enforce structural architecture policy
+        shell: pwsh
+        run: '& (Join-Path $env:CARGO_TARGET_DIR ''debug/lumin-xtask'') architecture-check'
+
+  bootstrap-tests:
+    name: Bootstrap tests
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      - name: Install exact Python
+        id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.14"
+
+      - name: Test source provenance bootstrap
+        shell: pwsh
+        env:
+          PINNED_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/test_source_provenance.py'
+
+  dependency-policy:
+    name: Dependency policy
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Initialize isolated Cargo paths
+        shell: pwsh
+        run: |
+          "CARGO_HOME=$env:RUNNER_TEMP/lumin-cargo-home" >> $env:GITHUB_ENV
+          "CARGO_TARGET_DIR=$env:RUNNER_TEMP/lumin-target" >> $env:GITHUB_ENV
+
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install exact Python
+        id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.14"
+
       - name: Install exact Rust toolchain
+        shell: pwsh
         run: rustup toolchain install 1.96.0 --profile minimal --no-self-update
 
       - name: Install dependency policy tools
@@ -63,11 +144,36 @@ jobs:
             cargo-deny@0.20.2
           fallback: none
 
+      - name: Record trusted tools
+        shell: pwsh
+        env:
+          SETUP_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: |
+          $suffix = if ($IsWindows) { '.exe' } else { '' }
+          $python = & "$env:SETUP_PYTHON" -I -S -c "import pathlib,sys; print(pathlib.Path(sys.executable).resolve(strict=True))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $cargo = rustup which --toolchain 1.96.0 cargo
+          $auditCommand = (Get-Command cargo-audit -CommandType Application -ErrorAction Stop).Source
+          $denyCommand = (Get-Command cargo-deny -CommandType Application -ErrorAction Stop).Source
+          $audit = (Resolve-Path -LiteralPath $auditCommand -ErrorAction Stop).ProviderPath
+          $deny = (Resolve-Path -LiteralPath $denyCommand -ErrorAction Stop).ProviderPath
+          if ($LASTEXITCODE -ne 0 -or [IO.Path]::GetFileName($audit) -cne "cargo-audit$suffix" -or [IO.Path]::GetFileName($deny) -cne "cargo-deny$suffix") { exit 1 }
+          "PINNED_PYTHON=$python" >> $env:GITHUB_ENV
+          "PINNED_CARGO=$cargo" >> $env:GITHUB_ENV
+          "PINNED_CARGO_AUDIT=$audit" >> $env:GITHUB_ENV
+          "PINNED_CARGO_DENY=$deny" >> $env:GITHUB_ENV
+
+      - name: Validate dependency admission
+        shell: pwsh
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py --check-only'
+
       - name: Audit RustSec advisories
-        run: cargo audit --deny warnings
+        shell: pwsh
+        run: '& "$env:PINNED_CARGO_AUDIT" audit --deny warnings'
 
       - name: Enforce dependency policy
-        run: cargo deny --locked check bans licenses sources
+        shell: pwsh
+        run: '& "$env:PINNED_CARGO_DENY" --locked check bans licenses sources'
 
   platform:
     name: ${{ matrix.name }}
@@ -81,58 +187,212 @@ jobs:
             os: windows-2022
     runs-on: ${{ matrix.os }}
     steps:
+      - name: Initialize isolated Cargo paths
+        shell: pwsh
+        run: |
+          "CARGO_HOME=$env:RUNNER_TEMP/lumin-cargo-home" >> $env:GITHUB_ENV
+          "CARGO_TARGET_DIR=$env:RUNNER_TEMP/lumin-target" >> $env:GITHUB_ENV
+
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      - name: Install exact Python
+        id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.14"
+
       - name: Install exact Rust toolchain
+        shell: pwsh
         run: rustup toolchain install 1.96.0 --profile minimal --component clippy,rustfmt --no-self-update
 
-      - name: Record toolchain
+      - name: Record trusted tools
+        shell: pwsh
+        env:
+          SETUP_PYTHON: ${{ steps.python.outputs.python-path }}
         run: |
-          rustc --version --verbose
-          cargo --version
+          $python = & "$env:SETUP_PYTHON" -I -S -c "import pathlib,sys; print(pathlib.Path(sys.executable).resolve(strict=True))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $cargo = rustup which --toolchain 1.96.0 cargo
+          $clippy = rustup which --toolchain 1.96.0 cargo-clippy
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "PINNED_PYTHON=$python" >> $env:GITHUB_ENV
+          "PINNED_CARGO=$cargo" >> $env:GITHUB_ENV
+          "PINNED_CARGO_CLIPPY=$clippy" >> $env:GITHUB_ENV
 
       - name: Lint all targets
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        shell: pwsh
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy --workspace --all-targets --locked -- -D warnings'
 
       - name: Lint retention crash corpus
-        run: cargo clippy -p lumin-cli --test retention_faults --features retention-test-crash --locked -- -D warnings
+        shell: pwsh
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy -p lumin-cli --test retention_faults --features retention-test-crash --locked -- -D warnings'
 
       - name: Lint lifecycle operation idempotency corpus
-        run: cargo clippy -p lumin-cli --test lifecycle_operation_idempotency --features lifecycle-test-fault --locked -- -D warnings
+        shell: pwsh
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy -p lumin-cli --test lifecycle_operation_idempotency --features lifecycle-test-fault --locked -- -D warnings'
 
       - name: Lint publication crash corpus
-        run: cargo clippy -p lumin-cli --test publication_faults --features publication-test-crash --locked -- -D warnings
+        shell: pwsh
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy -p lumin-cli --test publication_faults --features publication-test-crash --locked -- -D warnings'
 
       - name: Lint concurrent publication corpus
-        run: cargo clippy -p lumin-cli --test publication_concurrency --features publication-test-crash --locked -- -D warnings
+        shell: pwsh
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy -p lumin-cli --test publication_concurrency --features publication-test-crash --locked -- -D warnings'
 
       - name: Lint publication retention race corpus
-        run: cargo clippy -p lumin-cli --test publication_retention_race --features publication-test-crash,retention-test-crash --locked -- -D warnings
+        shell: pwsh
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy -p lumin-cli --test publication_retention_race --features publication-test-crash,retention-test-crash --locked -- -D warnings'
 
       - name: Test all targets
-        run: cargo test --workspace --all-targets --locked
+        shell: pwsh
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --workspace --all-targets --locked'
 
-      - name: Test retention crash corpus in isolated processes
-        run: cargo run --locked -p lumin-xtask -- corpus foundation --store-crash --row retention-crash-protocol
+  corpus:
+    name: ${{ matrix.os }} corpus ${{ matrix.case.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - windows-2022
+        case:
+          - name: retention-crash-protocol
+            arguments: foundation --store-crash --row retention-crash-protocol
+          - name: lifecycle-operation-idempotency
+            arguments: foundation --row lifecycle-operation-idempotency
+          - name: crash-publication
+            arguments: foundation --store-crash --row crash-publication
+          - name: concurrent-latest-publication
+            arguments: foundation --store-crash --row concurrent-latest-publication
+          - name: publication-retention-race
+            arguments: foundation --store-crash --row publication-retention-race
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Initialize isolated Cargo paths
+        shell: pwsh
+        run: |
+          "CARGO_HOME=$env:RUNNER_TEMP/lumin-cargo-home" >> $env:GITHUB_ENV
+          "CARGO_TARGET_DIR=$env:RUNNER_TEMP/lumin-target" >> $env:GITHUB_ENV
 
-      - name: Test lifecycle operation idempotency corpus in isolated processes
-        run: cargo run --locked -p lumin-xtask -- corpus foundation --row lifecycle-operation-idempotency
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Test publication crash corpus in isolated processes
-        run: cargo run --locked -p lumin-xtask -- corpus foundation --store-crash --row crash-publication
+      - name: Install exact Python
+        id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.14"
 
-      - name: Test concurrent publication corpus in isolated processes
-        run: cargo run --locked -p lumin-xtask -- corpus foundation --store-crash --row concurrent-latest-publication
+      - name: Install exact Rust toolchain
+        shell: pwsh
+        run: rustup toolchain install 1.96.0 --profile minimal --no-self-update
 
-      - name: Test publication retention race corpus in isolated processes
-        run: cargo run --locked -p lumin-xtask -- corpus foundation --store-crash --row publication-retention-race
+      - name: Record trusted tools
+        shell: pwsh
+        env:
+          SETUP_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: |
+          $python = & "$env:SETUP_PYTHON" -I -S -c "import pathlib,sys; print(pathlib.Path(sys.executable).resolve(strict=True))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $cargo = rustup which --toolchain 1.96.0 cargo
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "PINNED_PYTHON=$python" >> $env:GITHUB_ENV
+          "PINNED_CARGO=$cargo" >> $env:GITHUB_ENV
+
+      - name: Run isolated corpus row
+        shell: pwsh
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus ${{ matrix.case.arguments }}'
+
+  documentation:
+    name: ${{ matrix.os }} documentation
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - windows-2022
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Initialize isolated Cargo paths
+        shell: pwsh
+        run: |
+          "CARGO_HOME=$env:RUNNER_TEMP/lumin-cargo-home" >> $env:GITHUB_ENV
+          "CARGO_TARGET_DIR=$env:RUNNER_TEMP/lumin-target" >> $env:GITHUB_ENV
+
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install exact Python
+        id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.14"
+
+      - name: Install exact Rust toolchain
+        shell: pwsh
+        run: rustup toolchain install 1.96.0 --profile minimal --no-self-update
+
+      - name: Record trusted tools
+        shell: pwsh
+        env:
+          SETUP_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: |
+          $python = & "$env:SETUP_PYTHON" -I -S -c "import pathlib,sys; print(pathlib.Path(sys.executable).resolve(strict=True))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $cargo = rustup which --toolchain 1.96.0 cargo
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "PINNED_PYTHON=$python" >> $env:GITHUB_ENV
+          "PINNED_CARGO=$cargo" >> $env:GITHUB_ENV
 
       - name: Test documentation
-        run: cargo test --workspace --doc --locked
+        shell: pwsh
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --workspace --doc --locked'
+
+  release:
+    name: ${{ matrix.os }} release
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - windows-2022
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Initialize isolated Cargo paths
+        shell: pwsh
+        run: |
+          "CARGO_HOME=$env:RUNNER_TEMP/lumin-cargo-home" >> $env:GITHUB_ENV
+          "CARGO_TARGET_DIR=$env:RUNNER_TEMP/lumin-target" >> $env:GITHUB_ENV
+
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install exact Python
+        id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.14"
+
+      - name: Install exact Rust toolchain
+        shell: pwsh
+        run: rustup toolchain install 1.96.0 --profile minimal --no-self-update
+
+      - name: Record trusted tools
+        shell: pwsh
+        env:
+          SETUP_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: |
+          $python = & "$env:SETUP_PYTHON" -I -S -c "import pathlib,sys; print(pathlib.Path(sys.executable).resolve(strict=True))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $cargo = rustup which --toolchain 1.96.0 cargo
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "PINNED_PYTHON=$python" >> $env:GITHUB_ENV
+          "PINNED_CARGO=$cargo" >> $env:GITHUB_ENV
 
       - name: Build release binary
-        run: cargo build -p lumin-cli --release --locked
+        shell: pwsh
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo build -p lumin-cli --release --locked'
 
   required:
     name: Required
@@ -140,18 +400,30 @@ jobs:
     needs:
       - formatting
       - architecture-check
+      - bootstrap-tests
       - dependency-policy
       - platform
+      - corpus
+      - documentation
+      - release
     runs-on: ubuntu-24.04
     steps:
       - name: Enforce required jobs
         env:
           FORMATTING_RESULT: ${{ needs.formatting.result }}
           ARCHITECTURE_CHECK_RESULT: ${{ needs.architecture-check.result }}
+          BOOTSTRAP_TESTS_RESULT: ${{ needs.bootstrap-tests.result }}
           DEPENDENCY_POLICY_RESULT: ${{ needs.dependency-policy.result }}
           PLATFORM_RESULT: ${{ needs.platform.result }}
+          CORPUS_RESULT: ${{ needs.corpus.result }}
+          DOCUMENTATION_RESULT: ${{ needs.documentation.result }}
+          RELEASE_RESULT: ${{ needs.release.result }}
         run: |
           test "$FORMATTING_RESULT" = success
           test "$ARCHITECTURE_CHECK_RESULT" = success
+          test "$BOOTSTRAP_TESTS_RESULT" = success
           test "$DEPENDENCY_POLICY_RESULT" = success
           test "$PLATFORM_RESULT" = success
+          test "$CORPUS_RESULT" = success
+          test "$DOCUMENTATION_RESULT" = success
+          test "$RELEASE_RESULT" = success

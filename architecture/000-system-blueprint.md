@@ -320,29 +320,41 @@ The diagram is conceptual; the enforceable edge list is:
 - `lumin-engine` -> `lumin-model`, `lumin-evidence`, all capability crates it orchestrates, and `lumin-store`.
 - `lumin-cli` -> `lumin-engine`, `lumin-protocol`, `lumin-model`.
 
-Every CI command that resolves, checks, or builds Cargo dependencies runs through
-`python -I -S tools/xtask/bootstrap/source_provenance.py -- cargo ...`. This Python
-3.11+ standard-library bootstrap asserts isolated/no-site mode, imports no repository
-or third-party module, validates provenance, and then launches the exact supplied Cargo
-argument vector without a shell. It exists because a Rust checker cannot validate the
-dependencies used to build itself. It rejects repository, ancestor, or
-active-Cargo-home config files, Cargo source or path override environment variables,
-Cargo global `--config` arguments in either value form, and manifest `[patch]`/`[replace]`
-tables. Source overrides include `CARGO_SOURCE_*`, `CARGO_PATHS`, and registry-index
-variables. Before Cargo executes, the guard also requires the exact root
+Every CI command that resolves, checks, or builds Cargo dependencies runs through the
+absolute Python interpreter provisioned by the pinned setup action as
+`<PINNED_PYTHON> -I -S tools/xtask/bootstrap/source_provenance.py -- cargo ... --locked`.
+The logical Cargo token maps only to the absolute executable exported by the exact Rust
+setup. An admitted logical `cargo clippy` vector maps instead to the exact setup's
+absolute cargo-clippy executable with the required leading token, never Cargo external
+subcommand lookup. This Python 3.11+ standard-library bootstrap asserts isolated/no-site
+mode, imports no repository or third-party module, validates provenance, and then
+launches the exact supplied argument vector without a shell. It exists because a Rust
+checker cannot validate the dependencies used to build itself. It rejects repository,
+ancestor, or active-Cargo-home config files, Cargo source or path override environment
+variables,
+Cargo global `--config`, `--manifest-path`, `--lockfile-path`, `-C`, `--directory`, and
+`-Z` arguments in any applicable form, and manifest `[patch]`/`[replace]` tables. Source
+overrides include `CARGO_SOURCE_*`, `CARGO_PATHS`, registry-index variables, and every
+`CARGO_ALIAS_*`; `CARGO_BUILD_TARGET` cannot select an unobserved lane. Before Cargo
+executes, the guard also requires the exact root
 `[workspace].resolver = "3"`. Architecture source policy pins the guard and rejects any
 unwrapped dependency-resolving CI Cargo command; non-resolving `cargo --version` is the
-sole exception. CI then reads locked, all-features `cargo metadata`.
+sole exception. Every dependency-resolving command uses one reviewed workspace subcommand
+from `build`, `check`, `test`, `clippy`, `doc`, `run`, `bench`, or `metadata` and requires
+one pre-delimiter `--locked`; install, update, vendor, publish, and unlisted external
+subcommands fail. CI reads locked, all-features metadata both unfiltered and filtered for
+the exact native Windows/Linux or admitted Linux-musl lane; every other explicit target
+and inherited `CARGO_BUILD_TARGET` fail.
 Every resolved non-workspace registry package must physically reside beneath the
 canonical active Cargo home `registry/src` and outside the repository; lexical or
 physical disagreement, including symlink and directory-source replacement, fails. The
-architecture check independently pins the exact workspace resolver and rejects every
-workspace feature definition or direct edge not listed in either the production or
-development-tool policy. Each workspace member's exact
+bootstrap dependency check pins the exact workspace resolver and rejects every workspace
+feature definition or direct edge not listed in either the production or development-tool
+policy. Each workspace member's exact
 feature-name-to-canonical-activation-set map is listed. Each edge then links a declaration
 identity to a resolution identity. The declaration contains the owner workspace package,
-dependency package name, exact optional rename, version requirement, dependency kind,
-optional target predicate, optionality,
+workspace-inherited or member-authored origin, exact authored alias, dependency package
+name, version requirement, dependency kind, optional target predicate, optionality,
 default-feature setting, and canonical requested-feature set. The resolution contains
 either the exact workspace member or the resolved third-party package name, version,
 and source. A non-workspace path package is rejected. An approval cannot authorize a
@@ -350,13 +362,15 @@ workspace-resolver or feature definition, rename, dependency feature/optionality
 predicate, kind, version, source, or loaded-location change. Unknown dependency kinds,
 ambiguous declaration-to-resolution joins, duplicate policy identities, and policy
 identities absent from the resolver, feature, declared, or resolved graph fail the
-architecture check.
+bootstrap check. The public CI architecture verdict requires both that dependency verdict
+and the Rust structural checker; direct `lumin-xtask architecture-check` output has no
+dependency-admission authority and never spawns Cargo to recreate one.
 
 ### 5.1 Development-Tool DAG
 
-`tools/xtask` is one development-only crate with `architecture-check`, `corpus`, and `package-check` subcommands. It may inspect `cargo metadata`, repository policy files, fixtures, and public binary behavior. Production crates never depend on it, it is not linked into `lumin`, and it does not import private analysis internals to manufacture expected results. Its feature and dependency identities live in the separate development-tool policy and are checked as exactly as production edges; development-only means physically isolated, not exempt from dependency review.
+`tools/xtask` is one development-only crate with `architecture-check`, `corpus`, and `package-check` subcommands. It may inspect repository policy files, fixtures, and public binary behavior. Guarded non-authorizing developer commands may inspect Cargo metadata, but only the pre-Cargo bootstrap owns dependency admission; `architecture-check` neither spawns Cargo nor recreates that verdict. Production crates never depend on xtask, it is not linked into `lumin`, and it does not import private analysis internals to manufacture expected results. Its feature and dependency identities live in the separate development-tool policy and are checked as exactly as production edges; development-only means physically isolated, not exempt from dependency review.
 
-The architecture check combines `cargo metadata`, scoped Clippy disallowed-method/type policy, owner-path source checks, exhaustive owner matches, and compile/public-API boundary fixtures. It rejects global Rayon entry points, runtime Node/Cargo launch sites, source-file reads outside `lumin-inventory`, backend API use or backend handles outside `lumin-store`, any production persistence dependency other than exact `redb 4.1.0`, a second backend feature or runtime fallback, backend handles that escape one repository-lock transaction, OXC imports outside `lumin-js`, configured third-party types in public project APIs or owner continuations, continuations containing borrowed parser/allocator state or open handles, owners that consume unsupplied/unreserved semantic inputs, gate projections that access I/O or emit late demands, cache envelopes missing owner outcome or diagnostic state, unavailable-capability signals outside the engine registry, limitation variants without static scope/absence/relevance ownership, semantic fact fields absent from their owner's key/dimension/metadata registry, non-total post-write delta mappings, adverse lifecycle effects that bypass typed delta classification, any canonical-finding `Muted`/`Suppressed` variant or implicit default finding filter, string/lossy path identity, a generated path/root codec, DTO, or golden vector differing from `repo-path-semantics.v1`, physical-file deduplication that erases a logical source context, a gate write that omits a member of its complete physical-alias closure, raw `.lumin` filesystem access outside store-owned no-follow helpers, a lock header missing its global physical binding, a marker/store header missing the exact four-kind managed-parent binding set, a parent anchor missing its cross-bound tuple, a managed-parent mutation that bypasses anchor/entry-to-handle verification, latest compare/replace or retention confirmation outside the exclusive catalog guard, inventory/resolver generated tables or owner partitions differing from their exact artifacts, an `inventory -> resolve` Cargo edge, package identity that silently selects among duplicate names, an `extends` selector, candidate order, cycle timing, or child merge differing from `extends-specifier-selection.v1`, disabled package features that are validated or emit limitations, enabled unsupported fields that fail to emit the owner-family limitation, valid pinned pnpm values that bypass their named limitation, package targets lowered outside the artifact rule, and any product `ScanLock` correctness primitive. Corpus and package checks execute the public binary.
+The Rust architecture check combines scoped Clippy disallowed-method/type policy, owner-path source checks, exhaustive owner matches, and compile/public-API boundary fixtures. It rejects global Rayon entry points, runtime Node/Cargo launch sites, source-file reads outside `lumin-inventory`, backend API use or backend handles outside `lumin-store`, any production persistence dependency other than exact `redb 4.1.0`, a second backend feature or runtime fallback, backend handles that escape one repository-lock transaction, OXC imports outside `lumin-js`, configured third-party types in public project APIs or owner continuations, continuations containing borrowed parser/allocator state or open handles, owners that consume unsupplied/unreserved semantic inputs, gate projections that access I/O or emit late demands, cache envelopes missing owner outcome or diagnostic state, unavailable-capability signals outside the engine registry, limitation variants without static scope/absence/relevance ownership, semantic fact fields absent from their owner's key/dimension/metadata registry, non-total post-write delta mappings, adverse lifecycle effects that bypass typed delta classification, any canonical-finding `Muted`/`Suppressed` variant or implicit default finding filter, string/lossy path identity, a generated path/root codec, DTO, or golden vector differing from `repo-path-semantics.v1`, physical-file deduplication that erases a logical source context, a gate write that omits a member of its complete physical-alias closure, raw `.lumin` filesystem access outside store-owned no-follow helpers, a lock header missing its global physical binding, a marker/store header missing the exact four-kind managed-parent binding set, a parent anchor missing its cross-bound tuple, a managed-parent mutation that bypasses anchor/entry-to-handle verification, latest compare/replace or retention confirmation outside the exclusive catalog guard, inventory/resolver generated tables or owner partitions differing from their exact artifacts, an `inventory -> resolve` Cargo edge, package identity that silently selects among duplicate names, an `extends` selector, candidate order, cycle timing, or child merge differing from `extends-specifier-selection.v1`, disabled package features that are validated or emit limitations, enabled unsupported fields that fail to emit the owner-family limitation, valid pinned pnpm values that bypass their named limitation, package targets lowered outside the artifact rule, and any product `ScanLock` correctness primitive. Corpus and package checks execute the public binary.
 
 ## 6. Forbidden Dependencies
 

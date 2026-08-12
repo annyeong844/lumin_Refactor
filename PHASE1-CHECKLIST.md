@@ -4,7 +4,7 @@ Status: active
 
 Owner: PLAN-001
 
-Revision: 2026-08-08
+Revision: 2026-08-12
 
 ## Purpose and Ownership
 
@@ -45,10 +45,10 @@ These are execution-matrix counts, not a percentage estimate of product code.
 
 | Lane | Applicable | Mapped | Remaining | Verified aggregate |
 | --- | ---: | ---: | ---: | --- |
-| Standard | 86 | 54 | 32 | Last full aggregate: 40 passed, 0 failed, 46 unmapped. All 14 later mappings passed focused public-binary markers; P1-70 owns the next full aggregate. |
-| Determinism | 86 | 54 | 32 | Last full aggregate: 40 passed, 0 failed, 46 unmapped. The same 14 mappings passed focused nonempty semantic-capture comparison across repeated default jobs and `jobs=1`; P1-70 owns the next full aggregate. |
+| Standard | 86 | 53 | 33 | Clean-HEAD `corpus::tests::mode_counts`: 53 mapped, 33 unmapped. Last full aggregate: 40 passed, 0 failed, 46 unmapped; P1-70 owns the next full aggregate. |
+| Determinism | 86 | 53 | 33 | Clean-HEAD `corpus::tests::mode_counts`: 53 mapped, 33 unmapped. Last full aggregate: 40 passed, 0 failed, 46 unmapped; P1-70 owns the next full aggregate. |
 | Store crash | 10 | 4 | 6 | Mapping count only; Phase 1 exit still requires the complete lane. |
-| **Total execution obligations** | **182** | **112** | **70** | This total deliberately counts each required lane execution. |
+| **Total execution obligations** | **182** | **110** | **72** | This total deliberately counts each required lane execution. |
 
 Known non-corpus exit gaps:
 
@@ -93,6 +93,15 @@ Owner routes: ARCH-000, ARCH-001, ARCH-002, SLICE-001 AC 19, 21, 35, 37, and 38.
 - [x] Enforce the path/root codec runtime boundary in `architecture-check`.
 - [x] Enforce the third-party command re-export boundary in
   `architecture-check`.
+- [x] Freeze the proportional
+  [REVIEW-003](reviews/dependency-edge-identity-amendment-2026-08-10.md) boundary
+  through exact owner approval and independent adversarial review before further
+  bootstrap implementation.
+- [x] Implement only that frozen dependency boundary, including the development-tool
+  member, and remove superseded provenance machinery rather than preserving two
+  authorities.
+- [x] Keep the frozen boundary's focused bootstrap tests process-isolated and its
+  Windows/Linux dependency-policy verdict blocking in public CI.
 
 Exit: no known semantic or structural prerequisite is being hidden by an
 unmapped corpus row. Corpus, package, and benchmark proof stay with their own
@@ -102,12 +111,14 @@ commands rather than being faked inside `architecture-check`.
 
 Owner routes: ARCH-001 and SLICE-001 AC 5, 6, 22, 24, 33, and 35.
 
-- [x] Keep determinism invocations paired with all 51 currently mapped standard
-  rows.
+- [x] Keep determinism invocations paired with every currently mapped standard
+  row.
 - [x] Require every later standard-row packet to add its applicable determinism
   invocation in the same packet.
 - [x] Prove repeated default jobs and `jobs=1` produce identical semantic
   evidence and finding IDs; exclude only contract-named runtime/store bytes.
+- [ ] Make required public CI execute every currently mapped standard and
+  determinism row; registry pairing alone is not merge evidence.
 
 Exit: determinism is no longer an end-of-phase retrofit, and its mapped count
 cannot trail the standard count.
