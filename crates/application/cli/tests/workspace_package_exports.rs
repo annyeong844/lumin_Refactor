@@ -11,6 +11,105 @@ use support::{assert_status, field, run};
 type FindingView = (String, String, String);
 
 #[test]
+fn overlapping_patterns_follow_comparator_independent_of_source_order()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"app","private":true,"workspaces":["packages/*"]}"#,
+    )?;
+    for (package, exports) in [
+        (
+            "forward",
+            concat!(
+                r#"{"./features/*":"./broad/*","./features/internal/*":"./prefix/*","#,
+                r#""./features/*.js":"./suffix/*"}"#,
+            ),
+        ),
+        (
+            "reverse",
+            concat!(
+                r#"{"./features/*.js":"./suffix/*","./features/internal/*":"./prefix/*","#,
+                r#""./features/*":"./broad/*"}"#,
+            ),
+        ),
+    ] {
+        write(
+            root.path(),
+            &format!("packages/{package}/package.json"),
+            &format!(r#"{{"name":"@acme/{package}","private":true,"exports":{exports}}}"#),
+        )?;
+        for (path, name) in [
+            ("prefix/x.ts", format!("{package}Prefix")),
+            ("suffix/button.ts", format!("{package}Suffix")),
+            ("broad/internal/x.ts", format!("wrong{package}Prefix")),
+            ("broad/button.ts", format!("wrong{package}Suffix")),
+        ] {
+            write(
+                root.path(),
+                &format!("packages/{package}/{path}"),
+                &format!("export const {name} = 1;\n"),
+            )?;
+        }
+    }
+    let main_source = concat!(
+        "import { forwardPrefix } from '@acme/forward/features/internal/x';\n",
+        "import { forwardSuffix } from '@acme/forward/features/button.js';\n",
+        "import { reversePrefix } from '@acme/reverse/features/internal/x';\n",
+        "import { reverseSuffix } from '@acme/reverse/features/button.js';\n",
+        "console.log(forwardPrefix, forwardSuffix, reversePrefix, reverseSuffix);\n",
+    );
+    write(root.path(), "src/main.ts", main_source)?;
+
+    let run_id = audit(root.path())?;
+    let source = file_response(root.path(), &run_id, "src/main.ts")?;
+    for (specifier, binding, target) in [
+        (
+            "@acme/forward/features/internal/x",
+            "forwardPrefix",
+            "packages/forward/prefix/x.ts",
+        ),
+        (
+            "@acme/forward/features/button.js",
+            "forwardSuffix",
+            "packages/forward/suffix/button.ts",
+        ),
+        (
+            "@acme/reverse/features/internal/x",
+            "reversePrefix",
+            "packages/reverse/prefix/x.ts",
+        ),
+        (
+            "@acme/reverse/features/button.js",
+            "reverseSuffix",
+            "packages/reverse/suffix/button.ts",
+        ),
+    ] {
+        assert_eq!(
+            resolution_target(
+                &source,
+                specifier,
+                "named",
+                "static-import",
+                expected_span(main_source, binding)?,
+            )?,
+            source_id(root.path(), &run_id, target)?
+        );
+    }
+    assert_eq!(
+        finding_set(root.path(), &run_id)?,
+        BTreeSet::from([
+            finding("packages/forward/broad/button.ts", "wrongforwardSuffix"),
+            finding("packages/forward/broad/internal/x.ts", "wrongforwardPrefix",),
+            finding("packages/reverse/broad/button.ts", "wrongreverseSuffix"),
+            finding("packages/reverse/broad/internal/x.ts", "wrongreversePrefix",),
+        ])
+    );
+    Ok(())
+}
+
+#[test]
 fn exact_and_pattern_exports_follow_edge_specific_conditions()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;

@@ -289,7 +289,10 @@ pub static REGISTRY: &[RegistryRow] = &[
         inv!("legacy_node_package_fields", "legacy_node_ignores_valid_and_malformed_fields_and_uses_main_and_typings"),
         inv!("legacy_node_package_fields", "enabled_profile_retains_field_applicability_after_legacy_run"),
     ]),
-    row_sd!("exports-overlapping-patterns"),
+    row_sd!("exports-overlapping-patterns", &[
+        inv!("workspace_package_exports", "overlapping_patterns_follow_comparator_independent_of_source_order"),
+        inv!("package_unsupported_public", "invalid_exports_subpath_components_are_package_scoped_unsupported"),
+    ]),
     row_sd!("exports-target-path-lowering"),
     row_sd!("package-types-versions-unsupported", &[inv!("package_unsupported_public", "types_versions_blocks_unspecialized_type_fallback")]),
     row_sd!("package-exports-unsupported-shapes", &[inv!("package_unsupported_public", "unsupported_exports_shapes_never_select_fallbacks")]),

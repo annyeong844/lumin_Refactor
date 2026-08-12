@@ -110,7 +110,101 @@ fn unsupported_exports_shapes_never_select_fallbacks() -> Result<(), Box<dyn std
     Ok(())
 }
 
+#[test]
+fn invalid_exports_subpath_components_are_package_scoped_unsupported()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (name, key, expected_detail) in [
+        (
+            "dot",
+            "./feature/./*",
+            "invalid package target component \".\"",
+        ),
+        (
+            "dot-dot",
+            "./feature/../*",
+            "invalid package target component \"..\"",
+        ),
+        (
+            "node-modules",
+            "./feature/node_modules/*",
+            "invalid package target component \"node_modules\"",
+        ),
+    ] {
+        let root = tempfile::tempdir()?;
+        fs::create_dir_all(root.path().join("src"))?;
+        fs::create_dir_all(root.path().join("packages/lib"))?;
+        write_workspace_root(root.path())?;
+        fs::write(
+            root.path().join("packages/lib/package.json"),
+            format!(
+                r#"{{"name":"@acme/lib","private":true,"exports":{{"{key}":"./fallback.js"}}}}"#
+            ),
+        )?;
+        fs::write(
+            root.path().join("packages/lib/fallback.ts"),
+            "export const used = 1; export const fallbackDead = 2;\n",
+        )?;
+        fs::write(
+            root.path().join("src/main.ts"),
+            concat!(
+                "import { used } from '@acme/lib/feature/x'; console.log(used);\n",
+                "export const appDead = 1;\n",
+            ),
+        )?;
+
+        let evidence = audit_evidence(root.path())?;
+        assert_public_surface_limitations(
+            &evidence.overview,
+            "packages/lib/package.json",
+            expected_detail,
+        )?;
+        let source = run(
+            root.path(),
+            &["files", "--run", &evidence.run_id, "src/main.ts"],
+        )?;
+        assert_status(&source, 0);
+        let source: Value = serde_json::from_str(&source.stdout)?;
+        let resolution = source
+            .get("resolutions")
+            .and_then(Value::as_array)
+            .and_then(|resolutions| {
+                resolutions.iter().find(|resolution| {
+                    resolution
+                        .pointer("/sourceUse/specifier")
+                        .and_then(Value::as_str)
+                        == Some("@acme/lib/feature/x")
+                })
+            })
+            .ok_or_else(|| std::io::Error::other("package resolution is missing"))?;
+        assert_eq!(
+            resolution.pointer("/outcome/kind").and_then(Value::as_str),
+            Some("unsupported"),
+            "invalid component case {name} did not retain an unsupported outcome"
+        );
+        assert!(
+            resolution
+                .pointer("/outcome/reason")
+                .and_then(Value::as_str)
+                .is_some_and(|detail| detail.contains(expected_detail)),
+            "invalid component case {name} lost its typed detail"
+        );
+        assert!(resolution.pointer("/outcome/target").is_none());
+        assert!(resolution.pointer("/outcome/candidates").is_none());
+        assert_eq!(
+            evidence.findings,
+            BTreeSet::from([(
+                "src/main.ts".to_owned(),
+                "appDead".to_owned(),
+                "value".to_owned(),
+            )]),
+            "invalid component case {name} selected or protected its target"
+        );
+    }
+    Ok(())
+}
+
 struct AuditEvidence {
+    run_id: String,
     overview: Value,
     findings: BTreeSet<FindingView>,
 }
@@ -194,6 +288,7 @@ fn audit_evidence(root: &Path) -> Result<AuditEvidence, Box<dyn std::error::Erro
         .collect::<Result<_, std::io::Error>>()?;
 
     Ok(AuditEvidence {
+        run_id,
         overview: overview_json,
         findings: finding_views,
     })
