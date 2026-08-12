@@ -836,6 +836,103 @@ mod tests {
     }
 
     #[test]
+    fn commonjs_shadowed_eval_preserves_grounded_require_edges()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let payload = parse_payload(
+            SourceKind::CommonJs,
+            concat!(
+                "const real = require('@acme/real');\n",
+                "function load(eval) {\n",
+                "  eval('require = customLoader');\n",
+                "  return require('@acme/nested');\n",
+                "}\n",
+            )
+            .as_bytes(),
+        )?;
+        assert_eq!(payload.uses.len(), 2);
+        assert_eq!(payload.uses[0].specifier, "@acme/nested");
+        assert_eq!(payload.uses[1].specifier, "@acme/real");
+        assert_eq!(
+            payload.limitation_details,
+            vec![
+                "CommonJS export lowering is not implemented in the first audit increment"
+                    .to_owned(),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn commonjs_body_var_does_not_shadow_default_parameter_require()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let payload = parse_payload(
+            SourceKind::CommonJs,
+            concat!(
+                "function load(value = require('@acme/real')) {\n",
+                "  var require;\n",
+                "  return require('@acme/local');\n",
+                "}\n",
+            )
+            .as_bytes(),
+        )?;
+        assert_eq!(payload.uses.len(), 1);
+        assert_eq!(payload.uses[0].specifier, "@acme/real");
+        assert_eq!(
+            payload.limitation_details,
+            vec![
+                "CommonJS export lowering is not implemented in the first audit increment"
+                    .to_owned(),
+                "local require binding or write makes CommonJS module-use attribution opaque"
+                    .to_owned(),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn commonjs_strict_block_function_does_not_shadow_outer_require()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let payload = parse_payload(
+            SourceKind::CommonJs,
+            concat!(
+                "'use strict';\n",
+                "if (enabled) { function require() {} }\n",
+                "require('@acme/real');\n",
+            )
+            .as_bytes(),
+        )?;
+        assert_eq!(payload.uses.len(), 1);
+        assert_eq!(payload.uses[0].specifier, "@acme/real");
+        assert_eq!(
+            payload.limitation_details,
+            vec![
+                "CommonJS export lowering is not implemented in the first audit increment"
+                    .to_owned(),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cts_ambient_require_declaration_keeps_runtime_loader_edge()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let payload = parse_payload(
+            SourceKind::Cts,
+            b"declare const require: NodeRequire; require('@acme/real');",
+        )?;
+        assert_eq!(payload.uses.len(), 1);
+        assert_eq!(payload.uses[0].specifier, "@acme/real");
+        assert_eq!(
+            payload.limitation_details,
+            vec![
+                "CommonJS export lowering is not implemented in the first audit increment"
+                    .to_owned(),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn embedded_script_keeps_its_unit_identity() -> Result<(), Box<dyn std::error::Error>> {
         let parent = SourceSnapshot::new(
             RepoPath::from_portable("src/App.vue")?,

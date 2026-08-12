@@ -5,18 +5,62 @@ use oxc_ast::ast_kind::AstKind;
 use oxc_ast_visit::{Visit, walk};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TrackedName {
+    Require,
+    Eval,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct NameBindings {
+    require: bool,
+    eval: bool,
+}
+
+impl NameBindings {
+    fn mark(&mut self, name: TrackedName) {
+        match name {
+            TrackedName::Require => self.require = true,
+            TrackedName::Eval => self.eval = true,
+        }
+    }
+
+    fn contains(self, name: TrackedName) -> bool {
+        match name {
+            TrackedName::Require => self.require,
+            TrackedName::Eval => self.eval,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RequireScopeKind {
     Root,
-    Function,
+    FunctionParameters,
+    VarEnvironment,
     Lexical,
+}
+
+impl RequireScopeKind {
+    fn is_var_environment(self) -> bool {
+        matches!(self, Self::Root | Self::VarEnvironment)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RequireScope {
     parent: Option<usize>,
     kind: RequireScopeKind,
-    binds_require: bool,
+    bindings: NameBindings,
     dynamic_lookup: bool,
+    strict: bool,
+    ambient: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum NameResolution {
+    Bound,
+    Unbound,
+    Dynamic,
 }
 
 #[derive(Debug)]
@@ -26,18 +70,47 @@ struct RequireScopeModel {
 }
 
 impl RequireScopeModel {
-    fn require_is_opaque(&self, scope: usize) -> bool {
+    fn resolve_name(&self, scope: usize, name: TrackedName) -> NameResolution {
+        let mut cursor = Some(scope);
+        let mut dynamic = false;
+        while let Some(index) = cursor {
+            let Some(current) = self.scopes.get(index) else {
+                return NameResolution::Dynamic;
+            };
+            if current.bindings.contains(name) {
+                return if dynamic {
+                    NameResolution::Dynamic
+                } else {
+                    NameResolution::Bound
+                };
+            }
+            dynamic |= current.dynamic_lookup;
+            cursor = current.parent;
+        }
+        if dynamic {
+            NameResolution::Dynamic
+        } else {
+            NameResolution::Unbound
+        }
+    }
+
+    fn has_binding(&self, scope: usize, name: TrackedName) -> bool {
         let mut cursor = Some(scope);
         while let Some(index) = cursor {
             let Some(current) = self.scopes.get(index) else {
-                return true;
+                return false;
             };
-            if current.binds_require || current.dynamic_lookup {
+            if current.bindings.contains(name) {
                 return true;
             }
             cursor = current.parent;
         }
+        false
+    }
+
+    fn require_is_opaque(&self, scope: usize) -> bool {
         self.implicit_require_written
+            || self.resolve_name(scope, TrackedName::Require) != NameResolution::Unbound
     }
 }
 
@@ -90,104 +163,178 @@ impl RequireScopeTracker {
 struct RequireScopeCollector {
     scopes: Vec<RequireScope>,
     scope_stack: Vec<usize>,
-    write_scopes: Vec<usize>,
-    dynamic_require_write: bool,
+    require_write_scopes: Vec<usize>,
+    eval_call_scopes: Vec<usize>,
 }
 
 impl RequireScopeCollector {
-    fn push_scope(&mut self, kind: RequireScopeKind, binds_require: bool, dynamic_lookup: bool) {
+    fn push_scope(
+        &mut self,
+        kind: RequireScopeKind,
+        bindings: NameBindings,
+        dynamic_lookup: bool,
+        strict: bool,
+        ambient: bool,
+    ) {
         let index = self.scopes.len();
         self.scopes.push(RequireScope {
             parent: self.scope_stack.last().copied(),
             kind,
-            binds_require,
+            bindings,
             dynamic_lookup,
+            strict,
+            ambient,
         });
         self.scope_stack.push(index);
+    }
+
+    fn push_inherited_scope(
+        &mut self,
+        kind: RequireScopeKind,
+        bindings: NameBindings,
+        dynamic_lookup: bool,
+    ) {
+        self.push_scope(
+            kind,
+            bindings,
+            dynamic_lookup,
+            self.current_strict(),
+            self.current_ambient(),
+        );
     }
 
     fn pop_scope(&mut self) {
         self.scope_stack.pop();
     }
 
-    fn mark_current_scope(&mut self) {
+    fn current_scope(&self) -> Option<&RequireScope> {
+        self.scope_stack
+            .last()
+            .and_then(|index| self.scopes.get(*index))
+    }
+
+    fn current_strict(&self) -> bool {
+        self.current_scope().is_some_and(|scope| scope.strict)
+    }
+
+    fn current_ambient(&self) -> bool {
+        self.current_scope().is_some_and(|scope| scope.ambient)
+    }
+
+    fn mark_current_scope(&mut self, name: TrackedName) {
         if let Some(scope) = self
             .scope_stack
             .last()
             .and_then(|index| self.scopes.get_mut(*index))
         {
-            scope.binds_require = true;
+            scope.bindings.mark(name);
         }
     }
 
-    fn mark_nearest_function_scope(&mut self) {
+    fn mark_nearest_var_environment(&mut self, name: TrackedName) {
         let scope = self.scope_stack.iter().rev().find_map(|index| {
             self.scopes
                 .get(*index)
-                .filter(|scope| {
-                    matches!(
-                        scope.kind,
-                        RequireScopeKind::Root | RequireScopeKind::Function
-                    )
-                })
+                .filter(|scope| scope.kind.is_var_environment())
                 .map(|_| *index)
         });
         if let Some(scope) = scope.and_then(|index| self.scopes.get_mut(index)) {
-            scope.binds_require = true;
+            scope.bindings.mark(name);
         }
     }
 
-    fn record_write(&mut self) {
-        if let Some(scope) = self.scope_stack.last().copied() {
-            self.write_scopes.push(scope);
+    fn mark_function_declaration(&mut self, name: TrackedName) {
+        let annex_b_binding = !self.current_strict()
+            && self
+                .current_scope()
+                .is_some_and(|scope| scope.kind == RequireScopeKind::Lexical);
+        self.mark_current_scope(name);
+        if annex_b_binding {
+            self.mark_nearest_var_environment(name);
+        }
+    }
+
+    fn record_require_write(&mut self) {
+        if !self.current_ambient()
+            && let Some(scope) = self.scope_stack.last().copied()
+        {
+            self.require_write_scopes.push(scope);
+        }
+    }
+
+    fn record_eval_call(&mut self) {
+        if !self.current_ambient()
+            && let Some(scope) = self.scope_stack.last().copied()
+        {
+            self.eval_call_scopes.push(scope);
         }
     }
 
     fn into_model(self) -> RequireScopeModel {
-        let implicit_require_written = self.dynamic_require_write
-            || self.write_scopes.iter().any(|scope| {
-                let mut cursor = Some(*scope);
-                while let Some(index) = cursor {
-                    let Some(current) = self.scopes.get(index) else {
-                        return true;
-                    };
-                    if current.binds_require {
-                        return false;
-                    }
-                    cursor = current.parent;
-                }
-                true
-            });
-        RequireScopeModel {
+        let mut model = RequireScopeModel {
             scopes: self.scopes,
-            implicit_require_written,
-        }
+            implicit_require_written: false,
+        };
+        let implicit_write = self
+            .require_write_scopes
+            .iter()
+            .any(|scope| !model.has_binding(*scope, TrackedName::Require));
+        let intrinsic_eval_can_reach_implicit_require = self.eval_call_scopes.iter().any(|scope| {
+            model.resolve_name(*scope, TrackedName::Eval) != NameResolution::Bound
+                && !model.has_binding(*scope, TrackedName::Require)
+        });
+        model.implicit_require_written =
+            implicit_write || intrinsic_eval_can_reach_implicit_require;
+        model
     }
 }
 
-fn pattern_binds_require(pattern: &BindingPattern<'_>) -> bool {
-    pattern
-        .get_binding_identifiers()
-        .into_iter()
-        .any(|identifier| identifier.name == "require")
+fn tracked_name(name: &str) -> Option<TrackedName> {
+    match name {
+        "require" => Some(TrackedName::Require),
+        "eval" => Some(TrackedName::Eval),
+        _ => None,
+    }
 }
 
-fn parameters_bind_require(parameters: &FormalParameters<'_>) -> bool {
-    parameters
-        .items
-        .iter()
-        .any(|parameter| pattern_binds_require(&parameter.pattern))
-        || parameters
-            .rest
-            .as_ref()
-            .is_some_and(|rest| pattern_binds_require(&rest.rest.argument))
+fn pattern_bindings(pattern: &BindingPattern<'_>) -> NameBindings {
+    let mut bindings = NameBindings::default();
+    for identifier in pattern.get_binding_identifiers() {
+        if let Some(name) = tracked_name(identifier.name.as_str()) {
+            bindings.mark(name);
+        }
+    }
+    bindings
+}
+
+fn parameters_bindings(parameters: &FormalParameters<'_>) -> NameBindings {
+    let mut bindings = NameBindings::default();
+    for parameter in &parameters.items {
+        for name in [TrackedName::Require, TrackedName::Eval] {
+            if pattern_bindings(&parameter.pattern).contains(name) {
+                bindings.mark(name);
+            }
+        }
+    }
+    if let Some(rest) = &parameters.rest {
+        let rest_bindings = pattern_bindings(&rest.rest.argument);
+        for name in [TrackedName::Require, TrackedName::Eval] {
+            if rest_bindings.contains(name) {
+                bindings.mark(name);
+            }
+        }
+    }
+    bindings
 }
 
 fn scope_kind(kind: AstKind<'_>) -> Option<RequireScopeKind> {
     match kind {
         AstKind::Program(_) => Some(RequireScopeKind::Root),
         AstKind::Function(_) | AstKind::ArrowFunctionExpression(_) => {
-            Some(RequireScopeKind::Function)
+            Some(RequireScopeKind::FunctionParameters)
+        }
+        AstKind::FunctionBody(_) | AstKind::StaticBlock(_) | AstKind::TSModuleDeclaration(_) => {
+            Some(RequireScopeKind::VarEnvironment)
         }
         AstKind::BlockStatement(_)
         | AstKind::ForStatement(_)
@@ -196,9 +343,7 @@ fn scope_kind(kind: AstKind<'_>) -> Option<RequireScopeKind> {
         | AstKind::WithStatement(_)
         | AstKind::SwitchStatement(_)
         | AstKind::CatchClause(_)
-        | AstKind::Class(_)
-        | AstKind::StaticBlock(_)
-        | AstKind::TSModuleDeclaration(_) => Some(RequireScopeKind::Lexical),
+        | AstKind::Class(_) => Some(RequireScopeKind::Lexical),
         _ => None,
     }
 }
@@ -206,132 +351,210 @@ fn scope_kind(kind: AstKind<'_>) -> Option<RequireScopeKind> {
 impl<'a> Visit<'a> for RequireScopeCollector {
     fn enter_node(&mut self, kind: AstKind<'a>) {
         match kind {
+            AstKind::Program(program) => {
+                self.push_scope(
+                    RequireScopeKind::Root,
+                    NameBindings::default(),
+                    false,
+                    program.source_type.is_strict() || program.has_use_strict_directive(),
+                    program.source_type.is_typescript_definition(),
+                );
+                return;
+            }
             AstKind::Function(function) => {
-                if matches!(
-                    function.r#type,
-                    oxc_ast::ast::FunctionType::FunctionDeclaration
-                        | oxc_ast::ast::FunctionType::TSDeclareFunction
-                ) && function
-                    .id
-                    .as_ref()
-                    .is_some_and(|identifier| identifier.name == "require")
-                {
-                    self.mark_nearest_function_scope();
-                }
-                self.push_scope(RequireScopeKind::Function, false, false);
-                if function.r#type == oxc_ast::ast::FunctionType::FunctionExpression
-                    && function
+                let ambient = self.current_ambient()
+                    || function.declare
+                    || function.r#type.is_typescript_syntax();
+                if !ambient
+                    && function.r#type == oxc_ast::ast::FunctionType::FunctionDeclaration
+                    && let Some(name) = function
                         .id
                         .as_ref()
-                        .is_some_and(|identifier| identifier.name == "require")
-                    || parameters_bind_require(&function.params)
+                        .and_then(|identifier| tracked_name(identifier.name.as_str()))
                 {
-                    self.mark_current_scope();
+                    self.mark_function_declaration(name);
                 }
+                let mut bindings = if ambient {
+                    NameBindings::default()
+                } else {
+                    parameters_bindings(&function.params)
+                };
+                if !ambient
+                    && function.r#type == oxc_ast::ast::FunctionType::FunctionExpression
+                    && let Some(name) = function
+                        .id
+                        .as_ref()
+                        .and_then(|identifier| tracked_name(identifier.name.as_str()))
+                {
+                    bindings.mark(name);
+                }
+                self.push_scope(
+                    RequireScopeKind::FunctionParameters,
+                    bindings,
+                    false,
+                    self.current_strict() || function.has_use_strict_directive(),
+                    ambient,
+                );
                 return;
             }
             AstKind::ArrowFunctionExpression(function) => {
+                let ambient = self.current_ambient();
                 self.push_scope(
-                    RequireScopeKind::Function,
-                    parameters_bind_require(&function.params),
+                    RequireScopeKind::FunctionParameters,
+                    if ambient {
+                        NameBindings::default()
+                    } else {
+                        parameters_bindings(&function.params)
+                    },
+                    false,
+                    self.current_strict() || function.has_use_strict_directive(),
+                    ambient,
+                );
+                return;
+            }
+            AstKind::FunctionBody(_) => {
+                self.push_inherited_scope(
+                    RequireScopeKind::VarEnvironment,
+                    NameBindings::default(),
                     false,
                 );
                 return;
             }
             AstKind::Class(class) => {
-                if class.r#type == oxc_ast::ast::ClassType::ClassDeclaration
-                    && class
-                        .id
-                        .as_ref()
-                        .is_some_and(|identifier| identifier.name == "require")
+                let ambient = self.current_ambient() || class.declare;
+                let name = class
+                    .id
+                    .as_ref()
+                    .and_then(|identifier| tracked_name(identifier.name.as_str()));
+                if !ambient
+                    && class.r#type == oxc_ast::ast::ClassType::ClassDeclaration
+                    && let Some(name) = name
                 {
-                    self.mark_current_scope();
+                    self.mark_current_scope(name);
                 }
-                self.push_scope(
-                    RequireScopeKind::Lexical,
-                    class.r#type == oxc_ast::ast::ClassType::ClassExpression
-                        && class
-                            .id
-                            .as_ref()
-                            .is_some_and(|identifier| identifier.name == "require"),
-                    false,
-                );
+                let mut bindings = NameBindings::default();
+                if !ambient && let Some(name) = name {
+                    bindings.mark(name);
+                }
+                self.push_scope(RequireScopeKind::Lexical, bindings, false, true, ambient);
                 return;
             }
             AstKind::CatchClause(catch) => {
+                let ambient = self.current_ambient();
                 self.push_scope(
                     RequireScopeKind::Lexical,
-                    catch
-                        .param
-                        .as_ref()
-                        .is_some_and(|parameter| pattern_binds_require(&parameter.pattern)),
+                    if ambient {
+                        NameBindings::default()
+                    } else {
+                        catch
+                            .param
+                            .as_ref()
+                            .map_or_else(NameBindings::default, |parameter| {
+                                pattern_bindings(&parameter.pattern)
+                            })
+                    },
                     false,
+                    self.current_strict(),
+                    ambient,
                 );
                 return;
             }
             AstKind::WithStatement(_) => {
-                self.push_scope(RequireScopeKind::Lexical, false, true);
+                self.push_inherited_scope(RequireScopeKind::Lexical, NameBindings::default(), true);
+                return;
+            }
+            AstKind::StaticBlock(_) => {
+                self.push_scope(
+                    RequireScopeKind::VarEnvironment,
+                    NameBindings::default(),
+                    false,
+                    true,
+                    self.current_ambient(),
+                );
                 return;
             }
             AstKind::VariableDeclaration(declaration) => {
-                if declaration
-                    .declarations
-                    .iter()
-                    .any(|declarator| pattern_binds_require(&declarator.id))
-                {
-                    if declaration.kind.is_var() {
-                        self.mark_nearest_function_scope();
-                    } else {
-                        self.mark_current_scope();
+                if !self.current_ambient() && !declaration.declare {
+                    for declarator in &declaration.declarations {
+                        let bindings = pattern_bindings(&declarator.id);
+                        for name in [TrackedName::Require, TrackedName::Eval] {
+                            if bindings.contains(name) {
+                                if declaration.kind.is_var() {
+                                    self.mark_nearest_var_environment(name);
+                                } else {
+                                    self.mark_current_scope(name);
+                                }
+                            }
+                        }
                     }
                 }
             }
             AstKind::ImportDeclaration(declaration) => {
-                if declaration.import_kind == ImportOrExportKind::Value
-                    && declaration.specifiers.as_ref().is_some_and(|specifiers| {
-                        specifiers.iter().any(|specifier| match specifier {
-                            ImportDeclarationSpecifier::ImportSpecifier(import) => {
-                                import.import_kind == ImportOrExportKind::Value
-                                    && import.local.name == "require"
+                if !self.current_ambient()
+                    && declaration.import_kind == ImportOrExportKind::Value
+                    && let Some(specifiers) = &declaration.specifiers
+                {
+                    for specifier in specifiers {
+                        let local = match specifier {
+                            ImportDeclarationSpecifier::ImportSpecifier(import)
+                                if import.import_kind == ImportOrExportKind::Value =>
+                            {
+                                Some(&import.local)
                             }
                             ImportDeclarationSpecifier::ImportDefaultSpecifier(import) => {
-                                import.local.name == "require"
+                                Some(&import.local)
                             }
                             ImportDeclarationSpecifier::ImportNamespaceSpecifier(import) => {
-                                import.local.name == "require"
+                                Some(&import.local)
                             }
-                        })
-                    })
-                {
-                    self.mark_current_scope();
+                            ImportDeclarationSpecifier::ImportSpecifier(_) => None,
+                        };
+                        if let Some(name) =
+                            local.and_then(|identifier| tracked_name(identifier.name.as_str()))
+                        {
+                            self.mark_current_scope(name);
+                        }
+                    }
                 }
             }
             AstKind::TSEnumDeclaration(declaration) => {
-                if declaration.id.name == "require" {
-                    self.mark_current_scope();
+                if !self.current_ambient()
+                    && !declaration.declare
+                    && let Some(name) = tracked_name(declaration.id.name.as_str())
+                {
+                    self.mark_current_scope(name);
                 }
             }
             AstKind::TSImportEqualsDeclaration(declaration) => {
-                if declaration.import_kind == ImportOrExportKind::Value
-                    && declaration.id.name == "require"
+                if !self.current_ambient()
+                    && declaration.import_kind == ImportOrExportKind::Value
+                    && let Some(name) = tracked_name(declaration.id.name.as_str())
                 {
-                    self.mark_current_scope();
+                    self.mark_current_scope(name);
                 }
             }
-            AstKind::TSModuleDeclaration(declaration)
-                if !declaration.declare
-                    && matches!(
-                        &declaration.id,
-                        oxc_ast::ast::TSModuleDeclarationName::Identifier(identifier)
-                            if identifier.name == "require"
-                    ) =>
-            {
-                self.mark_current_scope();
+            AstKind::TSModuleDeclaration(declaration) => {
+                let ambient = self.current_ambient() || declaration.declare;
+                if !ambient
+                    && let oxc_ast::ast::TSModuleDeclarationName::Identifier(identifier) =
+                        &declaration.id
+                    && let Some(name) = tracked_name(identifier.name.as_str())
+                {
+                    self.mark_current_scope(name);
+                }
+                self.push_scope(
+                    RequireScopeKind::VarEnvironment,
+                    NameBindings::default(),
+                    false,
+                    self.current_strict() || declaration.has_use_strict_directive(),
+                    ambient,
+                );
+                return;
             }
             _ => {}
         }
         if let Some(kind) = scope_kind(kind) {
-            self.push_scope(kind, false, false);
+            self.push_inherited_scope(kind, NameBindings::default(), false);
         }
     }
 
@@ -354,7 +577,7 @@ impl<'a> Visit<'a> for RequireScopeCollector {
             .get_expression()
             .is_some_and(|expression| expression.is_specific_id("require"));
         if direct_write || wrapped_write {
-            self.record_write();
+            self.record_require_write();
         }
         walk::walk_simple_assignment_target(self, target);
     }
@@ -364,14 +587,14 @@ impl<'a> Visit<'a> for RequireScopeCollector {
         property: &oxc_ast::ast::AssignmentTargetPropertyIdentifier<'a>,
     ) {
         if property.binding.name == "require" {
-            self.record_write();
+            self.record_require_write();
         }
         walk::walk_assignment_target_property_identifier(self, property);
     }
 
     fn visit_call_expression(&mut self, expression: &oxc_ast::ast::CallExpression<'a>) {
         if expression.callee.is_specific_id("eval") {
-            self.dynamic_require_write = true;
+            self.record_eval_call();
         }
         walk::walk_call_expression(self, expression);
     }
