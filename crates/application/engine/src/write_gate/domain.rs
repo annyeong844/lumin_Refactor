@@ -250,15 +250,22 @@ pub(super) fn protected_semantic_inputs(
         .snapshot
         .inputs
         .iter()
-        .filter(|input| {
-            !source_paths.contains(input.path.canonical.as_slice())
-                || selected_keys.contains(input.path.canonical.as_slice())
-        })
+        .filter(|input| semantic_input_requires_protection(input, &source_paths, &selected_keys))
         .cloned()
         .collect::<Vec<_>>();
     protected.sort();
     protected.dedup();
     protected
+}
+
+fn semantic_input_requires_protection(
+    input: &SemanticInputRecord,
+    source_paths: &BTreeSet<&[u8]>,
+    selected_keys: &BTreeSet<&[u8]>,
+) -> bool {
+    input.physical_redirect_sha256.is_some()
+        || !source_paths.contains(input.path.canonical.as_slice())
+        || selected_keys.contains(input.path.canonical.as_slice())
 }
 
 pub(super) fn close_alias_topology(
@@ -421,4 +428,32 @@ fn validate_stable_lease_parents(root: &Path, leases: &[WriteLease]) -> Vec<Gate
             .map(|detail| GateSignal::AnalysisFailed { detail }),
     );
     signals
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_backed_redirect_is_protected_without_adjacency_selection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = RepoPath::from_portable("packages/lib/dist/index.js")?;
+        let input = SemanticInputRecord {
+            path: RepoPathProjection::from(&path),
+            state: SemanticInputState::Source,
+            payload_sha256: Some("payload".to_owned()),
+            physical_identity: None,
+            absence_parent: None,
+            physical_redirect_sha256: Some("redirect".to_owned()),
+        };
+        let source_paths = BTreeSet::from([input.path.canonical.as_slice()]);
+        let selected_keys = BTreeSet::new();
+
+        assert!(semantic_input_requires_protection(
+            &input,
+            &source_paths,
+            &selected_keys
+        ));
+        Ok(())
+    }
 }

@@ -2,6 +2,7 @@ mod capture;
 mod config_document;
 mod generated_config_policy;
 mod package_semantics;
+mod physical_path;
 mod pnpm_workspace;
 mod root;
 
@@ -10,25 +11,32 @@ use std::ffi::OsStr;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use ignore::WalkBuilder;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use lumin_model::{
-    ConfigAbsenceParent, ConfigObservation, ConfigSyntax, EntrySource, EntryUnavailableReason,
-    Limitation, PhysicalAliasWriteClosure, PhysicalFileIdentity, RepoPath, RepoPathError,
-    RoleOverride, SOURCE_CLASSIFICATION_RULE_VERSION, ScanRole, SemanticConfigSnapshot,
-    SourceClassificationRole, SourceKind, SourceRoleClassification, SourceRoleConfigurationSource,
-    SourceRoleReason, SourceRoles, SourceSnapshot, digest_hex,
+    ConfigObservation, ConfigSyntax, EntrySource, EntryUnavailableReason, Limitation,
+    PhysicalFileIdentity, PhysicalPathRedirect, RepoPath, RepoPathError, RoleOverride,
+    SOURCE_CLASSIFICATION_RULE_VERSION, ScanRole, SemanticConfigSnapshot, SourceClassificationRole,
+    SourceKind, SourceRoleClassification, SourceRoleConfigurationSource, SourceRoleReason,
+    SourceRoles, SourceSnapshot, digest_hex,
 };
 use serde::Deserialize;
 use thiserror::Error;
+
+use physical_path::{is_physical_path_redirect, observe_physical_path_redirect};
 
 pub use generated_config_policy::{
     FieldClassification as InventoryConfigFieldClassification,
     FieldPolicy as InventoryConfigFieldPolicy, INVENTORY_CONFIG_ARTIFACT_SHA256,
     INVENTORY_CONFIG_TABLE_SHA256, INVENTORY_PACKAGE_JSON_FIELDS, INVENTORY_PNPM_WORKSPACE_FIELDS,
     INVENTORY_RESOLVER_OWNED_FIELDS,
+};
+pub use physical_path::{
+    ConfigInputIdentity, WriteTargetError, WriteTargetKind, WriteTargetObservation,
+    directory_physical_identity, inspect_write_target, observe_config_input_identity,
+    observe_physical_file_identity, physical_alias_write_closure, physical_file_identity,
 };
 pub use root::{RepositoryAdmission, repository_admission};
 
@@ -131,6 +139,7 @@ pub struct SemanticPolicyInput {
 #[derive(Clone, Debug)]
 pub struct InventorySnapshot {
     pub sources: Vec<SourceSnapshot>,
+    pub physical_path_redirects: Vec<PhysicalPathRedirect>,
     pub limitations: Vec<Limitation>,
     pub consulted_config_paths: Vec<RepoPath>,
     pub config: SemanticConfigSnapshot,
@@ -174,40 +183,6 @@ fn native_relative(path: &RepoPath) -> Result<PathBuf, InventoryError> {
         })
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum WriteTargetKind {
-    ExistingFile,
-    ExistingDirectory,
-    NewFile,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WriteTargetObservation {
-    pub path: RepoPath,
-    pub kind: WriteTargetKind,
-    pub physical_identity: Option<PhysicalFileIdentity>,
-    pub nearest_existing_parent: Option<RepoPath>,
-    pub prefix_identities: Vec<(RepoPath, PhysicalFileIdentity)>,
-}
-
-#[derive(Debug, Error)]
-pub enum WriteTargetError {
-    #[error("repository root cannot be leased as one directory scope")]
-    UnboundedDirectory,
-    #[error("planned path has no observable real parent: {0}")]
-    MissingParent(String),
-    #[error("planned path resolves outside the repository root: {0}")]
-    OutsideRoot(String),
-    #[error("planned path is not a regular file or real directory: {0}")]
-    NonRegular(String),
-    #[error("planned directory is reached through a symlink or junction: {0}")]
-    LinkedDirectory(String),
-    #[error("failed to inspect planned path {path}: {detail}")]
-    Io { path: String, detail: String },
-    #[error(transparent)]
-    PhysicalIdentity(#[from] InventoryError),
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RootConfig {
@@ -247,6 +222,7 @@ struct PatternSet {
 struct CollectedFiles {
     sources: BTreeMap<RepoPath, SourceSnapshot>,
     payloads: BTreeMap<PhysicalFileIdentity, Arc<[u8]>>,
+    physical_path_redirects: BTreeMap<RepoPath, PhysicalPathRedirect>,
     config_observations: BTreeMap<RepoPath, ConfigObservation>,
     limitations: Vec<Limitation>,
     consulted_config_paths: Vec<RepoPath>,
@@ -364,6 +340,7 @@ pub fn scan(root: &Path, request: &InventoryRequest) -> Result<InventorySnapshot
 
     Ok(InventorySnapshot {
         sources,
+        physical_path_redirects: collected.physical_path_redirects.into_values().collect(),
         limitations: collected.limitations,
         consulted_config_paths: collected.consulted_config_paths,
         config,
@@ -667,339 +644,18 @@ fn read_root_config(
     Ok((Some(config), Some(repo_path), policy))
 }
 
-pub fn physical_alias_write_closure(
-    root: &Path,
-    target: &RepoPath,
-    source_paths: &[RepoPath],
-) -> Result<PhysicalAliasWriteClosure, InventoryError> {
-    let target_native = root.join(native_relative(target)?);
-    let physical_identity = physical_file_identity(&target_native)?;
-    let target_handle = same_file::Handle::from_path(&target_native)
-        .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
-    let mut aliases = Vec::new();
-    for source_path in source_paths {
-        let handle = same_file::Handle::from_path(root.join(native_relative(source_path)?))
-            .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
-        if handle == target_handle {
-            aliases.push(source_path.clone());
-        }
-    }
-    aliases.sort();
-    aliases.dedup();
-    Ok(PhysicalAliasWriteClosure {
-        physical_identity,
-        members: aliases,
-    })
-}
-
-pub fn inspect_write_target(
-    root: &Path,
-    path: &RepoPath,
-) -> Result<WriteTargetObservation, WriteTargetError> {
-    if path.components_len() == 0 {
-        return Err(WriteTargetError::UnboundedDirectory);
-    }
-    let canonical_root = fs::canonicalize(root).map_err(|error| WriteTargetError::Io {
-        path: root.display().to_string(),
-        detail: error.to_string(),
-    })?;
-    let native = root.join(native_relative(path)?);
-    let metadata = match fs::symlink_metadata(&native) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            let nearest_parent = nearest_existing_parent(root, path)?;
-            let prefix_identities =
-                observe_directory_prefixes(root, Some(&nearest_parent), &canonical_root)?;
-            return Ok(WriteTargetObservation {
-                path: path.clone(),
-                kind: WriteTargetKind::NewFile,
-                physical_identity: None,
-                nearest_existing_parent: Some(nearest_parent),
-                prefix_identities,
-            });
-        }
-        Err(error) => {
-            return Err(WriteTargetError::Io {
-                path: path.display_escaped(),
-                detail: error.to_string(),
-            });
-        }
-    };
-
-    let target_metadata = if metadata.file_type().is_symlink() {
-        let followed = fs::metadata(&native).map_err(|error| WriteTargetError::Io {
-            path: path.display_escaped(),
-            detail: error.to_string(),
-        })?;
-        if followed.is_dir() {
-            return Err(WriteTargetError::LinkedDirectory(path.display_escaped()));
-        }
-        followed
-    } else {
-        metadata
-    };
-    let prefix_identities =
-        observe_directory_prefixes(root, path.parent().as_ref(), &canonical_root)?;
-    ensure_contained(&canonical_root, &native, path)?;
-    let kind = if target_metadata.is_file() {
-        WriteTargetKind::ExistingFile
-    } else if target_metadata.is_dir() {
-        WriteTargetKind::ExistingDirectory
-    } else {
-        return Err(WriteTargetError::NonRegular(path.display_escaped()));
-    };
-    Ok(WriteTargetObservation {
-        path: path.clone(),
-        kind,
-        physical_identity: Some(physical_file_identity(&native)?),
-        nearest_existing_parent: None,
-        prefix_identities,
-    })
-}
-
-fn nearest_existing_parent(root: &Path, path: &RepoPath) -> Result<RepoPath, WriteTargetError> {
-    let mut candidate = path.parent();
-    while let Some(parent) = candidate {
-        let native = root.join(native_relative(&parent)?);
-        match fs::symlink_metadata(&native) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                return Err(WriteTargetError::LinkedDirectory(parent.display_escaped()));
-            }
-            Ok(metadata) if metadata.is_dir() => return Ok(parent),
-            Ok(_) => return Err(WriteTargetError::MissingParent(parent.display_escaped())),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                candidate = parent.parent();
-            }
-            Err(error) => {
-                return Err(WriteTargetError::Io {
-                    path: parent.display_escaped(),
-                    detail: error.to_string(),
-                });
-            }
-        }
-    }
-    Err(WriteTargetError::MissingParent(path.display_escaped()))
-}
-
-fn observe_directory_prefixes(
-    root: &Path,
-    parent: Option<&RepoPath>,
-    canonical_root: &Path,
-) -> Result<Vec<(RepoPath, PhysicalFileIdentity)>, WriteTargetError> {
-    let Some(parent) = parent else {
-        return Ok(Vec::new());
-    };
-    let mut prefixes = Vec::new();
-    let mut cursor = Some(parent.clone());
-    while let Some(path) = cursor {
-        let is_root = path.components_len() == 0;
-        prefixes.push(path.clone());
-        if is_root {
-            break;
-        }
-        cursor = path.parent();
-    }
-    prefixes.reverse();
-
-    let mut observed = Vec::with_capacity(prefixes.len());
-    for prefix in prefixes {
-        let native = root.join(native_relative(&prefix)?);
-        let metadata = fs::symlink_metadata(&native).map_err(|error| WriteTargetError::Io {
-            path: prefix.display_escaped(),
-            detail: error.to_string(),
-        })?;
-        if metadata.file_type().is_symlink() {
-            return Err(WriteTargetError::LinkedDirectory(prefix.display_escaped()));
-        }
-        if !metadata.is_dir() {
-            return Err(WriteTargetError::MissingParent(prefix.display_escaped()));
-        }
-        ensure_contained(canonical_root, &native, &prefix)?;
-        observed.push((prefix, physical_file_identity(&native)?));
-    }
-    Ok(observed)
-}
-
 pub fn is_supported_source_path(path: &RepoPath) -> bool {
     native_relative(path)
         .ok()
         .is_some_and(|native| source_kind(&native).is_some())
 }
 
-pub fn physical_file_identity(path: &Path) -> Result<PhysicalFileIdentity, InventoryError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let metadata = fs::metadata(path)
-            .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
-        Ok(PhysicalFileIdentity::Unix {
-            device: metadata.dev(),
-            inode: metadata.ino(),
-        })
-    }
-    #[cfg(windows)]
-    {
-        let handle = winapi_util::Handle::from_path_any(path)
-            .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
-        let information = winapi_util::file::information(&handle)
-            .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
-        let volume_serial = u32::try_from(information.volume_serial_number()).map_err(|_| {
-            InventoryError::PhysicalIdentity("volume serial number exceeds u32".to_owned())
-        })?;
-        Ok(PhysicalFileIdentity::Windows {
-            volume_serial,
-            file_index: information.file_index(),
-        })
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ConfigInputIdentity {
-    pub physical_identity: Option<PhysicalFileIdentity>,
-    pub absence_parent: Option<ConfigAbsenceParent>,
-}
-
-pub fn observe_config_input_identity(
-    root: &Path,
-    path: &RepoPath,
-) -> Result<ConfigInputIdentity, InventoryError> {
-    validate_root(root)?;
-    let canonical_root = fs::canonicalize(root)
-        .map_err(|error| InventoryError::RepositoryIdentity(error.to_string()))?;
-    let native = root.join(native_relative(path)?);
-    match fs::symlink_metadata(&native) {
-        Ok(metadata) => {
-            match fs::canonicalize(&native) {
-                Ok(canonical) if !canonical.starts_with(&canonical_root) => {
-                    return Err(InventoryError::MalformedConfiguration(format!(
-                        "config path resolves outside the repository root: {}",
-                        path.display_escaped()
-                    )));
-                }
-                Ok(_) => {}
-                Err(_) if metadata.file_type().is_symlink() => {
-                    return Ok(ConfigInputIdentity {
-                        physical_identity: None,
-                        absence_parent: None,
-                    });
-                }
-                Err(error) => {
-                    return Err(InventoryError::PhysicalIdentity(format!(
-                        "cannot resolve config path {}: {error}",
-                        path.display_escaped()
-                    )));
-                }
-            }
-            Ok(ConfigInputIdentity {
-                physical_identity: Some(physical_file_identity(&native)?),
-                absence_parent: None,
-            })
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(ConfigInputIdentity {
-            physical_identity: None,
-            absence_parent: Some(config_absence_parent(
-                root,
-                &canonical_root,
-                path.parent().unwrap_or_else(RepoPath::empty),
-            )?),
-        }),
-        Err(error) => Err(InventoryError::PhysicalIdentity(error.to_string())),
-    }
-}
-
-fn config_absence_parent(
-    root: &Path,
-    canonical_root: &Path,
-    mut path: RepoPath,
-) -> Result<ConfigAbsenceParent, InventoryError> {
-    loop {
-        let native = root.join(native_relative(&path)?);
-        match fs::symlink_metadata(&native) {
-            Ok(_) => {
-                let canonical = fs::canonicalize(&native).map_err(|error| {
-                    InventoryError::PhysicalIdentity(format!(
-                        "cannot resolve missing-config parent {}: {error}",
-                        path.display_escaped()
-                    ))
-                })?;
-                if !canonical.starts_with(canonical_root) {
-                    return Err(InventoryError::MalformedConfiguration(format!(
-                        "missing-config parent resolves outside the repository root: {}",
-                        path.display_escaped()
-                    )));
-                }
-                return Ok(ConfigAbsenceParent {
-                    physical_identity: physical_file_identity(&native)?,
-                    path,
-                });
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                path = path.parent().ok_or_else(|| {
-                    InventoryError::PhysicalIdentity(
-                        "repository root disappeared while binding a missing config".to_owned(),
-                    )
-                })?;
-            }
-            Err(error) => {
-                return Err(InventoryError::PhysicalIdentity(format!(
-                    "cannot inspect missing-config parent {}: {error}",
-                    path.display_escaped()
-                )));
-            }
-        }
-    }
-}
-
-pub fn observe_physical_file_identity(
-    root: &Path,
-    path: &RepoPath,
-) -> Result<PhysicalFileIdentity, InventoryError> {
-    validate_root(root)?;
-    physical_file_identity(&root.join(native_relative(path)?))
-}
-
-pub fn directory_physical_identity(
-    root: &Path,
-    path: &RepoPath,
-) -> Result<PhysicalFileIdentity, WriteTargetError> {
-    if path.components_len() == 0 {
-        let metadata = fs::symlink_metadata(root).map_err(|error| WriteTargetError::Io {
-            path: path.display_escaped(),
-            detail: error.to_string(),
-        })?;
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            return Err(WriteTargetError::LinkedDirectory(path.display_escaped()));
-        }
-        return physical_file_identity(root).map_err(WriteTargetError::from);
-    }
-    let observation = inspect_write_target(root, path)?;
-    if observation.kind != WriteTargetKind::ExistingDirectory {
-        return Err(WriteTargetError::NonRegular(path.display_escaped()));
-    }
-    observation
-        .physical_identity
-        .ok_or_else(|| WriteTargetError::NonRegular(path.display_escaped()))
-}
-
-fn ensure_contained(
-    canonical_root: &Path,
-    native: &Path,
-    logical: &RepoPath,
-) -> Result<(), WriteTargetError> {
-    let canonical = fs::canonicalize(native).map_err(|error| WriteTargetError::Io {
-        path: logical.display_escaped(),
-        detail: error.to_string(),
-    })?;
-    if !canonical.starts_with(canonical_root) {
-        return Err(WriteTargetError::OutsideRoot(logical.display_escaped()));
-    }
-    Ok(())
-}
-
 fn collect_repository_files(
     context: &FileObservationContext<'_>,
 ) -> Result<CollectedFiles, InventoryError> {
     let mut collected = CollectedFiles::default();
+    let pruned_redirects = Arc::new(Mutex::new(Vec::new()));
+    let captured_pruned_redirects = Arc::clone(&pruned_redirects);
     let mut builder = WalkBuilder::new(context.root);
     builder
         .hidden(false)
@@ -1008,7 +664,31 @@ fn collect_repository_files(
         .git_global(false)
         .git_exclude(false)
         .follow_links(false)
-        .filter_entry(|entry| !is_hard_excluded(entry.path()));
+        .filter_entry(move |entry| {
+            let hard_excluded = is_hard_excluded(entry.path());
+            let file_type = entry.file_type().or_else(|| {
+                fs::symlink_metadata(entry.path())
+                    .ok()
+                    .map(|metadata| metadata.file_type())
+            });
+            let Some(file_type) = file_type else {
+                if let Ok(mut redirects) = captured_pruned_redirects.lock() {
+                    redirects.push(entry.path().to_owned());
+                }
+                return false;
+            };
+            let redirect = is_physical_path_redirect(entry.path(), &file_type);
+            if hard_excluded
+                || (redirect
+                    && !fs::metadata(entry.path()).is_ok_and(|metadata| metadata.is_file()))
+            {
+                if redirect && let Ok(mut redirects) = captured_pruned_redirects.lock() {
+                    redirects.push(entry.path().to_owned());
+                }
+                return false;
+            }
+            true
+        });
 
     for result in builder.build() {
         let entry = match result {
@@ -1038,9 +718,13 @@ fn collect_repository_files(
         let Some(file_type) = entry.file_type() else {
             continue;
         };
+        let is_redirect = is_physical_path_redirect(entry.path(), &file_type);
+        if is_redirect {
+            record_physical_path_redirect(context, entry.path(), path.clone(), &mut collected);
+        }
         let is_file = if file_type.is_file() {
             true
-        } else if file_type.is_symlink() {
+        } else if is_redirect {
             match fs::metadata(entry.path()) {
                 Ok(metadata) if metadata.is_file() => match fs::canonicalize(entry.path()) {
                     Ok(target) if target.starts_with(context.canonical_root) => true,
@@ -1083,7 +767,47 @@ fn collect_repository_files(
         }
         collected.observe_file(context, entry.path(), relative, path)?;
     }
+    let mut pruned_redirects = pruned_redirects
+        .lock()
+        .map_err(|_| InventoryError::RootIo("pruned redirect capture failed".to_owned()))?
+        .clone();
+    pruned_redirects.sort();
+    pruned_redirects.dedup();
+    for native_path in pruned_redirects {
+        let relative = native_path.strip_prefix(context.root).map_err(|_| {
+            InventoryError::RootIo(format!(
+                "pruned redirect escaped root: {}",
+                native_path.display()
+            ))
+        })?;
+        let path = RepoPath::from_native_relative(relative).map_err(|source| {
+            InventoryError::InvalidRepoPath {
+                path: relative.display().to_string(),
+                source,
+            }
+        })?;
+        record_physical_path_redirect(context, &native_path, path, &mut collected);
+    }
     Ok(collected)
+}
+
+fn record_physical_path_redirect(
+    context: &FileObservationContext<'_>,
+    native_path: &Path,
+    path: RepoPath,
+    collected: &mut CollectedFiles,
+) {
+    let (redirect, target_error) =
+        observe_physical_path_redirect(context.canonical_root, native_path, path.clone());
+    if let Some(detail) = target_error {
+        collected
+            .limitations
+            .push(Limitation::SourcePayloadUnavailable {
+                path: path.display_escaped(),
+                detail,
+            });
+    }
+    collected.physical_path_redirects.insert(path, redirect);
 }
 
 impl CollectedFiles {

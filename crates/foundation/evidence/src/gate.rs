@@ -62,6 +62,7 @@ pub enum SemanticInputState {
     Missing,
     NonRegular,
     Unreadable,
+    PathRedirect,
 }
 
 impl SemanticInputState {
@@ -72,6 +73,7 @@ impl SemanticInputState {
             Self::Missing => 3,
             Self::NonRegular => 4,
             Self::Unreadable => 5,
+            Self::PathRedirect => 6,
         }
     }
 }
@@ -86,6 +88,8 @@ pub struct SemanticInputRecord {
     pub physical_identity: Option<PhysicalFileIdentity>,
     #[serde(default)]
     pub absence_parent: Option<PathPrefixIdentity>,
+    #[serde(default)]
+    pub physical_redirect_sha256: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -596,6 +600,13 @@ pub fn seal_analysis_snapshot(
             }
             None => framed.push(0),
         }
+        match &input.physical_redirect_sha256 {
+            Some(sha256) => {
+                framed.push(1);
+                append_length_prefixed(&mut framed, sha256.as_bytes());
+            }
+            None => framed.push(0),
+        }
     }
     AnalysisSnapshot {
         analysis_input_id: AnalysisInputId::from_string(format!(
@@ -1065,6 +1076,7 @@ mod tests {
             payload_sha256: Some(payload_sha256.to_owned()),
             physical_identity: None,
             absence_parent: None,
+            physical_redirect_sha256: None,
         })
     }
 
@@ -1123,12 +1135,26 @@ mod tests {
                     path: path("config")?,
                     physical_identity: PhysicalFileIdentity::Unix { device: 7, inode },
                 }),
+                physical_redirect_sha256: None,
             })
         };
         let before = snapshot(vec![missing(11)?]);
         let replaced_parent = snapshot(vec![missing(12)?]);
 
         assert_ne!(before.analysis_input_id, replaced_parent.analysis_input_id);
+        Ok(())
+    }
+
+    #[test]
+    fn physical_redirect_changes_analysis_input_id() -> Result<(), Box<dyn std::error::Error>> {
+        let without_redirect = input("packages/lib/escape", "payload")?;
+        let mut with_redirect = without_redirect.clone();
+        with_redirect.physical_redirect_sha256 = Some("redirect".to_owned());
+
+        assert_ne!(
+            snapshot(vec![without_redirect]).analysis_input_id,
+            snapshot(vec![with_redirect]).analysis_input_id,
+        );
         Ok(())
     }
 

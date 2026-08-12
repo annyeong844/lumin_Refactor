@@ -181,6 +181,7 @@ fn resolve_manifest_fields(
                 allow_directory: lane_allows_extensionless(request.lane),
             },
             context.sources,
+            context.physical_path_redirects,
         );
         if let Some(result) = accept_or_collect(result, consulted) {
             return Some(result);
@@ -216,6 +217,7 @@ fn resolve_index(
             allow_directory: false,
         },
         context.sources,
+        context.physical_path_redirects,
     );
     accept_or_collect(result, consulted)
 }

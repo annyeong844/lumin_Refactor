@@ -1,27 +1,26 @@
-use std::collections::BTreeMap;
-
 use lumin_model::{
-    ConfigEntry, ConfigValue, LogicalSourceId, PackageFact, PackageSurfaceLane,
-    PackageSurfaceSource, RepoPath, SymbolNamespace,
+    ConfigEntry, ConfigValue, PackageSurfaceLane, PackageSurfaceSource, RepoPath, SymbolNamespace,
 };
 
-use super::{PackageResolution, TargetRequest, resolve_base, unresolved_no_target, unsupported};
+use super::{
+    PackageContext, PackageResolution, TargetRequest, resolve_base, unresolved_no_target,
+    unsupported,
+};
 
 pub(super) fn resolve(
-    package: &PackageFact,
+    context: &PackageContext<'_>,
     specifier: &str,
     request_key: &str,
     namespace: SymbolNamespace,
     lane: PackageSurfaceLane,
     exports: &ConfigValue,
-    sources: &BTreeMap<RepoPath, LogicalSourceId>,
 ) -> PackageResolution {
-    if let Err(detail) = validate(exports, &package.root) {
-        return unsupported(package, specifier, &detail);
+    if let Err(detail) = validate(exports, &context.package.root) {
+        return unsupported(context.package, specifier, &detail);
     }
     let selected = match select(exports, request_key, lane, namespace) {
         Ok(selected) => selected,
-        Err(detail) => return unsupported(package, specifier, &detail),
+        Err(detail) => return unsupported(context.package, specifier, &detail),
     };
     let Some(selected) = selected else {
         return unresolved_no_target(specifier);
@@ -29,12 +28,12 @@ pub(super) fn resolve(
     let Some(target) = selected.target else {
         return unresolved_no_target(specifier);
     };
-    let base = match lower_target(&package.root, &target, selected.capture.as_deref()) {
+    let base = match lower_target(&context.package.root, &target, selected.capture.as_deref()) {
         Ok(base) => base,
-        Err(detail) => return unsupported(package, specifier, &detail),
+        Err(detail) => return unsupported(context.package, specifier, &detail),
     };
     resolve_base(
-        package,
+        context.package,
         TargetRequest {
             specifier,
             namespace,
@@ -47,7 +46,8 @@ pub(super) fn resolve(
             allow_extensionless: super::fallback::lane_allows_extensionless(lane),
             allow_directory: false,
         },
-        sources,
+        context.sources,
+        context.physical_path_redirects,
     )
 }
 
@@ -208,12 +208,7 @@ fn select(
             })),
             ObjectKind::Conditions => Ok(None),
             ObjectKind::Subpaths => {
-                let selected = entries
-                    .iter()
-                    .enumerate()
-                    .find(|(_, entry)| entry.key == request_key)
-                    .map(|(index, entry)| (index, entry, None))
-                    .or_else(|| select_pattern(entries, request_key));
+                let selected = select_subpath_entry(entries, request_key);
                 let Some((_, entry, capture)) = selected else {
                     return Ok(None);
                 };
@@ -229,6 +224,25 @@ fn select(
         },
         _ => Err("package exports must match exports-v1".to_owned()),
     }
+}
+
+pub(super) fn selected_subpath_entry_index(
+    entries: &[ConfigEntry],
+    request_key: &str,
+) -> Option<usize> {
+    select_subpath_entry(entries, request_key).map(|(index, _, _)| index)
+}
+
+fn select_subpath_entry<'a>(
+    entries: &'a [ConfigEntry],
+    request_key: &str,
+) -> Option<(usize, &'a ConfigEntry, Option<String>)> {
+    entries
+        .iter()
+        .enumerate()
+        .find(|(_, entry)| entry.key == request_key)
+        .map(|(index, entry)| (index, entry, None))
+        .or_else(|| select_pattern(entries, request_key))
 }
 
 pub(super) fn select_subpath_value(
