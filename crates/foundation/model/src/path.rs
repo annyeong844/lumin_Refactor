@@ -106,6 +106,8 @@ pub struct PhysicalPathRedirect {
     pub path: RepoPath,
     pub target: PhysicalPathRedirectTarget,
     pub kind: PhysicalPathRedirectKind,
+    pub entry_physical_identity: Option<PhysicalFileIdentity>,
+    pub target_physical_identity: Option<PhysicalFileIdentity>,
     pub target_identity_sha256: String,
 }
 
@@ -120,6 +122,20 @@ impl PhysicalPathRedirect {
             PhysicalPathRedirectKind::Other => 3,
             PhysicalPathRedirectKind::Unavailable => 4,
         });
+        match &self.entry_physical_identity {
+            Some(identity) => {
+                framed.push(1);
+                crate::append_length_prefixed(&mut framed, &identity.canonical_bytes());
+            }
+            None => framed.push(0),
+        }
+        match &self.target_physical_identity {
+            Some(identity) => {
+                framed.push(1);
+                crate::append_length_prefixed(&mut framed, &identity.canonical_bytes());
+            }
+            None => framed.push(0),
+        }
         match &self.target {
             PhysicalPathRedirectTarget::Repository(target) => {
                 framed.push(1);

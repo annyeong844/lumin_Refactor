@@ -220,13 +220,72 @@ pub fn physical_file_identity(path: &Path) -> Result<PhysicalFileIdentity, Inven
             .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
         let information = winapi_util::file::information(&handle)
             .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
-        let volume_serial = u32::try_from(information.volume_serial_number()).map_err(|_| {
-            InventoryError::PhysicalIdentity("volume serial number exceeds u32".to_owned())
-        })?;
-        Ok(PhysicalFileIdentity::Windows {
-            volume_serial,
-            file_index: information.file_index(),
+        windows_physical_identity(&information)
+    }
+}
+
+#[cfg(windows)]
+fn windows_physical_identity(
+    information: &winapi_util::file::Information,
+) -> Result<PhysicalFileIdentity, InventoryError> {
+    let volume_serial = u32::try_from(information.volume_serial_number()).map_err(|_| {
+        InventoryError::PhysicalIdentity("volume serial number exceeds u32".to_owned())
+    })?;
+    Ok(PhysicalFileIdentity::Windows {
+        volume_serial,
+        file_index: information.file_index(),
+    })
+}
+
+pub(super) fn is_physical_path_redirect(path: &Path, file_type: &fs::FileType) -> bool {
+    if file_type.is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+
+        fs::symlink_metadata(path).map_or(true, |metadata| {
+            metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
         })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        false
+    }
+}
+
+fn physical_redirect_entry_identity(path: &Path) -> Result<PhysicalFileIdentity, InventoryError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+
+        let metadata = fs::symlink_metadata(path)
+            .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
+        Ok(PhysicalFileIdentity::Unix {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })
+    }
+    #[cfg(windows)]
+    {
+        use std::fs::OpenOptions;
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+        };
+
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+            .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
+        let handle = winapi_util::Handle::from_file(file);
+        let information = winapi_util::file::information(&handle)
+            .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
+        windows_physical_identity(&information)
     }
 }
 
@@ -373,10 +432,6 @@ pub(super) fn observe_physical_path_redirect(
     path: RepoPath,
 ) -> (PhysicalPathRedirect, Option<String>) {
     let raw_target = fs::read_link(native_path);
-    let target_error = raw_target
-        .as_ref()
-        .err()
-        .map(|error| format!("cannot observe physical redirect target: {error}"));
     let canonical_target = fs::canonicalize(native_path);
     let kind = match fs::metadata(native_path) {
         Ok(metadata) if metadata.is_file() => PhysicalPathRedirectKind::File,
@@ -384,12 +439,14 @@ pub(super) fn observe_physical_path_redirect(
         Ok(_) => PhysicalPathRedirectKind::Other,
         Err(_) => PhysicalPathRedirectKind::Unavailable,
     };
+    let entry_physical_identity = physical_redirect_entry_identity(native_path);
+    let target_physical_identity = physical_file_identity(native_path);
     let target_identity_sha256 = physical_redirect_target_sha256(
-        native_path,
         raw_target.as_ref(),
         canonical_target.as_ref(),
+        target_physical_identity.as_ref().ok(),
     );
-    let target = match canonical_target {
+    let target = match &canonical_target {
         _ if raw_target.is_err() => PhysicalPathRedirectTarget::Unavailable,
         Ok(target) if target.starts_with(canonical_root) => target
             .strip_prefix(canonical_root)
@@ -402,11 +459,31 @@ pub(super) fn observe_physical_path_redirect(
         Ok(_) => PhysicalPathRedirectTarget::OutsideRepository,
         Err(_) => PhysicalPathRedirectTarget::Unavailable,
     };
+    let mut errors = Vec::new();
+    if let Err(error) = &raw_target {
+        errors.push(format!("cannot observe physical redirect target: {error}"));
+    }
+    if let Err(error) = &canonical_target {
+        errors.push(format!("cannot resolve physical redirect target: {error}"));
+    }
+    if let Err(error) = &entry_physical_identity {
+        errors.push(format!(
+            "cannot observe physical redirect entry identity: {error}"
+        ));
+    }
+    if let Err(error) = &target_physical_identity {
+        errors.push(format!(
+            "cannot observe physical redirect target identity: {error}"
+        ));
+    }
+    let target_error = (!errors.is_empty()).then(|| errors.join("; "));
     (
         PhysicalPathRedirect {
             path,
             target,
             kind,
+            entry_physical_identity: entry_physical_identity.ok(),
+            target_physical_identity: target_physical_identity.ok(),
             target_identity_sha256,
         },
         target_error,
@@ -414,9 +491,9 @@ pub(super) fn observe_physical_path_redirect(
 }
 
 fn physical_redirect_target_sha256(
-    path: &Path,
     raw_target: Result<&PathBuf, &std::io::Error>,
     canonical_target: Result<&PathBuf, &std::io::Error>,
+    target_physical_identity: Option<&PhysicalFileIdentity>,
 ) -> String {
     let mut framed = Vec::new();
     match raw_target {
@@ -439,12 +516,12 @@ fn physical_redirect_target_sha256(
             append_length_prefixed(&mut framed, format!("{:?}", error.kind()).as_bytes());
         }
     }
-    match physical_file_identity(path) {
-        Ok(identity) => {
+    match target_physical_identity {
+        Some(identity) => {
             framed.push(1);
             append_length_prefixed(&mut framed, &identity.canonical_bytes());
         }
-        Err(_) => framed.push(0),
+        None => framed.push(0),
     }
     digest_hex(&framed)
 }

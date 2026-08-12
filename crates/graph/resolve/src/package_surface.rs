@@ -514,6 +514,7 @@ pub(super) fn verify_physical_package_containment(
     let mut current = candidate.clone();
     let mut visited = BTreeSet::new();
     loop {
+        reject_hard_excluded_package_target(package_root, &current)?;
         if !visited.insert(current.clone()) {
             return Err("package target physical redirect cycle is unsupported".to_owned());
         }
@@ -550,6 +551,24 @@ pub(super) fn verify_physical_package_containment(
         }
         current = resolved;
     }
+}
+
+fn reject_hard_excluded_package_target(
+    package_root: &RepoPath,
+    candidate: &RepoPath,
+) -> Result<(), String> {
+    let relative = candidate
+        .portable_relative_to(package_root)
+        .ok_or_else(|| {
+            "package target is not representable relative to the package root".to_owned()
+        })?;
+    if relative
+        .split('/')
+        .any(|component| matches!(component, ".git" | ".lumin" | "node_modules"))
+    {
+        return Err("package target enters a hard-excluded source namespace".to_owned());
+    }
+    Ok(())
 }
 
 pub(super) fn unresolved(specifier: &str, candidates: Vec<String>) -> PackageResolution {
@@ -613,6 +632,8 @@ mod tests {
                 "packages/lib/real",
             )?),
             kind: lumin_model::PhysicalPathRedirectKind::Directory,
+            entry_physical_identity: None,
+            target_physical_identity: None,
             target_identity_sha256: "contained".to_owned(),
         };
         assert!(verify_physical_package_containment(&package, &candidate, &[contained]).is_ok());
@@ -626,6 +647,8 @@ mod tests {
                 path: link.clone(),
                 target,
                 kind: lumin_model::PhysicalPathRedirectKind::Directory,
+                entry_physical_identity: None,
+                target_physical_identity: None,
                 target_identity_sha256: "rejected".to_owned(),
             };
             assert!(

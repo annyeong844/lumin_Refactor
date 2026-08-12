@@ -25,7 +25,7 @@ use lumin_model::{
 use serde::Deserialize;
 use thiserror::Error;
 
-use physical_path::observe_physical_path_redirect;
+use physical_path::{is_physical_path_redirect, observe_physical_path_redirect};
 
 pub use generated_config_policy::{
     FieldClassification as InventoryConfigFieldClassification,
@@ -654,8 +654,8 @@ fn collect_repository_files(
     context: &FileObservationContext<'_>,
 ) -> Result<CollectedFiles, InventoryError> {
     let mut collected = CollectedFiles::default();
-    let hard_excluded_redirects = Arc::new(Mutex::new(Vec::new()));
-    let captured_hard_excluded_redirects = Arc::clone(&hard_excluded_redirects);
+    let pruned_redirects = Arc::new(Mutex::new(Vec::new()));
+    let captured_pruned_redirects = Arc::clone(&pruned_redirects);
     let mut builder = WalkBuilder::new(context.root);
     builder
         .hidden(false)
@@ -665,15 +665,29 @@ fn collect_repository_files(
         .git_exclude(false)
         .follow_links(false)
         .filter_entry(move |entry| {
-            if !is_hard_excluded(entry.path()) {
-                return true;
-            }
-            if entry.file_type().is_some_and(|kind| kind.is_symlink())
-                && let Ok(mut redirects) = captured_hard_excluded_redirects.lock()
+            let hard_excluded = is_hard_excluded(entry.path());
+            let file_type = entry.file_type().or_else(|| {
+                fs::symlink_metadata(entry.path())
+                    .ok()
+                    .map(|metadata| metadata.file_type())
+            });
+            let Some(file_type) = file_type else {
+                if let Ok(mut redirects) = captured_pruned_redirects.lock() {
+                    redirects.push(entry.path().to_owned());
+                }
+                return false;
+            };
+            let redirect = is_physical_path_redirect(entry.path(), &file_type);
+            if hard_excluded
+                || (redirect
+                    && !fs::metadata(entry.path()).is_ok_and(|metadata| metadata.is_file()))
             {
-                redirects.push(entry.path().to_owned());
+                if redirect && let Ok(mut redirects) = captured_pruned_redirects.lock() {
+                    redirects.push(entry.path().to_owned());
+                }
+                return false;
             }
-            false
+            true
         });
 
     for result in builder.build() {
@@ -704,12 +718,13 @@ fn collect_repository_files(
         let Some(file_type) = entry.file_type() else {
             continue;
         };
-        if file_type.is_symlink() {
+        let is_redirect = is_physical_path_redirect(entry.path(), &file_type);
+        if is_redirect {
             record_physical_path_redirect(context, entry.path(), path.clone(), &mut collected);
         }
         let is_file = if file_type.is_file() {
             true
-        } else if file_type.is_symlink() {
+        } else if is_redirect {
             match fs::metadata(entry.path()) {
                 Ok(metadata) if metadata.is_file() => match fs::canonicalize(entry.path()) {
                     Ok(target) if target.starts_with(context.canonical_root) => true,
@@ -752,16 +767,16 @@ fn collect_repository_files(
         }
         collected.observe_file(context, entry.path(), relative, path)?;
     }
-    let mut hard_excluded_redirects = hard_excluded_redirects
+    let mut pruned_redirects = pruned_redirects
         .lock()
-        .map_err(|_| InventoryError::RootIo("hard-excluded redirect capture failed".to_owned()))?
+        .map_err(|_| InventoryError::RootIo("pruned redirect capture failed".to_owned()))?
         .clone();
-    hard_excluded_redirects.sort();
-    hard_excluded_redirects.dedup();
-    for native_path in hard_excluded_redirects {
+    pruned_redirects.sort();
+    pruned_redirects.dedup();
+    for native_path in pruned_redirects {
         let relative = native_path.strip_prefix(context.root).map_err(|_| {
             InventoryError::RootIo(format!(
-                "hard-excluded redirect escaped root: {}",
+                "pruned redirect escaped root: {}",
                 native_path.display()
             ))
         })?;

@@ -213,7 +213,118 @@ fn physical_escape_is_unsupported_before_candidate_publication()
 }
 
 #[test]
-fn hard_excluded_redirect_is_observed_before_pruning() -> Result<(), Box<dyn std::error::Error>> {
+fn hard_excluded_descendant_redirect_is_rejected_without_traversal()
+-> Result<(), Box<dyn std::error::Error>> {
+    let sandbox = tempfile::tempdir()?;
+    let root = sandbox.path().join("repo");
+    let outside = sandbox.path().join("outside");
+    fs::create_dir_all(&root)?;
+    fs::create_dir_all(&outside)?;
+    write_workspace(&root)?;
+    write_json(
+        &root,
+        "packages/lib/package.json",
+        &serde_json::json!({
+            "name": "@acme/lib",
+            "private": true,
+            "exports": "./.git/escape/index.js",
+        }),
+    )?;
+    write(&outside, "index.ts", "export const hidden = 1;\n")?;
+    let main_source = "import { hidden } from '@acme/lib'; console.log(hidden);\n";
+    write(&root, "src/main.ts", main_source)?;
+    let _redirect = DirectoryRedirect::create(
+        root.join("packages")
+            .join("lib")
+            .join(".git")
+            .join("escape"),
+        &outside,
+    )?;
+
+    let run_id = audit(&root, "incomplete", 1)?;
+    let source = file_response(&root, &run_id, "src/main.ts")?;
+    let resolution = named_resolution(&source, "@acme/lib", expected_span(main_source, "hidden")?)?;
+    assert_eq!(required_str(resolution, "/outcome/kind")?, "unsupported");
+    assert_eq!(
+        required_str(resolution, "/outcome/reason")?,
+        "package target enters a hard-excluded source namespace"
+    );
+    assert!(resolution.pointer("/outcome/candidates").is_none());
+    Ok(())
+}
+
+#[test]
+fn static_target_prefix_redirect_is_probed_without_sources()
+-> Result<(), Box<dyn std::error::Error>> {
+    let sandbox = tempfile::tempdir()?;
+    let root = sandbox.path().join("repo");
+    let outside = sandbox.path().join("outside");
+    fs::create_dir_all(&root)?;
+    fs::create_dir_all(&outside)?;
+    write_workspace(&root)?;
+    write_json(
+        &root,
+        "packages/lib/package.json",
+        &serde_json::json!({
+            "name": "@acme/lib",
+            "exports": {"./x/*": "./escape/generated/*.js"},
+        }),
+    )?;
+    write(&root, "src/main.ts", "console.log('main');\n")?;
+    let _redirect =
+        DirectoryRedirect::create(root.join("packages").join("lib").join("escape"), &outside)?;
+
+    let run_id = audit(&root, "incomplete", 1)?;
+    let overview = overview(&root, &run_id)?;
+    let limitations = required_array(&overview, "/limitations")?;
+    assert_eq!(limitations.len(), 1);
+    assert_eq!(
+        limitations[0].get("detail").and_then(Value::as_str),
+        Some("package target physically escapes the repository root")
+    );
+    Ok(())
+}
+
+#[test]
+fn public_pattern_probe_avoids_exact_and_more_specific_key_collisions()
+-> Result<(), Box<dyn std::error::Error>> {
+    for target in ["./escape/generated/*.js", "./escape/generated/index.js"] {
+        let sandbox = tempfile::tempdir()?;
+        let root = sandbox.path().join("repo");
+        let outside = sandbox.path().join("outside");
+        fs::create_dir_all(&root)?;
+        fs::create_dir_all(&outside)?;
+        write_workspace(&root)?;
+        write_json(
+            &root,
+            "packages/lib/package.json",
+            &serde_json::json!({
+                "name": "@acme/lib",
+                "exports": {
+                    "./features/lumin-pattern": null,
+                    "./features/lumin-*": null,
+                    "./features/*": target,
+                },
+            }),
+        )?;
+        write(&root, "src/main.ts", "console.log('main');\n")?;
+        let _redirect =
+            DirectoryRedirect::create(root.join("packages").join("lib").join("escape"), &outside)?;
+
+        let run_id = audit(&root, "incomplete", 1)?;
+        let limitations = required_array(&overview(&root, &run_id)?, "/limitations")?.to_owned();
+        assert_eq!(
+            limitations[0].get("detail").and_then(Value::as_str),
+            Some("package target physically escapes the repository root"),
+            "target: {target}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn hard_excluded_target_is_rejected_before_topology_pruning()
+-> Result<(), Box<dyn std::error::Error>> {
     let sandbox = tempfile::tempdir()?;
     let root = sandbox.path().join("repo");
     let outside = sandbox.path().join("outside");
@@ -241,7 +352,51 @@ fn hard_excluded_redirect_is_observed_before_pruning() -> Result<(), Box<dyn std
     assert_eq!(required_str(resolution, "/outcome/kind")?, "unsupported");
     assert_eq!(
         required_str(resolution, "/outcome/reason")?,
-        "package target physically escapes the repository root"
+        "package target enters a hard-excluded source namespace"
+    );
+    assert!(resolution.pointer("/outcome/candidates").is_none());
+    Ok(())
+}
+
+#[test]
+fn redirect_into_hard_excluded_namespace_is_rejected_after_lowering()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write_workspace(root.path())?;
+    write_json(
+        root.path(),
+        "packages/lib/package.json",
+        &serde_json::json!({
+            "name": "@acme/lib",
+            "private": true,
+            "exports": "./alias/index.js",
+        }),
+    )?;
+    write(
+        root.path(),
+        "packages/lib/.git/real/index.ts",
+        "export const hidden = 1;\n",
+    )?;
+    let main_source = "import { hidden } from '@acme/lib'; console.log(hidden);\n";
+    write(root.path(), "src/main.ts", main_source)?;
+    let hidden_target = root
+        .path()
+        .join("packages")
+        .join("lib")
+        .join(".git")
+        .join("real");
+    let _redirect = DirectoryRedirect::create(
+        root.path().join("packages").join("lib").join("alias"),
+        &hidden_target,
+    )?;
+
+    let run_id = audit(root.path(), "incomplete", 1)?;
+    let source = file_response(root.path(), &run_id, "src/main.ts")?;
+    let resolution = named_resolution(&source, "@acme/lib", expected_span(main_source, "hidden")?)?;
+    assert_eq!(required_str(resolution, "/outcome/kind")?, "unsupported");
+    assert_eq!(
+        required_str(resolution, "/outcome/reason")?,
+        "package target enters a hard-excluded source namespace"
     );
     assert!(resolution.pointer("/outcome/candidates").is_none());
     Ok(())
@@ -475,6 +630,151 @@ fn same_category_redirect_retargeting_invalidates_the_active_gate()
     assert_status(&operation_after, 0);
     assert_eq!(operation_after.stdout, operation_before.stdout);
     let gate_after = run(&root, &["gate", "show", &gate_id])?;
+    assert_status(&gate_after, 0);
+    assert_eq!(gate_after.stdout, gate_before.stdout);
+    Ok(())
+}
+
+#[test]
+fn same_target_redirect_replacement_invalidates_the_active_gate()
+-> Result<(), Box<dyn std::error::Error>> {
+    let sandbox = tempfile::tempdir()?;
+    let root = sandbox.path().join("repo");
+    let target = root.join("packages").join("lib").join("target");
+    fs::create_dir_all(&target)?;
+    write_workspace(&root)?;
+    write_json(
+        &root,
+        "packages/lib/package.json",
+        &serde_json::json!({"name": "@acme/lib", "private": true}),
+    )?;
+    write(&root, "src/main.ts", "console.log('main');\n")?;
+    let redirect_path = root.join("packages").join("lib").join("link");
+    let redirect = DirectoryRedirect::create(redirect_path.clone(), &target)?;
+
+    let opened = run(
+        &root,
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-redirect-replace-open",
+            "--path",
+            "src/main.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&opened, 0);
+    assert_eq!(field(&opened.stdout, "decision")?, "allow");
+    let gate_id = field(&opened.stdout, "gateId")?;
+
+    let retired_path = sandbox.path().join("retired-link");
+    fs::rename(&redirect.path, &retired_path)?;
+    create_directory_redirect(&redirect.path, &target)?;
+    let _retired_redirect = DirectoryRedirect { path: retired_path };
+
+    let close_arguments = [
+        "post-write",
+        gate_id.as_str(),
+        "--operation-id",
+        "op-redirect-replace-close",
+    ];
+    let closed = run(&root, &close_arguments)?;
+    assert_status(&closed, 5);
+    assert_eq!(field(&closed.stdout, "decision")?, "stale");
+    assert_eq!(field(&closed.stdout, "lifecycle")?, "active");
+    let operation_before = run(&root, &["operation", "show", "op-redirect-replace-close"])?;
+    assert_status(&operation_before, 0);
+    let gate_before = run(&root, &["gate", "show", &gate_id])?;
+    assert_status(&gate_before, 0);
+
+    let retry = run(&root, &close_arguments)?;
+    assert_status(&retry, 5);
+    assert_eq!(retry.stdout, closed.stdout);
+    let operation_after = run(&root, &["operation", "show", "op-redirect-replace-close"])?;
+    assert_status(&operation_after, 0);
+    assert_eq!(operation_after.stdout, operation_before.stdout);
+    let gate_after = run(&root, &["gate", "show", &gate_id])?;
+    assert_status(&gate_after, 0);
+    assert_eq!(gate_after.stdout, gate_before.stdout);
+    Ok(())
+}
+
+#[test]
+fn redirect_target_identity_blocks_a_physical_directory_writer()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write_workspace(root.path())?;
+    write_json(
+        root.path(),
+        "packages/lib/package.json",
+        &serde_json::json!({"name": "@acme/lib", "private": true}),
+    )?;
+    fs::create_dir_all(root.path().join("packages/lib/inside"))?;
+    write(root.path(), "src/main.ts", "console.log('main');\n")?;
+    let inside = root.path().join("packages").join("lib").join("inside");
+    let _redirect = DirectoryRedirect::create(
+        root.path().join("packages").join("lib").join("link"),
+        &inside,
+    )?;
+
+    let reader = run(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-redirect-reader",
+            "--path",
+            "src/main.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&reader, 0);
+    assert_eq!(field(&reader.stdout, "decision")?, "allow");
+    let reader_gate = field(&reader.stdout, "gateId")?;
+
+    let writer_arguments = [
+        "pre-write",
+        "--operation-id",
+        "op-redirect-target-writer",
+        "--path",
+        "packages/lib/inside",
+        "--jobs",
+        "1",
+    ];
+    let writer = run(root.path(), &writer_arguments)?;
+    assert_status(&writer, 4);
+    assert_eq!(field(&writer.stdout, "decision")?, "incomplete");
+    let response: Value = serde_json::from_str(&writer.stdout)?;
+    let conflict = required_array(&response, "/signals")?
+        .iter()
+        .find(|signal| signal.get("kind").and_then(Value::as_str) == Some("write-conflict"))
+        .ok_or_else(|| std::io::Error::other("physical redirect write conflict is missing"))?;
+    assert_eq!(
+        required_str(conflict, "/paths/0/display")?,
+        "packages/lib/inside"
+    );
+    assert_eq!(required_str(conflict, "/gateIds/0")?, reader_gate);
+    let writer_gate = field(&writer.stdout, "gateId")?;
+    let operation_before = run(
+        root.path(),
+        &["operation", "show", "op-redirect-target-writer"],
+    )?;
+    assert_status(&operation_before, 0);
+    let gate_before = run(root.path(), &["gate", "show", &writer_gate])?;
+    assert_status(&gate_before, 0);
+
+    let retry = run(root.path(), &writer_arguments)?;
+    assert_status(&retry, 4);
+    assert_eq!(retry.stdout, writer.stdout);
+    let operation_after = run(
+        root.path(),
+        &["operation", "show", "op-redirect-target-writer"],
+    )?;
+    assert_status(&operation_after, 0);
+    assert_eq!(operation_after.stdout, operation_before.stdout);
+    let gate_after = run(root.path(), &["gate", "show", &writer_gate])?;
     assert_status(&gate_after, 0);
     assert_eq!(gate_after.stdout, gate_before.stdout);
     Ok(())

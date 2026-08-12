@@ -208,12 +208,7 @@ fn select(
             })),
             ObjectKind::Conditions => Ok(None),
             ObjectKind::Subpaths => {
-                let selected = entries
-                    .iter()
-                    .enumerate()
-                    .find(|(_, entry)| entry.key == request_key)
-                    .map(|(index, entry)| (index, entry, None))
-                    .or_else(|| select_pattern(entries, request_key));
+                let selected = select_subpath_entry(entries, request_key);
                 let Some((_, entry, capture)) = selected else {
                     return Ok(None);
                 };
@@ -229,6 +224,25 @@ fn select(
         },
         _ => Err("package exports must match exports-v1".to_owned()),
     }
+}
+
+pub(super) fn selected_subpath_entry_index(
+    entries: &[ConfigEntry],
+    request_key: &str,
+) -> Option<usize> {
+    select_subpath_entry(entries, request_key).map(|(index, _, _)| index)
+}
+
+fn select_subpath_entry<'a>(
+    entries: &'a [ConfigEntry],
+    request_key: &str,
+) -> Option<(usize, &'a ConfigEntry, Option<String>)> {
+    entries
+        .iter()
+        .enumerate()
+        .find(|(_, entry)| entry.key == request_key)
+        .map(|(index, entry)| (index, entry, None))
+        .or_else(|| select_pattern(entries, request_key))
 }
 
 pub(super) fn select_subpath_value(

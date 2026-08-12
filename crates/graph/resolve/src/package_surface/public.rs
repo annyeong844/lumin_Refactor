@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_model::{
-    ConfigDocument, ConfigValue, ImportKind, LogicalSourceId, PackageFact, PackageIdentityState,
-    PackagePrivacy, PackageSurfaceLane, PhysicalPathRedirect, PhysicalPathRedirectKind, RepoPath,
-    SemanticConfigSnapshot, SourceSnapshot, SymbolNamespace,
+    ConfigDocument, ConfigEntry, ConfigValue, ImportKind, Limitation, LogicalSourceId, PackageFact,
+    PackageIdentityState, PackagePrivacy, PackageSurfaceLane, PhysicalPathRedirect,
+    PhysicalPathRedirectKind, RepoPath, SemanticConfigSnapshot, SourceSnapshot, SymbolNamespace,
 };
 
 use super::{
@@ -43,14 +43,25 @@ pub(super) fn collect(
             PackageSurfaceLane::NodeRequire,
         ] {
             for namespace in [SymbolNamespace::Value, SymbolNamespace::Type] {
-                let requests = public_requests(
+                let requests = match public_requests(
                     package,
                     manifest,
                     lane,
                     namespace,
                     sources,
                     physical_path_redirects,
-                );
+                ) {
+                    Ok(requests) => requests,
+                    Err(detail) => {
+                        output
+                            .limitations
+                            .push(Limitation::PublicSurfaceUnsupported {
+                                path: package.manifest_path.display_escaped(),
+                                detail,
+                            });
+                        continue;
+                    }
+                };
                 for request in requests {
                     let result = resolve_request(
                         &context,
@@ -92,9 +103,9 @@ fn public_requests(
     namespace: SymbolNamespace,
     sources: &[SourceSnapshot],
     physical_path_redirects: &[PhysicalPathRedirect],
-) -> Vec<PublicRequest> {
+) -> Result<Vec<PublicRequest>, String> {
     let PackageIdentityState::Valid(identity) = &package.identity else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
     let mut keys = BTreeMap::from([(".".to_owned(), false)]);
     if lane != PackageSurfaceLane::LegacyNode
@@ -104,24 +115,26 @@ fn public_requests(
             Ok(super::exports::ObjectKind::Subpaths)
         )
     {
-        for entry in entries {
+        for (entry_index, entry) in entries.iter().enumerate() {
             if !entry.key.contains('*') {
                 insert_public_key(&mut keys, entry.key.clone(), false);
                 continue;
             }
             for (key, probe_only) in pattern_public_keys(
                 package,
-                entry,
+                entries,
+                entry_index,
                 lane,
                 namespace,
                 sources,
                 physical_path_redirects,
-            ) {
+            )? {
                 insert_public_key(&mut keys, key, probe_only);
             }
         }
     }
-    keys.into_iter()
+    Ok(keys
+        .into_iter()
         .filter_map(|(key, probe_only)| {
             let specifier = if key == "." {
                 identity.as_str().to_owned()
@@ -134,7 +147,7 @@ fn public_requests(
                 probe_only,
             })
         })
-        .collect()
+        .collect())
 }
 
 fn insert_public_key(keys: &mut BTreeMap<String, bool>, key: String, probe_only: bool) {
@@ -145,28 +158,37 @@ fn insert_public_key(keys: &mut BTreeMap<String, bool>, key: String, probe_only:
 
 fn pattern_public_keys(
     package: &PackageFact,
-    entry: &lumin_model::ConfigEntry,
+    entries: &[ConfigEntry],
+    entry_index: usize,
     lane: PackageSurfaceLane,
     namespace: SymbolNamespace,
     sources: &[SourceSnapshot],
     physical_path_redirects: &[PhysicalPathRedirect],
-) -> BTreeMap<String, bool> {
+) -> Result<BTreeMap<String, bool>, String> {
+    let entry = entries
+        .get(entry_index)
+        .ok_or_else(|| "exports pattern entry disappeared during public probing".to_owned())?;
     let mut keys = BTreeMap::new();
     let Ok(Some(selected)) = super::exports::select_subpath_value(&entry.value, lane, namespace)
     else {
-        return keys;
+        return Ok(keys);
     };
     let Some(target) = selected.target else {
-        return keys;
+        return Ok(keys);
     };
     if !target.contains('*') {
         insert_public_key(
             &mut keys,
-            entry.key.replacen('*', "lumin-pattern", 1),
+            selectable_pattern_probe(entries, entry_index)?,
             false,
         );
-        return keys;
+        return Ok(keys);
     }
+    insert_public_key(
+        &mut keys,
+        selectable_pattern_probe(entries, entry_index)?,
+        true,
+    );
     for source in sources {
         let Some(relative) = source.path.portable_relative_to(&package.root) else {
             continue;
@@ -187,7 +209,7 @@ fn pattern_public_keys(
         }
     }
     let Some((_, suffix)) = target.split_once('*') else {
-        return keys;
+        return Ok(keys);
     };
     for redirect in physical_path_redirects
         .iter()
@@ -206,7 +228,29 @@ fn pattern_public_keys(
             }
         }
     }
-    keys
+    Ok(keys)
+}
+
+fn selectable_pattern_probe(entries: &[ConfigEntry], entry_index: usize) -> Result<String, String> {
+    let entry = entries
+        .get(entry_index)
+        .ok_or_else(|| "exports pattern entry disappeared during public probing".to_owned())?;
+    let capture = (0..=u32::from(char::MAX))
+        .filter_map(char::from_u32)
+        .find(|candidate| {
+            candidate.is_alphanumeric()
+                && entries.iter().all(|other| !other.key.contains(*candidate))
+        })
+        .ok_or_else(|| {
+            "exports patterns leave no collision-free public probe character".to_owned()
+        })?
+        .to_string();
+    let key = entry.key.replacen('*', &capture, 1);
+    super::exports::validate_subpath_key(&key)?;
+    if super::exports::selected_subpath_entry_index(entries, &key) != Some(entry_index) {
+        return Err("exports pattern precedence rejected a collision-free public probe".to_owned());
+    }
+    Ok(key)
 }
 
 fn redirect_pattern_candidates(
@@ -289,5 +333,31 @@ mod tests {
         ] {
             assert_eq!(redirect_pattern_candidates("dist", ".js", kind), descendant);
         }
+    }
+
+    #[test]
+    fn selectable_pattern_probe_avoids_exact_and_more_specific_keys()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let entries = vec![
+            ConfigEntry {
+                key: "./features/lumin-pattern".to_owned(),
+                value: ConfigValue::Null,
+            },
+            ConfigEntry {
+                key: "./features/lumin-*".to_owned(),
+                value: ConfigValue::Null,
+            },
+            ConfigEntry {
+                key: "./features/*".to_owned(),
+                value: ConfigValue::String("./escape/generated/*.js".to_owned()),
+            },
+        ];
+        let key = selectable_pattern_probe(&entries, 2)?;
+        assert_eq!(
+            super::super::exports::selected_subpath_entry_index(&entries, &key),
+            Some(2)
+        );
+        assert_ne!(key, "./features/lumin-pattern");
+        Ok(())
     }
 }

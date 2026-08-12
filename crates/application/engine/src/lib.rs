@@ -628,12 +628,15 @@ fn semantic_input_records(inventory: &InventorySnapshot) -> Vec<SemanticInputRec
         let sha256 = redirect.semantic_sha256();
         if let Some(input) = inputs.iter_mut().find(|input| input.path == path) {
             input.physical_redirect_sha256 = Some(sha256);
+            if input.physical_identity.is_none() {
+                input.physical_identity = redirect.target_physical_identity.clone();
+            }
         } else {
             inputs.push(SemanticInputRecord {
                 path,
                 state: SemanticInputState::PathRedirect,
                 payload_sha256: None,
-                physical_identity: None,
+                physical_identity: redirect.target_physical_identity.clone(),
                 absence_parent: None,
                 physical_redirect_sha256: Some(sha256),
             });
