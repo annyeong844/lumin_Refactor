@@ -2,7 +2,7 @@
 use std::fs;
 
 #[cfg(unix)]
-use lumin_model::{PhysicalPathRedirectTarget, RepoPath};
+use lumin_model::{PhysicalPathRedirectKind, PhysicalPathRedirectTarget, RepoPath};
 
 #[cfg(unix)]
 use super::super::{InventoryRequest, scan};
@@ -33,6 +33,7 @@ fn scan_records_directory_redirect_targets_without_following_them()
         escape_before.target,
         PhysicalPathRedirectTarget::OutsideRepository
     );
+    assert_eq!(escape_before.kind, PhysicalPathRedirectKind::Directory);
     assert!(!escape_before.target_identity_sha256.is_empty());
     let local = before
         .physical_path_redirects
@@ -43,6 +44,7 @@ fn scan_records_directory_redirect_targets_without_following_them()
         local.target,
         PhysicalPathRedirectTarget::Repository(RepoPath::from_portable("packages/lib/inside")?)
     );
+    assert_eq!(local.kind, PhysicalPathRedirectKind::Directory);
 
     fs::remove_file(root.path().join("packages/lib/escape"))?;
     std::os::unix::fs::symlink(

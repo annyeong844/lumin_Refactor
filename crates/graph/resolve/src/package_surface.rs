@@ -461,6 +461,11 @@ pub(super) fn resolve_base(
     sources: &BTreeMap<RepoPath, LogicalSourceId>,
     physical_path_redirects: &[PhysicalPathRedirect],
 ) -> PackageResolution {
+    if let Err(detail) =
+        verify_physical_package_containment(&package.root, &request.base, physical_path_redirects)
+    {
+        return unsupported(package, request.specifier, &detail);
+    }
     let mut paths = candidates(
         &request.base,
         request.namespace,
@@ -607,6 +612,7 @@ mod tests {
             target: PhysicalPathRedirectTarget::Repository(RepoPath::from_portable(
                 "packages/lib/real",
             )?),
+            kind: lumin_model::PhysicalPathRedirectKind::Directory,
             target_identity_sha256: "contained".to_owned(),
         };
         assert!(verify_physical_package_containment(&package, &candidate, &[contained]).is_ok());
@@ -619,6 +625,7 @@ mod tests {
             let redirect = PhysicalPathRedirect {
                 path: link.clone(),
                 target,
+                kind: lumin_model::PhysicalPathRedirectKind::Directory,
                 target_identity_sha256: "rejected".to_owned(),
             };
             assert!(

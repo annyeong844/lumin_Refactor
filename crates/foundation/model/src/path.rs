@@ -93,10 +93,19 @@ pub enum PhysicalPathRedirectTarget {
     Unavailable,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum PhysicalPathRedirectKind {
+    File,
+    Directory,
+    Other,
+    Unavailable,
+}
+
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct PhysicalPathRedirect {
     pub path: RepoPath,
     pub target: PhysicalPathRedirectTarget,
+    pub kind: PhysicalPathRedirectKind,
     pub target_identity_sha256: String,
 }
 
@@ -105,6 +114,12 @@ impl PhysicalPathRedirect {
         let mut framed = Vec::new();
         crate::append_length_prefixed(&mut framed, self.path.canonical_bytes());
         crate::append_length_prefixed(&mut framed, self.target_identity_sha256.as_bytes());
+        framed.push(match self.kind {
+            PhysicalPathRedirectKind::File => 1,
+            PhysicalPathRedirectKind::Directory => 2,
+            PhysicalPathRedirectKind::Other => 3,
+            PhysicalPathRedirectKind::Unavailable => 4,
+        });
         match &self.target {
             PhysicalPathRedirectTarget::Repository(target) => {
                 framed.push(1);

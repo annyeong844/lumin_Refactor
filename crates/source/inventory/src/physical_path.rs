@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 
 use lumin_model::{
     ConfigAbsenceParent, PhysicalAliasWriteClosure, PhysicalFileIdentity, PhysicalPathRedirect,
-    PhysicalPathRedirectTarget, RepoPath, append_length_prefixed, digest_hex,
+    PhysicalPathRedirectKind, PhysicalPathRedirectTarget, RepoPath, append_length_prefixed,
+    digest_hex,
 };
 use thiserror::Error;
 
@@ -377,6 +378,12 @@ pub(super) fn observe_physical_path_redirect(
         .err()
         .map(|error| format!("cannot observe physical redirect target: {error}"));
     let canonical_target = fs::canonicalize(native_path);
+    let kind = match fs::metadata(native_path) {
+        Ok(metadata) if metadata.is_file() => PhysicalPathRedirectKind::File,
+        Ok(metadata) if metadata.is_dir() => PhysicalPathRedirectKind::Directory,
+        Ok(_) => PhysicalPathRedirectKind::Other,
+        Err(_) => PhysicalPathRedirectKind::Unavailable,
+    };
     let target_identity_sha256 = physical_redirect_target_sha256(
         native_path,
         raw_target.as_ref(),
@@ -399,6 +406,7 @@ pub(super) fn observe_physical_path_redirect(
         PhysicalPathRedirect {
             path,
             target,
+            kind,
             target_identity_sha256,
         },
         target_error,

@@ -11,7 +11,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use ignore::WalkBuilder;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
@@ -654,6 +654,8 @@ fn collect_repository_files(
     context: &FileObservationContext<'_>,
 ) -> Result<CollectedFiles, InventoryError> {
     let mut collected = CollectedFiles::default();
+    let hard_excluded_redirects = Arc::new(Mutex::new(Vec::new()));
+    let captured_hard_excluded_redirects = Arc::clone(&hard_excluded_redirects);
     let mut builder = WalkBuilder::new(context.root);
     builder
         .hidden(false)
@@ -662,7 +664,17 @@ fn collect_repository_files(
         .git_global(false)
         .git_exclude(false)
         .follow_links(false)
-        .filter_entry(|entry| !is_hard_excluded(entry.path()));
+        .filter_entry(move |entry| {
+            if !is_hard_excluded(entry.path()) {
+                return true;
+            }
+            if entry.file_type().is_some_and(|kind| kind.is_symlink())
+                && let Ok(mut redirects) = captured_hard_excluded_redirects.lock()
+            {
+                redirects.push(entry.path().to_owned());
+            }
+            false
+        });
 
     for result in builder.build() {
         let entry = match result {
@@ -693,19 +705,7 @@ fn collect_repository_files(
             continue;
         };
         if file_type.is_symlink() {
-            let (redirect, target_error) =
-                observe_physical_path_redirect(context.canonical_root, entry.path(), path.clone());
-            if let Some(detail) = target_error {
-                collected
-                    .limitations
-                    .push(Limitation::SourcePayloadUnavailable {
-                        path: path.display_escaped(),
-                        detail,
-                    });
-            }
-            collected
-                .physical_path_redirects
-                .insert(path.clone(), redirect);
+            record_physical_path_redirect(context, entry.path(), path.clone(), &mut collected);
         }
         let is_file = if file_type.is_file() {
             true
@@ -752,7 +752,47 @@ fn collect_repository_files(
         }
         collected.observe_file(context, entry.path(), relative, path)?;
     }
+    let mut hard_excluded_redirects = hard_excluded_redirects
+        .lock()
+        .map_err(|_| InventoryError::RootIo("hard-excluded redirect capture failed".to_owned()))?
+        .clone();
+    hard_excluded_redirects.sort();
+    hard_excluded_redirects.dedup();
+    for native_path in hard_excluded_redirects {
+        let relative = native_path.strip_prefix(context.root).map_err(|_| {
+            InventoryError::RootIo(format!(
+                "hard-excluded redirect escaped root: {}",
+                native_path.display()
+            ))
+        })?;
+        let path = RepoPath::from_native_relative(relative).map_err(|source| {
+            InventoryError::InvalidRepoPath {
+                path: relative.display().to_string(),
+                source,
+            }
+        })?;
+        record_physical_path_redirect(context, &native_path, path, &mut collected);
+    }
     Ok(collected)
+}
+
+fn record_physical_path_redirect(
+    context: &FileObservationContext<'_>,
+    native_path: &Path,
+    path: RepoPath,
+    collected: &mut CollectedFiles,
+) {
+    let (redirect, target_error) =
+        observe_physical_path_redirect(context.canonical_root, native_path, path.clone());
+    if let Some(detail) = target_error {
+        collected
+            .limitations
+            .push(Limitation::SourcePayloadUnavailable {
+                path: path.display_escaped(),
+                detail,
+            });
+    }
+    collected.physical_path_redirects.insert(path, redirect);
 }
 
 impl CollectedFiles {

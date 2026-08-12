@@ -213,6 +213,153 @@ fn physical_escape_is_unsupported_before_candidate_publication()
 }
 
 #[test]
+fn hard_excluded_redirect_is_observed_before_pruning() -> Result<(), Box<dyn std::error::Error>> {
+    let sandbox = tempfile::tempdir()?;
+    let root = sandbox.path().join("repo");
+    let outside = sandbox.path().join("outside");
+    fs::create_dir_all(&root)?;
+    fs::create_dir_all(&outside)?;
+    write_workspace(&root)?;
+    write_json(
+        &root,
+        "packages/lib/package.json",
+        &serde_json::json!({
+            "name": "@acme/lib",
+            "private": true,
+            "exports": "./.git/index.js",
+        }),
+    )?;
+    write(&outside, "index.ts", "export const hidden = 1;\n")?;
+    let main_source = "import { hidden } from '@acme/lib'; console.log(hidden);\n";
+    write(&root, "src/main.ts", main_source)?;
+    let _redirect =
+        DirectoryRedirect::create(root.join("packages").join("lib").join(".git"), &outside)?;
+
+    let run_id = audit(&root, "incomplete", 1)?;
+    let source = file_response(&root, &run_id, "src/main.ts")?;
+    let resolution = named_resolution(&source, "@acme/lib", expected_span(main_source, "hidden")?)?;
+    assert_eq!(required_str(resolution, "/outcome/kind")?, "unsupported");
+    assert_eq!(
+        required_str(resolution, "/outcome/reason")?,
+        "package target physically escapes the repository root"
+    );
+    assert!(resolution.pointer("/outcome/candidates").is_none());
+    Ok(())
+}
+
+#[test]
+fn literal_target_escape_is_checked_before_extension_probe()
+-> Result<(), Box<dyn std::error::Error>> {
+    let sandbox = tempfile::tempdir()?;
+    let root = sandbox.path().join("repo");
+    let outside = sandbox.path().join("outside");
+    fs::create_dir_all(&root)?;
+    fs::create_dir_all(&outside)?;
+    write_workspace(&root)?;
+    write_json(
+        &root,
+        "packages/lib/package.json",
+        &serde_json::json!({
+            "name": "@acme/lib",
+            "private": true,
+            "exports": "./dist/index.js",
+        }),
+    )?;
+    write(
+        &root,
+        "packages/lib/dist/index.ts",
+        "export const selectedTooEarly = 1;\n",
+    )?;
+    let main_source = concat!(
+        "import { selectedTooEarly } from '@acme/lib';\n",
+        "console.log(selectedTooEarly);\n",
+    );
+    write(&root, "src/main.ts", main_source)?;
+    let _redirect = DirectoryRedirect::create(
+        root.join("packages")
+            .join("lib")
+            .join("dist")
+            .join("index.js"),
+        &outside,
+    )?;
+
+    let run_id = audit(&root, "incomplete", 1)?;
+    let source = file_response(&root, &run_id, "src/main.ts")?;
+    let resolution = named_resolution(
+        &source,
+        "@acme/lib",
+        expected_span(main_source, "selectedTooEarly")?,
+    )?;
+    assert_eq!(required_str(resolution, "/outcome/kind")?, "unsupported");
+    assert_eq!(
+        required_str(resolution, "/outcome/reason")?,
+        "package target physically escapes the repository root"
+    );
+    assert!(resolution.pointer("/outcome/target").is_none());
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn file_redirect_is_not_treated_as_a_wildcard_directory() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    write_workspace(root.path())?;
+    write_json(
+        root.path(),
+        "packages/lib/package.json",
+        &serde_json::json!({
+            "name": "@acme/lib",
+            "exports": {"./features/*": "./dist/*.js"},
+        }),
+    )?;
+    write(root.path(), "shared/readme.txt", "not a source\n")?;
+    write(root.path(), "src/main.ts", "console.log('main');\n")?;
+    let _redirect = FileRedirect::create(
+        root.path().join("packages/lib/dist/readme.txt"),
+        &root.path().join("shared/readme.txt"),
+    )?;
+
+    let run_id = audit(root.path(), "complete", 0)?;
+    assert!(required_array(&overview(root.path(), &run_id)?, "/limitations")?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn more_specific_null_pattern_prevents_a_general_escape_probe()
+-> Result<(), Box<dyn std::error::Error>> {
+    let sandbox = tempfile::tempdir()?;
+    let root = sandbox.path().join("repo");
+    let outside = sandbox.path().join("outside");
+    fs::create_dir_all(&root)?;
+    fs::create_dir_all(&outside)?;
+    write_workspace(&root)?;
+    write_json(
+        &root,
+        "packages/lib/package.json",
+        &serde_json::json!({
+            "name": "@acme/lib",
+            "exports": {
+                "./features/private/*": null,
+                "./features/*": "./escape/*.js",
+            },
+        }),
+    )?;
+    write(&root, "src/main.ts", "console.log('main');\n")?;
+    let _redirect = DirectoryRedirect::create(
+        root.join("packages")
+            .join("lib")
+            .join("escape")
+            .join("private"),
+        &outside,
+    )?;
+
+    let run_id = audit(&root, "complete", 0)?;
+    assert!(required_array(&overview(&root, &run_id)?, "/limitations")?.is_empty());
+    Ok(())
+}
+
+#[test]
 fn empty_wildcard_target_still_reports_its_physical_escape()
 -> Result<(), Box<dyn std::error::Error>> {
     let sandbox = tempfile::tempdir()?;
@@ -337,6 +484,29 @@ struct DirectoryRedirect {
     path: PathBuf,
 }
 
+#[cfg(unix)]
+struct FileRedirect {
+    path: PathBuf,
+}
+
+#[cfg(unix)]
+impl FileRedirect {
+    fn create(path: PathBuf, target: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        create_file_redirect(&path, target)?;
+        Ok(Self { path })
+    }
+}
+
+#[cfg(unix)]
+impl Drop for FileRedirect {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
 impl DirectoryRedirect {
     fn create(path: PathBuf, target: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         if let Some(parent) = path.parent() {
@@ -361,6 +531,11 @@ impl Drop for DirectoryRedirect {
 
 #[cfg(unix)]
 fn create_directory_redirect(path: &Path, target: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, path)
+}
+
+#[cfg(unix)]
+fn create_file_redirect(path: &Path, target: &Path) -> std::io::Result<()> {
     std::os::unix::fs::symlink(target, path)
 }
 
