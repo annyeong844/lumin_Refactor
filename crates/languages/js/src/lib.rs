@@ -20,6 +20,8 @@ use require_scope::RequireScopeTracker;
 const REQUIRE_ATTRIBUTION_OPAQUE: &str = "shadowed, mutated, dynamically resolved, or escaped require makes CommonJS module-use attribution opaque";
 const MODULE_REQUIRE_ATTRIBUTION_OPAQUE: &str =
     "module.require cannot be attributed to the CommonJS wrapper loader";
+const COMMONJS_EXPORT_LOWERING_UNSUPPORTED: &str =
+    "CommonJS export lowering is not implemented in the first audit increment";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct JsExtractError {
@@ -119,9 +121,9 @@ pub fn parse_payload(kind: SourceKind, bytes: &[u8]) -> Result<JsPayloadFacts, J
         limitation_details: Vec::new(),
     };
     if matches!(kind, SourceKind::CommonJs | SourceKind::Cts) {
-        facts.limitation_details.push(
-            "CommonJS export lowering is not implemented in the first audit increment".to_owned(),
-        );
+        facts
+            .limitation_details
+            .push(COMMONJS_EXPORT_LOWERING_UNSUPPORTED.to_owned());
     }
     for statement in &parsed.program.body {
         lower_statement(statement, &mut facts);
@@ -135,11 +137,22 @@ pub fn parse_payload(kind: SourceKind, bytes: &[u8]) -> Result<JsPayloadFacts, J
         require_scopes,
         opaque_require_reported: false,
         opaque_module_require_reported: false,
+        commonjs_export_syntax_observed: false,
     };
     if escaped_require {
         detector.report_opaque_require();
     }
     detector.visit_program(&parsed.program);
+    if detector.commonjs_export_syntax_observed
+        && !facts
+            .limitation_details
+            .iter()
+            .any(|detail| detail == COMMONJS_EXPORT_LOWERING_UNSUPPORTED)
+    {
+        facts
+            .limitation_details
+            .push(COMMONJS_EXPORT_LOWERING_UNSUPPORTED.to_owned());
+    }
     facts.uses.extend(detector.uses);
     facts.limitation_details.extend(detector.unknown_details);
     canonicalize(&mut facts);
@@ -214,21 +227,7 @@ fn lower_statement(statement: &Statement<'_>, facts: &mut JsPayloadFacts) {
                 span: span(declaration.span),
             });
         }
-        Statement::ExportAllDeclaration(declaration) => {
-            facts.uses.push(SourceUseTemplate {
-                specifier: declaration.source.value.to_string(),
-                imported_name: None,
-                local_name: None,
-                namespace: namespace(declaration.export_kind),
-                kind: ImportKind::ReExportAll,
-                request_kind: ModuleRequestKind::StaticImport,
-                span: span(declaration.span),
-            });
-            facts.limitation_details.push(format!(
-                "export-all from {} requires graph expansion not implemented in this increment",
-                declaration.source.value
-            ));
-        }
+        Statement::ExportAllDeclaration(declaration) => lower_export_all(declaration, facts),
         Statement::TSExportAssignment(_) | Statement::TSNamespaceExportDeclaration(_) => {
             facts
                 .limitation_details
@@ -300,6 +299,46 @@ fn lower_import(declaration: &ImportDeclaration<'_>, facts: &mut JsPayloadFacts)
             }
         }
     }
+}
+
+fn lower_export_all(
+    declaration: &oxc_ast::ast::ExportAllDeclaration<'_>,
+    facts: &mut JsPayloadFacts,
+) {
+    let declaration_namespace = namespace(declaration.export_kind);
+    if let Some(exported) = &declaration.exported {
+        let exported_name = module_export_name(exported);
+        facts.exports.push(ExportTemplate {
+            exported_name,
+            local_name: None,
+            namespace: declaration_namespace,
+            span: span(declaration.span),
+        });
+        facts.uses.push(SourceUseTemplate {
+            specifier: declaration.source.value.to_string(),
+            imported_name: None,
+            local_name: None,
+            namespace: declaration_namespace,
+            kind: ImportKind::Namespace,
+            request_kind: ModuleRequestKind::StaticImport,
+            span: span(declaration.span),
+        });
+        return;
+    }
+
+    facts.uses.push(SourceUseTemplate {
+        specifier: declaration.source.value.to_string(),
+        imported_name: None,
+        local_name: None,
+        namespace: declaration_namespace,
+        kind: ImportKind::ReExportAll,
+        request_kind: ModuleRequestKind::StaticImport,
+        span: span(declaration.span),
+    });
+    facts.limitation_details.push(format!(
+        "export-all from {} requires graph expansion not implemented in this increment",
+        declaration.source.value
+    ));
 }
 
 fn lower_named_export(declaration: &ExportNamedDeclaration<'_>, facts: &mut JsPayloadFacts) {
@@ -480,11 +519,12 @@ struct DynamicUseDetector {
     require_scopes: RequireScopeTracker,
     opaque_require_reported: bool,
     opaque_module_require_reported: bool,
+    commonjs_export_syntax_observed: bool,
 }
 
 impl DynamicUseDetector {
-    fn require_is_opaque(&self) -> bool {
-        self.require_scopes.require_is_opaque()
+    fn require_is_opaque(&self, call_position: u32) -> bool {
+        self.require_scopes.require_is_opaque(call_position)
     }
 
     fn report_opaque_require(&mut self) {
@@ -534,7 +574,9 @@ impl<'a> Visit<'a> for DynamicUseDetector {
     }
 
     fn visit_call_expression(&mut self, expression: &oxc_ast::ast::CallExpression<'a>) {
-        if expression.callee.is_specific_id("require") && self.require_is_opaque() {
+        if expression.callee.is_specific_id("require")
+            && self.require_is_opaque(expression.span.start)
+        {
             self.report_opaque_require();
         } else if let Some(source) = expression.common_js_require() {
             self.uses.push(SourceUseTemplate {
@@ -549,7 +591,9 @@ impl<'a> Visit<'a> for DynamicUseDetector {
         } else if expression.callee.is_specific_id("require") {
             self.unknown_details
                 .push("nonliteral CommonJS require may hide an internal consumer".to_owned());
-        } else if is_module_require(&expression.callee) {
+        } else if is_module_require(&expression.callee)
+            && self.require_scopes.module_may_be_wrapper()
+        {
             self.report_opaque_module_require();
         } else if is_import_meta_glob(&expression.callee) {
             self.unknown_details.push(
@@ -557,6 +601,42 @@ impl<'a> Visit<'a> for DynamicUseDetector {
             );
         }
         walk::walk_call_expression(self, expression);
+    }
+
+    fn visit_simple_assignment_target(
+        &mut self,
+        target: &oxc_ast::ast::SimpleAssignmentTarget<'a>,
+    ) {
+        let wrapper_is_visible = match commonjs_export_owner(target) {
+            Some(CommonJsExportOwner::Module) => self.require_scopes.module_may_be_wrapper(),
+            Some(CommonJsExportOwner::Exports) => self.require_scopes.exports_may_be_wrapper(),
+            None => false,
+        };
+        self.commonjs_export_syntax_observed |= wrapper_is_visible;
+        walk::walk_simple_assignment_target(self, target);
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CommonJsExportOwner {
+    Module,
+    Exports,
+}
+
+fn commonjs_export_owner(
+    target: &oxc_ast::ast::SimpleAssignmentTarget<'_>,
+) -> Option<CommonJsExportOwner> {
+    let mut member = target.as_member_expression()?;
+    loop {
+        if member.static_property_name() == Some("exports")
+            && member.object().is_specific_id("module")
+        {
+            return Some(CommonJsExportOwner::Module);
+        }
+        if member.object().is_specific_id("exports") {
+            return Some(CommonJsExportOwner::Exports);
+        }
+        member = member.object().get_member_expr()?;
     }
 }
 

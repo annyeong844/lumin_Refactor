@@ -20,6 +20,7 @@ const MTS_SOURCE: &str = concat!(
     "import '@acme/lib/mts-side-effect-import';\n",
     "export { marker as mtsNamed } from '@acme/lib/mts-named-export';\n",
     "export * from '@acme/lib/mts-export';\n",
+    "export * as mtsNamespace from '@acme/lib/mts-namespace-export';\n",
     "export {} from '@acme/lib/mts-empty-export';\n",
     "const esmRequired = require('@acme/lib/esm-require');\n",
     "console.log(mtsStatic, esmRequired);\n",
@@ -34,6 +35,7 @@ const CTS_SOURCE: &str = concat!(
     "import '@acme/lib/cts-side-effect-import';\n",
     "export { marker as ctsNamed } from '@acme/lib/cts-named-export';\n",
     "export * from '@acme/lib/cts-export';\n",
+    "export * as ctsNamespace from '@acme/lib/cts-namespace-export';\n",
     "export {} from '@acme/lib/cts-empty-export';\n",
     "import equalsLib = require('@acme/lib/cts-import-equals');\n",
     "void import('@acme/lib/cjs-dynamic');\n",
@@ -44,6 +46,9 @@ const CJS_SOURCE: &str = concat!(
     "const escapedLoader = require;\n",
     "escapedLoader('@acme/lib/cjs-aliased');\n",
     "module.require('@acme/lib/cjs-module-require');\n",
+    "require('@acme/lib/cjs-before-write');\n",
+    "require = customLoader;\n",
+    "require('@acme/lib/cjs-after-write');\n",
     "console.log(cjsRequired);\n",
 );
 const ROOT_SOURCE: &str = concat!(
@@ -53,6 +58,7 @@ const ROOT_SOURCE: &str = concat!(
 const NEAREST_COMMONJS_SOURCE: &str = concat!(
     "import { nearestCommonJs } from '@acme/lib/nearest-commonjs';\n",
     "export import exportedEquals = require('@acme/lib/nearest-export-import-equals');\n",
+    "module.exports.unmodeled = 1;\n",
     "console.log(nearestCommonJs);\n",
 );
 const NEAREST_DEFAULT_SOURCE: &str = concat!(
@@ -66,6 +72,7 @@ const TARGET_CASES: &[&str] = &[
     "mts-side-effect-import",
     "mts-named-export",
     "mts-export",
+    "mts-namespace-export",
     "mts-empty-export",
     "mjs-static",
     "cts-static",
@@ -73,9 +80,11 @@ const TARGET_CASES: &[&str] = &[
     "cts-side-effect-import",
     "cts-named-export",
     "cts-export",
+    "cts-namespace-export",
     "cts-empty-export",
     "cts-import-equals",
     "cjs-require",
+    "cjs-before-write",
     "root-module",
     "nearest-commonjs",
     "nearest-export-import-equals",
@@ -91,7 +100,7 @@ fn node_profiles_select_conditions_from_importer_format_and_edge_syntax()
     for profile in ["node16", "nodenext"] {
         verify_profile(root.path(), profile)?;
     }
-    verify_exported_import_equals_identity()?;
+    verify_exported_static_identities()?;
     Ok(())
 }
 
@@ -108,7 +117,7 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
     );
     assert_eq!(
         audit_json.get("limitationCount").and_then(Value::as_u64),
-        Some(6)
+        Some(7)
     );
     let run_id = field(&audit.stdout, "runId")?;
 
@@ -119,13 +128,13 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
         .get("limitations")
         .and_then(Value::as_array)
         .ok_or_else(|| std::io::Error::other("limitations are missing"))?;
-    assert_eq!(limitations.len(), 6);
+    assert_eq!(limitations.len(), 7);
     assert!(limitations.iter().all(|limitation| {
         limitation.get("reason").and_then(Value::as_str) == Some("js-module-use-unknown")
     }));
     assert_eq!(
         limitation_detail_count(limitations, COMMONJS_EXPORT_LIMITATION),
-        2
+        3
     );
     assert_eq!(
         limitation_detail_count(limitations, REQUIRE_ATTRIBUTION_LIMITATION),
@@ -226,6 +235,16 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
         (
             "apps/ext-esm/main.mts",
             MTS_SOURCE,
+            "@acme/lib/mts-namespace-export",
+            "namespace",
+            "static-import",
+            "export * as mtsNamespace from '@acme/lib/mts-namespace-export';",
+            "mts-namespace-export",
+            "import",
+        ),
+        (
+            "apps/ext-esm/main.mts",
+            MTS_SOURCE,
             "@acme/lib/mts-empty-export",
             "side-effect",
             "static-import",
@@ -251,6 +270,16 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
             "static-import",
             "export * from '@acme/lib/cts-export';",
             "cts-export",
+            "require",
+        ),
+        (
+            "apps/ext-cjs/main.cts",
+            CTS_SOURCE,
+            "@acme/lib/cts-namespace-export",
+            "namespace",
+            "static-import",
+            "export * as ctsNamespace from '@acme/lib/cts-namespace-export';",
+            "cts-namespace-export",
             "require",
         ),
         (
@@ -311,6 +340,16 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
             "require",
             "require('@acme/lib/cjs-require')",
             "cjs-require",
+            "require",
+        ),
+        (
+            "apps/ext-cjs/main.cjs",
+            CJS_SOURCE,
+            "@acme/lib/cjs-before-write",
+            "dynamic-broad",
+            "require",
+            "require('@acme/lib/cjs-before-write')",
+            "cjs-before-write",
             "require",
         ),
         (
@@ -437,8 +476,8 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-fn verify_exported_import_equals_identity() -> Result<(), Box<dyn std::error::Error>> {
-    let root = exported_import_equals_fixture()?;
+fn verify_exported_static_identities() -> Result<(), Box<dyn std::error::Error>> {
+    let root = exported_static_identity_fixture()?;
     let audit = run(
         root.path(),
         &["audit", "--jobs", "1", "--resolution-profile", "nodenext"],
@@ -453,11 +492,18 @@ fn verify_exported_import_equals_identity() -> Result<(), Box<dyn std::error::Er
         audit_json.get("limitationCount").and_then(Value::as_u64),
         Some(0)
     );
+    let run_id = field(&audit.stdout, "runId")?;
     assert_dead_export(
         root.path(),
-        &field(&audit.stdout, "runId")?,
+        &run_id,
         "apps/consumer/main.ts",
         "exportedEquals",
+    )?;
+    assert_dead_export(
+        root.path(),
+        &run_id,
+        "apps/consumer/main.ts",
+        "namespaceExport",
     )
 }
 
@@ -531,7 +577,7 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
     Ok(root)
 }
 
-fn exported_import_equals_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+fn exported_static_identity_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     write(
         root.path(),
@@ -546,7 +592,10 @@ fn exported_import_equals_fixture() -> Result<tempfile::TempDir, Box<dyn std::er
     write(
         root.path(),
         "apps/consumer/main.ts",
-        "export import exportedEquals = require('@acme/lib/identity');\n",
+        concat!(
+            "export import exportedEquals = require('@acme/lib/identity');\n",
+            "export * as namespaceExport from '@acme/lib/namespace';\n",
+        ),
     )?;
     write(
         root.path(),
@@ -558,6 +607,10 @@ fn exported_import_equals_fixture() -> Result<tempfile::TempDir, Box<dyn std::er
                 "./identity": {
                     "import": "./identity-import.js",
                     "require": "./identity-require.js",
+                },
+                "./namespace": {
+                    "import": "./namespace-import.js",
+                    "require": "./namespace-require.js",
                 }
             },
         })
@@ -572,6 +625,16 @@ fn exported_import_equals_fixture() -> Result<tempfile::TempDir, Box<dyn std::er
         root.path(),
         "packages/lib/identity-require.ts",
         "export const required = 1;\n",
+    )?;
+    write(
+        root.path(),
+        "packages/lib/namespace-import.ts",
+        "export const importedNamespace = 1;\n",
+    )?;
+    write(
+        root.path(),
+        "packages/lib/namespace-require.ts",
+        "export const requiredNamespace = 1;\n",
     )?;
     Ok(root)
 }

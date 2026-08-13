@@ -1,21 +1,33 @@
 use std::collections::BTreeSet;
 
 use oxc_ast::ast::{
-    BindingPattern, FormalParameters, ImportDeclarationSpecifier, ImportOrExportKind,
+    BindingPattern, FormalParameters, ImportDeclarationSpecifier, ImportOrExportKind, Statement,
 };
 use oxc_ast::ast_kind::AstKind;
 use oxc_ast_visit::{Visit, walk};
+use oxc_span::GetSpan;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TrackedName {
     Require,
     Eval,
+    Module,
+    Exports,
 }
+
+const TRACKED_NAMES: [TrackedName; 4] = [
+    TrackedName::Require,
+    TrackedName::Eval,
+    TrackedName::Module,
+    TrackedName::Exports,
+];
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct NameBindings {
     require: bool,
     eval: bool,
+    module: bool,
+    exports: bool,
 }
 
 impl NameBindings {
@@ -23,6 +35,8 @@ impl NameBindings {
         match name {
             TrackedName::Require => self.require = true,
             TrackedName::Eval => self.eval = true,
+            TrackedName::Module => self.module = true,
+            TrackedName::Exports => self.exports = true,
         }
     }
 
@@ -30,6 +44,8 @@ impl NameBindings {
         match name {
             TrackedName::Require => self.require,
             TrackedName::Eval => self.eval,
+            TrackedName::Module => self.module,
+            TrackedName::Exports => self.exports,
         }
     }
 }
@@ -65,10 +81,18 @@ enum NameResolution {
     Dynamic,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MutationObservation {
+    scope: usize,
+    position: u32,
+    ordered_root_expression: bool,
+}
+
 #[derive(Debug)]
 struct RequireScopeModel {
     scopes: Vec<RequireScope>,
-    implicit_require_written: bool,
+    unordered_implicit_require_write: bool,
+    ordered_root_require_writes: Vec<u32>,
     unattributed_require_escape: bool,
 }
 
@@ -111,9 +135,25 @@ impl RequireScopeModel {
         false
     }
 
-    fn require_is_opaque(&self, scope: usize) -> bool {
-        self.implicit_require_written
-            || self.resolve_name(scope, TrackedName::Require) != NameResolution::Unbound
+    fn require_is_opaque(&self, scope: usize, call_position: u32) -> bool {
+        if self.resolve_name(scope, TrackedName::Require) != NameResolution::Unbound
+            || self.unordered_implicit_require_write
+        {
+            return true;
+        }
+        if self.ordered_root_require_writes.is_empty() {
+            return false;
+        }
+        if scope != 0 {
+            return true;
+        }
+        self.ordered_root_require_writes
+            .iter()
+            .any(|write_position| *write_position < call_position)
+    }
+
+    fn may_resolve_to_wrapper(&self, scope: usize, name: TrackedName) -> bool {
+        self.resolve_name(scope, name) != NameResolution::Bound
     }
 }
 
@@ -153,16 +193,32 @@ impl RequireScopeTracker {
         }
     }
 
-    pub(super) fn require_is_opaque(&self) -> bool {
+    pub(super) fn require_is_opaque(&self, call_position: u32) -> bool {
         self.tracking_failed
             || self
                 .scope_stack
                 .last()
-                .is_none_or(|scope| self.model.require_is_opaque(*scope))
+                .is_none_or(|scope| self.model.require_is_opaque(*scope, call_position))
     }
 
     pub(super) fn has_unattributed_require_escape(&self) -> bool {
         self.model.unattributed_require_escape
+    }
+
+    pub(super) fn module_may_be_wrapper(&self) -> bool {
+        self.wrapper_name_may_be_implicit(TrackedName::Module)
+    }
+
+    pub(super) fn exports_may_be_wrapper(&self) -> bool {
+        self.wrapper_name_may_be_implicit(TrackedName::Exports)
+    }
+
+    fn wrapper_name_may_be_implicit(&self, name: TrackedName) -> bool {
+        self.tracking_failed
+            || self
+                .scope_stack
+                .last()
+                .is_none_or(|scope| self.model.may_resolve_to_wrapper(*scope, name))
     }
 }
 
@@ -170,10 +226,12 @@ impl RequireScopeTracker {
 struct RequireScopeCollector {
     scopes: Vec<RequireScope>,
     scope_stack: Vec<usize>,
-    require_write_scopes: Vec<usize>,
-    eval_call_scopes: Vec<usize>,
+    require_writes: Vec<MutationObservation>,
+    eval_calls: Vec<MutationObservation>,
     require_reference_scopes: Vec<(usize, u32, u32)>,
     direct_require_callees: BTreeSet<(u32, u32)>,
+    ordered_root_expression_spans: BTreeSet<(u32, u32)>,
+    inside_ordered_root_expression: bool,
 }
 
 impl RequireScopeCollector {
@@ -263,45 +321,72 @@ impl RequireScopeCollector {
         }
     }
 
-    fn record_require_write(&mut self) {
+    fn record_require_write(&mut self, position: u32) {
         if !self.current_ambient()
             && let Some(scope) = self.scope_stack.last().copied()
         {
-            self.require_write_scopes.push(scope);
+            self.require_writes.push(MutationObservation {
+                scope,
+                position,
+                ordered_root_expression: scope == 0 && self.inside_ordered_root_expression,
+            });
         }
     }
 
-    fn record_eval_call(&mut self) {
+    fn record_eval_call(&mut self, position: u32) {
         if !self.current_ambient()
             && let Some(scope) = self.scope_stack.last().copied()
         {
-            self.eval_call_scopes.push(scope);
+            self.eval_calls.push(MutationObservation {
+                scope,
+                position,
+                ordered_root_expression: scope == 0 && self.inside_ordered_root_expression,
+            });
         }
     }
 
     fn into_model(self) -> RequireScopeModel {
         let mut model = RequireScopeModel {
             scopes: self.scopes,
-            implicit_require_written: false,
+            unordered_implicit_require_write: false,
+            ordered_root_require_writes: Vec::new(),
             unattributed_require_escape: false,
         };
-        let implicit_write = self
-            .require_write_scopes
+        let mut implicit_mutations = self
+            .require_writes
             .iter()
-            .any(|scope| !model.has_binding(*scope, TrackedName::Require));
-        let intrinsic_eval_can_reach_implicit_require = self.eval_call_scopes.iter().any(|scope| {
-            model.resolve_name(*scope, TrackedName::Eval) != NameResolution::Bound
-                && !model.has_binding(*scope, TrackedName::Require)
-        });
-        model.implicit_require_written =
-            implicit_write || intrinsic_eval_can_reach_implicit_require;
+            .copied()
+            .filter(|observation| !model.has_binding(observation.scope, TrackedName::Require))
+            .collect::<Vec<_>>();
+        let intrinsic_eval_mutations = self
+            .eval_calls
+            .iter()
+            .copied()
+            .filter(|observation| {
+                model.resolve_name(observation.scope, TrackedName::Eval) != NameResolution::Bound
+                    && !model.has_binding(observation.scope, TrackedName::Require)
+            })
+            .collect::<Vec<_>>();
+        implicit_mutations.extend(intrinsic_eval_mutations.iter().copied());
+        for observation in implicit_mutations {
+            if observation.ordered_root_expression {
+                model.ordered_root_require_writes.push(observation.position);
+            } else {
+                model.unordered_implicit_require_write = true;
+            }
+        }
+        model.ordered_root_require_writes.sort_unstable();
+        model.ordered_root_require_writes.dedup();
+
+        let escaped_reference = self
+            .require_reference_scopes
+            .iter()
+            .any(|(scope, start, end)| {
+                !self.direct_require_callees.contains(&(*start, *end))
+                    && model.resolve_name(*scope, TrackedName::Require) != NameResolution::Bound
+            });
         model.unattributed_require_escape =
-            self.require_reference_scopes
-                .iter()
-                .any(|(scope, start, end)| {
-                    !self.direct_require_callees.contains(&(*start, *end))
-                        && model.resolve_name(*scope, TrackedName::Require) != NameResolution::Bound
-                });
+            escaped_reference || !intrinsic_eval_mutations.is_empty();
         model
     }
 }
@@ -310,6 +395,8 @@ fn tracked_name(name: &str) -> Option<TrackedName> {
     match name {
         "require" => Some(TrackedName::Require),
         "eval" => Some(TrackedName::Eval),
+        "module" => Some(TrackedName::Module),
+        "exports" => Some(TrackedName::Exports),
         _ => None,
     }
 }
@@ -327,7 +414,7 @@ fn pattern_bindings(pattern: &BindingPattern<'_>) -> NameBindings {
 fn parameters_bindings(parameters: &FormalParameters<'_>) -> NameBindings {
     let mut bindings = NameBindings::default();
     for parameter in &parameters.items {
-        for name in [TrackedName::Require, TrackedName::Eval] {
+        for name in TRACKED_NAMES {
             if pattern_bindings(&parameter.pattern).contains(name) {
                 bindings.mark(name);
             }
@@ -335,7 +422,7 @@ fn parameters_bindings(parameters: &FormalParameters<'_>) -> NameBindings {
     }
     if let Some(rest) = &parameters.rest {
         let rest_bindings = pattern_bindings(&rest.rest.argument);
-        for name in [TrackedName::Require, TrackedName::Eval] {
+        for name in TRACKED_NAMES {
             if rest_bindings.contains(name) {
                 bindings.mark(name);
             }
@@ -370,6 +457,13 @@ impl<'a> Visit<'a> for RequireScopeCollector {
     fn enter_node(&mut self, kind: AstKind<'a>) {
         match kind {
             AstKind::Program(program) => {
+                self.ordered_root_expression_spans
+                    .extend(program.body.iter().filter_map(|statement| match statement {
+                        Statement::ExpressionStatement(statement) => {
+                            Some((statement.span.start, statement.span.end))
+                        }
+                        _ => None,
+                    }));
                 self.push_scope(
                     RequireScopeKind::Root,
                     NameBindings::default(),
@@ -495,7 +589,7 @@ impl<'a> Visit<'a> for RequireScopeCollector {
                 if !self.current_ambient() && !declaration.declare {
                     for declarator in &declaration.declarations {
                         let bindings = pattern_bindings(&declarator.id);
-                        for name in [TrackedName::Require, TrackedName::Eval] {
+                        for name in TRACKED_NAMES {
                             if bindings.contains(name) {
                                 if declaration.kind.is_var() {
                                     self.mark_nearest_var_environment(name);
@@ -605,7 +699,7 @@ impl<'a> Visit<'a> for RequireScopeCollector {
             .get_expression()
             .is_some_and(|expression| expression.is_specific_id("require"));
         if direct_write || wrapped_write {
-            self.record_require_write();
+            self.record_require_write(target.span().start);
         }
         walk::walk_simple_assignment_target(self, target);
     }
@@ -615,7 +709,7 @@ impl<'a> Visit<'a> for RequireScopeCollector {
         property: &oxc_ast::ast::AssignmentTargetPropertyIdentifier<'a>,
     ) {
         if property.binding.name == "require" {
-            self.record_require_write();
+            self.record_require_write(property.span.start);
         }
         walk::walk_assignment_target_property_identifier(self, property);
     }
@@ -628,9 +722,18 @@ impl<'a> Visit<'a> for RequireScopeCollector {
                 .insert((identifier.span.start, identifier.span.end));
         }
         if !expression.optional && expression.callee.is_specific_id("eval") {
-            self.record_eval_call();
+            self.record_eval_call(expression.span.start);
         }
         walk::walk_call_expression(self, expression);
+    }
+
+    fn visit_expression_statement(&mut self, statement: &oxc_ast::ast::ExpressionStatement<'a>) {
+        let previous = self.inside_ordered_root_expression;
+        self.inside_ordered_root_expression = self
+            .ordered_root_expression_spans
+            .contains(&(statement.span.start, statement.span.end));
+        walk::walk_expression_statement(self, statement);
+        self.inside_ordered_root_expression = previous;
     }
 
     fn visit_identifier_reference(&mut self, identifier: &oxc_ast::ast::IdentifierReference<'a>) {
