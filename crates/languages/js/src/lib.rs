@@ -121,20 +121,47 @@ pub fn parse_payload_with_module_format(
     bytes: &[u8],
     module_format: JsModuleFormat,
 ) -> Result<JsPayloadFacts, JsExtractError> {
+    let variants = parse_payload_with_module_formats(kind, bytes, &[module_format])?;
+    match variants.into_iter().next() {
+        Some((_format, facts)) => Ok(facts),
+        None => Err(JsExtractError { kind }),
+    }
+}
+
+pub fn parse_payload_with_module_formats(
+    kind: SourceKind,
+    bytes: &[u8],
+    module_formats: &[JsModuleFormat],
+) -> Result<Vec<(JsModuleFormat, JsPayloadFacts)>, JsExtractError> {
     if !kind.is_js_family() {
+        return Err(JsExtractError { kind });
+    }
+    let mut module_formats = module_formats.to_vec();
+    module_formats.sort_unstable();
+    module_formats.dedup();
+    if module_formats.is_empty() {
         return Err(JsExtractError { kind });
     }
 
     let source = match std::str::from_utf8(bytes) {
         Ok(source) => source,
         Err(error) => {
-            return Ok(unknown_payload(format!("source is not UTF-8: {error}")));
+            let detail = format!("source is not UTF-8: {error}");
+            return Ok(module_formats
+                .into_iter()
+                .map(|format| (format, unknown_payload(detail.clone())))
+                .collect());
         }
     };
 
     let source_type = match source_type(kind) {
         Ok(source_type) => source_type,
-        Err(detail) => return Ok(unknown_payload(detail)),
+        Err(detail) => {
+            return Ok(module_formats
+                .into_iter()
+                .map(|format| (format, unknown_payload(detail.clone())))
+                .collect());
+        }
     };
 
     let allocator = Allocator::default();
@@ -146,28 +173,47 @@ pub fn parse_payload_with_module_format(
             .map(ToString::to_string)
             .collect::<Vec<_>>()
             .join("; ");
-        return Ok(unknown_payload(format!(
-            "OXC parse did not complete cleanly: {detail}"
-        )));
+        let detail = format!("OXC parse did not complete cleanly: {detail}");
+        return Ok(module_formats
+            .into_iter()
+            .map(|format| (format, unknown_payload(detail.clone())))
+            .collect());
     }
 
-    let mut facts = JsPayloadFacts {
+    let mut base_facts = JsPayloadFacts {
         exports: Vec::new(),
         uses: Vec::new(),
         limitation_details: Vec::new(),
     };
     if matches!(kind, SourceKind::CommonJs | SourceKind::Cts) {
-        facts
+        base_facts
             .limitation_details
             .push(COMMONJS_EXPORT_LOWERING_UNSUPPORTED.to_owned());
     }
     for statement in &parsed.program.body {
-        lower_statement(statement, &mut facts);
+        lower_statement(statement, &mut base_facts);
     }
 
+    Ok(module_formats
+        .into_iter()
+        .map(|module_format| {
+            (
+                module_format,
+                contextualize_payload(kind, &parsed.program, base_facts.clone(), module_format),
+            )
+        })
+        .collect())
+}
+
+fn contextualize_payload(
+    kind: SourceKind,
+    program: &oxc_ast::ast::Program<'_>,
+    mut facts: JsPayloadFacts,
+    module_format: JsModuleFormat,
+) -> JsPayloadFacts {
     let commonjs_wrapper_exports_possible = module_format != JsModuleFormat::EsModule;
     let require_scopes = RequireScopeTracker::analyze(
-        &parsed.program,
+        program,
         module_format == JsModuleFormat::CommonJs,
         commonjs_wrapper_exports_possible,
     );
@@ -185,7 +231,7 @@ pub fn parse_payload_with_module_format(
     if escaped_require {
         detector.report_opaque_require();
     }
-    detector.visit_program(&parsed.program);
+    detector.visit_program(program);
     if detector.commonjs_export_syntax_observed
         && !facts
             .limitation_details
@@ -207,7 +253,7 @@ pub fn parse_payload_with_module_format(
         }
     }
     canonicalize(&mut facts);
-    Ok(facts)
+    facts
 }
 
 pub fn bind_payload(

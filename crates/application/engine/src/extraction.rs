@@ -110,55 +110,60 @@ pub(super) fn extract_facts(
 
 type PayloadGroup<'a> = (
     SourceKind,
-    lumin_js::JsModuleFormat,
     Arc<[u8]>,
-    Vec<&'a SourceSnapshot>,
+    BTreeMap<lumin_js::JsModuleFormat, Vec<&'a SourceSnapshot>>,
 );
 
 fn extract_physical_js(
     sources: &[SourceSnapshot],
     config: &SemanticConfigSnapshot,
     profiles: &BTreeMap<lumin_model::LogicalSourceId, ResolutionProfile>,
-) -> Result<(Vec<FileFacts>, usize), lumin_js::JsExtractError> {
+) -> Result<(Vec<FileFacts>, usize), EngineError> {
     let mut grouped = BTreeMap::<
-        (PayloadSnapshotId, SourceKind, lumin_js::JsModuleFormat),
-        (Arc<[u8]>, Vec<&SourceSnapshot>),
+        (PayloadSnapshotId, SourceKind),
+        (
+            Arc<[u8]>,
+            BTreeMap<lumin_js::JsModuleFormat, Vec<&SourceSnapshot>>,
+        ),
     >::new();
     for source in sources.iter().filter(|source| source.kind.is_js_family()) {
         let module_format = source_module_format(source, config, profiles);
         grouped
-            .entry((
-                source.payload_snapshot_id.clone(),
-                source.kind,
-                module_format,
-            ))
-            .or_insert_with(|| (Arc::clone(&source.bytes), Vec::new()))
+            .entry((source.payload_snapshot_id.clone(), source.kind))
+            .or_insert_with(|| (Arc::clone(&source.bytes), BTreeMap::new()))
             .1
+            .entry(module_format)
+            .or_default()
             .push(source);
     }
     let parse_product_count = grouped.len();
     let groups = grouped
         .into_iter()
-        .map(|((_payload_id, kind, module_format), (bytes, sources))| {
-            (kind, module_format, bytes, sources)
-        })
+        .map(|((_payload_id, kind), (bytes, sources))| (kind, bytes, sources))
         .collect::<Vec<PayloadGroup<'_>>>();
     let facts = groups
         .into_par_iter()
-        .map(|(kind, module_format, bytes, sources)| {
-            let payload = lumin_js::parse_payload_with_module_format(kind, &bytes, module_format)?;
-            Ok(sources
+        .map(|(kind, bytes, sources_by_format)| {
+            let formats = sources_by_format.keys().copied().collect::<Vec<_>>();
+            let mut payloads = lumin_js::parse_payload_with_module_formats(kind, &bytes, &formats)?
                 .into_iter()
-                .map(|source| {
-                    lumin_js::bind_payload(
+                .collect::<BTreeMap<_, _>>();
+            let mut facts = Vec::new();
+            for (format, sources) in sources_by_format {
+                let payload = payloads.remove(&format).ok_or_else(|| {
+                    EngineError::ExtractionProductMissing(format!("{kind:?}/{format:?}"))
+                })?;
+                for source in sources {
+                    facts.push(lumin_js::bind_payload(
                         &payload,
                         &source.id,
                         SourceUnitId::Logical(source.id.clone()),
-                    )
-                })
-                .collect::<Vec<_>>())
+                    ));
+                }
+            }
+            Ok(facts)
         })
-        .collect::<Result<Vec<_>, lumin_js::JsExtractError>>()?
+        .collect::<Result<Vec<_>, EngineError>>()?
         .into_iter()
         .flatten()
         .collect();

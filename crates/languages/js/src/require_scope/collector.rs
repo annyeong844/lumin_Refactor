@@ -870,6 +870,16 @@ impl<'a> Visit<'a> for RequireScopeCollector {
         self.arguments_escape_timing = previous_escape;
     }
 
+    fn visit_tagged_template_expression(
+        &mut self,
+        expression: &oxc_ast::ast::TaggedTemplateExpression<'a>,
+    ) {
+        let previous_escape = self.arguments_escape_timing;
+        self.arguments_escape_timing = Some(self.expression_mutation_timing(expression.span.end));
+        walk::walk_tagged_template_expression(self, expression);
+        self.arguments_escape_timing = previous_escape;
+    }
+
     fn visit_return_statement(&mut self, statement: &oxc_ast::ast::ReturnStatement<'a>) {
         let previous_escape = self.arguments_escape_timing;
         self.arguments_escape_timing = Some(MutationTiming::After(statement.span.end));
