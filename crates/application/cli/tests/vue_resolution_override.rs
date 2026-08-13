@@ -98,6 +98,7 @@ fn vue_embedded_scripts_follow_invocation_extension_rules_without_a_template_lan
             assert_script_request(root.path(), &run_id, request, serialized, expected)?;
         }
         assert_external_sfc_has_no_resolver_lane(root.path(), &run_id, serialized)?;
+        assert_empty_findings(root.path(), &run_id)?;
     }
 
     let audit = run(
@@ -125,6 +126,61 @@ fn vue_embedded_scripts_follow_invocation_extension_rules_without_a_template_lan
         )?;
     }
     assert_external_sfc_has_no_resolver_lane(root.path(), &run_id, "bundler")?;
+    assert_empty_findings(root.path(), &run_id)?;
+    Ok(())
+}
+
+#[test]
+fn external_vue_template_binding_uses_attached_script_facts()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = external_binding_fixture()?;
+    let audit = run(
+        root.path(),
+        &["audit", "--jobs", "1", "--resolution-profile", "bundler"],
+    )?;
+    assert_status(&audit, 0);
+    let summary: Value = serde_json::from_str(&audit.stdout)?;
+    assert_eq!(
+        summary.get("status").and_then(Value::as_str),
+        Some("incomplete")
+    );
+    assert_eq!(
+        summary.get("limitationCount").and_then(Value::as_u64),
+        Some(1)
+    );
+    let run_id = field(&audit.stdout, "runId")?;
+
+    for request in SCRIPT_REQUESTS
+        .iter()
+        .copied()
+        .filter(|request| request.path == "src/external.ts")
+    {
+        assert_script_request(
+            root.path(),
+            &run_id,
+            request,
+            "bundler",
+            ExpectedOutcome::Internal,
+        )?;
+    }
+    assert_external_sfc_has_no_resolver_lane(root.path(), &run_id, "bundler")?;
+    let overview = run(root.path(), &["overview", "--run", &run_id])?;
+    assert_status(&overview, 0);
+    let overview: Value = serde_json::from_str(&overview.stdout)?;
+    let limitations = required_array(&overview, "/limitations")?;
+    assert_eq!(limitations.len(), 1);
+    assert_eq!(
+        required_str(&limitations[0], "/reason")?,
+        "vue-template-opaque"
+    );
+    assert_eq!(
+        required_str(&limitations[0], "/source_id")?,
+        source_id(root.path(), &run_id, "src/ExternalApp.vue")?
+    );
+    assert_eq!(
+        required_str(&limitations[0], "/detail")?,
+        "template component `MissingExternal` has no local script binding"
+    );
     assert_empty_findings(root.path(), &run_id)?;
     Ok(())
 }
@@ -410,6 +466,40 @@ fn identity_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         root.path(),
         "src/planned-change.ts",
         "export const plannedChange = true;\n",
+    )?;
+    Ok(root)
+}
+
+fn external_binding_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"app","private":true,"type":"module"}"#,
+    )?;
+    write(
+        root.path(),
+        "src/main.ts",
+        "import ExternalApp from './ExternalApp.vue';\nconsole.log(ExternalApp);\n",
+    )?;
+    write(
+        root.path(),
+        "src/ExternalApp.vue",
+        concat!(
+            "<script lang=\"ts\" src=\"./external.ts\"></script>\n",
+            "<template><ExternalWidget /><ExternalControl /><MissingExternal /></template>\n",
+        ),
+    )?;
+    write(root.path(), "src/external.ts", EXTERNAL_SCRIPT)?;
+    write(
+        root.path(),
+        "src/ExternalWidget.ts",
+        "export default { name: 'ExternalWidget' };\n",
+    )?;
+    write(
+        root.path(),
+        "src/ExternalControl.ts",
+        "export default { name: 'ExternalControl' };\n",
     )?;
     Ok(root)
 }

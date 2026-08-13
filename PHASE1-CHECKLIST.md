@@ -45,8 +45,8 @@ These are execution-matrix counts, not a percentage estimate of product code.
 
 | Lane | Applicable | Mapped | Remaining | Verified aggregate |
 | --- | ---: | ---: | ---: | --- |
-| Standard | 86 | 60 | 26 | Focused `corpus::tests::mode_counts`: 60 mapped, 26 unmapped; `vue-resolution-override`: 2 invocations passed, 0 failed. Last required public CI mapped aggregate: 59 passed, 0 failed. |
-| Determinism | 86 | 60 | 26 | Focused `corpus::tests::mode_counts`: 60 mapped, 26 unmapped; `vue-resolution-override`: 2 invocations passed with 6 semantic captures, 0 failed. Last required public CI mapped aggregate: 59 passed, 0 failed. |
+| Standard | 86 | 60 | 26 | Focused `corpus::tests::mode_counts`: 60 mapped, 26 unmapped; `vue-resolution-override`: 3 invocations passed, 0 failed. Last required public CI mapped aggregate: 59 passed, 0 failed. |
+| Determinism | 86 | 60 | 26 | Focused `corpus::tests::mode_counts`: 60 mapped, 26 unmapped; `vue-resolution-override`: 3 invocations passed with 7 semantic captures, 0 failed. Last required public CI mapped aggregate: 59 passed, 0 failed. |
 | Store crash | 10 | 4 | 6 | Mapping count only; Phase 1 exit still requires the complete lane. |
 | **Total execution obligations** | **182** | **124** | **58** | This total deliberately counts each required lane execution. |
 
