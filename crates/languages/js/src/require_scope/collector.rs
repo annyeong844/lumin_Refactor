@@ -33,6 +33,8 @@ struct RequireScopeCollector {
     direct_require_call_positions: BTreeSet<u32>,
     non_escaping_require_references: BTreeSet<(u32, u32)>,
     non_escaping_arguments_references: BTreeSet<(u32, u32)>,
+    non_read_arguments_member_spans: BTreeSet<(u32, u32)>,
+    plain_assignment_lhs_ranges: Vec<(u32, u32)>,
     deferred_execution_ranges: BTreeSet<(u32, u32)>,
     repeated_execution_ranges: BTreeSet<(u32, u32)>,
     non_wrapper_this_ranges: BTreeSet<(u32, u32)>,
@@ -828,6 +830,20 @@ impl<'a> Visit<'a> for RequireScopeCollector {
         &mut self,
         target: &oxc_ast::ast::SimpleAssignmentTarget<'a>,
     ) {
+        if let Some((span, may_invoke_setter)) = mapped_arguments::arguments_member_target(target)
+            && (self
+                .plain_assignment_lhs_ranges
+                .iter()
+                .any(|range| range.0 <= span.0 && span.1 <= range.1)
+                || self
+                    .loop_head_write_range
+                    .is_some_and(|range| range.0 <= span.0 && span.1 <= range.1))
+        {
+            self.non_read_arguments_member_spans.insert(span);
+            if may_invoke_setter {
+                self.record_arguments_escape(self.assignment_target_timing(span.1));
+            }
+        }
         let direct_write = matches!(
             target,
             oxc_ast::ast::SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier)
@@ -864,6 +880,13 @@ impl<'a> Visit<'a> for RequireScopeCollector {
     fn visit_assignment_expression(&mut self, expression: &oxc_ast::ast::AssignmentExpression<'a>) {
         let previous = self.assignment_write_context;
         let previous_escape = self.arguments_escape_timing;
+        let plain_assignment_lhs = expression.operator.is_assign().then(|| {
+            let span = expression.left.span();
+            (span.start, span.end)
+        });
+        if let Some(range) = plain_assignment_lhs {
+            self.plain_assignment_lhs_ranges.push(range);
+        }
         if let Some(span) = expression
             .left
             .as_simple_assignment_target()
@@ -893,6 +916,9 @@ impl<'a> Visit<'a> for RequireScopeCollector {
             });
         self.arguments_escape_timing = Some(MutationTiming::After(expression.span.end));
         walk::walk_assignment_expression(self, expression);
+        if plain_assignment_lhs.is_some() {
+            self.plain_assignment_lhs_ranges.pop();
+        }
         if suppress_mutations {
             self.suppress_arguments_mutations -= 1;
         }
@@ -1117,6 +1143,12 @@ impl<'a> Visit<'a> for RequireScopeCollector {
         {
             self.record_arguments_escape(self.expression_mutation_timing(expression.span.end));
         }
+        if expression.operator.is_delete()
+            && let Some(span) =
+                mapped_arguments::arguments_member_expression_span(&expression.argument)
+        {
+            self.non_read_arguments_member_spans.insert(span);
+        }
         walk::walk_unary_expression(self, expression);
     }
 
@@ -1287,8 +1319,14 @@ impl<'a> Visit<'a> for RequireScopeCollector {
         &mut self,
         expression: &oxc_ast::ast::ComputedMemberExpression<'a>,
     ) {
-        if let Some(span) = mapped_arguments::non_require_computed_object_span(expression) {
-            self.non_escaping_arguments_references.insert(span);
+        if let Some(object_span) = mapped_arguments::computed_object_span(expression) {
+            self.non_escaping_arguments_references.insert(object_span);
+            let member_span = (expression.span.start, expression.span.end);
+            if !mapped_arguments::computed_member_is_wrapper_export_slot(expression)
+                && !self.non_read_arguments_member_spans.contains(&member_span)
+            {
+                self.record_arguments_escape(self.expression_mutation_timing(expression.span.end));
+            }
         }
         walk::walk_computed_member_expression(self, expression);
     }
@@ -1297,8 +1335,12 @@ impl<'a> Visit<'a> for RequireScopeCollector {
         &mut self,
         expression: &oxc_ast::ast::StaticMemberExpression<'a>,
     ) {
-        if let Some(span) = mapped_arguments::static_object_span(expression) {
-            self.non_escaping_arguments_references.insert(span);
+        if let Some(object_span) = mapped_arguments::static_object_span(expression) {
+            self.non_escaping_arguments_references.insert(object_span);
+            let member_span = (expression.span.start, expression.span.end);
+            if !self.non_read_arguments_member_spans.contains(&member_span) {
+                self.record_arguments_escape(self.expression_mutation_timing(expression.span.end));
+            }
         }
         walk::walk_static_member_expression(self, expression);
     }

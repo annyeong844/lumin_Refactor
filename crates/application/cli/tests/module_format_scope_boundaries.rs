@@ -48,7 +48,7 @@ const ESCAPED_ARGUMENTS_SOURCE: &str = concat!(
 );
 const UNARY_ARGUMENTS_SOURCE: &str = concat!(
     "require('@scope/dep/unary-before');\n",
-    "arguments.valueOf = function () { this[1] = customLoader; return 0; };\n",
+    "Object.prototype.valueOf = function () { this[1] = customLoader; return 0; };\n",
     "+arguments;\n",
     "require('@scope/dep/unary-after');\n",
 );
@@ -60,7 +60,7 @@ const NONCOERCIVE_UNARY_ARGUMENTS_SOURCE: &str = concat!(
 );
 const BINARY_ARGUMENTS_SOURCE: &str = concat!(
     "require('@scope/dep/binary-before');\n",
-    "arguments.valueOf = function () { this[1] = customLoader; return 0; };\n",
+    "Object.prototype.valueOf = function () { this[1] = customLoader; return 0; };\n",
     "(condition ? arguments : 0) + 1;\n",
     "require('@scope/dep/binary-after');\n",
 );
@@ -73,15 +73,28 @@ const NONCOERCIVE_BINARY_ARGUMENTS_SOURCE: &str = concat!(
     "require('@scope/dep/binary-grounded');\n",
 );
 const UPDATE_ARGUMENTS_SOURCE: &str = concat!(
-    "arguments.valueOf = function () { this[1] = customLoader; return 0; };\n",
+    "Object.prototype.valueOf = function () { this[1] = customLoader; return 0; };\n",
     "try { arguments instanceof arguments++; } catch {}\n",
     "require('@scope/dep/update-after');\n",
 );
 const COMPUTED_KEY_ARGUMENTS_SOURCE: &str = concat!(
     "require('@scope/dep/computed-key-before');\n",
-    "arguments.toString = function () { this[1] = customLoader; return 'key'; };\n",
     "({ [(require('@scope/dep/computed-key-during'), arguments)]: 1 });\n",
     "require('@scope/dep/computed-key-after');\n",
+);
+const PROPERTY_ARGUMENTS_SOURCE: &str = concat!(
+    "Object.defineProperty(Object.prototype, 'poison', {\n",
+    "  get() { this[1] = customLoader; return 0; }\n",
+    "});\n",
+    "arguments.poison;\n",
+    "require('@scope/dep/property-after');\n",
+);
+const PROPERTY_SETTER_ARGUMENTS_SOURCE: &str = concat!(
+    "Object.defineProperty(Object.prototype, 'poison', {\n",
+    "  set(_value) { this[1] = customLoader; }\n",
+    "});\n",
+    "arguments.poison = require('@scope/dep/property-setter-rhs');\n",
+    "require('@scope/dep/property-setter-after');\n",
 );
 const CLASS_PHASE_SOURCE: &str = concat!(
     "require('@scope/dep/class-before');\n",
@@ -229,6 +242,20 @@ fn commonjs_wrapper_mutations_preserve_only_grounded_public_edges()
             "@scope/dep/computed-key-during",
         ]
     );
+    let property_arguments = file_response(root.path(), &run_id, "src/property-arguments.cjs")?;
+    assert!(resolutions(&property_arguments).is_empty());
+    let property_setter = file_response(root.path(), &run_id, "src/property-setter-arguments.cjs")?;
+    assert_eq!(
+        resolutions(&property_setter)
+            .iter()
+            .filter_map(|resolution| {
+                resolution
+                    .pointer("/sourceUse/specifier")
+                    .and_then(Value::as_str)
+            })
+            .collect::<Vec<_>>(),
+        ["@scope/dep/property-setter-rhs"]
+    );
     let class_phase = file_response(root.path(), &run_id, "src/class-phase.cjs")?;
     let class_specifiers = resolutions(&class_phase)
         .iter()
@@ -332,8 +359,8 @@ fn commonjs_wrapper_mutations_preserve_only_grounded_public_edges()
         })
         .collect::<Result<Vec<_>, _>>()?;
     details.sort_unstable();
-    let mut expected = vec![COMMONJS_EXPORT_LOWERING_UNSUPPORTED; 18];
-    expected.extend([REQUIRE_ATTRIBUTION_OPAQUE; 12]);
+    let mut expected = vec![COMMONJS_EXPORT_LOWERING_UNSUPPORTED; 20];
+    expected.extend([REQUIRE_ATTRIBUTION_OPAQUE; 14]);
     expected.sort_unstable();
     assert_eq!(details, expected);
     Ok(())
@@ -456,6 +483,16 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         "src/computed-key-arguments.cjs",
         COMPUTED_KEY_ARGUMENTS_SOURCE,
     )?;
+    write(
+        root.path(),
+        "src/property-arguments.cjs",
+        PROPERTY_ARGUMENTS_SOURCE,
+    )?;
+    write(
+        root.path(),
+        "src/property-setter-arguments.cjs",
+        PROPERTY_SETTER_ARGUMENTS_SOURCE,
+    )?;
     write(root.path(), "src/class-phase.cjs", CLASS_PHASE_SOURCE)?;
     write(
         root.path(),
@@ -556,6 +593,18 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
                     "import": "./computed-key-after-import.js",
                     "require": "./computed-key-after-require.js",
                 },
+                "./property-after": {
+                    "import": "./property-after-import.js",
+                    "require": "./property-after-require.js",
+                },
+                "./property-setter-rhs": {
+                    "import": "./property-setter-rhs-import.js",
+                    "require": "./property-setter-rhs-require.js",
+                },
+                "./property-setter-after": {
+                    "import": "./property-setter-after-import.js",
+                    "require": "./property-setter-after-require.js",
+                },
                 "./class-before": {
                     "import": "./class-before-import.js",
                     "require": "./class-before-require.js",
@@ -631,6 +680,12 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         "computed-key-during-require",
         "computed-key-after-import",
         "computed-key-after-require",
+        "property-after-import",
+        "property-after-require",
+        "property-setter-rhs-import",
+        "property-setter-rhs-require",
+        "property-setter-after-import",
+        "property-setter-after-require",
         "class-before-import",
         "class-before-require",
         "class-static-import",

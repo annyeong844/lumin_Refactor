@@ -3,6 +3,7 @@ use oxc_ast::ast::{
     JSXMemberExpressionObject, LogicalExpression, MemberExpression, SimpleAssignmentTarget,
     StaticMemberExpression,
 };
+use oxc_span::GetSpan;
 
 use super::{
     MutationObservation, NameResolution, RequireScopeKind, RequireScopeModel, TrackedName,
@@ -326,6 +327,12 @@ pub(super) fn member_is_wrapper_export_slot(expression: &MemberExpression<'_>) -
     matches!(computed_arguments_slot(member), Some(0 | 2))
 }
 
+pub(super) fn computed_member_is_wrapper_export_slot(
+    expression: &ComputedMemberExpression<'_>,
+) -> bool {
+    matches!(computed_arguments_slot(expression), Some(0 | 2))
+}
+
 fn computed_arguments_slot(member: &ComputedMemberExpression<'_>) -> Option<u8> {
     if !member
         .object
@@ -375,19 +382,14 @@ pub(super) fn mapped_require_mutations(
         .collect()
 }
 
-pub(super) fn non_require_computed_object_span(
+pub(super) fn computed_object_span(
     expression: &ComputedMemberExpression<'_>,
 ) -> Option<(u32, u32)> {
     let identifier = expression
         .object
         .without_parentheses()
         .get_identifier_reference()?;
-    (identifier.name == "arguments"
-        && (computed_arguments_slot(expression).is_some_and(|slot| slot != 1)
-            || expression
-                .static_property_name()
-                .is_some_and(|name| name.as_str() != "1")))
-    .then_some((identifier.span.start, identifier.span.end))
+    (identifier.name == "arguments").then_some((identifier.span.start, identifier.span.end))
 }
 
 pub(super) fn static_object_span(expression: &StaticMemberExpression<'_>) -> Option<(u32, u32)> {
@@ -396,6 +398,78 @@ pub(super) fn static_object_span(expression: &StaticMemberExpression<'_>) -> Opt
         .without_parentheses()
         .get_identifier_reference()?;
     (identifier.name == "arguments").then_some((identifier.span.start, identifier.span.end))
+}
+
+pub(super) fn arguments_member_target(
+    target: &SimpleAssignmentTarget<'_>,
+) -> Option<((u32, u32), bool)> {
+    let member = match target {
+        SimpleAssignmentTarget::ComputedMemberExpression(member) => {
+            return computed_object_span(member).map(|_| {
+                let span = member.span;
+                (
+                    (span.start, span.end),
+                    !computed_member_has_guaranteed_wrapper_property(member),
+                )
+            });
+        }
+        SimpleAssignmentTarget::StaticMemberExpression(member) => {
+            return static_object_span(member).map(|_| {
+                let span = member.span;
+                (
+                    (span.start, span.end),
+                    !static_member_has_guaranteed_wrapper_property(member),
+                )
+            });
+        }
+        _ => target
+            .get_expression()?
+            .get_inner_expression()
+            .get_member_expr()?,
+    };
+    let may_invoke_setter = match member {
+        MemberExpression::ComputedMemberExpression(member) => {
+            computed_object_span(member)?;
+            Some(!computed_member_has_guaranteed_wrapper_property(member))
+        }
+        MemberExpression::StaticMemberExpression(member) => {
+            static_object_span(member)?;
+            Some(!static_member_has_guaranteed_wrapper_property(member))
+        }
+        MemberExpression::PrivateFieldExpression(_) => None,
+    }?;
+    let span = member.span();
+    Some(((span.start, span.end), may_invoke_setter))
+}
+
+fn computed_member_has_guaranteed_wrapper_property(member: &ComputedMemberExpression<'_>) -> bool {
+    if let Some(name) = member.static_property_name() {
+        return matches!(
+            name.as_str(),
+            "0" | "1" | "2" | "3" | "4" | "length" | "callee"
+        );
+    }
+    matches!(
+        member.expression.without_parentheses(),
+        Expression::NumericLiteral(literal)
+            if matches!(literal.value, 0.0 | 1.0 | 2.0 | 3.0 | 4.0)
+    )
+}
+
+fn static_member_has_guaranteed_wrapper_property(member: &StaticMemberExpression<'_>) -> bool {
+    matches!(member.property.name.as_str(), "length" | "callee")
+}
+
+pub(super) fn arguments_member_expression_span(expression: &Expression<'_>) -> Option<(u32, u32)> {
+    let member = expression.get_inner_expression().get_member_expr()?;
+    let direct_arguments = match member {
+        MemberExpression::ComputedMemberExpression(member) => computed_object_span(member),
+        MemberExpression::StaticMemberExpression(member) => static_object_span(member),
+        MemberExpression::PrivateFieldExpression(_) => None,
+    };
+    direct_arguments?;
+    let span = member.span();
+    Some((span.start, span.end))
 }
 
 pub(super) fn callee_invokes_arguments_receiver(callee: &Expression<'_>) -> bool {

@@ -30,13 +30,15 @@ fn escaped_mapped_arguments_mutate_only_after_the_escape_executes()
 }
 
 #[test]
-fn mapped_arguments_method_calls_escape_after_call_arguments_are_evaluated()
+fn mapped_arguments_member_reads_preserve_accessor_and_non_read_contexts()
 -> Result<(), Box<dyn std::error::Error>> {
     let payload = parse_payload(
         SourceKind::CommonJs,
         concat!(
             "require('@acme/before');\n",
-            "arguments.poison = function () { this[1] = customLoader; };\n",
+            "Object.defineProperty(Object.prototype, 'poison', {\n",
+            "  get() { this[1] = customLoader; return () => {}; }\n",
+            "});\n",
             "arguments.poison(require('@acme/during-call'));\n",
             "require('@acme/after');\n",
         )
@@ -47,7 +49,7 @@ fn mapped_arguments_method_calls_escape_after_call_arguments_are_evaluated()
         .iter()
         .map(|source_use| source_use.specifier.as_str())
         .collect::<Vec<_>>();
-    assert_eq!(specifiers, ["@acme/before", "@acme/during-call"]);
+    assert_eq!(specifiers, ["@acme/before"]);
     assert!(
         payload
             .limitation_details
@@ -57,15 +59,141 @@ fn mapped_arguments_method_calls_escape_after_call_arguments_are_evaluated()
 
     let property_lookup = parse_payload(
         SourceKind::CommonJs,
-        b"const poison = arguments.poison; require('@acme/after-property-lookup');",
+        concat!(
+            "Object.defineProperty(Object.prototype, 'poison', {\n",
+            "  get() { this[1] = customLoader; return 0; }\n",
+            "});\n",
+            "arguments.poison;\n",
+            "require('@acme/after-property-lookup');\n",
+        )
+        .as_bytes(),
     )?;
-    assert_eq!(property_lookup.uses.len(), 1);
+    assert!(property_lookup.uses.is_empty());
+    assert!(
+        property_lookup
+            .limitation_details
+            .iter()
+            .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE)
+    );
+
+    let computed_lookup = parse_payload(
+        SourceKind::CommonJs,
+        concat!(
+            "Object.defineProperty(Object.prototype, 'poison', {\n",
+            "  get() { this[1] = customLoader; return 0; }\n",
+            "});\n",
+            "arguments[(require('@acme/during-key'), 'poison')];\n",
+            "require('@acme/after-computed');\n",
+        )
+        .as_bytes(),
+    )?;
+    assert_eq!(computed_lookup.uses.len(), 1);
+    assert_eq!(computed_lookup.uses[0].specifier, "@acme/during-key");
+
+    let compound_getter_before_rhs = parse_payload(
+        SourceKind::CommonJs,
+        concat!(
+            "Object.defineProperty(Object.prototype, 'poison', {\n",
+            "  get() { this[1] = customLoader; return 0; },\n",
+            "  set(_value) {}\n",
+            "});\n",
+            "arguments.poison += require('@acme/compound-rhs');\n",
+        )
+        .as_bytes(),
+    )?;
+    assert!(compound_getter_before_rhs.uses.is_empty());
+    assert!(
+        compound_getter_before_rhs
+            .limitation_details
+            .iter()
+            .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE)
+    );
+
+    let setter_after_key_and_rhs = parse_payload(
+        SourceKind::CommonJs,
+        concat!(
+            "Object.defineProperty(Object.prototype, 'poison', {\n",
+            "  set(_value) { this[1] = customLoader; }\n",
+            "});\n",
+            "arguments[(require('@acme/setter-key'), 'poison')] = ",
+            "require('@acme/setter-rhs');\n",
+            "require('@acme/setter-after');\n",
+        )
+        .as_bytes(),
+    )?;
     assert_eq!(
-        property_lookup.uses[0].specifier,
-        "@acme/after-property-lookup"
+        setter_after_key_and_rhs
+            .uses
+            .iter()
+            .map(|source_use| source_use.specifier.as_str())
+            .collect::<Vec<_>>(),
+        ["@acme/setter-key", "@acme/setter-rhs"]
     );
     assert!(
-        !property_lookup
+        setter_after_key_and_rhs
+            .limitation_details
+            .iter()
+            .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE)
+    );
+
+    let destructuring_setter = parse_payload(
+        SourceKind::CommonJs,
+        concat!(
+            "Object.defineProperty(Object.prototype, 'poison', {\n",
+            "  set(_value) { this[1] = customLoader; }\n",
+            "});\n",
+            "({ value: arguments.poison } = ",
+            "{ value: require('@acme/destructuring-rhs') });\n",
+            "require('@acme/destructuring-after');\n",
+        )
+        .as_bytes(),
+    )?;
+    assert_eq!(destructuring_setter.uses.len(), 1);
+    assert_eq!(
+        destructuring_setter.uses[0].specifier,
+        "@acme/destructuring-rhs"
+    );
+    assert!(
+        destructuring_setter
+            .limitation_details
+            .iter()
+            .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE)
+    );
+
+    let loop_setter = parse_payload(
+        SourceKind::CommonJs,
+        concat!(
+            "Object.defineProperty(Object.prototype, 'poison', {\n",
+            "  set(_value) { this[1] = customLoader; }\n",
+            "});\n",
+            "for (arguments.poison of [require('@acme/loop-rhs')]) {\n",
+            "  require('@acme/loop-body');\n",
+            "}\n",
+            "require('@acme/loop-after');\n",
+        )
+        .as_bytes(),
+    )?;
+    assert_eq!(loop_setter.uses.len(), 1);
+    assert_eq!(loop_setter.uses[0].specifier, "@acme/loop-rhs");
+    assert!(
+        loop_setter
+            .limitation_details
+            .iter()
+            .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE)
+    );
+
+    let deleted_property = parse_payload(
+        SourceKind::CommonJs,
+        concat!(
+            "delete arguments.poison;\n",
+            "require('@acme/after-delete');\n",
+        )
+        .as_bytes(),
+    )?;
+    assert_eq!(deleted_property.uses.len(), 1);
+    assert_eq!(deleted_property.uses[0].specifier, "@acme/after-delete");
+    assert!(
+        !deleted_property
             .limitation_details
             .iter()
             .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE)
@@ -110,7 +238,7 @@ fn ordinary_template_coercion_mutates_before_later_substitutions()
         SourceKind::CommonJs,
         concat!(
             "require('@acme/before');\n",
-            "arguments.toString = function () { this[1] = customLoader; return ''; };\n",
+            "Object.prototype.toString = function () { this[1] = customLoader; return ''; };\n",
             "`${arguments}${require('@acme/after-coercion')}`;\n",
             "require('@acme/after-template');\n",
         )
@@ -139,7 +267,7 @@ fn coercive_unary_arguments_mutate_require_without_poisoning_noncoercive_unary()
         let source = format!(
             concat!(
                 "require('@acme/before');\n",
-                "arguments.valueOf = function () {{ this[1] = customLoader; return 0; }};\n",
+                "Object.prototype.valueOf = function () {{ this[1] = customLoader; return 0; }};\n",
                 "{}arguments;\n",
                 "require('@acme/after');\n",
             ),
@@ -224,7 +352,7 @@ fn coercive_binary_arguments_mutate_after_both_operands_are_evaluated()
         let source = format!(
             concat!(
                 "require('@acme/before');\n",
-                "arguments.valueOf = function () {{ this[1] = customLoader; return 0; }};\n",
+                "Object.prototype.valueOf = function () {{ this[1] = customLoader; return 0; }};\n",
                 "{};\n",
                 "require('@acme/after');\n",
             ),
@@ -262,7 +390,7 @@ fn coercive_binary_arguments_mutate_after_both_operands_are_evaluated()
     ] {
         let source = format!(
             concat!(
-                "arguments.valueOf = function () {{ this[1] = customLoader; return 0; }};\n",
+                "Object.prototype.valueOf = function () {{ this[1] = customLoader; return 0; }};\n",
                 "try {{ {}; }} catch {{}}\n",
                 "require('@acme/after');\n",
             ),
@@ -285,7 +413,7 @@ fn coercive_binary_arguments_mutate_after_both_operands_are_evaluated()
     for expression in ["arguments++", "++arguments"] {
         let source = format!(
             concat!(
-                "arguments.valueOf = function () {{ this[1] = customLoader; return 0; }};\n",
+                "Object.prototype.valueOf = function () {{ this[1] = customLoader; return 0; }};\n",
                 "try {{ arguments instanceof {}; }} catch {{}}\n",
                 "require('@acme/after');\n",
             ),
@@ -305,7 +433,7 @@ fn coercive_binary_arguments_mutate_after_both_operands_are_evaluated()
         );
     }
     let source = concat!(
-        "arguments.valueOf = function () { this[1] = customLoader; return 0; };\n",
+        "Object.prototype.valueOf = function () { this[1] = customLoader; return 0; };\n",
         "arguments += require('@acme/during');\n",
         "require('@acme/after');\n",
     );
@@ -428,7 +556,6 @@ fn computed_property_keys_coerce_mapped_arguments_after_key_inputs()
         SourceKind::CommonJs,
         concat!(
             "require('@acme/before');\n",
-            "arguments.toString = function () { this[1] = customLoader; return 'key'; };\n",
             "({ [(require('@acme/during'), arguments)]: 1 });\n",
             "require('@acme/after');\n",
         )
@@ -451,12 +578,10 @@ fn computed_property_keys_coerce_mapped_arguments_after_key_inputs()
 
     for source in [
         concat!(
-            "arguments.toString = function () { this[1] = customLoader; return 'key'; };\n",
             "const { [arguments]: selected } = require('@acme/binding-rhs');\n",
             "require('@acme/binding-after');\n",
         ),
         concat!(
-            "arguments.toString = function () { this[1] = customLoader; return 'key'; };\n",
             "({ [arguments]: selected } = require('@acme/assignment-rhs'));\n",
             "require('@acme/assignment-after');\n",
         ),
