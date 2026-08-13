@@ -46,6 +46,18 @@ const ESCAPED_ARGUMENTS_SOURCE: &str = concat!(
     "replace(arguments, require('@scope/dep/escape-during'));\n",
     "require('@scope/dep/escape-after');\n",
 );
+const UNARY_ARGUMENTS_SOURCE: &str = concat!(
+    "require('@scope/dep/unary-before');\n",
+    "arguments.valueOf = function () { this[1] = customLoader; return 0; };\n",
+    "+arguments;\n",
+    "require('@scope/dep/unary-after');\n",
+);
+const NONCOERCIVE_UNARY_ARGUMENTS_SOURCE: &str = concat!(
+    "const inspected = !arguments;\n",
+    "consume(typeof arguments);\n",
+    "const ignored = void arguments;\n",
+    "require('@scope/dep/unary-grounded');\n",
+);
 const WRAPPER_THIS_SOURCE: &str = "this.publicValue = 1;\n";
 
 #[test]
@@ -110,6 +122,23 @@ fn commonjs_wrapper_mutations_preserve_only_grounded_public_edges()
     ] {
         assert_resolution_target(root.path(), &run_id, &escaped_arguments, specifier, target)?;
     }
+    let unary_arguments = file_response(root.path(), &run_id, "src/unary-arguments.cjs")?;
+    let unary_specifiers = resolutions(&unary_arguments)
+        .iter()
+        .filter_map(|resolution| {
+            resolution
+                .pointer("/sourceUse/specifier")
+                .and_then(Value::as_str)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(unary_specifiers, ["@scope/dep/unary-before"]);
+    assert_resolution_target(
+        root.path(),
+        &run_id,
+        &unary_arguments,
+        "@scope/dep/unary-before",
+        "packages/dep/unary-before-require.ts",
+    )?;
     for (path, specifier, target) in [
         (
             "src/strict-arguments.cjs",
@@ -120,6 +149,11 @@ fn commonjs_wrapper_mutations_preserve_only_grounded_public_edges()
             "src/shadowed-arguments.cjs",
             "@scope/dep/shadowed-arguments",
             "packages/dep/shadowed-arguments-require.ts",
+        ),
+        (
+            "src/noncoercive-unary-arguments.cjs",
+            "@scope/dep/unary-grounded",
+            "packages/dep/unary-grounded-require.ts",
         ),
     ] {
         let file = file_response(root.path(), &run_id, path)?;
@@ -160,8 +194,8 @@ fn commonjs_wrapper_mutations_preserve_only_grounded_public_edges()
         })
         .collect::<Result<Vec<_>, _>>()?;
     details.sort_unstable();
-    let mut expected = vec![COMMONJS_EXPORT_LOWERING_UNSUPPORTED; 8];
-    expected.extend([REQUIRE_ATTRIBUTION_OPAQUE; 4]);
+    let mut expected = vec![COMMONJS_EXPORT_LOWERING_UNSUPPORTED; 10];
+    expected.extend([REQUIRE_ATTRIBUTION_OPAQUE; 5]);
     expected.sort_unstable();
     assert_eq!(details, expected);
     Ok(())
@@ -254,6 +288,16 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         "src/escaped-arguments.cjs",
         ESCAPED_ARGUMENTS_SOURCE,
     )?;
+    write(
+        root.path(),
+        "src/unary-arguments.cjs",
+        UNARY_ARGUMENTS_SOURCE,
+    )?;
+    write(
+        root.path(),
+        "src/noncoercive-unary-arguments.cjs",
+        NONCOERCIVE_UNARY_ARGUMENTS_SOURCE,
+    )?;
     write(root.path(), "src/wrapper-this.ts", WRAPPER_THIS_SOURCE)?;
     write(
         root.path(),
@@ -298,6 +342,18 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
                     "import": "./escape-after-import.js",
                     "require": "./escape-after-require.js",
                 },
+                "./unary-before": {
+                    "import": "./unary-before-import.js",
+                    "require": "./unary-before-require.js",
+                },
+                "./unary-after": {
+                    "import": "./unary-after-import.js",
+                    "require": "./unary-after-require.js",
+                },
+                "./unary-grounded": {
+                    "import": "./unary-grounded-import.js",
+                    "require": "./unary-grounded-require.js",
+                },
             },
         })
         .to_string(),
@@ -321,6 +377,12 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         "escape-during-require",
         "escape-after-import",
         "escape-after-require",
+        "unary-before-import",
+        "unary-before-require",
+        "unary-after-import",
+        "unary-after-require",
+        "unary-grounded-import",
+        "unary-grounded-require",
     ] {
         write(
             root.path(),

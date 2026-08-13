@@ -1050,6 +1050,19 @@ impl<'a> Visit<'a> for RequireScopeCollector {
             self.non_escaping_require_references
                 .insert((identifier.span.start, identifier.span.end));
         }
+        if (expression.operator.is_arithmetic() || expression.operator.is_bitwise())
+            && expression.argument.is_specific_id("arguments")
+        {
+            self.record_arguments_escape(self.expression_mutation_timing(expression.span.end));
+        } else if let Some(identifier) = expression
+            .argument
+            .get_inner_expression()
+            .get_identifier_reference()
+            && identifier.name == "arguments"
+        {
+            self.non_escaping_arguments_references
+                .insert((identifier.span.start, identifier.span.end));
+        }
         walk::walk_unary_expression(self, expression);
     }
 

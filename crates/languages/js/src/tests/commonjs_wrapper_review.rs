@@ -133,6 +133,78 @@ fn ordinary_template_coercion_mutates_before_later_substitutions()
 }
 
 #[test]
+fn coercive_unary_arguments_mutate_require_without_poisoning_noncoercive_unary()
+-> Result<(), Box<dyn std::error::Error>> {
+    for operator in ["+", "-", "~"] {
+        let source = format!(
+            concat!(
+                "require('@acme/before');\n",
+                "arguments.valueOf = function () {{ this[1] = customLoader; return 0; }};\n",
+                "{}arguments;\n",
+                "require('@acme/after');\n",
+            ),
+            operator,
+        );
+        let payload = parse_payload(SourceKind::CommonJs, source.as_bytes())?;
+        let specifiers = payload
+            .uses
+            .iter()
+            .map(|source_use| source_use.specifier.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            specifiers,
+            ["@acme/before"],
+            "wrong attribution for {operator}"
+        );
+        assert!(
+            payload
+                .limitation_details
+                .iter()
+                .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE),
+            "missing unary coercion opacity for {operator}",
+        );
+    }
+
+    for source in [
+        "const inspected = !arguments; require('@acme/grounded');",
+        "consume(typeof arguments); require('@acme/grounded');",
+        "const ignored = void arguments; require('@acme/grounded');",
+        "const retained = delete arguments; require('@acme/grounded');",
+    ] {
+        let payload = parse_payload(SourceKind::CommonJs, source.as_bytes())?;
+        assert_eq!(payload.uses.len(), 1, "wrong attribution for {source}");
+        assert_eq!(payload.uses[0].specifier, "@acme/grounded");
+        assert!(
+            !payload
+                .limitation_details
+                .iter()
+                .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE),
+            "noncoercive unary expression became opaque: {source}",
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn transparent_typescript_eval_wrapper_still_poisons_later_require()
+-> Result<(), Box<dyn std::error::Error>> {
+    let payload = parse_payload_with_module_format(
+        SourceKind::TypeScript,
+        b"eval!(\"require = customLoader\"); require('@acme/after-eval');",
+        JsModuleFormat::CommonJs,
+    )?;
+    assert!(payload.uses.is_empty());
+    assert!(
+        payload
+            .limitation_details
+            .iter()
+            .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE)
+    );
+    Ok(())
+}
+
+#[test]
 fn jsx_arguments_escape_after_attributes_and_children_are_evaluated()
 -> Result<(), Box<dyn std::error::Error>> {
     let payload = parse_payload_with_module_format(
