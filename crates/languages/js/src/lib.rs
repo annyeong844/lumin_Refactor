@@ -19,7 +19,7 @@ mod require_scope;
 
 use require_scope::RequireScopeTracker;
 
-pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v5";
+pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v6";
 
 const REQUIRE_ATTRIBUTION_OPAQUE: &str = "shadowed, mutated, dynamically resolved, or escaped require makes CommonJS module-use attribution opaque";
 const MODULE_REQUIRE_ATTRIBUTION_OPAQUE: &str =
@@ -675,7 +675,11 @@ impl<'a> Visit<'a> for DynamicUseDetector {
     }
 
     fn visit_this_expression(&mut self, expression: &oxc_ast::ast::ThisExpression) {
-        if self.commonjs_wrapper_exports_possible && self.require_scopes.this_may_be_wrapper() {
+        if self.commonjs_wrapper_exports_possible
+            && self
+                .require_scopes
+                .this_may_be_wrapper(expression.span.start)
+        {
             self.commonjs_export_syntax_observed = true;
         }
         walk::walk_this_expression(self, expression);
@@ -708,6 +712,13 @@ impl<'a> Visit<'a> for DynamicUseDetector {
     }
 
     fn visit_member_expression(&mut self, expression: &oxc_ast::ast::MemberExpression<'a>) {
+        if self.commonjs_wrapper_exports_possible
+            && self
+                .require_scopes
+                .mapped_wrapper_export_object_may_be_visible(expression)
+        {
+            self.commonjs_export_syntax_observed = true;
+        }
         if let Some(identifier) = expression
             .object()
             .without_parentheses()

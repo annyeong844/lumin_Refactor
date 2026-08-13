@@ -5,7 +5,7 @@ use lumin_model::{
     ResolutionOutcome, ResolvedSourceUse, SourceRoles, SourceSnapshot, SourceSpan, SymbolNamespace,
 };
 
-pub const SYMBOL_GRAPH_SEMANTICS_VERSION: &str = "symbol-graph-semantics.v2";
+pub const SYMBOL_GRAPH_SEMANTICS_VERSION: &str = "symbol-graph-semantics.v3";
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ExportIdentity {
@@ -183,7 +183,7 @@ pub fn build(
                     namespace_re_exports.extend(matching_exports);
                 }
             }
-            ImportKind::DynamicBroad | ImportKind::ReExportAll => {
+            ImportKind::DynamicBroad => {
                 increment_broad_fan_in(
                     &mut graph,
                     target,
@@ -191,7 +191,7 @@ pub fn build(
                     importer_is_test,
                 );
             }
-            ImportKind::SideEffect => {}
+            ImportKind::ReExportAll | ImportKind::SideEffect => {}
         }
     }
 
@@ -723,6 +723,75 @@ mod tests {
         assert!(live_alias.exports.iter().all(|(identity, export)| {
             identity.source_id != target_source.id || export.production_broad_fan_in == 1
         }));
+        Ok(())
+    }
+
+    #[test]
+    fn unsupported_export_all_never_creates_eager_broad_fan_in()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let target_source = make_source("src/target.ts", false)?;
+        let barrel_source = make_source("src/barrel.ts", false)?;
+        let target_facts = FileFacts {
+            source_id: target_source.id.clone(),
+            source_unit: SourceUnitId::Logical(target_source.id.clone()),
+            exports: ["named", "default"]
+                .into_iter()
+                .enumerate()
+                .map(|(index, exported_name)| ExportFact {
+                    source_id: target_source.id.clone(),
+                    exported_name: exported_name.to_owned(),
+                    local_name: Some(exported_name.to_owned()),
+                    namespace: SymbolNamespace::Value,
+                    span: SourceSpan {
+                        start: index as u32,
+                        end: index as u32 + 1,
+                    },
+                })
+                .collect(),
+            uses: Vec::new(),
+            limitations: Vec::new(),
+        };
+        let barrel_facts = FileFacts {
+            source_id: barrel_source.id.clone(),
+            source_unit: SourceUnitId::Logical(barrel_source.id.clone()),
+            exports: Vec::new(),
+            uses: Vec::new(),
+            limitations: Vec::new(),
+        };
+        let re_export_all = ResolvedSourceUse {
+            source_use: SourceUseFact {
+                importer: barrel_source.id.clone(),
+                specifier: "./target.js".to_owned(),
+                imported_name: None,
+                local_name: None,
+                namespace: SymbolNamespace::Value,
+                kind: ImportKind::ReExportAll,
+                request_kind: ModuleRequestKind::StaticImport,
+                span: SourceSpan { start: 0, end: 35 },
+            },
+            outcome: ResolutionOutcome::Internal {
+                target: target_source.id.clone(),
+            },
+        };
+
+        let graph = build(
+            &[target_source.clone(), barrel_source],
+            &[target_facts, barrel_facts],
+            &[re_export_all],
+            &[],
+        );
+        for exported_name in ["named", "default"] {
+            let export = graph
+                .exports
+                .get(&ExportIdentity {
+                    source_id: target_source.id.clone(),
+                    namespace: SymbolNamespace::Value,
+                    exported_name: exported_name.to_owned(),
+                })
+                .ok_or("target export is missing")?;
+            assert_eq!(export.production_exact_fan_in, 0);
+            assert_eq!(export.production_broad_fan_in, 0);
+        }
         Ok(())
     }
 }

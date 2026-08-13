@@ -33,6 +33,7 @@ struct RequireScopeCollector {
     non_escaping_arguments_references: BTreeSet<(u32, u32)>,
     deferred_execution_ranges: BTreeSet<(u32, u32)>,
     repeated_execution_ranges: BTreeSet<(u32, u32)>,
+    non_wrapper_this_ranges: BTreeSet<(u32, u32)>,
     deferred_require_call_positions: BTreeSet<u32>,
     assignment_write_context: Option<AssignmentWriteContext>,
     destructuring_target_position: Option<u32>,
@@ -41,6 +42,7 @@ struct RequireScopeCollector {
     loop_head_write_range: Option<(u32, u32)>,
     loop_head_is_root_ordered: bool,
     arguments_escape_timing: Option<MutationTiming>,
+    tagged_template_quasi: Option<(u32, u32)>,
     jsx_invocation_end: Option<u32>,
     root_has_commonjs_wrapper: bool,
     root_this_may_be_wrapper: bool,
@@ -325,6 +327,7 @@ impl RequireScopeCollector {
             unordered_implicit_require_write: false,
             ordered_root_require_writes: Vec::new(),
             deferred_require_call_positions: self.deferred_require_call_positions,
+            non_wrapper_this_ranges: self.non_wrapper_this_ranges,
             unattributed_require_escape: false,
         };
         let mut implicit_mutations = self
@@ -525,7 +528,6 @@ impl<'a> Visit<'a> for RequireScopeCollector {
                     bindings.mark(name);
                 }
                 self.push_scope(RequireScopeKind::Lexical, bindings, false, true, ambient);
-                self.suppress_wrapper_this();
                 return;
             }
             AstKind::CatchClause(catch) => {
@@ -560,21 +562,23 @@ impl<'a> Visit<'a> for RequireScopeCollector {
                 return;
             }
             AstKind::PropertyDefinition(property) => {
-                if !property.r#static
-                    && let Some(value) = &property.value
-                {
+                if let Some(value) = &property.value {
                     let span = value.span();
-                    self.deferred_execution_ranges
-                        .insert((span.start, span.end));
+                    self.non_wrapper_this_ranges.insert((span.start, span.end));
+                    if !property.r#static {
+                        self.deferred_execution_ranges
+                            .insert((span.start, span.end));
+                    }
                 }
             }
             AstKind::AccessorProperty(property) => {
-                if !property.r#static
-                    && let Some(value) = &property.value
-                {
+                if let Some(value) = &property.value {
                     let span = value.span();
-                    self.deferred_execution_ranges
-                        .insert((span.start, span.end));
+                    self.non_wrapper_this_ranges.insert((span.start, span.end));
+                    if !property.r#static {
+                        self.deferred_execution_ranges
+                            .insert((span.start, span.end));
+                    }
                 }
             }
             AstKind::ForStatement(statement) => {
@@ -880,9 +884,32 @@ impl<'a> Visit<'a> for RequireScopeCollector {
         expression: &oxc_ast::ast::TaggedTemplateExpression<'a>,
     ) {
         let previous_escape = self.arguments_escape_timing;
+        let previous_quasi = self.tagged_template_quasi;
         self.arguments_escape_timing = Some(self.expression_mutation_timing(expression.span.end));
+        self.tagged_template_quasi = Some((expression.quasi.span.start, expression.quasi.span.end));
         walk::walk_tagged_template_expression(self, expression);
         self.arguments_escape_timing = previous_escape;
+        self.tagged_template_quasi = previous_quasi;
+    }
+
+    fn visit_template_literal(&mut self, literal: &oxc_ast::ast::TemplateLiteral<'a>) {
+        if self.tagged_template_quasi == Some((literal.span.start, literal.span.end)) {
+            walk::walk_template_literal(self, literal);
+            return;
+        }
+
+        let kind = AstKind::TemplateLiteral(self.alloc(literal));
+        self.enter_node(kind);
+        self.visit_span(&literal.span);
+        self.visit_template_elements(&literal.quasis);
+        for expression in &literal.expressions {
+            let previous_escape = self.arguments_escape_timing;
+            self.arguments_escape_timing =
+                Some(self.expression_mutation_timing(expression.span().end));
+            self.visit_expression(expression);
+            self.arguments_escape_timing = previous_escape;
+        }
+        self.leave_node(kind);
     }
 
     fn visit_jsx_element(&mut self, expression: &oxc_ast::ast::JSXElement<'a>) {

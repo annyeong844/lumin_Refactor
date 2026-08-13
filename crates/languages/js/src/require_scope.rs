@@ -135,6 +135,7 @@ struct RequireScopeModel {
     unordered_implicit_require_write: bool,
     ordered_root_require_writes: Vec<MutationTiming>,
     deferred_require_call_positions: BTreeSet<u32>,
+    non_wrapper_this_ranges: BTreeSet<(u32, u32)>,
     unattributed_require_escape: bool,
 }
 
@@ -269,13 +270,32 @@ impl RequireScopeTracker {
         self.wrapper_name_may_be_implicit(TrackedName::Exports)
     }
 
-    pub(super) fn this_may_be_wrapper(&self) -> bool {
-        self.tracking_failed
-            || self
-                .scope_stack
-                .last()
-                .and_then(|scope| self.model.scopes.get(*scope))
-                .is_none_or(|scope| scope.wrapper_this)
+    pub(super) fn this_may_be_wrapper(&self, position: u32) -> bool {
+        if self.tracking_failed {
+            return true;
+        }
+        if self
+            .model
+            .non_wrapper_this_ranges
+            .iter()
+            .any(|(start, end)| *start <= position && position <= *end)
+        {
+            return false;
+        }
+        self.scope_stack
+            .last()
+            .and_then(|scope| self.model.scopes.get(*scope))
+            .is_none_or(|scope| scope.wrapper_this)
+    }
+
+    pub(super) fn mapped_wrapper_export_object_may_be_visible(
+        &self,
+        expression: &oxc_ast::ast::MemberExpression<'_>,
+    ) -> bool {
+        if !mapped_arguments::member_is_wrapper_export_slot(expression) {
+            return false;
+        }
+        self.wrapper_name_may_be_implicit(TrackedName::Arguments)
     }
 
     fn wrapper_name_may_be_implicit(&self, name: TrackedName) -> bool {

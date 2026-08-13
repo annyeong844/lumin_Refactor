@@ -104,6 +104,35 @@ fn tagged_template_arguments_escape_after_substitutions_are_evaluated()
 }
 
 #[test]
+fn ordinary_template_coercion_mutates_before_later_substitutions()
+-> Result<(), Box<dyn std::error::Error>> {
+    let payload = parse_payload(
+        SourceKind::CommonJs,
+        concat!(
+            "require('@acme/before');\n",
+            "arguments.toString = function () { this[1] = customLoader; return ''; };\n",
+            "`${arguments}${require('@acme/after-coercion')}`;\n",
+            "require('@acme/after-template');\n",
+        )
+        .as_bytes(),
+    )?;
+    let specifiers = payload
+        .uses
+        .iter()
+        .map(|source_use| source_use.specifier.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(specifiers, ["@acme/before"]);
+    assert!(
+        payload
+            .limitation_details
+            .iter()
+            .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE)
+    );
+
+    Ok(())
+}
+
+#[test]
 fn jsx_arguments_escape_after_attributes_and_children_are_evaluated()
 -> Result<(), Box<dyn std::error::Error>> {
     let payload = parse_payload_with_module_format(
@@ -245,6 +274,61 @@ fn wrapper_this_is_opaque_only_in_commonjs_lexical_this_scopes()
         unknown.limitation_details,
         [COMMONJS_EXPORT_LOWERING_UNSUPPORTED]
     );
+
+    for source in [
+        "class C extends (this.heritage = 1, Base) {}",
+        "class C { [this.computed = 1]() {} }",
+    ] {
+        let class_definition = parse_payload_with_module_format(
+            SourceKind::TypeScript,
+            source.as_bytes(),
+            JsModuleFormat::CommonJs,
+        )?;
+        assert_eq!(
+            class_definition.limitation_details,
+            [COMMONJS_EXPORT_LOWERING_UNSUPPORTED],
+            "class definition expression lost wrapper this for {source}",
+        );
+    }
+
+    let class_elements = parse_payload_with_module_format(
+        SourceKind::TypeScript,
+        concat!(
+            "class C {\n",
+            "  field = (this.instance = 1);\n",
+            "  static field = (this.staticValue = 1);\n",
+            "  method() { this.methodValue = 1; }\n",
+            "}\n",
+        )
+        .as_bytes(),
+        JsModuleFormat::CommonJs,
+    )?;
+    assert!(class_elements.limitation_details.is_empty());
+    Ok(())
+}
+
+#[test]
+fn mapped_wrapper_export_slots_are_visible_without_poisoning_shadowed_arguments()
+-> Result<(), Box<dyn std::error::Error>> {
+    for source in ["arguments[0].foo = 1;", "arguments[2].exports = api;"] {
+        let payload = parse_payload_with_module_format(
+            SourceKind::TypeScript,
+            source.as_bytes(),
+            JsModuleFormat::CommonJs,
+        )?;
+        assert_eq!(
+            payload.limitation_details,
+            [COMMONJS_EXPORT_LOWERING_UNSUPPORTED],
+            "mapped wrapper export was not observed for {source}",
+        );
+    }
+
+    let shadowed = parse_payload_with_module_format(
+        SourceKind::TypeScript,
+        b"function local(arguments) { arguments[0].foo = 1; arguments[2].exports = api; }",
+        JsModuleFormat::CommonJs,
+    )?;
+    assert!(shadowed.limitation_details.is_empty());
     Ok(())
 }
 
