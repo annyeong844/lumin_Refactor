@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use oxc_ast::ast::{
     BindingPattern, FormalParameters, ImportDeclarationSpecifier, ImportOrExportKind,
 };
@@ -67,6 +69,7 @@ enum NameResolution {
 struct RequireScopeModel {
     scopes: Vec<RequireScope>,
     implicit_require_written: bool,
+    unattributed_require_escape: bool,
 }
 
 impl RequireScopeModel {
@@ -157,6 +160,10 @@ impl RequireScopeTracker {
                 .last()
                 .is_none_or(|scope| self.model.require_is_opaque(*scope))
     }
+
+    pub(super) fn has_unattributed_require_escape(&self) -> bool {
+        self.model.unattributed_require_escape
+    }
 }
 
 #[derive(Default)]
@@ -165,6 +172,8 @@ struct RequireScopeCollector {
     scope_stack: Vec<usize>,
     require_write_scopes: Vec<usize>,
     eval_call_scopes: Vec<usize>,
+    require_reference_scopes: Vec<(usize, u32, u32)>,
+    direct_require_callees: BTreeSet<(u32, u32)>,
 }
 
 impl RequireScopeCollector {
@@ -274,6 +283,7 @@ impl RequireScopeCollector {
         let mut model = RequireScopeModel {
             scopes: self.scopes,
             implicit_require_written: false,
+            unattributed_require_escape: false,
         };
         let implicit_write = self
             .require_write_scopes
@@ -285,6 +295,13 @@ impl RequireScopeCollector {
         });
         model.implicit_require_written =
             implicit_write || intrinsic_eval_can_reach_implicit_require;
+        model.unattributed_require_escape =
+            self.require_reference_scopes
+                .iter()
+                .any(|(scope, start, end)| {
+                    !self.direct_require_callees.contains(&(*start, *end))
+                        && model.resolve_name(*scope, TrackedName::Require) != NameResolution::Bound
+                });
         model
     }
 }
@@ -604,9 +621,26 @@ impl<'a> Visit<'a> for RequireScopeCollector {
     }
 
     fn visit_call_expression(&mut self, expression: &oxc_ast::ast::CallExpression<'a>) {
+        if let Some(identifier) = expression.callee.get_identifier_reference()
+            && identifier.name == "require"
+        {
+            self.direct_require_callees
+                .insert((identifier.span.start, identifier.span.end));
+        }
         if !expression.optional && expression.callee.is_specific_id("eval") {
             self.record_eval_call();
         }
         walk::walk_call_expression(self, expression);
+    }
+
+    fn visit_identifier_reference(&mut self, identifier: &oxc_ast::ast::IdentifierReference<'a>) {
+        if identifier.name == "require"
+            && !self.current_ambient()
+            && let Some(scope) = self.scope_stack.last().copied()
+        {
+            self.require_reference_scopes
+                .push((scope, identifier.span.start, identifier.span.end));
+        }
+        walk::walk_identifier_reference(self, identifier);
     }
 }

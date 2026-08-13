@@ -17,6 +17,8 @@ mod require_scope;
 
 use require_scope::RequireScopeTracker;
 
+const REQUIRE_ATTRIBUTION_OPAQUE: &str = "shadowed, mutated, dynamically resolved, or escaped require makes CommonJS module-use attribution opaque";
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct JsExtractError {
     kind: SourceKind,
@@ -123,12 +125,17 @@ pub fn parse_payload(kind: SourceKind, bytes: &[u8]) -> Result<JsPayloadFacts, J
         lower_statement(statement, &mut facts);
     }
 
+    let require_scopes = RequireScopeTracker::analyze(&parsed.program);
+    let escaped_require = require_scopes.has_unattributed_require_escape();
     let mut detector = DynamicUseDetector {
         uses: Vec::new(),
         unknown_details: Vec::new(),
-        require_scopes: RequireScopeTracker::analyze(&parsed.program),
+        require_scopes,
         opaque_require_reported: false,
     };
+    if escaped_require {
+        detector.report_opaque_require();
+    }
     detector.visit_program(&parsed.program);
     facts.uses.extend(detector.uses);
     facts.limitation_details.extend(detector.unknown_details);
@@ -427,6 +434,19 @@ fn lower_declaration(declaration: &Declaration<'_>, facts: &mut JsPayloadFacts) 
             );
         }
         Declaration::TSImportEqualsDeclaration(declaration) => {
+            if declaration.import_kind == ImportOrExportKind::Value
+                && matches!(
+                    declaration.module_reference,
+                    oxc_ast::ast::TSModuleReference::ExternalModuleReference(_)
+                )
+            {
+                push_named_declaration(
+                    facts,
+                    declaration.id.name.as_str(),
+                    SymbolNamespace::Value,
+                    declaration.span,
+                );
+            }
             lower_import_equals(declaration, facts);
         }
         Declaration::TSModuleDeclaration(_) | Declaration::TSGlobalDeclaration(_) => {
@@ -465,10 +485,8 @@ impl DynamicUseDetector {
 
     fn report_opaque_require(&mut self) {
         if !self.opaque_require_reported {
-            self.unknown_details.push(
-                "local require binding or write makes CommonJS module-use attribution opaque"
-                    .to_owned(),
-            );
+            self.unknown_details
+                .push(REQUIRE_ATTRIBUTION_OPAQUE.to_owned());
             self.opaque_require_reported = true;
         }
     }

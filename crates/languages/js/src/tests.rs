@@ -131,8 +131,7 @@ fn commonjs_shadowed_require_is_opaque() -> Result<(), Box<dyn std::error::Error
         payload.limitation_details,
         vec![
             "CommonJS export lowering is not implemented in the first audit increment".to_owned(),
-            "local require binding or write makes CommonJS module-use attribution opaque"
-                .to_owned(),
+            REQUIRE_ATTRIBUTION_OPAQUE.to_owned(),
         ]
     );
     Ok(())
@@ -157,8 +156,7 @@ fn commonjs_mixed_require_scopes_preserve_grounded_edges() -> Result<(), Box<dyn
         payload.limitation_details,
         vec![
             "CommonJS export lowering is not implemented in the first audit increment".to_owned(),
-            "local require binding or write makes CommonJS module-use attribution opaque"
-                .to_owned(),
+            REQUIRE_ATTRIBUTION_OPAQUE.to_owned(),
         ]
     );
     Ok(())
@@ -177,8 +175,7 @@ fn commonjs_reassigned_require_is_opaque() -> Result<(), Box<dyn std::error::Err
             vec![
                 "CommonJS export lowering is not implemented in the first audit increment"
                     .to_owned(),
-                "local require binding or write makes CommonJS module-use attribution opaque"
-                    .to_owned(),
+                REQUIRE_ATTRIBUTION_OPAQUE.to_owned(),
             ]
         );
     }
@@ -199,8 +196,7 @@ fn commonjs_dynamic_require_scope_cannot_hide_outer_writes()
             vec![
                 "CommonJS export lowering is not implemented in the first audit increment"
                     .to_owned(),
-                "local require binding or write makes CommonJS module-use attribution opaque"
-                    .to_owned(),
+                REQUIRE_ATTRIBUTION_OPAQUE.to_owned(),
             ]
         );
     }
@@ -224,8 +220,7 @@ fn commonjs_dynamic_lookup_only_hides_its_own_require_call()
         payload.limitation_details,
         vec![
             "CommonJS export lowering is not implemented in the first audit increment".to_owned(),
-            "local require binding or write makes CommonJS module-use attribution opaque"
-                .to_owned(),
+            REQUIRE_ATTRIBUTION_OPAQUE.to_owned(),
         ]
     );
     Ok(())
@@ -242,8 +237,7 @@ fn commonjs_block_function_require_is_opaque() -> Result<(), Box<dyn std::error:
         payload.limitation_details,
         vec![
             "CommonJS export lowering is not implemented in the first audit increment".to_owned(),
-            "local require binding or write makes CommonJS module-use attribution opaque"
-                .to_owned(),
+            REQUIRE_ATTRIBUTION_OPAQUE.to_owned(),
         ]
     );
     Ok(())
@@ -327,6 +321,69 @@ fn lowers_empty_reexport_and_external_import_equals_requests()
 }
 
 #[test]
+fn exported_import_equals_retains_request_and_export_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    let payload = parse_payload(
+        SourceKind::TypeScript,
+        b"export import lib = require('@acme/import-equals');",
+    )?;
+    assert_eq!(payload.uses.len(), 1);
+    assert_eq!(payload.uses[0].specifier, "@acme/import-equals");
+    assert_eq!(payload.uses[0].kind, ImportKind::Namespace);
+    assert_eq!(payload.uses[0].request_kind, ModuleRequestKind::Require);
+    assert_eq!(payload.exports.len(), 1);
+    assert_eq!(payload.exports[0].exported_name, "lib");
+    assert_eq!(payload.exports[0].local_name.as_deref(), Some("lib"));
+    assert_eq!(payload.exports[0].namespace, SymbolNamespace::Value);
+    assert!(payload.limitation_details.is_empty());
+    Ok(())
+}
+
+#[test]
+fn escaped_require_is_visible_without_discarding_grounded_edges()
+-> Result<(), Box<dyn std::error::Error>> {
+    let payload = parse_payload(
+        SourceKind::CommonJs,
+        concat!(
+            "const known = require('@acme/known');\n",
+            "const load = require;\n",
+            "load('@acme/hidden');\n",
+        )
+        .as_bytes(),
+    )?;
+    assert_eq!(payload.uses.len(), 1);
+    assert_eq!(payload.uses[0].specifier, "@acme/known");
+    assert_eq!(
+        payload.limitation_details,
+        vec![
+            "CommonJS export lowering is not implemented in the first audit increment".to_owned(),
+            REQUIRE_ATTRIBUTION_OPAQUE.to_owned(),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn escaped_local_require_binding_does_not_poison_the_wrapper_loader()
+-> Result<(), Box<dyn std::error::Error>> {
+    let payload = parse_payload(
+        SourceKind::CommonJs,
+        concat!(
+            "function local(require) { const load = require; return load('local'); }\n",
+            "require('@acme/known');\n",
+        )
+        .as_bytes(),
+    )?;
+    assert_eq!(payload.uses.len(), 1);
+    assert_eq!(payload.uses[0].specifier, "@acme/known");
+    assert_eq!(
+        payload.limitation_details,
+        vec!["CommonJS export lowering is not implemented in the first audit increment".to_owned(),]
+    );
+    Ok(())
+}
+
+#[test]
 fn commonjs_body_var_does_not_shadow_default_parameter_require()
 -> Result<(), Box<dyn std::error::Error>> {
     let payload = parse_payload(
@@ -345,8 +402,7 @@ fn commonjs_body_var_does_not_shadow_default_parameter_require()
         payload.limitation_details,
         vec![
             "CommonJS export lowering is not implemented in the first audit increment".to_owned(),
-            "local require binding or write makes CommonJS module-use attribution opaque"
-                .to_owned(),
+            REQUIRE_ATTRIBUTION_OPAQUE.to_owned(),
         ]
     );
     Ok(())

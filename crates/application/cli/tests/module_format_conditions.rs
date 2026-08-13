@@ -10,6 +10,7 @@ use support::{assert_status, field, run};
 
 const COMMONJS_EXPORT_LIMITATION: &str =
     "CommonJS export lowering is not implemented in the first audit increment";
+const REQUIRE_ATTRIBUTION_LIMITATION: &str = "shadowed, mutated, dynamically resolved, or escaped require makes CommonJS module-use attribution opaque";
 
 const MTS_SOURCE: &str = concat!(
     "import { mtsStatic } from '@acme/lib/mts-static';\n",
@@ -38,6 +39,8 @@ const CTS_SOURCE: &str = concat!(
 );
 const CJS_SOURCE: &str = concat!(
     "const cjsRequired = require('@acme/lib/cjs-require');\n",
+    "const escapedLoader = require;\n",
+    "escapedLoader('@acme/lib/cjs-aliased');\n",
     "console.log(cjsRequired);\n",
 );
 const ROOT_SOURCE: &str = concat!(
@@ -46,6 +49,7 @@ const ROOT_SOURCE: &str = concat!(
 );
 const NEAREST_COMMONJS_SOURCE: &str = concat!(
     "import { nearestCommonJs } from '@acme/lib/nearest-commonjs';\n",
+    "export import exportedEquals = require('@acme/lib/nearest-export-import-equals');\n",
     "console.log(nearestCommonJs);\n",
 );
 const NEAREST_DEFAULT_SOURCE: &str = concat!(
@@ -71,6 +75,7 @@ const TARGET_CASES: &[&str] = &[
     "cjs-require",
     "root-module",
     "nearest-commonjs",
+    "nearest-export-import-equals",
     "nearest-default",
     "esm-require",
     "cjs-dynamic",
@@ -83,6 +88,7 @@ fn node_profiles_select_conditions_from_importer_format_and_edge_syntax()
     for profile in ["node16", "nodenext"] {
         verify_profile(root.path(), profile)?;
     }
+    verify_exported_import_equals_identity()?;
     Ok(())
 }
 
@@ -99,7 +105,7 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
     );
     assert_eq!(
         audit_json.get("limitationCount").and_then(Value::as_u64),
-        Some(4)
+        Some(5)
     );
     let run_id = field(&audit.stdout, "runId")?;
 
@@ -110,13 +116,17 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
         .get("limitations")
         .and_then(Value::as_array)
         .ok_or_else(|| std::io::Error::other("limitations are missing"))?;
-    assert_eq!(limitations.len(), 4);
+    assert_eq!(limitations.len(), 5);
     assert!(limitations.iter().all(|limitation| {
         limitation.get("reason").and_then(Value::as_str) == Some("js-module-use-unknown")
     }));
     assert_eq!(
         limitation_detail_count(limitations, COMMONJS_EXPORT_LIMITATION),
         2
+    );
+    assert_eq!(
+        limitation_detail_count(limitations, REQUIRE_ATTRIBUTION_LIMITATION),
+        1
     );
     for specifier in ["@acme/lib/mts-export", "@acme/lib/cts-export"] {
         assert_eq!(
@@ -317,6 +327,16 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
             "require",
         ),
         (
+            "apps/nearest-commonjs/main.ts",
+            NEAREST_COMMONJS_SOURCE,
+            "@acme/lib/nearest-export-import-equals",
+            "namespace",
+            "require",
+            "import exportedEquals = require('@acme/lib/nearest-export-import-equals');",
+            "nearest-export-import-equals",
+            "require",
+        ),
+        (
             "apps/nearest-default/main.ts",
             NEAREST_DEFAULT_SOURCE,
             "@acme/lib/nearest-default",
@@ -410,6 +430,30 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
+fn verify_exported_import_equals_identity() -> Result<(), Box<dyn std::error::Error>> {
+    let root = exported_import_equals_fixture()?;
+    let audit = run(
+        root.path(),
+        &["audit", "--jobs", "1", "--resolution-profile", "nodenext"],
+    )?;
+    assert_status(&audit, 0);
+    let audit_json: Value = serde_json::from_str(&audit.stdout)?;
+    assert_eq!(
+        audit_json.get("status").and_then(Value::as_str),
+        Some("complete")
+    );
+    assert_eq!(
+        audit_json.get("limitationCount").and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_dead_export(
+        root.path(),
+        &field(&audit.stdout, "runId")?,
+        "apps/consumer/main.ts",
+        "exportedEquals",
+    )
+}
+
 fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     write(
@@ -480,6 +524,51 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
     Ok(root)
 }
 
+fn exported_import_equals_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"root-app","private":true,"type":"module","workspaces":["apps/*","packages/*"]}"#,
+    )?;
+    write(
+        root.path(),
+        "apps/consumer/package.json",
+        r#"{"name":"@acme/consumer","private":true,"type":"commonjs"}"#,
+    )?;
+    write(
+        root.path(),
+        "apps/consumer/main.ts",
+        "export import exportedEquals = require('@acme/lib/identity');\n",
+    )?;
+    write(
+        root.path(),
+        "packages/lib/package.json",
+        &json!({
+            "name": "@acme/lib",
+            "private": true,
+            "exports": {
+                "./identity": {
+                    "import": "./identity-import.js",
+                    "require": "./identity-require.js",
+                }
+            },
+        })
+        .to_string(),
+    )?;
+    write(
+        root.path(),
+        "packages/lib/identity-import.ts",
+        "export const imported = 1;\n",
+    )?;
+    write(
+        root.path(),
+        "packages/lib/identity-require.ts",
+        "export const required = 1;\n",
+    )?;
+    Ok(root)
+}
+
 fn target_path(case: &str, lane: &str) -> String {
     format!("packages/lib/targets/{case}-{lane}.ts")
 }
@@ -489,6 +578,31 @@ fn limitation_detail_count(limitations: &[Value], detail: &str) -> usize {
         .iter()
         .filter(|limitation| limitation.get("detail").and_then(Value::as_str) == Some(detail))
         .count()
+}
+
+fn assert_dead_export(
+    root: &Path,
+    run_id: &str,
+    path: &str,
+    exported_name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let output = run(root, &["findings", "--run", run_id, "--area", "dead-code"])?;
+    assert_status(&output, 0);
+    let response: Value = serde_json::from_str(&output.stdout)?;
+    let items = response
+        .get("items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("dead-code findings are missing"))?;
+    assert!(
+        items.iter().any(|item| {
+            item.get("ruleId").and_then(Value::as_str) == Some("dead-code/zero-exact-fan-in.v1")
+                && item.pointer("/path/display").and_then(Value::as_str) == Some(path)
+                && item.get("exportedName").and_then(Value::as_str) == Some(exported_name)
+                && item.get("namespace").and_then(Value::as_str) == Some("value")
+        }),
+        "missing grounded dead-export evidence for {path}:{exported_name}: {response}"
+    );
+    Ok(())
 }
 
 fn write(root: &Path, path: &str, contents: &str) -> Result<(), std::io::Error> {
