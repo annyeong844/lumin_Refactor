@@ -320,7 +320,9 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("public-condition-union", &[
         inv!("package_condition_public", "supported_public_condition_lanes_union_only_selected_identity_namespaces"),
     ]),
-    row_sd!("package-fields-no-exports"),
+    row_sd!("package-fields-no-exports", &[
+        inv!("package_fallback_public", "package_fields_without_exports_select_role_scoped_public_targets"),
+    ]),
     row_sd!("resolution-profile-selection"),
     row_sd!("explicit-entry-selection", &[inv!("explicit_entry_selection", "explicit_entries_replace_deduplicate_and_preserve_alias_contexts")]),
     row_sd!("reachable-dead-sibling", &[inv!("core_dead_evidence", "reachable_module_keeps_zero_fan_in_sibling")]),

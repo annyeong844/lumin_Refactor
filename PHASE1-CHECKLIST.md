@@ -45,10 +45,10 @@ These are execution-matrix counts, not a percentage estimate of product code.
 
 | Lane | Applicable | Mapped | Remaining | Verified aggregate |
 | --- | ---: | ---: | ---: | --- |
-| Standard | 86 | 57 | 29 | Focused `corpus::tests::mode_counts`: 57 mapped, 29 unmapped; `public-condition-union`: 1 invocation passed, 0 failed. Last required public CI mapped aggregate: 55 passed, 0 failed. |
-| Determinism | 86 | 57 | 29 | Focused `corpus::tests::mode_counts`: 57 mapped, 29 unmapped; `public-condition-union`: 1 invocation passed with 1 semantic capture, 0 failed. Last required public CI mapped aggregate: 55 passed, 0 failed. |
+| Standard | 86 | 58 | 28 | Focused `corpus::tests::mode_counts`: 58 mapped, 28 unmapped; `package-fields-no-exports`: 1 invocation passed, 0 failed. Last required public CI mapped aggregate: 57 passed, 0 failed. |
+| Determinism | 86 | 58 | 28 | Focused `corpus::tests::mode_counts`: 58 mapped, 28 unmapped; `package-fields-no-exports`: 1 invocation passed with 4 semantic captures, 0 failed. Last required public CI mapped aggregate: 57 passed, 0 failed. |
 | Store crash | 10 | 4 | 6 | Mapping count only; Phase 1 exit still requires the complete lane. |
-| **Total execution obligations** | **182** | **118** | **64** | This total deliberately counts each required lane execution. |
+| **Total execution obligations** | **182** | **120** | **62** | This total deliberately counts each required lane execution. |
 
 Known non-corpus exit gaps:
 
