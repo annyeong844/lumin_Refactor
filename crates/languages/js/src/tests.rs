@@ -419,6 +419,7 @@ fn shadowed_commonjs_wrapper_names_do_not_create_limitations()
             "  exports.alsoHidden = 2;\n",
             "  Object.defineProperty(exports, 'objectHidden', { value: 3 });\n",
             "  Reflect.defineProperty(module.exports, 'reflectHidden', { value: 4 });\n",
+            "  Object.defineProperty(module, 'exports', { value: 5 });\n",
             "}\n",
             "export const visible = 1;\n",
         )
@@ -437,6 +438,7 @@ fn call_based_commonjs_exports_are_visible_in_ordinary_typescript()
         "Object.defineProperties(module.exports, { foo: { value: 1 } });",
         "Object.assign(exports, { foo: 1 });",
         "Reflect.defineProperty(module['exports'], 'foo', { value: 1 });",
+        "Object.defineProperty(module, 'exports', { value: {} });",
         "defineExport(exports);",
         "const exportObject = module.exports; consume(exportObject);",
     ] {
@@ -502,6 +504,129 @@ fn initialized_var_require_applies_its_write_after_the_initializer()
     )?;
     assert_eq!(payload.uses.len(), 1);
     assert_eq!(payload.uses[0].specifier, "@acme/rhs");
+    assert_eq!(
+        payload.limitation_details,
+        vec![
+            COMMONJS_EXPORT_LOWERING_UNSUPPORTED.to_owned(),
+            REQUIRE_ATTRIBUTION_OPAQUE.to_owned(),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn destructuring_require_writes_precede_later_pattern_defaults()
+-> Result<(), Box<dyn std::error::Error>> {
+    let payload = parse_payload(
+        SourceKind::CommonJs,
+        concat!(
+            "let x;\n",
+            "[require, x = require('@acme/not-node')] = [customLoader, undefined];\n",
+        )
+        .as_bytes(),
+    )?;
+    assert!(payload.uses.is_empty());
+    assert_eq!(
+        payload.limitation_details,
+        vec![
+            COMMONJS_EXPORT_LOWERING_UNSUPPORTED.to_owned(),
+            REQUIRE_ATTRIBUTION_OPAQUE.to_owned(),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn destructuring_rhs_and_same_target_default_precede_their_writes()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (source, expected) in [
+        ("[require] = [require('@acme/rhs')];", "@acme/rhs"),
+        (
+            "[require = require('@acme/default')] = [undefined];",
+            "@acme/default",
+        ),
+    ] {
+        let payload = parse_payload(SourceKind::CommonJs, source.as_bytes())?;
+        assert_eq!(payload.uses.len(), 1, "lost known request in {source}");
+        assert_eq!(payload.uses[0].specifier, expected);
+        assert_eq!(
+            payload.limitation_details,
+            vec![
+                COMMONJS_EXPORT_LOWERING_UNSUPPORTED.to_owned(),
+                REQUIRE_ATTRIBUTION_OPAQUE.to_owned(),
+            ]
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn var_destructuring_uses_binding_initialization_order() -> Result<(), Box<dyn std::error::Error>> {
+    let poisoned = parse_payload(
+        SourceKind::CommonJs,
+        concat!(
+            "let x;\n",
+            "var [require, x = require('@acme/not-node')] = [customLoader, undefined];\n",
+        )
+        .as_bytes(),
+    )?;
+    assert!(poisoned.uses.is_empty());
+
+    for (source, expected) in [
+        ("var [require] = [require('@acme/rhs')];", "@acme/rhs"),
+        (
+            "var [require = require('@acme/default')] = [undefined];",
+            "@acme/default",
+        ),
+    ] {
+        let payload = parse_payload(SourceKind::CommonJs, source.as_bytes())?;
+        assert_eq!(payload.uses.len(), 1, "lost known request in {source}");
+        assert_eq!(payload.uses[0].specifier, expected);
+    }
+    Ok(())
+}
+
+#[test]
+fn eval_poisoning_follows_argument_evaluation() -> Result<(), Box<dyn std::error::Error>> {
+    let payload = parse_payload(
+        SourceKind::CommonJs,
+        concat!(
+            "eval(require('@acme/code'));\n",
+            "require('@acme/after');\n",
+        )
+        .as_bytes(),
+    )?;
+    assert_eq!(payload.uses.len(), 1);
+    assert_eq!(payload.uses[0].specifier, "@acme/code");
+    assert_eq!(
+        payload.limitation_details,
+        vec![
+            COMMONJS_EXPORT_LOWERING_UNSUPPORTED.to_owned(),
+            REQUIRE_ATTRIBUTION_OPAQUE.to_owned(),
+        ]
+    );
+
+    let rhs = parse_payload(
+        SourceKind::CommonJs,
+        b"[code] = [eval('require = customLoader'), require('@acme/after-eval')];",
+    )?;
+    assert!(rhs.uses.is_empty());
+    assert!(
+        rhs.limitation_details
+            .iter()
+            .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE)
+    );
+    Ok(())
+}
+
+#[test]
+fn with_object_is_evaluated_before_dynamic_body_lookup() -> Result<(), Box<dyn std::error::Error>> {
+    let payload = parse_payload(
+        SourceKind::CommonJs,
+        b"with (require('@acme/context')) { require('@acme/inside'); }",
+    )?;
+    assert_eq!(payload.uses.len(), 1);
+    assert_eq!(payload.uses[0].specifier, "@acme/context");
     assert_eq!(
         payload.limitation_details,
         vec![

@@ -84,15 +84,49 @@ enum NameResolution {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct MutationObservation {
     scope: usize,
-    position: u32,
+    timing: MutationTiming,
     ordered_root_statement: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum MutationTiming {
+    After(u32),
+    Destructuring {
+        target_position: u32,
+        rhs_start: u32,
+        rhs_end: u32,
+    },
+}
+
+impl MutationTiming {
+    fn precedes_call(self, call_position: u32) -> bool {
+        match self {
+            Self::After(position) => position < call_position,
+            Self::Destructuring {
+                target_position,
+                rhs_start,
+                rhs_end,
+            } => !(rhs_start..rhs_end).contains(&call_position) && target_position < call_position,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AssignmentWriteContext {
+    AfterExpression(u32),
+    Destructuring {
+        lhs_start: u32,
+        lhs_end: u32,
+        rhs_start: u32,
+        rhs_end: u32,
+    },
 }
 
 #[derive(Debug)]
 struct RequireScopeModel {
     scopes: Vec<RequireScope>,
     unordered_implicit_require_write: bool,
-    ordered_root_require_writes: Vec<u32>,
+    ordered_root_require_writes: Vec<MutationTiming>,
     unattributed_require_escape: bool,
 }
 
@@ -149,7 +183,7 @@ impl RequireScopeModel {
         }
         self.ordered_root_require_writes
             .iter()
-            .any(|write_position| *write_position < call_position)
+            .any(|timing| timing.precedes_call(call_position))
     }
 
     fn may_resolve_to_wrapper(&self, scope: usize, name: TrackedName) -> bool {
@@ -178,17 +212,22 @@ impl RequireScopeTracker {
 
     pub(super) fn enter_node(&mut self, kind: AstKind<'_>) {
         if scope_kind(kind).is_some() {
-            if self.next_scope < self.model.scopes.len() {
-                self.scope_stack.push(self.next_scope);
-                self.next_scope += 1;
-            } else {
-                self.tracking_failed = true;
-            }
+            self.enter_next_scope(false);
         }
     }
 
     pub(super) fn leave_node(&mut self, kind: AstKind<'_>) {
         if scope_kind(kind).is_some() && self.scope_stack.pop().is_none() {
+            self.tracking_failed = true;
+        }
+    }
+
+    pub(super) fn enter_with_body(&mut self) {
+        self.enter_next_scope(true);
+    }
+
+    pub(super) fn leave_with_body(&mut self) {
+        if self.scope_stack.pop().is_none() {
             self.tracking_failed = true;
         }
     }
@@ -220,6 +259,19 @@ impl RequireScopeTracker {
                 .last()
                 .is_none_or(|scope| self.model.may_resolve_to_wrapper(*scope, name))
     }
+
+    fn enter_next_scope(&mut self, require_dynamic: bool) {
+        let Some(scope) = self.model.scopes.get(self.next_scope) else {
+            self.tracking_failed = true;
+            return;
+        };
+        if require_dynamic && !scope.dynamic_lookup {
+            self.tracking_failed = true;
+            return;
+        }
+        self.scope_stack.push(self.next_scope);
+        self.next_scope += 1;
+    }
 }
 
 #[derive(Default)]
@@ -233,7 +285,10 @@ struct RequireScopeCollector {
     non_escaping_require_references: BTreeSet<(u32, u32)>,
     ordered_root_statement_spans: BTreeSet<(u32, u32)>,
     inside_ordered_root_statement: bool,
-    assignment_write_position: Option<u32>,
+    assignment_write_context: Option<AssignmentWriteContext>,
+    destructuring_target_position: Option<u32>,
+    binding_write_context: Option<AssignmentWriteContext>,
+    binding_target_position: Option<u32>,
     root_has_commonjs_wrapper: bool,
 }
 
@@ -333,27 +388,87 @@ impl RequireScopeCollector {
         }
     }
 
-    fn record_require_write(&mut self, position: u32) {
+    fn record_require_write(&mut self, timing: MutationTiming) {
         if !self.current_ambient()
             && let Some(scope) = self.scope_stack.last().copied()
         {
             self.require_writes.push(MutationObservation {
                 scope,
-                position,
+                timing,
                 ordered_root_statement: scope == 0 && self.inside_ordered_root_statement,
             });
         }
     }
 
-    fn record_eval_call(&mut self, position: u32) {
+    fn record_eval_call(&mut self, timing: MutationTiming) {
         if !self.current_ambient()
             && let Some(scope) = self.scope_stack.last().copied()
         {
             self.eval_calls.push(MutationObservation {
                 scope,
-                position,
+                timing,
                 ordered_root_statement: scope == 0 && self.inside_ordered_root_statement,
             });
+        }
+    }
+
+    fn assignment_target_timing(&self, fallback_position: u32) -> MutationTiming {
+        Self::target_timing(
+            self.assignment_write_context,
+            self.destructuring_target_position,
+            fallback_position,
+        )
+    }
+
+    fn binding_target_timing(&self, fallback_position: u32) -> MutationTiming {
+        Self::target_timing(
+            self.binding_write_context,
+            self.binding_target_position,
+            fallback_position,
+        )
+    }
+
+    fn target_timing(
+        context: Option<AssignmentWriteContext>,
+        target_position: Option<u32>,
+        fallback_position: u32,
+    ) -> MutationTiming {
+        match context {
+            Some(AssignmentWriteContext::AfterExpression(position)) => {
+                MutationTiming::After(position)
+            }
+            Some(AssignmentWriteContext::Destructuring {
+                lhs_start,
+                lhs_end,
+                rhs_start,
+                rhs_end,
+            }) if (lhs_start..lhs_end).contains(&fallback_position) => {
+                MutationTiming::Destructuring {
+                    target_position: target_position.unwrap_or(fallback_position),
+                    rhs_start,
+                    rhs_end,
+                }
+            }
+            Some(AssignmentWriteContext::Destructuring { .. }) => {
+                MutationTiming::After(fallback_position)
+            }
+            None => MutationTiming::After(fallback_position),
+        }
+    }
+
+    fn expression_mutation_timing(&self, position: u32) -> MutationTiming {
+        match self.assignment_write_context {
+            Some(AssignmentWriteContext::Destructuring {
+                lhs_start,
+                lhs_end,
+                rhs_start,
+                rhs_end,
+            }) if (lhs_start..lhs_end).contains(&position) => MutationTiming::Destructuring {
+                target_position: position,
+                rhs_start,
+                rhs_end,
+            },
+            _ => MutationTiming::After(position),
         }
     }
 
@@ -382,7 +497,7 @@ impl RequireScopeCollector {
         implicit_mutations.extend(intrinsic_eval_mutations.iter().copied());
         for observation in implicit_mutations {
             if observation.ordered_root_statement {
-                model.ordered_root_require_writes.push(observation.position);
+                model.ordered_root_require_writes.push(observation.timing);
             } else {
                 model.unordered_implicit_require_write = true;
             }
@@ -460,7 +575,6 @@ fn scope_kind(kind: AstKind<'_>) -> Option<RequireScopeKind> {
         | AstKind::ForStatement(_)
         | AstKind::ForInStatement(_)
         | AstKind::ForOfStatement(_)
-        | AstKind::WithStatement(_)
         | AstKind::SwitchStatement(_)
         | AstKind::CatchClause(_)
         | AstKind::Class(_) => Some(RequireScopeKind::Lexical),
@@ -590,10 +704,6 @@ impl<'a> Visit<'a> for RequireScopeCollector {
                 );
                 return;
             }
-            AstKind::WithStatement(_) => {
-                self.push_inherited_scope(RequireScopeKind::Lexical, NameBindings::default(), true);
-                return;
-            }
             AstKind::StaticBlock(_) => {
                 self.push_scope(
                     RequireScopeKind::VarEnvironment,
@@ -619,12 +729,7 @@ impl<'a> Visit<'a> for RequireScopeCollector {
                                                 | TrackedName::Module
                                                 | TrackedName::Exports
                                         );
-                                    if wrapper_redeclaration {
-                                        if name == TrackedName::Require && declarator.init.is_some()
-                                        {
-                                            self.record_require_write(declarator.span.end);
-                                        }
-                                    } else {
+                                    if !wrapper_redeclaration {
                                         self.mark_nearest_var_environment(name);
                                     }
                                 } else {
@@ -733,10 +838,7 @@ impl<'a> Visit<'a> for RequireScopeCollector {
             .get_expression()
             .is_some_and(|expression| expression.is_specific_id("require"));
         if direct_write || wrapped_write {
-            self.record_require_write(
-                self.assignment_write_position
-                    .unwrap_or_else(|| target.span().end),
-            );
+            self.record_require_write(self.assignment_target_timing(target.span().end));
         }
         walk::walk_simple_assignment_target(self, target);
     }
@@ -746,16 +848,38 @@ impl<'a> Visit<'a> for RequireScopeCollector {
         property: &oxc_ast::ast::AssignmentTargetPropertyIdentifier<'a>,
     ) {
         if property.binding.name == "require" {
-            self.record_require_write(self.assignment_write_position.unwrap_or(property.span.end));
+            self.record_require_write(self.assignment_target_timing(property.span.end));
         }
         walk::walk_assignment_target_property_identifier(self, property);
     }
 
     fn visit_assignment_expression(&mut self, expression: &oxc_ast::ast::AssignmentExpression<'a>) {
-        let previous = self.assignment_write_position;
-        self.assignment_write_position = Some(expression.span.end);
+        let previous = self.assignment_write_context;
+        self.assignment_write_context =
+            Some(if expression.left.as_simple_assignment_target().is_some() {
+                AssignmentWriteContext::AfterExpression(expression.span.end)
+            } else {
+                let lhs = expression.left.span();
+                let rhs = expression.right.span();
+                AssignmentWriteContext::Destructuring {
+                    lhs_start: lhs.start,
+                    lhs_end: lhs.end,
+                    rhs_start: rhs.start,
+                    rhs_end: rhs.end,
+                }
+            });
         walk::walk_assignment_expression(self, expression);
-        self.assignment_write_position = previous;
+        self.assignment_write_context = previous;
+    }
+
+    fn visit_assignment_target_with_default(
+        &mut self,
+        target: &oxc_ast::ast::AssignmentTargetWithDefault<'a>,
+    ) {
+        let previous = self.destructuring_target_position;
+        self.destructuring_target_position = Some(target.span.end);
+        walk::walk_assignment_target_with_default(self, target);
+        self.destructuring_target_position = previous;
     }
 
     fn visit_call_expression(&mut self, expression: &oxc_ast::ast::CallExpression<'a>) {
@@ -766,9 +890,16 @@ impl<'a> Visit<'a> for RequireScopeCollector {
                 .insert((identifier.span.start, identifier.span.end));
         }
         if !expression.optional && expression.callee.is_specific_id("eval") {
-            self.record_eval_call(expression.span.start);
+            self.record_eval_call(self.expression_mutation_timing(expression.span.end));
         }
         walk::walk_call_expression(self, expression);
+    }
+
+    fn visit_with_statement(&mut self, statement: &oxc_ast::ast::WithStatement<'a>) {
+        self.visit_expression(&statement.object);
+        self.push_inherited_scope(RequireScopeKind::Lexical, NameBindings::default(), true);
+        self.visit_statement(&statement.body);
+        self.pop_scope();
     }
 
     fn visit_expression_statement(&mut self, statement: &oxc_ast::ast::ExpressionStatement<'a>) {
@@ -787,6 +918,45 @@ impl<'a> Visit<'a> for RequireScopeCollector {
             .contains(&(declaration.span.start, declaration.span.end));
         walk::walk_variable_declaration(self, declaration);
         self.inside_ordered_root_statement = previous;
+    }
+
+    fn visit_variable_declarator(&mut self, declarator: &oxc_ast::ast::VariableDeclarator<'a>) {
+        let previous = self.binding_write_context;
+        if declarator.kind.is_var()
+            && self.root_has_commonjs_wrapper
+            && self.nearest_var_environment_is_root()
+            && pattern_bindings(&declarator.id).contains(TrackedName::Require)
+            && let Some(init) = &declarator.init
+        {
+            self.binding_write_context = Some(if declarator.id.is_binding_identifier() {
+                AssignmentWriteContext::AfterExpression(declarator.span.end)
+            } else {
+                let lhs = declarator.id.span();
+                let rhs = init.span();
+                AssignmentWriteContext::Destructuring {
+                    lhs_start: lhs.start,
+                    lhs_end: lhs.end,
+                    rhs_start: rhs.start,
+                    rhs_end: rhs.end,
+                }
+            });
+        }
+        walk::walk_variable_declarator(self, declarator);
+        self.binding_write_context = previous;
+    }
+
+    fn visit_binding_identifier(&mut self, identifier: &oxc_ast::ast::BindingIdentifier<'a>) {
+        if identifier.name == "require" && self.binding_write_context.is_some() {
+            self.record_require_write(self.binding_target_timing(identifier.span.end));
+        }
+        walk::walk_binding_identifier(self, identifier);
+    }
+
+    fn visit_assignment_pattern(&mut self, pattern: &oxc_ast::ast::AssignmentPattern<'a>) {
+        let previous = self.binding_target_position;
+        self.binding_target_position = Some(pattern.span.end);
+        walk::walk_assignment_pattern(self, pattern);
+        self.binding_target_position = previous;
     }
 
     fn visit_unary_expression(&mut self, expression: &oxc_ast::ast::UnaryExpression<'a>) {
