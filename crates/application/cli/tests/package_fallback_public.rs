@@ -19,6 +19,11 @@ fn package_fields_without_exports_select_role_scoped_public_targets()
         view("packages/lib/module.ts", "ModuleDeadType", "type"),
         view("packages/lib/preferred.ts", "preferredDeadValue", "value"),
         view(
+            "packages/types-only/declarations.ts",
+            "typesOnlyDeadValue",
+            "value",
+        ),
+        view(
             "packages/lib/shadowed-types.ts",
             "ShadowedTypesDeadType",
             "type",
@@ -88,10 +93,12 @@ fn assert_package_targets(
     let expected_value = source_id(root, run_id, expected_value_path)?;
     let expected_type = source_id(root, run_id, "packages/lib/preferred.ts")?;
     let expected_fallback = source_id(root, run_id, "packages/fallback/main.ts")?;
+    let expected_types_only = source_id(root, run_id, "packages/types-only/declarations.ts")?;
 
     assert_internal_target(&importer, "@acme/lib", "value", &expected_value)?;
     assert_internal_target(&importer, "@acme/lib", "type", &expected_type)?;
     assert_internal_target(&importer, "@acme/fallback", "value", &expected_fallback)?;
+    assert_internal_target(&importer, "@acme/types-only", "type", &expected_types_only)?;
     Ok(())
 }
 
@@ -164,7 +171,11 @@ fn package_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
     write(
         root.path(),
         "packages/lib/preferred.ts",
-        "export const preferredDeadValue = 3; export type SelectedType = string;\n",
+        concat!(
+            "export const preferredDeadValue = 3;\n",
+            "export type SelectedType = string;\n",
+            "export type UnusedPublicTypingsType = number;\n",
+        ),
     )?;
     write(
         root.path(),
@@ -189,12 +200,28 @@ fn package_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
     )?;
     write(
         root.path(),
+        "packages/types-only/package.json",
+        r#"{"name":"@acme/types-only","types":"./declarations.ts"}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/types-only/declarations.ts",
+        concat!(
+            "export const typesOnlyDeadValue = 1;\n",
+            "export type SelectedTypesOnly = string;\n",
+            "export type UnusedPublicTypesOnly = number;\n",
+        ),
+    )?;
+    write(
+        root.path(),
         "src/importer.ts",
         concat!(
             "import { selectedValue, type SelectedType } from '@acme/lib';\n",
             "import { fallbackValue } from '@acme/fallback';\n",
+            "import type { SelectedTypesOnly } from '@acme/types-only';\n",
             "const typed: SelectedType = String(selectedValue);\n",
-            "console.log(typed, fallbackValue);\n",
+            "const typesOnly: SelectedTypesOnly = typed;\n",
+            "console.log(typed, typesOnly, fallbackValue);\n",
         ),
     )?;
     Ok(root)
