@@ -654,6 +654,63 @@ fn bare_var_require_redeclaration_preserves_the_wrapper_loader()
 }
 
 #[test]
+fn package_commonjs_context_preserves_bare_var_require_redeclaration()
+-> Result<(), Box<dyn std::error::Error>> {
+    let payload = parse_payload_with_module_format(
+        SourceKind::TypeScript,
+        b"var require; const loaded = require('@acme/package-wrapper');",
+        JsModuleFormat::CommonJs,
+    )?;
+    assert_eq!(payload.uses.len(), 1);
+    assert_eq!(payload.uses[0].specifier, "@acme/package-wrapper");
+    assert!(payload.limitation_details.is_empty());
+    Ok(())
+}
+
+#[test]
+fn for_in_and_for_of_var_require_write_after_rhs_before_body()
+-> Result<(), Box<dyn std::error::Error>> {
+    for source in [
+        "for (var require of [require('@acme/rhs')]) { require('@acme/body'); }",
+        "for (var require in { [require('@acme/rhs')]: true }) { require('@acme/body'); }",
+    ] {
+        let payload = parse_payload(SourceKind::CommonJs, source.as_bytes())?;
+        assert_eq!(payload.uses.len(), 1, "wrong loop attribution for {source}");
+        assert_eq!(payload.uses[0].specifier, "@acme/rhs");
+        assert_eq!(
+            payload.limitation_details,
+            vec![
+                COMMONJS_EXPORT_LOWERING_UNSUPPORTED.to_owned(),
+                REQUIRE_ATTRIBUTION_OPAQUE.to_owned(),
+            ]
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn declaration_import_equals_is_projected_entirely_to_type_space()
+-> Result<(), Box<dyn std::error::Error>> {
+    for kind in [
+        SourceKind::DeclarationTs,
+        SourceKind::DeclarationMts,
+        SourceKind::DeclarationCts,
+    ] {
+        let payload = parse_payload(
+            kind,
+            b"export import declarationLib = require('@acme/declaration-lib');",
+        )?;
+        assert_eq!(payload.exports.len(), 1);
+        assert_eq!(payload.exports[0].namespace, SymbolNamespace::Type);
+        assert_eq!(payload.uses.len(), 1);
+        assert_eq!(payload.uses[0].namespace, SymbolNamespace::Type);
+        assert_eq!(payload.uses[0].request_kind, ModuleRequestKind::Require);
+        assert!(payload.limitation_details.is_empty());
+    }
+    Ok(())
+}
+
+#[test]
 fn typeof_require_does_not_escape_the_wrapper_loader() -> Result<(), Box<dyn std::error::Error>> {
     let payload = parse_payload(
         SourceKind::CommonJs,

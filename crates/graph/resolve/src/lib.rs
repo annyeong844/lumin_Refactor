@@ -21,6 +21,21 @@ pub use generated_config_policy::{
 
 pub const RESOLVER_VERSION: &str = "config-package-resolution.v3";
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ImporterFormatClassification {
+    CommonJs,
+    EsModule,
+    Unavailable,
+    Unsupported { path: String, detail: String },
+}
+
+pub fn classify_importer_format(
+    source: &SourceSnapshot,
+    config: &SemanticConfigSnapshot,
+) -> ImporterFormatClassification {
+    config::classify_importer_format(source, config)
+}
+
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ConfigDemand {
     pub path: RepoPath,

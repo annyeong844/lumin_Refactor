@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use lumin_model::{
-    CapabilityState, FileFacts, PayloadSnapshotId, SfcDialect, SourceKind, SourceSnapshot,
-    SourceUnitId,
+    CapabilityState, FileFacts, PayloadSnapshotId, ResolutionProfile, SemanticConfigSnapshot,
+    SfcDialect, SourceKind, SourceSnapshot, SourceUnitId,
 };
 use rayon::prelude::*;
 
@@ -19,6 +19,8 @@ pub(super) struct ExtractionOutput {
 
 pub(super) fn extract_facts(
     sources: &[SourceSnapshot],
+    config: &SemanticConfigSnapshot,
+    resolution_profile: Option<ResolutionProfile>,
     jobs: usize,
 ) -> Result<ExtractionOutput, EngineError> {
     let pool = rayon::ThreadPoolBuilder::new()
@@ -29,7 +31,8 @@ pub(super) fn extract_facts(
         .map_err(|error| EngineError::Scheduler(error.to_string()))?;
     let source_index = lumin_sfc::source_index(sources);
     pool.install(|| {
-        let (physical_facts, physical_parse_product_count) = extract_physical_js(sources)?;
+        let (physical_facts, physical_parse_product_count) =
+            extract_physical_js(sources, config, resolution_profile)?;
 
         let mut decompositions = sources
             .par_iter()
@@ -93,16 +96,30 @@ pub(super) fn extract_facts(
     })
 }
 
-type PayloadGroup<'a> = (SourceKind, Arc<[u8]>, Vec<&'a SourceSnapshot>);
+type PayloadGroup<'a> = (
+    SourceKind,
+    lumin_js::JsModuleFormat,
+    Arc<[u8]>,
+    Vec<&'a SourceSnapshot>,
+);
 
 fn extract_physical_js(
     sources: &[SourceSnapshot],
+    config: &SemanticConfigSnapshot,
+    resolution_profile: Option<ResolutionProfile>,
 ) -> Result<(Vec<FileFacts>, usize), lumin_js::JsExtractError> {
-    let mut grouped =
-        BTreeMap::<(PayloadSnapshotId, SourceKind), (Arc<[u8]>, Vec<&SourceSnapshot>)>::new();
+    let mut grouped = BTreeMap::<
+        (PayloadSnapshotId, SourceKind, lumin_js::JsModuleFormat),
+        (Arc<[u8]>, Vec<&SourceSnapshot>),
+    >::new();
     for source in sources.iter().filter(|source| source.kind.is_js_family()) {
+        let module_format = source_module_format(source, config, resolution_profile);
         grouped
-            .entry((source.payload_snapshot_id.clone(), source.kind))
+            .entry((
+                source.payload_snapshot_id.clone(),
+                source.kind,
+                module_format,
+            ))
             .or_insert_with(|| (Arc::clone(&source.bytes), Vec::new()))
             .1
             .push(source);
@@ -110,12 +127,14 @@ fn extract_physical_js(
     let parse_product_count = grouped.len();
     let groups = grouped
         .into_iter()
-        .map(|((_payload_id, kind), (bytes, sources))| (kind, bytes, sources))
+        .map(|((_payload_id, kind, module_format), (bytes, sources))| {
+            (kind, module_format, bytes, sources)
+        })
         .collect::<Vec<PayloadGroup<'_>>>();
     let facts = groups
         .into_par_iter()
-        .map(|(kind, bytes, sources)| {
-            let payload = lumin_js::parse_payload(kind, &bytes)?;
+        .map(|(kind, module_format, bytes, sources)| {
+            let payload = lumin_js::parse_payload_with_module_format(kind, &bytes, module_format)?;
             Ok(sources
                 .into_iter()
                 .map(|source| {
@@ -132,6 +151,37 @@ fn extract_physical_js(
         .flatten()
         .collect();
     Ok((reduce_file_facts(facts), parse_product_count))
+}
+
+fn source_module_format(
+    source: &SourceSnapshot,
+    config: &SemanticConfigSnapshot,
+    resolution_profile: Option<ResolutionProfile>,
+) -> lumin_js::JsModuleFormat {
+    let extension_defines_format = matches!(
+        source.kind,
+        SourceKind::CommonJs
+            | SourceKind::Cts
+            | SourceKind::DeclarationCts
+            | SourceKind::Mjs
+            | SourceKind::Mts
+            | SourceKind::DeclarationMts
+    );
+    let node_profile_defines_package_format = matches!(
+        resolution_profile,
+        Some(ResolutionProfile::Node16 | ResolutionProfile::NodeNext)
+    );
+    if !extension_defines_format && !node_profile_defines_package_format {
+        return lumin_js::JsModuleFormat::Unknown;
+    }
+    match lumin_resolve::classify_importer_format(source, config) {
+        lumin_resolve::ImporterFormatClassification::CommonJs => lumin_js::JsModuleFormat::CommonJs,
+        lumin_resolve::ImporterFormatClassification::EsModule => lumin_js::JsModuleFormat::EsModule,
+        lumin_resolve::ImporterFormatClassification::Unavailable
+        | lumin_resolve::ImporterFormatClassification::Unsupported { .. } => {
+            lumin_js::JsModuleFormat::Unknown
+        }
+    }
 }
 
 pub(super) fn reduce_file_facts(mut facts: Vec<FileFacts>) -> Vec<FileFacts> {

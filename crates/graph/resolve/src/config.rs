@@ -8,7 +8,7 @@ use lumin_model::{
 };
 
 use crate::generated_config_policy::{self, FieldClassification};
-use crate::{ConfigDemand, ResolverError};
+use crate::{ConfigDemand, ImporterFormatClassification, ResolverError};
 
 #[derive(Clone, Debug)]
 pub(crate) struct ImporterSettings {
@@ -856,38 +856,59 @@ fn importer_is_esm(
     config: &SemanticConfigSnapshot,
     limitations: &mut Vec<Limitation>,
 ) -> Result<bool, ()> {
+    match classify_importer_format(source, config) {
+        ImporterFormatClassification::EsModule => Ok(true),
+        ImporterFormatClassification::CommonJs | ImporterFormatClassification::Unavailable => {
+            Ok(false)
+        }
+        ImporterFormatClassification::Unsupported { path, detail } => {
+            limitations.push(Limitation::ImporterFormatUnsupported { path, detail });
+            Err(())
+        }
+    }
+}
+
+pub(super) fn classify_importer_format(
+    source: &SourceSnapshot,
+    config: &SemanticConfigSnapshot,
+) -> ImporterFormatClassification {
     match source.kind {
-        SourceKind::Mts | SourceKind::Mjs | SourceKind::DeclarationMts => return Ok(true),
-        SourceKind::Cts | SourceKind::CommonJs | SourceKind::DeclarationCts => return Ok(false),
+        SourceKind::Mts | SourceKind::Mjs | SourceKind::DeclarationMts => {
+            return ImporterFormatClassification::EsModule;
+        }
+        SourceKind::Cts | SourceKind::CommonJs | SourceKind::DeclarationCts => {
+            return ImporterFormatClassification::CommonJs;
+        }
         _ => {}
     }
     let Some(package_root) = config.source_packages.get(&source.id) else {
-        return Ok(false);
+        return ImporterFormatClassification::CommonJs;
     };
     let Some(package) = config
         .packages
         .iter()
         .find(|package| &package.root == package_root)
     else {
-        return Ok(false);
+        return ImporterFormatClassification::Unavailable;
     };
     let Some(ConfigObservation::Present {
         document: manifest, ..
     }) = config.observations.get(&package.manifest_path)
     else {
-        return Ok(false);
+        return ImporterFormatClassification::Unavailable;
     };
     match manifest.root.get("type") {
-        None => Ok(false),
-        Some(ConfigValue::String(value)) if value == "module" => Ok(true),
-        Some(ConfigValue::String(value)) if value == "commonjs" => Ok(false),
-        Some(_) => {
-            limitations.push(Limitation::ImporterFormatUnsupported {
-                path: package.manifest_path.display_escaped(),
-                detail: "package type must be module or commonjs for Node profiles".to_owned(),
-            });
-            Err(())
+        None => ImporterFormatClassification::CommonJs,
+        Some(ConfigValue::String(value)) if value == "module" => {
+            ImporterFormatClassification::EsModule
         }
+        Some(ConfigValue::String(value)) if value == "commonjs" => {
+            ImporterFormatClassification::CommonJs
+        }
+        Some(_) => ImporterFormatClassification::Unsupported {
+            path: package.manifest_path.display_escaped(),
+            detail: "package type must be module or commonjs for Node profiles".to_owned(),
+        },
     }
 }
 

@@ -367,7 +367,12 @@ impl RepositoryAnalysisSession {
             return Err(EngineError::InvalidWorkerCount(0));
         }
         let inventory = lumin_inventory::scan(root, request)?;
-        let extraction = extract_facts(&inventory.sources, jobs)?;
+        let extraction = extract_facts(
+            &inventory.sources,
+            &inventory.config,
+            scan_invocation.resolution_profile,
+            jobs,
+        )?;
         Ok(Self {
             repository_root,
             inventory,

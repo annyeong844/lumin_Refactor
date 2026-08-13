@@ -51,15 +51,22 @@ const CJS_SOURCE: &str = concat!(
     "require('@acme/lib/cjs-after-write');\n",
     "console.log(cjsRequired);\n",
 );
+const CJS_LOOP_SOURCE: &str = concat!(
+    "for (var require of [require('@acme/lib/cjs-loop-rhs')]) {\n",
+    "  require('@acme/lib/cjs-loop-body');\n",
+    "}\n",
+);
 const ROOT_SOURCE: &str = concat!(
     "import { rootStatic } from '@acme/lib/root-module';\n",
     "console.log(rootStatic);\n",
 );
 const NEAREST_COMMONJS_SOURCE: &str = concat!(
     "import { nearestCommonJs } from '@acme/lib/nearest-commonjs';\n",
+    "var require;\n",
+    "const bareLoaded = require('@acme/lib/nearest-bare-var');\n",
     "export import exportedEquals = require('@acme/lib/nearest-export-import-equals');\n",
     "Object.defineProperty(exports, 'unmodeled', { value: 1 });\n",
-    "console.log(nearestCommonJs);\n",
+    "console.log(nearestCommonJs, bareLoaded);\n",
 );
 const NEAREST_DEFAULT_SOURCE: &str = concat!(
     "import { nearestDefault } from '@acme/lib/nearest-default';\n",
@@ -84,10 +91,13 @@ const TARGET_CASES: &[&str] = &[
     "cts-empty-export",
     "cts-import-equals",
     "cjs-require",
+    "cjs-loop-rhs",
+    "cjs-loop-body",
     "cjs-before-write",
     "cjs-rhs-write",
     "root-module",
     "nearest-commonjs",
+    "nearest-bare-var",
     "nearest-export-import-equals",
     "nearest-default",
     "esm-require",
@@ -118,7 +128,7 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
     );
     assert_eq!(
         audit_json.get("limitationCount").and_then(Value::as_u64),
-        Some(7)
+        Some(9)
     );
     let run_id = field(&audit.stdout, "runId")?;
 
@@ -129,17 +139,17 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
         .get("limitations")
         .and_then(Value::as_array)
         .ok_or_else(|| std::io::Error::other("limitations are missing"))?;
-    assert_eq!(limitations.len(), 7);
+    assert_eq!(limitations.len(), 9);
     assert!(limitations.iter().all(|limitation| {
         limitation.get("reason").and_then(Value::as_str) == Some("js-module-use-unknown")
     }));
     assert_eq!(
         limitation_detail_count(limitations, COMMONJS_EXPORT_LIMITATION),
-        3
+        4
     );
     assert_eq!(
         limitation_detail_count(limitations, REQUIRE_ATTRIBUTION_LIMITATION),
-        1
+        2
     );
     assert_eq!(
         limitation_detail_count(limitations, MODULE_REQUIRE_ATTRIBUTION_LIMITATION),
@@ -344,6 +354,16 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
             "require",
         ),
         (
+            "apps/ext-cjs/loop.cjs",
+            CJS_LOOP_SOURCE,
+            "@acme/lib/cjs-loop-rhs",
+            "dynamic-broad",
+            "require",
+            "require('@acme/lib/cjs-loop-rhs')",
+            "cjs-loop-rhs",
+            "require",
+        ),
+        (
             "apps/ext-cjs/main.cjs",
             CJS_SOURCE,
             "@acme/lib/cjs-before-write",
@@ -381,6 +401,16 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
             "static-import",
             "nearestCommonJs",
             "nearest-commonjs",
+            "require",
+        ),
+        (
+            "apps/nearest-commonjs/main.ts",
+            NEAREST_COMMONJS_SOURCE,
+            "@acme/lib/nearest-bare-var",
+            "dynamic-broad",
+            "require",
+            "require('@acme/lib/nearest-bare-var')",
+            "nearest-bare-var",
             "require",
         ),
         (
@@ -579,6 +609,7 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         ("apps/ext-esm/main.mjs", MJS_SOURCE),
         ("apps/ext-cjs/main.cts", CTS_SOURCE),
         ("apps/ext-cjs/main.cjs", CJS_SOURCE),
+        ("apps/ext-cjs/loop.cjs", CJS_LOOP_SOURCE),
         ("root-main.ts", ROOT_SOURCE),
         ("apps/nearest-commonjs/main.ts", NEAREST_COMMONJS_SOURCE),
         ("apps/nearest-default/main.ts", NEAREST_DEFAULT_SOURCE),

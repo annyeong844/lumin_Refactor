@@ -30,6 +30,23 @@ pub struct JsExtractError {
     kind: SourceKind,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum JsModuleFormat {
+    CommonJs,
+    EsModule,
+    Unknown,
+}
+
+impl JsModuleFormat {
+    fn from_source_kind(kind: SourceKind) -> Self {
+        match kind {
+            SourceKind::CommonJs | SourceKind::Cts | SourceKind::DeclarationCts => Self::CommonJs,
+            SourceKind::Mjs | SourceKind::Mts | SourceKind::DeclarationMts => Self::EsModule,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 impl std::fmt::Display for JsExtractError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -87,6 +104,14 @@ pub fn extract_embedded(unit: &EmbeddedSourceUnit) -> Result<FileFacts, JsExtrac
 }
 
 pub fn parse_payload(kind: SourceKind, bytes: &[u8]) -> Result<JsPayloadFacts, JsExtractError> {
+    parse_payload_with_module_format(kind, bytes, JsModuleFormat::from_source_kind(kind))
+}
+
+pub fn parse_payload_with_module_format(
+    kind: SourceKind,
+    bytes: &[u8],
+    module_format: JsModuleFormat,
+) -> Result<JsPayloadFacts, JsExtractError> {
     if !kind.is_js_family() {
         return Err(JsExtractError { kind });
     }
@@ -131,7 +156,8 @@ pub fn parse_payload(kind: SourceKind, bytes: &[u8]) -> Result<JsPayloadFacts, J
         lower_statement(statement, &mut facts);
     }
 
-    let require_scopes = RequireScopeTracker::analyze(&parsed.program);
+    let require_scopes =
+        RequireScopeTracker::analyze(&parsed.program, module_format == JsModuleFormat::CommonJs);
     let escaped_require = require_scopes.has_unattributed_require_escape();
     let mut detector = DynamicUseDetector {
         uses: Vec::new(),
@@ -158,6 +184,14 @@ pub fn parse_payload(kind: SourceKind, bytes: &[u8]) -> Result<JsPayloadFacts, J
     }
     facts.uses.extend(detector.uses);
     facts.limitation_details.extend(detector.unknown_details);
+    if kind.is_declaration() {
+        for export in &mut facts.exports {
+            export.namespace = SymbolNamespace::Type;
+        }
+        for source_use in &mut facts.uses {
+            source_use.namespace = SymbolNamespace::Type;
+        }
+    }
     canonicalize(&mut facts);
     Ok(facts)
 }
