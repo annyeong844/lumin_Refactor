@@ -91,6 +91,13 @@ const CLASS_PHASE_SOURCE: &str = concat!(
     "}\n",
     "require('@scope/dep/class-after');\n",
 );
+const CLASS_REVERSE_PHASE_SOURCE: &str = concat!(
+    "class C {\n",
+    "  static value = (require = customLoader);\n",
+    "  [require('@scope/dep/class-key')]() {}\n",
+    "}\n",
+    "require('@scope/dep/class-reverse-after');\n",
+);
 const WRAPPER_THIS_SOURCE: &str = "this.publicValue = 1;\n";
 
 #[test]
@@ -217,6 +224,16 @@ fn commonjs_wrapper_mutations_preserve_only_grounded_public_edges()
         })
         .collect::<Vec<_>>();
     assert_eq!(class_specifiers, ["@scope/dep/class-before"]);
+    let class_reverse_phase = file_response(root.path(), &run_id, "src/class-reverse-phase.cjs")?;
+    let class_reverse_specifiers = resolutions(&class_reverse_phase)
+        .iter()
+        .filter_map(|resolution| {
+            resolution
+                .pointer("/sourceUse/specifier")
+                .and_then(Value::as_str)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(class_reverse_specifiers, ["@scope/dep/class-key"]);
     for (path, specifier, target) in [
         (
             "src/strict-arguments.cjs",
@@ -277,8 +294,8 @@ fn commonjs_wrapper_mutations_preserve_only_grounded_public_edges()
         })
         .collect::<Result<Vec<_>, _>>()?;
     details.sort_unstable();
-    let mut expected = vec![COMMONJS_EXPORT_LOWERING_UNSUPPORTED; 15];
-    expected.extend([REQUIRE_ATTRIBUTION_OPAQUE; 9]);
+    let mut expected = vec![COMMONJS_EXPORT_LOWERING_UNSUPPORTED; 16];
+    expected.extend([REQUIRE_ATTRIBUTION_OPAQUE; 10]);
     expected.sort_unstable();
     assert_eq!(details, expected);
     Ok(())
@@ -402,6 +419,11 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         COMPUTED_KEY_ARGUMENTS_SOURCE,
     )?;
     write(root.path(), "src/class-phase.cjs", CLASS_PHASE_SOURCE)?;
+    write(
+        root.path(),
+        "src/class-reverse-phase.cjs",
+        CLASS_REVERSE_PHASE_SOURCE,
+    )?;
     write(root.path(), "src/wrapper-this.ts", WRAPPER_THIS_SOURCE)?;
     write(
         root.path(),
@@ -498,6 +520,14 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
                     "import": "./class-after-import.js",
                     "require": "./class-after-require.js",
                 },
+                "./class-key": {
+                    "import": "./class-key-import.js",
+                    "require": "./class-key-require.js",
+                },
+                "./class-reverse-after": {
+                    "import": "./class-reverse-after-import.js",
+                    "require": "./class-reverse-after-require.js",
+                },
             },
         })
         .to_string(),
@@ -547,6 +577,10 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         "class-static-require",
         "class-after-import",
         "class-after-require",
+        "class-key-import",
+        "class-key-require",
+        "class-reverse-after-import",
+        "class-reverse-after-require",
     ] {
         write(
             root.path(),

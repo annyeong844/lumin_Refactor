@@ -137,6 +137,7 @@ struct RequireScopeModel {
     ordered_root_require_writes: Vec<MutationTiming>,
     deferred_require_call_positions: BTreeSet<u32>,
     class_phase_opaque_require_call_positions: BTreeSet<u32>,
+    class_phase_nonpreceding_mutations: BTreeSet<(MutationTiming, u32)>,
     non_wrapper_this_ranges: BTreeSet<(u32, u32)>,
     unattributed_require_escape: bool,
 }
@@ -202,9 +203,12 @@ impl RequireScopeModel {
         {
             return true;
         }
-        self.ordered_root_require_writes
-            .iter()
-            .any(|timing| timing.precedes_call(call_position))
+        self.ordered_root_require_writes.iter().any(|timing| {
+            timing.precedes_call(call_position)
+                && !self
+                    .class_phase_nonpreceding_mutations
+                    .contains(&(*timing, call_position))
+        })
     }
 
     fn may_resolve_to_wrapper(&self, scope: usize, name: TrackedName) -> bool {

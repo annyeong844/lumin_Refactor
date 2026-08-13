@@ -19,7 +19,7 @@ mod require_scope;
 
 use require_scope::RequireScopeTracker;
 
-pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v9";
+pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v10";
 
 const REQUIRE_ATTRIBUTION_OPAQUE: &str = "shadowed, mutated, dynamically resolved, or escaped require makes CommonJS module-use attribution opaque";
 const MODULE_REQUIRE_ATTRIBUTION_OPAQUE: &str =

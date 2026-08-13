@@ -334,6 +334,7 @@ impl RequireScopeCollector {
             ordered_root_require_writes: Vec::new(),
             deferred_require_call_positions: self.deferred_require_call_positions,
             class_phase_opaque_require_call_positions: BTreeSet::new(),
+            class_phase_nonpreceding_mutations: BTreeSet::new(),
             non_wrapper_this_ranges: self.non_wrapper_this_ranges,
             unattributed_require_escape: false,
         };
@@ -370,6 +371,21 @@ impl RequireScopeCollector {
                         .iter()
                         .copied()
                         .filter(|position| phases.static_execution_contains(*position)),
+                );
+            }
+            let computed_key_calls = self
+                .direct_require_call_positions
+                .iter()
+                .copied()
+                .filter(|position| phases.computed_key_contains(*position));
+            for observation in implicit_mutations.iter().filter(|observation| {
+                observation.ordered_execution
+                    && phases.static_execution_contains(observation.timing.target_position())
+            }) {
+                model.class_phase_nonpreceding_mutations.extend(
+                    computed_key_calls
+                        .clone()
+                        .map(|position| (observation.timing, position)),
                 );
             }
         }

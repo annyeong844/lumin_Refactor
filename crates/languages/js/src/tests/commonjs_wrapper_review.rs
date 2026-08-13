@@ -536,6 +536,33 @@ fn class_computed_keys_precede_static_initializers() -> Result<(), Box<dyn std::
     )?;
     assert_eq!(later_write.uses.len(), 1);
     assert_eq!(later_write.uses[0].specifier, "@acme/static");
+
+    for source in [
+        concat!(
+            "class C {\n",
+            "  static value = (require = customLoader);\n",
+            "  [require('@acme/key')]() {}\n",
+            "}\n",
+            "require('@acme/after');\n",
+        ),
+        concat!(
+            "class C {\n",
+            "  static { require = customLoader; }\n",
+            "  [require('@acme/key')]() {}\n",
+            "}\n",
+            "require('@acme/after');\n",
+        ),
+    ] {
+        let payload = parse_payload(SourceKind::CommonJs, source.as_bytes())?;
+        assert_eq!(payload.uses.len(), 1, "computed key was poisoned: {source}");
+        assert_eq!(payload.uses[0].specifier, "@acme/key");
+        assert!(
+            payload
+                .limitation_details
+                .iter()
+                .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE)
+        );
+    }
     Ok(())
 }
 
