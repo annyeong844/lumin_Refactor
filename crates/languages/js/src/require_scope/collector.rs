@@ -41,6 +41,7 @@ struct RequireScopeCollector {
     loop_head_write_range: Option<(u32, u32)>,
     loop_head_is_root_ordered: bool,
     arguments_escape_timing: Option<MutationTiming>,
+    jsx_invocation_end: Option<u32>,
     root_has_commonjs_wrapper: bool,
     root_this_may_be_wrapper: bool,
 }
@@ -877,6 +878,60 @@ impl<'a> Visit<'a> for RequireScopeCollector {
         let previous_escape = self.arguments_escape_timing;
         self.arguments_escape_timing = Some(self.expression_mutation_timing(expression.span.end));
         walk::walk_tagged_template_expression(self, expression);
+        self.arguments_escape_timing = previous_escape;
+    }
+
+    fn visit_jsx_element(&mut self, expression: &oxc_ast::ast::JSXElement<'a>) {
+        let previous_end = self.jsx_invocation_end;
+        self.jsx_invocation_end = Some(expression.span.end);
+        walk::walk_jsx_element(self, expression);
+        self.jsx_invocation_end = previous_end;
+    }
+
+    fn visit_jsx_fragment(&mut self, expression: &oxc_ast::ast::JSXFragment<'a>) {
+        let previous_end = self.jsx_invocation_end;
+        self.jsx_invocation_end = Some(expression.span.end);
+        walk::walk_jsx_fragment(self, expression);
+        self.jsx_invocation_end = previous_end;
+    }
+
+    fn visit_jsx_expression_container(
+        &mut self,
+        expression: &oxc_ast::ast::JSXExpressionContainer<'a>,
+    ) {
+        let previous_escape = self.arguments_escape_timing;
+        self.arguments_escape_timing = self
+            .jsx_invocation_end
+            .map(|end| self.expression_mutation_timing(end));
+        walk::walk_jsx_expression_container(self, expression);
+        self.arguments_escape_timing = previous_escape;
+    }
+
+    fn visit_jsx_member_expression_object(
+        &mut self,
+        expression: &oxc_ast::ast::JSXMemberExpressionObject<'a>,
+    ) {
+        if let Some(span) = mapped_arguments::jsx_member_object_span(expression) {
+            self.non_escaping_arguments_references.insert(span);
+        }
+        walk::walk_jsx_member_expression_object(self, expression);
+    }
+
+    fn visit_jsx_spread_attribute(&mut self, attribute: &oxc_ast::ast::JSXSpreadAttribute<'a>) {
+        let previous_escape = self.arguments_escape_timing;
+        self.arguments_escape_timing = self
+            .jsx_invocation_end
+            .map(|end| self.expression_mutation_timing(end));
+        walk::walk_jsx_spread_attribute(self, attribute);
+        self.arguments_escape_timing = previous_escape;
+    }
+
+    fn visit_jsx_spread_child(&mut self, child: &oxc_ast::ast::JSXSpreadChild<'a>) {
+        let previous_escape = self.arguments_escape_timing;
+        self.arguments_escape_timing = self
+            .jsx_invocation_end
+            .map(|end| self.expression_mutation_timing(end));
+        walk::walk_jsx_spread_child(self, child);
         self.arguments_escape_timing = previous_escape;
     }
 

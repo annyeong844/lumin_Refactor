@@ -110,6 +110,14 @@ fn relative_extension_and_directory_probes_follow_frozen_precedence()
     assert_eq!(field(&audit.stdout, "status")?, "complete");
     let run_id = field(&audit.stdout, "runId")?;
 
+    let overview = run(root.path(), &["overview", "--run", &run_id])?;
+    assert_status(&overview, 0);
+    let overview: Value = serde_json::from_str(&overview.stdout)?;
+    assert_eq!(
+        overview.pointer("/analysisMetrics/jsParseProductCount"),
+        Some(&Value::from(14)),
+    );
+
     assert_eq!(
         finding_set(root.path(), &run_id)?,
         BTreeSet::from([

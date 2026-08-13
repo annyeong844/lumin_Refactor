@@ -123,6 +123,10 @@ pub enum EngineError {
     ExtractionUnavailable,
     #[error("JS extraction omitted the requested module-format product: {0}")]
     ExtractionProductMissing(String),
+    #[error("resolution discovered profile-sensitive inputs after extraction: {0}")]
+    LateExtractionProfileDemand(String),
+    #[error("JS parse-product count overflowed during extraction")]
+    ExtractionMetricOverflow,
     #[error("pre-write requires at least one declared path")]
     NoDeclaredPaths,
     #[error("tier projection corrupt: {0}")]
@@ -290,6 +294,7 @@ struct RepositoryAnalysisSession {
     repository_root: RepositoryRootIdentity,
     inventory: InventorySnapshot,
     extraction: Option<ExtractionOutput>,
+    js_parse_product_count: usize,
     jobs: usize,
     scan_invocation: ScanInvocationTier,
 }
@@ -373,6 +378,7 @@ impl RepositoryAnalysisSession {
             repository_root,
             inventory: lumin_inventory::scan(root, request)?,
             extraction: None,
+            js_parse_product_count: 0,
             jobs,
             scan_invocation,
         })
@@ -389,17 +395,31 @@ impl RepositoryAnalysisSession {
             resolution_profile,
         )?;
         if !profile_selection.demands.is_empty() {
+            if self.extraction.is_some() {
+                let paths = profile_selection
+                    .demands
+                    .iter()
+                    .map(|demand| demand.path.display_escaped())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(EngineError::LateExtractionProfileDemand(paths));
+            }
             return self
                 .pending_demands(profile_selection.demands)
                 .map(RepositoryAnalysisStep::NeedsInputs);
         }
         if self.extraction.is_none() {
-            self.extraction = Some(extract_facts(
+            let extraction = extract_facts(
                 &self.inventory.sources,
                 &self.inventory.config,
                 &profile_selection.profiles,
                 self.jobs,
-            )?);
+            )?;
+            self.js_parse_product_count = self
+                .js_parse_product_count
+                .checked_add(extraction.js_parse_product_count)
+                .ok_or(EngineError::ExtractionMetricOverflow)?;
+            self.extraction = Some(extraction);
         }
         let extraction = self
             .extraction
@@ -453,7 +473,6 @@ impl RepositoryAnalysisSession {
         demands: Vec<ConfigDemand>,
     ) -> Result<(), EngineError> {
         capture_config_demands(root, &mut self.inventory, demands)?;
-        self.extraction = None;
         Ok(())
     }
 
@@ -548,7 +567,7 @@ impl RepositoryAnalysisSession {
             logical_source_count: self.inventory.sources.len(),
             physical_source_count,
             payload_snapshot_count,
-            js_parse_product_count: extraction.js_parse_product_count,
+            js_parse_product_count: self.js_parse_product_count,
         };
         let evidence = RunEvidence {
             schema_version: "lumin-evidence.v1".to_owned(),

@@ -13,13 +13,13 @@ use oxc_ast::ast::{
 use oxc_ast::ast_kind::AstKind;
 use oxc_ast_visit::{Visit, walk};
 use oxc_parser::Parser;
-use oxc_span::{SourceType, Span};
+use oxc_span::{GetSpan, SourceType, Span};
 
 mod require_scope;
 
 use require_scope::RequireScopeTracker;
 
-pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v3";
+pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v4";
 
 const REQUIRE_ATTRIBUTION_OPAQUE: &str = "shadowed, mutated, dynamically resolved, or escaped require makes CommonJS module-use attribution opaque";
 const MODULE_REQUIRE_ATTRIBUTION_OPAQUE: &str =
@@ -227,6 +227,7 @@ fn contextualize_payload(
         commonjs_export_syntax_observed: false,
         commonjs_wrapper_exports_possible,
         module_member_object_references: BTreeSet::new(),
+        non_escaping_module_require_members: BTreeSet::new(),
     };
     if escaped_require {
         detector.report_opaque_require();
@@ -619,6 +620,7 @@ struct DynamicUseDetector {
     commonjs_export_syntax_observed: bool,
     commonjs_wrapper_exports_possible: bool,
     module_member_object_references: BTreeSet<(u32, u32)>,
+    non_escaping_module_require_members: BTreeSet<(u32, u32)>,
 }
 
 impl DynamicUseDetector {
@@ -697,10 +699,6 @@ impl<'a> Visit<'a> for DynamicUseDetector {
         } else if expression.callee.is_specific_id("require") {
             self.unknown_details
                 .push("nonliteral CommonJS require may hide an internal consumer".to_owned());
-        } else if is_module_require(&expression.callee)
-            && self.require_scopes.module_may_be_wrapper()
-        {
-            self.report_opaque_module_require();
         } else if is_import_meta_glob(&expression.callee) {
             self.unknown_details.push(
                 "import.meta.glob target expansion is not implemented in this increment".to_owned(),
@@ -719,11 +717,19 @@ impl<'a> Visit<'a> for DynamicUseDetector {
             self.module_member_object_references
                 .insert((identifier.span.start, identifier.span.end));
             let property_name = expression.static_property_name();
-            if self.commonjs_wrapper_exports_possible
-                && matches!(property_name, Some("exports") | None)
-                && self.require_scopes.module_may_be_wrapper()
-            {
-                self.commonjs_export_syntax_observed = true;
+            if self.require_scopes.module_may_be_wrapper() {
+                if property_name == Some("require")
+                    && !self
+                        .non_escaping_module_require_members
+                        .contains(&(expression.span().start, expression.span().end))
+                {
+                    self.report_opaque_module_require();
+                }
+                if self.commonjs_wrapper_exports_possible
+                    && matches!(property_name, Some("exports") | None)
+                {
+                    self.commonjs_export_syntax_observed = true;
+                }
             }
         }
         walk::walk_member_expression(self, expression);
@@ -743,6 +749,17 @@ impl<'a> Visit<'a> for DynamicUseDetector {
         walk::walk_identifier_reference(self, identifier);
     }
 
+    fn visit_unary_expression(&mut self, expression: &oxc_ast::ast::UnaryExpression<'a>) {
+        if expression.operator.is_typeof()
+            && let Some(member) = expression.argument.without_parentheses().get_member_expr()
+            && is_module_require_member(member)
+        {
+            self.non_escaping_module_require_members
+                .insert((member.span().start, member.span().end));
+        }
+        walk::walk_unary_expression(self, expression);
+    }
+
     fn visit_with_statement(&mut self, statement: &oxc_ast::ast::WithStatement<'a>) {
         self.visit_expression(&statement.object);
         self.require_scopes.enter_with_body();
@@ -751,11 +768,9 @@ impl<'a> Visit<'a> for DynamicUseDetector {
     }
 }
 
-fn is_module_require(expression: &oxc_ast::ast::Expression<'_>) -> bool {
-    let Some(member) = expression.get_member_expr() else {
-        return false;
-    };
-    member.static_property_name() == Some("require") && member.object().is_specific_id("module")
+fn is_module_require_member(expression: &oxc_ast::ast::MemberExpression<'_>) -> bool {
+    expression.static_property_name() == Some("require")
+        && expression.object().is_specific_id("module")
 }
 
 fn is_import_meta_glob(expression: &oxc_ast::ast::Expression<'_>) -> bool {

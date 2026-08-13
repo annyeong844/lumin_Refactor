@@ -1,4 +1,7 @@
-use oxc_ast::ast::{ComputedMemberExpression, SimpleAssignmentTarget, StaticMemberExpression};
+use oxc_ast::ast::{
+    ComputedMemberExpression, JSXMemberExpressionObject, SimpleAssignmentTarget,
+    StaticMemberExpression,
+};
 
 use super::{
     MutationObservation, NameResolution, RequireScopeKind, RequireScopeModel, TrackedName,
@@ -73,5 +76,14 @@ pub(super) fn static_object_span(expression: &StaticMemberExpression<'_>) -> Opt
         .object
         .without_parentheses()
         .get_identifier_reference()?;
+    (identifier.name == "arguments").then_some((identifier.span.start, identifier.span.end))
+}
+
+pub(super) fn jsx_member_object_span(
+    expression: &JSXMemberExpressionObject<'_>,
+) -> Option<(u32, u32)> {
+    let JSXMemberExpressionObject::IdentifierReference(identifier) = expression else {
+        return None;
+    };
     (identifier.name == "arguments").then_some((identifier.span.start, identifier.span.end))
 }

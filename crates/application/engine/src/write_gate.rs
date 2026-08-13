@@ -32,7 +32,7 @@ use transitions::{
     reconcile_transitions,
 };
 
-const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v7";
+const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v8";
 
 fn analysis_contract_id() -> String {
     let inputs = [
