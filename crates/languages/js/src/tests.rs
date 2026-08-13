@@ -413,10 +413,12 @@ fn shadowed_commonjs_wrapper_names_do_not_create_limitations()
     let payload = parse_payload(
         SourceKind::TypeScript,
         concat!(
-            "function local(module, exports) {\n",
+            "function local(module, exports, Object, Reflect) {\n",
             "  module.require('@acme/local');\n",
             "  module.exports.hidden = 1;\n",
             "  exports.alsoHidden = 2;\n",
+            "  Object.defineProperty(exports, 'objectHidden', { value: 3 });\n",
+            "  Reflect.defineProperty(module.exports, 'reflectHidden', { value: 4 });\n",
             "}\n",
             "export const visible = 1;\n",
         )
@@ -428,6 +430,28 @@ fn shadowed_commonjs_wrapper_names_do_not_create_limitations()
 }
 
 #[test]
+fn call_based_commonjs_exports_are_visible_in_ordinary_typescript()
+-> Result<(), Box<dyn std::error::Error>> {
+    for source in [
+        "Object.defineProperty(exports, 'foo', { value: 1 });",
+        "Object.defineProperties(module.exports, { foo: { value: 1 } });",
+        "Object.assign(exports, { foo: 1 });",
+        "Reflect.defineProperty(module['exports'], 'foo', { value: 1 });",
+        "defineExport(exports);",
+        "const exportObject = module.exports; consume(exportObject);",
+    ] {
+        let payload = parse_payload(SourceKind::TypeScript, source.as_bytes())?;
+        assert!(payload.uses.is_empty());
+        assert_eq!(
+            payload.limitation_details,
+            vec![COMMONJS_EXPORT_LOWERING_UNSUPPORTED.to_owned()],
+            "call-based CommonJS export was not visible: {source}",
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn commonjs_wrapper_export_syntax_is_visible_in_ordinary_typescript()
 -> Result<(), Box<dyn std::error::Error>> {
     let payload = parse_payload(
@@ -435,6 +459,83 @@ fn commonjs_wrapper_export_syntax_is_visible_in_ordinary_typescript()
         b"module.exports.foo = 1; exports.bar = 2;",
     )?;
     assert!(payload.uses.is_empty());
+    assert_eq!(
+        payload.limitation_details,
+        vec![COMMONJS_EXPORT_LOWERING_UNSUPPORTED.to_owned()]
+    );
+    Ok(())
+}
+
+#[test]
+fn require_assignment_rhs_uses_the_original_loader_before_the_write()
+-> Result<(), Box<dyn std::error::Error>> {
+    let payload = parse_payload(
+        SourceKind::CommonJs,
+        concat!(
+            "require = require('@acme/rhs');\n",
+            "require('@acme/after');\n",
+        )
+        .as_bytes(),
+    )?;
+    assert_eq!(payload.uses.len(), 1);
+    assert_eq!(payload.uses[0].specifier, "@acme/rhs");
+    assert_eq!(
+        payload.limitation_details,
+        vec![
+            COMMONJS_EXPORT_LOWERING_UNSUPPORTED.to_owned(),
+            REQUIRE_ATTRIBUTION_OPAQUE.to_owned(),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn initialized_var_require_applies_its_write_after_the_initializer()
+-> Result<(), Box<dyn std::error::Error>> {
+    let payload = parse_payload(
+        SourceKind::CommonJs,
+        concat!(
+            "var require = require('@acme/rhs');\n",
+            "require('@acme/after');\n",
+        )
+        .as_bytes(),
+    )?;
+    assert_eq!(payload.uses.len(), 1);
+    assert_eq!(payload.uses[0].specifier, "@acme/rhs");
+    assert_eq!(
+        payload.limitation_details,
+        vec![
+            COMMONJS_EXPORT_LOWERING_UNSUPPORTED.to_owned(),
+            REQUIRE_ATTRIBUTION_OPAQUE.to_owned(),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn bare_var_require_redeclaration_preserves_the_wrapper_loader()
+-> Result<(), Box<dyn std::error::Error>> {
+    let payload = parse_payload(
+        SourceKind::CommonJs,
+        b"var require; const loaded = require('@acme/real');",
+    )?;
+    assert_eq!(payload.uses.len(), 1);
+    assert_eq!(payload.uses[0].specifier, "@acme/real");
+    assert_eq!(
+        payload.limitation_details,
+        vec![COMMONJS_EXPORT_LOWERING_UNSUPPORTED.to_owned()]
+    );
+    Ok(())
+}
+
+#[test]
+fn typeof_require_does_not_escape_the_wrapper_loader() -> Result<(), Box<dyn std::error::Error>> {
+    let payload = parse_payload(
+        SourceKind::CommonJs,
+        b"if (typeof (require) === 'function') require('@acme/real');",
+    )?;
+    assert_eq!(payload.uses.len(), 1);
+    assert_eq!(payload.uses[0].specifier, "@acme/real");
     assert_eq!(
         payload.limitation_details,
         vec![COMMONJS_EXPORT_LOWERING_UNSUPPORTED.to_owned()]

@@ -603,40 +603,21 @@ impl<'a> Visit<'a> for DynamicUseDetector {
         walk::walk_call_expression(self, expression);
     }
 
-    fn visit_simple_assignment_target(
-        &mut self,
-        target: &oxc_ast::ast::SimpleAssignmentTarget<'a>,
-    ) {
-        let wrapper_is_visible = match commonjs_export_owner(target) {
-            Some(CommonJsExportOwner::Module) => self.require_scopes.module_may_be_wrapper(),
-            Some(CommonJsExportOwner::Exports) => self.require_scopes.exports_may_be_wrapper(),
-            None => false,
-        };
-        self.commonjs_export_syntax_observed |= wrapper_is_visible;
-        walk::walk_simple_assignment_target(self, target);
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CommonJsExportOwner {
-    Module,
-    Exports,
-}
-
-fn commonjs_export_owner(
-    target: &oxc_ast::ast::SimpleAssignmentTarget<'_>,
-) -> Option<CommonJsExportOwner> {
-    let mut member = target.as_member_expression()?;
-    loop {
-        if member.static_property_name() == Some("exports")
-            && member.object().is_specific_id("module")
+    fn visit_member_expression(&mut self, expression: &oxc_ast::ast::MemberExpression<'a>) {
+        if expression.static_property_name() == Some("exports")
+            && expression.object().is_specific_id("module")
+            && self.require_scopes.module_may_be_wrapper()
         {
-            return Some(CommonJsExportOwner::Module);
+            self.commonjs_export_syntax_observed = true;
         }
-        if member.object().is_specific_id("exports") {
-            return Some(CommonJsExportOwner::Exports);
+        walk::walk_member_expression(self, expression);
+    }
+
+    fn visit_identifier_reference(&mut self, identifier: &oxc_ast::ast::IdentifierReference<'a>) {
+        if identifier.name == "exports" && self.require_scopes.exports_may_be_wrapper() {
+            self.commonjs_export_syntax_observed = true;
         }
-        member = member.object().get_member_expr()?;
+        walk::walk_identifier_reference(self, identifier);
     }
 }
 

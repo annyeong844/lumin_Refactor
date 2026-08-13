@@ -47,7 +47,7 @@ const CJS_SOURCE: &str = concat!(
     "escapedLoader('@acme/lib/cjs-aliased');\n",
     "module.require('@acme/lib/cjs-module-require');\n",
     "require('@acme/lib/cjs-before-write');\n",
-    "require = customLoader;\n",
+    "require = require('@acme/lib/cjs-rhs-write');\n",
     "require('@acme/lib/cjs-after-write');\n",
     "console.log(cjsRequired);\n",
 );
@@ -58,7 +58,7 @@ const ROOT_SOURCE: &str = concat!(
 const NEAREST_COMMONJS_SOURCE: &str = concat!(
     "import { nearestCommonJs } from '@acme/lib/nearest-commonjs';\n",
     "export import exportedEquals = require('@acme/lib/nearest-export-import-equals');\n",
-    "module.exports.unmodeled = 1;\n",
+    "Object.defineProperty(exports, 'unmodeled', { value: 1 });\n",
     "console.log(nearestCommonJs);\n",
 );
 const NEAREST_DEFAULT_SOURCE: &str = concat!(
@@ -85,6 +85,7 @@ const TARGET_CASES: &[&str] = &[
     "cts-import-equals",
     "cjs-require",
     "cjs-before-write",
+    "cjs-rhs-write",
     "root-module",
     "nearest-commonjs",
     "nearest-export-import-equals",
@@ -350,6 +351,16 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
             "require",
             "require('@acme/lib/cjs-before-write')",
             "cjs-before-write",
+            "require",
+        ),
+        (
+            "apps/ext-cjs/main.cjs",
+            CJS_SOURCE,
+            "@acme/lib/cjs-rhs-write",
+            "dynamic-broad",
+            "require",
+            "require('@acme/lib/cjs-rhs-write')",
+            "cjs-rhs-write",
             "require",
         ),
         (

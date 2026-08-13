@@ -85,7 +85,7 @@ enum NameResolution {
 struct MutationObservation {
     scope: usize,
     position: u32,
-    ordered_root_expression: bool,
+    ordered_root_statement: bool,
 }
 
 #[derive(Debug)]
@@ -230,8 +230,11 @@ struct RequireScopeCollector {
     eval_calls: Vec<MutationObservation>,
     require_reference_scopes: Vec<(usize, u32, u32)>,
     direct_require_callees: BTreeSet<(u32, u32)>,
-    ordered_root_expression_spans: BTreeSet<(u32, u32)>,
-    inside_ordered_root_expression: bool,
+    non_escaping_require_references: BTreeSet<(u32, u32)>,
+    ordered_root_statement_spans: BTreeSet<(u32, u32)>,
+    inside_ordered_root_statement: bool,
+    assignment_write_position: Option<u32>,
+    root_has_commonjs_wrapper: bool,
 }
 
 impl RequireScopeCollector {
@@ -310,6 +313,15 @@ impl RequireScopeCollector {
         }
     }
 
+    fn nearest_var_environment_is_root(&self) -> bool {
+        self.scope_stack.iter().rev().find_map(|index| {
+            self.scopes
+                .get(*index)
+                .filter(|scope| scope.kind.is_var_environment())
+                .map(|scope| scope.kind == RequireScopeKind::Root)
+        }) == Some(true)
+    }
+
     fn mark_function_declaration(&mut self, name: TrackedName) {
         let annex_b_binding = !self.current_strict()
             && self
@@ -328,7 +340,7 @@ impl RequireScopeCollector {
             self.require_writes.push(MutationObservation {
                 scope,
                 position,
-                ordered_root_expression: scope == 0 && self.inside_ordered_root_expression,
+                ordered_root_statement: scope == 0 && self.inside_ordered_root_statement,
             });
         }
     }
@@ -340,7 +352,7 @@ impl RequireScopeCollector {
             self.eval_calls.push(MutationObservation {
                 scope,
                 position,
-                ordered_root_expression: scope == 0 && self.inside_ordered_root_expression,
+                ordered_root_statement: scope == 0 && self.inside_ordered_root_statement,
             });
         }
     }
@@ -369,7 +381,7 @@ impl RequireScopeCollector {
             .collect::<Vec<_>>();
         implicit_mutations.extend(intrinsic_eval_mutations.iter().copied());
         for observation in implicit_mutations {
-            if observation.ordered_root_expression {
+            if observation.ordered_root_statement {
                 model.ordered_root_require_writes.push(observation.position);
             } else {
                 model.unordered_implicit_require_write = true;
@@ -383,6 +395,9 @@ impl RequireScopeCollector {
             .iter()
             .any(|(scope, start, end)| {
                 !self.direct_require_callees.contains(&(*start, *end))
+                    && !self
+                        .non_escaping_require_references
+                        .contains(&(*start, *end))
                     && model.resolve_name(*scope, TrackedName::Require) != NameResolution::Bound
             });
         model.unattributed_require_escape =
@@ -457,10 +472,14 @@ impl<'a> Visit<'a> for RequireScopeCollector {
     fn enter_node(&mut self, kind: AstKind<'a>) {
         match kind {
             AstKind::Program(program) => {
-                self.ordered_root_expression_spans
+                self.root_has_commonjs_wrapper = program.source_type.is_commonjs();
+                self.ordered_root_statement_spans
                     .extend(program.body.iter().filter_map(|statement| match statement {
                         Statement::ExpressionStatement(statement) => {
                             Some((statement.span.start, statement.span.end))
+                        }
+                        Statement::VariableDeclaration(declaration) => {
+                            Some((declaration.span.start, declaration.span.end))
                         }
                         _ => None,
                     }));
@@ -592,7 +611,22 @@ impl<'a> Visit<'a> for RequireScopeCollector {
                         for name in TRACKED_NAMES {
                             if bindings.contains(name) {
                                 if declaration.kind.is_var() {
-                                    self.mark_nearest_var_environment(name);
+                                    let wrapper_redeclaration = self.root_has_commonjs_wrapper
+                                        && self.nearest_var_environment_is_root()
+                                        && matches!(
+                                            name,
+                                            TrackedName::Require
+                                                | TrackedName::Module
+                                                | TrackedName::Exports
+                                        );
+                                    if wrapper_redeclaration {
+                                        if name == TrackedName::Require && declarator.init.is_some()
+                                        {
+                                            self.record_require_write(declarator.span.end);
+                                        }
+                                    } else {
+                                        self.mark_nearest_var_environment(name);
+                                    }
                                 } else {
                                     self.mark_current_scope(name);
                                 }
@@ -699,7 +733,10 @@ impl<'a> Visit<'a> for RequireScopeCollector {
             .get_expression()
             .is_some_and(|expression| expression.is_specific_id("require"));
         if direct_write || wrapped_write {
-            self.record_require_write(target.span().start);
+            self.record_require_write(
+                self.assignment_write_position
+                    .unwrap_or_else(|| target.span().end),
+            );
         }
         walk::walk_simple_assignment_target(self, target);
     }
@@ -709,9 +746,16 @@ impl<'a> Visit<'a> for RequireScopeCollector {
         property: &oxc_ast::ast::AssignmentTargetPropertyIdentifier<'a>,
     ) {
         if property.binding.name == "require" {
-            self.record_require_write(property.span.start);
+            self.record_require_write(self.assignment_write_position.unwrap_or(property.span.end));
         }
         walk::walk_assignment_target_property_identifier(self, property);
+    }
+
+    fn visit_assignment_expression(&mut self, expression: &oxc_ast::ast::AssignmentExpression<'a>) {
+        let previous = self.assignment_write_position;
+        self.assignment_write_position = Some(expression.span.end);
+        walk::walk_assignment_expression(self, expression);
+        self.assignment_write_position = previous;
     }
 
     fn visit_call_expression(&mut self, expression: &oxc_ast::ast::CallExpression<'a>) {
@@ -728,12 +772,35 @@ impl<'a> Visit<'a> for RequireScopeCollector {
     }
 
     fn visit_expression_statement(&mut self, statement: &oxc_ast::ast::ExpressionStatement<'a>) {
-        let previous = self.inside_ordered_root_expression;
-        self.inside_ordered_root_expression = self
-            .ordered_root_expression_spans
+        let previous = self.inside_ordered_root_statement;
+        self.inside_ordered_root_statement = self
+            .ordered_root_statement_spans
             .contains(&(statement.span.start, statement.span.end));
         walk::walk_expression_statement(self, statement);
-        self.inside_ordered_root_expression = previous;
+        self.inside_ordered_root_statement = previous;
+    }
+
+    fn visit_variable_declaration(&mut self, declaration: &oxc_ast::ast::VariableDeclaration<'a>) {
+        let previous = self.inside_ordered_root_statement;
+        self.inside_ordered_root_statement = self
+            .ordered_root_statement_spans
+            .contains(&(declaration.span.start, declaration.span.end));
+        walk::walk_variable_declaration(self, declaration);
+        self.inside_ordered_root_statement = previous;
+    }
+
+    fn visit_unary_expression(&mut self, expression: &oxc_ast::ast::UnaryExpression<'a>) {
+        if expression.operator.is_typeof()
+            && let Some(identifier) = expression
+                .argument
+                .without_parentheses()
+                .get_identifier_reference()
+            && identifier.name == "require"
+        {
+            self.non_escaping_require_references
+                .insert((identifier.span.start, identifier.span.end));
+        }
+        walk::walk_unary_expression(self, expression);
     }
 
     fn visit_identifier_reference(&mut self, identifier: &oxc_ast::ast::IdentifierReference<'a>) {
