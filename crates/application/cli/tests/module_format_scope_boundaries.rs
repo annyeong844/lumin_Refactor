@@ -98,6 +98,21 @@ const CLASS_REVERSE_PHASE_SOURCE: &str = concat!(
     "}\n",
     "require('@scope/dep/class-reverse-after');\n",
 );
+const DECORATOR_PHASE_SOURCE: &str = concat!(
+    "const decorator = () => {};\n",
+    "class C {\n",
+    "  static dep = require('@scope/dep/decorator-static');\n",
+    "  @((require = customLoader), decorator) method() {}\n",
+    "}\n",
+);
+const DECORATOR_REVERSE_PHASE_SOURCE: &str = concat!(
+    "const decorator = () => {};\n",
+    "class C {\n",
+    "  static value = (require = customLoader);\n",
+    "  @((require('@scope/dep/decorator-expression'), decorator)) method() {}\n",
+    "}\n",
+    "require('@scope/dep/decorator-after');\n",
+);
 const WRAPPER_THIS_SOURCE: &str = "this.publicValue = 1;\n";
 
 #[test]
@@ -234,6 +249,29 @@ fn commonjs_wrapper_mutations_preserve_only_grounded_public_edges()
         })
         .collect::<Vec<_>>();
     assert_eq!(class_reverse_specifiers, ["@scope/dep/class-key"]);
+    let decorator_phase = file_response(root.path(), &run_id, "src/decorator-phase.cts")?;
+    assert!(resolutions(&decorator_phase).is_empty());
+    let decorator_reverse_phase =
+        file_response(root.path(), &run_id, "src/decorator-reverse-phase.cts")?;
+    let decorator_reverse_specifiers = resolutions(&decorator_reverse_phase)
+        .iter()
+        .filter_map(|resolution| {
+            resolution
+                .pointer("/sourceUse/specifier")
+                .and_then(Value::as_str)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        decorator_reverse_specifiers,
+        ["@scope/dep/decorator-expression"]
+    );
+    assert_resolution_target(
+        root.path(),
+        &run_id,
+        &decorator_reverse_phase,
+        "@scope/dep/decorator-expression",
+        "packages/dep/decorator-expression-require.ts",
+    )?;
     for (path, specifier, target) in [
         (
             "src/strict-arguments.cjs",
@@ -294,8 +332,8 @@ fn commonjs_wrapper_mutations_preserve_only_grounded_public_edges()
         })
         .collect::<Result<Vec<_>, _>>()?;
     details.sort_unstable();
-    let mut expected = vec![COMMONJS_EXPORT_LOWERING_UNSUPPORTED; 16];
-    expected.extend([REQUIRE_ATTRIBUTION_OPAQUE; 10]);
+    let mut expected = vec![COMMONJS_EXPORT_LOWERING_UNSUPPORTED; 18];
+    expected.extend([REQUIRE_ATTRIBUTION_OPAQUE; 12]);
     expected.sort_unstable();
     assert_eq!(details, expected);
     Ok(())
@@ -424,6 +462,16 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         "src/class-reverse-phase.cjs",
         CLASS_REVERSE_PHASE_SOURCE,
     )?;
+    write(
+        root.path(),
+        "src/decorator-phase.cts",
+        DECORATOR_PHASE_SOURCE,
+    )?;
+    write(
+        root.path(),
+        "src/decorator-reverse-phase.cts",
+        DECORATOR_REVERSE_PHASE_SOURCE,
+    )?;
     write(root.path(), "src/wrapper-this.ts", WRAPPER_THIS_SOURCE)?;
     write(
         root.path(),
@@ -528,6 +576,18 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
                     "import": "./class-reverse-after-import.js",
                     "require": "./class-reverse-after-require.js",
                 },
+                "./decorator-static": {
+                    "import": "./decorator-static-import.js",
+                    "require": "./decorator-static-require.js",
+                },
+                "./decorator-expression": {
+                    "import": "./decorator-expression-import.js",
+                    "require": "./decorator-expression-require.js",
+                },
+                "./decorator-after": {
+                    "import": "./decorator-after-import.js",
+                    "require": "./decorator-after-require.js",
+                },
             },
         })
         .to_string(),
@@ -581,6 +641,12 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         "class-key-require",
         "class-reverse-after-import",
         "class-reverse-after-require",
+        "decorator-static-import",
+        "decorator-static-require",
+        "decorator-expression-import",
+        "decorator-expression-require",
+        "decorator-after-import",
+        "decorator-after-require",
     ] {
         write(
             root.path(),

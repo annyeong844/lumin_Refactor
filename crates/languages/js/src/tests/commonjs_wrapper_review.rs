@@ -479,7 +479,8 @@ fn computed_property_keys_coerce_mapped_arguments_after_key_inputs()
 }
 
 #[test]
-fn class_computed_keys_precede_static_initializers() -> Result<(), Box<dyn std::error::Error>> {
+fn class_definition_evaluations_precede_static_initializers()
+-> Result<(), Box<dyn std::error::Error>> {
     for (source, expected_grounded) in [
         (
             concat!(
@@ -563,6 +564,52 @@ fn class_computed_keys_precede_static_initializers() -> Result<(), Box<dyn std::
                 .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE)
         );
     }
+
+    for source in [
+        concat!(
+            "const decorator = () => {};\n",
+            "class C {\n",
+            "  static dep = require('@acme/static');\n",
+            "  @((require = customLoader), decorator) method() {}\n",
+            "}\n",
+        ),
+        concat!(
+            "const decorator = () => {};\n",
+            "@((require = customLoader), decorator)\n",
+            "class C { static dep = require('@acme/static'); }\n",
+        ),
+    ] {
+        let payload = parse_payload(SourceKind::Cts, source.as_bytes())?;
+        assert!(
+            payload.uses.is_empty(),
+            "decorator mutation left a false static edge: {source}"
+        );
+        assert!(
+            payload
+                .limitation_details
+                .iter()
+                .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE)
+        );
+    }
+
+    let decorator_after_static_source = concat!(
+        "const decorator = () => {};\n",
+        "class C {\n",
+        "  static value = (require = customLoader);\n",
+        "  @((require('@acme/decorator'), decorator)) method() {}\n",
+        "}\n",
+        "require('@acme/after');\n",
+    );
+    let decorator_after_static =
+        parse_payload(SourceKind::Cts, decorator_after_static_source.as_bytes())?;
+    assert_eq!(decorator_after_static.uses.len(), 1);
+    assert_eq!(decorator_after_static.uses[0].specifier, "@acme/decorator");
+    assert!(
+        decorator_after_static
+            .limitation_details
+            .iter()
+            .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE)
+    );
     Ok(())
 }
 

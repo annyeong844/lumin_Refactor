@@ -1,27 +1,30 @@
-use oxc_ast::ast::{Class, ClassElement};
+use oxc_ast::ast::{Class, ClassElement, Decorator};
 use oxc_span::GetSpan;
 
 #[derive(Debug)]
 pub(super) struct ClassEvaluationPhases {
-    computed_keys: Vec<(u32, u32)>,
+    pre_static_evaluations: Vec<(u32, u32)>,
     static_executions: Vec<(u32, u32)>,
 }
 
 impl ClassEvaluationPhases {
     pub(super) fn from_class(class: &Class<'_>) -> Option<Self> {
-        let mut computed_keys = Vec::new();
+        let mut pre_static_evaluations = Vec::new();
         let mut static_executions = Vec::new();
 
+        push_decorator_spans(&mut pre_static_evaluations, &class.decorators);
         for element in &class.body.body {
             match element {
                 ClassElement::MethodDefinition(method) => {
+                    push_decorator_spans(&mut pre_static_evaluations, &method.decorators);
                     if method.computed {
-                        push_span(&mut computed_keys, method.key.span());
+                        push_span(&mut pre_static_evaluations, method.key.span());
                     }
                 }
                 ClassElement::PropertyDefinition(property) => {
+                    push_decorator_spans(&mut pre_static_evaluations, &property.decorators);
                     if property.computed {
-                        push_span(&mut computed_keys, property.key.span());
+                        push_span(&mut pre_static_evaluations, property.key.span());
                     }
                     if property.r#static
                         && let Some(value) = &property.value
@@ -30,8 +33,9 @@ impl ClassEvaluationPhases {
                     }
                 }
                 ClassElement::AccessorProperty(property) => {
+                    push_decorator_spans(&mut pre_static_evaluations, &property.decorators);
                     if property.computed {
-                        push_span(&mut computed_keys, property.key.span());
+                        push_span(&mut pre_static_evaluations, property.key.span());
                     }
                     if property.r#static
                         && let Some(value) = &property.value
@@ -46,18 +50,24 @@ impl ClassEvaluationPhases {
             }
         }
 
-        (!computed_keys.is_empty() && !static_executions.is_empty()).then_some(Self {
-            computed_keys,
+        (!pre_static_evaluations.is_empty() && !static_executions.is_empty()).then_some(Self {
+            pre_static_evaluations,
             static_executions,
         })
     }
 
-    pub(super) fn computed_key_contains(&self, position: u32) -> bool {
-        contains(&self.computed_keys, position)
+    pub(super) fn pre_static_evaluation_contains(&self, position: u32) -> bool {
+        contains(&self.pre_static_evaluations, position)
     }
 
     pub(super) fn static_execution_contains(&self, position: u32) -> bool {
         contains(&self.static_executions, position)
+    }
+}
+
+fn push_decorator_spans(ranges: &mut Vec<(u32, u32)>, decorators: &[Decorator<'_>]) {
+    for decorator in decorators {
+        push_span(ranges, decorator.expression.span());
     }
 }
 

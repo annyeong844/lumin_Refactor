@@ -361,11 +361,13 @@ impl RequireScopeCollector {
         implicit_mutations.extend(intrinsic_eval_mutations.iter().copied());
         implicit_mutations.extend(mapped_arguments_mutations.iter().copied());
         for phases in &self.class_evaluation_phases {
-            let computed_key_mutates_require = implicit_mutations.iter().any(|observation| {
-                observation.ordered_execution
-                    && phases.computed_key_contains(observation.timing.target_position())
-            });
-            if computed_key_mutates_require {
+            let pre_static_evaluation_mutates_require =
+                implicit_mutations.iter().any(|observation| {
+                    observation.ordered_execution
+                        && phases
+                            .pre_static_evaluation_contains(observation.timing.target_position())
+                });
+            if pre_static_evaluation_mutates_require {
                 model.class_phase_opaque_require_call_positions.extend(
                     self.direct_require_call_positions
                         .iter()
@@ -373,17 +375,17 @@ impl RequireScopeCollector {
                         .filter(|position| phases.static_execution_contains(*position)),
                 );
             }
-            let computed_key_calls = self
+            let pre_static_evaluation_calls = self
                 .direct_require_call_positions
                 .iter()
                 .copied()
-                .filter(|position| phases.computed_key_contains(*position));
+                .filter(|position| phases.pre_static_evaluation_contains(*position));
             for observation in implicit_mutations.iter().filter(|observation| {
                 observation.ordered_execution
                     && phases.static_execution_contains(observation.timing.target_position())
             }) {
                 model.class_phase_nonpreceding_mutations.extend(
-                    computed_key_calls
+                    pre_static_evaluation_calls
                         .clone()
                         .map(|position| (observation.timing, position)),
                 );
