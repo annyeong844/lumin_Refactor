@@ -24,7 +24,8 @@ const MTS_SOURCE: &str = concat!(
     "export {} from '@acme/lib/mts-empty-export';\n",
     "import type {} from '@acme/type-only';\n",
     "const esmRequired = require('@acme/lib/esm-require');\n",
-    "console.log(mtsStatic, esmRequired);\n",
+    "const relativeRequired = require('./relative-required');\n",
+    "console.log(mtsStatic, esmRequired, relativeRequired);\n",
 );
 const MJS_SOURCE: &str = concat!(
     "import { mjsStatic } from '@acme/lib/mjs-static';\n",
@@ -40,6 +41,7 @@ const CTS_SOURCE: &str = concat!(
     "export {} from '@acme/lib/cts-empty-export';\n",
     "import equalsLib = require('@acme/lib/cts-import-equals');\n",
     "void import('@acme/lib/cjs-dynamic');\n",
+    "void import('./relative-dynamic');\n",
     "console.log(ctsStatic, equalsLib);\n",
 );
 const CJS_SOURCE: &str = concat!(
@@ -138,7 +140,7 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
     );
     assert_eq!(
         audit_json.get("limitationCount").and_then(Value::as_u64),
-        Some(9)
+        Some(10)
     );
     let run_id = field(&audit.stdout, "runId")?;
 
@@ -149,10 +151,25 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
         .get("limitations")
         .and_then(Value::as_array)
         .ok_or_else(|| std::io::Error::other("limitations are missing"))?;
-    assert_eq!(limitations.len(), 9);
-    assert!(limitations.iter().all(|limitation| {
-        limitation.get("reason").and_then(Value::as_str) == Some("js-module-use-unknown")
-    }));
+    assert_eq!(limitations.len(), 10);
+    assert_eq!(
+        limitations
+            .iter()
+            .filter(|limitation| {
+                limitation.get("reason").and_then(Value::as_str) == Some("js-module-use-unknown")
+            })
+            .count(),
+        9
+    );
+    assert_eq!(
+        limitations
+            .iter()
+            .filter(|limitation| {
+                limitation.get("reason").and_then(Value::as_str) == Some("alias-shape-unsupported")
+            })
+            .count(),
+        1
+    );
     assert_eq!(
         limitation_detail_count(limitations, COMMONJS_EXPORT_LIMITATION),
         4
@@ -508,7 +525,8 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
             .iter()
             .filter(|expectation| expectation.0 == path)
             .count()
-            + usize::from(path == "apps/ext-esm/main.mts");
+            + usize::from(path == "apps/ext-esm/main.mts") * 2
+            + usize::from(path == "apps/ext-cjs/main.cts");
         assert_eq!(
             source
                 .get("resolutions")
@@ -545,6 +563,46 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
             expectation.0,
         );
     }
+    let relative_required_span = expected_span(MTS_SOURCE, "require('./relative-required')")?;
+    let relative_required_target = resolution_target(
+        sources
+            .get("apps/ext-esm/main.mts")
+            .ok_or_else(|| std::io::Error::other("MTS source response is missing"))?,
+        "./relative-required",
+        "dynamic-broad",
+        "require",
+        relative_required_span,
+    )?;
+    assert_eq!(
+        relative_required_target,
+        source_id(root, &run_id, "apps/ext-esm/relative-required.ts")?,
+        "ESM importer require() did not use require-lane relative fallback under {profile}",
+    );
+    let relative_dynamic_span = expected_span(CTS_SOURCE, "import('./relative-dynamic')")?;
+    let relative_dynamic = resolution(
+        sources
+            .get("apps/ext-cjs/main.cts")
+            .ok_or_else(|| std::io::Error::other("CTS source response is missing"))?,
+        "./relative-dynamic",
+        "dynamic-broad",
+        "dynamic-import",
+        relative_dynamic_span,
+    )?;
+    assert_eq!(
+        relative_dynamic
+            .pointer("/outcome/kind")
+            .and_then(Value::as_str),
+        Some("unsupported")
+    );
+    let expected_relative_dynamic_reason =
+        format!("{profile} import-mode resolution requires an explicit relative extension");
+    assert_eq!(
+        relative_dynamic
+            .pointer("/outcome/reason")
+            .and_then(Value::as_str),
+        Some(expected_relative_dynamic_reason.as_str())
+    );
+    assert!(relative_dynamic.pointer("/outcome/target").is_none());
     let deferred_span = expected_span(CJS_SOURCE, "require('@acme/lib/cjs-instance-field')")?;
     let cjs_resolutions = sources
         .get("apps/ext-cjs/main.cjs")
@@ -723,6 +781,16 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
     ] {
         write(root.path(), path, source)?;
     }
+    write(
+        root.path(),
+        "apps/ext-esm/relative-required.ts",
+        "export const relativeRequired = 1;\n",
+    )?;
+    write(
+        root.path(),
+        "apps/ext-cjs/relative-dynamic.ts",
+        "export const relativeDynamic = 1;\n",
+    )?;
     Ok(root)
 }
 
@@ -888,7 +956,22 @@ fn resolution_target(
     request_kind: &str,
     expected_span: (u64, u64),
 ) -> Result<String, std::io::Error> {
-    let resolution = source
+    let resolution = resolution(source, specifier, use_kind, request_kind, expected_span)?;
+    assert_eq!(
+        resolution.pointer("/outcome/kind").and_then(Value::as_str),
+        Some("internal")
+    );
+    required_str(resolution, "/outcome/target")
+}
+
+fn resolution<'a>(
+    source: &'a Value,
+    specifier: &str,
+    use_kind: &str,
+    request_kind: &str,
+    expected_span: (u64, u64),
+) -> Result<&'a Value, std::io::Error> {
+    source
         .get("resolutions")
         .and_then(Value::as_array)
         .and_then(|resolutions| {
@@ -919,12 +1002,7 @@ fn resolution_target(
             std::io::Error::other(format!(
                 "{use_kind} {request_kind} resolution for {specifier} at {expected_span:?} is missing"
             ))
-        })?;
-    assert_eq!(
-        resolution.pointer("/outcome/kind").and_then(Value::as_str),
-        Some("internal")
-    );
-    required_str(resolution, "/outcome/target")
+        })
 }
 
 fn expected_span(source: &str, syntax: &str) -> Result<(u64, u64), std::io::Error> {

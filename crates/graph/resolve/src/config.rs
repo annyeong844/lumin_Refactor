@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_model::{
-    ConfigObservation, ConfigSyntax, ConfigValue, Limitation, LogicalSourceId,
+    ConfigObservation, ConfigSyntax, ConfigValue, Limitation, LogicalSourceId, ModuleRequestKind,
     PackageIdentityState, RepoPath, RepositoryRootIdentity, ResolutionProfile,
     ResolutionProfileSource, RootedPathRelation, SelectedResolutionProfile, SemanticConfigSnapshot,
     SourceKind, SourceSnapshot,
@@ -13,7 +13,6 @@ use crate::{ConfigDemand, ImporterFormatClassification, ResolverError};
 #[derive(Clone, Debug)]
 pub(crate) struct ImporterSettings {
     pub profile: ResolutionProfile,
-    pub allow_extensionless: bool,
     pub static_condition: PackageConditionMode,
     pub base_url: Option<RepoPath>,
     pub paths: Option<PathMappings>,
@@ -24,6 +23,32 @@ pub(crate) struct ImporterSettings {
 pub(crate) enum PackageConditionMode {
     Import,
     Require,
+}
+
+impl ImporterSettings {
+    pub(crate) fn condition_mode_for(
+        &self,
+        request_kind: ModuleRequestKind,
+    ) -> PackageConditionMode {
+        match self.profile {
+            ResolutionProfile::Bundler => PackageConditionMode::Import,
+            ResolutionProfile::Node => PackageConditionMode::Require,
+            ResolutionProfile::Node16 | ResolutionProfile::NodeNext => match request_kind {
+                ModuleRequestKind::DynamicImport => PackageConditionMode::Import,
+                ModuleRequestKind::Require => PackageConditionMode::Require,
+                ModuleRequestKind::StaticImport => self.static_condition,
+            },
+        }
+    }
+
+    pub(crate) fn allows_extensionless_for(&self, request_kind: ModuleRequestKind) -> bool {
+        match self.profile {
+            ResolutionProfile::Bundler | ResolutionProfile::Node => true,
+            ResolutionProfile::Node16 | ResolutionProfile::NodeNext => {
+                self.condition_mode_for(request_kind) == PackageConditionMode::Require
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -138,16 +163,16 @@ fn select_importer(
                 ),
             });
     }
-    let (allow_extensionless, static_condition) = match profile {
-        ResolutionProfile::Bundler => (true, PackageConditionMode::Import),
-        ResolutionProfile::Node => (true, PackageConditionMode::Require),
+    let static_condition = match profile {
+        ResolutionProfile::Bundler => PackageConditionMode::Import,
+        ResolutionProfile::Node => PackageConditionMode::Require,
         ResolutionProfile::Node16 | ResolutionProfile::NodeNext => {
             match importer_is_esm(source, config, &mut selection.limitations) {
-                Ok(true) => (false, PackageConditionMode::Import),
-                Ok(false) => (true, PackageConditionMode::Require),
+                Ok(true) => PackageConditionMode::Import,
+                Ok(false) => PackageConditionMode::Require,
                 Err(()) => {
                     blocked = true;
-                    (false, PackageConditionMode::Import)
+                    PackageConditionMode::Import
                 }
             }
         }
@@ -161,7 +186,6 @@ fn select_importer(
         source.id.clone(),
         ImporterSettings {
             profile,
-            allow_extensionless,
             static_condition,
             base_url: effective.base_url,
             paths: effective.paths,
