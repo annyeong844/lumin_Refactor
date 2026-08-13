@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use oxc_ast::ast_kind::AstKind;
 
 mod collector;
@@ -126,6 +128,7 @@ struct RequireScopeModel {
     scopes: Vec<RequireScope>,
     unordered_implicit_require_write: bool,
     ordered_root_require_writes: Vec<MutationTiming>,
+    deferred_require_call_positions: BTreeSet<u32>,
     unattributed_require_escape: bool,
 }
 
@@ -178,9 +181,12 @@ impl RequireScopeModel {
             return false;
         }
         if self
-            .scopes
-            .get(scope)
-            .is_none_or(|scope| scope.deferred_execution)
+            .deferred_require_call_positions
+            .contains(&call_position)
+            || self
+                .scopes
+                .get(scope)
+                .is_none_or(|scope| scope.deferred_execution)
         {
             return true;
         }

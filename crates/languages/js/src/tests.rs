@@ -773,6 +773,41 @@ fn require_calls_before_later_root_control_flow_writes_remain_grounded()
 }
 
 #[test]
+fn instance_field_initializers_are_deferred_without_deferring_class_evaluation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let payload = parse_payload(
+        SourceKind::CommonJs,
+        concat!(
+            "class C {\n",
+            "  static immediate = require('@acme/static');\n",
+            "  [require('@acme/computed')] = 1;\n",
+            "  deferred = require('@acme/instance');\n",
+            "}\n",
+            "require = customLoader;\n",
+            "new C();\n",
+        )
+        .as_bytes(),
+    )?;
+    assert_eq!(payload.uses.len(), 2);
+    for expected in ["@acme/static", "@acme/computed"] {
+        assert!(
+            payload
+                .uses
+                .iter()
+                .any(|use_fact| use_fact.specifier == expected),
+            "missing immediate class-evaluation request {expected}",
+        );
+    }
+    assert!(
+        payload
+            .limitation_details
+            .iter()
+            .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE)
+    );
+    Ok(())
+}
+
+#[test]
 fn explicit_esm_module_exports_does_not_imply_a_commonjs_wrapper()
 -> Result<(), Box<dyn std::error::Error>> {
     for kind in [SourceKind::Mjs, SourceKind::Mts] {

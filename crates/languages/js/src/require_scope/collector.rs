@@ -29,6 +29,8 @@ struct RequireScopeCollector {
     direct_require_callees: BTreeSet<(u32, u32)>,
     non_escaping_require_references: BTreeSet<(u32, u32)>,
     ordered_root_statement_spans: BTreeSet<(u32, u32)>,
+    deferred_execution_ranges: BTreeSet<(u32, u32)>,
+    deferred_require_call_positions: BTreeSet<u32>,
     assignment_write_context: Option<AssignmentWriteContext>,
     destructuring_target_position: Option<u32>,
     binding_write_context: Option<AssignmentWriteContext>,
@@ -182,10 +184,11 @@ impl RequireScopeCollector {
         timing: MutationTiming,
         preserve_nested_timing: bool,
     ) -> Option<MutationTiming> {
-        if self
-            .scopes
-            .get(scope)
-            .is_none_or(|scope| scope.deferred_execution)
+        if self.position_has_deferred_execution(timing.target_position())
+            || self
+                .scopes
+                .get(scope)
+                .is_none_or(|scope| scope.deferred_execution)
         {
             return None;
         }
@@ -199,6 +202,12 @@ impl RequireScopeCollector {
                     MutationTiming::After(*start)
                 }
             })
+    }
+
+    fn position_has_deferred_execution(&self, position: u32) -> bool {
+        self.deferred_execution_ranges
+            .iter()
+            .any(|(start, end)| position_within_span(*start, *end, position))
     }
 
     fn assignment_target_timing(&self, fallback_position: u32) -> MutationTiming {
@@ -268,6 +277,7 @@ impl RequireScopeCollector {
             scopes: self.scopes,
             unordered_implicit_require_write: false,
             ordered_root_require_writes: Vec::new(),
+            deferred_require_call_positions: self.deferred_require_call_positions,
             unattributed_require_escape: false,
         };
         let mut implicit_mutations = self
@@ -490,6 +500,24 @@ impl<'a> Visit<'a> for RequireScopeCollector {
                     self.current_ambient(),
                 );
                 return;
+            }
+            AstKind::PropertyDefinition(property) => {
+                if !property.r#static
+                    && let Some(value) = &property.value
+                {
+                    let span = value.span();
+                    self.deferred_execution_ranges
+                        .insert((span.start, span.end));
+                }
+            }
+            AstKind::AccessorProperty(property) => {
+                if !property.r#static
+                    && let Some(value) = &property.value
+                {
+                    let span = value.span();
+                    self.deferred_execution_ranges
+                        .insert((span.start, span.end));
+                }
             }
             AstKind::VariableDeclaration(declaration) => {
                 if !self.current_ambient() && !declaration.declare {
@@ -717,6 +745,10 @@ impl<'a> Visit<'a> for RequireScopeCollector {
         {
             self.direct_require_callees
                 .insert((identifier.span.start, identifier.span.end));
+            if self.position_has_deferred_execution(expression.span.start) {
+                self.deferred_require_call_positions
+                    .insert(expression.span.start);
+            }
         }
         if !expression.optional && expression.callee.is_specific_id("eval") {
             self.record_eval_call(self.expression_mutation_timing(expression.span.end));

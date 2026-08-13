@@ -44,11 +44,17 @@ const CTS_SOURCE: &str = concat!(
 );
 const CJS_SOURCE: &str = concat!(
     "const cjsRequired = require('@acme/lib/cjs-require');\n",
+    "class RuntimeField {\n",
+    "  static immediate = require('@acme/lib/cjs-static-field');\n",
+    "  [require('@acme/lib/cjs-computed-field')] = 1;\n",
+    "  deferred = require('@acme/lib/cjs-instance-field');\n",
+    "}\n",
     "const escapedLoader = require;\n",
     "escapedLoader('@acme/lib/cjs-aliased');\n",
     "module.require('@acme/lib/cjs-module-require');\n",
     "require('@acme/lib/cjs-before-write');\n",
     "require = require('@acme/lib/cjs-rhs-write');\n",
+    "new RuntimeField();\n",
     "require('@acme/lib/cjs-after-write');\n",
     "console.log(cjsRequired);\n",
 );
@@ -92,6 +98,9 @@ const TARGET_CASES: &[&str] = &[
     "cts-empty-export",
     "cts-import-equals",
     "cjs-require",
+    "cjs-static-field",
+    "cjs-computed-field",
+    "cjs-instance-field",
     "cjs-loop-rhs",
     "cjs-loop-body",
     "cjs-before-write",
@@ -355,6 +364,26 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
             "require",
         ),
         (
+            "apps/ext-cjs/main.cjs",
+            CJS_SOURCE,
+            "@acme/lib/cjs-static-field",
+            "dynamic-broad",
+            "require",
+            "require('@acme/lib/cjs-static-field')",
+            "cjs-static-field",
+            "require",
+        ),
+        (
+            "apps/ext-cjs/main.cjs",
+            CJS_SOURCE,
+            "@acme/lib/cjs-computed-field",
+            "dynamic-broad",
+            "require",
+            "require('@acme/lib/cjs-computed-field')",
+            "cjs-computed-field",
+            "require",
+        ),
+        (
             "apps/ext-cjs/loop.cjs",
             CJS_LOOP_SOURCE,
             "@acme/lib/cjs-loop-rhs",
@@ -516,6 +545,29 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
             expectation.0,
         );
     }
+    let deferred_span = expected_span(CJS_SOURCE, "require('@acme/lib/cjs-instance-field')")?;
+    let cjs_resolutions = sources
+        .get("apps/ext-cjs/main.cjs")
+        .and_then(|source| source.get("resolutions"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("CJS resolutions are missing"))?;
+    assert!(
+        cjs_resolutions.iter().all(|resolution| {
+            resolution
+                .pointer("/sourceUse/specifier")
+                .and_then(Value::as_str)
+                != Some("@acme/lib/cjs-instance-field")
+                || resolution
+                    .pointer("/sourceUse/span/start")
+                    .and_then(Value::as_u64)
+                    != Some(deferred_span.0)
+                || resolution
+                    .pointer("/sourceUse/span/end")
+                    .and_then(Value::as_u64)
+                    != Some(deferred_span.1)
+        }),
+        "deferred instance-field require published a grounded resolution under {profile}",
+    );
     let type_only_target = resolution_target(
         sources
             .get("apps/ext-esm/main.mts")
