@@ -74,11 +74,25 @@ pub(crate) struct ConfigSelection {
 
 #[derive(Clone, Debug, Default)]
 struct EffectiveConfig {
-    module_resolution: Option<(ResolutionProfile, RepoPath)>,
+    module_resolution: EffectiveModuleResolution,
     module: Option<String>,
     base_url: Option<RepoPath>,
     paths: Option<PathMappings>,
     blocked: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+enum EffectiveModuleResolution {
+    #[default]
+    Absent,
+    Selected {
+        profile: ResolutionProfile,
+        path: RepoPath,
+    },
+    Unsupported {
+        value: String,
+        path: RepoPath,
+    },
 }
 
 enum ExtendsSelection {
@@ -131,24 +145,37 @@ fn select_importer(
         )?,
         None => EffectiveConfig::default(),
     };
-    let (profile, profile_source) = if let Some(profile) = override_profile {
-        (profile, ResolutionProfileSource::Invocation)
-    } else if let Some((profile, path)) = &effective.module_resolution {
-        (
-            *profile,
-            ResolutionProfileSource::Config {
-                path_canonical: path.canonical_bytes().to_vec(),
-                path_display: path.display_escaped(),
-            },
-        )
+    let selected_profile = if let Some(profile) = override_profile {
+        Some((profile, ResolutionProfileSource::Invocation))
     } else {
-        (
-            ResolutionProfile::Bundler,
-            ResolutionProfileSource::ProductDefault,
-        )
+        match &effective.module_resolution {
+            EffectiveModuleResolution::Absent => Some((
+                ResolutionProfile::Bundler,
+                ResolutionProfileSource::ProductDefault,
+            )),
+            EffectiveModuleResolution::Selected { profile, path } => Some((
+                *profile,
+                ResolutionProfileSource::Config {
+                    path_canonical: path.canonical_bytes().to_vec(),
+                    path_display: path.display_escaped(),
+                },
+            )),
+            EffectiveModuleResolution::Unsupported { value, path } => {
+                selection
+                    .limitations
+                    .push(Limitation::TsconfigSemanticsUnsupported {
+                        path: path.display_escaped(),
+                        detail: format!("unsupported moduleResolution value {value}"),
+                    });
+                None
+            }
+        }
     };
-    let mut blocked = effective.blocked;
-    if !module_is_compatible(profile, effective.module.as_deref()) {
+    let profile = selected_profile
+        .as_ref()
+        .map_or(ResolutionProfile::Bundler, |(profile, _)| *profile);
+    let mut blocked = effective.blocked || selected_profile.is_none();
+    if selected_profile.is_some() && !module_is_compatible(profile, effective.module.as_deref()) {
         blocked = true;
         selection
             .limitations
@@ -163,25 +190,31 @@ fn select_importer(
                 ),
             });
     }
-    let static_condition = match profile {
-        ResolutionProfile::Bundler => PackageConditionMode::Import,
-        ResolutionProfile::Node => PackageConditionMode::Require,
-        ResolutionProfile::Node16 | ResolutionProfile::NodeNext => {
-            match importer_is_esm(source, config, &mut selection.limitations) {
-                Ok(true) => PackageConditionMode::Import,
-                Ok(false) => PackageConditionMode::Require,
-                Err(()) => {
-                    blocked = true;
-                    PackageConditionMode::Import
+    let static_condition = if selected_profile.is_none() {
+        PackageConditionMode::Import
+    } else {
+        match profile {
+            ResolutionProfile::Bundler => PackageConditionMode::Import,
+            ResolutionProfile::Node => PackageConditionMode::Require,
+            ResolutionProfile::Node16 | ResolutionProfile::NodeNext => {
+                match importer_is_esm(source, config, &mut selection.limitations) {
+                    Ok(true) => PackageConditionMode::Import,
+                    Ok(false) => PackageConditionMode::Require,
+                    Err(()) => {
+                        blocked = true;
+                        PackageConditionMode::Import
+                    }
                 }
             }
         }
     };
-    selection.profiles.push(SelectedResolutionProfile {
-        source_id: source.id.clone(),
-        profile,
-        source: profile_source,
-    });
+    if let Some((profile, profile_source)) = selected_profile {
+        selection.profiles.push(SelectedResolutionProfile {
+            source_id: source.id.clone(),
+            profile,
+            source: profile_source,
+        });
+    }
     selection.settings.insert(
         source.id.clone(),
         ImporterSettings {
@@ -684,20 +717,24 @@ fn apply_modeled_option(
         "moduleResolution" => {
             let value = value.as_str().unwrap_or_default().to_ascii_lowercase();
             let profile = match value.as_str() {
-                "bundler" => ResolutionProfile::Bundler,
-                "node" | "node10" => ResolutionProfile::Node,
-                "node16" => ResolutionProfile::Node16,
-                "nodenext" => ResolutionProfile::NodeNext,
+                "bundler" => Some(ResolutionProfile::Bundler),
+                "node" | "node10" => Some(ResolutionProfile::Node),
+                "node16" => Some(ResolutionProfile::Node16),
+                "nodenext" => Some(ResolutionProfile::NodeNext),
                 _ => {
-                    effective.blocked = true;
-                    limitations.push(Limitation::TsconfigSemanticsUnsupported {
-                        path: config_path.display_escaped(),
-                        detail: format!("unsupported moduleResolution value {value}"),
-                    });
-                    return Ok(());
+                    effective.module_resolution = EffectiveModuleResolution::Unsupported {
+                        value,
+                        path: config_path.clone(),
+                    };
+                    None
                 }
             };
-            effective.module_resolution = Some((profile, config_path.clone()));
+            if let Some(profile) = profile {
+                effective.module_resolution = EffectiveModuleResolution::Selected {
+                    profile,
+                    path: config_path.clone(),
+                };
+            }
         }
         "module" => effective.module = value.as_str().map(|value| value.to_ascii_lowercase()),
         "baseUrl" => {
