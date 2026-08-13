@@ -54,6 +54,13 @@ fn package_fields_without_exports_select_role_scoped_public_targets()
     let standalone_run_id = audit(standalone_root.path(), "bundler", 0)?;
     assert_standalone_targets(standalone_root.path(), &standalone_run_id)?;
     assert!(finding_views(standalone_root.path(), &standalone_run_id, 0)?.is_empty());
+
+    let main_only_root = main_only_fixture()?;
+    for profile in ["node", "node16", "nodenext"] {
+        let run_id = audit(main_only_root.path(), profile, 0)?;
+        assert_main_only_target(main_only_root.path(), &run_id)?;
+        assert!(finding_views(main_only_root.path(), &run_id, 0)?.is_empty());
+    }
     Ok(())
 }
 
@@ -113,6 +120,13 @@ fn assert_standalone_targets(root: &Path, run_id: &str) -> Result<(), Box<dyn st
     let main_target = source_id(root, run_id, "packages/main-only/main.ts")?;
 
     assert_internal_target(&importer, "@acme/module-only", "value", &module_target)?;
+    assert_internal_target(&importer, "@acme/main-only", "value", &main_target)?;
+    Ok(())
+}
+
+fn assert_main_only_target(root: &Path, run_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let importer = file_response(root, run_id, "src/importer.ts")?;
+    let main_target = source_id(root, run_id, "packages/main-only/main.ts")?;
     assert_internal_target(&importer, "@acme/main-only", "value", &main_target)?;
     Ok(())
 }
@@ -293,6 +307,37 @@ fn standalone_field_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::E
             "import { selectedModuleOnly } from '@acme/module-only';\n",
             "import { selectedMainOnly } from '@acme/main-only';\n",
             "console.log(selectedModuleOnly, selectedMainOnly);\n",
+        ),
+    )?;
+    Ok(root)
+}
+
+fn main_only_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"app","private":true,"type":"module","workspaces":["packages/*"]}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/main-only/package.json",
+        r#"{"name":"@acme/main-only","main":"./main.js"}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/main-only/main.ts",
+        concat!(
+            "export const selectedMainOnly = 1;\n",
+            "export const unusedMainOnlyPublicValue = 2;\n",
+        ),
+    )?;
+    write(
+        root.path(),
+        "src/importer.ts",
+        concat!(
+            "import { selectedMainOnly } from '@acme/main-only';\n",
+            "console.log(selectedMainOnly);\n",
         ),
     )?;
     Ok(root)
