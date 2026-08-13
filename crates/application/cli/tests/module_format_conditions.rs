@@ -22,6 +22,7 @@ const MTS_SOURCE: &str = concat!(
     "export * from '@acme/lib/mts-export';\n",
     "export * as mtsNamespace from '@acme/lib/mts-namespace-export';\n",
     "export {} from '@acme/lib/mts-empty-export';\n",
+    "import type {} from '@acme/type-only';\n",
     "const esmRequired = require('@acme/lib/esm-require');\n",
     "console.log(mtsStatic, esmRequired);\n",
 );
@@ -477,7 +478,8 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
         let expected_count = expectations
             .iter()
             .filter(|expectation| expectation.0 == path)
-            .count();
+            .count()
+            + usize::from(path == "apps/ext-esm/main.mts");
         assert_eq!(
             source
                 .get("resolutions")
@@ -514,6 +516,20 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
             expectation.0,
         );
     }
+    let type_only_target = resolution_target(
+        sources
+            .get("apps/ext-esm/main.mts")
+            .ok_or_else(|| std::io::Error::other("MTS source response is missing"))?,
+        "@acme/type-only",
+        "side-effect",
+        "static-import",
+        expected_span(MTS_SOURCE, "import type {} from '@acme/type-only';")?,
+    )?;
+    assert_eq!(
+        type_only_target,
+        source_id(root, &run_id, "packages/type-only/index.d.ts")?,
+        "type-only request activated the package side-effect policy under {profile}",
+    );
     Ok(())
 }
 
@@ -602,6 +618,27 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
             "exports": Value::Object(exports),
         })
         .to_string(),
+    )?;
+    write(
+        root.path(),
+        "packages/type-only/package.json",
+        &json!({
+            "name": "@acme/type-only",
+            "private": true,
+            "sideEffects": "unsupported-shape",
+            "exports": {
+                ".": {
+                    "types": "./index.d.ts",
+                    "default": "./index.d.ts",
+                }
+            },
+        })
+        .to_string(),
+    )?;
+    write(
+        root.path(),
+        "packages/type-only/index.d.ts",
+        "export type TypeOnlySurface = string;\n",
     )?;
 
     for (path, source) in [

@@ -750,6 +750,51 @@ fn require_calls_before_a_proven_top_level_write_remain_grounded()
 }
 
 #[test]
+fn require_calls_before_later_root_control_flow_writes_remain_grounded()
+-> Result<(), Box<dyn std::error::Error>> {
+    let payload = parse_payload(
+        SourceKind::CommonJs,
+        concat!(
+            "require('@acme/before');\n",
+            "if (enabled) { require = customLoader; }\n",
+            "require('@acme/after');\n",
+        )
+        .as_bytes(),
+    )?;
+    assert_eq!(payload.uses.len(), 1);
+    assert_eq!(payload.uses[0].specifier, "@acme/before");
+    assert!(
+        payload
+            .limitation_details
+            .iter()
+            .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE)
+    );
+    Ok(())
+}
+
+#[test]
+fn explicit_esm_module_exports_does_not_imply_a_commonjs_wrapper()
+-> Result<(), Box<dyn std::error::Error>> {
+    for kind in [SourceKind::Mjs, SourceKind::Mts] {
+        let payload = parse_payload(kind, b"module.exports.value = 1;")?;
+        assert!(payload.uses.is_empty());
+        assert!(payload.limitation_details.is_empty());
+    }
+    Ok(())
+}
+
+#[test]
+fn empty_type_import_keeps_resolution_without_value_side_effect_semantics()
+-> Result<(), Box<dyn std::error::Error>> {
+    let payload = parse_payload(SourceKind::Mts, b"import type {} from '@acme/type-only';")?;
+    assert_eq!(payload.uses.len(), 1);
+    assert_eq!(payload.uses[0].specifier, "@acme/type-only");
+    assert_eq!(payload.uses[0].namespace, SymbolNamespace::Type);
+    assert!(payload.limitation_details.is_empty());
+    Ok(())
+}
+
+#[test]
 fn intrinsic_eval_without_a_direct_require_is_visible() -> Result<(), Box<dyn std::error::Error>> {
     let payload = parse_payload(SourceKind::CommonJs, b"eval(\"require('@acme/hidden')\");")?;
     assert!(payload.uses.is_empty());

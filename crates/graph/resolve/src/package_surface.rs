@@ -351,6 +351,7 @@ pub(super) fn resolve_request(
     request: ResolutionRequest<'_>,
 ) -> PackageResolution {
     if request.import_kind == ImportKind::SideEffect
+        && request.namespace == SymbolNamespace::Value
         && let Some(result) = reject_applicable_unsupported_fields(
             context,
             request.specifier,

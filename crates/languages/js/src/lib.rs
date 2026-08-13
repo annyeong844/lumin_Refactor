@@ -166,6 +166,7 @@ pub fn parse_payload_with_module_format(
         opaque_require_reported: false,
         opaque_module_require_reported: false,
         commonjs_export_syntax_observed: false,
+        commonjs_wrapper_exports_possible: module_format != JsModuleFormat::EsModule,
         module_member_object_references: BTreeSet::new(),
     };
     if escaped_require {
@@ -557,6 +558,7 @@ struct DynamicUseDetector {
     opaque_require_reported: bool,
     opaque_module_require_reported: bool,
     commonjs_export_syntax_observed: bool,
+    commonjs_wrapper_exports_possible: bool,
     module_member_object_references: BTreeSet<(u32, u32)>,
 }
 
@@ -650,7 +652,8 @@ impl<'a> Visit<'a> for DynamicUseDetector {
         {
             self.module_member_object_references
                 .insert((identifier.span.start, identifier.span.end));
-            if expression.static_property_name() == Some("exports")
+            if self.commonjs_wrapper_exports_possible
+                && expression.static_property_name() == Some("exports")
                 && self.require_scopes.module_may_be_wrapper()
             {
                 self.commonjs_export_syntax_observed = true;
@@ -660,13 +663,13 @@ impl<'a> Visit<'a> for DynamicUseDetector {
     }
 
     fn visit_identifier_reference(&mut self, identifier: &oxc_ast::ast::IdentifierReference<'a>) {
-        let wrapper_export_object = (identifier.name == "exports"
-            && self.require_scopes.exports_may_be_wrapper())
-            || (identifier.name == "module"
-                && self.require_scopes.module_may_be_wrapper()
-                && !self
-                    .module_member_object_references
-                    .contains(&(identifier.span.start, identifier.span.end)));
+        let wrapper_export_object = self.commonjs_wrapper_exports_possible
+            && ((identifier.name == "exports" && self.require_scopes.exports_may_be_wrapper())
+                || (identifier.name == "module"
+                    && self.require_scopes.module_may_be_wrapper()
+                    && !self
+                        .module_member_object_references
+                        .contains(&(identifier.span.start, identifier.span.end))));
         if wrapper_export_object {
             self.commonjs_export_syntax_observed = true;
         }

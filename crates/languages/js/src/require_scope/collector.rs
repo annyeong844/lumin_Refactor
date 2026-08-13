@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use oxc_ast::ast::{
-    BindingPattern, FormalParameters, ImportDeclarationSpecifier, ImportOrExportKind, Statement,
+    BindingPattern, FormalParameters, ImportDeclarationSpecifier, ImportOrExportKind,
 };
 use oxc_ast::ast_kind::AstKind;
 use oxc_ast_visit::{Visit, walk};
@@ -29,7 +29,6 @@ struct RequireScopeCollector {
     direct_require_callees: BTreeSet<(u32, u32)>,
     non_escaping_require_references: BTreeSet<(u32, u32)>,
     ordered_root_statement_spans: BTreeSet<(u32, u32)>,
-    inside_ordered_root_statement: bool,
     assignment_write_context: Option<AssignmentWriteContext>,
     destructuring_target_position: Option<u32>,
     binding_write_context: Option<AssignmentWriteContext>,
@@ -155,11 +154,11 @@ impl RequireScopeCollector {
                 && self.loop_head_write_range.is_some_and(|(start, end)| {
                     position_within_span(start, end, timing.target_position())
                 });
+            let ordered_timing = self.ordered_mutation_timing(scope, timing, loop_head_ordered);
             self.require_writes.push(MutationObservation {
                 scope,
-                timing,
-                ordered_execution: (scope == 0 && self.inside_ordered_root_statement)
-                    || loop_head_ordered,
+                timing: ordered_timing.unwrap_or(timing),
+                ordered_execution: ordered_timing.is_some(),
             });
         }
     }
@@ -168,12 +167,38 @@ impl RequireScopeCollector {
         if !self.current_ambient()
             && let Some(scope) = self.scope_stack.last().copied()
         {
+            let ordered_timing = self.ordered_mutation_timing(scope, timing, false);
             self.eval_calls.push(MutationObservation {
                 scope,
-                timing,
-                ordered_execution: scope == 0 && self.inside_ordered_root_statement,
+                timing: ordered_timing.unwrap_or(timing),
+                ordered_execution: ordered_timing.is_some(),
             });
         }
+    }
+
+    fn ordered_mutation_timing(
+        &self,
+        scope: usize,
+        timing: MutationTiming,
+        preserve_nested_timing: bool,
+    ) -> Option<MutationTiming> {
+        if self
+            .scopes
+            .get(scope)
+            .is_none_or(|scope| scope.deferred_execution)
+        {
+            return None;
+        }
+        self.ordered_root_statement_spans
+            .iter()
+            .find(|(start, end)| position_within_span(*start, *end, timing.target_position()))
+            .map(|(start, _end)| {
+                if scope == 0 || preserve_nested_timing {
+                    timing
+                } else {
+                    MutationTiming::After(*start)
+                }
+            })
     }
 
     fn assignment_target_timing(&self, fallback_position: u32) -> MutationTiming {
@@ -345,14 +370,9 @@ impl<'a> Visit<'a> for RequireScopeCollector {
         match kind {
             AstKind::Program(program) => {
                 self.ordered_root_statement_spans
-                    .extend(program.body.iter().filter_map(|statement| match statement {
-                        Statement::ExpressionStatement(statement) => {
-                            Some((statement.span.start, statement.span.end))
-                        }
-                        Statement::VariableDeclaration(declaration) => {
-                            Some((declaration.span.start, declaration.span.end))
-                        }
-                        _ => None,
+                    .extend(program.body.iter().map(|statement| {
+                        let span = statement.span();
+                        (span.start, span.end)
                     }));
                 self.push_scope(
                     RequireScopeKind::Root,
@@ -709,24 +729,6 @@ impl<'a> Visit<'a> for RequireScopeCollector {
         self.push_inherited_scope(RequireScopeKind::Lexical, NameBindings::default(), true);
         self.visit_statement(&statement.body);
         self.pop_scope();
-    }
-
-    fn visit_expression_statement(&mut self, statement: &oxc_ast::ast::ExpressionStatement<'a>) {
-        let previous = self.inside_ordered_root_statement;
-        self.inside_ordered_root_statement = self
-            .ordered_root_statement_spans
-            .contains(&(statement.span.start, statement.span.end));
-        walk::walk_expression_statement(self, statement);
-        self.inside_ordered_root_statement = previous;
-    }
-
-    fn visit_variable_declaration(&mut self, declaration: &oxc_ast::ast::VariableDeclaration<'a>) {
-        let previous = self.inside_ordered_root_statement;
-        self.inside_ordered_root_statement = self
-            .ordered_root_statement_spans
-            .contains(&(declaration.span.start, declaration.span.end));
-        walk::walk_variable_declaration(self, declaration);
-        self.inside_ordered_root_statement = previous;
     }
 
     fn visit_variable_declarator(&mut self, declarator: &oxc_ast::ast::VariableDeclarator<'a>) {
