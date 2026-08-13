@@ -5,11 +5,26 @@ use lumin_model::{
     ResolutionOutcome, ResolvedSourceUse, SourceRoles, SourceSnapshot, SourceSpan, SymbolNamespace,
 };
 
+pub const SYMBOL_GRAPH_SEMANTICS_VERSION: &str = "symbol-graph-semantics.v1";
+
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ExportIdentity {
     pub source_id: LogicalSourceId,
     pub namespace: SymbolNamespace,
     pub exported_name: String,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct NamespaceReExportEdge {
+    exported_namespace: ExportIdentity,
+    target_source_id: LogicalSourceId,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum NamespaceLiveness {
+    Production,
+    Test,
+    Public,
 }
 
 #[derive(Clone, Debug)]
@@ -55,6 +70,7 @@ pub fn build(
         .map(|source| (source.id.clone(), source.roles.clone()))
         .collect::<BTreeMap<_, _>>();
     let mut graph = SymbolGraph::default();
+    let mut namespace_re_exports = Vec::new();
 
     // Index exports by file for importer-export matching.
     let exports_by_source: BTreeMap<LogicalSourceId, Vec<&ExportFact>> = {
@@ -137,18 +153,42 @@ pub fn build(
                     }
                 }
             }
-            ImportKind::Namespace | ImportKind::DynamicBroad | ImportKind::ReExportAll => {
-                for (identity, export) in &mut graph.exports {
-                    if identity.source_id == *target
-                        && identity.namespace == resolved.source_use.namespace
-                    {
-                        if importer_is_test {
-                            export.test_broad_fan_in += 1;
-                        } else {
-                            export.production_broad_fan_in += 1;
-                        }
-                    }
+            ImportKind::Namespace => {
+                let matching_exports = exports_by_source
+                    .get(&resolved.source_use.importer)
+                    .into_iter()
+                    .flatten()
+                    .filter(|export| {
+                        export.namespace == resolved.source_use.namespace
+                            && export.span == resolved.source_use.span
+                    })
+                    .map(|export| NamespaceReExportEdge {
+                        exported_namespace: ExportIdentity {
+                            source_id: export.source_id.clone(),
+                            namespace: export.namespace,
+                            exported_name: export.exported_name.clone(),
+                        },
+                        target_source_id: target.clone(),
+                    })
+                    .collect::<Vec<_>>();
+                if matching_exports.is_empty() {
+                    increment_broad_fan_in(
+                        &mut graph,
+                        target,
+                        resolved.source_use.namespace,
+                        importer_is_test,
+                    );
+                } else {
+                    namespace_re_exports.extend(matching_exports);
                 }
+            }
+            ImportKind::DynamicBroad | ImportKind::ReExportAll => {
+                increment_broad_fan_in(
+                    &mut graph,
+                    target,
+                    resolved.source_use.namespace,
+                    importer_is_test,
+                );
             }
             ImportKind::SideEffect => {}
         }
@@ -171,8 +211,73 @@ pub fn build(
             }
         }
     }
+    namespace_re_exports.sort();
+    namespace_re_exports.dedup();
+    propagate_namespace_re_exports(&mut graph, &namespace_re_exports);
 
     graph
+}
+
+fn increment_broad_fan_in(
+    graph: &mut SymbolGraph,
+    target: &LogicalSourceId,
+    namespace: SymbolNamespace,
+    importer_is_test: bool,
+) {
+    for (identity, export) in &mut graph.exports {
+        if identity.source_id == *target && identity.namespace == namespace {
+            if importer_is_test {
+                export.test_broad_fan_in += 1;
+            } else {
+                export.production_broad_fan_in += 1;
+            }
+        }
+    }
+}
+
+fn propagate_namespace_re_exports(graph: &mut SymbolGraph, edges: &[NamespaceReExportEdge]) {
+    let mut propagated = std::collections::BTreeSet::new();
+    loop {
+        let mut pending = Vec::new();
+        for (edge_index, edge) in edges.iter().enumerate() {
+            let Some(export) = graph.exports.get(&edge.exported_namespace) else {
+                continue;
+            };
+            for (liveness, active) in [
+                (
+                    NamespaceLiveness::Production,
+                    export.production_exact_fan_in > 0 || export.production_broad_fan_in > 0,
+                ),
+                (
+                    NamespaceLiveness::Test,
+                    export.test_exact_fan_in > 0 || export.test_broad_fan_in > 0,
+                ),
+                (NamespaceLiveness::Public, export.public_surface_count > 0),
+            ] {
+                if active && propagated.insert((edge_index, liveness)) {
+                    pending.push((edge_index, liveness));
+                }
+            }
+        }
+        if pending.is_empty() {
+            return;
+        }
+        for (edge_index, liveness) in pending {
+            let edge = &edges[edge_index];
+            for (identity, target_export) in &mut graph.exports {
+                if identity.source_id != edge.target_source_id
+                    || identity.namespace != edge.exported_namespace.namespace
+                {
+                    continue;
+                }
+                match liveness {
+                    NamespaceLiveness::Production => target_export.production_broad_fan_in += 1,
+                    NamespaceLiveness::Test => target_export.test_broad_fan_in += 1,
+                    NamespaceLiveness::Public => target_export.public_surface_count += 1,
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -503,6 +608,113 @@ mod tests {
 
         // Deduplication should collapse identical re-exports.
         assert_eq!(graph.test_re_exports.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn namespace_re_export_propagates_only_after_its_alias_becomes_live()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let target_source = make_source("src/target.ts", false)?;
+        let barrel_source = make_source("src/barrel.ts", false)?;
+        let consumer_source = make_source("src/consumer.ts", false)?;
+        let namespace_span = SourceSpan { start: 0, end: 40 };
+
+        let target_facts = FileFacts {
+            source_id: target_source.id.clone(),
+            source_unit: SourceUnitId::Logical(target_source.id.clone()),
+            exports: ["first", "second"]
+                .into_iter()
+                .enumerate()
+                .map(|(index, exported_name)| ExportFact {
+                    source_id: target_source.id.clone(),
+                    exported_name: exported_name.to_owned(),
+                    local_name: Some(exported_name.to_owned()),
+                    namespace: SymbolNamespace::Value,
+                    span: SourceSpan {
+                        start: index as u32,
+                        end: index as u32 + 1,
+                    },
+                })
+                .collect(),
+            uses: Vec::new(),
+            limitations: Vec::new(),
+        };
+        let barrel_facts = FileFacts {
+            source_id: barrel_source.id.clone(),
+            source_unit: SourceUnitId::Logical(barrel_source.id.clone()),
+            exports: vec![ExportFact {
+                source_id: barrel_source.id.clone(),
+                exported_name: "namespace".to_owned(),
+                local_name: None,
+                namespace: SymbolNamespace::Value,
+                span: namespace_span.clone(),
+            }],
+            uses: Vec::new(),
+            limitations: Vec::new(),
+        };
+        let consumer_facts = FileFacts {
+            source_id: consumer_source.id.clone(),
+            source_unit: SourceUnitId::Logical(consumer_source.id.clone()),
+            exports: Vec::new(),
+            uses: Vec::new(),
+            limitations: Vec::new(),
+        };
+        let namespace_resolution = ResolvedSourceUse {
+            source_use: SourceUseFact {
+                importer: barrel_source.id.clone(),
+                specifier: "./target.js".to_owned(),
+                imported_name: None,
+                local_name: None,
+                namespace: SymbolNamespace::Value,
+                kind: ImportKind::Namespace,
+                request_kind: ModuleRequestKind::StaticImport,
+                span: namespace_span,
+            },
+            outcome: ResolutionOutcome::Internal {
+                target: target_source.id.clone(),
+            },
+        };
+        let consumer_resolution = ResolvedSourceUse {
+            source_use: SourceUseFact {
+                importer: consumer_source.id.clone(),
+                specifier: "./barrel.js".to_owned(),
+                imported_name: Some("namespace".to_owned()),
+                local_name: Some("namespace".to_owned()),
+                namespace: SymbolNamespace::Value,
+                kind: ImportKind::Named,
+                request_kind: ModuleRequestKind::StaticImport,
+                span: SourceSpan { start: 0, end: 20 },
+            },
+            outcome: ResolutionOutcome::Internal {
+                target: barrel_source.id.clone(),
+            },
+        };
+        let sources = [
+            target_source.clone(),
+            barrel_source.clone(),
+            consumer_source,
+        ];
+        let facts = [target_facts, barrel_facts, consumer_facts];
+
+        let dead_alias = build(
+            &sources,
+            &facts,
+            std::slice::from_ref(&namespace_resolution),
+            &[],
+        );
+        assert!(dead_alias.exports.iter().all(|(identity, export)| {
+            identity.source_id != target_source.id || export.production_broad_fan_in == 0
+        }));
+
+        let live_alias = build(
+            &sources,
+            &facts,
+            &[namespace_resolution, consumer_resolution],
+            &[],
+        );
+        assert!(live_alias.exports.iter().all(|(identity, export)| {
+            identity.source_id != target_source.id || export.production_broad_fan_in == 1
+        }));
         Ok(())
     }
 }

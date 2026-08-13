@@ -10,6 +10,7 @@ enum TrackedName {
     Eval,
     Module,
     Exports,
+    Arguments,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -18,6 +19,7 @@ struct NameBindings {
     eval: bool,
     module: bool,
     exports: bool,
+    arguments: bool,
 }
 
 impl NameBindings {
@@ -27,6 +29,7 @@ impl NameBindings {
             TrackedName::Eval => self.eval = true,
             TrackedName::Module => self.module = true,
             TrackedName::Exports => self.exports = true,
+            TrackedName::Arguments => self.arguments = true,
         }
     }
 
@@ -36,6 +39,7 @@ impl NameBindings {
             TrackedName::Eval => self.eval,
             TrackedName::Module => self.module,
             TrackedName::Exports => self.exports,
+            TrackedName::Arguments => self.arguments,
         }
     }
 }

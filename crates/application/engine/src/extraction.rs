@@ -37,25 +37,33 @@ pub(super) fn extract_facts(
         let mut decompositions = sources
             .par_iter()
             .filter(|source| !source.kind.is_js_family())
-            .map(|source| lumin_sfc::decompose(source, &source_index))
+            .map(|source| {
+                lumin_sfc::decompose(source, &source_index).map(|decomposition| {
+                    (
+                        decomposition,
+                        source_module_format(source, config, resolution_profile),
+                    )
+                })
+            })
             .collect::<Result<Vec<_>, _>>()?;
-        decompositions.sort_by(|left, right| left.source_id.cmp(&right.source_id));
+        decompositions.sort_by(|left, right| left.0.source_id.cmp(&right.0.source_id));
 
         let embedded_parse_product_count = decompositions
             .iter()
-            .map(|decomposition| decomposition.inline_scripts.len())
+            .map(|(decomposition, _module_format)| decomposition.inline_scripts.len())
             .sum::<usize>();
         let mut embedded_by_parent = BTreeMap::<_, Vec<FileFacts>>::new();
         let mut embedded = decompositions
             .par_iter()
-            .flat_map_iter(|decomposition| {
+            .flat_map_iter(|(decomposition, module_format)| {
                 decomposition
                     .inline_scripts
                     .iter()
-                    .map(move |unit| (&decomposition.source_id, unit))
+                    .map(move |unit| (&decomposition.source_id, unit, *module_format))
             })
-            .map(|(parent, unit)| {
-                lumin_js::extract_embedded(unit).map(|facts| (parent.clone(), facts))
+            .map(|(parent, unit, module_format)| {
+                lumin_js::extract_embedded_with_module_format(unit, module_format)
+                    .map(|facts| (parent.clone(), facts))
             })
             .collect::<Result<Vec<_>, _>>()?;
         embedded.sort_by(|left, right| {
@@ -72,7 +80,7 @@ pub(super) fn extract_facts(
             sfc_states.insert(dialect, initial_state);
         }
         let mut sfc_facts = Vec::new();
-        for decomposition in decompositions {
+        for (decomposition, _module_format) in decompositions {
             let parent = decomposition.source_id.clone();
             let analysis = lumin_sfc::finalize(
                 decomposition,

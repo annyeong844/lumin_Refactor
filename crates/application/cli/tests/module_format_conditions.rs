@@ -613,6 +613,18 @@ fn verify_exported_static_identities() -> Result<(), Box<dyn std::error::Error>>
         &run_id,
         "apps/consumer/main.ts",
         "namespaceExport",
+    )?;
+    assert_dead_export(
+        root.path(),
+        &run_id,
+        "apps/consumer/main.ts",
+        "relativeNamespace",
+    )?;
+    assert_dead_export(
+        root.path(),
+        &run_id,
+        "apps/consumer/relative-target.ts",
+        "relativeSibling",
     )
 }
 
@@ -726,7 +738,13 @@ fn exported_static_identity_fixture() -> Result<tempfile::TempDir, Box<dyn std::
         concat!(
             "export import exportedEquals = require('@acme/lib/identity');\n",
             "export * as namespaceExport from '@acme/lib/namespace';\n",
+            "export * as relativeNamespace from './relative-target.js';\n",
         ),
+    )?;
+    write(
+        root.path(),
+        "apps/consumer/relative-target.ts",
+        "export const relativeSibling = 1;\n",
     )?;
     write(
         root.path(),

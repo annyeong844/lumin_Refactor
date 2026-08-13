@@ -19,6 +19,8 @@ mod require_scope;
 
 use require_scope::RequireScopeTracker;
 
+pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v1";
+
 const REQUIRE_ATTRIBUTION_OPAQUE: &str = "shadowed, mutated, dynamically resolved, or escaped require makes CommonJS module-use attribution opaque";
 const MODULE_REQUIRE_ATTRIBUTION_OPAQUE: &str =
     "module.require cannot be attributed to the CommonJS wrapper loader";
@@ -95,7 +97,14 @@ pub fn extract(snapshot: &SourceSnapshot) -> Result<FileFacts, JsExtractError> {
 }
 
 pub fn extract_embedded(unit: &EmbeddedSourceUnit) -> Result<FileFacts, JsExtractError> {
-    let payload = parse_payload(unit.kind, &unit.bytes)?;
+    extract_embedded_with_module_format(unit, JsModuleFormat::from_source_kind(unit.kind))
+}
+
+pub fn extract_embedded_with_module_format(
+    unit: &EmbeddedSourceUnit,
+    module_format: JsModuleFormat,
+) -> Result<FileFacts, JsExtractError> {
+    let payload = parse_payload_with_module_format(unit.kind, &unit.bytes, module_format)?;
     Ok(bind_payload(
         &payload,
         &unit.parent_source_id,

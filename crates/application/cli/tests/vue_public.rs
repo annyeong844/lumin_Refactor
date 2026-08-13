@@ -59,6 +59,45 @@ fn vue_inline_script_setup_binds_template_components() -> Result<(), Box<dyn std
 }
 
 #[test]
+fn vue_inline_script_inherits_the_parent_node_importer_format()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"root-app","private":true,"type":"module"}"#,
+    )?;
+    write(
+        root.path(),
+        "src/main.ts",
+        "import App from './App.vue'; console.log(App);\n",
+    )?;
+    write(
+        root.path(),
+        "src/App.vue",
+        concat!(
+            "<template><article>ESM</article></template>\n",
+            "<script>module.exports.unmodeled = 1;</script>\n",
+        ),
+    )?;
+
+    let audit = run(
+        root.path(),
+        &["audit", "--jobs", "1", "--resolution-profile", "node16"],
+    )?;
+    assert_status(&audit, 0);
+    let run_id = field(&audit.stdout, "runId")?;
+    assert_eq!(field(&audit.stdout, "status")?, "complete");
+    let overview = run(root.path(), &["overview", "--run", &run_id])?;
+    assert_status(&overview, 0);
+    let overview: Value = serde_json::from_str(&overview.stdout)?;
+    assert_eq!(capability_state(&overview, "sfc/vue.v1"), Some("complete"));
+    assert!(limitations(&overview)?.is_empty());
+    assert_empty_findings(root.path(), &run_id)?;
+    Ok(())
+}
+
+#[test]
 fn vue_external_script_attach_and_mode_conflict() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     write(

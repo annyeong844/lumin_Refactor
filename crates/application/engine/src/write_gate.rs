@@ -32,7 +32,7 @@ use transitions::{
     reconcile_transitions,
 };
 
-const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v6";
+const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v7";
 
 fn analysis_contract_id() -> String {
     let inputs = [
@@ -42,6 +42,8 @@ fn analysis_contract_id() -> String {
         lumin_model::SOURCE_CLASSIFICATION_RULE_VERSION.as_bytes(),
         lumin_inventory::INVENTORY_CONFIG_ARTIFACT_SHA256.as_bytes(),
         lumin_inventory::INVENTORY_CONFIG_TABLE_SHA256.as_bytes(),
+        lumin_js::EXTRACTOR_SEMANTICS_VERSION.as_bytes(),
+        lumin_graph::SYMBOL_GRAPH_SEMANTICS_VERSION.as_bytes(),
         lumin_resolve::RESOLVER_VERSION.as_bytes(),
         lumin_resolve::RESOLVER_CONFIG_ARTIFACT_SHA256.as_bytes(),
         lumin_resolve::RESOLVER_CONFIG_TABLE_SHA256.as_bytes(),

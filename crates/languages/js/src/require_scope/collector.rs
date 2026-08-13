@@ -12,11 +12,12 @@ use super::{
     RequireScope, RequireScopeKind, RequireScopeModel, TrackedName, scope_kind,
 };
 
-const TRACKED_NAMES: [TrackedName; 4] = [
+const TRACKED_NAMES: [TrackedName; 5] = [
     TrackedName::Require,
     TrackedName::Eval,
     TrackedName::Module,
     TrackedName::Exports,
+    TrackedName::Arguments,
 ];
 
 #[derive(Default)]
@@ -28,8 +29,8 @@ struct RequireScopeCollector {
     require_reference_scopes: Vec<(usize, u32, u32)>,
     direct_require_callees: BTreeSet<(u32, u32)>,
     non_escaping_require_references: BTreeSet<(u32, u32)>,
-    ordered_root_statement_spans: BTreeSet<(u32, u32)>,
     deferred_execution_ranges: BTreeSet<(u32, u32)>,
+    repeated_execution_ranges: BTreeSet<(u32, u32)>,
     deferred_require_call_positions: BTreeSet<u32>,
     assignment_write_context: Option<AssignmentWriteContext>,
     destructuring_target_position: Option<u32>,
@@ -137,6 +138,20 @@ impl RequireScopeCollector {
         }) == Some(true)
     }
 
+    fn current_has_binding(&self, name: TrackedName) -> bool {
+        let mut cursor = self.scope_stack.last().copied();
+        while let Some(index) = cursor {
+            let Some(scope) = self.scopes.get(index) else {
+                return true;
+            };
+            if scope.bindings.contains(name) {
+                return true;
+            }
+            cursor = scope.parent;
+        }
+        false
+    }
+
     fn mark_function_declaration(&mut self, name: TrackedName) {
         let annex_b_binding = !self.current_strict()
             && self
@@ -182,9 +197,11 @@ impl RequireScopeCollector {
         &self,
         scope: usize,
         timing: MutationTiming,
-        preserve_nested_timing: bool,
+        preserve_repeated_timing: bool,
     ) -> Option<MutationTiming> {
         if self.position_has_deferred_execution(timing.target_position())
+            || (!preserve_repeated_timing
+                && self.position_has_repeated_execution(timing.target_position()))
             || self
                 .scopes
                 .get(scope)
@@ -192,22 +209,48 @@ impl RequireScopeCollector {
         {
             return None;
         }
-        self.ordered_root_statement_spans
-            .iter()
-            .find(|(start, end)| position_within_span(*start, *end, timing.target_position()))
-            .map(|(start, _end)| {
-                if scope == 0 || preserve_nested_timing {
-                    timing
-                } else {
-                    MutationTiming::After(*start)
-                }
-            })
+        Some(timing)
     }
 
     fn position_has_deferred_execution(&self, position: u32) -> bool {
         self.deferred_execution_ranges
             .iter()
             .any(|(start, end)| position_within_span(*start, *end, position))
+    }
+
+    fn position_has_repeated_execution(&self, position: u32) -> bool {
+        self.repeated_execution_ranges
+            .iter()
+            .any(|(start, end)| position_within_span(*start, *end, position))
+    }
+
+    fn mapped_require_argument_target(
+        &self,
+        target: &oxc_ast::ast::SimpleAssignmentTarget<'_>,
+    ) -> bool {
+        if !self.root_has_commonjs_wrapper
+            || self.current_strict()
+            || self.current_has_binding(TrackedName::Arguments)
+        {
+            return false;
+        }
+        let oxc_ast::ast::SimpleAssignmentTarget::ComputedMemberExpression(member) = target else {
+            return false;
+        };
+        if !member
+            .object
+            .without_parentheses()
+            .is_specific_id("arguments")
+        {
+            return false;
+        }
+        member
+            .static_property_name()
+            .is_some_and(|name| name.as_str() == "1")
+            || matches!(
+                member.expression.without_parentheses(),
+                oxc_ast::ast::Expression::NumericLiteral(literal) if literal.value == 1.0
+            )
     }
 
     fn assignment_target_timing(&self, fallback_position: u32) -> MutationTiming {
@@ -337,6 +380,7 @@ fn tracked_name(name: &str) -> Option<TrackedName> {
         "eval" => Some(TrackedName::Eval),
         "module" => Some(TrackedName::Module),
         "exports" => Some(TrackedName::Exports),
+        "arguments" => Some(TrackedName::Arguments),
         _ => None,
     }
 }
@@ -379,11 +423,6 @@ impl<'a> Visit<'a> for RequireScopeCollector {
     fn enter_node(&mut self, kind: AstKind<'a>) {
         match kind {
             AstKind::Program(program) => {
-                self.ordered_root_statement_spans
-                    .extend(program.body.iter().map(|statement| {
-                        let span = statement.span();
-                        (span.start, span.end)
-                    }));
                 self.push_scope(
                     RequireScopeKind::Root,
                     NameBindings::default(),
@@ -419,6 +458,9 @@ impl<'a> Visit<'a> for RequireScopeCollector {
                         .and_then(|identifier| tracked_name(identifier.name.as_str()))
                 {
                     bindings.mark(name);
+                }
+                if !ambient {
+                    bindings.mark(TrackedName::Arguments);
                 }
                 self.push_scope(
                     RequireScopeKind::FunctionParameters,
@@ -519,6 +561,41 @@ impl<'a> Visit<'a> for RequireScopeCollector {
                         .insert((span.start, span.end));
                 }
             }
+            AstKind::ForStatement(statement) => {
+                for expression in [statement.test.as_ref(), statement.update.as_ref()]
+                    .into_iter()
+                    .flatten()
+                {
+                    let span = expression.span();
+                    self.repeated_execution_ranges
+                        .insert((span.start, span.end));
+                }
+                let span = statement.body.span();
+                self.repeated_execution_ranges
+                    .insert((span.start, span.end));
+            }
+            AstKind::ForInStatement(statement) => {
+                let span = statement.body.span();
+                self.repeated_execution_ranges
+                    .insert((span.start, span.end));
+            }
+            AstKind::ForOfStatement(statement) => {
+                let span = statement.body.span();
+                self.repeated_execution_ranges
+                    .insert((span.start, span.end));
+            }
+            AstKind::WhileStatement(statement) => {
+                for span in [statement.test.span(), statement.body.span()] {
+                    self.repeated_execution_ranges
+                        .insert((span.start, span.end));
+                }
+            }
+            AstKind::DoWhileStatement(statement) => {
+                for span in [statement.body.span(), statement.test.span()] {
+                    self.repeated_execution_ranges
+                        .insert((span.start, span.end));
+                }
+            }
             AstKind::VariableDeclaration(declaration) => {
                 if !self.current_ambient() && !declaration.declare {
                     for declarator in &declaration.declarations {
@@ -533,6 +610,7 @@ impl<'a> Visit<'a> for RequireScopeCollector {
                                             TrackedName::Require
                                                 | TrackedName::Module
                                                 | TrackedName::Exports
+                                                | TrackedName::Arguments
                                         );
                                     if !wrapper_redeclaration {
                                         self.mark_nearest_var_environment(name);
@@ -694,7 +772,7 @@ impl<'a> Visit<'a> for RequireScopeCollector {
         let wrapped_write = target
             .get_expression()
             .is_some_and(|expression| expression.is_specific_id("require"));
-        if direct_write || wrapped_write {
+        if direct_write || wrapped_write || self.mapped_require_argument_target(target) {
             self.record_require_write(self.assignment_target_timing(target.span().end));
         }
         walk::walk_simple_assignment_target(self, target);
