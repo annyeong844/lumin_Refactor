@@ -49,6 +49,11 @@ fn package_fields_without_exports_select_role_scoped_public_targets()
             "wrong public identity set for {profile}",
         );
     }
+
+    let standalone_root = standalone_field_fixture()?;
+    let standalone_run_id = audit(standalone_root.path(), "bundler", 0)?;
+    assert_standalone_targets(standalone_root.path(), &standalone_run_id)?;
+    assert!(finding_views(standalone_root.path(), &standalone_run_id, 0)?.is_empty());
     Ok(())
 }
 
@@ -99,6 +104,16 @@ fn assert_package_targets(
     assert_internal_target(&importer, "@acme/lib", "type", &expected_type)?;
     assert_internal_target(&importer, "@acme/fallback", "value", &expected_fallback)?;
     assert_internal_target(&importer, "@acme/types-only", "type", &expected_types_only)?;
+    Ok(())
+}
+
+fn assert_standalone_targets(root: &Path, run_id: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let importer = file_response(root, run_id, "src/importer.ts")?;
+    let module_target = source_id(root, run_id, "packages/module-only/module.ts")?;
+    let main_target = source_id(root, run_id, "packages/main-only/main.ts")?;
+
+    assert_internal_target(&importer, "@acme/module-only", "value", &module_target)?;
+    assert_internal_target(&importer, "@acme/main-only", "value", &main_target)?;
     Ok(())
 }
 
@@ -161,12 +176,20 @@ fn package_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
     write(
         root.path(),
         "packages/lib/module.ts",
-        "export const selectedValue = 1; export type ModuleDeadType = string;\n",
+        concat!(
+            "export const selectedValue = 1;\n",
+            "export const unusedModulePublicValue = 2;\n",
+            "export type ModuleDeadType = string;\n",
+        ),
     )?;
     write(
         root.path(),
         "packages/lib/main.ts",
-        "export const selectedValue = 2; export type MainDeadType = string;\n",
+        concat!(
+            "export const selectedValue = 2;\n",
+            "export const unusedMainPublicValue = 3;\n",
+            "export type MainDeadType = string;\n",
+        ),
     )?;
     write(
         root.path(),
@@ -196,7 +219,10 @@ fn package_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
     write(
         root.path(),
         "packages/fallback/main.ts",
-        "export const fallbackValue = 1;\n",
+        concat!(
+            "export const fallbackValue = 1;\n",
+            "export const unusedFallbackPublicValue = 2;\n",
+        ),
     )?;
     write(
         root.path(),
@@ -222,6 +248,51 @@ fn package_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
             "const typed: SelectedType = String(selectedValue);\n",
             "const typesOnly: SelectedTypesOnly = typed;\n",
             "console.log(typed, typesOnly, fallbackValue);\n",
+        ),
+    )?;
+    Ok(root)
+}
+
+fn standalone_field_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"app","private":true,"type":"module","workspaces":["packages/*"]}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/module-only/package.json",
+        r#"{"name":"@acme/module-only","module":"./module.js"}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/module-only/module.ts",
+        concat!(
+            "export const selectedModuleOnly = 1;\n",
+            "export const unusedModuleOnlyPublicValue = 2;\n",
+        ),
+    )?;
+    write(
+        root.path(),
+        "packages/main-only/package.json",
+        r#"{"name":"@acme/main-only","main":"./main.js"}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/main-only/main.ts",
+        concat!(
+            "export const selectedMainOnly = 1;\n",
+            "export const unusedMainOnlyPublicValue = 2;\n",
+        ),
+    )?;
+    write(
+        root.path(),
+        "src/importer.ts",
+        concat!(
+            "import { selectedModuleOnly } from '@acme/module-only';\n",
+            "import { selectedMainOnly } from '@acme/main-only';\n",
+            "console.log(selectedModuleOnly, selectedMainOnly);\n",
         ),
     )?;
     Ok(root)
