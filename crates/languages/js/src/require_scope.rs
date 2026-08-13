@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 
 use oxc_ast::ast_kind::AstKind;
 
+mod class_evaluation;
 mod collector;
 mod mapped_arguments;
 
@@ -135,6 +136,7 @@ struct RequireScopeModel {
     unordered_implicit_require_write: bool,
     ordered_root_require_writes: Vec<MutationTiming>,
     deferred_require_call_positions: BTreeSet<u32>,
+    class_phase_opaque_require_call_positions: BTreeSet<u32>,
     non_wrapper_this_ranges: BTreeSet<(u32, u32)>,
     unattributed_require_escape: bool,
 }
@@ -181,6 +183,9 @@ impl RequireScopeModel {
     fn require_is_opaque(&self, scope: usize, call_position: u32) -> bool {
         if self.resolve_name(scope, TrackedName::Require) != NameResolution::Unbound
             || self.unordered_implicit_require_write
+            || self
+                .class_phase_opaque_require_call_positions
+                .contains(&call_position)
         {
             return true;
         }

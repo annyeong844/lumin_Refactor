@@ -9,7 +9,8 @@ use oxc_span::GetSpan;
 
 use super::{
     AssignmentWriteContext, MutationObservation, MutationTiming, NameBindings, NameResolution,
-    RequireScope, RequireScopeKind, RequireScopeModel, TrackedName, mapped_arguments, scope_kind,
+    RequireScope, RequireScopeKind, RequireScopeModel, TrackedName,
+    class_evaluation::ClassEvaluationPhases, mapped_arguments, scope_kind,
 };
 
 const TRACKED_NAMES: [TrackedName; 5] = [
@@ -29,6 +30,7 @@ struct RequireScopeCollector {
     arguments_escapes: Vec<MutationObservation>,
     require_reference_scopes: Vec<(usize, u32, u32)>,
     direct_require_callees: BTreeSet<(u32, u32)>,
+    direct_require_call_positions: BTreeSet<u32>,
     non_escaping_require_references: BTreeSet<(u32, u32)>,
     non_escaping_arguments_references: BTreeSet<(u32, u32)>,
     deferred_execution_ranges: BTreeSet<(u32, u32)>,
@@ -42,11 +44,13 @@ struct RequireScopeCollector {
     loop_head_write_range: Option<(u32, u32)>,
     loop_head_is_root_ordered: bool,
     arguments_escape_timing: Option<MutationTiming>,
+    computed_property_key_timing: Option<MutationTiming>,
     suppress_arguments_mutations: usize,
     tagged_template_quasi: Option<(u32, u32)>,
     jsx_invocation_end: Option<u32>,
     root_has_commonjs_wrapper: bool,
     root_this_may_be_wrapper: bool,
+    class_evaluation_phases: Vec<ClassEvaluationPhases>,
 }
 
 impl RequireScopeCollector {
@@ -329,6 +333,7 @@ impl RequireScopeCollector {
             unordered_implicit_require_write: false,
             ordered_root_require_writes: Vec::new(),
             deferred_require_call_positions: self.deferred_require_call_positions,
+            class_phase_opaque_require_call_positions: BTreeSet::new(),
             non_wrapper_this_ranges: self.non_wrapper_this_ranges,
             unattributed_require_escape: false,
         };
@@ -354,6 +359,20 @@ impl RequireScopeCollector {
         );
         implicit_mutations.extend(intrinsic_eval_mutations.iter().copied());
         implicit_mutations.extend(mapped_arguments_mutations.iter().copied());
+        for phases in &self.class_evaluation_phases {
+            let computed_key_mutates_require = implicit_mutations.iter().any(|observation| {
+                observation.ordered_execution
+                    && phases.computed_key_contains(observation.timing.target_position())
+            });
+            if computed_key_mutates_require {
+                model.class_phase_opaque_require_call_positions.extend(
+                    self.direct_require_call_positions
+                        .iter()
+                        .copied()
+                        .filter(|position| phases.static_execution_contains(*position)),
+                );
+            }
+        }
         for observation in implicit_mutations {
             if observation.ordered_execution {
                 model.ordered_root_require_writes.push(observation.timing);
@@ -514,6 +533,9 @@ impl<'a> Visit<'a> for RequireScopeCollector {
                 return;
             }
             AstKind::Class(class) => {
+                if let Some(phases) = ClassEvaluationPhases::from_class(class) {
+                    self.class_evaluation_phases.push(phases);
+                }
                 let ambient = self.current_ambient() || class.declare;
                 let name = class
                     .id
@@ -876,6 +898,8 @@ impl<'a> Visit<'a> for RequireScopeCollector {
         {
             self.direct_require_callees
                 .insert((identifier.span.start, identifier.span.end));
+            self.direct_require_call_positions
+                .insert(expression.span.start);
             if self.position_has_deferred_execution(expression.span.start) {
                 self.deferred_require_call_positions
                     .insert(expression.span.start);
@@ -1012,12 +1036,7 @@ impl<'a> Visit<'a> for RequireScopeCollector {
     fn visit_variable_declarator(&mut self, declarator: &oxc_ast::ast::VariableDeclarator<'a>) {
         let previous = self.binding_write_context;
         let previous_escape = self.arguments_escape_timing;
-        if declarator.kind.is_var()
-            && self.root_has_commonjs_wrapper
-            && self.nearest_var_environment_is_root()
-            && pattern_bindings(&declarator.id).contains(TrackedName::Require)
-            && let Some(init) = &declarator.init
-        {
+        if let Some(init) = &declarator.init {
             self.binding_write_context = Some(if declarator.id.is_binding_identifier() {
                 AssignmentWriteContext::AfterExpression(declarator.span.end)
             } else {
@@ -1157,6 +1176,73 @@ impl<'a> Visit<'a> for RequireScopeCollector {
                 .extend(mapped_arguments::value_arguments_references(discarded));
         }
         walk::walk_sequence_expression(self, expression);
+    }
+
+    fn visit_object_property(&mut self, property: &oxc_ast::ast::ObjectProperty<'a>) {
+        let previous = self.computed_property_key_timing;
+        self.computed_property_key_timing = property
+            .computed
+            .then_some(MutationTiming::After(property.key.span().end));
+        walk::walk_object_property(self, property);
+        self.computed_property_key_timing = previous;
+    }
+
+    fn visit_method_definition(&mut self, method: &oxc_ast::ast::MethodDefinition<'a>) {
+        let previous = self.computed_property_key_timing;
+        self.computed_property_key_timing = method
+            .computed
+            .then_some(MutationTiming::After(method.key.span().end));
+        walk::walk_method_definition(self, method);
+        self.computed_property_key_timing = previous;
+    }
+
+    fn visit_property_definition(&mut self, property: &oxc_ast::ast::PropertyDefinition<'a>) {
+        let previous = self.computed_property_key_timing;
+        self.computed_property_key_timing = property
+            .computed
+            .then_some(MutationTiming::After(property.key.span().end));
+        walk::walk_property_definition(self, property);
+        self.computed_property_key_timing = previous;
+    }
+
+    fn visit_accessor_property(&mut self, property: &oxc_ast::ast::AccessorProperty<'a>) {
+        let previous = self.computed_property_key_timing;
+        self.computed_property_key_timing = property
+            .computed
+            .then_some(MutationTiming::After(property.key.span().end));
+        walk::walk_accessor_property(self, property);
+        self.computed_property_key_timing = previous;
+    }
+
+    fn visit_assignment_target_property_property(
+        &mut self,
+        property: &oxc_ast::ast::AssignmentTargetPropertyProperty<'a>,
+    ) {
+        let previous = self.computed_property_key_timing;
+        self.computed_property_key_timing = property
+            .computed
+            .then_some(self.assignment_target_timing(property.name.span().end));
+        walk::walk_assignment_target_property_property(self, property);
+        self.computed_property_key_timing = previous;
+    }
+
+    fn visit_binding_property(&mut self, property: &oxc_ast::ast::BindingProperty<'a>) {
+        let previous = self.computed_property_key_timing;
+        self.computed_property_key_timing = property
+            .computed
+            .then_some(self.binding_target_timing(property.key.span().end));
+        walk::walk_binding_property(self, property);
+        self.computed_property_key_timing = previous;
+    }
+
+    fn visit_property_key(&mut self, key: &oxc_ast::ast::PropertyKey<'a>) {
+        let key_timing = self.computed_property_key_timing.take();
+        let previous_escape = self.arguments_escape_timing;
+        if let Some(timing) = key_timing {
+            self.arguments_escape_timing = Some(timing);
+        }
+        walk::walk_property_key(self, key);
+        self.arguments_escape_timing = previous_escape;
     }
 
     fn visit_identifier_reference(&mut self, identifier: &oxc_ast::ast::IdentifierReference<'a>) {

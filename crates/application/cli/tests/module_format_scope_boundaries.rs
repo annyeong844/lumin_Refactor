@@ -77,6 +77,20 @@ const UPDATE_ARGUMENTS_SOURCE: &str = concat!(
     "try { arguments instanceof arguments++; } catch {}\n",
     "require('@scope/dep/update-after');\n",
 );
+const COMPUTED_KEY_ARGUMENTS_SOURCE: &str = concat!(
+    "require('@scope/dep/computed-key-before');\n",
+    "arguments.toString = function () { this[1] = customLoader; return 'key'; };\n",
+    "({ [(require('@scope/dep/computed-key-during'), arguments)]: 1 });\n",
+    "require('@scope/dep/computed-key-after');\n",
+);
+const CLASS_PHASE_SOURCE: &str = concat!(
+    "require('@scope/dep/class-before');\n",
+    "class C {\n",
+    "  static dep = require('@scope/dep/class-static');\n",
+    "  [require = customLoader]() {}\n",
+    "}\n",
+    "require('@scope/dep/class-after');\n",
+);
 const WRAPPER_THIS_SOURCE: &str = "this.publicValue = 1;\n";
 
 #[test]
@@ -177,6 +191,32 @@ fn commonjs_wrapper_mutations_preserve_only_grounded_public_edges()
     )?;
     let update_arguments = file_response(root.path(), &run_id, "src/update-arguments.cjs")?;
     assert!(resolutions(&update_arguments).is_empty());
+    let computed_key = file_response(root.path(), &run_id, "src/computed-key-arguments.cjs")?;
+    let computed_key_specifiers = resolutions(&computed_key)
+        .iter()
+        .filter_map(|resolution| {
+            resolution
+                .pointer("/sourceUse/specifier")
+                .and_then(Value::as_str)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        computed_key_specifiers,
+        [
+            "@scope/dep/computed-key-before",
+            "@scope/dep/computed-key-during",
+        ]
+    );
+    let class_phase = file_response(root.path(), &run_id, "src/class-phase.cjs")?;
+    let class_specifiers = resolutions(&class_phase)
+        .iter()
+        .filter_map(|resolution| {
+            resolution
+                .pointer("/sourceUse/specifier")
+                .and_then(Value::as_str)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(class_specifiers, ["@scope/dep/class-before"]);
     for (path, specifier, target) in [
         (
             "src/strict-arguments.cjs",
@@ -237,8 +277,8 @@ fn commonjs_wrapper_mutations_preserve_only_grounded_public_edges()
         })
         .collect::<Result<Vec<_>, _>>()?;
     details.sort_unstable();
-    let mut expected = vec![COMMONJS_EXPORT_LOWERING_UNSUPPORTED; 13];
-    expected.extend([REQUIRE_ATTRIBUTION_OPAQUE; 7]);
+    let mut expected = vec![COMMONJS_EXPORT_LOWERING_UNSUPPORTED; 15];
+    expected.extend([REQUIRE_ATTRIBUTION_OPAQUE; 9]);
     expected.sort_unstable();
     assert_eq!(details, expected);
     Ok(())
@@ -356,6 +396,12 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         "src/update-arguments.cjs",
         UPDATE_ARGUMENTS_SOURCE,
     )?;
+    write(
+        root.path(),
+        "src/computed-key-arguments.cjs",
+        COMPUTED_KEY_ARGUMENTS_SOURCE,
+    )?;
+    write(root.path(), "src/class-phase.cjs", CLASS_PHASE_SOURCE)?;
     write(root.path(), "src/wrapper-this.ts", WRAPPER_THIS_SOURCE)?;
     write(
         root.path(),
@@ -428,6 +474,30 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
                     "import": "./update-after-import.js",
                     "require": "./update-after-require.js",
                 },
+                "./computed-key-before": {
+                    "import": "./computed-key-before-import.js",
+                    "require": "./computed-key-before-require.js",
+                },
+                "./computed-key-during": {
+                    "import": "./computed-key-during-import.js",
+                    "require": "./computed-key-during-require.js",
+                },
+                "./computed-key-after": {
+                    "import": "./computed-key-after-import.js",
+                    "require": "./computed-key-after-require.js",
+                },
+                "./class-before": {
+                    "import": "./class-before-import.js",
+                    "require": "./class-before-require.js",
+                },
+                "./class-static": {
+                    "import": "./class-static-import.js",
+                    "require": "./class-static-require.js",
+                },
+                "./class-after": {
+                    "import": "./class-after-import.js",
+                    "require": "./class-after-require.js",
+                },
             },
         })
         .to_string(),
@@ -465,6 +535,18 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         "binary-grounded-require",
         "update-after-import",
         "update-after-require",
+        "computed-key-before-import",
+        "computed-key-before-require",
+        "computed-key-during-import",
+        "computed-key-during-require",
+        "computed-key-after-import",
+        "computed-key-after-require",
+        "class-before-import",
+        "class-before-require",
+        "class-static-import",
+        "class-static-require",
+        "class-after-import",
+        "class-after-require",
     ] {
         write(
             root.path(),

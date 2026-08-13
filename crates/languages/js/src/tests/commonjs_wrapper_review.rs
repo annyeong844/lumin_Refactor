@@ -422,6 +422,124 @@ fn noncoercive_binary_arguments_preserve_later_require() -> Result<(), Box<dyn s
 }
 
 #[test]
+fn computed_property_keys_coerce_mapped_arguments_after_key_inputs()
+-> Result<(), Box<dyn std::error::Error>> {
+    let payload = parse_payload(
+        SourceKind::CommonJs,
+        concat!(
+            "require('@acme/before');\n",
+            "arguments.toString = function () { this[1] = customLoader; return 'key'; };\n",
+            "({ [(require('@acme/during'), arguments)]: 1 });\n",
+            "require('@acme/after');\n",
+        )
+        .as_bytes(),
+    )?;
+    assert_eq!(
+        payload
+            .uses
+            .iter()
+            .map(|source_use| source_use.specifier.as_str())
+            .collect::<Vec<_>>(),
+        ["@acme/before", "@acme/during"],
+    );
+    assert!(
+        payload
+            .limitation_details
+            .iter()
+            .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE)
+    );
+
+    for source in [
+        concat!(
+            "arguments.toString = function () { this[1] = customLoader; return 'key'; };\n",
+            "const { [arguments]: selected } = require('@acme/binding-rhs');\n",
+            "require('@acme/binding-after');\n",
+        ),
+        concat!(
+            "arguments.toString = function () { this[1] = customLoader; return 'key'; };\n",
+            "({ [arguments]: selected } = require('@acme/assignment-rhs'));\n",
+            "require('@acme/assignment-after');\n",
+        ),
+    ] {
+        let payload = parse_payload(SourceKind::CommonJs, source.as_bytes())?;
+        assert_eq!(
+            payload.uses.len(),
+            1,
+            "computed destructuring key ran before its RHS: {source}",
+        );
+        assert!(payload.uses[0].specifier.ends_with("-rhs"));
+        assert!(
+            payload
+                .limitation_details
+                .iter()
+                .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn class_computed_keys_precede_static_initializers() -> Result<(), Box<dyn std::error::Error>> {
+    for (source, expected_grounded) in [
+        (
+            concat!(
+                "require('@acme/before');\n",
+                "class C {\n",
+                "  static dep = require('@acme/static');\n",
+                "  [require = customLoader]() {}\n",
+                "}\n",
+                "require('@acme/after');\n",
+            ),
+            &["@acme/before"][..],
+        ),
+        (
+            concat!(
+                "class C {\n",
+                "  [(require('@acme/key-before'), require = customLoader)]() {}\n",
+                "  static dep = require('@acme/static');\n",
+                "}\n",
+            ),
+            &["@acme/key-before"][..],
+        ),
+        (
+            concat!(
+                "class C {\n",
+                "  static dep = require('@acme/static');\n",
+                "  [require = customLoader]() {}\n",
+                "  static { require('@acme/block'); }\n",
+                "}\n",
+            ),
+            &[][..],
+        ),
+    ] {
+        let payload = parse_payload(SourceKind::CommonJs, source.as_bytes())?;
+        let grounded = payload
+            .uses
+            .iter()
+            .map(|source_use| source_use.specifier.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            grounded, expected_grounded,
+            "static phase retained a false grounded edge: {source}\n{grounded:?}",
+        );
+        assert!(
+            payload
+                .limitation_details
+                .iter()
+                .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE)
+        );
+    }
+
+    let later_write = parse_payload(
+        SourceKind::CommonJs,
+        b"class C { static dep = require('@acme/static'); } require = customLoader;",
+    )?;
+    assert_eq!(later_write.uses.len(), 1);
+    assert_eq!(later_write.uses[0].specifier, "@acme/static");
+    Ok(())
+}
+
+#[test]
 fn jsx_arguments_escape_after_attributes_and_children_are_evaluated()
 -> Result<(), Box<dyn std::error::Error>> {
     let payload = parse_payload_with_module_format(
