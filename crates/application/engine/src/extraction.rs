@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use lumin_model::{
-    CapabilityState, FileFacts, PayloadSnapshotId, ResolutionProfile, SemanticConfigSnapshot,
-    SfcDialect, SourceKind, SourceSnapshot, SourceUnitId,
+    CapabilityState, FileFacts, PayloadSnapshotId, ResolutionProfile, SelectedResolutionProfile,
+    SemanticConfigSnapshot, SfcDialect, SourceKind, SourceSnapshot, SourceUnitId,
 };
 use rayon::prelude::*;
 
@@ -20,7 +20,7 @@ pub(super) struct ExtractionOutput {
 pub(super) fn extract_facts(
     sources: &[SourceSnapshot],
     config: &SemanticConfigSnapshot,
-    resolution_profile: Option<ResolutionProfile>,
+    selected_profiles: &[SelectedResolutionProfile],
     jobs: usize,
 ) -> Result<ExtractionOutput, EngineError> {
     let pool = rayon::ThreadPoolBuilder::new()
@@ -30,9 +30,13 @@ pub(super) fn extract_facts(
         .build()
         .map_err(|error| EngineError::Scheduler(error.to_string()))?;
     let source_index = lumin_sfc::source_index(sources);
+    let profiles = selected_profiles
+        .iter()
+        .map(|selected| (selected.source_id.clone(), selected.profile))
+        .collect::<BTreeMap<_, _>>();
     pool.install(|| {
         let (physical_facts, physical_parse_product_count) =
-            extract_physical_js(sources, config, resolution_profile)?;
+            extract_physical_js(sources, config, &profiles)?;
 
         let mut decompositions = sources
             .par_iter()
@@ -41,7 +45,7 @@ pub(super) fn extract_facts(
                 lumin_sfc::decompose(source, &source_index).map(|decomposition| {
                     (
                         decomposition,
-                        source_module_format(source, config, resolution_profile),
+                        source_module_format(source, config, &profiles),
                     )
                 })
             })
@@ -114,14 +118,14 @@ type PayloadGroup<'a> = (
 fn extract_physical_js(
     sources: &[SourceSnapshot],
     config: &SemanticConfigSnapshot,
-    resolution_profile: Option<ResolutionProfile>,
+    profiles: &BTreeMap<lumin_model::LogicalSourceId, ResolutionProfile>,
 ) -> Result<(Vec<FileFacts>, usize), lumin_js::JsExtractError> {
     let mut grouped = BTreeMap::<
         (PayloadSnapshotId, SourceKind, lumin_js::JsModuleFormat),
         (Arc<[u8]>, Vec<&SourceSnapshot>),
     >::new();
     for source in sources.iter().filter(|source| source.kind.is_js_family()) {
-        let module_format = source_module_format(source, config, resolution_profile);
+        let module_format = source_module_format(source, config, profiles);
         grouped
             .entry((
                 source.payload_snapshot_id.clone(),
@@ -164,7 +168,7 @@ fn extract_physical_js(
 fn source_module_format(
     source: &SourceSnapshot,
     config: &SemanticConfigSnapshot,
-    resolution_profile: Option<ResolutionProfile>,
+    profiles: &BTreeMap<lumin_model::LogicalSourceId, ResolutionProfile>,
 ) -> lumin_js::JsModuleFormat {
     let extension_defines_format = matches!(
         source.kind,
@@ -175,12 +179,16 @@ fn source_module_format(
             | SourceKind::Mts
             | SourceKind::DeclarationMts
     );
+    let profile = profiles.get(&source.id).copied();
     let node_profile_defines_package_format = matches!(
-        resolution_profile,
-        Some(ResolutionProfile::Node16 | ResolutionProfile::NodeNext)
+        profile,
+        Some(ResolutionProfile::Node | ResolutionProfile::Node16 | ResolutionProfile::NodeNext)
     );
     if !extension_defines_format && !node_profile_defines_package_format {
         return lumin_js::JsModuleFormat::Unknown;
+    }
+    if !extension_defines_format && profile == Some(ResolutionProfile::Node) {
+        return lumin_js::JsModuleFormat::CommonJs;
     }
     match lumin_resolve::classify_importer_format(source, config) {
         lumin_resolve::ImporterFormatClassification::CommonJs => lumin_js::JsModuleFormat::CommonJs,

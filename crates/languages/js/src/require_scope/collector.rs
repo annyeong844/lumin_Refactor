@@ -9,7 +9,7 @@ use oxc_span::GetSpan;
 
 use super::{
     AssignmentWriteContext, MutationObservation, MutationTiming, NameBindings, NameResolution,
-    RequireScope, RequireScopeKind, RequireScopeModel, TrackedName, scope_kind,
+    RequireScope, RequireScopeKind, RequireScopeModel, TrackedName, mapped_arguments, scope_kind,
 };
 
 const TRACKED_NAMES: [TrackedName; 5] = [
@@ -26,9 +26,11 @@ struct RequireScopeCollector {
     scope_stack: Vec<usize>,
     require_writes: Vec<MutationObservation>,
     eval_calls: Vec<MutationObservation>,
+    arguments_escapes: Vec<MutationObservation>,
     require_reference_scopes: Vec<(usize, u32, u32)>,
     direct_require_callees: BTreeSet<(u32, u32)>,
     non_escaping_require_references: BTreeSet<(u32, u32)>,
+    non_escaping_arguments_references: BTreeSet<(u32, u32)>,
     deferred_execution_ranges: BTreeSet<(u32, u32)>,
     repeated_execution_ranges: BTreeSet<(u32, u32)>,
     deferred_require_call_positions: BTreeSet<u32>,
@@ -38,13 +40,16 @@ struct RequireScopeCollector {
     binding_target_position: Option<u32>,
     loop_head_write_range: Option<(u32, u32)>,
     loop_head_is_root_ordered: bool,
+    arguments_escape_timing: Option<MutationTiming>,
     root_has_commonjs_wrapper: bool,
+    root_this_may_be_wrapper: bool,
 }
 
 impl RequireScopeCollector {
-    fn new(root_has_commonjs_wrapper: bool) -> Self {
+    fn new(root_has_commonjs_wrapper: bool, root_this_may_be_wrapper: bool) -> Self {
         Self {
             root_has_commonjs_wrapper,
+            root_this_may_be_wrapper,
             ..Self::default()
         }
     }
@@ -58,6 +63,9 @@ impl RequireScopeCollector {
         ambient: bool,
     ) {
         let index = self.scopes.len();
+        let wrapper_this = self
+            .current_scope()
+            .map_or(self.root_this_may_be_wrapper, |scope| scope.wrapper_this);
         let deferred_execution = self
             .current_scope()
             .is_some_and(|scope| scope.deferred_execution)
@@ -70,6 +78,7 @@ impl RequireScopeCollector {
             strict,
             ambient,
             deferred_execution,
+            wrapper_this,
         });
         self.scope_stack.push(index);
     }
@@ -105,6 +114,16 @@ impl RequireScopeCollector {
 
     fn current_ambient(&self) -> bool {
         self.current_scope().is_some_and(|scope| scope.ambient)
+    }
+
+    fn suppress_wrapper_this(&mut self) {
+        if let Some(scope) = self
+            .scope_stack
+            .last()
+            .and_then(|index| self.scopes.get_mut(*index))
+        {
+            scope.wrapper_this = false;
+        }
     }
 
     fn mark_current_scope(&mut self, name: TrackedName) {
@@ -193,6 +212,19 @@ impl RequireScopeCollector {
         }
     }
 
+    fn record_arguments_escape(&mut self, timing: MutationTiming) {
+        if !self.current_ambient()
+            && let Some(scope) = self.scope_stack.last().copied()
+        {
+            let ordered_timing = self.ordered_mutation_timing(scope, timing, false);
+            self.arguments_escapes.push(MutationObservation {
+                scope,
+                timing: ordered_timing.unwrap_or(timing),
+                ordered_execution: ordered_timing.is_some(),
+            });
+        }
+    }
+
     fn ordered_mutation_timing(
         &self,
         scope: usize,
@@ -222,35 +254,6 @@ impl RequireScopeCollector {
         self.repeated_execution_ranges
             .iter()
             .any(|(start, end)| position_within_span(*start, *end, position))
-    }
-
-    fn mapped_require_argument_target(
-        &self,
-        target: &oxc_ast::ast::SimpleAssignmentTarget<'_>,
-    ) -> bool {
-        if !self.root_has_commonjs_wrapper
-            || self.current_strict()
-            || self.current_has_binding(TrackedName::Arguments)
-        {
-            return false;
-        }
-        let oxc_ast::ast::SimpleAssignmentTarget::ComputedMemberExpression(member) = target else {
-            return false;
-        };
-        if !member
-            .object
-            .without_parentheses()
-            .is_specific_id("arguments")
-        {
-            return false;
-        }
-        member
-            .static_property_name()
-            .is_some_and(|name| name.as_str() == "1")
-            || matches!(
-                member.expression.without_parentheses(),
-                oxc_ast::ast::Expression::NumericLiteral(literal) if literal.value == 1.0
-            )
     }
 
     fn assignment_target_timing(&self, fallback_position: u32) -> MutationTiming {
@@ -338,7 +341,13 @@ impl RequireScopeCollector {
                     && !model.has_binding(observation.scope, TrackedName::Require)
             })
             .collect::<Vec<_>>();
+        let mapped_arguments_mutations = mapped_arguments::mapped_require_mutations(
+            self.root_has_commonjs_wrapper,
+            &model,
+            &self.arguments_escapes,
+        );
         implicit_mutations.extend(intrinsic_eval_mutations.iter().copied());
+        implicit_mutations.extend(mapped_arguments_mutations.iter().copied());
         for observation in implicit_mutations {
             if observation.ordered_execution {
                 model.ordered_root_require_writes.push(observation.timing);
@@ -359,8 +368,9 @@ impl RequireScopeCollector {
                         .contains(&(*start, *end))
                     && model.resolve_name(*scope, TrackedName::Require) != NameResolution::Bound
             });
-        model.unattributed_require_escape =
-            escaped_reference || !intrinsic_eval_mutations.is_empty();
+        model.unattributed_require_escape = escaped_reference
+            || !intrinsic_eval_mutations.is_empty()
+            || !mapped_arguments_mutations.is_empty();
         model
     }
 }
@@ -368,8 +378,10 @@ impl RequireScopeCollector {
 pub(super) fn collect(
     program: &oxc_ast::ast::Program<'_>,
     root_has_commonjs_wrapper: bool,
+    root_this_may_be_wrapper: bool,
 ) -> RequireScopeModel {
-    let mut collector = RequireScopeCollector::new(root_has_commonjs_wrapper);
+    let mut collector =
+        RequireScopeCollector::new(root_has_commonjs_wrapper, root_this_may_be_wrapper);
     collector.visit_program(program);
     collector.into_model()
 }
@@ -469,6 +481,7 @@ impl<'a> Visit<'a> for RequireScopeCollector {
                     self.current_strict() || function.has_use_strict_directive(),
                     ambient,
                 );
+                self.suppress_wrapper_this();
                 return;
             }
             AstKind::ArrowFunctionExpression(function) => {
@@ -511,6 +524,7 @@ impl<'a> Visit<'a> for RequireScopeCollector {
                     bindings.mark(name);
                 }
                 self.push_scope(RequireScopeKind::Lexical, bindings, false, true, ambient);
+                self.suppress_wrapper_this();
                 return;
             }
             AstKind::CatchClause(catch) => {
@@ -541,6 +555,7 @@ impl<'a> Visit<'a> for RequireScopeCollector {
                     true,
                     self.current_ambient(),
                 );
+                self.suppress_wrapper_this();
                 return;
             }
             AstKind::PropertyDefinition(property) => {
@@ -683,6 +698,7 @@ impl<'a> Visit<'a> for RequireScopeCollector {
                     self.current_strict() || declaration.has_use_strict_directive(),
                     ambient,
                 );
+                self.suppress_wrapper_this();
                 return;
             }
             AstKind::TSGlobalDeclaration(declaration) => {
@@ -693,6 +709,7 @@ impl<'a> Visit<'a> for RequireScopeCollector {
                     self.current_strict() || declaration.body.has_use_strict_directive(),
                     true,
                 );
+                self.suppress_wrapper_this();
                 return;
             }
             _ => {}
@@ -772,7 +789,13 @@ impl<'a> Visit<'a> for RequireScopeCollector {
         let wrapped_write = target
             .get_expression()
             .is_some_and(|expression| expression.is_specific_id("require"));
-        if direct_write || wrapped_write || self.mapped_require_argument_target(target) {
+        let mapped_arguments_write = mapped_arguments::target_is_require_slot(
+            target,
+            self.root_has_commonjs_wrapper,
+            self.current_strict(),
+            self.current_has_binding(TrackedName::Arguments),
+        );
+        if direct_write || wrapped_write || mapped_arguments_write {
             self.record_require_write(self.assignment_target_timing(target.span().end));
         }
         walk::walk_simple_assignment_target(self, target);
@@ -790,6 +813,7 @@ impl<'a> Visit<'a> for RequireScopeCollector {
 
     fn visit_assignment_expression(&mut self, expression: &oxc_ast::ast::AssignmentExpression<'a>) {
         let previous = self.assignment_write_context;
+        let previous_escape = self.arguments_escape_timing;
         self.assignment_write_context =
             Some(if expression.left.as_simple_assignment_target().is_some() {
                 AssignmentWriteContext::AfterExpression(expression.span.end)
@@ -803,8 +827,10 @@ impl<'a> Visit<'a> for RequireScopeCollector {
                     rhs_end: rhs.end,
                 }
             });
+        self.arguments_escape_timing = Some(MutationTiming::After(expression.span.end));
         walk::walk_assignment_expression(self, expression);
         self.assignment_write_context = previous;
+        self.arguments_escape_timing = previous_escape;
     }
 
     fn visit_assignment_target_with_default(
@@ -831,7 +857,31 @@ impl<'a> Visit<'a> for RequireScopeCollector {
         if !expression.optional && expression.callee.is_specific_id("eval") {
             self.record_eval_call(self.expression_mutation_timing(expression.span.end));
         }
+        let previous_escape = self.arguments_escape_timing;
+        self.arguments_escape_timing = Some(self.expression_mutation_timing(expression.span.end));
         walk::walk_call_expression(self, expression);
+        self.arguments_escape_timing = previous_escape;
+    }
+
+    fn visit_new_expression(&mut self, expression: &oxc_ast::ast::NewExpression<'a>) {
+        let previous_escape = self.arguments_escape_timing;
+        self.arguments_escape_timing = Some(self.expression_mutation_timing(expression.span.end));
+        walk::walk_new_expression(self, expression);
+        self.arguments_escape_timing = previous_escape;
+    }
+
+    fn visit_return_statement(&mut self, statement: &oxc_ast::ast::ReturnStatement<'a>) {
+        let previous_escape = self.arguments_escape_timing;
+        self.arguments_escape_timing = Some(MutationTiming::After(statement.span.end));
+        walk::walk_return_statement(self, statement);
+        self.arguments_escape_timing = previous_escape;
+    }
+
+    fn visit_throw_statement(&mut self, statement: &oxc_ast::ast::ThrowStatement<'a>) {
+        let previous_escape = self.arguments_escape_timing;
+        self.arguments_escape_timing = Some(MutationTiming::After(statement.span.end));
+        walk::walk_throw_statement(self, statement);
+        self.arguments_escape_timing = previous_escape;
     }
 
     fn visit_with_statement(&mut self, statement: &oxc_ast::ast::WithStatement<'a>) {
@@ -843,6 +893,7 @@ impl<'a> Visit<'a> for RequireScopeCollector {
 
     fn visit_variable_declarator(&mut self, declarator: &oxc_ast::ast::VariableDeclarator<'a>) {
         let previous = self.binding_write_context;
+        let previous_escape = self.arguments_escape_timing;
         if declarator.kind.is_var()
             && self.root_has_commonjs_wrapper
             && self.nearest_var_environment_is_root()
@@ -862,8 +913,12 @@ impl<'a> Visit<'a> for RequireScopeCollector {
                 }
             });
         }
+        if declarator.init.is_some() {
+            self.arguments_escape_timing = Some(MutationTiming::After(declarator.span.end));
+        }
         walk::walk_variable_declarator(self, declarator);
         self.binding_write_context = previous;
+        self.arguments_escape_timing = previous_escape;
     }
 
     fn visit_binding_identifier(&mut self, identifier: &oxc_ast::ast::BindingIdentifier<'a>) {
@@ -910,6 +965,35 @@ impl<'a> Visit<'a> for RequireScopeCollector {
             self.require_reference_scopes
                 .push((scope, identifier.span.start, identifier.span.end));
         }
+        if identifier.name == "arguments"
+            && !self.current_ambient()
+            && !self
+                .non_escaping_arguments_references
+                .contains(&(identifier.span.start, identifier.span.end))
+            && let Some(timing) = self.arguments_escape_timing
+        {
+            self.record_arguments_escape(timing);
+        }
         walk::walk_identifier_reference(self, identifier);
+    }
+
+    fn visit_computed_member_expression(
+        &mut self,
+        expression: &oxc_ast::ast::ComputedMemberExpression<'a>,
+    ) {
+        if let Some(span) = mapped_arguments::non_require_computed_object_span(expression) {
+            self.non_escaping_arguments_references.insert(span);
+        }
+        walk::walk_computed_member_expression(self, expression);
+    }
+
+    fn visit_static_member_expression(
+        &mut self,
+        expression: &oxc_ast::ast::StaticMemberExpression<'a>,
+    ) {
+        if let Some(span) = mapped_arguments::static_object_span(expression) {
+            self.non_escaping_arguments_references.insert(span);
+        }
+        walk::walk_static_member_expression(self, expression);
     }
 }

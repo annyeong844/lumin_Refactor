@@ -51,12 +51,31 @@ pub struct ResolverOutput {
     pub demands: Vec<ConfigDemand>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ResolutionProfileSelection {
+    pub profiles: Vec<SelectedResolutionProfile>,
+    pub demands: Vec<ConfigDemand>,
+}
+
 #[derive(Debug, Error)]
 pub enum ResolverError {
     #[error("resolver generated policy is invalid: {0}")]
     Policy(String),
     #[error("resolver configuration is invalid: {0}")]
     Configuration(String),
+}
+
+pub fn select_resolution_profiles(
+    sources: &[SourceSnapshot],
+    semantic_config: &SemanticConfigSnapshot,
+    repository_root: &RepositoryRootIdentity,
+    override_profile: Option<ResolutionProfile>,
+) -> Result<ResolutionProfileSelection, ResolverError> {
+    let selection = config::select(sources, semantic_config, repository_root, override_profile)?;
+    Ok(ResolutionProfileSelection {
+        profiles: selection.profiles,
+        demands: selection.demands,
+    })
 }
 
 pub fn resolve_all(

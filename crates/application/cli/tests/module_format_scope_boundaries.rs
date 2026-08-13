@@ -40,6 +40,13 @@ const COMPUTED_MODULE_SOURCE: &str = concat!(
     "const key = 'exports';\n",
     "module[key] = { publicValue: 1 };\n",
 );
+const ESCAPED_ARGUMENTS_SOURCE: &str = concat!(
+    "require('@scope/dep/escape-before');\n",
+    "function replace(value) { value[1] = customLoader; }\n",
+    "replace(arguments, require('@scope/dep/escape-during'));\n",
+    "require('@scope/dep/escape-after');\n",
+);
+const WRAPPER_THIS_SOURCE: &str = "this.publicValue = 1;\n";
 
 #[test]
 fn commonjs_wrapper_mutations_preserve_only_grounded_public_edges()
@@ -78,6 +85,31 @@ fn commonjs_wrapper_mutations_preserve_only_grounded_public_edges()
     assert!(resolutions(&arguments).is_empty());
     let var_arguments = file_response(root.path(), &run_id, "src/var-arguments.cjs")?;
     assert!(resolutions(&var_arguments).is_empty());
+    let escaped_arguments = file_response(root.path(), &run_id, "src/escaped-arguments.cjs")?;
+    let escaped_specifiers = resolutions(&escaped_arguments)
+        .iter()
+        .filter_map(|resolution| {
+            resolution
+                .pointer("/sourceUse/specifier")
+                .and_then(Value::as_str)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        escaped_specifiers,
+        ["@scope/dep/escape-before", "@scope/dep/escape-during"]
+    );
+    for (specifier, target) in [
+        (
+            "@scope/dep/escape-before",
+            "packages/dep/escape-before-require.ts",
+        ),
+        (
+            "@scope/dep/escape-during",
+            "packages/dep/escape-during-require.ts",
+        ),
+    ] {
+        assert_resolution_target(root.path(), &run_id, &escaped_arguments, specifier, target)?;
+    }
     for (path, specifier, target) in [
         (
             "src/strict-arguments.cjs",
@@ -128,11 +160,68 @@ fn commonjs_wrapper_mutations_preserve_only_grounded_public_edges()
         })
         .collect::<Result<Vec<_>, _>>()?;
     details.sort_unstable();
-    let mut expected = vec![COMMONJS_EXPORT_LOWERING_UNSUPPORTED; 6];
-    expected.extend([REQUIRE_ATTRIBUTION_OPAQUE; 3]);
+    let mut expected = vec![COMMONJS_EXPORT_LOWERING_UNSUPPORTED; 8];
+    expected.extend([REQUIRE_ATTRIBUTION_OPAQUE; 4]);
     expected.sort_unstable();
     assert_eq!(details, expected);
     Ok(())
+}
+
+#[test]
+fn effective_profiles_drive_physical_and_embedded_commonjs_extraction()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = profile_fixture()?;
+    let configured = run(root.path(), &["audit", "--jobs", "1"])?;
+    assert_status(&configured, 0);
+    let configured_run = field(&configured.stdout, "runId")?;
+    for (path, specifier, target) in [
+        (
+            "apps/configured/main.ts",
+            "@scope/dep/configured",
+            "packages/dep/configured-require.ts",
+        ),
+        (
+            "apps/configured/App.vue",
+            "@scope/dep/embedded",
+            "packages/dep/embedded-require.ts",
+        ),
+    ] {
+        let source = file_response(root.path(), &configured_run, path)?;
+        assert_eq!(
+            source
+                .pointer("/resolutionProfile/profile")
+                .and_then(Value::as_str),
+            Some("node16")
+        );
+        assert_eq!(
+            source
+                .pointer("/resolutionProfile/source/kind")
+                .and_then(Value::as_str),
+            Some("config")
+        );
+        assert_resolution_target(root.path(), &configured_run, &source, specifier, target)?;
+    }
+
+    let legacy = run(
+        root.path(),
+        &["audit", "--jobs", "1", "--resolution-profile", "node"],
+    )?;
+    assert_status(&legacy, 0);
+    let legacy_run = field(&legacy.stdout, "runId")?;
+    let legacy_source = file_response(root.path(), &legacy_run, "src/legacy.ts")?;
+    assert_eq!(
+        legacy_source
+            .pointer("/resolutionProfile/profile")
+            .and_then(Value::as_str),
+        Some("node")
+    );
+    assert_resolution_target(
+        root.path(),
+        &legacy_run,
+        &legacy_source,
+        "@scope/dep/legacy",
+        "packages/dep/legacy.ts",
+    )
 }
 
 fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
@@ -160,6 +249,12 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         "src/computed-module.ts",
         COMPUTED_MODULE_SOURCE,
     )?;
+    write(
+        root.path(),
+        "src/escaped-arguments.cjs",
+        ESCAPED_ARGUMENTS_SOURCE,
+    )?;
+    write(root.path(), "src/wrapper-this.ts", WRAPPER_THIS_SOURCE)?;
     write(
         root.path(),
         "packages/dep/package.json",
@@ -191,6 +286,18 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
                     "import": "./shadowed-arguments-import.js",
                     "require": "./shadowed-arguments-require.js",
                 },
+                "./escape-before": {
+                    "import": "./escape-before-import.js",
+                    "require": "./escape-before-require.js",
+                },
+                "./escape-during": {
+                    "import": "./escape-during-import.js",
+                    "require": "./escape-during-require.js",
+                },
+                "./escape-after": {
+                    "import": "./escape-after-import.js",
+                    "require": "./escape-after-require.js",
+                },
             },
         })
         .to_string(),
@@ -208,6 +315,12 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         "strict-arguments-require",
         "shadowed-arguments-import",
         "shadowed-arguments-require",
+        "escape-before-import",
+        "escape-before-require",
+        "escape-during-import",
+        "escape-during-require",
+        "escape-after-import",
+        "escape-after-require",
     ] {
         write(
             root.path(),
@@ -215,6 +328,86 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
             &format!("export const {} = 1;\n", path.replace('-', "_")),
         )?;
     }
+    Ok(root)
+}
+
+fn profile_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"root-app","private":true,"workspaces":["apps/*","packages/*"]}"#,
+    )?;
+    write(
+        root.path(),
+        "apps/configured/tsconfig.json",
+        r#"{"extends":"../../configs/node16.json"}"#,
+    )?;
+    write(
+        root.path(),
+        "configs/node16.json",
+        r#"{"compilerOptions":{"moduleResolution":"node16","module":"node16"}}"#,
+    )?;
+    write(
+        root.path(),
+        "apps/configured/package.json",
+        r#"{"name":"configured","private":true,"type":"commonjs"}"#,
+    )?;
+    write(
+        root.path(),
+        "apps/configured/main.ts",
+        "var require; const configured = require('@scope/dep/configured');\n",
+    )?;
+    write(
+        root.path(),
+        "apps/configured/App.vue",
+        concat!(
+            "<script lang=\"ts\">\n",
+            "var require; const embedded = require('@scope/dep/embedded');\n",
+            "</script>\n<template><div /></template>\n",
+        ),
+    )?;
+    write(
+        root.path(),
+        "src/legacy.ts",
+        "var require; const legacy = require('@scope/dep/legacy');\n",
+    )?;
+    write(
+        root.path(),
+        "packages/dep/package.json",
+        &json!({
+            "name": "@scope/dep",
+            "private": true,
+            "exports": {
+                "./configured": {
+                    "import": "./configured-import.js",
+                    "require": "./configured-require.js",
+                },
+                "./embedded": {
+                    "import": "./embedded-import.js",
+                    "require": "./embedded-require.js",
+                },
+            },
+        })
+        .to_string(),
+    )?;
+    for target in [
+        "configured-import",
+        "configured-require",
+        "embedded-import",
+        "embedded-require",
+    ] {
+        write(
+            root.path(),
+            &format!("packages/dep/{target}.ts"),
+            &format!("export const {} = 1;\n", target.replace('-', "_")),
+        )?;
+    }
+    write(
+        root.path(),
+        "packages/dep/legacy.ts",
+        "export const legacy = 1;\n",
+    )?;
     Ok(root)
 }
 
@@ -243,6 +436,32 @@ fn source_id(
         .pointer("/sourceContext/sourceId")
         .and_then(Value::as_str)
         .map(str::to_owned))
+}
+
+fn assert_resolution_target(
+    root: &Path,
+    run_id: &str,
+    source: &Value,
+    specifier: &str,
+    target: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let resolution = resolutions(source)
+        .iter()
+        .find(|resolution| {
+            resolution
+                .pointer("/sourceUse/specifier")
+                .and_then(Value::as_str)
+                == Some(specifier)
+        })
+        .ok_or_else(|| std::io::Error::other(format!("resolution is missing: {specifier}")))?;
+    assert_eq!(
+        resolution
+            .pointer("/outcome/target")
+            .and_then(Value::as_str),
+        source_id(root, run_id, target)?.as_deref(),
+        "wrong resolution target for {specifier}: {resolution}",
+    );
+    Ok(())
 }
 
 fn write(root: &Path, path: &str, contents: &str) -> Result<(), std::io::Error> {

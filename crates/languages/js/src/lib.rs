@@ -19,7 +19,7 @@ mod require_scope;
 
 use require_scope::RequireScopeTracker;
 
-pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v2";
+pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v3";
 
 const REQUIRE_ATTRIBUTION_OPAQUE: &str = "shadowed, mutated, dynamically resolved, or escaped require makes CommonJS module-use attribution opaque";
 const MODULE_REQUIRE_ATTRIBUTION_OPAQUE: &str =
@@ -165,8 +165,12 @@ pub fn parse_payload_with_module_format(
         lower_statement(statement, &mut facts);
     }
 
-    let require_scopes =
-        RequireScopeTracker::analyze(&parsed.program, module_format == JsModuleFormat::CommonJs);
+    let commonjs_wrapper_exports_possible = module_format != JsModuleFormat::EsModule;
+    let require_scopes = RequireScopeTracker::analyze(
+        &parsed.program,
+        module_format == JsModuleFormat::CommonJs,
+        commonjs_wrapper_exports_possible,
+    );
     let escaped_require = require_scopes.has_unattributed_require_escape();
     let mut detector = DynamicUseDetector {
         uses: Vec::new(),
@@ -175,7 +179,7 @@ pub fn parse_payload_with_module_format(
         opaque_require_reported: false,
         opaque_module_require_reported: false,
         commonjs_export_syntax_observed: false,
-        commonjs_wrapper_exports_possible: module_format != JsModuleFormat::EsModule,
+        commonjs_wrapper_exports_possible,
         module_member_object_references: BTreeSet::new(),
     };
     if escaped_require {
@@ -620,6 +624,13 @@ impl<'a> Visit<'a> for DynamicUseDetector {
                 .push("nonliteral dynamic import may hide an internal consumer".to_owned()),
         }
         walk::walk_import_expression(self, expression);
+    }
+
+    fn visit_this_expression(&mut self, expression: &oxc_ast::ast::ThisExpression) {
+        if self.commonjs_wrapper_exports_possible && self.require_scopes.this_may_be_wrapper() {
+            self.commonjs_export_syntax_observed = true;
+        }
+        walk::walk_this_expression(self, expression);
     }
 
     fn visit_call_expression(&mut self, expression: &oxc_ast::ast::CallExpression<'a>) {

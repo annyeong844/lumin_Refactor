@@ -366,13 +366,20 @@ impl RepositoryAnalysisSession {
         if jobs == 0 {
             return Err(EngineError::InvalidWorkerCount(0));
         }
-        let inventory = lumin_inventory::scan(root, request)?;
-        let extraction = extract_facts(
-            &inventory.sources,
-            &inventory.config,
-            scan_invocation.resolution_profile,
-            jobs,
-        )?;
+        let mut inventory = lumin_inventory::scan(root, request)?;
+        let profiles = loop {
+            let selection = lumin_resolve::select_resolution_profiles(
+                &inventory.sources,
+                &inventory.config,
+                &repository_root,
+                scan_invocation.resolution_profile,
+            )?;
+            if selection.demands.is_empty() {
+                break selection.profiles;
+            }
+            capture_config_demands(root, &mut inventory, selection.demands)?;
+        };
+        let extraction = extract_facts(&inventory.sources, &inventory.config, &profiles, jobs)?;
         Ok(Self {
             repository_root,
             inventory,
@@ -428,17 +435,7 @@ impl RepositoryAnalysisSession {
         root: &Path,
         demands: Vec<ConfigDemand>,
     ) -> Result<(), EngineError> {
-        for demand in demands {
-            let capture = lumin_inventory::capture_config(root, &demand.path, demand.syntax)?;
-            if let Some(limitation) = capture.limitation {
-                self.inventory.limitations.push(limitation);
-            }
-            self.inventory
-                .config
-                .observations
-                .insert(demand.path, capture.observation);
-        }
-        Ok(())
+        capture_config_demands(root, &mut self.inventory, demands)
     }
 
     fn finish(mut self, resolver: ResolverOutput) -> Result<RepositoryCapture, EngineError> {
@@ -572,6 +569,37 @@ impl RepositoryAnalysisSession {
             source_adjacency,
         })
     }
+}
+
+fn capture_config_demands(
+    root: &Path,
+    inventory: &mut InventorySnapshot,
+    demands: Vec<ConfigDemand>,
+) -> Result<(), EngineError> {
+    let requested = demands
+        .iter()
+        .map(|demand| demand.path.display_escaped())
+        .collect::<Vec<_>>();
+    let mut uncaptured = demands
+        .into_iter()
+        .filter(|demand| !inventory.config.observations.contains_key(&demand.path))
+        .collect::<Vec<_>>();
+    uncaptured.sort();
+    uncaptured.dedup();
+    if uncaptured.is_empty() {
+        return Err(EngineError::ResolverDemandStalled(requested.join(", ")));
+    }
+    for demand in uncaptured {
+        let capture = lumin_inventory::capture_config(root, &demand.path, demand.syntax)?;
+        if let Some(limitation) = capture.limitation {
+            inventory.limitations.push(limitation);
+        }
+        inventory
+            .config
+            .observations
+            .insert(demand.path, capture.observation);
+    }
+    Ok(())
 }
 
 fn semantic_input_records(inventory: &InventorySnapshot) -> Vec<SemanticInputRecord> {

@@ -2,6 +2,8 @@ use lumin_model::{RepoPath, SourceRoles};
 
 use super::*;
 
+mod commonjs_wrapper_review;
+
 #[test]
 fn lowers_named_imports_and_exports() -> Result<(), Box<dyn std::error::Error>> {
     let snapshot = SourceSnapshot::new(

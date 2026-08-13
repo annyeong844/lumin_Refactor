@@ -3,6 +3,7 @@ use std::collections::BTreeSet;
 use oxc_ast::ast_kind::AstKind;
 
 mod collector;
+mod mapped_arguments;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TrackedName {
@@ -67,6 +68,7 @@ struct RequireScope {
     strict: bool,
     ambient: bool,
     deferred_execution: bool,
+    wrapper_this: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -215,9 +217,10 @@ impl RequireScopeTracker {
     pub(super) fn analyze(
         program: &oxc_ast::ast::Program<'_>,
         root_has_commonjs_wrapper: bool,
+        root_this_may_be_wrapper: bool,
     ) -> Self {
         Self {
-            model: collector::collect(program, root_has_commonjs_wrapper),
+            model: collector::collect(program, root_has_commonjs_wrapper, root_this_may_be_wrapper),
             scope_stack: Vec::new(),
             next_scope: 0,
             tracking_failed: false,
@@ -264,6 +267,15 @@ impl RequireScopeTracker {
 
     pub(super) fn exports_may_be_wrapper(&self) -> bool {
         self.wrapper_name_may_be_implicit(TrackedName::Exports)
+    }
+
+    pub(super) fn this_may_be_wrapper(&self) -> bool {
+        self.tracking_failed
+            || self
+                .scope_stack
+                .last()
+                .and_then(|scope| self.model.scopes.get(*scope))
+                .is_none_or(|scope| scope.wrapper_this)
     }
 
     fn wrapper_name_may_be_implicit(&self, name: TrackedName) -> bool {
