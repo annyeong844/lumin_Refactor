@@ -40,6 +40,80 @@ fn bundler_excludes_node_in_value_and_type_lanes() -> Result<(), Box<dyn std::er
     Ok(())
 }
 
+#[test]
+fn supported_public_condition_lanes_union_only_selected_identity_namespaces()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = public_union_fixture()?;
+
+    let audit = run(root.path(), &["audit", "--jobs", "1"])?;
+    assert_status(&audit, 0);
+    let audit_json: Value = serde_json::from_str(&audit.stdout)?;
+    assert_eq!(
+        audit_json.get("status").and_then(Value::as_str),
+        Some("complete")
+    );
+    assert_eq!(
+        audit_json.get("findingCount").and_then(Value::as_u64),
+        Some(12)
+    );
+    assert_eq!(
+        audit_json.get("limitationCount").and_then(Value::as_u64),
+        Some(0)
+    );
+    let run_id = field(&audit.stdout, "runId")?;
+
+    assert_eq!(
+        finding_views(root.path(), &run_id, 12)?,
+        BTreeSet::from([
+            view("packages/lib/bundler.ts", "BundlerDeadType", "type"),
+            view("packages/lib/import.ts", "ImportDeadType", "type"),
+            view("packages/lib/node.ts", "NodeDeadType", "type"),
+            view("packages/lib/require.ts", "RequireDeadType", "type"),
+            view(
+                "packages/lib/runtime-default.ts",
+                "RuntimeDefaultDeadType",
+                "type",
+            ),
+            view(
+                "packages/lib/runtime-default.ts",
+                "runtimeDefaultDeadValue",
+                "value",
+            ),
+            view(
+                "packages/lib/runtime-types.ts",
+                "runtimeTypesDeadValue",
+                "value",
+            ),
+            view(
+                "packages/lib/shadowed-require.ts",
+                "ShadowedRequireDeadType",
+                "type",
+            ),
+            view(
+                "packages/lib/shadowed-require.ts",
+                "shadowedRequireDeadValue",
+                "value",
+            ),
+            view(
+                "packages/lib/syntax-default.ts",
+                "SyntaxDefaultDeadType",
+                "type",
+            ),
+            view(
+                "packages/lib/syntax-default.ts",
+                "syntaxDefaultDeadValue",
+                "value",
+            ),
+            view(
+                "packages/lib/syntax-types.ts",
+                "syntaxTypesDeadValue",
+                "value",
+            ),
+        ])
+    );
+    Ok(())
+}
+
 fn audit_findings(
     root: &Path,
     profile: &str,
@@ -86,12 +160,26 @@ fn audit_findings(
             && selected.pointer("/source/kind").and_then(Value::as_str) == Some("invocation")
     }));
 
-    let findings = run(root, &["findings", "--run", &run_id, "--area", "dead-code"])?;
+    finding_views(root, &run_id, 6)
+}
+
+fn finding_views(
+    root: &Path,
+    run_id: &str,
+    expected_count: u64,
+) -> Result<BTreeSet<FindingView>, Box<dyn std::error::Error>> {
+    let findings = run(root, &["findings", "--run", run_id, "--area", "dead-code"])?;
     assert_status(&findings, 0);
     let response: Value = serde_json::from_str(&findings.stdout)?;
     assert_eq!(response.get("filters"), Some(&serde_json::json!({})));
-    assert_eq!(response.get("scopeTotal").and_then(Value::as_u64), Some(6));
-    assert_eq!(response.get("total").and_then(Value::as_u64), Some(6));
+    assert_eq!(
+        response.get("scopeTotal").and_then(Value::as_u64),
+        Some(expected_count)
+    );
+    assert_eq!(
+        response.get("total").and_then(Value::as_u64),
+        Some(expected_count)
+    );
     assert_eq!(
         response.get("truncated").and_then(Value::as_bool),
         Some(false)
@@ -120,6 +208,59 @@ fn audit_findings(
         })
         .collect::<Result<_, std::io::Error>>()
         .map_err(Into::into)
+}
+
+fn public_union_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("packages/lib"))?;
+    fs::write(
+        root.path().join("package.json"),
+        r#"{"name":"app","private":true,"workspaces":["packages/*"]}"#,
+    )?;
+    fs::write(
+        root.path().join("packages/lib/package.json"),
+        concat!(
+            r#"{"name":"@acme/lib","exports":{"./runtime":{"types":"./runtime-types.js","node":"./node.js","import":"./bundler.js","require":"./shadowed-require.js","default":"./runtime-default.js"},"#,
+            r#""./syntax":{"types":"./syntax-types.js","import":"./import.js","require":"./require.js","default":"./syntax-default.js"}}}"#,
+        ),
+    )?;
+    for (file, value, ty) in [
+        ("bundler.ts", "bundlerSelectedValue", "BundlerDeadType"),
+        ("node.ts", "nodeSelectedValue", "NodeDeadType"),
+        ("import.ts", "importSelectedValue", "ImportDeadType"),
+        ("require.ts", "requireSelectedValue", "RequireDeadType"),
+        (
+            "shadowed-require.ts",
+            "shadowedRequireDeadValue",
+            "ShadowedRequireDeadType",
+        ),
+        (
+            "runtime-default.ts",
+            "runtimeDefaultDeadValue",
+            "RuntimeDefaultDeadType",
+        ),
+        (
+            "runtime-types.ts",
+            "runtimeTypesDeadValue",
+            "RuntimeSelectedType",
+        ),
+        (
+            "syntax-default.ts",
+            "syntaxDefaultDeadValue",
+            "SyntaxDefaultDeadType",
+        ),
+        (
+            "syntax-types.ts",
+            "syntaxTypesDeadValue",
+            "SyntaxSelectedType",
+        ),
+    ] {
+        fs::write(
+            root.path().join("packages/lib").join(file),
+            format!("export const {value} = 1;\nexport type {ty} = string;\n"),
+        )?;
+    }
+    Ok(root)
 }
 
 fn package_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {

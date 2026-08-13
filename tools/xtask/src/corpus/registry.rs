@@ -317,7 +317,9 @@ pub static REGISTRY: &[RegistryRow] = &[
         inv!("module_format_scope_boundaries", "commonjs_wrapper_mutations_preserve_only_grounded_public_edges"),
         inv!("vue_public", "vue_inline_script_inherits_the_parent_node_importer_format"),
     ]),
-    row_sd!("public-condition-union"),
+    row_sd!("public-condition-union", &[
+        inv!("package_condition_public", "supported_public_condition_lanes_union_only_selected_identity_namespaces"),
+    ]),
     row_sd!("package-fields-no-exports"),
     row_sd!("resolution-profile-selection"),
     row_sd!("explicit-entry-selection", &[inv!("explicit_entry_selection", "explicit_entries_replace_deduplicate_and_preserve_alias_contexts")]),
