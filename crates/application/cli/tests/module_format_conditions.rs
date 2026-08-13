@@ -11,6 +11,8 @@ use support::{assert_status, field, run};
 const COMMONJS_EXPORT_LIMITATION: &str =
     "CommonJS export lowering is not implemented in the first audit increment";
 const REQUIRE_ATTRIBUTION_LIMITATION: &str = "shadowed, mutated, dynamically resolved, or escaped require makes CommonJS module-use attribution opaque";
+const MODULE_REQUIRE_ATTRIBUTION_LIMITATION: &str =
+    "module.require cannot be attributed to the CommonJS wrapper loader";
 
 const MTS_SOURCE: &str = concat!(
     "import { mtsStatic } from '@acme/lib/mts-static';\n",
@@ -41,6 +43,7 @@ const CJS_SOURCE: &str = concat!(
     "const cjsRequired = require('@acme/lib/cjs-require');\n",
     "const escapedLoader = require;\n",
     "escapedLoader('@acme/lib/cjs-aliased');\n",
+    "module.require('@acme/lib/cjs-module-require');\n",
     "console.log(cjsRequired);\n",
 );
 const ROOT_SOURCE: &str = concat!(
@@ -105,7 +108,7 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
     );
     assert_eq!(
         audit_json.get("limitationCount").and_then(Value::as_u64),
-        Some(5)
+        Some(6)
     );
     let run_id = field(&audit.stdout, "runId")?;
 
@@ -116,7 +119,7 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
         .get("limitations")
         .and_then(Value::as_array)
         .ok_or_else(|| std::io::Error::other("limitations are missing"))?;
-    assert_eq!(limitations.len(), 5);
+    assert_eq!(limitations.len(), 6);
     assert!(limitations.iter().all(|limitation| {
         limitation.get("reason").and_then(Value::as_str) == Some("js-module-use-unknown")
     }));
@@ -126,6 +129,10 @@ fn verify_profile(root: &Path, profile: &str) -> Result<(), Box<dyn std::error::
     );
     assert_eq!(
         limitation_detail_count(limitations, REQUIRE_ATTRIBUTION_LIMITATION),
+        1
+    );
+    assert_eq!(
+        limitation_detail_count(limitations, MODULE_REQUIRE_ATTRIBUTION_LIMITATION),
         1
     );
     for specifier in ["@acme/lib/mts-export", "@acme/lib/cts-export"] {

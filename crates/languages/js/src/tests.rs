@@ -384,6 +384,30 @@ fn escaped_local_require_binding_does_not_poison_the_wrapper_loader()
 }
 
 #[test]
+fn module_require_is_visible_without_discarding_direct_require_edges()
+-> Result<(), Box<dyn std::error::Error>> {
+    let payload = parse_payload(
+        SourceKind::CommonJs,
+        concat!(
+            "const known = require('@acme/known');\n",
+            "module.require('@acme/member');\n",
+            "module['require']('@acme/computed-member');\n",
+        )
+        .as_bytes(),
+    )?;
+    assert_eq!(payload.uses.len(), 1);
+    assert_eq!(payload.uses[0].specifier, "@acme/known");
+    assert_eq!(
+        payload.limitation_details,
+        vec![
+            "CommonJS export lowering is not implemented in the first audit increment".to_owned(),
+            MODULE_REQUIRE_ATTRIBUTION_OPAQUE.to_owned(),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
 fn commonjs_body_var_does_not_shadow_default_parameter_require()
 -> Result<(), Box<dyn std::error::Error>> {
     let payload = parse_payload(

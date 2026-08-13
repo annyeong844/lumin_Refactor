@@ -18,6 +18,8 @@ mod require_scope;
 use require_scope::RequireScopeTracker;
 
 const REQUIRE_ATTRIBUTION_OPAQUE: &str = "shadowed, mutated, dynamically resolved, or escaped require makes CommonJS module-use attribution opaque";
+const MODULE_REQUIRE_ATTRIBUTION_OPAQUE: &str =
+    "module.require cannot be attributed to the CommonJS wrapper loader";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct JsExtractError {
@@ -132,6 +134,7 @@ pub fn parse_payload(kind: SourceKind, bytes: &[u8]) -> Result<JsPayloadFacts, J
         unknown_details: Vec::new(),
         require_scopes,
         opaque_require_reported: false,
+        opaque_module_require_reported: false,
     };
     if escaped_require {
         detector.report_opaque_require();
@@ -476,6 +479,7 @@ struct DynamicUseDetector {
     unknown_details: Vec<String>,
     require_scopes: RequireScopeTracker,
     opaque_require_reported: bool,
+    opaque_module_require_reported: bool,
 }
 
 impl DynamicUseDetector {
@@ -488,6 +492,14 @@ impl DynamicUseDetector {
             self.unknown_details
                 .push(REQUIRE_ATTRIBUTION_OPAQUE.to_owned());
             self.opaque_require_reported = true;
+        }
+    }
+
+    fn report_opaque_module_require(&mut self) {
+        if !self.opaque_module_require_reported {
+            self.unknown_details
+                .push(MODULE_REQUIRE_ATTRIBUTION_OPAQUE.to_owned());
+            self.opaque_module_require_reported = true;
         }
     }
 }
@@ -537,6 +549,8 @@ impl<'a> Visit<'a> for DynamicUseDetector {
         } else if expression.callee.is_specific_id("require") {
             self.unknown_details
                 .push("nonliteral CommonJS require may hide an internal consumer".to_owned());
+        } else if is_module_require(&expression.callee) {
+            self.report_opaque_module_require();
         } else if is_import_meta_glob(&expression.callee) {
             self.unknown_details.push(
                 "import.meta.glob target expansion is not implemented in this increment".to_owned(),
@@ -544,6 +558,13 @@ impl<'a> Visit<'a> for DynamicUseDetector {
         }
         walk::walk_call_expression(self, expression);
     }
+}
+
+fn is_module_require(expression: &oxc_ast::ast::Expression<'_>) -> bool {
+    let Some(member) = expression.get_member_expr() else {
+        return false;
+    };
+    member.static_property_name() == Some("require") && member.object().is_specific_id("module")
 }
 
 fn is_import_meta_glob(expression: &oxc_ast::ast::Expression<'_>) -> bool {
