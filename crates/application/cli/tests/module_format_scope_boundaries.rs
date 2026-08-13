@@ -58,6 +58,25 @@ const NONCOERCIVE_UNARY_ARGUMENTS_SOURCE: &str = concat!(
     "const ignored = void arguments;\n",
     "require('@scope/dep/unary-grounded');\n",
 );
+const BINARY_ARGUMENTS_SOURCE: &str = concat!(
+    "require('@scope/dep/binary-before');\n",
+    "arguments.valueOf = function () { this[1] = customLoader; return 0; };\n",
+    "(condition ? arguments : 0) + 1;\n",
+    "require('@scope/dep/binary-after');\n",
+);
+const NONCOERCIVE_BINARY_ARGUMENTS_SOURCE: &str = concat!(
+    "consume(arguments === candidate);\n",
+    "consume(arguments == null);\n",
+    "consume('1' in arguments);\n",
+    "try { arguments instanceof null; } catch {}\n",
+    "try { arguments instanceof (1 + 2); } catch {}\n",
+    "require('@scope/dep/binary-grounded');\n",
+);
+const UPDATE_ARGUMENTS_SOURCE: &str = concat!(
+    "arguments.valueOf = function () { this[1] = customLoader; return 0; };\n",
+    "try { arguments instanceof arguments++; } catch {}\n",
+    "require('@scope/dep/update-after');\n",
+);
 const WRAPPER_THIS_SOURCE: &str = "this.publicValue = 1;\n";
 
 #[test]
@@ -139,6 +158,25 @@ fn commonjs_wrapper_mutations_preserve_only_grounded_public_edges()
         "@scope/dep/unary-before",
         "packages/dep/unary-before-require.ts",
     )?;
+    let binary_arguments = file_response(root.path(), &run_id, "src/binary-arguments.cjs")?;
+    let binary_specifiers = resolutions(&binary_arguments)
+        .iter()
+        .filter_map(|resolution| {
+            resolution
+                .pointer("/sourceUse/specifier")
+                .and_then(Value::as_str)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(binary_specifiers, ["@scope/dep/binary-before"]);
+    assert_resolution_target(
+        root.path(),
+        &run_id,
+        &binary_arguments,
+        "@scope/dep/binary-before",
+        "packages/dep/binary-before-require.ts",
+    )?;
+    let update_arguments = file_response(root.path(), &run_id, "src/update-arguments.cjs")?;
+    assert!(resolutions(&update_arguments).is_empty());
     for (path, specifier, target) in [
         (
             "src/strict-arguments.cjs",
@@ -154,6 +192,11 @@ fn commonjs_wrapper_mutations_preserve_only_grounded_public_edges()
             "src/noncoercive-unary-arguments.cjs",
             "@scope/dep/unary-grounded",
             "packages/dep/unary-grounded-require.ts",
+        ),
+        (
+            "src/noncoercive-binary-arguments.cjs",
+            "@scope/dep/binary-grounded",
+            "packages/dep/binary-grounded-require.ts",
         ),
     ] {
         let file = file_response(root.path(), &run_id, path)?;
@@ -194,8 +237,8 @@ fn commonjs_wrapper_mutations_preserve_only_grounded_public_edges()
         })
         .collect::<Result<Vec<_>, _>>()?;
     details.sort_unstable();
-    let mut expected = vec![COMMONJS_EXPORT_LOWERING_UNSUPPORTED; 10];
-    expected.extend([REQUIRE_ATTRIBUTION_OPAQUE; 5]);
+    let mut expected = vec![COMMONJS_EXPORT_LOWERING_UNSUPPORTED; 13];
+    expected.extend([REQUIRE_ATTRIBUTION_OPAQUE; 7]);
     expected.sort_unstable();
     assert_eq!(details, expected);
     Ok(())
@@ -298,6 +341,21 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         "src/noncoercive-unary-arguments.cjs",
         NONCOERCIVE_UNARY_ARGUMENTS_SOURCE,
     )?;
+    write(
+        root.path(),
+        "src/binary-arguments.cjs",
+        BINARY_ARGUMENTS_SOURCE,
+    )?;
+    write(
+        root.path(),
+        "src/noncoercive-binary-arguments.cjs",
+        NONCOERCIVE_BINARY_ARGUMENTS_SOURCE,
+    )?;
+    write(
+        root.path(),
+        "src/update-arguments.cjs",
+        UPDATE_ARGUMENTS_SOURCE,
+    )?;
     write(root.path(), "src/wrapper-this.ts", WRAPPER_THIS_SOURCE)?;
     write(
         root.path(),
@@ -354,6 +412,22 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
                     "import": "./unary-grounded-import.js",
                     "require": "./unary-grounded-require.js",
                 },
+                "./binary-before": {
+                    "import": "./binary-before-import.js",
+                    "require": "./binary-before-require.js",
+                },
+                "./binary-after": {
+                    "import": "./binary-after-import.js",
+                    "require": "./binary-after-require.js",
+                },
+                "./binary-grounded": {
+                    "import": "./binary-grounded-import.js",
+                    "require": "./binary-grounded-require.js",
+                },
+                "./update-after": {
+                    "import": "./update-after-import.js",
+                    "require": "./update-after-require.js",
+                },
             },
         })
         .to_string(),
@@ -383,6 +457,14 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         "unary-after-require",
         "unary-grounded-import",
         "unary-grounded-require",
+        "binary-before-import",
+        "binary-before-require",
+        "binary-after-import",
+        "binary-after-require",
+        "binary-grounded-import",
+        "binary-grounded-require",
+        "update-after-import",
+        "update-after-require",
     ] {
         write(
             root.path(),

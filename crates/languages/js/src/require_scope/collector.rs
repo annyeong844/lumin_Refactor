@@ -42,6 +42,7 @@ struct RequireScopeCollector {
     loop_head_write_range: Option<(u32, u32)>,
     loop_head_is_root_ordered: bool,
     arguments_escape_timing: Option<MutationTiming>,
+    suppress_arguments_mutations: usize,
     tagged_template_quasi: Option<(u32, u32)>,
     jsx_invocation_end: Option<u32>,
     root_has_commonjs_wrapper: bool,
@@ -216,7 +217,8 @@ impl RequireScopeCollector {
     }
 
     fn record_arguments_escape(&mut self, timing: MutationTiming) {
-        if !self.current_ambient()
+        if self.suppress_arguments_mutations == 0
+            && !self.current_ambient()
             && let Some(scope) = self.scope_stack.last().copied()
         {
             let ordered_timing = self.ordered_mutation_timing(scope, timing, false);
@@ -800,7 +802,10 @@ impl<'a> Visit<'a> for RequireScopeCollector {
             self.current_strict(),
             self.current_has_binding(TrackedName::Arguments),
         );
-        if direct_write || wrapped_write || mapped_arguments_write {
+        if direct_write || wrapped_write {
+            self.record_require_write(self.assignment_target_timing(target.span().end));
+        }
+        if mapped_arguments_write && self.suppress_arguments_mutations == 0 {
             self.record_require_write(self.assignment_target_timing(target.span().end));
         }
         walk::walk_simple_assignment_target(self, target);
@@ -819,6 +824,20 @@ impl<'a> Visit<'a> for RequireScopeCollector {
     fn visit_assignment_expression(&mut self, expression: &oxc_ast::ast::AssignmentExpression<'a>) {
         let previous = self.assignment_write_context;
         let previous_escape = self.arguments_escape_timing;
+        if let Some(span) = expression
+            .left
+            .as_simple_assignment_target()
+            .and_then(mapped_arguments::direct_arguments_target)
+            .filter(|_| expression.operator.is_arithmetic() || expression.operator.is_bitwise())
+        {
+            self.non_escaping_arguments_references.insert(span);
+            self.record_arguments_escape(self.expression_mutation_timing(expression.span.end));
+        }
+        let suppress_mutations =
+            mapped_arguments::logical_assignment_rhs_cannot_execute(expression);
+        if suppress_mutations {
+            self.suppress_arguments_mutations += 1;
+        }
         self.assignment_write_context =
             Some(if expression.left.as_simple_assignment_target().is_some() {
                 AssignmentWriteContext::AfterExpression(expression.span.end)
@@ -834,6 +853,9 @@ impl<'a> Visit<'a> for RequireScopeCollector {
             });
         self.arguments_escape_timing = Some(MutationTiming::After(expression.span.end));
         walk::walk_assignment_expression(self, expression);
+        if suppress_mutations {
+            self.suppress_arguments_mutations -= 1;
+        }
         self.assignment_write_context = previous;
         self.arguments_escape_timing = previous_escape;
     }
@@ -1050,20 +1072,91 @@ impl<'a> Visit<'a> for RequireScopeCollector {
             self.non_escaping_require_references
                 .insert((identifier.span.start, identifier.span.end));
         }
-        if (expression.operator.is_arithmetic() || expression.operator.is_bitwise())
-            && expression.argument.is_specific_id("arguments")
+        let arguments = mapped_arguments::value_arguments_references(&expression.argument);
+        self.non_escaping_arguments_references
+            .extend(arguments.iter().copied());
+        if !arguments.is_empty()
+            && (expression.operator.is_arithmetic() || expression.operator.is_bitwise())
         {
             self.record_arguments_escape(self.expression_mutation_timing(expression.span.end));
-        } else if let Some(identifier) = expression
-            .argument
-            .get_inner_expression()
-            .get_identifier_reference()
-            && identifier.name == "arguments"
-        {
-            self.non_escaping_arguments_references
-                .insert((identifier.span.start, identifier.span.end));
         }
         walk::walk_unary_expression(self, expression);
+    }
+
+    fn visit_update_expression(&mut self, expression: &oxc_ast::ast::UpdateExpression<'a>) {
+        if let Some(span) = mapped_arguments::direct_arguments_target(&expression.argument) {
+            self.non_escaping_arguments_references.insert(span);
+            self.record_arguments_escape(self.expression_mutation_timing(expression.span.end));
+        }
+        walk::walk_update_expression(self, expression);
+    }
+
+    fn visit_binary_expression(&mut self, expression: &oxc_ast::ast::BinaryExpression<'a>) {
+        let arguments = mapped_arguments::binary_arguments_use(expression);
+        self.non_escaping_arguments_references
+            .extend(arguments.references);
+        if arguments.may_mutate {
+            self.record_arguments_escape(self.expression_mutation_timing(expression.span.end));
+        }
+        walk::walk_binary_expression(self, expression);
+    }
+
+    fn visit_logical_expression(&mut self, expression: &oxc_ast::ast::LogicalExpression<'a>) {
+        if expression.operator.is_and() {
+            self.non_escaping_arguments_references.extend(
+                mapped_arguments::value_arguments_references(&expression.left),
+            );
+        }
+        let kind = AstKind::LogicalExpression(self.alloc(expression));
+        self.enter_node(kind);
+        self.visit_span(&expression.span);
+        self.visit_expression(&expression.left);
+        let suppress_rhs = mapped_arguments::logical_rhs_cannot_execute(expression);
+        if suppress_rhs {
+            self.suppress_arguments_mutations += 1;
+        }
+        self.visit_expression(&expression.right);
+        if suppress_rhs {
+            self.suppress_arguments_mutations -= 1;
+        }
+        self.leave_node(kind);
+    }
+
+    fn visit_conditional_expression(
+        &mut self,
+        expression: &oxc_ast::ast::ConditionalExpression<'a>,
+    ) {
+        self.non_escaping_arguments_references.extend(
+            mapped_arguments::value_arguments_references(&expression.test),
+        );
+        let truthiness = mapped_arguments::condition_truthiness(&expression.test);
+        let kind = AstKind::ConditionalExpression(self.alloc(expression));
+        self.enter_node(kind);
+        self.visit_span(&expression.span);
+        self.visit_expression(&expression.test);
+        if truthiness == Some(false) {
+            self.suppress_arguments_mutations += 1;
+        }
+        self.visit_expression(&expression.consequent);
+        if truthiness == Some(false) {
+            self.suppress_arguments_mutations -= 1;
+        }
+        if truthiness == Some(true) {
+            self.suppress_arguments_mutations += 1;
+        }
+        self.visit_expression(&expression.alternate);
+        if truthiness == Some(true) {
+            self.suppress_arguments_mutations -= 1;
+        }
+        self.leave_node(kind);
+    }
+
+    fn visit_sequence_expression(&mut self, expression: &oxc_ast::ast::SequenceExpression<'a>) {
+        for discarded in expression.expressions.iter().rev().skip(1) {
+            self.non_escaping_arguments_references
+                .extend(mapped_arguments::value_arguments_references(discarded));
+        }
+        walk::walk_sequence_expression(self, expression);
     }
 
     fn visit_identifier_reference(&mut self, identifier: &oxc_ast::ast::IdentifierReference<'a>) {

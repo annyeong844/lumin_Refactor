@@ -205,6 +205,223 @@ fn transparent_typescript_eval_wrapper_still_poisons_later_require()
 }
 
 #[test]
+fn coercive_binary_arguments_mutate_after_both_operands_are_evaluated()
+-> Result<(), Box<dyn std::error::Error>> {
+    for expression in [
+        "arguments + require('@acme/during')",
+        "require('@acme/during') + arguments",
+        "arguments < require('@acme/during')",
+        "arguments == require('@acme/during')",
+        "arguments in require('@acme/during')",
+        "arguments instanceof require('@acme/during')",
+        "require('@acme/during') instanceof arguments",
+        "(condition ? arguments : 0) + require('@acme/during')",
+        "require('@acme/during') + (condition ? arguments : 0)",
+        "(false || arguments) < require('@acme/during')",
+        "(0, arguments) == require('@acme/during')",
+        "(condition ? arguments : require('@acme/during')) == (condition ? arguments : 1)",
+    ] {
+        let source = format!(
+            concat!(
+                "require('@acme/before');\n",
+                "arguments.valueOf = function () {{ this[1] = customLoader; return 0; }};\n",
+                "{};\n",
+                "require('@acme/after');\n",
+            ),
+            expression,
+        );
+        let payload = parse_payload(SourceKind::CommonJs, source.as_bytes())?;
+        let specifiers = payload
+            .uses
+            .iter()
+            .map(|source_use| source_use.specifier.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            specifiers,
+            ["@acme/before", "@acme/during"],
+            "wrong binary evaluation order for {expression}",
+        );
+        assert!(
+            payload
+                .limitation_details
+                .iter()
+                .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE),
+            "missing binary coercion opacity for {expression}",
+        );
+    }
+
+    for expression in [
+        "+(condition ? arguments : 0)",
+        "+(false || arguments)",
+        "+(0, arguments)",
+        "+(arguments ||= 0)",
+        "+(arguments ??= 0)",
+        "+(false ? 0 : arguments)",
+        "arguments == ({} && +arguments)",
+        "arguments == (false ? {} : +arguments)",
+    ] {
+        let source = format!(
+            concat!(
+                "arguments.valueOf = function () {{ this[1] = customLoader; return 0; }};\n",
+                "try {{ {}; }} catch {{}}\n",
+                "require('@acme/after');\n",
+            ),
+            expression,
+        );
+        let payload = parse_payload(SourceKind::CommonJs, source.as_bytes())?;
+        assert!(
+            payload.uses.is_empty(),
+            "wrapped unary coercion left a false grounded edge for {expression}",
+        );
+        assert!(
+            payload
+                .limitation_details
+                .iter()
+                .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE),
+            "missing wrapped unary coercion opacity for {expression}",
+        );
+    }
+
+    for expression in ["arguments++", "++arguments"] {
+        let source = format!(
+            concat!(
+                "arguments.valueOf = function () {{ this[1] = customLoader; return 0; }};\n",
+                "try {{ arguments instanceof {}; }} catch {{}}\n",
+                "require('@acme/after');\n",
+            ),
+            expression,
+        );
+        let payload = parse_payload(SourceKind::CommonJs, source.as_bytes())?;
+        assert!(
+            payload.uses.is_empty(),
+            "update coercion left a false grounded edge for {expression}",
+        );
+        assert!(
+            payload
+                .limitation_details
+                .iter()
+                .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE),
+            "missing update coercion opacity for {expression}",
+        );
+    }
+    let source = concat!(
+        "arguments.valueOf = function () { this[1] = customLoader; return 0; };\n",
+        "arguments += require('@acme/during');\n",
+        "require('@acme/after');\n",
+    );
+    let payload = parse_payload(SourceKind::CommonJs, source.as_bytes())?;
+    assert_eq!(
+        payload
+            .uses
+            .iter()
+            .map(|source_use| source_use.specifier.as_str())
+            .collect::<Vec<_>>(),
+        ["@acme/during"],
+    );
+    assert!(
+        payload
+            .limitation_details
+            .iter()
+            .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE),
+        "missing compound-assignment coercion opacity",
+    );
+    Ok(())
+}
+
+#[test]
+fn noncoercive_binary_arguments_preserve_later_require() -> Result<(), Box<dyn std::error::Error>> {
+    for expression in [
+        "arguments === candidate",
+        "arguments !== candidate",
+        "arguments == null",
+        "arguments != void 0",
+        "arguments == arguments",
+        "arguments == (condition ? arguments : null)",
+        "arguments == (condition ? arguments : {})",
+        "'1' in arguments",
+        "(arguments, 0) + 1",
+        "(arguments && 0) + 1",
+    ] {
+        let source = format!("consume({expression}); require('@acme/grounded');");
+        let payload = parse_payload(SourceKind::CommonJs, source.as_bytes())?;
+        assert_eq!(payload.uses.len(), 1, "wrong attribution for {expression}");
+        assert_eq!(payload.uses[0].specifier, "@acme/grounded");
+        assert!(
+            !payload
+                .limitation_details
+                .iter()
+                .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE),
+            "noncoercive binary expression became opaque: {expression}",
+        );
+    }
+    for expression in [
+        "arguments || +arguments",
+        "arguments ?? +arguments",
+        "arguments || (arguments[1] = customLoader)",
+        "true || +arguments",
+        "1 || +arguments",
+        "1n || +arguments",
+        "`value` || +arguments",
+        "false && +arguments",
+        "0 && +arguments",
+        "0n && +arguments",
+        "`` && +arguments",
+        "false && (arguments[1] = customLoader)",
+        "arguments ||= +arguments",
+        "arguments ??= +arguments",
+        "+(true || +arguments)",
+        "+(1 || +arguments)",
+        "+(false && +arguments)",
+        "+(0 && +arguments)",
+        "true ? 0 : +arguments",
+        "+(true ? 0 : +arguments)",
+        "arguments == ({} || +arguments)",
+        "arguments == (true ? {} : +arguments)",
+    ] {
+        let source = format!("{expression}; require('@acme/grounded');");
+        let payload = parse_payload(SourceKind::CommonJs, source.as_bytes())?;
+        assert_eq!(payload.uses.len(), 1, "wrong attribution for {expression}");
+        assert_eq!(payload.uses[0].specifier, "@acme/grounded");
+        assert!(
+            !payload
+                .limitation_details
+                .iter()
+                .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE),
+            "unreachable logical RHS became opaque: {expression}",
+        );
+    }
+    for rhs in [
+        "null",
+        "false",
+        "0",
+        "1n",
+        "'value'",
+        "`value`",
+        "void 0",
+        "(1 + 2)",
+        "(condition ? 1 : 2)",
+        "(1, 2)",
+        "(true && 1)",
+        "(target = 1)",
+        "target++",
+    ] {
+        let source =
+            format!("try {{ arguments instanceof {rhs}; }} catch {{}} require('@acme/grounded');");
+        let payload = parse_payload(SourceKind::CommonJs, source.as_bytes())?;
+        assert_eq!(payload.uses.len(), 1, "wrong attribution for RHS {rhs}");
+        assert_eq!(payload.uses[0].specifier, "@acme/grounded");
+        assert!(
+            !payload
+                .limitation_details
+                .iter()
+                .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE),
+            "primitive instanceof RHS became opaque: {rhs}",
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn jsx_arguments_escape_after_attributes_and_children_are_evaluated()
 -> Result<(), Box<dyn std::error::Error>> {
     let payload = parse_payload_with_module_format(
