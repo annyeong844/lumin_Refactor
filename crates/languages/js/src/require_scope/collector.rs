@@ -858,8 +858,12 @@ impl<'a> Visit<'a> for RequireScopeCollector {
         if !expression.optional && expression.callee.is_specific_id("eval") {
             self.record_eval_call(self.expression_mutation_timing(expression.span.end));
         }
+        let mutation_timing = self.expression_mutation_timing(expression.span.end);
+        if mapped_arguments::callee_invokes_arguments_receiver(&expression.callee) {
+            self.record_arguments_escape(mutation_timing);
+        }
         let previous_escape = self.arguments_escape_timing;
-        self.arguments_escape_timing = Some(self.expression_mutation_timing(expression.span.end));
+        self.arguments_escape_timing = Some(mutation_timing);
         walk::walk_call_expression(self, expression);
         self.arguments_escape_timing = previous_escape;
     }

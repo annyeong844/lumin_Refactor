@@ -1,5 +1,5 @@
 use oxc_ast::ast::{
-    ComputedMemberExpression, JSXMemberExpressionObject, SimpleAssignmentTarget,
+    ComputedMemberExpression, Expression, JSXMemberExpressionObject, SimpleAssignmentTarget,
     StaticMemberExpression,
 };
 
@@ -77,6 +77,18 @@ pub(super) fn static_object_span(expression: &StaticMemberExpression<'_>) -> Opt
         .without_parentheses()
         .get_identifier_reference()?;
     (identifier.name == "arguments").then_some((identifier.span.start, identifier.span.end))
+}
+
+pub(super) fn callee_invokes_arguments_receiver(callee: &Expression<'_>) -> bool {
+    callee
+        .get_member_expr()
+        .and_then(|member| {
+            member
+                .object()
+                .without_parentheses()
+                .get_identifier_reference()
+        })
+        .is_some_and(|identifier| identifier.name == "arguments")
 }
 
 pub(super) fn jsx_member_object_span(

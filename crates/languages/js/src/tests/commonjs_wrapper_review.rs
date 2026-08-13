@@ -30,6 +30,51 @@ fn escaped_mapped_arguments_mutate_only_after_the_escape_executes()
 }
 
 #[test]
+fn mapped_arguments_method_calls_escape_after_call_arguments_are_evaluated()
+-> Result<(), Box<dyn std::error::Error>> {
+    let payload = parse_payload(
+        SourceKind::CommonJs,
+        concat!(
+            "require('@acme/before');\n",
+            "arguments.poison = function () { this[1] = customLoader; };\n",
+            "arguments.poison(require('@acme/during-call'));\n",
+            "require('@acme/after');\n",
+        )
+        .as_bytes(),
+    )?;
+    let specifiers = payload
+        .uses
+        .iter()
+        .map(|source_use| source_use.specifier.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(specifiers, ["@acme/before", "@acme/during-call"]);
+    assert!(
+        payload
+            .limitation_details
+            .iter()
+            .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE)
+    );
+
+    let property_lookup = parse_payload(
+        SourceKind::CommonJs,
+        b"const poison = arguments.poison; require('@acme/after-property-lookup');",
+    )?;
+    assert_eq!(property_lookup.uses.len(), 1);
+    assert_eq!(
+        property_lookup.uses[0].specifier,
+        "@acme/after-property-lookup"
+    );
+    assert!(
+        !property_lookup
+            .limitation_details
+            .iter()
+            .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE)
+    );
+
+    Ok(())
+}
+
+#[test]
 fn tagged_template_arguments_escape_after_substitutions_are_evaluated()
 -> Result<(), Box<dyn std::error::Error>> {
     let payload = parse_payload(
