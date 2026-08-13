@@ -332,7 +332,11 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("vue-entry", &[inv!("vue_public", "vue_entry_resolves_and_graph_completes")]),
     row_sd!("vue-inline-script-setup", &[inv!("vue_public", "vue_inline_script_setup_binds_template_components")]),
     row_sd!("vue-external-script", &[inv!("vue_public", "vue_external_script_attach_and_mode_conflict")]),
-    row_sd!("vue-resolution-override"),
+    row_sd!("vue-resolution-override", &[
+        inv!("vue_resolution_override", "vue_embedded_scripts_follow_invocation_extension_rules_without_a_template_lane"),
+        inv!("vue_resolution_override", "external_vue_template_binding_uses_attached_script_facts"),
+        inv!("vue_resolution_override", "vue_resolution_profile_changes_sealed_analysis_input_identity"),
+    ]),
     row_sd!("vue-missing-target", &[inv!("vue_public", "vue_missing_target_is_scoped_without_aborting_graph")]),
     row_sd!("vue-non-source-asset", &[inv!("vue_public", "vue_non_source_asset_does_not_probe_declarations")]),
     row_sd!("sfc-dialect-boundary", &[inv!("vue_public", "sfc_dialect_boundary_vue_complete_svelte_astro_unavailable")]),

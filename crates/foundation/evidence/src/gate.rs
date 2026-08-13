@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use lumin_model::{
     AnalysisInputId, DeltaDimensionChange, DeltaFactFamily, GateDeltaClassification,
     GateDeltaRecord, GateId, OperationId, PhysicalFileIdentity, ResolutionProfile,
-    append_length_prefixed, classify_lifecycle_deltas, digest_hex,
+    ResolutionProfileSource, SelectedResolutionProfile, append_length_prefixed,
+    classify_lifecycle_deltas, digest_hex,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -557,6 +558,7 @@ pub fn seal_analysis_snapshot(
     let mut framed = Vec::new();
     // Frame scan invocation tier using canonical append_semantic_framing
     scan_invocation.append_semantic_framing(&mut framed);
+    append_effective_resolution_profiles(&mut framed, &evidence.resolution_profiles);
     // Frame entry selections (including unavailable ones)
     framed.extend_from_slice(&(entry_selections.len() as u64).to_be_bytes());
     for entry in &entry_selections {
@@ -617,6 +619,35 @@ pub fn seal_analysis_snapshot(
         scan_invocation,
         entry_selections,
         evidence,
+    }
+}
+
+fn append_effective_resolution_profiles(
+    output: &mut Vec<u8>,
+    profiles: &[SelectedResolutionProfile],
+) {
+    append_length_prefixed(output, b"effective-resolution-profiles.v1");
+    let mut records = profiles
+        .iter()
+        .map(|selected| {
+            let mut record = Vec::new();
+            append_length_prefixed(&mut record, selected.source_id.as_str().as_bytes());
+            append_length_prefixed(&mut record, selected.profile.as_str().as_bytes());
+            match &selected.source {
+                ResolutionProfileSource::Invocation => record.push(1),
+                ResolutionProfileSource::Config { path_canonical, .. } => {
+                    record.push(2);
+                    append_length_prefixed(&mut record, path_canonical);
+                }
+                ResolutionProfileSource::ProductDefault => record.push(3),
+            }
+            record
+        })
+        .collect::<Vec<_>>();
+    records.sort();
+    output.extend_from_slice(&(records.len() as u64).to_be_bytes());
+    for record in records {
+        append_length_prefixed(output, &record);
     }
 }
 
@@ -1119,6 +1150,52 @@ mod tests {
         assert_ne!(
             without_invocation.analysis_input_id, with_includes.analysis_input_id,
             "scan invocation tier includes must affect the analysis input ID"
+        );
+    }
+
+    #[test]
+    fn effective_resolution_profiles_change_analysis_input_id_in_canonical_order() {
+        let evidence = RunEvidence {
+            schema_version: "lumin-evidence.v1".to_owned(),
+            capabilities: Vec::new(),
+            resolution_profiles: Vec::new(),
+            source_classifications: Vec::new(),
+            source_contexts: Vec::new(),
+            source_observations: Vec::new(),
+            resolutions: Vec::new(),
+            metrics: Default::default(),
+            findings: Vec::new(),
+            limitations: Vec::new(),
+        };
+        let profile = |source: &str, profile| SelectedResolutionProfile {
+            source_id: lumin_model::LogicalSourceId::from_string(source.to_owned()),
+            profile,
+            source: ResolutionProfileSource::ProductDefault,
+        };
+        let node = profile("source-a", ResolutionProfile::Node16);
+        let bundler = profile("source-a", ResolutionProfile::Bundler);
+        let other = profile("source-b", ResolutionProfile::NodeNext);
+        let seal = |profiles| {
+            let mut evidence = evidence.clone();
+            evidence.resolution_profiles = profiles;
+            seal_analysis_snapshot(
+                Vec::new(),
+                evidence,
+                ScanInvocationTier::default(),
+                Vec::new(),
+            )
+        };
+
+        let node_first = seal(vec![node.clone(), other.clone()]);
+        let node_reordered = seal(vec![other.clone(), node]);
+        let bundler_first = seal(vec![bundler, other]);
+        assert_eq!(
+            node_first.analysis_input_id, node_reordered.analysis_input_id,
+            "effective profile record ordering changed AnalysisInputId",
+        );
+        assert_ne!(
+            node_first.analysis_input_id, bundler_first.analysis_input_id,
+            "effective importer profile records did not participate in AnalysisInputId",
         );
     }
 
