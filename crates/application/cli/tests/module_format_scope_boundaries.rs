@@ -36,6 +36,10 @@ const SHADOWED_ARGUMENTS_SOURCE: &str = concat!(
     "arguments[1] = customLoader;\n",
     "require('@scope/dep/shadowed-arguments');\n",
 );
+const COMPUTED_MODULE_SOURCE: &str = concat!(
+    "const key = 'exports';\n",
+    "module[key] = { publicValue: 1 };\n",
+);
 
 #[test]
 fn commonjs_wrapper_mutations_preserve_only_grounded_public_edges()
@@ -124,7 +128,7 @@ fn commonjs_wrapper_mutations_preserve_only_grounded_public_edges()
         })
         .collect::<Result<Vec<_>, _>>()?;
     details.sort_unstable();
-    let mut expected = vec![COMMONJS_EXPORT_LOWERING_UNSUPPORTED; 5];
+    let mut expected = vec![COMMONJS_EXPORT_LOWERING_UNSUPPORTED; 6];
     expected.extend([REQUIRE_ATTRIBUTION_OPAQUE; 3]);
     expected.sort_unstable();
     assert_eq!(details, expected);
@@ -150,6 +154,11 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         root.path(),
         "src/shadowed-arguments.cjs",
         SHADOWED_ARGUMENTS_SOURCE,
+    )?;
+    write(
+        root.path(),
+        "src/computed-module.ts",
+        COMPUTED_MODULE_SOURCE,
     )?;
     write(
         root.path(),

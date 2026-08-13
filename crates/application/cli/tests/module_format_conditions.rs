@@ -608,6 +608,12 @@ fn verify_exported_static_identities() -> Result<(), Box<dyn std::error::Error>>
         "apps/consumer/main.ts",
         "exportedEquals",
     )?;
+    assert_not_dead_export(
+        root.path(),
+        &run_id,
+        "packages/lib/identity-require.ts",
+        "required",
+    )?;
     assert_dead_export(
         root.path(),
         &run_id,
@@ -737,6 +743,7 @@ fn exported_static_identity_fixture() -> Result<tempfile::TempDir, Box<dyn std::
         "apps/consumer/main.ts",
         concat!(
             "export import exportedEquals = require('@acme/lib/identity');\n",
+            "console.log(exportedEquals.required);\n",
             "export * as namespaceExport from '@acme/lib/namespace';\n",
             "export * as relativeNamespace from './relative-target.js';\n",
         ),
@@ -820,6 +827,30 @@ fn assert_dead_export(
                 && item.get("namespace").and_then(Value::as_str) == Some("value")
         }),
         "missing grounded dead-export evidence for {path}:{exported_name}: {response}"
+    );
+    Ok(())
+}
+
+fn assert_not_dead_export(
+    root: &Path,
+    run_id: &str,
+    path: &str,
+    exported_name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let output = run(root, &["findings", "--run", run_id, "--area", "dead-code"])?;
+    assert_status(&output, 0);
+    let response: Value = serde_json::from_str(&output.stdout)?;
+    let items = response
+        .get("items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("dead-code findings are missing"))?;
+    assert!(
+        items.iter().all(|item| {
+            item.pointer("/path/display").and_then(Value::as_str) != Some(path)
+                || item.get("exportedName").and_then(Value::as_str) != Some(exported_name)
+                || item.get("namespace").and_then(Value::as_str) != Some("value")
+        }),
+        "local import-equals use was reported dead for {path}:{exported_name}: {response}"
     );
     Ok(())
 }

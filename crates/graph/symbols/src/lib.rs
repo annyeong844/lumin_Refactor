@@ -5,7 +5,7 @@ use lumin_model::{
     ResolutionOutcome, ResolvedSourceUse, SourceRoles, SourceSnapshot, SourceSpan, SymbolNamespace,
 };
 
-pub const SYMBOL_GRAPH_SEMANTICS_VERSION: &str = "symbol-graph-semantics.v1";
+pub const SYMBOL_GRAPH_SEMANTICS_VERSION: &str = "symbol-graph-semantics.v2";
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ExportIdentity {
@@ -159,7 +159,8 @@ pub fn build(
                     .into_iter()
                     .flatten()
                     .filter(|export| {
-                        export.namespace == resolved.source_use.namespace
+                        resolved.source_use.local_name.is_none()
+                            && export.namespace == resolved.source_use.namespace
                             && export.span == resolved.source_use.span
                     })
                     .map(|export| NamespaceReExportEdge {
@@ -612,7 +613,7 @@ mod tests {
     }
 
     #[test]
-    fn namespace_re_export_propagates_only_after_its_alias_becomes_live()
+    fn namespace_re_export_defers_only_when_it_has_no_local_binding()
     -> Result<(), Box<dyn std::error::Error>> {
         let target_source = make_source("src/target.ts", false)?;
         let barrel_source = make_source("src/barrel.ts", false)?;
@@ -704,6 +705,13 @@ mod tests {
         );
         assert!(dead_alias.exports.iter().all(|(identity, export)| {
             identity.source_id != target_source.id || export.production_broad_fan_in == 0
+        }));
+
+        let mut local_namespace_resolution = namespace_resolution.clone();
+        local_namespace_resolution.source_use.local_name = Some("namespace".to_owned());
+        let local_binding = build(&sources, &facts, &[local_namespace_resolution], &[]);
+        assert!(local_binding.exports.iter().all(|(identity, export)| {
+            identity.source_id != target_source.id || export.production_broad_fan_in == 1
         }));
 
         let live_alias = build(

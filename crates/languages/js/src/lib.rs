@@ -19,7 +19,7 @@ mod require_scope;
 
 use require_scope::RequireScopeTracker;
 
-pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v1";
+pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v2";
 
 const REQUIRE_ATTRIBUTION_OPAQUE: &str = "shadowed, mutated, dynamically resolved, or escaped require makes CommonJS module-use attribution opaque";
 const MODULE_REQUIRE_ATTRIBUTION_OPAQUE: &str =
@@ -661,8 +661,9 @@ impl<'a> Visit<'a> for DynamicUseDetector {
         {
             self.module_member_object_references
                 .insert((identifier.span.start, identifier.span.end));
+            let property_name = expression.static_property_name();
             if self.commonjs_wrapper_exports_possible
-                && expression.static_property_name() == Some("exports")
+                && matches!(property_name, Some("exports") | None)
                 && self.require_scopes.module_may_be_wrapper()
             {
                 self.commonjs_export_syntax_observed = true;
