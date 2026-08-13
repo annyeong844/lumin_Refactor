@@ -51,9 +51,9 @@ use lumin_resolve::{ConfigDemand, ResolverError, ResolverOutput};
 use lumin_store::{PublishedRun, RepositoryStore, RunCatalogRecord, StoreError};
 use thiserror::Error;
 
-use extraction::extract_facts;
 #[cfg(test)]
 use extraction::reduce_file_facts;
+use extraction::{ExtractionOutput, extract_facts};
 
 pub fn lower_native_repo_path(
     value: &OsStr,
@@ -119,6 +119,14 @@ pub enum EngineError {
     Sfc(#[from] lumin_sfc::SfcError),
     #[error("resolver requested semantic inputs that were already captured: {0}")]
     ResolverDemandStalled(String),
+    #[error("analysis extraction is unavailable after resolution completed")]
+    ExtractionUnavailable,
+    #[error("JS extraction omitted the requested module-format product: {0}")]
+    ExtractionProductMissing(String),
+    #[error("resolution discovered profile-sensitive inputs after extraction: {0}")]
+    LateExtractionProfileDemand(String),
+    #[error("JS parse-product count overflowed during extraction")]
+    ExtractionMetricOverflow,
     #[error("pre-write requires at least one declared path")]
     NoDeclaredPaths,
     #[error("tier projection corrupt: {0}")]
@@ -285,9 +293,9 @@ struct RepositoryCapture {
 struct RepositoryAnalysisSession {
     repository_root: RepositoryRootIdentity,
     inventory: InventorySnapshot,
-    facts: Vec<FileFacts>,
-    sfc_states: BTreeMap<SfcDialect, CapabilityState>,
+    extraction: Option<ExtractionOutput>,
     js_parse_product_count: usize,
+    jobs: usize,
     scan_invocation: ScanInvocationTier,
 }
 
@@ -366,26 +374,61 @@ impl RepositoryAnalysisSession {
         if jobs == 0 {
             return Err(EngineError::InvalidWorkerCount(0));
         }
-        let inventory = lumin_inventory::scan(root, request)?;
-        let extraction = extract_facts(&inventory.sources, jobs)?;
         Ok(Self {
             repository_root,
-            inventory,
-            facts: extraction.facts,
-            sfc_states: extraction.sfc_states,
-            js_parse_product_count: extraction.js_parse_product_count,
+            inventory: lumin_inventory::scan(root, request)?,
+            extraction: None,
+            js_parse_product_count: 0,
+            jobs,
             scan_invocation,
         })
     }
 
     fn next_step(
-        &self,
+        &mut self,
         resolution_profile: Option<ResolutionProfile>,
     ) -> Result<RepositoryAnalysisStep, EngineError> {
+        let profile_selection = lumin_resolve::select_resolution_profiles(
+            &self.inventory.sources,
+            &self.inventory.config,
+            &self.repository_root,
+            resolution_profile,
+        )?;
+        if !profile_selection.demands.is_empty() {
+            if self.extraction.is_some() {
+                let paths = profile_selection
+                    .demands
+                    .iter()
+                    .map(|demand| demand.path.display_escaped())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(EngineError::LateExtractionProfileDemand(paths));
+            }
+            return self
+                .pending_demands(profile_selection.demands)
+                .map(RepositoryAnalysisStep::NeedsInputs);
+        }
+        if self.extraction.is_none() {
+            let extraction = extract_facts(
+                &self.inventory.sources,
+                &self.inventory.config,
+                &profile_selection.profiles,
+                self.jobs,
+            )?;
+            self.js_parse_product_count = self
+                .js_parse_product_count
+                .checked_add(extraction.js_parse_product_count)
+                .ok_or(EngineError::ExtractionMetricOverflow)?;
+            self.extraction = Some(extraction);
+        }
+        let extraction = self
+            .extraction
+            .as_ref()
+            .ok_or(EngineError::ExtractionUnavailable)?;
         let output = lumin_resolve::resolve_all(
             &self.inventory.sources,
             &self.inventory.physical_path_redirects,
-            &self.facts,
+            &extraction.facts,
             &self.inventory.config,
             &self.repository_root,
             resolution_profile,
@@ -393,29 +436,35 @@ impl RepositoryAnalysisSession {
         if output.demands.is_empty() {
             Ok(RepositoryAnalysisStep::Finished(output))
         } else {
-            let requested = output
-                .demands
-                .iter()
-                .map(|demand| demand.path.display_escaped())
-                .collect::<Vec<_>>();
-            let mut demands = output
-                .demands
-                .into_iter()
-                .filter(|demand| {
-                    !self
-                        .inventory
-                        .config
-                        .observations
-                        .contains_key(&demand.path)
-                })
-                .collect::<Vec<_>>();
-            demands.sort();
-            demands.dedup();
-            if demands.is_empty() {
-                return Err(EngineError::ResolverDemandStalled(requested.join(", ")));
-            }
-            Ok(RepositoryAnalysisStep::NeedsInputs(demands))
+            self.pending_demands(output.demands)
+                .map(RepositoryAnalysisStep::NeedsInputs)
         }
+    }
+
+    fn pending_demands(
+        &self,
+        demands: Vec<ConfigDemand>,
+    ) -> Result<Vec<ConfigDemand>, EngineError> {
+        let requested = demands
+            .iter()
+            .map(|demand| demand.path.display_escaped())
+            .collect::<Vec<_>>();
+        let mut pending = demands
+            .into_iter()
+            .filter(|demand| {
+                !self
+                    .inventory
+                    .config
+                    .observations
+                    .contains_key(&demand.path)
+            })
+            .collect::<Vec<_>>();
+        pending.sort();
+        pending.dedup();
+        if pending.is_empty() {
+            return Err(EngineError::ResolverDemandStalled(requested.join(", ")));
+        }
+        Ok(pending)
     }
 
     fn capture_demands(
@@ -423,20 +472,15 @@ impl RepositoryAnalysisSession {
         root: &Path,
         demands: Vec<ConfigDemand>,
     ) -> Result<(), EngineError> {
-        for demand in demands {
-            let capture = lumin_inventory::capture_config(root, &demand.path, demand.syntax)?;
-            if let Some(limitation) = capture.limitation {
-                self.inventory.limitations.push(limitation);
-            }
-            self.inventory
-                .config
-                .observations
-                .insert(demand.path, capture.observation);
-        }
+        capture_config_demands(root, &mut self.inventory, demands)?;
         Ok(())
     }
 
     fn finish(mut self, resolver: ResolverOutput) -> Result<RepositoryCapture, EngineError> {
+        let extraction = self
+            .extraction
+            .take()
+            .ok_or(EngineError::ExtractionUnavailable)?;
         let ResolverOutput {
             resolved,
             package_surfaces,
@@ -446,14 +490,14 @@ impl RepositoryAnalysisSession {
         } = resolver;
         let limitations = collect_limitations(
             &mut self.inventory.limitations,
-            &self.facts,
+            &extraction.facts,
             resolver_limitations,
         );
 
         let source_adjacency = source_adjacency(&self.inventory.sources, &resolved);
         let graph = lumin_graph::build(
             &self.inventory.sources,
-            &self.facts,
+            &extraction.facts,
             &resolved,
             &package_surfaces,
         );
@@ -472,7 +516,7 @@ impl RepositoryAnalysisSession {
             capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
             state,
         }];
-        capabilities.extend(sfc_capability_records(&self.sfc_states));
+        capabilities.extend(sfc_capability_records(&extraction.sfc_states));
         let source_classifications = self
             .inventory
             .sources
@@ -567,6 +611,37 @@ impl RepositoryAnalysisSession {
             source_adjacency,
         })
     }
+}
+
+fn capture_config_demands(
+    root: &Path,
+    inventory: &mut InventorySnapshot,
+    demands: Vec<ConfigDemand>,
+) -> Result<(), EngineError> {
+    let requested = demands
+        .iter()
+        .map(|demand| demand.path.display_escaped())
+        .collect::<Vec<_>>();
+    let mut uncaptured = demands
+        .into_iter()
+        .filter(|demand| !inventory.config.observations.contains_key(&demand.path))
+        .collect::<Vec<_>>();
+    uncaptured.sort();
+    uncaptured.dedup();
+    if uncaptured.is_empty() {
+        return Err(EngineError::ResolverDemandStalled(requested.join(", ")));
+    }
+    for demand in uncaptured {
+        let capture = lumin_inventory::capture_config(root, &demand.path, demand.syntax)?;
+        if let Some(limitation) = capture.limitation {
+            inventory.limitations.push(limitation);
+        }
+        inventory
+            .config
+            .observations
+            .insert(demand.path, capture.observation);
+    }
+    Ok(())
 }
 
 fn semantic_input_records(inventory: &InventorySnapshot) -> Vec<SemanticInputRecord> {

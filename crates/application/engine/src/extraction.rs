@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use lumin_model::{
-    CapabilityState, FileFacts, PayloadSnapshotId, SfcDialect, SourceKind, SourceSnapshot,
-    SourceUnitId,
+    CapabilityState, FileFacts, PayloadSnapshotId, ResolutionProfile, SelectedResolutionProfile,
+    SemanticConfigSnapshot, SfcDialect, SourceKind, SourceSnapshot, SourceUnitId,
 };
 use rayon::prelude::*;
 
@@ -19,6 +19,8 @@ pub(super) struct ExtractionOutput {
 
 pub(super) fn extract_facts(
     sources: &[SourceSnapshot],
+    config: &SemanticConfigSnapshot,
+    selected_profiles: &[SelectedResolutionProfile],
     jobs: usize,
 ) -> Result<ExtractionOutput, EngineError> {
     let pool = rayon::ThreadPoolBuilder::new()
@@ -28,31 +30,44 @@ pub(super) fn extract_facts(
         .build()
         .map_err(|error| EngineError::Scheduler(error.to_string()))?;
     let source_index = lumin_sfc::source_index(sources);
+    let profiles = selected_profiles
+        .iter()
+        .map(|selected| (selected.source_id.clone(), selected.profile))
+        .collect::<BTreeMap<_, _>>();
     pool.install(|| {
-        let (physical_facts, physical_parse_product_count) = extract_physical_js(sources)?;
+        let (physical_facts, physical_parse_product_count) =
+            extract_physical_js(sources, config, &profiles)?;
 
         let mut decompositions = sources
             .par_iter()
             .filter(|source| !source.kind.is_js_family())
-            .map(|source| lumin_sfc::decompose(source, &source_index))
+            .map(|source| {
+                lumin_sfc::decompose(source, &source_index).map(|decomposition| {
+                    (
+                        decomposition,
+                        source_module_format(source, config, &profiles),
+                    )
+                })
+            })
             .collect::<Result<Vec<_>, _>>()?;
-        decompositions.sort_by(|left, right| left.source_id.cmp(&right.source_id));
+        decompositions.sort_by(|left, right| left.0.source_id.cmp(&right.0.source_id));
 
         let embedded_parse_product_count = decompositions
             .iter()
-            .map(|decomposition| decomposition.inline_scripts.len())
+            .map(|(decomposition, _module_format)| decomposition.inline_scripts.len())
             .sum::<usize>();
         let mut embedded_by_parent = BTreeMap::<_, Vec<FileFacts>>::new();
         let mut embedded = decompositions
             .par_iter()
-            .flat_map_iter(|decomposition| {
+            .flat_map_iter(|(decomposition, module_format)| {
                 decomposition
                     .inline_scripts
                     .iter()
-                    .map(move |unit| (&decomposition.source_id, unit))
+                    .map(move |unit| (&decomposition.source_id, unit, *module_format))
             })
-            .map(|(parent, unit)| {
-                lumin_js::extract_embedded(unit).map(|facts| (parent.clone(), facts))
+            .map(|(parent, unit, module_format)| {
+                lumin_js::extract_embedded_with_module_format(unit, module_format)
+                    .map(|facts| (parent.clone(), facts))
             })
             .collect::<Result<Vec<_>, _>>()?;
         embedded.sort_by(|left, right| {
@@ -69,7 +84,7 @@ pub(super) fn extract_facts(
             sfc_states.insert(dialect, initial_state);
         }
         let mut sfc_facts = Vec::new();
-        for decomposition in decompositions {
+        for (decomposition, _module_format) in decompositions {
             let parent = decomposition.source_id.clone();
             let analysis = lumin_sfc::finalize(
                 decomposition,
@@ -93,18 +108,32 @@ pub(super) fn extract_facts(
     })
 }
 
-type PayloadGroup<'a> = (SourceKind, Arc<[u8]>, Vec<&'a SourceSnapshot>);
+type PayloadGroup<'a> = (
+    SourceKind,
+    Arc<[u8]>,
+    BTreeMap<lumin_js::JsModuleFormat, Vec<&'a SourceSnapshot>>,
+);
 
 fn extract_physical_js(
     sources: &[SourceSnapshot],
-) -> Result<(Vec<FileFacts>, usize), lumin_js::JsExtractError> {
-    let mut grouped =
-        BTreeMap::<(PayloadSnapshotId, SourceKind), (Arc<[u8]>, Vec<&SourceSnapshot>)>::new();
+    config: &SemanticConfigSnapshot,
+    profiles: &BTreeMap<lumin_model::LogicalSourceId, ResolutionProfile>,
+) -> Result<(Vec<FileFacts>, usize), EngineError> {
+    let mut grouped = BTreeMap::<
+        (PayloadSnapshotId, SourceKind),
+        (
+            Arc<[u8]>,
+            BTreeMap<lumin_js::JsModuleFormat, Vec<&SourceSnapshot>>,
+        ),
+    >::new();
     for source in sources.iter().filter(|source| source.kind.is_js_family()) {
+        let module_format = source_module_format(source, config, profiles);
         grouped
             .entry((source.payload_snapshot_id.clone(), source.kind))
-            .or_insert_with(|| (Arc::clone(&source.bytes), Vec::new()))
+            .or_insert_with(|| (Arc::clone(&source.bytes), BTreeMap::new()))
             .1
+            .entry(module_format)
+            .or_default()
             .push(source);
     }
     let parse_product_count = grouped.len();
@@ -114,24 +143,66 @@ fn extract_physical_js(
         .collect::<Vec<PayloadGroup<'_>>>();
     let facts = groups
         .into_par_iter()
-        .map(|(kind, bytes, sources)| {
-            let payload = lumin_js::parse_payload(kind, &bytes)?;
-            Ok(sources
+        .map(|(kind, bytes, sources_by_format)| {
+            let formats = sources_by_format.keys().copied().collect::<Vec<_>>();
+            let mut payloads = lumin_js::parse_payload_with_module_formats(kind, &bytes, &formats)?
                 .into_iter()
-                .map(|source| {
-                    lumin_js::bind_payload(
+                .collect::<BTreeMap<_, _>>();
+            let mut facts = Vec::new();
+            for (format, sources) in sources_by_format {
+                let payload = payloads.remove(&format).ok_or_else(|| {
+                    EngineError::ExtractionProductMissing(format!("{kind:?}/{format:?}"))
+                })?;
+                for source in sources {
+                    facts.push(lumin_js::bind_payload(
                         &payload,
                         &source.id,
                         SourceUnitId::Logical(source.id.clone()),
-                    )
-                })
-                .collect::<Vec<_>>())
+                    ));
+                }
+            }
+            Ok(facts)
         })
-        .collect::<Result<Vec<_>, lumin_js::JsExtractError>>()?
+        .collect::<Result<Vec<_>, EngineError>>()?
         .into_iter()
         .flatten()
         .collect();
     Ok((reduce_file_facts(facts), parse_product_count))
+}
+
+fn source_module_format(
+    source: &SourceSnapshot,
+    config: &SemanticConfigSnapshot,
+    profiles: &BTreeMap<lumin_model::LogicalSourceId, ResolutionProfile>,
+) -> lumin_js::JsModuleFormat {
+    let extension_defines_format = matches!(
+        source.kind,
+        SourceKind::CommonJs
+            | SourceKind::Cts
+            | SourceKind::DeclarationCts
+            | SourceKind::Mjs
+            | SourceKind::Mts
+            | SourceKind::DeclarationMts
+    );
+    let profile = profiles.get(&source.id).copied();
+    let node_profile_defines_package_format = matches!(
+        profile,
+        Some(ResolutionProfile::Node | ResolutionProfile::Node16 | ResolutionProfile::NodeNext)
+    );
+    if !extension_defines_format && !node_profile_defines_package_format {
+        return lumin_js::JsModuleFormat::Unknown;
+    }
+    if !extension_defines_format && profile == Some(ResolutionProfile::Node) {
+        return lumin_js::JsModuleFormat::CommonJs;
+    }
+    match lumin_resolve::classify_importer_format(source, config) {
+        lumin_resolve::ImporterFormatClassification::CommonJs => lumin_js::JsModuleFormat::CommonJs,
+        lumin_resolve::ImporterFormatClassification::EsModule => lumin_js::JsModuleFormat::EsModule,
+        lumin_resolve::ImporterFormatClassification::Unavailable
+        | lumin_resolve::ImporterFormatClassification::Unsupported { .. } => {
+            lumin_js::JsModuleFormat::Unknown
+        }
+    }
 }
 
 pub(super) fn reduce_file_facts(mut facts: Vec<FileFacts>) -> Vec<FileFacts> {

@@ -16,7 +16,10 @@ fn declaration_facts_satisfy_type_space_only() -> Result<(), Box<dyn std::error:
     write(
         root.path(),
         "src/types.d.ts",
-        "export type TypeOnly = string; export declare const RuntimeOnly: number;\n",
+        concat!(
+            "export type TypeOnly = string; export declare const RuntimeOnly: number;\n",
+            "export import SelfTypes = require('./types.js');\n",
+        ),
     )?;
     write(
         root.path(),
@@ -58,6 +61,38 @@ fn declaration_facts_satisfy_type_space_only() -> Result<(), Box<dyn std::error:
             .as_str()
             .is_some_and(|path| !path.ends_with("types.d.ts"))
     }));
+
+    let declaration = run(root.path(), &["files", "--run", &run_id, "src/types.d.ts"])?;
+    assert_status(&declaration, 0);
+    let declaration: Value = serde_json::from_str(&declaration.stdout)?;
+    let import_equals = declaration
+        .get("resolutions")
+        .and_then(Value::as_array)
+        .and_then(|resolutions| {
+            resolutions.iter().find(|resolution| {
+                resolution
+                    .pointer("/sourceUse/specifier")
+                    .and_then(Value::as_str)
+                    == Some("./types.js")
+                    && resolution
+                        .pointer("/sourceUse/requestKind")
+                        .and_then(Value::as_str)
+                        == Some("require")
+            })
+        })
+        .ok_or_else(|| std::io::Error::other("declaration import-equals resolution is missing"))?;
+    assert_eq!(
+        import_equals
+            .pointer("/sourceUse/namespace")
+            .and_then(Value::as_str),
+        Some("type")
+    );
+    assert_eq!(
+        import_equals
+            .pointer("/outcome/kind")
+            .and_then(Value::as_str),
+        Some("internal")
+    );
 
     let findings = finding_set(root.path(), &run_id)?;
     assert_eq!(

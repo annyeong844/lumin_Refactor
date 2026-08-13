@@ -19,7 +19,22 @@ pub use generated_config_policy::{
     RESOLVER_PACKAGE_JSON_FIELDS, RESOLVER_TSCONFIG_TOP_LEVEL,
 };
 
-pub const RESOLVER_VERSION: &str = "config-package-resolution.v3";
+pub const RESOLVER_VERSION: &str = "config-package-resolution.v4";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ImporterFormatClassification {
+    CommonJs,
+    EsModule,
+    Unavailable,
+    Unsupported { path: String, detail: String },
+}
+
+pub fn classify_importer_format(
+    source: &SourceSnapshot,
+    config: &SemanticConfigSnapshot,
+) -> ImporterFormatClassification {
+    config::classify_importer_format(source, config)
+}
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ConfigDemand {
@@ -36,12 +51,31 @@ pub struct ResolverOutput {
     pub demands: Vec<ConfigDemand>,
 }
 
+#[derive(Clone, Debug)]
+pub struct ResolutionProfileSelection {
+    pub profiles: Vec<SelectedResolutionProfile>,
+    pub demands: Vec<ConfigDemand>,
+}
+
 #[derive(Debug, Error)]
 pub enum ResolverError {
     #[error("resolver generated policy is invalid: {0}")]
     Policy(String),
     #[error("resolver configuration is invalid: {0}")]
     Configuration(String),
+}
+
+pub fn select_resolution_profiles(
+    sources: &[SourceSnapshot],
+    semantic_config: &SemanticConfigSnapshot,
+    repository_root: &RepositoryRootIdentity,
+    override_profile: Option<ResolutionProfile>,
+) -> Result<ResolutionProfileSelection, ResolverError> {
+    let selection = config::select(sources, semantic_config, repository_root, override_profile)?;
+    Ok(ResolutionProfileSelection {
+        profiles: selection.profiles,
+        demands: selection.demands,
+    })
 }
 
 pub fn resolve_all(
@@ -174,10 +208,13 @@ fn collect_relative_directory_demands(
         let Some(settings) = settings_by_source.get(&file.source_id) else {
             continue;
         };
-        if settings.blocked || !settings.allow_extensionless {
+        if settings.blocked {
             continue;
         }
         for source_use in &file.uses {
+            if !settings.allows_extensionless_for(source_use.request_kind) {
+                continue;
+            }
             let specifier = source_use.specifier.as_str();
             if !specifier.starts_with("./") && !specifier.starts_with("../") {
                 continue;
@@ -301,7 +338,11 @@ fn resolve_bare_specifier(
     if let Some(base_url) = &settings.base_url
         && let Some(base) = config::normalize_from(base_url, specifier)
     {
-        let candidates = candidates(&base, source_use.namespace, settings.allow_extensionless);
+        let candidates = candidates(
+            &base,
+            source_use.namespace,
+            settings.allows_extensionless_for(source_use.request_kind),
+        );
         if let Some(target) = candidates.iter().find_map(|path| sources.get(path)) {
             return (
                 ResolutionOutcome::Internal {
@@ -351,7 +392,8 @@ fn resolve_relative_specifier(
             |source_id, detail| Limitation::AliasShapeUnsupported { source_id, detail },
         );
     };
-    if !settings.allow_extensionless
+    let allow_extensionless = settings.allows_extensionless_for(source_use.request_kind);
+    if !allow_extensionless
         && base
             .file_name_portable()
             .is_some_and(|name| !name.contains('.'))
@@ -359,13 +401,13 @@ fn resolve_relative_specifier(
         return unsupported_with_limitation(
             source_use,
             format!(
-                "{} ESM resolution requires an explicit relative extension",
+                "{} import-mode resolution requires an explicit relative extension",
                 settings.profile.as_str()
             ),
             |source_id, detail| Limitation::AliasShapeUnsupported { source_id, detail },
         );
     }
-    let candidates = candidates(&base, source_use.namespace, settings.allow_extensionless);
+    let candidates = candidates(&base, source_use.namespace, allow_extensionless);
     for candidate in &candidates {
         if let Some(target) = sources.get(candidate) {
             return (
@@ -392,7 +434,7 @@ fn resolve_relative_specifier(
         .iter()
         .map(RepoPath::display_escaped)
         .collect::<Vec<_>>();
-    if settings.allow_extensionless
+    if allow_extensionless
         && base
             .file_name_portable()
             .is_some_and(|name| !name.contains('.'))
@@ -571,7 +613,11 @@ fn resolve_paths(
                 "paths mapping for {specifier} escapes the canonical repository root"
             ));
         };
-        for candidate in candidates(&base, source_use.namespace, settings.allow_extensionless) {
+        for candidate in candidates(
+            &base,
+            source_use.namespace,
+            settings.allows_extensionless_for(source_use.request_kind),
+        ) {
             if let Some(target) = sources.get(&candidate) {
                 return Ok(Some(ResolutionOutcome::Internal {
                     target: target.clone(),
@@ -665,7 +711,6 @@ mod tests {
         let config = SemanticConfigSnapshot::default();
         let settings = config::ImporterSettings {
             profile: ResolutionProfile::Bundler,
-            allow_extensionless: true,
             static_condition: config::PackageConditionMode::Import,
             base_url: None,
             paths: None,

@@ -1,19 +1,18 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_model::{
-    ConfigObservation, ConfigSyntax, ConfigValue, Limitation, LogicalSourceId,
+    ConfigObservation, ConfigSyntax, ConfigValue, Limitation, LogicalSourceId, ModuleRequestKind,
     PackageIdentityState, RepoPath, RepositoryRootIdentity, ResolutionProfile,
     ResolutionProfileSource, RootedPathRelation, SelectedResolutionProfile, SemanticConfigSnapshot,
     SourceKind, SourceSnapshot,
 };
 
 use crate::generated_config_policy::{self, FieldClassification};
-use crate::{ConfigDemand, ResolverError};
+use crate::{ConfigDemand, ImporterFormatClassification, ResolverError};
 
 #[derive(Clone, Debug)]
 pub(crate) struct ImporterSettings {
     pub profile: ResolutionProfile,
-    pub allow_extensionless: bool,
     pub static_condition: PackageConditionMode,
     pub base_url: Option<RepoPath>,
     pub paths: Option<PathMappings>,
@@ -24,6 +23,32 @@ pub(crate) struct ImporterSettings {
 pub(crate) enum PackageConditionMode {
     Import,
     Require,
+}
+
+impl ImporterSettings {
+    pub(crate) fn condition_mode_for(
+        &self,
+        request_kind: ModuleRequestKind,
+    ) -> PackageConditionMode {
+        match self.profile {
+            ResolutionProfile::Bundler => PackageConditionMode::Import,
+            ResolutionProfile::Node => PackageConditionMode::Require,
+            ResolutionProfile::Node16 | ResolutionProfile::NodeNext => match request_kind {
+                ModuleRequestKind::DynamicImport => PackageConditionMode::Import,
+                ModuleRequestKind::Require => PackageConditionMode::Require,
+                ModuleRequestKind::StaticImport => self.static_condition,
+            },
+        }
+    }
+
+    pub(crate) fn allows_extensionless_for(&self, request_kind: ModuleRequestKind) -> bool {
+        match self.profile {
+            ResolutionProfile::Bundler | ResolutionProfile::Node => true,
+            ResolutionProfile::Node16 | ResolutionProfile::NodeNext => {
+                self.condition_mode_for(request_kind) == PackageConditionMode::Require
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -138,16 +163,16 @@ fn select_importer(
                 ),
             });
     }
-    let (allow_extensionless, static_condition) = match profile {
-        ResolutionProfile::Bundler => (true, PackageConditionMode::Import),
-        ResolutionProfile::Node => (true, PackageConditionMode::Require),
+    let static_condition = match profile {
+        ResolutionProfile::Bundler => PackageConditionMode::Import,
+        ResolutionProfile::Node => PackageConditionMode::Require,
         ResolutionProfile::Node16 | ResolutionProfile::NodeNext => {
             match importer_is_esm(source, config, &mut selection.limitations) {
-                Ok(true) => (false, PackageConditionMode::Import),
-                Ok(false) => (true, PackageConditionMode::Require),
+                Ok(true) => PackageConditionMode::Import,
+                Ok(false) => PackageConditionMode::Require,
                 Err(()) => {
                     blocked = true;
-                    (false, PackageConditionMode::Import)
+                    PackageConditionMode::Import
                 }
             }
         }
@@ -161,7 +186,6 @@ fn select_importer(
         source.id.clone(),
         ImporterSettings {
             profile,
-            allow_extensionless,
             static_condition,
             base_url: effective.base_url,
             paths: effective.paths,
@@ -856,38 +880,59 @@ fn importer_is_esm(
     config: &SemanticConfigSnapshot,
     limitations: &mut Vec<Limitation>,
 ) -> Result<bool, ()> {
+    match classify_importer_format(source, config) {
+        ImporterFormatClassification::EsModule => Ok(true),
+        ImporterFormatClassification::CommonJs | ImporterFormatClassification::Unavailable => {
+            Ok(false)
+        }
+        ImporterFormatClassification::Unsupported { path, detail } => {
+            limitations.push(Limitation::ImporterFormatUnsupported { path, detail });
+            Err(())
+        }
+    }
+}
+
+pub(super) fn classify_importer_format(
+    source: &SourceSnapshot,
+    config: &SemanticConfigSnapshot,
+) -> ImporterFormatClassification {
     match source.kind {
-        SourceKind::Mts | SourceKind::Mjs | SourceKind::DeclarationMts => return Ok(true),
-        SourceKind::Cts | SourceKind::CommonJs | SourceKind::DeclarationCts => return Ok(false),
+        SourceKind::Mts | SourceKind::Mjs | SourceKind::DeclarationMts => {
+            return ImporterFormatClassification::EsModule;
+        }
+        SourceKind::Cts | SourceKind::CommonJs | SourceKind::DeclarationCts => {
+            return ImporterFormatClassification::CommonJs;
+        }
         _ => {}
     }
     let Some(package_root) = config.source_packages.get(&source.id) else {
-        return Ok(false);
+        return ImporterFormatClassification::CommonJs;
     };
     let Some(package) = config
         .packages
         .iter()
         .find(|package| &package.root == package_root)
     else {
-        return Ok(false);
+        return ImporterFormatClassification::Unavailable;
     };
     let Some(ConfigObservation::Present {
         document: manifest, ..
     }) = config.observations.get(&package.manifest_path)
     else {
-        return Ok(false);
+        return ImporterFormatClassification::Unavailable;
     };
     match manifest.root.get("type") {
-        None => Ok(false),
-        Some(ConfigValue::String(value)) if value == "module" => Ok(true),
-        Some(ConfigValue::String(value)) if value == "commonjs" => Ok(false),
-        Some(_) => {
-            limitations.push(Limitation::ImporterFormatUnsupported {
-                path: package.manifest_path.display_escaped(),
-                detail: "package type must be module or commonjs for Node profiles".to_owned(),
-            });
-            Err(())
+        None => ImporterFormatClassification::CommonJs,
+        Some(ConfigValue::String(value)) if value == "module" => {
+            ImporterFormatClassification::EsModule
         }
+        Some(ConfigValue::String(value)) if value == "commonjs" => {
+            ImporterFormatClassification::CommonJs
+        }
+        Some(_) => ImporterFormatClassification::Unsupported {
+            path: package.manifest_path.display_escaped(),
+            detail: "package type must be module or commonjs for Node profiles".to_owned(),
+        },
     }
 }
 

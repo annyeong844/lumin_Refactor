@@ -335,14 +335,12 @@ fn lane_for_use(
     match settings.profile {
         ResolutionProfile::Bundler => PackageSurfaceLane::BundlerImport,
         ResolutionProfile::Node => PackageSurfaceLane::LegacyNode,
-        ResolutionProfile::Node16 | ResolutionProfile::NodeNext => match request_kind {
-            ModuleRequestKind::DynamicImport => PackageSurfaceLane::NodeImport,
-            ModuleRequestKind::Require => PackageSurfaceLane::NodeRequire,
-            ModuleRequestKind::StaticImport => match settings.static_condition {
+        ResolutionProfile::Node16 | ResolutionProfile::NodeNext => {
+            match settings.condition_mode_for(request_kind) {
                 PackageConditionMode::Import => PackageSurfaceLane::NodeImport,
                 PackageConditionMode::Require => PackageSurfaceLane::NodeRequire,
-            },
-        },
+            }
+        }
     }
 }
 
@@ -351,6 +349,7 @@ pub(super) fn resolve_request(
     request: ResolutionRequest<'_>,
 ) -> PackageResolution {
     if request.import_kind == ImportKind::SideEffect
+        && request.namespace == SymbolNamespace::Value
         && let Some(result) = reject_applicable_unsupported_fields(
             context,
             request.specifier,
