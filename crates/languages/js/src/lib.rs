@@ -231,17 +231,20 @@ fn lower_statement(statement: &Statement<'_>, facts: &mut JsPayloadFacts) {
 fn lower_import(declaration: &ImportDeclaration<'_>, facts: &mut JsPayloadFacts) {
     let specifier = declaration.source.value.to_string();
     let declaration_namespace = namespace(declaration.import_kind);
-    let Some(specifiers) = &declaration.specifiers else {
-        facts.uses.push(SourceUseTemplate {
-            specifier,
-            imported_name: None,
-            local_name: None,
-            namespace: declaration_namespace,
-            kind: ImportKind::SideEffect,
-            request_kind: ModuleRequestKind::StaticImport,
-            span: span(declaration.span),
-        });
-        return;
+    let specifiers = match &declaration.specifiers {
+        Some(specifiers) if !specifiers.is_empty() => specifiers,
+        _ => {
+            facts.uses.push(SourceUseTemplate {
+                specifier,
+                imported_name: None,
+                local_name: None,
+                namespace: declaration_namespace,
+                kind: ImportKind::SideEffect,
+                request_kind: ModuleRequestKind::StaticImport,
+                span: span(declaration.span),
+            });
+            return;
+        }
     };
 
     for import in specifiers {

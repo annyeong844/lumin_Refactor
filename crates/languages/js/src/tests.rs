@@ -295,23 +295,30 @@ fn lowers_empty_reexport_and_external_import_equals_requests()
     let payload = parse_payload(
         SourceKind::Cts,
         concat!(
+            "import {} from '@acme/empty-import';\n",
             "export {} from '@acme/empty';\n",
             "import lib = require('@acme/import-equals');\n",
             "console.log(lib);\n",
         )
         .as_bytes(),
     )?;
-    assert_eq!(payload.uses.len(), 2);
+    assert_eq!(payload.uses.len(), 3);
     assert_eq!(payload.uses[0].specifier, "@acme/empty");
     assert_eq!(payload.uses[0].kind, ImportKind::SideEffect);
     assert_eq!(
         payload.uses[0].request_kind,
         ModuleRequestKind::StaticImport
     );
-    assert_eq!(payload.uses[1].specifier, "@acme/import-equals");
-    assert_eq!(payload.uses[1].kind, ImportKind::Namespace);
-    assert_eq!(payload.uses[1].request_kind, ModuleRequestKind::Require);
-    assert_eq!(payload.uses[1].local_name.as_deref(), Some("lib"));
+    assert_eq!(payload.uses[1].specifier, "@acme/empty-import");
+    assert_eq!(payload.uses[1].kind, ImportKind::SideEffect);
+    assert_eq!(
+        payload.uses[1].request_kind,
+        ModuleRequestKind::StaticImport
+    );
+    assert_eq!(payload.uses[2].specifier, "@acme/import-equals");
+    assert_eq!(payload.uses[2].kind, ImportKind::Namespace);
+    assert_eq!(payload.uses[2].request_kind, ModuleRequestKind::Require);
+    assert_eq!(payload.uses[2].local_name.as_deref(), Some("lib"));
     assert_eq!(
         payload.limitation_details,
         vec!["CommonJS export lowering is not implemented in the first audit increment".to_owned(),]
