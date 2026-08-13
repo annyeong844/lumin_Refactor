@@ -1,5 +1,12 @@
 use super::*;
 
+const MUTATING_ARGUMENTS_ITERATOR_SETUP: &str = concat!(
+    "delete arguments[Symbol.iterator];\n",
+    "Object.defineProperty(Object.prototype, Symbol.iterator, {\n",
+    "  value: function* () { this[1] = customLoader; }\n",
+    "});\n",
+);
+
 #[test]
 fn escaped_mapped_arguments_mutate_only_after_the_escape_executes()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -198,6 +205,97 @@ fn mapped_arguments_member_reads_preserve_accessor_and_non_read_contexts()
             .iter()
             .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE)
     );
+
+    Ok(())
+}
+
+#[test]
+fn mapped_arguments_iteration_mutates_at_each_consumption_boundary()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (body, grounded) in [
+        (
+            "[require('@acme/array-before'), ...arguments, require('@acme/array-after')];\n",
+            "@acme/array-before",
+        ),
+        (
+            "consume(require('@acme/call-before'), ...arguments, require('@acme/call-after'));\n",
+            "@acme/call-before",
+        ),
+        (
+            "new Consumer(require('@acme/new-before'), ...arguments, require('@acme/new-after'));\n",
+            "@acme/new-before",
+        ),
+        (
+            "for (const value of (require('@acme/for-rhs'), arguments)) { require('@acme/for-body'); }\n",
+            "@acme/for-rhs",
+        ),
+        (
+            "const [value = require('@acme/binding-default')] = (require('@acme/binding-rhs'), arguments);\n",
+            "@acme/binding-rhs",
+        ),
+        (
+            "let value; [value = require('@acme/assignment-default')] = (require('@acme/assignment-rhs'), arguments);\n",
+            "@acme/assignment-rhs",
+        ),
+        (
+            "const [value] = [require('@acme/nested-before'), ...arguments, require('@acme/nested-after')];\n",
+            "@acme/nested-before",
+        ),
+        (
+            "const [value] = [arguments, require('@acme/element-after')];\n",
+            "@acme/element-after",
+        ),
+    ] {
+        let source = format!("{MUTATING_ARGUMENTS_ITERATOR_SETUP}{body}require('@acme/after');\n");
+        let payload = parse_payload(SourceKind::CommonJs, source.as_bytes())?;
+        assert_eq!(
+            payload
+                .uses
+                .iter()
+                .map(|source_use| source_use.specifier.as_str())
+                .collect::<Vec<_>>(),
+            [grounded],
+            "wrong iteration timing for {body}",
+        );
+        assert!(
+            payload
+                .limitation_details
+                .iter()
+                .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE),
+            "missing iteration opacity for {body}",
+        );
+    }
+
+    for source in [
+        concat!(
+            "'use strict';\n",
+            "[...arguments];\n",
+            "require('@acme/strict');\n",
+        ),
+        concat!(
+            "function local(arguments) {\n",
+            "  [...arguments];\n",
+            "  require('@acme/shadowed');\n",
+            "}\n",
+        ),
+        concat!("({ ...arguments });\n", "require('@acme/object-spread');\n",),
+        concat!(
+            "[...(arguments, [])];\n",
+            "for (const value of (temporary = arguments, [])) {}\n",
+            "const [value] = (temporary = arguments, []);\n",
+            "require('@acme/non-iterated-value');\n",
+        ),
+    ] {
+        let payload = parse_payload(SourceKind::CommonJs, source.as_bytes())?;
+        assert_eq!(payload.uses.len(), 1);
+        assert!(
+            !payload
+                .limitation_details
+                .iter()
+                .any(|detail| detail == REQUIRE_ATTRIBUTION_OPAQUE),
+            "strict or shadowed arguments poisoned require: {source}",
+        );
+    }
 
     Ok(())
 }

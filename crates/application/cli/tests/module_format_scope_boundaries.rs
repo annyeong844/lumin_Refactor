@@ -96,6 +96,15 @@ const PROPERTY_SETTER_ARGUMENTS_SOURCE: &str = concat!(
     "arguments.poison = require('@scope/dep/property-setter-rhs');\n",
     "require('@scope/dep/property-setter-after');\n",
 );
+const ITERATION_ARGUMENTS_SOURCE: &str = concat!(
+    "delete arguments[Symbol.iterator];\n",
+    "Object.defineProperty(Object.prototype, Symbol.iterator, {\n",
+    "  value: function* () { this[1] = customLoader; }\n",
+    "});\n",
+    "[require('@scope/dep/iteration-before'), ...arguments, ",
+    "require('@scope/dep/iteration-after-spread')];\n",
+    "require('@scope/dep/iteration-after');\n",
+);
 const CLASS_PHASE_SOURCE: &str = concat!(
     "require('@scope/dep/class-before');\n",
     "class C {\n",
@@ -256,6 +265,18 @@ fn commonjs_wrapper_mutations_preserve_only_grounded_public_edges()
             .collect::<Vec<_>>(),
         ["@scope/dep/property-setter-rhs"]
     );
+    let iteration_arguments = file_response(root.path(), &run_id, "src/iteration-arguments.cjs")?;
+    assert_eq!(
+        resolutions(&iteration_arguments)
+            .iter()
+            .filter_map(|resolution| {
+                resolution
+                    .pointer("/sourceUse/specifier")
+                    .and_then(Value::as_str)
+            })
+            .collect::<Vec<_>>(),
+        ["@scope/dep/iteration-before"]
+    );
     let class_phase = file_response(root.path(), &run_id, "src/class-phase.cjs")?;
     let class_specifiers = resolutions(&class_phase)
         .iter()
@@ -359,8 +380,8 @@ fn commonjs_wrapper_mutations_preserve_only_grounded_public_edges()
         })
         .collect::<Result<Vec<_>, _>>()?;
     details.sort_unstable();
-    let mut expected = vec![COMMONJS_EXPORT_LOWERING_UNSUPPORTED; 20];
-    expected.extend([REQUIRE_ATTRIBUTION_OPAQUE; 14]);
+    let mut expected = vec![COMMONJS_EXPORT_LOWERING_UNSUPPORTED; 21];
+    expected.extend([REQUIRE_ATTRIBUTION_OPAQUE; 15]);
     expected.sort_unstable();
     assert_eq!(details, expected);
     Ok(())
@@ -493,6 +514,11 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         "src/property-setter-arguments.cjs",
         PROPERTY_SETTER_ARGUMENTS_SOURCE,
     )?;
+    write(
+        root.path(),
+        "src/iteration-arguments.cjs",
+        ITERATION_ARGUMENTS_SOURCE,
+    )?;
     write(root.path(), "src/class-phase.cjs", CLASS_PHASE_SOURCE)?;
     write(
         root.path(),
@@ -605,6 +631,18 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
                     "import": "./property-setter-after-import.js",
                     "require": "./property-setter-after-require.js",
                 },
+                "./iteration-before": {
+                    "import": "./iteration-before-import.js",
+                    "require": "./iteration-before-require.js",
+                },
+                "./iteration-after-spread": {
+                    "import": "./iteration-after-spread-import.js",
+                    "require": "./iteration-after-spread-require.js",
+                },
+                "./iteration-after": {
+                    "import": "./iteration-after-import.js",
+                    "require": "./iteration-after-require.js",
+                },
                 "./class-before": {
                     "import": "./class-before-import.js",
                     "require": "./class-before-require.js",
@@ -686,6 +724,12 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         "property-setter-rhs-require",
         "property-setter-after-import",
         "property-setter-after-require",
+        "iteration-before-import",
+        "iteration-before-require",
+        "iteration-after-spread-import",
+        "iteration-after-spread-require",
+        "iteration-after-import",
+        "iteration-after-require",
         "class-before-import",
         "class-before-require",
         "class-static-import",

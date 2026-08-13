@@ -46,6 +46,8 @@ struct RequireScopeCollector {
     loop_head_write_range: Option<(u32, u32)>,
     loop_head_is_root_ordered: bool,
     arguments_escape_timing: Option<MutationTiming>,
+    iterable_arguments_references: Vec<((u32, u32), MutationTiming)>,
+    object_spread_ranges: Vec<(u32, u32)>,
     computed_property_key_timing: Option<MutationTiming>,
     suppress_arguments_mutations: usize,
     tagged_template_quasi: Option<(u32, u32)>,
@@ -327,6 +329,37 @@ impl RequireScopeCollector {
             }
             _ => MutationTiming::After(position),
         }
+    }
+
+    fn iterable_consumption_timing(start: u32, end: u32, target_position: u32) -> MutationTiming {
+        MutationTiming::RhsBeforeTarget {
+            target_position,
+            rhs_start: start,
+            rhs_end: end,
+        }
+    }
+
+    fn push_iterable_source(
+        &mut self,
+        expression: &oxc_ast::ast::Expression<'_>,
+        target_position: u32,
+    ) -> usize {
+        let previous_len = self.iterable_arguments_references.len();
+        let span = expression.span();
+        let timing = Self::iterable_consumption_timing(span.start, span.end, target_position);
+        self.iterable_arguments_references.extend(
+            mapped_arguments::value_arguments_references(expression)
+                .into_iter()
+                .map(|reference| (reference, timing)),
+        );
+        previous_len
+    }
+
+    fn iterable_source_timing(&self, reference: (u32, u32)) -> Option<MutationTiming> {
+        self.iterable_arguments_references
+            .iter()
+            .rev()
+            .find_map(|(candidate, timing)| (*candidate == reference).then_some(*timing))
     }
 
     fn into_model(self) -> RequireScopeModel {
@@ -819,7 +852,10 @@ impl<'a> Visit<'a> for RequireScopeCollector {
         self.loop_head_is_root_ordered = self
             .current_scope()
             .is_some_and(|scope| scope.kind == RequireScopeKind::Root);
+        let iterable_references = self.push_iterable_source(&statement.right, rhs.end);
         walk::walk_for_of_statement(self, statement);
+        self.iterable_arguments_references
+            .truncate(iterable_references);
         self.assignment_write_context = previous_assignment;
         self.binding_write_context = previous_binding;
         self.loop_head_write_range = previous_range;
@@ -887,6 +923,14 @@ impl<'a> Visit<'a> for RequireScopeCollector {
         if let Some(range) = plain_assignment_lhs {
             self.plain_assignment_lhs_ranges.push(range);
         }
+        let iterable_references = matches!(
+            &expression.left,
+            oxc_ast::ast::AssignmentTarget::ArrayAssignmentTarget(_)
+        )
+        .then(|| {
+            let lhs = expression.left.span();
+            self.push_iterable_source(&expression.right, lhs.start)
+        });
         if let Some(span) = expression
             .left
             .as_simple_assignment_target()
@@ -916,6 +960,9 @@ impl<'a> Visit<'a> for RequireScopeCollector {
             });
         self.arguments_escape_timing = Some(MutationTiming::After(expression.span.end));
         walk::walk_assignment_expression(self, expression);
+        if let Some(previous_len) = iterable_references {
+            self.iterable_arguments_references.truncate(previous_len);
+        }
         if plain_assignment_lhs.is_some() {
             self.plain_assignment_lhs_ranges.pop();
         }
@@ -967,6 +1014,39 @@ impl<'a> Visit<'a> for RequireScopeCollector {
         self.arguments_escape_timing = Some(self.expression_mutation_timing(expression.span.end));
         walk::walk_new_expression(self, expression);
         self.arguments_escape_timing = previous_escape;
+    }
+
+    fn visit_spread_element(&mut self, element: &oxc_ast::ast::SpreadElement<'a>) {
+        if self
+            .object_spread_ranges
+            .contains(&(element.span.start, element.span.end))
+        {
+            walk::walk_spread_element(self, element);
+            return;
+        }
+        let argument = element.argument.span();
+        let iterable_references = self.push_iterable_source(&element.argument, argument.end);
+        walk::walk_spread_element(self, element);
+        self.iterable_arguments_references
+            .truncate(iterable_references);
+    }
+
+    fn visit_object_expression(&mut self, expression: &oxc_ast::ast::ObjectExpression<'a>) {
+        let previous_len = self.object_spread_ranges.len();
+        self.object_spread_ranges
+            .extend(
+                expression
+                    .properties
+                    .iter()
+                    .filter_map(|property| match property {
+                        oxc_ast::ast::ObjectPropertyKind::SpreadProperty(spread) => {
+                            Some((spread.span.start, spread.span.end))
+                        }
+                        oxc_ast::ast::ObjectPropertyKind::ObjectProperty(_) => None,
+                    }),
+            );
+        walk::walk_object_expression(self, expression);
+        self.object_spread_ranges.truncate(previous_len);
     }
 
     fn visit_tagged_template_expression(
@@ -1097,7 +1177,18 @@ impl<'a> Visit<'a> for RequireScopeCollector {
         if declarator.init.is_some() {
             self.arguments_escape_timing = Some(MutationTiming::After(declarator.span.end));
         }
+        let iterable_references = declarator
+            .init
+            .as_ref()
+            .filter(|_| declarator.id.is_array_pattern())
+            .map(|init| {
+                let lhs = declarator.id.span();
+                self.push_iterable_source(init, lhs.start)
+            });
         walk::walk_variable_declarator(self, declarator);
+        if let Some(previous_len) = iterable_references {
+            self.iterable_arguments_references.truncate(previous_len);
+        }
         self.binding_write_context = previous;
         self.arguments_escape_timing = previous_escape;
     }
@@ -1308,7 +1399,9 @@ impl<'a> Visit<'a> for RequireScopeCollector {
             && !self
                 .non_escaping_arguments_references
                 .contains(&(identifier.span.start, identifier.span.end))
-            && let Some(timing) = self.arguments_escape_timing
+            && let Some(timing) = self
+                .iterable_source_timing((identifier.span.start, identifier.span.end))
+                .or(self.arguments_escape_timing)
         {
             self.record_arguments_escape(timing);
         }
