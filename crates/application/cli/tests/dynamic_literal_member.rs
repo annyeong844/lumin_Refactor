@@ -13,7 +13,7 @@ const MAIN_SOURCE: &str = concat!(
     "async function run(flag: boolean) {\n",
     "  const awaited = await import('./awaited.js');\n",
     "  console.log(awaited.selectedAwait);\n",
-    "  import('./then.js').then((callback) => callback.selectedThen());\n",
+    "  import('./then.js').then((callback) => console.log(callback.selectedThen));\n",
     "  const scoped = await import('./outer.js');\n",
     "  if (flag) {\n",
     "    const scoped = await import('./inner.js');\n",
@@ -134,6 +134,49 @@ fn literal_dynamic_members_preserve_precision_across_bindings_callbacks_and_shad
         Some(11),
         "dynamic member extraction emitted duplicate or extra resolutions",
     );
+
+    for (source_path, specifier, local_name, target) in [
+        (
+            "src/exporter.ts",
+            "./export-target.js",
+            "exported",
+            "src/export-target.ts",
+        ),
+        (
+            "src/jsx-escape.tsx",
+            "./jsx-target.js",
+            "Loaded",
+            "src/jsx-target.ts",
+        ),
+        (
+            "src/receiver-escape.ts",
+            "./receiver-target.js",
+            "loaded",
+            "src/receiver-target.ts",
+        ),
+        (
+            "src/tagged-escape.ts",
+            "./tagged-target.js",
+            "loaded",
+            "src/tagged-target.ts",
+        ),
+    ] {
+        let escape_source = file_response(root.path(), &run_id, source_path)?;
+        assert_broad_dynamic_resolution(
+            &escape_source,
+            specifier,
+            Some(local_name),
+            &source_id(root.path(), &run_id, target)?,
+        )?;
+        assert_eq!(
+            escape_source
+                .get("resolutions")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(1),
+            "{source_path} emitted exact evidence beside its broad escape",
+        );
+    }
     Ok(())
 }
 
@@ -168,6 +211,47 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         "src/broad.ts",
         "export const broadOne = 1; export const broadTwo = 2;\n",
     )?;
+    write(
+        root.path(),
+        "src/exporter.ts",
+        "const exported = await import('./export-target.js'); console.log(exported.selectedExport); export { exported };\n",
+    )?;
+    write(
+        root.path(),
+        "src/exporter-consumer.ts",
+        "import { exported } from './exporter.js'; console.log(exported);\n",
+    )?;
+    write(
+        root.path(),
+        "src/jsx-escape.tsx",
+        "async function render() { const Loaded = await import('./jsx-target.js'); console.log(Loaded.selectedJsx); return <Loaded />; } void render();\n",
+    )?;
+    write(
+        root.path(),
+        "src/receiver-escape.ts",
+        "async function invoke() { const loaded = await import('./receiver-target.js'); loaded.selectedReceiver(); } void invoke();\n",
+    )?;
+    write(
+        root.path(),
+        "src/tagged-escape.ts",
+        "async function invoke() { const loaded = await import('./tagged-target.js'); loaded.selectedTag`value`; } void invoke();\n",
+    )?;
+    for (path, selected, hidden) in [
+        ("src/export-target.ts", "selectedExport", "hiddenExport"),
+        ("src/jsx-target.ts", "selectedJsx", "hiddenJsx"),
+        (
+            "src/receiver-target.ts",
+            "selectedReceiver",
+            "hiddenReceiver",
+        ),
+        ("src/tagged-target.ts", "selectedTag", "hiddenTagged"),
+    ] {
+        write(
+            root.path(),
+            path,
+            &format!("export function {selected}() {{}} export const {hidden} = 2;\n"),
+        )?;
+    }
     Ok(root)
 }
 

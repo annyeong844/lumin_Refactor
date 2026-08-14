@@ -3,8 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use lumin_model::{ImportKind, ModuleRequestKind, SourceSpan, SymbolNamespace};
 use oxc_ast::ast::{
     Argument, BindingIdentifier, BindingPattern, CallExpression, ClassType, ExportNamedDeclaration,
-    Expression, FunctionType, ImportExpression, JSXMemberExpression, JSXMemberExpressionObject,
-    MemberExpression, VariableDeclarator, WithStatement,
+    Expression, FunctionType, ImportExpression, ImportOrExportKind, JSXElementName,
+    JSXMemberExpression, JSXMemberExpressionObject, MemberExpression, ModuleExportName,
+    TaggedTemplateExpression, VariableDeclarator, WithStatement,
 };
 use oxc_ast::ast_kind::AstKind;
 use oxc_ast_visit::{Visit, walk};
@@ -503,6 +504,25 @@ impl<'m, 'r> UseAnalyzer<'m, 'r> {
             Resolution::AmbiguousOther | Resolution::Other | Resolution::Unbound => {}
         }
     }
+
+    fn degrade_identifier(&mut self, identifier: &oxc_ast::ast::IdentifierReference<'_>) {
+        match self.resolve(identifier.name.as_str()) {
+            Resolution::Dynamic(record) | Resolution::AmbiguousDynamic(record) => {
+                self.degrade(record);
+            }
+            Resolution::AmbiguousOther | Resolution::Other | Resolution::Unbound => {}
+        }
+    }
+
+    fn degrade_member_receiver(&mut self, member: &MemberExpression<'_>) {
+        if let Some(identifier) = member
+            .object()
+            .without_parentheses()
+            .get_identifier_reference()
+        {
+            self.degrade_identifier(identifier);
+        }
+    }
 }
 
 impl<'a> Visit<'a> for UseAnalyzer<'_, '_> {
@@ -543,7 +563,37 @@ impl<'a> Visit<'a> for UseAnalyzer<'_, '_> {
         {
             self.degrade_all();
         }
+        if let Some(member) = expression.callee.get_member_expr() {
+            self.degrade_member_receiver(member);
+        }
         walk::walk_call_expression(self, expression);
+    }
+
+    fn visit_tagged_template_expression(&mut self, expression: &TaggedTemplateExpression<'a>) {
+        if let Some(member) = expression.tag.get_member_expr() {
+            self.degrade_member_receiver(member);
+        }
+        walk::walk_tagged_template_expression(self, expression);
+    }
+
+    fn visit_export_named_declaration(&mut self, declaration: &ExportNamedDeclaration<'a>) {
+        if declaration.source.is_none() && declaration.export_kind == ImportOrExportKind::Value {
+            for specifier in &declaration.specifiers {
+                if specifier.export_kind == ImportOrExportKind::Value
+                    && let ModuleExportName::IdentifierReference(identifier) = &specifier.local
+                {
+                    self.degrade_identifier(identifier);
+                }
+            }
+        }
+        walk::walk_export_named_declaration(self, declaration);
+    }
+
+    fn visit_jsx_element_name(&mut self, name: &JSXElementName<'a>) {
+        if let JSXElementName::IdentifierReference(identifier) = name {
+            self.degrade_identifier(identifier);
+        }
+        walk::walk_jsx_element_name(self, name);
     }
 
     fn visit_jsx_member_expression(&mut self, expression: &JSXMemberExpression<'a>) {
@@ -562,12 +612,7 @@ impl<'a> Visit<'a> for UseAnalyzer<'_, '_> {
             .handled_member_objects
             .contains(&span_key(identifier.span))
         {
-            match self.resolve(identifier.name.as_str()) {
-                Resolution::Dynamic(record) | Resolution::AmbiguousDynamic(record) => {
-                    self.degrade(record);
-                }
-                Resolution::AmbiguousOther | Resolution::Other | Resolution::Unbound => {}
-            }
+            self.degrade_identifier(identifier);
         }
         walk::walk_identifier_reference(self, identifier);
     }
