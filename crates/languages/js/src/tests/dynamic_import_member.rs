@@ -31,6 +31,12 @@ fn literal_dynamic_members_are_exact_while_escaped_bindings_remain_broad()
                 "named",
             ),
             (
+                "./awaited.js".to_owned(),
+                Some("then".to_owned()),
+                None,
+                "named",
+            ),
+            (
                 "./broad.js".to_owned(),
                 None,
                 Some("escaped".to_owned()),
@@ -43,9 +49,21 @@ fn literal_dynamic_members_are_exact_while_escaped_bindings_remain_broad()
                 "named",
             ),
             (
+                "./direct.js".to_owned(),
+                Some("then".to_owned()),
+                None,
+                "named",
+            ),
+            (
                 "./then.js".to_owned(),
                 Some("selectedThen".to_owned()),
                 Some("callback".to_owned()),
+                "named",
+            ),
+            (
+                "./then.js".to_owned(),
+                Some("then".to_owned()),
+                None,
                 "named",
             ),
         ]
@@ -87,9 +105,21 @@ fn shadowed_dynamic_bindings_resolve_to_their_own_literal_imports()
                 "named",
             ),
             (
+                "./inner.js".to_owned(),
+                Some("then".to_owned()),
+                None,
+                "named",
+            ),
+            (
                 "./outer.js".to_owned(),
                 Some("selectedOuter".to_owned()),
                 Some("scoped".to_owned()),
+                "named",
+            ),
+            (
+                "./outer.js".to_owned(),
+                Some("then".to_owned()),
+                None,
                 "named",
             ),
         ]
@@ -138,6 +168,32 @@ fn eval_and_import_options_cannot_publish_exact_dynamic_members()
             .any(|detail| detail.contains("dynamic import options or phases"))
     );
     Ok(())
+}
+
+#[test]
+fn callback_arguments_exported_bindings_and_with_eval_remain_broad()
+-> Result<(), Box<dyn std::error::Error>> {
+    for source in [
+        "import('./mod.js').then(function (loaded) { loaded.safe; consume(arguments[0].hidden); });",
+        "export const loaded = await import('./mod.js'); loaded.safe;",
+    ] {
+        let payload = parse_payload(SourceKind::TypeScript, source.as_bytes())?;
+        assert_single_broad(&payload, source);
+    }
+
+    let with_eval = parse_payload(
+        SourceKind::CommonJs,
+        b"async function run(eval, env) { const loaded = await import('./mod.js'); loaded.safe; with (env) { eval('consume(loaded.hidden)'); } }",
+    )?;
+    assert_single_broad(&with_eval, "with-intercepted eval");
+    Ok(())
+}
+
+fn assert_single_broad(payload: &JsPayloadFacts, context: &str) {
+    assert_eq!(payload.uses.len(), 1, "unexpected uses for {context}");
+    assert_eq!(payload.uses[0].specifier, "./mod.js");
+    assert_eq!(payload.uses[0].kind, ImportKind::DynamicBroad);
+    assert_eq!(payload.uses[0].imported_name, None);
 }
 
 fn use_views(payload: &JsPayloadFacts) -> Vec<UseView> {

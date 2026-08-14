@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_model::{ImportKind, ModuleRequestKind, SourceSpan, SymbolNamespace};
 use oxc_ast::ast::{
-    Argument, BindingIdentifier, BindingPattern, CallExpression, ClassType, Expression,
-    FunctionType, ImportExpression, JSXMemberExpression, JSXMemberExpressionObject,
+    Argument, BindingIdentifier, BindingPattern, CallExpression, ClassType, ExportNamedDeclaration,
+    Expression, FunctionType, ImportExpression, JSXMemberExpression, JSXMemberExpressionObject,
     MemberExpression, VariableDeclarator, WithStatement,
 };
 use oxc_ast::ast_kind::AstKind;
@@ -90,6 +90,7 @@ pub(super) fn analyze_literal_dynamic_imports(
         scope_stack: _,
         binding_context: _,
         special_bindings: _,
+        exported_declaration: _,
     } = collector;
     let mut analyzer = UseAnalyzer::new(&scopes, &mut records);
     analyzer.visit_program(program);
@@ -111,6 +112,7 @@ struct BindingCollector {
     handled_imports: BTreeSet<SpanKey>,
     special_bindings: BTreeMap<SpanKey, usize>,
     binding_context: Option<(usize, Binding)>,
+    exported_declaration: bool,
     tracking_failed: bool,
 }
 
@@ -222,11 +224,15 @@ impl BindingCollector {
     }
 
     fn collect_then_binding(&mut self, expression: &CallExpression<'_>) {
-        let Some((import_expression, specifier, binding)) = then_callback_binding(expression)
+        let Some((import_expression, specifier, binding, callback_arguments_are_visible)) =
+            then_callback_binding(expression)
         else {
             return;
         };
         let record = self.add_record(specifier, import_expression, Some(binding.name.to_string()));
+        if callback_arguments_are_visible {
+            self.degrade_binding(Binding::Dynamic(record));
+        }
         let key = span_key(binding.span);
         if let Some(previous) = self.special_bindings.insert(key, record) {
             self.degrade_binding(Binding::Dynamic(previous));
@@ -319,6 +325,9 @@ impl<'a> Visit<'a> for BindingCollector {
                 import_expression,
                 Some(identifier.name.to_string()),
             );
+            if self.exported_declaration {
+                self.degrade_binding(Binding::Dynamic(record));
+            }
             binding = Binding::Dynamic(record);
         }
 
@@ -328,17 +337,27 @@ impl<'a> Visit<'a> for BindingCollector {
         }
         self.visit_binding_pattern(&declarator.id);
         self.binding_context = previous;
+        let exported_declaration = self.exported_declaration;
+        self.exported_declaration = false;
         if let Some(type_annotation) = &declarator.type_annotation {
             self.visit_ts_type_annotation(type_annotation);
         }
         if let Some(initializer) = &declarator.init {
             self.visit_expression(initializer);
         }
+        self.exported_declaration = exported_declaration;
     }
 
     fn visit_call_expression(&mut self, expression: &CallExpression<'a>) {
         self.collect_then_binding(expression);
         walk::walk_call_expression(self, expression);
+    }
+
+    fn visit_export_named_declaration(&mut self, declaration: &ExportNamedDeclaration<'a>) {
+        let previous = self.exported_declaration;
+        self.exported_declaration = declaration.declaration.is_some();
+        walk::walk_export_named_declaration(self, declaration);
+        self.exported_declaration = previous;
     }
 
     fn visit_member_expression(&mut self, expression: &MemberExpression<'a>) {
@@ -367,6 +386,7 @@ struct UseAnalyzer<'m, 'r> {
 enum Resolution {
     Dynamic(usize),
     AmbiguousDynamic(usize),
+    AmbiguousOther,
     Other,
     Unbound,
 }
@@ -423,6 +443,7 @@ impl<'m, 'r> UseAnalyzer<'m, 'r> {
                 return match binding {
                     Binding::Dynamic(record) if dynamic => Resolution::AmbiguousDynamic(*record),
                     Binding::Dynamic(record) => Resolution::Dynamic(*record),
+                    Binding::Other if dynamic => Resolution::AmbiguousOther,
                     Binding::Other => Resolution::Other,
                 };
             }
@@ -479,7 +500,7 @@ impl<'m, 'r> UseAnalyzer<'m, 'r> {
                     .insert(span_key(identifier.span));
                 self.degrade(record);
             }
-            Resolution::Other | Resolution::Unbound => {}
+            Resolution::AmbiguousOther | Resolution::Other | Resolution::Unbound => {}
         }
     }
 }
@@ -517,7 +538,7 @@ impl<'a> Visit<'a> for UseAnalyzer<'_, '_> {
             && expression.callee.is_specific_id("eval")
             && matches!(
                 self.resolve("eval"),
-                Resolution::Unbound | Resolution::AmbiguousDynamic(_)
+                Resolution::Unbound | Resolution::AmbiguousDynamic(_) | Resolution::AmbiguousOther
             )
         {
             self.degrade_all();
@@ -545,7 +566,7 @@ impl<'a> Visit<'a> for UseAnalyzer<'_, '_> {
                 Resolution::Dynamic(record) | Resolution::AmbiguousDynamic(record) => {
                     self.degrade(record);
                 }
-                Resolution::Other | Resolution::Unbound => {}
+                Resolution::AmbiguousOther | Resolution::Other | Resolution::Unbound => {}
             }
         }
         walk::walk_identifier_reference(self, identifier);
@@ -574,6 +595,17 @@ fn emit_uses(records: Vec<DynamicRecord>) -> Vec<SourceUseTemplate> {
             });
             continue;
         }
+        if !record.members.iter().any(|(member, _, _)| member == "then") {
+            uses.push(SourceUseTemplate {
+                specifier: record.specifier.clone(),
+                imported_name: Some("then".to_owned()),
+                local_name: None,
+                namespace: SymbolNamespace::Value,
+                kind: ImportKind::Named,
+                request_kind: ModuleRequestKind::DynamicImport,
+                span: record.import_span.clone(),
+            });
+        }
         for (member, start, end) in record.members {
             uses.push(SourceUseTemplate {
                 specifier: record.specifier.clone(),
@@ -591,7 +623,12 @@ fn emit_uses(records: Vec<DynamicRecord>) -> Vec<SourceUseTemplate> {
 
 fn then_callback_binding<'a>(
     expression: &'a CallExpression<'a>,
-) -> Option<(&'a ImportExpression<'a>, &'a str, &'a BindingIdentifier<'a>)> {
+) -> Option<(
+    &'a ImportExpression<'a>,
+    &'a str,
+    &'a BindingIdentifier<'a>,
+    bool,
+)> {
     let member = expression
         .callee
         .without_parentheses()
@@ -601,16 +638,21 @@ fn then_callback_binding<'a>(
     }
     let (import_expression, specifier) = literal_import(member.object())?;
     let callback = expression.arguments.first()?;
-    let parameters = match callback {
-        Argument::ArrowFunctionExpression(callback) => &callback.params,
-        Argument::FunctionExpression(callback) => &callback.params,
+    let (parameters, callback_arguments_are_visible) = match callback {
+        Argument::ArrowFunctionExpression(callback) => (&callback.params, false),
+        Argument::FunctionExpression(callback) => (&callback.params, true),
         _ => return None,
     };
     let first = parameters.items.first()?;
     let BindingPattern::BindingIdentifier(identifier) = &first.pattern else {
         return None;
     };
-    Some((import_expression, specifier, identifier))
+    Some((
+        import_expression,
+        specifier,
+        identifier,
+        callback_arguments_are_visible,
+    ))
 }
 
 fn awaited_literal_import<'a>(

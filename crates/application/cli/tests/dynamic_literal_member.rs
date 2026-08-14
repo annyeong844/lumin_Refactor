@@ -104,6 +104,22 @@ fn literal_dynamic_members_preserve_precision_across_bindings_callbacks_and_shad
             &source_id(root.path(), &run_id, target)?,
         )?;
     }
+    for (specifier, syntax, target) in [
+        ("./awaited.js", "import('./awaited.js')", "src/awaited.ts"),
+        ("./then.js", "import('./then.js')", "src/then.ts"),
+        ("./outer.js", "import('./outer.js')", "src/outer.ts"),
+        ("./inner.js", "import('./inner.js')", "src/inner.ts"),
+        ("./direct.js", "import('./direct.js')", "src/direct.ts"),
+    ] {
+        assert_exact_dynamic_resolution(
+            &source,
+            specifier,
+            "then",
+            None,
+            expected_span(MAIN_SOURCE, syntax)?,
+            &source_id(root.path(), &run_id, target)?,
+        )?;
+    }
     assert_broad_dynamic_resolution(
         &source,
         "./broad.js",
@@ -115,7 +131,7 @@ fn literal_dynamic_members_preserve_precision_across_bindings_callbacks_and_shad
             .get("resolutions")
             .and_then(Value::as_array)
             .map(Vec::len),
-        Some(6),
+        Some(11),
         "dynamic member extraction emitted duplicate or extra resolutions",
     );
     Ok(())
@@ -129,17 +145,22 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         r#"{"name":"dynamic-member-fixture","private":true,"type":"module"}"#,
     )?;
     write(root.path(), "src/main.ts", MAIN_SOURCE)?;
-    for (path, selected, dead) in [
-        ("src/awaited.ts", "selectedAwait", "deadAwait"),
-        ("src/then.ts", "selectedThen", "deadThen"),
-        ("src/outer.ts", "selectedOuter", "deadOuter"),
-        ("src/inner.ts", "selectedInner", "deadInner"),
-        ("src/direct.ts", "selectedDirect", "deadDirect"),
+    for (path, selected, dead, additional_export) in [
+        (
+            "src/awaited.ts",
+            "selectedAwait",
+            "deadAwait",
+            "export function then() {}",
+        ),
+        ("src/then.ts", "selectedThen", "deadThen", ""),
+        ("src/outer.ts", "selectedOuter", "deadOuter", ""),
+        ("src/inner.ts", "selectedInner", "deadInner", ""),
+        ("src/direct.ts", "selectedDirect", "deadDirect", ""),
     ] {
         write(
             root.path(),
             path,
-            &format!("export const {selected} = 1; export const {dead} = 2;\n"),
+            &format!("export const {selected} = 1; export const {dead} = 2; {additional_export}\n"),
         )?;
     }
     write(
