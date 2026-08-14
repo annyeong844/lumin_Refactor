@@ -30,6 +30,15 @@ const VUE_SHIFTED: &str = concat!(
     "void import(`./features/${segment}.js`);\n",
     "</script>\n",
 );
+const VUE_DUPLICATE: &str = concat!(
+    "<template><div /></template>\n",
+    "<script setup lang=\"ts\">\n",
+    "const segment = 'one';\n",
+    "// unrelated leading edit\n",
+    "void import(`./features/${segment}.js`);\n",
+    "void import(`./features/${segment}.js`);\n",
+    "</script>\n",
+);
 
 #[test]
 fn nonliteral_dynamic_imports_preserve_bounded_and_workspace_opacity()
@@ -321,6 +330,76 @@ fn verify_embedded_span_and_stable_delta() -> Result<(), Box<dyn std::error::Err
             .and_then(Value::as_str),
         Some("unchanged"),
         "an unrelated leading edit changed the opacity identity: {response:#?}",
+    );
+
+    let duplicate_opened = run(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-embedded-duplicate-open",
+            "--path",
+            "src/App.vue",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&duplicate_opened, 0);
+    let duplicate_gate_id = field(&duplicate_opened.stdout, "gateId")?;
+    write(root.path(), "src/App.vue", VUE_DUPLICATE)?;
+    let duplicate_closed = run(
+        root.path(),
+        &[
+            "post-write",
+            &duplicate_gate_id,
+            "--operation-id",
+            "op-embedded-duplicate-close",
+        ],
+    )?;
+    assert_status(&duplicate_closed, 4);
+    assert_eq!(field(&duplicate_closed.stdout, "decision")?, "incomplete");
+    assert_eq!(field(&duplicate_closed.stdout, "lifecycle")?, "active");
+    let duplicate_response: Value = serde_json::from_str(&duplicate_closed.stdout)?;
+    let duplicate_opacity = duplicate_response
+        .get("deltas")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("duplicate opacity deltas are missing"))?
+        .iter()
+        .filter(|delta| delta.pointer("/key/family").and_then(Value::as_str) == Some("opacity"))
+        .collect::<Vec<_>>();
+    assert_eq!(duplicate_opacity.len(), 2);
+    assert_eq!(
+        duplicate_opacity
+            .iter()
+            .filter(|delta| {
+                delta
+                    .pointer("/classification/kind")
+                    .and_then(Value::as_str)
+                    == Some("unchanged")
+            })
+            .count(),
+        1,
+    );
+    assert_eq!(
+        duplicate_opacity
+            .iter()
+            .filter(|delta| {
+                delta
+                    .pointer("/classification/kind")
+                    .and_then(Value::as_str)
+                    == Some("introduced")
+            })
+            .count(),
+        1,
+    );
+    assert!(
+        duplicate_response
+            .get("signals")
+            .and_then(Value::as_array)
+            .is_some_and(|signals| signals.iter().any(|signal| {
+                signal.get("kind").and_then(Value::as_str) == Some("opacity-introduced")
+            })),
+        "adding a same-prefix construct did not produce opacity-introduced: {duplicate_response:#?}",
     );
     Ok(())
 }

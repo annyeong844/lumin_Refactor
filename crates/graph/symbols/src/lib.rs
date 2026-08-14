@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_model::{
     DynamicImportTargetScope, ExportFact, FileFacts, ImportKind, Limitation, LogicalSourceId,
@@ -60,6 +60,12 @@ pub struct SymbolGraph {
     pub test_re_exports: Vec<GraphTestReExport>,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct BroadFanInCounts {
+    production: u64,
+    test: u64,
+}
+
 pub fn build(
     sources: &[SourceSnapshot],
     file_facts: &[FileFacts],
@@ -108,24 +114,13 @@ pub fn build(
         }
     }
 
-    for limitation in limitations {
-        let Limitation::DynamicImportNonLiteral {
-            source_id,
-            candidates,
-            target_scope: DynamicImportTargetScope::ExplicitTargets,
-            ..
-        } = limitation
-        else {
-            continue;
-        };
-        let importer_is_test = roles.get(source_id).is_some_and(SourceRoles::is_test_like);
-        for candidate in candidates {
-            increment_broad_fan_in(
-                &mut graph,
-                candidate,
-                SymbolNamespace::Value,
-                importer_is_test,
-            );
+    let bounded_dynamic_fan_in = bounded_dynamic_fan_in(&roles, limitations);
+    for export in graph.exports.values_mut() {
+        if export.fact.namespace == SymbolNamespace::Value
+            && let Some(counts) = bounded_dynamic_fan_in.get(&export.fact.source_id)
+        {
+            export.production_broad_fan_in += counts.production;
+            export.test_broad_fan_in += counts.test;
         }
     }
 
@@ -240,6 +235,34 @@ pub fn build(
     propagate_namespace_re_exports(&mut graph, &namespace_re_exports);
 
     graph
+}
+
+fn bounded_dynamic_fan_in(
+    roles: &BTreeMap<LogicalSourceId, SourceRoles>,
+    limitations: &[Limitation],
+) -> BTreeMap<LogicalSourceId, BroadFanInCounts> {
+    let mut fan_in = BTreeMap::<LogicalSourceId, BroadFanInCounts>::new();
+    for limitation in limitations {
+        let Limitation::DynamicImportNonLiteral {
+            source_id,
+            candidates,
+            target_scope: DynamicImportTargetScope::ExplicitTargets,
+            ..
+        } = limitation
+        else {
+            continue;
+        };
+        let importer_is_test = roles.get(source_id).is_some_and(SourceRoles::is_test_like);
+        for candidate in candidates.iter().collect::<BTreeSet<_>>() {
+            let counts = fan_in.entry(candidate.clone()).or_default();
+            if importer_is_test {
+                counts.test += 1;
+            } else {
+                counts.production += 1;
+            }
+        }
+    }
+    fan_in
 }
 
 fn increment_broad_fan_in(
@@ -788,7 +811,7 @@ mod tests {
             source_id,
             span: SourceSpan { start: 0, end: 30 },
             static_prefix: Some("./target-".to_owned()),
-            candidates: vec![target.id.clone()],
+            candidates: vec![target.id.clone(), target.id.clone()],
             target_scope: DynamicImportTargetScope::ExplicitTargets,
         };
 

@@ -22,8 +22,25 @@ pub(crate) fn lifecycle_delta_input(evidence: &RunEvidence) -> LifecycleDeltaInp
         .collect::<Vec<_>>();
     let mut advisory_limitation_count = 0;
     let mut required_evidence_gap_count = 0;
+    let mut dynamic_import_occurrences = BTreeMap::<(LogicalSourceId, Option<String>), u64>::new();
     for limitation in &evidence.limitations {
-        match limitation_delta(limitation) {
+        let construct_ordinal = match limitation {
+            Limitation::DynamicImportNonLiteral {
+                source_id,
+                static_prefix,
+                target_scope: DynamicImportTargetScope::ExplicitTargets,
+                ..
+            } => {
+                let next = dynamic_import_occurrences
+                    .entry((source_id.clone(), static_prefix.clone()))
+                    .or_default();
+                let ordinal = *next;
+                *next += 1;
+                ordinal
+            }
+            _ => 0,
+        };
+        match limitation_delta_at(limitation, construct_ordinal) {
             LimitationDelta::Fact(fact) => {
                 advisory_limitation_count += 1;
                 facts.push(fact);
@@ -115,7 +132,12 @@ enum LimitationDelta {
     RequiredEvidenceGap,
 }
 
+#[cfg(test)]
 fn limitation_delta(limitation: &Limitation) -> LimitationDelta {
+    limitation_delta_at(limitation, 0)
+}
+
+fn limitation_delta_at(limitation: &Limitation, construct_ordinal: u64) -> LimitationDelta {
     match limitation {
         Limitation::InternalSpecifierUnresolved {
             importer,
@@ -178,10 +200,12 @@ fn limitation_delta(limitation: &Limitation) -> LimitationDelta {
                 return LimitationDelta::RequiredEvidenceGap;
             }
             let normalized_prefix = static_prefix.as_deref().unwrap_or_default();
+            let ordinal = construct_ordinal.to_be_bytes();
             let semantic_identity = frame([
                 source_id.as_str().as_bytes(),
-                b"dynamic-import-opacity.v1",
+                b"dynamic-import-opacity.v2",
                 normalized_prefix.as_bytes(),
+                ordinal.as_slice(),
             ]);
             LimitationDelta::Fact(DeltaFact {
                 key: DeltaKey {
@@ -297,6 +321,37 @@ mod tests {
     use super::*;
     use crate::{DEAD_CODE_CAPABILITY_ID, DEAD_EXPORT_RULE_ID, RepoPathProjection};
 
+    fn evidence_with_limitations(limitations: Vec<Limitation>) -> RunEvidence {
+        RunEvidence {
+            schema_version: "lumin-evidence.v1".to_owned(),
+            capabilities: Vec::new(),
+            resolution_profiles: Vec::new(),
+            source_classifications: Vec::new(),
+            source_contexts: Vec::new(),
+            source_observations: Vec::new(),
+            resolutions: Vec::new(),
+            metrics: Default::default(),
+            findings: Vec::new(),
+            limitations,
+        }
+    }
+
+    fn bounded_dynamic_limitation(unit: &str, start: u32) -> Limitation {
+        Limitation::DynamicImportNonLiteral {
+            source_id: LogicalSourceId::from_string("source-parent".to_owned()),
+            source_unit: SourceUnitId::Embedded(lumin_model::EmbeddedSourceUnitId::from_string(
+                unit.to_owned(),
+            )),
+            span: SourceSpan {
+                start,
+                end: start + 17,
+            },
+            static_prefix: Some("./features/".to_owned()),
+            candidates: Vec::new(),
+            target_scope: DynamicImportTargetScope::ExplicitTargets,
+        }
+    }
+
     #[test]
     fn finding_disposition_is_payload_not_delta_key() {
         let finding = FindingRecord {
@@ -409,35 +464,52 @@ mod tests {
     #[test]
     fn bounded_dynamic_import_key_survives_position_and_embedded_unit_changes()
     -> Result<(), &'static str> {
-        let fact = |unit: &str, start: u32| {
-            limitation_delta(&Limitation::DynamicImportNonLiteral {
-                source_id: LogicalSourceId::from_string("source-parent".to_owned()),
-                source_unit: SourceUnitId::Embedded(
-                    lumin_model::EmbeddedSourceUnitId::from_string(unit.to_owned()),
-                ),
-                span: SourceSpan {
-                    start,
-                    end: start + 17,
-                },
-                static_prefix: Some("./features/".to_owned()),
-                candidates: Vec::new(),
-                target_scope: DynamicImportTargetScope::ExplicitTargets,
-            })
-        };
-        let first = match fact("embedded-first", 3) {
-            LimitationDelta::Fact(fact) => fact,
-            LimitationDelta::RequiredEvidenceGap => return Err("first opacity was not a fact"),
-        };
-        let second = match fact("embedded-second", 30) {
-            LimitationDelta::Fact(fact) => fact,
-            LimitationDelta::RequiredEvidenceGap => return Err("second opacity was not a fact"),
-        };
+        let mut first = lifecycle_delta_input(&evidence_with_limitations(vec![
+            bounded_dynamic_limitation("embedded-first", 3),
+        ]))
+        .facts;
+        let mut second = lifecycle_delta_input(&evidence_with_limitations(vec![
+            bounded_dynamic_limitation("embedded-second", 30),
+        ]))
+        .facts;
+        let first = first.pop().ok_or("first opacity was not a fact")?;
+        let second = second.pop().ok_or("second opacity was not a fact")?;
         assert_eq!(first.key, second.key);
         assert!(matches!(
             classify_lifecycle_deltas(Some(&[first]), &[second])[0].classification,
             GateDeltaClassification::Unchanged
         ));
         Ok(())
+    }
+
+    #[test]
+    fn same_prefix_dynamic_imports_keep_distinct_stable_occurrence_keys() {
+        let baseline = lifecycle_delta_input(&evidence_with_limitations(vec![
+            bounded_dynamic_limitation("embedded-baseline", 3),
+        ]));
+        let current = lifecycle_delta_input(&evidence_with_limitations(vec![
+            bounded_dynamic_limitation("embedded-moved", 30),
+            bounded_dynamic_limitation("embedded-added", 60),
+        ]));
+
+        assert_eq!(baseline.facts.len(), 1);
+        assert_eq!(current.facts.len(), 2);
+        assert_ne!(current.facts[0].key, current.facts[1].key);
+        let deltas = classify_lifecycle_deltas(Some(&baseline.facts), &current.facts);
+        assert_eq!(
+            deltas
+                .iter()
+                .filter(|delta| matches!(delta.classification, GateDeltaClassification::Unchanged))
+                .count(),
+            1
+        );
+        assert_eq!(
+            deltas
+                .iter()
+                .filter(|delta| matches!(delta.classification, GateDeltaClassification::Introduced))
+                .count(),
+            1
+        );
     }
 
     #[test]
