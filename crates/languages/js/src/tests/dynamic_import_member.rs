@@ -11,6 +11,7 @@ fn literal_dynamic_members_are_exact_while_escaped_bindings_remain_broad()
             "async function run() {\n",
             "  const loaded = await import('./awaited.js');\n",
             "  console.log(loaded.selectedAwait);\n",
+            "  type AwaitedSnapshot = typeof loaded;\n",
             "  import('./then.js').then((callback) => console.log(callback.selectedThen));\n",
             "  console.log((await import('./direct.js')).selectedDirect);\n",
             "  const escaped = await import('./broad.js');\n",
@@ -225,6 +226,14 @@ fn namespace_exports_jsx_and_receiver_preserving_calls_remain_broad()
             SourceKind::TypeScript,
             "const loaded = await import('./mod.js'); loaded.safe; export { loaded as default };",
         ),
+        (
+            SourceKind::TypeScript,
+            "async function run() { (await import('./mod.js')).safe(); }",
+        ),
+        (
+            SourceKind::TypeScript,
+            "async function run() { (await import('./mod.js')).safe`value`; }",
+        ),
     ] {
         let payload = parse_payload(kind, source.as_bytes())?;
         assert_single_broad(&payload, source);
@@ -236,6 +245,7 @@ fn namespace_exports_jsx_and_receiver_preserving_calls_remain_broad()
 fn detached_or_constructed_namespace_members_remain_exact() -> Result<(), Box<dyn std::error::Error>>
 {
     for source in [
+        "async function run() { const loaded = await import('./mod.js'); loaded.safe; type Snapshot = typeof loaded; }",
         "async function run() { const loaded = await import('./mod.js'); (0, loaded.safe)(); }",
         "async function run() { const loaded = await import('./mod.js'); const invoke = loaded.safe; invoke(); }",
         "async function run() { const loaded = await import('./mod.js'); new loaded.safe(); }",

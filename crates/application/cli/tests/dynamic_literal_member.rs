@@ -13,6 +13,7 @@ const MAIN_SOURCE: &str = concat!(
     "async function run(flag: boolean) {\n",
     "  const awaited = await import('./awaited.js');\n",
     "  console.log(awaited.selectedAwait);\n",
+    "  type AwaitedSnapshot = typeof awaited;\n",
     "  import('./then.js').then((callback) => console.log(callback.selectedThen));\n",
     "  const scoped = await import('./outer.js');\n",
     "  if (flag) {\n",
@@ -139,33 +140,45 @@ fn literal_dynamic_members_preserve_precision_across_bindings_callbacks_and_shad
         (
             "src/exporter.ts",
             "./export-target.js",
-            "exported",
+            Some("exported"),
             "src/export-target.ts",
         ),
         (
             "src/jsx-escape.tsx",
             "./jsx-target.js",
-            "Loaded",
+            Some("Loaded"),
             "src/jsx-target.ts",
         ),
         (
             "src/receiver-escape.ts",
             "./receiver-target.js",
-            "loaded",
+            Some("loaded"),
             "src/receiver-target.ts",
         ),
         (
             "src/tagged-escape.ts",
             "./tagged-target.js",
-            "loaded",
+            Some("loaded"),
             "src/tagged-target.ts",
+        ),
+        (
+            "src/immediate-call.ts",
+            "./immediate-call-target.js",
+            None,
+            "src/immediate-call-target.ts",
+        ),
+        (
+            "src/immediate-tag.ts",
+            "./immediate-tag-target.js",
+            None,
+            "src/immediate-tag-target.ts",
         ),
     ] {
         let escape_source = file_response(root.path(), &run_id, source_path)?;
         assert_broad_dynamic_resolution(
             &escape_source,
             specifier,
-            Some(local_name),
+            local_name,
             &source_id(root.path(), &run_id, target)?,
         )?;
         assert_eq!(
@@ -236,6 +249,16 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         "src/tagged-escape.ts",
         "async function invoke() { const loaded = await import('./tagged-target.js'); loaded.selectedTag`value`; } void invoke();\n",
     )?;
+    write(
+        root.path(),
+        "src/immediate-call.ts",
+        "async function invoke() { (await import('./immediate-call-target.js')).selectedImmediate(); } void invoke();\n",
+    )?;
+    write(
+        root.path(),
+        "src/immediate-tag.ts",
+        "async function invoke() { (await import('./immediate-tag-target.js')).selectedImmediateTag`value`; } void invoke();\n",
+    )?;
     for (path, selected, hidden) in [
         ("src/export-target.ts", "selectedExport", "hiddenExport"),
         ("src/jsx-target.ts", "selectedJsx", "hiddenJsx"),
@@ -245,6 +268,16 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
             "hiddenReceiver",
         ),
         ("src/tagged-target.ts", "selectedTag", "hiddenTagged"),
+        (
+            "src/immediate-call-target.ts",
+            "selectedImmediate",
+            "hiddenImmediate",
+        ),
+        (
+            "src/immediate-tag-target.ts",
+            "selectedImmediateTag",
+            "hiddenImmediateTag",
+        ),
     ] {
         write(
             root.path(),

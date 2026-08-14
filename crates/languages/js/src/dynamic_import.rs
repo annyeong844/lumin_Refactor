@@ -3,9 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use lumin_model::{ImportKind, ModuleRequestKind, SourceSpan, SymbolNamespace};
 use oxc_ast::ast::{
     Argument, BindingIdentifier, BindingPattern, CallExpression, ClassType, ExportNamedDeclaration,
-    Expression, FunctionType, ImportExpression, ImportOrExportKind, JSXElementName,
-    JSXMemberExpression, JSXMemberExpressionObject, MemberExpression, ModuleExportName,
-    TaggedTemplateExpression, VariableDeclarator, WithStatement,
+    ExportSpecifier, Expression, FunctionType, ImportExpression, ImportOrExportKind,
+    JSXElementName, JSXMemberExpression, JSXMemberExpressionObject, MemberExpression,
+    ModuleExportName, TSClassImplements, TSInterfaceHeritage, TSType, TaggedTemplateExpression,
+    VariableDeclarator, WithStatement,
 };
 use oxc_ast::ast_kind::AstKind;
 use oxc_ast_visit::{Visit, walk};
@@ -241,14 +242,15 @@ impl BindingCollector {
         }
     }
 
-    fn collect_immediate_member(&mut self, expression: &MemberExpression<'_>) {
-        let Some((import_expression, specifier)) = awaited_literal_import(expression.object())
-        else {
-            return;
-        };
-        let Some(property) = expression.static_property_name() else {
-            return;
-        };
+    fn collect_immediate_member(&mut self, expression: &MemberExpression<'_>) -> Option<usize> {
+        let (import_expression, specifier) = awaited_literal_import(expression.object())?;
+        let property = expression.static_property_name()?;
+        if self
+            .handled_imports
+            .contains(&span_key(import_expression.span))
+        {
+            return None;
+        }
         let record = self.add_record(specifier, import_expression, None);
         if let Some(record) = self.records.get_mut(record) {
             record.members.insert((
@@ -256,6 +258,15 @@ impl BindingCollector {
                 expression.span().start,
                 expression.span().end,
             ));
+        }
+        Some(record)
+    }
+
+    fn collect_immediate_receiver(&mut self, expression: &Expression<'_>) {
+        if let Some(member) = expression.get_member_expr()
+            && let Some(record) = self.collect_immediate_member(member)
+        {
+            self.degrade_binding(Binding::Dynamic(record));
         }
     }
 }
@@ -351,7 +362,13 @@ impl<'a> Visit<'a> for BindingCollector {
 
     fn visit_call_expression(&mut self, expression: &CallExpression<'a>) {
         self.collect_then_binding(expression);
+        self.collect_immediate_receiver(&expression.callee);
         walk::walk_call_expression(self, expression);
+    }
+
+    fn visit_tagged_template_expression(&mut self, expression: &TaggedTemplateExpression<'a>) {
+        self.collect_immediate_receiver(&expression.tag);
+        walk::walk_tagged_template_expression(self, expression);
     }
 
     fn visit_export_named_declaration(&mut self, declaration: &ExportNamedDeclaration<'a>) {
@@ -362,7 +379,7 @@ impl<'a> Visit<'a> for BindingCollector {
     }
 
     fn visit_member_expression(&mut self, expression: &MemberExpression<'a>) {
-        self.collect_immediate_member(expression);
+        let _ = self.collect_immediate_member(expression);
         walk::walk_member_expression(self, expression);
     }
 
@@ -380,6 +397,7 @@ struct UseAnalyzer<'m, 'r> {
     scope_stack: Vec<usize>,
     next_scope: usize,
     handled_member_objects: BTreeSet<SpanKey>,
+    type_only_depth: usize,
     tracking_failed: bool,
 }
 
@@ -400,12 +418,16 @@ impl<'m, 'r> UseAnalyzer<'m, 'r> {
             scope_stack: Vec::new(),
             next_scope: 0,
             handled_member_objects: BTreeSet::new(),
+            type_only_depth: 0,
             tracking_failed: false,
         }
     }
 
     fn complete(&self) -> bool {
-        !self.tracking_failed && self.scope_stack.is_empty() && self.next_scope == self.scopes.len()
+        !self.tracking_failed
+            && self.scope_stack.is_empty()
+            && self.next_scope == self.scopes.len()
+            && self.type_only_depth == 0
     }
 
     fn push_next_scope(&mut self, dynamic_lookup: bool) {
@@ -523,6 +545,18 @@ impl<'m, 'r> UseAnalyzer<'m, 'r> {
             self.degrade_identifier(identifier);
         }
     }
+
+    fn enter_type_only(&mut self) {
+        self.type_only_depth += 1;
+    }
+
+    fn leave_type_only(&mut self) {
+        let Some(depth) = self.type_only_depth.checked_sub(1) else {
+            self.tracking_failed = true;
+            return;
+        };
+        self.type_only_depth = depth;
+    }
 }
 
 impl<'a> Visit<'a> for UseAnalyzer<'_, '_> {
@@ -586,7 +620,23 @@ impl<'a> Visit<'a> for UseAnalyzer<'_, '_> {
                 }
             }
         }
+        if declaration.export_kind == ImportOrExportKind::Type {
+            self.enter_type_only();
+        }
         walk::walk_export_named_declaration(self, declaration);
+        if declaration.export_kind == ImportOrExportKind::Type {
+            self.leave_type_only();
+        }
+    }
+
+    fn visit_export_specifier(&mut self, specifier: &ExportSpecifier<'a>) {
+        if specifier.export_kind == ImportOrExportKind::Type {
+            self.enter_type_only();
+        }
+        walk::walk_export_specifier(self, specifier);
+        if specifier.export_kind == ImportOrExportKind::Type {
+            self.leave_type_only();
+        }
     }
 
     fn visit_jsx_element_name(&mut self, name: &JSXElementName<'a>) {
@@ -608,13 +658,32 @@ impl<'a> Visit<'a> for UseAnalyzer<'_, '_> {
     }
 
     fn visit_identifier_reference(&mut self, identifier: &oxc_ast::ast::IdentifierReference<'a>) {
-        if !self
-            .handled_member_objects
-            .contains(&span_key(identifier.span))
+        if self.type_only_depth == 0
+            && !self
+                .handled_member_objects
+                .contains(&span_key(identifier.span))
         {
             self.degrade_identifier(identifier);
         }
         walk::walk_identifier_reference(self, identifier);
+    }
+
+    fn visit_ts_type(&mut self, ty: &TSType<'a>) {
+        self.enter_type_only();
+        walk::walk_ts_type(self, ty);
+        self.leave_type_only();
+    }
+
+    fn visit_ts_class_implements(&mut self, implementation: &TSClassImplements<'a>) {
+        self.enter_type_only();
+        walk::walk_ts_class_implements(self, implementation);
+        self.leave_type_only();
+    }
+
+    fn visit_ts_interface_heritage(&mut self, heritage: &TSInterfaceHeritage<'a>) {
+        self.enter_type_only();
+        walk::walk_ts_interface_heritage(self, heritage);
+        self.leave_type_only();
     }
 
     fn visit_with_statement(&mut self, statement: &WithStatement<'a>) {
