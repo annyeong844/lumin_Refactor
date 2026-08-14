@@ -21,7 +21,7 @@ mod require_scope;
 use dynamic_import::analyze_literal_dynamic_imports;
 use require_scope::RequireScopeTracker;
 
-pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v18";
+pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v19";
 
 const REQUIRE_ATTRIBUTION_OPAQUE: &str = "shadowed, mutated, dynamically resolved, or escaped require makes CommonJS module-use attribution opaque";
 const MODULE_REQUIRE_ATTRIBUTION_OPAQUE: &str =

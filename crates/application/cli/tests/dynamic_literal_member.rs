@@ -191,6 +191,116 @@ fn literal_dynamic_members_preserve_precision_across_bindings_callbacks_and_shad
             "{source_path} emitted exact evidence beside its broad escape",
         );
     }
+    assert_mapped_arguments_alias_is_broad()?;
+    Ok(())
+}
+
+fn assert_mapped_arguments_alias_is_broad() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"mapped-arguments-fixture","private":true,"type":"commonjs"}"#,
+    )?;
+    write(
+        root.path(),
+        "src/main.cjs",
+        concat!(
+            "function consume(value) { console.log(value); }\n",
+            "async function invoke(loaded) {\n",
+            "  var loaded = await import('./target.mjs');\n",
+            "  loaded.selectedMapped;\n",
+            "  consume(arguments[0].hiddenMapped);\n",
+            "}\n",
+            "void invoke(undefined);\n",
+        ),
+    )?;
+    write(
+        root.path(),
+        "src/target.mjs",
+        "export const selectedMapped = 1; export const hiddenMapped = 2;\n",
+    )?;
+    for (source, target, body) in [
+        (
+            "src/lexical-shadow.cjs",
+            "src/lexical-shadow-target.mjs",
+            concat!(
+                "async function invoke(loaded) {\n",
+                "  var loaded = await import('./lexical-shadow-target.mjs');\n",
+                "  { const loaded = {}; consume(arguments[0].hiddenShadowed); }\n",
+                "  loaded.selectedShadowed;\n",
+                "}\n",
+                "void invoke(undefined);\n",
+            ),
+        ),
+        (
+            "src/var-arguments.cjs",
+            "src/var-arguments-target.mjs",
+            concat!(
+                "async function invoke(loaded) {\n",
+                "  var loaded = await import('./var-arguments-target.mjs');\n",
+                "  var arguments;\n",
+                "  consume(arguments[0].hiddenVarArguments);\n",
+                "  loaded.selectedVarArguments;\n",
+                "}\n",
+                "void invoke(undefined);\n",
+            ),
+        ),
+    ] {
+        write(
+            root.path(),
+            source,
+            &format!("function consume(value) {{ console.log(value); }}\n{body}"),
+        )?;
+        let stem = target
+            .strip_prefix("src/")
+            .and_then(|path| path.strip_suffix("-target.mjs"))
+            .ok_or_else(|| std::io::Error::other("mapped-arguments fixture target is malformed"))?;
+        let suffix = if stem == "lexical-shadow" {
+            "Shadowed"
+        } else {
+            "VarArguments"
+        };
+        write(
+            root.path(),
+            target,
+            &format!("export const selected{suffix} = 1; export const hidden{suffix} = 2;\n"),
+        )?;
+    }
+
+    let audit = run(root.path(), &["audit", "--jobs", "1"])?;
+    assert_status(&audit, 0);
+    assert_eq!(field(&audit.stdout, "status")?, "incomplete");
+    let run_id = field(&audit.stdout, "runId")?;
+    let source = file_response(root.path(), &run_id, "src/main.cjs")?;
+    assert_broad_dynamic_resolution(
+        &source,
+        "./target.mjs",
+        Some("loaded"),
+        &source_id(root.path(), &run_id, "src/target.mjs")?,
+    )?;
+    for (source_path, specifier, local_name, target) in [
+        (
+            "src/lexical-shadow.cjs",
+            "./lexical-shadow-target.mjs",
+            "loaded",
+            "src/lexical-shadow-target.mjs",
+        ),
+        (
+            "src/var-arguments.cjs",
+            "./var-arguments-target.mjs",
+            "loaded",
+            "src/var-arguments-target.mjs",
+        ),
+    ] {
+        let source = file_response(root.path(), &run_id, source_path)?;
+        assert_broad_dynamic_resolution(
+            &source,
+            specifier,
+            Some(local_name),
+            &source_id(root.path(), &run_id, target)?,
+        )?;
+    }
     Ok(())
 }
 
@@ -243,7 +353,7 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
     write(
         root.path(),
         "src/receiver-escape.ts",
-        "async function invoke() { const loaded = await import('./receiver-target.js'); (loaded.selectedReceiver as Function)(); } void invoke();\n",
+        "async function invoke() { const loaded = await import('./receiver-target.js'); ((loaded?.selectedReceiver) as Function)(); } void invoke();\n",
     )?;
     write(
         root.path(),
