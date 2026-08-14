@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use lumin_evidence::{
     Confidence, DEAD_CODE_CAPABILITY_ID, DEAD_EXPORT_RULE_ID, EvidenceRecord, FindingRecord,
@@ -26,8 +26,7 @@ pub fn analyze(
             )
         })
         .collect::<BTreeMap<LogicalSourceId, (RepoPath, String)>>();
-    let (workspace_blocked, blocked_paths, blocked_sources) =
-        blocked_absence_scope(sources, config, limitations);
+    let (workspace_blocked, blocked_paths) = blocked_absence_scope(sources, config, limitations);
     let mut findings = Vec::new();
     for export in graph.exports.values() {
         if export.roles.is_declaration()
@@ -41,7 +40,6 @@ pub fn analyze(
             continue;
         };
         if workspace_blocked
-            || blocked_sources.contains(&export.fact.source_id)
             || blocked_paths
                 .iter()
                 .any(|blocked| blocked == &path.display_escaped())
@@ -179,10 +177,9 @@ fn blocked_absence_scope(
     sources: &[SourceSnapshot],
     config: &SemanticConfigSnapshot,
     limitations: &[Limitation],
-) -> (bool, Vec<String>, BTreeSet<LogicalSourceId>) {
+) -> (bool, Vec<String>) {
     let mut workspace_blocked = false;
     let mut blocked_paths = Vec::new();
-    let mut blocked_sources = BTreeSet::new();
     for limitation in limitations {
         match limitation {
             Limitation::InternalSpecifierUnresolved {
@@ -204,14 +201,8 @@ fn blocked_absence_scope(
             | Limitation::PackageIdentityUnsupported { .. }
             | Limitation::SfcDialectUnavailable { .. }
             | Limitation::SfcDecompositionUnknown { .. } => workspace_blocked = true,
-            Limitation::DynamicImportNonLiteral {
-                candidates,
-                target_scope,
-                ..
-            } => match target_scope {
-                DynamicImportTargetScope::ExplicitTargets => {
-                    blocked_sources.extend(candidates.iter().cloned());
-                }
+            Limitation::DynamicImportNonLiteral { target_scope, .. } => match target_scope {
+                DynamicImportTargetScope::ExplicitTargets => {}
                 DynamicImportTargetScope::Workspace => workspace_blocked = true,
             },
             Limitation::VueTemplateOpaque { source_id, .. }
@@ -269,7 +260,7 @@ fn blocked_absence_scope(
     }
     blocked_paths.sort();
     blocked_paths.dedup();
-    (workspace_blocked, blocked_paths, blocked_sources)
+    (workspace_blocked, blocked_paths)
 }
 
 fn block_source_owner(

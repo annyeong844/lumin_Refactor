@@ -500,6 +500,7 @@ impl RepositoryAnalysisSession {
             &extraction.facts,
             &resolved,
             &package_surfaces,
+            &limitations,
         );
         let findings = lumin_dead::analyze(
             &self.inventory.sources,

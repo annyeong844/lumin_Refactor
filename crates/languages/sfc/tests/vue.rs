@@ -95,6 +95,49 @@ import UserList from './UserList.vue';
 }
 
 #[test]
+fn embedded_dynamic_import_limitations_shift_to_parent_coordinates()
+-> Result<(), Box<dyn std::error::Error>> {
+    let app = source(
+        "src/App.vue",
+        SourceKind::Vue,
+        "<template></template>\n<script>\nvoid import(`./features/${name}.js`);\n</script>\n",
+    )?;
+    let decomposition =
+        lumin_sfc::decompose(&app, &lumin_sfc::source_index(std::slice::from_ref(&app)))?;
+    let unit = decomposition
+        .inline_scripts
+        .first()
+        .ok_or("inline script is missing")?;
+    let offset = unit.parent_span.start;
+    let unit_id = unit.id.clone();
+    let mut embedded = FileFacts::embedded(app.id.clone(), unit_id.clone());
+    embedded
+        .limitations
+        .push(Limitation::DynamicImportNonLiteral {
+            source_id: app.id.clone(),
+            source_unit: SourceUnitId::Embedded(unit_id),
+            span: SourceSpan { start: 6, end: 40 },
+            static_prefix: Some("./features/".to_owned()),
+            candidates: Vec::new(),
+            target_scope: lumin_model::DynamicImportTargetScope::ExplicitTargets,
+        });
+
+    let analysis = lumin_sfc::finalize(decomposition, vec![embedded], &[])?;
+    let shifted = analysis
+        .file_facts
+        .iter()
+        .flat_map(|facts| &facts.limitations)
+        .find_map(|limitation| match limitation {
+            Limitation::DynamicImportNonLiteral { span, .. } => Some(span),
+            _ => None,
+        })
+        .ok_or("dynamic import limitation is missing")?;
+    assert_eq!(shifted.start, offset + 6);
+    assert_eq!(shifted.end, offset + 40);
+    Ok(())
+}
+
+#[test]
 fn external_script_attaches_existing_logical_source_without_copying_facts()
 -> Result<(), Box<dyn std::error::Error>> {
     let app = source(

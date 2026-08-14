@@ -14,11 +14,29 @@ const BOUNDED_MAIN: &str = concat!(
     "void import('./shared/prefix-' + segment);\n",
     "void import(`./missing/${segment}.js`);\n",
 );
+const VUE_IMPORT: &str = "void import(`./features/${segment}.js`);";
+const VUE_BASE: &str = concat!(
+    "<template><div /></template>\n",
+    "<script setup lang=\"ts\">\n",
+    "const segment = 'one';\n",
+    "void import(`./features/${segment}.js`);\n",
+    "</script>\n",
+);
+const VUE_SHIFTED: &str = concat!(
+    "<template><div /></template>\n",
+    "<script setup lang=\"ts\">\n",
+    "const segment = 'one';\n",
+    "// unrelated leading edit\n",
+    "void import(`./features/${segment}.js`);\n",
+    "</script>\n",
+);
 
 #[test]
 fn nonliteral_dynamic_imports_preserve_bounded_and_workspace_opacity()
 -> Result<(), Box<dyn std::error::Error>> {
     verify_bounded_prefixes()?;
+    verify_test_like_bounded_fan_in()?;
+    verify_embedded_span_and_stable_delta()?;
     verify_unbounded_expression()?;
     Ok(())
 }
@@ -38,14 +56,24 @@ fn verify_bounded_prefixes() -> Result<(), Box<dyn std::error::Error>> {
     );
     let run_id = field(&audit.stdout, "runId")?;
 
+    let findings = finding_items(root.path(), &run_id)?;
+    assert_eq!(findings.len(), 6);
+    assert!(
+        findings
+            .iter()
+            .all(|finding| { finding.get("namespace").and_then(Value::as_str) == Some("type") })
+    );
     assert_eq!(
-        finding_paths(root.path(), &run_id)?,
+        finding_paths_from_items(&findings)?,
         BTreeSet::from([
             "src/features-old.ts".to_owned(),
+            "src/features/nested/two.ts".to_owned(),
+            "src/features/one.ts".to_owned(),
             "src/shared/other.ts".to_owned(),
+            "src/shared/prefix-one.ts".to_owned(),
             "src/unrelated.ts".to_owned(),
         ]),
-        "bounded opacity suppressed findings outside its static prefixes",
+        "runtime opacity protected a type-only export or missed a reachable value export",
     );
 
     let overview = overview(root.path(), &run_id)?;
@@ -55,20 +83,21 @@ fn verify_bounded_prefixes() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or_else(|| std::io::Error::other("overview limitations are missing"))?;
     assert_eq!(limitations.len(), 3);
 
-    assert_bounded_limitation(
-        limitations,
-        "./features/",
-        BTreeSet::from([
-            source_id(root.path(), &run_id, "src/features/one.ts")?,
-            source_id(root.path(), &run_id, "src/features/nested/two.ts")?,
-        ]),
-    )?;
-    assert_bounded_limitation(
-        limitations,
-        "./shared/prefix-",
-        BTreeSet::from([source_id(root.path(), &run_id, "src/shared/prefix-one.ts")?]),
-    )?;
-    assert_bounded_limitation(limitations, "./missing/", BTreeSet::new())?;
+    let all_candidates = [
+        "src/main.ts",
+        "src/features/one.ts",
+        "src/features/nested/two.ts",
+        "src/shared/prefix-one.ts",
+        "src/features-old.ts",
+        "src/shared/other.ts",
+        "src/unrelated.ts",
+    ]
+    .into_iter()
+    .map(|path| source_id(root.path(), &run_id, path))
+    .collect::<Result<BTreeSet<_>, _>>()?;
+    assert_bounded_limitation(limitations, "./features/", all_candidates.clone())?;
+    assert_bounded_limitation(limitations, "./shared/prefix-", all_candidates.clone())?;
+    assert_bounded_limitation(limitations, "./missing/", all_candidates)?;
 
     let opened = run(
         root.path(),
@@ -98,69 +127,22 @@ fn verify_bounded_prefixes() -> Result<(), Box<dyn std::error::Error>> {
         shown
             .get("protectedSemanticInputCount")
             .and_then(Value::as_u64)
-            .is_some_and(|count| count >= 4),
+            .is_some_and(|count| count >= 7),
         "bounded candidate inputs were not protected: {shown:#?}",
     );
 
-    let candidate_conflict = run(
+    assert_candidate_conflict(
         root.path(),
-        &[
-            "pre-write",
-            "--operation-id",
-            "op-bounded-candidate-conflict",
-            "--path",
-            "src/features/one.ts",
-            "--jobs",
-            "1",
-        ],
+        &gate_id,
+        "op-bounded-candidate-conflict",
+        "src/features/one.ts",
     )?;
-    assert_status(&candidate_conflict, 4);
-    let conflict: Value = serde_json::from_str(&candidate_conflict.stdout)?;
-    assert!(
-        conflict
-            .get("signals")
-            .and_then(Value::as_array)
-            .is_some_and(|signals| signals.iter().any(|signal| {
-                signal.get("kind").and_then(Value::as_str) == Some("write-conflict")
-                    && signal
-                        .get("gateIds")
-                        .and_then(Value::as_array)
-                        .is_some_and(|gate_ids| {
-                            gate_ids
-                                .iter()
-                                .any(|candidate| candidate.as_str() == Some(gate_id.as_str()))
-                        })
-            })),
-        "candidate write did not conflict with the active reader: {conflict:#?}",
-    );
-
-    let unrelated = run(
+    assert_candidate_conflict(
         root.path(),
-        &[
-            "pre-write",
-            "--operation-id",
-            "op-bounded-unrelated",
-            "--path",
-            "src/unrelated.ts",
-            "--jobs",
-            "1",
-        ],
+        &gate_id,
+        "op-bounded-escape-conflict",
+        "src/unrelated.ts",
     )?;
-    assert_status(&unrelated, 0);
-    let unrelated_gate = field(&unrelated.stdout, "gateId")?;
-    let unrelated_abandoned = run(
-        root.path(),
-        &[
-            "gate",
-            "abandon",
-            &unrelated_gate,
-            "--operation-id",
-            "op-abandon-bounded-unrelated",
-            "--reason",
-            "fixture control complete",
-        ],
-    )?;
-    assert_status(&unrelated_abandoned, 0);
     let closed = run(
         root.path(),
         &[
@@ -196,6 +178,149 @@ fn verify_bounded_prefixes() -> Result<(), Box<dyn std::error::Error>> {
                 signal.get("kind").and_then(Value::as_str) == Some("required-evidence-incomplete")
             })),
         "bounded opacity became required-evidence incompleteness at close: {closed:#?}",
+    );
+    Ok(())
+}
+
+fn verify_test_like_bounded_fan_in() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"test-bounded-dynamic","private":true,"type":"module"}"#,
+    )?;
+    write(
+        root.path(),
+        "tests/loader.test.ts",
+        "const segment = 'target'; void import('../src/targets/' + segment);\n",
+    )?;
+    write(
+        root.path(),
+        "src/target.ts",
+        "export const targetValue = 1; export type TargetType = string;\n",
+    )?;
+    write(
+        root.path(),
+        "src/other.ts",
+        "export const otherValue = 1; export type OtherType = string;\n",
+    )?;
+
+    let audit = run(root.path(), &["audit", "--jobs", "1"])?;
+    assert_status(&audit, 0);
+    let run_id = field(&audit.stdout, "runId")?;
+    let findings = finding_items(root.path(), &run_id)?;
+    assert_eq!(findings.len(), 4);
+    for finding in findings {
+        let namespace = finding
+            .get("namespace")
+            .and_then(Value::as_str)
+            .ok_or_else(|| std::io::Error::other("finding namespace is missing"))?;
+        let claim = finding
+            .get("claim")
+            .and_then(Value::as_str)
+            .ok_or_else(|| std::io::Error::other("finding claim is missing"))?;
+        if namespace == "value" {
+            assert!(
+                claim.contains("consumed only by test-like sources"),
+                "test broad fan-in was not preserved: {finding:#?}",
+            );
+        } else {
+            assert_eq!(namespace, "type");
+            assert!(
+                !claim.contains("consumed only by test-like sources"),
+                "runtime opacity leaked into the type namespace: {finding:#?}",
+            );
+        }
+    }
+    Ok(())
+}
+
+fn verify_embedded_span_and_stable_delta() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"embedded-dynamic","private":true,"type":"module"}"#,
+    )?;
+    write(root.path(), "src/App.vue", VUE_BASE)?;
+    write(
+        root.path(),
+        "src/features/one.ts",
+        "export const selected = 1;\n",
+    )?;
+
+    let audit = run(root.path(), &["audit", "--jobs", "1"])?;
+    assert_status(&audit, 0);
+    let run_id = field(&audit.stdout, "runId")?;
+    let overview = overview(root.path(), &run_id)?;
+    let limitation = overview
+        .get("limitations")
+        .and_then(Value::as_array)
+        .and_then(|limitations| {
+            limitations.iter().find(|limitation| {
+                limitation.get("reason").and_then(Value::as_str)
+                    == Some("dynamic-import-non-literal")
+            })
+        })
+        .ok_or_else(|| std::io::Error::other("embedded dynamic limitation is missing"))?;
+    assert_eq!(
+        limitation.pointer("/span/start").and_then(Value::as_u64),
+        Some(
+            VUE_BASE
+                .find(VUE_IMPORT)
+                .ok_or_else(|| std::io::Error::other("Vue import text is missing"))?
+                .checked_add(
+                    VUE_IMPORT
+                        .find("import(")
+                        .ok_or_else(|| std::io::Error::other("import expression is missing"))?,
+                )
+                .ok_or_else(|| std::io::Error::other("Vue import offset overflowed"))?
+                as u64
+        ),
+        "embedded limitation span was not translated to parent coordinates",
+    );
+
+    let opened = run(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-embedded-stable-open",
+            "--path",
+            "src/App.vue",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&opened, 0);
+    let gate_id = field(&opened.stdout, "gateId")?;
+    write(root.path(), "src/App.vue", VUE_SHIFTED)?;
+    let closed = run(
+        root.path(),
+        &[
+            "post-write",
+            &gate_id,
+            "--operation-id",
+            "op-embedded-stable-close",
+        ],
+    )?;
+    assert_status(&closed, 0);
+    assert_eq!(field(&closed.stdout, "lifecycle")?, "closed");
+    let response: Value = serde_json::from_str(&closed.stdout)?;
+    let opacity = response
+        .get("deltas")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("embedded post-write deltas are missing"))?
+        .iter()
+        .filter(|delta| delta.pointer("/key/family").and_then(Value::as_str) == Some("opacity"))
+        .collect::<Vec<_>>();
+    assert_eq!(opacity.len(), 1);
+    assert_eq!(
+        opacity[0]
+            .pointer("/classification/kind")
+            .and_then(Value::as_str),
+        Some("unchanged"),
+        "an unrelated leading edit changed the opacity identity: {response:#?}",
     );
     Ok(())
 }
@@ -335,6 +460,46 @@ fn assert_bounded_limitation(
     Ok(())
 }
 
+fn assert_candidate_conflict(
+    root: &Path,
+    gate_id: &str,
+    operation_id: &str,
+    path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let candidate = run(
+        root,
+        &[
+            "pre-write",
+            "--operation-id",
+            operation_id,
+            "--path",
+            path,
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&candidate, 4);
+    let conflict: Value = serde_json::from_str(&candidate.stdout)?;
+    assert!(
+        conflict
+            .get("signals")
+            .and_then(Value::as_array)
+            .is_some_and(|signals| signals.iter().any(|signal| {
+                signal.get("kind").and_then(Value::as_str) == Some("write-conflict")
+                    && signal
+                        .get("gateIds")
+                        .and_then(Value::as_array)
+                        .is_some_and(|gate_ids| {
+                            gate_ids
+                                .iter()
+                                .any(|candidate| candidate.as_str() == Some(gate_id))
+                        })
+            })),
+        "candidate write did not conflict with the active reader: {conflict:#?}",
+    );
+    Ok(())
+}
+
 fn bounded_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     write(
@@ -351,7 +516,11 @@ fn bounded_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         ("src/shared/other.ts", "other"),
         ("src/unrelated.ts", "unrelated"),
     ] {
-        write(root.path(), path, &format!("export const {name} = 1;\n"))?;
+        write(
+            root.path(),
+            path,
+            &format!("export const {name} = 1; export type {name}Type = string;\n"),
+        )?;
     }
     Ok(root)
 }
@@ -366,6 +535,10 @@ fn finding_paths(
     root: &Path,
     run_id: &str,
 ) -> Result<BTreeSet<String>, Box<dyn std::error::Error>> {
+    finding_paths_from_items(&finding_items(root, run_id)?).map_err(Into::into)
+}
+
+fn finding_items(root: &Path, run_id: &str) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
     let output = run(root, &["findings", "--run", run_id, "--area", "dead-code"])?;
     assert_status(&output, 0);
     let response: Value = serde_json::from_str(&output.stdout)?;
@@ -377,6 +550,10 @@ fn finding_paths(
         response.get("total").and_then(Value::as_u64),
         Some(items.len() as u64)
     );
+    Ok(items.clone())
+}
+
+fn finding_paths_from_items(items: &[Value]) -> Result<BTreeSet<String>, std::io::Error> {
     items
         .iter()
         .map(|item| {
@@ -385,8 +562,7 @@ fn finding_paths(
                 .map(str::to_owned)
                 .ok_or_else(|| std::io::Error::other("finding path is missing"))
         })
-        .collect::<Result<_, _>>()
-        .map_err(Into::into)
+        .collect()
 }
 
 fn source_id(root: &Path, run_id: &str, path: &str) -> Result<String, Box<dyn std::error::Error>> {

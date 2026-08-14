@@ -8,7 +8,7 @@ use lumin_model::{
 use super::super::{extract, scope_dynamic_import_limitations};
 
 #[test]
-fn relative_static_prefixes_bind_only_matching_inventory_sources()
+fn relative_static_prefixes_bind_the_complete_normalized_inventory_domain()
 -> Result<(), Box<dyn std::error::Error>> {
     let sources = vec![
         snapshot(
@@ -44,15 +44,16 @@ fn relative_static_prefixes_bind_only_matching_inventory_sources()
         .collect::<Result<Vec<_>, _>>()?;
 
     assert_eq!(limitations.len(), 2);
+    let all_sources = sources
+        .iter()
+        .map(|source| source.id.clone())
+        .collect::<BTreeSet<_>>();
     assert_eq!(limitations[0].0, "../features/");
     assert_eq!(limitations[0].2, DynamicImportTargetScope::ExplicitTargets);
-    assert_eq!(
-        limitations[0].1,
-        BTreeSet::from([sources[1].id.clone(), sources[2].id.clone()])
-    );
+    assert_eq!(limitations[0].1, all_sources);
     assert_eq!(limitations[1].0, "../shared/prefix-");
     assert_eq!(limitations[1].2, DynamicImportTargetScope::ExplicitTargets);
-    assert_eq!(limitations[1].1, BTreeSet::from([sources[4].id.clone()]));
+    assert_eq!(limitations[1].1, all_sources);
     Ok(())
 }
 
@@ -92,7 +93,7 @@ fn bounded_empty_and_unbounded_expressions_remain_distinct()
         vec![
             (
                 Some("./missing/"),
-                0,
+                1,
                 DynamicImportTargetScope::ExplicitTargets,
             ),
             (None, 0, DynamicImportTargetScope::Workspace),

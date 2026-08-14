@@ -48,19 +48,18 @@ pub(crate) fn scope_limitations(facts: &mut [FileFacts], sources: &[SourceSnapsh
             let Some(importer_path) = paths.get(source_id) else {
                 continue;
             };
-            let Some(prefix) = static_prefix
+            let Some(_domain) = static_prefix
                 .as_deref()
-                .and_then(|prefix| InventoryPrefix::from_importer(importer_path, prefix))
+                .and_then(|prefix| RelativeInventoryDomain::from_importer(importer_path, prefix))
             else {
                 continue;
             };
 
-            candidates.extend(
-                sources
-                    .iter()
-                    .filter(|source| prefix.matches(&source.path))
-                    .map(|source| source.id.clone()),
-            );
+            // An arbitrary suffix can inject separators and dot segments, so even a
+            // relative static prefix can normalize to any repository source. Keep the
+            // bounded fact comparable by enumerating the complete current inventory;
+            // narrowing to lexical descendants would permit false absence claims.
+            candidates.extend(sources.iter().map(|source| source.id.clone()));
             candidates.sort();
             candidates.dedup();
             *target_scope = DynamicImportTargetScope::ExplicitTargets;
@@ -68,12 +67,9 @@ pub(crate) fn scope_limitations(facts: &mut [FileFacts], sources: &[SourceSnapsh
     }
 }
 
-struct InventoryPrefix {
-    base: RepoPath,
-    tail: String,
-}
+struct RelativeInventoryDomain;
 
-impl InventoryPrefix {
+impl RelativeInventoryDomain {
     fn from_importer(importer: &RepoPath, prefix: &str) -> Option<Self> {
         if !(prefix.starts_with("./") || prefix.starts_with("../"))
             || prefix.contains(['\\', '\0', '?', '#', '%'])
@@ -84,16 +80,8 @@ impl InventoryPrefix {
         if matches!(tail, "." | "..") {
             return None;
         }
-        Some(Self {
-            base: importer.resolve_portable_relative(directory)?,
-            tail: tail.to_owned(),
-        })
-    }
-
-    fn matches(&self, candidate: &RepoPath) -> bool {
-        candidate
-            .portable_relative_to(&self.base)
-            .is_some_and(|relative| !relative.is_empty() && relative.starts_with(&self.tail))
+        importer.resolve_portable_relative(directory)?;
+        Some(Self)
     }
 }
 

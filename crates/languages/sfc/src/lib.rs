@@ -12,7 +12,7 @@ use lumin_model::{
 };
 use thiserror::Error;
 
-pub const SFC_OWNER_VERSION: &str = "sfc-owner.v1";
+pub const SFC_OWNER_VERSION: &str = "sfc-owner.v2";
 pub const VUE_CAPABILITY_ID: &str = "sfc/vue.v1";
 pub const SVELTE_CAPABILITY_ID: &str = "sfc/svelte.v1";
 pub const ASTRO_CAPABILITY_ID: &str = "sfc/astro.v1";
@@ -334,6 +334,11 @@ fn shift_file_spans(facts: &mut FileFacts, offset: u32, unit_id: &str) -> Result
     }
     for source_use in &mut facts.uses {
         shift_span(&mut source_use.span, offset, unit_id)?;
+    }
+    for limitation in &mut facts.limitations {
+        if let Limitation::DynamicImportNonLiteral { span, .. } = limitation {
+            shift_span(span, offset, unit_id)?;
+        }
     }
     Ok(())
 }

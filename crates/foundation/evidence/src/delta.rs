@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use lumin_model::{
     DeltaFact, DeltaFactFamily, DeltaIdentity, DeltaIdentityKind, DeltaKey, DeltaOwnerPayloadValue,
     DeltaValue, DynamicImportTargetScope, FindingDisposition, Limitation, LogicalSourceId,
-    ReviewOnlyReason, SourceUnitId, UnresolvedTargetScope, append_length_prefixed,
+    ReviewOnlyReason, UnresolvedTargetScope, append_length_prefixed,
 };
 
 use crate::{Confidence, FindingRecord, RunEvidence, Severity};
@@ -169,21 +169,19 @@ fn limitation_delta(limitation: &Limitation) -> LimitationDelta {
         }
         Limitation::DynamicImportNonLiteral {
             source_id,
-            source_unit,
-            span,
             static_prefix,
             candidates,
             target_scope,
+            ..
         } => {
             if *target_scope == DynamicImportTargetScope::Workspace {
                 return LimitationDelta::RequiredEvidenceGap;
             }
+            let normalized_prefix = static_prefix.as_deref().unwrap_or_default();
             let semantic_identity = frame([
                 source_id.as_str().as_bytes(),
-                source_unit_identity(source_unit).as_slice(),
-                b"dynamic-import",
-                span.start.to_be_bytes().as_slice(),
-                span.end.to_be_bytes().as_slice(),
+                b"dynamic-import-opacity.v1",
+                normalized_prefix.as_bytes(),
             ]);
             LimitationDelta::Fact(DeltaFact {
                 key: DeltaKey {
@@ -289,22 +287,11 @@ fn severity_name(severity: Severity) -> &'static str {
     }
 }
 
-fn source_unit_identity(source_unit: &SourceUnitId) -> Vec<u8> {
-    match source_unit {
-        SourceUnitId::Logical(source_id) => {
-            frame([b"logical".as_slice(), source_id.as_str().as_bytes()])
-        }
-        SourceUnitId::Embedded(unit_id) => {
-            frame([b"embedded".as_slice(), unit_id.as_str().as_bytes()])
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use lumin_model::{
-        DeltaDimensionChange, FindingId, GateDeltaClassification, SourceSpan, SymbolNamespace,
-        classify_lifecycle_deltas,
+        DeltaDimensionChange, FindingId, GateDeltaClassification, SourceSpan, SourceUnitId,
+        SymbolNamespace, classify_lifecycle_deltas,
     };
 
     use super::*;
@@ -420,28 +407,36 @@ mod tests {
     }
 
     #[test]
-    fn embedded_dynamic_imports_with_equal_spans_have_distinct_keys() -> Result<(), &'static str> {
-        let fact = |unit: &str| {
+    fn bounded_dynamic_import_key_survives_position_and_embedded_unit_changes()
+    -> Result<(), &'static str> {
+        let fact = |unit: &str, start: u32| {
             limitation_delta(&Limitation::DynamicImportNonLiteral {
                 source_id: LogicalSourceId::from_string("source-parent".to_owned()),
                 source_unit: SourceUnitId::Embedded(
                     lumin_model::EmbeddedSourceUnitId::from_string(unit.to_owned()),
                 ),
-                span: SourceSpan { start: 3, end: 20 },
+                span: SourceSpan {
+                    start,
+                    end: start + 17,
+                },
                 static_prefix: Some("./features/".to_owned()),
                 candidates: Vec::new(),
                 target_scope: DynamicImportTargetScope::ExplicitTargets,
             })
         };
-        let first = match fact("embedded-first") {
+        let first = match fact("embedded-first", 3) {
             LimitationDelta::Fact(fact) => fact,
             LimitationDelta::RequiredEvidenceGap => return Err("first opacity was not a fact"),
         };
-        let second = match fact("embedded-second") {
+        let second = match fact("embedded-second", 30) {
             LimitationDelta::Fact(fact) => fact,
             LimitationDelta::RequiredEvidenceGap => return Err("second opacity was not a fact"),
         };
-        assert_ne!(first.key, second.key);
+        assert_eq!(first.key, second.key);
+        assert!(matches!(
+            classify_lifecycle_deltas(Some(&[first]), &[second])[0].classification,
+            GateDeltaClassification::Unchanged
+        ));
         Ok(())
     }
 
