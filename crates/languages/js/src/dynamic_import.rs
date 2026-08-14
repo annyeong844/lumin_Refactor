@@ -15,8 +15,11 @@ use oxc_span::GetSpan;
 use super::SourceUseTemplate;
 
 mod bindings;
+mod nonliteral;
 
 use bindings::{Binding, BindingCollection, Scope, ScopeKind, collect as collect_bindings};
+pub(crate) use nonliteral::scope_limitations;
+pub(super) use nonliteral::{NonLiteralDynamicImportTemplate, nonliteral_template};
 
 type SpanKey = (u32, u32);
 
@@ -626,12 +629,24 @@ fn literal_import<'a>(
     if import_expression.options.is_some() || import_expression.phase.is_some() {
         return None;
     }
-    let Expression::StringLiteral(source) =
-        transparent_runtime_expression(&import_expression.source)
-    else {
-        return None;
-    };
-    Some((import_expression, source.value.as_str()))
+    Some((
+        import_expression,
+        literal_dynamic_import_specifier(&import_expression.source)?,
+    ))
+}
+
+pub(super) fn literal_dynamic_import_specifier<'a>(
+    expression: &'a Expression<'a>,
+) -> Option<&'a str> {
+    match transparent_runtime_expression(expression) {
+        Expression::StringLiteral(source) => Some(source.value.as_str()),
+        Expression::TemplateLiteral(template) if template.expressions.is_empty() => template
+            .quasis
+            .first()
+            .and_then(|quasi| quasi.value.cooked.as_ref())
+            .map(|value| value.as_str()),
+        _ => None,
+    }
 }
 
 fn mapped_argument_property(member: &MemberExpression<'_>) -> MappedArgumentProperty {

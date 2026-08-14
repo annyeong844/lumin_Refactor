@@ -494,12 +494,13 @@ impl RepositoryAnalysisSession {
             resolver_limitations,
         );
 
-        let source_adjacency = source_adjacency(&self.inventory.sources, &resolved);
+        let source_adjacency = source_adjacency(&self.inventory.sources, &resolved, &limitations);
         let graph = lumin_graph::build(
             &self.inventory.sources,
             &extraction.facts,
             &resolved,
             &package_surfaces,
+            &limitations,
         );
         let findings = lumin_dead::analyze(
             &self.inventory.sources,
@@ -723,6 +724,7 @@ fn semantic_input_records(inventory: &InventorySnapshot) -> Vec<SemanticInputRec
 fn source_adjacency(
     sources: &[SourceSnapshot],
     resolved: &[ResolvedSourceUse],
+    limitations: &[Limitation],
 ) -> BTreeMap<lumin_model::RepoPath, BTreeSet<lumin_model::RepoPath>> {
     let paths_by_id = sources
         .iter()
@@ -750,6 +752,33 @@ fn source_adjacency(
             .entry(target.clone())
             .or_default()
             .insert(importer.clone());
+    }
+    for limitation in limitations {
+        let Limitation::DynamicImportNonLiteral {
+            source_id,
+            candidates,
+            target_scope: lumin_model::DynamicImportTargetScope::ExplicitTargets,
+            ..
+        } = limitation
+        else {
+            continue;
+        };
+        let Some(importer) = paths_by_id.get(source_id) else {
+            continue;
+        };
+        for candidate in candidates {
+            let Some(target) = paths_by_id.get(candidate) else {
+                continue;
+            };
+            adjacency
+                .entry(importer.clone())
+                .or_default()
+                .insert(target.clone());
+            adjacency
+                .entry(target.clone())
+                .or_default()
+                .insert(importer.clone());
+        }
     }
     adjacency
 }

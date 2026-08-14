@@ -6,8 +6,9 @@ use lumin_evidence::{
 };
 use lumin_graph::SymbolGraph;
 use lumin_model::{
-    EvidenceId, FindingDisposition, FindingId, Limitation, LogicalSourceId, RepoPath,
-    ReviewOnlyReason, SemanticConfigSnapshot, SourceSnapshot, UnresolvedTargetScope,
+    DynamicImportTargetScope, EvidenceId, FindingDisposition, FindingId, Limitation,
+    LogicalSourceId, RepoPath, ReviewOnlyReason, SemanticConfigSnapshot, SourceSnapshot,
+    UnresolvedTargetScope,
 };
 
 pub fn analyze(
@@ -200,6 +201,11 @@ fn blocked_absence_scope(
             | Limitation::PackageIdentityUnsupported { .. }
             | Limitation::SfcDialectUnavailable { .. }
             | Limitation::SfcDecompositionUnknown { .. } => workspace_blocked = true,
+            Limitation::DynamicImportNonLiteral { target_scope, .. } => match target_scope {
+                DynamicImportTargetScope::ExplicitTargets
+                | DynamicImportTargetScope::SourceInventory => {}
+                DynamicImportTargetScope::Workspace => workspace_blocked = true,
+            },
             Limitation::VueTemplateOpaque { source_id, .. }
             | Limitation::AliasShapeUnsupported { source_id, .. } => {
                 if !block_source_owner(source_id, sources, config, &mut blocked_paths) {

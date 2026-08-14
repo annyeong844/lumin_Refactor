@@ -4,6 +4,7 @@ use super::*;
 
 mod commonjs_wrapper_review;
 mod dynamic_import_member;
+mod dynamic_import_nonliteral;
 
 #[test]
 fn lowers_named_imports_and_exports() -> Result<(), Box<dyn std::error::Error>> {

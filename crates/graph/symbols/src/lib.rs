@@ -1,11 +1,12 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_model::{
-    ExportFact, FileFacts, ImportKind, LogicalSourceId, PackageSurfaceDeclaration,
-    ResolutionOutcome, ResolvedSourceUse, SourceRoles, SourceSnapshot, SourceSpan, SymbolNamespace,
+    DynamicImportTargetScope, ExportFact, FileFacts, ImportKind, Limitation, LogicalSourceId,
+    PackageSurfaceDeclaration, ResolutionOutcome, ResolvedSourceUse, SourceRoles, SourceSnapshot,
+    SourceSpan, SymbolNamespace,
 };
 
-pub const SYMBOL_GRAPH_SEMANTICS_VERSION: &str = "symbol-graph-semantics.v3";
+pub const SYMBOL_GRAPH_SEMANTICS_VERSION: &str = "symbol-graph-semantics.v5";
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ExportIdentity {
@@ -59,11 +60,24 @@ pub struct SymbolGraph {
     pub test_re_exports: Vec<GraphTestReExport>,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct BroadFanInCounts {
+    production: u64,
+    test: u64,
+}
+
+#[derive(Clone, Debug, Default)]
+struct DynamicFanIn {
+    by_source: BTreeMap<LogicalSourceId, BroadFanInCounts>,
+    source_inventory: BroadFanInCounts,
+}
+
 pub fn build(
     sources: &[SourceSnapshot],
     file_facts: &[FileFacts],
     resolved_uses: &[ResolvedSourceUse],
     package_surfaces: &[PackageSurfaceDeclaration],
+    limitations: &[Limitation],
 ) -> SymbolGraph {
     let roles = sources
         .iter()
@@ -103,6 +117,18 @@ pub fn build(
                     test_broad_fan_in: 0,
                     public_surface_count: 0,
                 });
+        }
+    }
+
+    let bounded_dynamic_fan_in = bounded_dynamic_fan_in(&roles, limitations);
+    for export in graph.exports.values_mut() {
+        if export.fact.namespace == SymbolNamespace::Value {
+            export.production_broad_fan_in += bounded_dynamic_fan_in.source_inventory.production;
+            export.test_broad_fan_in += bounded_dynamic_fan_in.source_inventory.test;
+            if let Some(counts) = bounded_dynamic_fan_in.by_source.get(&export.fact.source_id) {
+                export.production_broad_fan_in += counts.production;
+                export.test_broad_fan_in += counts.test;
+            }
         }
     }
 
@@ -217,6 +243,46 @@ pub fn build(
     propagate_namespace_re_exports(&mut graph, &namespace_re_exports);
 
     graph
+}
+
+fn bounded_dynamic_fan_in(
+    roles: &BTreeMap<LogicalSourceId, SourceRoles>,
+    limitations: &[Limitation],
+) -> DynamicFanIn {
+    let mut fan_in = DynamicFanIn::default();
+    for limitation in limitations {
+        let Limitation::DynamicImportNonLiteral {
+            source_id,
+            candidates,
+            target_scope,
+            ..
+        } = limitation
+        else {
+            continue;
+        };
+        let importer_is_test = roles.get(source_id).is_some_and(SourceRoles::is_test_like);
+        match target_scope {
+            DynamicImportTargetScope::ExplicitTargets => {
+                for candidate in candidates.iter().collect::<BTreeSet<_>>() {
+                    let counts = fan_in.by_source.entry(candidate.clone()).or_default();
+                    if importer_is_test {
+                        counts.test += 1;
+                    } else {
+                        counts.production += 1;
+                    }
+                }
+            }
+            DynamicImportTargetScope::SourceInventory => {
+                if importer_is_test {
+                    fan_in.source_inventory.test += 1;
+                } else {
+                    fan_in.source_inventory.production += 1;
+                }
+            }
+            DynamicImportTargetScope::Workspace => {}
+        }
+    }
+    fan_in
 }
 
 fn increment_broad_fan_in(
@@ -388,6 +454,7 @@ mod tests {
             &[prod_file_facts, test_file_facts],
             &[resolved_use],
             &[],
+            &[],
         );
 
         // The target export should have test_exact_fan_in == 1.
@@ -474,6 +541,7 @@ mod tests {
             &[prod_file_facts, barrel_file_facts],
             &[resolved_use],
             &[],
+            &[],
         );
 
         // Production re-export should NOT create test_re_exports.
@@ -536,6 +604,7 @@ mod tests {
             &[prod_source, test_source],
             &[prod_file_facts, test_file_facts],
             &[resolved_use],
+            &[],
             &[],
         );
 
@@ -604,6 +673,7 @@ mod tests {
             &[prod_source, test_source],
             &[prod_file_facts, test_file_facts],
             &[resolved_use.clone(), resolved_use],
+            &[],
             &[],
         );
 
@@ -702,6 +772,7 @@ mod tests {
             &facts,
             std::slice::from_ref(&namespace_resolution),
             &[],
+            &[],
         );
         assert!(dead_alias.exports.iter().all(|(identity, export)| {
             identity.source_id != target_source.id || export.production_broad_fan_in == 0
@@ -709,7 +780,7 @@ mod tests {
 
         let mut local_namespace_resolution = namespace_resolution.clone();
         local_namespace_resolution.source_use.local_name = Some("namespace".to_owned());
-        let local_binding = build(&sources, &facts, &[local_namespace_resolution], &[]);
+        let local_binding = build(&sources, &facts, &[local_namespace_resolution], &[], &[]);
         assert!(local_binding.exports.iter().all(|(identity, export)| {
             identity.source_id != target_source.id || export.production_broad_fan_in == 1
         }));
@@ -719,10 +790,118 @@ mod tests {
             &facts,
             &[namespace_resolution, consumer_resolution],
             &[],
+            &[],
         );
         assert!(live_alias.exports.iter().all(|(identity, export)| {
             identity.source_id != target_source.id || export.production_broad_fan_in == 1
         }));
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_dynamic_opacity_preserves_importer_role_and_value_namespace()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let production_importer = make_source("src/main.ts", false)?;
+        let test_importer = make_source("tests/loader.test.ts", true)?;
+        let target = make_source("src/target.ts", false)?;
+        let target_facts = FileFacts {
+            source_id: target.id.clone(),
+            source_unit: SourceUnitId::Logical(target.id.clone()),
+            exports: [SymbolNamespace::Value, SymbolNamespace::Type]
+                .into_iter()
+                .map(|namespace| ExportFact {
+                    source_id: target.id.clone(),
+                    exported_name: "candidate".to_owned(),
+                    local_name: Some("candidate".to_owned()),
+                    namespace,
+                    span: SourceSpan { start: 0, end: 20 },
+                })
+                .collect(),
+            uses: Vec::new(),
+            limitations: Vec::new(),
+        };
+        let sources = [
+            production_importer.clone(),
+            test_importer.clone(),
+            target.clone(),
+        ];
+        let facts = [target_facts];
+        let limitation = |source_id: LogicalSourceId| Limitation::DynamicImportNonLiteral {
+            source_unit: SourceUnitId::Logical(source_id.clone()),
+            source_id,
+            span: SourceSpan { start: 0, end: 30 },
+            static_prefix: Some("./target-".to_owned()),
+            candidates: vec![target.id.clone(), target.id.clone()],
+            target_scope: DynamicImportTargetScope::ExplicitTargets,
+        };
+
+        let production = build(
+            &sources,
+            &facts,
+            &[],
+            &[],
+            &[limitation(production_importer.id.clone())],
+        );
+        let test = build(
+            &sources,
+            &facts,
+            &[],
+            &[],
+            &[limitation(test_importer.id.clone())],
+        );
+        let source_inventory_limitation =
+            |source_id: LogicalSourceId| Limitation::DynamicImportNonLiteral {
+                source_unit: SourceUnitId::Logical(source_id.clone()),
+                source_id,
+                span: SourceSpan { start: 0, end: 30 },
+                static_prefix: Some("./target-".to_owned()),
+                candidates: Vec::new(),
+                target_scope: DynamicImportTargetScope::SourceInventory,
+            };
+        let inventory_production = build(
+            &sources,
+            &facts,
+            &[],
+            &[],
+            &[source_inventory_limitation(production_importer.id)],
+        );
+        let inventory_test = build(
+            &sources,
+            &facts,
+            &[],
+            &[],
+            &[source_inventory_limitation(test_importer.id)],
+        );
+        for namespace in [SymbolNamespace::Value, SymbolNamespace::Type] {
+            let identity = ExportIdentity {
+                source_id: target.id.clone(),
+                namespace,
+                exported_name: "candidate".to_owned(),
+            };
+            let production_export = &production.exports[&identity];
+            let test_export = &test.exports[&identity];
+            let inventory_production_export = &inventory_production.exports[&identity];
+            let inventory_test_export = &inventory_test.exports[&identity];
+            if namespace == SymbolNamespace::Value {
+                assert_eq!(production_export.production_broad_fan_in, 1);
+                assert_eq!(production_export.test_broad_fan_in, 0);
+                assert_eq!(test_export.production_broad_fan_in, 0);
+                assert_eq!(test_export.test_broad_fan_in, 1);
+                assert_eq!(inventory_production_export.production_broad_fan_in, 1);
+                assert_eq!(inventory_production_export.test_broad_fan_in, 0);
+                assert_eq!(inventory_test_export.production_broad_fan_in, 0);
+                assert_eq!(inventory_test_export.test_broad_fan_in, 1);
+            } else {
+                assert_eq!(production_export.production_broad_fan_in, 0);
+                assert_eq!(production_export.test_broad_fan_in, 0);
+                assert_eq!(test_export.production_broad_fan_in, 0);
+                assert_eq!(test_export.test_broad_fan_in, 0);
+                assert_eq!(inventory_production_export.production_broad_fan_in, 0);
+                assert_eq!(inventory_production_export.test_broad_fan_in, 0);
+                assert_eq!(inventory_test_export.production_broad_fan_in, 0);
+                assert_eq!(inventory_test_export.test_broad_fan_in, 0);
+            }
+        }
         Ok(())
     }
 
@@ -778,6 +957,7 @@ mod tests {
             &[target_source.clone(), barrel_source],
             &[target_facts, barrel_facts],
             &[re_export_all],
+            &[],
             &[],
         );
         for exported_name in ["named", "default"] {
