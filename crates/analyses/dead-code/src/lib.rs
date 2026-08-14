@@ -202,7 +202,8 @@ fn blocked_absence_scope(
             | Limitation::SfcDialectUnavailable { .. }
             | Limitation::SfcDecompositionUnknown { .. } => workspace_blocked = true,
             Limitation::DynamicImportNonLiteral { target_scope, .. } => match target_scope {
-                DynamicImportTargetScope::ExplicitTargets => {}
+                DynamicImportTargetScope::ExplicitTargets
+                | DynamicImportTargetScope::SourceInventory => {}
                 DynamicImportTargetScope::Workspace => workspace_blocked = true,
             },
             Limitation::VueTemplateOpaque { source_id, .. }

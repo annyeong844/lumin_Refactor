@@ -196,7 +196,10 @@ fn limitation_delta_at(limitation: &Limitation, construct_ordinal: u64) -> Limit
             target_scope,
             ..
         } => {
-            if *target_scope == DynamicImportTargetScope::Workspace {
+            if matches!(
+                target_scope,
+                DynamicImportTargetScope::SourceInventory | DynamicImportTargetScope::Workspace
+            ) {
                 return LimitationDelta::RequiredEvidenceGap;
             }
             let normalized_prefix = static_prefix.as_deref().unwrap_or_default();
@@ -513,20 +516,26 @@ mod tests {
     }
 
     #[test]
-    fn unbounded_dynamic_import_remains_a_required_evidence_gap() {
-        assert!(matches!(
-            limitation_delta(&Limitation::DynamicImportNonLiteral {
-                source_id: LogicalSourceId::from_string("source-importer".to_owned()),
-                source_unit: SourceUnitId::Logical(LogicalSourceId::from_string(
-                    "source-importer".to_owned(),
-                )),
-                span: SourceSpan { start: 7, end: 20 },
-                static_prefix: None,
-                candidates: Vec::new(),
-                target_scope: DynamicImportTargetScope::Workspace,
-            }),
-            LimitationDelta::RequiredEvidenceGap
-        ));
+    fn growing_and_unbounded_dynamic_imports_remain_required_evidence_gaps() {
+        for target_scope in [
+            DynamicImportTargetScope::SourceInventory,
+            DynamicImportTargetScope::Workspace,
+        ] {
+            assert!(matches!(
+                limitation_delta(&Limitation::DynamicImportNonLiteral {
+                    source_id: LogicalSourceId::from_string("source-importer".to_owned()),
+                    source_unit: SourceUnitId::Logical(LogicalSourceId::from_string(
+                        "source-importer".to_owned(),
+                    )),
+                    span: SourceSpan { start: 7, end: 20 },
+                    static_prefix: (target_scope == DynamicImportTargetScope::SourceInventory)
+                        .then(|| "./features/".to_owned()),
+                    candidates: Vec::new(),
+                    target_scope,
+                }),
+                LimitationDelta::RequiredEvidenceGap
+            ));
+        }
     }
 
     #[test]

@@ -443,6 +443,7 @@ pub enum UnresolvedTargetScope {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum DynamicImportTargetScope {
     ExplicitTargets,
+    SourceInventory,
     Workspace,
 }
 
@@ -602,6 +603,7 @@ pub enum LimitationFactOwner {
 pub enum LimitationScopePolicy {
     Workspace,
     ExplicitTargetsOrWorkspace,
+    ExplicitTargetsOrSourceInventoryOrWorkspace,
     ExplicitTargetsOrKnownNoTargetOrWorkspace,
     SourceOwnerPackageOrWorkspace,
     OwningPackage,
@@ -699,7 +701,7 @@ define_limitation_registry! {
     },
     DynamicImportNonLiteral => {
         owner: Js,
-        scope: ExplicitTargetsOrWorkspace,
+        scope: ExplicitTargetsOrSourceInventoryOrWorkspace,
         absence: CandidateConsumers,
         gate: NormalizedOpacityOrRequiredEvidence,
     },

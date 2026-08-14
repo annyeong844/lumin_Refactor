@@ -46,7 +46,7 @@ These are execution-matrix counts, not a percentage estimate of product code.
 | Lane | Applicable | Mapped | Remaining | Verified aggregate |
 | --- | ---: | ---: | ---: | --- |
 | Standard | 86 | 62 | 24 | Focused `corpus::tests::mode_counts`: 62 mapped, 24 unmapped; `dynamic-nonliteral`: 1 invocation passed, 0 failed. Last required public CI mapped aggregate: 59 passed, 0 failed. |
-| Determinism | 86 | 62 | 24 | Focused `corpus::tests::mode_counts`: 62 mapped, 24 unmapped; `dynamic-nonliteral`: 1 invocation passed with 11 semantic captures, 0 failed. Last required public CI mapped aggregate: 59 passed, 0 failed. |
+| Determinism | 86 | 62 | 24 | Focused `corpus::tests::mode_counts`: 62 mapped, 24 unmapped; `dynamic-nonliteral`: 1 invocation passed with 9 semantic captures, 0 failed. Last required public CI mapped aggregate: 59 passed, 0 failed. |
 | Store crash | 10 | 4 | 6 | Mapping count only; Phase 1 exit still requires the complete lane. |
 | **Total execution obligations** | **182** | **128** | **54** | This total deliberately counts each required lane execution. |
 

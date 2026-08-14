@@ -6,7 +6,7 @@ use lumin_model::{
     SourceSpan, SymbolNamespace,
 };
 
-pub const SYMBOL_GRAPH_SEMANTICS_VERSION: &str = "symbol-graph-semantics.v4";
+pub const SYMBOL_GRAPH_SEMANTICS_VERSION: &str = "symbol-graph-semantics.v5";
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ExportIdentity {
@@ -66,6 +66,12 @@ struct BroadFanInCounts {
     test: u64,
 }
 
+#[derive(Clone, Debug, Default)]
+struct DynamicFanIn {
+    by_source: BTreeMap<LogicalSourceId, BroadFanInCounts>,
+    source_inventory: BroadFanInCounts,
+}
+
 pub fn build(
     sources: &[SourceSnapshot],
     file_facts: &[FileFacts],
@@ -116,11 +122,13 @@ pub fn build(
 
     let bounded_dynamic_fan_in = bounded_dynamic_fan_in(&roles, limitations);
     for export in graph.exports.values_mut() {
-        if export.fact.namespace == SymbolNamespace::Value
-            && let Some(counts) = bounded_dynamic_fan_in.get(&export.fact.source_id)
-        {
-            export.production_broad_fan_in += counts.production;
-            export.test_broad_fan_in += counts.test;
+        if export.fact.namespace == SymbolNamespace::Value {
+            export.production_broad_fan_in += bounded_dynamic_fan_in.source_inventory.production;
+            export.test_broad_fan_in += bounded_dynamic_fan_in.source_inventory.test;
+            if let Some(counts) = bounded_dynamic_fan_in.by_source.get(&export.fact.source_id) {
+                export.production_broad_fan_in += counts.production;
+                export.test_broad_fan_in += counts.test;
+            }
         }
     }
 
@@ -240,26 +248,38 @@ pub fn build(
 fn bounded_dynamic_fan_in(
     roles: &BTreeMap<LogicalSourceId, SourceRoles>,
     limitations: &[Limitation],
-) -> BTreeMap<LogicalSourceId, BroadFanInCounts> {
-    let mut fan_in = BTreeMap::<LogicalSourceId, BroadFanInCounts>::new();
+) -> DynamicFanIn {
+    let mut fan_in = DynamicFanIn::default();
     for limitation in limitations {
         let Limitation::DynamicImportNonLiteral {
             source_id,
             candidates,
-            target_scope: DynamicImportTargetScope::ExplicitTargets,
+            target_scope,
             ..
         } = limitation
         else {
             continue;
         };
         let importer_is_test = roles.get(source_id).is_some_and(SourceRoles::is_test_like);
-        for candidate in candidates.iter().collect::<BTreeSet<_>>() {
-            let counts = fan_in.entry(candidate.clone()).or_default();
-            if importer_is_test {
-                counts.test += 1;
-            } else {
-                counts.production += 1;
+        match target_scope {
+            DynamicImportTargetScope::ExplicitTargets => {
+                for candidate in candidates.iter().collect::<BTreeSet<_>>() {
+                    let counts = fan_in.by_source.entry(candidate.clone()).or_default();
+                    if importer_is_test {
+                        counts.test += 1;
+                    } else {
+                        counts.production += 1;
+                    }
+                }
             }
+            DynamicImportTargetScope::SourceInventory => {
+                if importer_is_test {
+                    fan_in.source_inventory.test += 1;
+                } else {
+                    fan_in.source_inventory.production += 1;
+                }
+            }
+            DynamicImportTargetScope::Workspace => {}
         }
     }
     fan_in
@@ -820,9 +840,38 @@ mod tests {
             &facts,
             &[],
             &[],
-            &[limitation(production_importer.id)],
+            &[limitation(production_importer.id.clone())],
         );
-        let test = build(&sources, &facts, &[], &[], &[limitation(test_importer.id)]);
+        let test = build(
+            &sources,
+            &facts,
+            &[],
+            &[],
+            &[limitation(test_importer.id.clone())],
+        );
+        let source_inventory_limitation =
+            |source_id: LogicalSourceId| Limitation::DynamicImportNonLiteral {
+                source_unit: SourceUnitId::Logical(source_id.clone()),
+                source_id,
+                span: SourceSpan { start: 0, end: 30 },
+                static_prefix: Some("./target-".to_owned()),
+                candidates: Vec::new(),
+                target_scope: DynamicImportTargetScope::SourceInventory,
+            };
+        let inventory_production = build(
+            &sources,
+            &facts,
+            &[],
+            &[],
+            &[source_inventory_limitation(production_importer.id)],
+        );
+        let inventory_test = build(
+            &sources,
+            &facts,
+            &[],
+            &[],
+            &[source_inventory_limitation(test_importer.id)],
+        );
         for namespace in [SymbolNamespace::Value, SymbolNamespace::Type] {
             let identity = ExportIdentity {
                 source_id: target.id.clone(),
@@ -831,16 +880,26 @@ mod tests {
             };
             let production_export = &production.exports[&identity];
             let test_export = &test.exports[&identity];
+            let inventory_production_export = &inventory_production.exports[&identity];
+            let inventory_test_export = &inventory_test.exports[&identity];
             if namespace == SymbolNamespace::Value {
                 assert_eq!(production_export.production_broad_fan_in, 1);
                 assert_eq!(production_export.test_broad_fan_in, 0);
                 assert_eq!(test_export.production_broad_fan_in, 0);
                 assert_eq!(test_export.test_broad_fan_in, 1);
+                assert_eq!(inventory_production_export.production_broad_fan_in, 1);
+                assert_eq!(inventory_production_export.test_broad_fan_in, 0);
+                assert_eq!(inventory_test_export.production_broad_fan_in, 0);
+                assert_eq!(inventory_test_export.test_broad_fan_in, 1);
             } else {
                 assert_eq!(production_export.production_broad_fan_in, 0);
                 assert_eq!(production_export.test_broad_fan_in, 0);
                 assert_eq!(test_export.production_broad_fan_in, 0);
                 assert_eq!(test_export.test_broad_fan_in, 0);
+                assert_eq!(inventory_production_export.production_broad_fan_in, 0);
+                assert_eq!(inventory_production_export.test_broad_fan_in, 0);
+                assert_eq!(inventory_test_export.production_broad_fan_in, 0);
+                assert_eq!(inventory_test_export.test_broad_fan_in, 0);
             }
         }
         Ok(())

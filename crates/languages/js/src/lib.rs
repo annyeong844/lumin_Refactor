@@ -19,11 +19,12 @@ mod dynamic_import;
 mod require_scope;
 
 use dynamic_import::{
-    NonLiteralDynamicImportTemplate, analyze_literal_dynamic_imports, nonliteral_template,
+    NonLiteralDynamicImportTemplate, analyze_literal_dynamic_imports,
+    literal_dynamic_import_specifier, nonliteral_template,
 };
 use require_scope::RequireScopeTracker;
 
-pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v20";
+pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v21";
 
 const REQUIRE_ATTRIBUTION_OPAQUE: &str = "shadowed, mutated, dynamically resolved, or escaped require makes CommonJS module-use attribution opaque";
 const MODULE_REQUIRE_ATTRIBUTION_OPAQUE: &str =
@@ -684,12 +685,10 @@ impl<'a> Visit<'a> for DynamicUseDetector {
     }
 
     fn visit_import_expression(&mut self, expression: &oxc_ast::ast::ImportExpression<'a>) {
-        match &expression.source {
-            oxc_ast::ast::Expression::StringLiteral(source)
-                if expression.options.is_some() || expression.phase.is_some() =>
-            {
+        match literal_dynamic_import_specifier(&expression.source) {
+            Some(specifier) if expression.options.is_some() || expression.phase.is_some() => {
                 self.uses.push(SourceUseTemplate {
-                    specifier: source.value.to_string(),
+                    specifier: specifier.to_owned(),
                     imported_name: None,
                     local_name: None,
                     namespace: SymbolNamespace::Value,
@@ -702,13 +701,13 @@ impl<'a> Visit<'a> for DynamicUseDetector {
                         .to_owned(),
                 );
             }
-            oxc_ast::ast::Expression::StringLiteral(source)
+            Some(specifier)
                 if !self
                     .handled_dynamic_imports
                     .contains(&(expression.span.start, expression.span.end)) =>
             {
                 self.uses.push(SourceUseTemplate {
-                    specifier: source.value.to_string(),
+                    specifier: specifier.to_owned(),
                     imported_name: None,
                     local_name: None,
                     namespace: SymbolNamespace::Value,
@@ -717,8 +716,8 @@ impl<'a> Visit<'a> for DynamicUseDetector {
                     span: span(expression.span),
                 });
             }
-            oxc_ast::ast::Expression::StringLiteral(_) => {}
-            _ => {
+            Some(_) => {}
+            None => {
                 self.nonliteral_dynamic_imports
                     .push(nonliteral_template(expression));
                 if expression.options.is_some() || expression.phase.is_some() {

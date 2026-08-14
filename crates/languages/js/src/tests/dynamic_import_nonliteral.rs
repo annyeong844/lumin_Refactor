@@ -8,7 +8,7 @@ use lumin_model::{
 use super::super::{extract, scope_dynamic_import_limitations};
 
 #[test]
-fn relative_static_prefixes_bind_the_complete_normalized_inventory_domain()
+fn relative_static_prefixes_use_the_compact_source_inventory_domain()
 -> Result<(), Box<dyn std::error::Error>> {
     let sources = vec![
         snapshot(
@@ -44,16 +44,25 @@ fn relative_static_prefixes_bind_the_complete_normalized_inventory_domain()
         .collect::<Result<Vec<_>, _>>()?;
 
     assert_eq!(limitations.len(), 2);
-    let all_sources = sources
-        .iter()
-        .map(|source| source.id.clone())
-        .collect::<BTreeSet<_>>();
     assert_eq!(limitations[0].0, "../features/");
-    assert_eq!(limitations[0].2, DynamicImportTargetScope::ExplicitTargets);
-    assert_eq!(limitations[0].1, all_sources);
+    assert_eq!(limitations[0].2, DynamicImportTargetScope::SourceInventory);
+    assert!(limitations[0].1.is_empty());
     assert_eq!(limitations[1].0, "../shared/prefix-");
-    assert_eq!(limitations[1].2, DynamicImportTargetScope::ExplicitTargets);
-    assert_eq!(limitations[1].1, all_sources);
+    assert_eq!(limitations[1].2, DynamicImportTargetScope::SourceInventory);
+    assert!(limitations[1].1.is_empty());
+    Ok(())
+}
+
+#[test]
+fn no_substitution_template_import_is_literal_evidence() -> Result<(), Box<dyn std::error::Error>> {
+    let importer = snapshot("src/main.ts", b"void import(`./used.js`);", 1)?;
+    let mut facts = vec![extract(&importer)?];
+    scope_dynamic_import_limitations(&mut facts, std::slice::from_ref(&importer));
+
+    assert!(facts[0].limitations.is_empty());
+    assert_eq!(facts[0].uses.len(), 1);
+    assert_eq!(facts[0].uses[0].specifier, "./used.js");
+    assert_eq!(facts[0].uses[0].kind, lumin_model::ImportKind::DynamicBroad);
     Ok(())
 }
 
@@ -93,8 +102,8 @@ fn bounded_empty_and_unbounded_expressions_remain_distinct()
         vec![
             (
                 Some("./missing/"),
-                1,
-                DynamicImportTargetScope::ExplicitTargets,
+                0,
+                DynamicImportTargetScope::SourceInventory,
             ),
             (None, 0, DynamicImportTargetScope::Workspace),
             (Some("/absolute/"), 0, DynamicImportTargetScope::Workspace,),

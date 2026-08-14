@@ -56,13 +56,11 @@ pub(crate) fn scope_limitations(facts: &mut [FileFacts], sources: &[SourceSnapsh
             };
 
             // An arbitrary suffix can inject separators and dot segments, so even a
-            // relative static prefix can normalize to any repository source. Keep the
-            // bounded fact comparable by enumerating the complete current inventory;
-            // narrowing to lexical descendants would permit false absence claims.
-            candidates.extend(sources.iter().map(|source| source.id.clone()));
-            candidates.sort();
-            candidates.dedup();
-            *target_scope = DynamicImportTargetScope::ExplicitTargets;
+            // relative static prefix can normalize to any repository source. Represent
+            // that current-inventory domain once instead of repeating every source ID
+            // in every limitation. The gate treats this growing domain as required
+            // incomplete evidence because it has no durable future-membership lease.
+            *target_scope = DynamicImportTargetScope::SourceInventory;
         }
     }
 }
