@@ -208,6 +208,10 @@ fn namespace_exports_jsx_and_receiver_preserving_calls_remain_broad()
         ),
         (
             SourceKind::TypeScript,
+            "async function run() { const loaded = await import('./mod.js'); (loaded.safe as Function)(); }",
+        ),
+        (
+            SourceKind::TypeScript,
             "async function run() { const loaded = await import('./mod.js'); loaded.safe`value`; }",
         ),
         (
@@ -246,6 +250,7 @@ fn detached_or_constructed_namespace_members_remain_exact() -> Result<(), Box<dy
 {
     for source in [
         "async function run() { const loaded = await import('./mod.js'); loaded.safe; type Snapshot = typeof loaded; }",
+        "async function run() { const loaded = await import('./mod.js'); type loaded = {}; loaded.safe; }",
         "async function run() { const loaded = await import('./mod.js'); (0, loaded.safe)(); }",
         "async function run() { const loaded = await import('./mod.js'); const invoke = loaded.safe; invoke(); }",
         "async function run() { const loaded = await import('./mod.js'); new loaded.safe(); }",

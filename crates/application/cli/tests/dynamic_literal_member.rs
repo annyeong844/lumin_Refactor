@@ -14,6 +14,7 @@ const MAIN_SOURCE: &str = concat!(
     "  const awaited = await import('./awaited.js');\n",
     "  console.log(awaited.selectedAwait);\n",
     "  type AwaitedSnapshot = typeof awaited;\n",
+    "  type awaited = {};\n",
     "  import('./then.js').then((callback) => console.log(callback.selectedThen));\n",
     "  const scoped = await import('./outer.js');\n",
     "  if (flag) {\n",
@@ -242,7 +243,7 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
     write(
         root.path(),
         "src/receiver-escape.ts",
-        "async function invoke() { const loaded = await import('./receiver-target.js'); loaded.selectedReceiver(); } void invoke();\n",
+        "async function invoke() { const loaded = await import('./receiver-target.js'); (loaded.selectedReceiver as Function)(); } void invoke();\n",
     )?;
     write(
         root.path(),

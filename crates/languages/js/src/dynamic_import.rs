@@ -3,10 +3,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use lumin_model::{ImportKind, ModuleRequestKind, SourceSpan, SymbolNamespace};
 use oxc_ast::ast::{
     Argument, BindingIdentifier, BindingPattern, CallExpression, ClassType, ExportNamedDeclaration,
-    ExportSpecifier, Expression, FunctionType, ImportExpression, ImportOrExportKind,
-    JSXElementName, JSXMemberExpression, JSXMemberExpressionObject, MemberExpression,
-    ModuleExportName, TSClassImplements, TSInterfaceHeritage, TSType, TaggedTemplateExpression,
-    VariableDeclarator, WithStatement,
+    ExportSpecifier, Expression, FunctionType, ImportDeclaration, ImportExpression,
+    ImportOrExportKind, ImportSpecifier, JSXElementName, JSXMemberExpression,
+    JSXMemberExpressionObject, MemberExpression, ModuleExportName, TSClassImplements,
+    TSImportEqualsDeclaration, TSInterfaceDeclaration, TSInterfaceHeritage, TSType,
+    TSTypeAliasDeclaration, TSTypeParameter, TaggedTemplateExpression, VariableDeclarator,
+    WithStatement,
 };
 use oxc_ast::ast_kind::AstKind;
 use oxc_ast_visit::{Visit, walk};
@@ -93,6 +95,7 @@ pub(super) fn analyze_literal_dynamic_imports(
         binding_context: _,
         special_bindings: _,
         exported_declaration: _,
+        type_only_binding_depth: _,
     } = collector;
     let mut analyzer = UseAnalyzer::new(&scopes, &mut records);
     analyzer.visit_program(program);
@@ -115,12 +118,16 @@ struct BindingCollector {
     special_bindings: BTreeMap<SpanKey, usize>,
     binding_context: Option<(usize, Binding)>,
     exported_declaration: bool,
+    type_only_binding_depth: usize,
     tracking_failed: bool,
 }
 
 impl BindingCollector {
     fn complete(&self) -> bool {
-        !self.tracking_failed && self.scope_stack.is_empty() && !self.scopes.is_empty()
+        !self.tracking_failed
+            && self.scope_stack.is_empty()
+            && !self.scopes.is_empty()
+            && self.type_only_binding_depth == 0
     }
 
     fn current_scope(&mut self) -> Option<usize> {
@@ -263,11 +270,23 @@ impl BindingCollector {
     }
 
     fn collect_immediate_receiver(&mut self, expression: &Expression<'_>) {
-        if let Some(member) = expression.get_member_expr()
+        if let Some(member) = transparent_runtime_expression(expression).get_member_expr()
             && let Some(record) = self.collect_immediate_member(member)
         {
             self.degrade_binding(Binding::Dynamic(record));
         }
+    }
+
+    fn enter_type_only_binding(&mut self) {
+        self.type_only_binding_depth += 1;
+    }
+
+    fn leave_type_only_binding(&mut self) {
+        let Some(depth) = self.type_only_binding_depth.checked_sub(1) else {
+            self.tracking_failed = true;
+            return;
+        };
+        self.type_only_binding_depth = depth;
     }
 }
 
@@ -304,6 +323,10 @@ impl<'a> Visit<'a> for BindingCollector {
     }
 
     fn visit_binding_identifier(&mut self, identifier: &BindingIdentifier<'a>) {
+        if self.type_only_binding_depth > 0 {
+            walk::walk_binding_identifier(self, identifier);
+            return;
+        }
         let binding = self
             .special_bindings
             .get(&span_key(identifier.span))
@@ -369,6 +392,60 @@ impl<'a> Visit<'a> for BindingCollector {
     fn visit_tagged_template_expression(&mut self, expression: &TaggedTemplateExpression<'a>) {
         self.collect_immediate_receiver(&expression.tag);
         walk::walk_tagged_template_expression(self, expression);
+    }
+
+    fn visit_import_declaration(&mut self, declaration: &ImportDeclaration<'a>) {
+        if declaration.import_kind == ImportOrExportKind::Type {
+            self.enter_type_only_binding();
+        }
+        walk::walk_import_declaration(self, declaration);
+        if declaration.import_kind == ImportOrExportKind::Type {
+            self.leave_type_only_binding();
+        }
+    }
+
+    fn visit_import_specifier(&mut self, specifier: &ImportSpecifier<'a>) {
+        if specifier.import_kind == ImportOrExportKind::Type {
+            self.enter_type_only_binding();
+        }
+        walk::walk_import_specifier(self, specifier);
+        if specifier.import_kind == ImportOrExportKind::Type {
+            self.leave_type_only_binding();
+        }
+    }
+
+    fn visit_ts_import_equals_declaration(&mut self, declaration: &TSImportEqualsDeclaration<'a>) {
+        if declaration.import_kind == ImportOrExportKind::Type {
+            self.enter_type_only_binding();
+        }
+        walk::walk_ts_import_equals_declaration(self, declaration);
+        if declaration.import_kind == ImportOrExportKind::Type {
+            self.leave_type_only_binding();
+        }
+    }
+
+    fn visit_ts_type_alias_declaration(&mut self, declaration: &TSTypeAliasDeclaration<'a>) {
+        self.enter_type_only_binding();
+        walk::walk_ts_type_alias_declaration(self, declaration);
+        self.leave_type_only_binding();
+    }
+
+    fn visit_ts_interface_declaration(&mut self, declaration: &TSInterfaceDeclaration<'a>) {
+        self.enter_type_only_binding();
+        walk::walk_ts_interface_declaration(self, declaration);
+        self.leave_type_only_binding();
+    }
+
+    fn visit_ts_type_parameter(&mut self, parameter: &TSTypeParameter<'a>) {
+        self.enter_type_only_binding();
+        walk::walk_ts_type_parameter(self, parameter);
+        self.leave_type_only_binding();
+    }
+
+    fn visit_ts_type(&mut self, ty: &TSType<'a>) {
+        self.enter_type_only_binding();
+        walk::walk_ts_type(self, ty);
+        self.leave_type_only_binding();
     }
 
     fn visit_export_named_declaration(&mut self, declaration: &ExportNamedDeclaration<'a>) {
@@ -537,10 +614,8 @@ impl<'m, 'r> UseAnalyzer<'m, 'r> {
     }
 
     fn degrade_member_receiver(&mut self, member: &MemberExpression<'_>) {
-        if let Some(identifier) = member
-            .object()
-            .without_parentheses()
-            .get_identifier_reference()
+        if let Some(identifier) =
+            transparent_runtime_expression(member.object()).get_identifier_reference()
         {
             self.degrade_identifier(identifier);
         }
@@ -573,10 +648,8 @@ impl<'a> Visit<'a> for UseAnalyzer<'_, '_> {
     }
 
     fn visit_member_expression(&mut self, expression: &MemberExpression<'a>) {
-        if let Some(identifier) = expression
-            .object()
-            .without_parentheses()
-            .get_identifier_reference()
+        if let Some(identifier) =
+            transparent_runtime_expression(expression.object()).get_identifier_reference()
         {
             self.inspect_member_object(
                 identifier,
@@ -588,8 +661,9 @@ impl<'a> Visit<'a> for UseAnalyzer<'_, '_> {
     }
 
     fn visit_call_expression(&mut self, expression: &CallExpression<'a>) {
+        let callee = transparent_runtime_expression(&expression.callee);
         if !expression.optional
-            && expression.callee.is_specific_id("eval")
+            && callee.is_specific_id("eval")
             && matches!(
                 self.resolve("eval"),
                 Resolution::Unbound | Resolution::AmbiguousDynamic(_) | Resolution::AmbiguousOther
@@ -597,14 +671,14 @@ impl<'a> Visit<'a> for UseAnalyzer<'_, '_> {
         {
             self.degrade_all();
         }
-        if let Some(member) = expression.callee.get_member_expr() {
+        if let Some(member) = callee.get_member_expr() {
             self.degrade_member_receiver(member);
         }
         walk::walk_call_expression(self, expression);
     }
 
     fn visit_tagged_template_expression(&mut self, expression: &TaggedTemplateExpression<'a>) {
-        if let Some(member) = expression.tag.get_member_expr() {
+        if let Some(member) = transparent_runtime_expression(&expression.tag).get_member_expr() {
             self.degrade_member_receiver(member);
         }
         walk::walk_tagged_template_expression(self, expression);
@@ -735,6 +809,24 @@ fn emit_uses(records: Vec<DynamicRecord>) -> Vec<SourceUseTemplate> {
     uses
 }
 
+fn transparent_runtime_expression<'a, 'b>(expression: &'b Expression<'a>) -> &'b Expression<'a> {
+    let expression = expression.without_parentheses();
+    match expression {
+        Expression::TSAsExpression(wrapper) => transparent_runtime_expression(&wrapper.expression),
+        Expression::TSSatisfiesExpression(wrapper) => {
+            transparent_runtime_expression(&wrapper.expression)
+        }
+        Expression::TSTypeAssertion(wrapper) => transparent_runtime_expression(&wrapper.expression),
+        Expression::TSNonNullExpression(wrapper) => {
+            transparent_runtime_expression(&wrapper.expression)
+        }
+        Expression::TSInstantiationExpression(wrapper) => {
+            transparent_runtime_expression(&wrapper.expression)
+        }
+        _ => expression,
+    }
+}
+
 fn then_callback_binding<'a>(
     expression: &'a CallExpression<'a>,
 ) -> Option<(
@@ -743,10 +835,7 @@ fn then_callback_binding<'a>(
     &'a BindingIdentifier<'a>,
     bool,
 )> {
-    let member = expression
-        .callee
-        .without_parentheses()
-        .as_member_expression()?;
+    let member = transparent_runtime_expression(&expression.callee).get_member_expr()?;
     if member.static_property_name() != Some("then") {
         return None;
     }
@@ -772,7 +861,8 @@ fn then_callback_binding<'a>(
 fn awaited_literal_import<'a>(
     expression: &'a Expression<'a>,
 ) -> Option<(&'a ImportExpression<'a>, &'a str)> {
-    let Expression::AwaitExpression(await_expression) = expression.without_parentheses() else {
+    let Expression::AwaitExpression(await_expression) = transparent_runtime_expression(expression)
+    else {
         return None;
     };
     literal_import(&await_expression.argument)
@@ -781,13 +871,17 @@ fn awaited_literal_import<'a>(
 fn literal_import<'a>(
     expression: &'a Expression<'a>,
 ) -> Option<(&'a ImportExpression<'a>, &'a str)> {
-    let Expression::ImportExpression(import_expression) = expression.without_parentheses() else {
+    let Expression::ImportExpression(import_expression) =
+        transparent_runtime_expression(expression)
+    else {
         return None;
     };
     if import_expression.options.is_some() || import_expression.phase.is_some() {
         return None;
     }
-    let Expression::StringLiteral(source) = import_expression.source.without_parentheses() else {
+    let Expression::StringLiteral(source) =
+        transparent_runtime_expression(&import_expression.source)
+    else {
         return None;
     };
     Some((import_expression, source.value.as_str()))
