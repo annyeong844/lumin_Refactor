@@ -362,7 +362,7 @@ pub enum ModuleRequestKind {
     Require,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceSpan {
     pub start: u32,
@@ -439,6 +439,13 @@ pub enum UnresolvedTargetScope {
     OpaqueWorkspace,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum DynamicImportTargetScope {
+    ExplicitTargets,
+    Workspace,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum ResolutionOutcome {
@@ -474,6 +481,21 @@ pub enum Limitation {
     JsModuleUseUnknown {
         source_id: LogicalSourceId,
         detail: String,
+    },
+    DynamicImportNonLiteral {
+        source_id: LogicalSourceId,
+        source_unit: SourceUnitId,
+        span: SourceSpan,
+        #[serde(
+            default,
+            rename = "staticPrefix",
+            alias = "static_prefix",
+            skip_serializing_if = "Option::is_none"
+        )]
+        static_prefix: Option<String>,
+        candidates: Vec<LogicalSourceId>,
+        #[serde(rename = "targetScope", alias = "target_scope")]
+        target_scope: DynamicImportTargetScope,
     },
     SourcePayloadUnavailable {
         path: String,
@@ -674,6 +696,12 @@ define_limitation_registry! {
         scope: Workspace,
         absence: WorkspaceConsumers,
         gate: RequiredEvidence,
+    },
+    DynamicImportNonLiteral => {
+        owner: Js,
+        scope: ExplicitTargetsOrWorkspace,
+        absence: CandidateConsumers,
+        gate: NormalizedOpacityOrRequiredEvidence,
     },
     SourcePayloadUnavailable => {
         owner: Inventory,

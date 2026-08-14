@@ -1,9 +1,9 @@
 use std::collections::BTreeSet;
 
 use lumin_model::{
-    EmbeddedSourceUnit, ExportFact, FileFacts, ImportKind, Limitation, LogicalSourceId,
-    ModuleRequestKind, SourceKind, SourceSnapshot, SourceSpan, SourceUnitId, SourceUseFact,
-    SymbolNamespace,
+    DynamicImportTargetScope, EmbeddedSourceUnit, ExportFact, FileFacts, ImportKind, Limitation,
+    LogicalSourceId, ModuleRequestKind, SourceKind, SourceSnapshot, SourceSpan, SourceUnitId,
+    SourceUseFact, SymbolNamespace,
 };
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
@@ -18,10 +18,12 @@ use oxc_span::{GetSpan, SourceType, Span};
 mod dynamic_import;
 mod require_scope;
 
-use dynamic_import::analyze_literal_dynamic_imports;
+use dynamic_import::{
+    NonLiteralDynamicImportTemplate, analyze_literal_dynamic_imports, nonliteral_template,
+};
 use require_scope::RequireScopeTracker;
 
-pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v19";
+pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v20";
 
 const REQUIRE_ATTRIBUTION_OPAQUE: &str = "shadowed, mutated, dynamically resolved, or escaped require makes CommonJS module-use attribution opaque";
 const MODULE_REQUIRE_ATTRIBUTION_OPAQUE: &str =
@@ -67,6 +69,7 @@ impl std::error::Error for JsExtractError {}
 pub struct JsPayloadFacts {
     exports: Vec<ExportTemplate>,
     uses: Vec<SourceUseTemplate>,
+    nonliteral_dynamic_imports: Vec<NonLiteralDynamicImportTemplate>,
     limitation_details: Vec<String>,
 }
 
@@ -185,6 +188,7 @@ pub fn parse_payload_with_module_formats(
     let mut base_facts = JsPayloadFacts {
         exports: Vec::new(),
         uses: Vec::new(),
+        nonliteral_dynamic_imports: Vec::new(),
         limitation_details: Vec::new(),
     };
     if matches!(kind, SourceKind::CommonJs | SourceKind::Cts) {
@@ -232,6 +236,7 @@ fn contextualize_payload(
         module_member_object_references: BTreeSet::new(),
         non_escaping_module_require_members: BTreeSet::new(),
         handled_dynamic_imports: dynamic_imports.handled_imports,
+        nonliteral_dynamic_imports: Vec::new(),
     };
     if escaped_require {
         detector.report_opaque_require();
@@ -249,6 +254,9 @@ fn contextualize_payload(
     }
     facts.uses.extend(dynamic_imports.uses);
     facts.uses.extend(detector.uses);
+    facts
+        .nonliteral_dynamic_imports
+        .extend(detector.nonliteral_dynamic_imports);
     facts.limitation_details.extend(detector.unknown_details);
     if kind.is_declaration() {
         for export in &mut facts.exports {
@@ -269,7 +277,7 @@ pub fn bind_payload(
 ) -> FileFacts {
     FileFacts {
         source_id: source_id.clone(),
-        source_unit,
+        source_unit: source_unit.clone(),
         exports: payload
             .exports
             .iter()
@@ -302,8 +310,22 @@ pub fn bind_payload(
                 source_id: source_id.clone(),
                 detail: detail.clone(),
             })
+            .chain(payload.nonliteral_dynamic_imports.iter().map(|dynamic| {
+                Limitation::DynamicImportNonLiteral {
+                    source_id: source_id.clone(),
+                    source_unit: source_unit.clone(),
+                    span: dynamic.span.clone(),
+                    static_prefix: dynamic.static_prefix.clone(),
+                    candidates: Vec::new(),
+                    target_scope: DynamicImportTargetScope::Workspace,
+                }
+            }))
             .collect(),
     }
+}
+
+pub fn scope_dynamic_import_limitations(facts: &mut [FileFacts], sources: &[SourceSnapshot]) {
+    dynamic_import::scope_limitations(facts, sources);
 }
 
 fn lower_statement(statement: &Statement<'_>, facts: &mut JsPayloadFacts) {
@@ -627,6 +649,7 @@ struct DynamicUseDetector {
     module_member_object_references: BTreeSet<(u32, u32)>,
     non_escaping_module_require_members: BTreeSet<(u32, u32)>,
     handled_dynamic_imports: BTreeSet<(u32, u32)>,
+    nonliteral_dynamic_imports: Vec<NonLiteralDynamicImportTemplate>,
 }
 
 impl DynamicUseDetector {
@@ -695,9 +718,16 @@ impl<'a> Visit<'a> for DynamicUseDetector {
                 });
             }
             oxc_ast::ast::Expression::StringLiteral(_) => {}
-            _ => self
-                .unknown_details
-                .push("nonliteral dynamic import may hide an internal consumer".to_owned()),
+            _ => {
+                self.nonliteral_dynamic_imports
+                    .push(nonliteral_template(expression));
+                if expression.options.is_some() || expression.phase.is_some() {
+                    self.unknown_details.push(
+                        "dynamic import options or phases are not modeled and may change module semantics"
+                            .to_owned(),
+                    );
+                }
+            }
         }
         walk::walk_import_expression(self, expression);
     }
@@ -882,6 +912,7 @@ fn unknown_payload(detail: String) -> JsPayloadFacts {
     JsPayloadFacts {
         exports: Vec::new(),
         uses: Vec::new(),
+        nonliteral_dynamic_imports: Vec::new(),
         limitation_details: vec![detail],
     }
 }
@@ -902,6 +933,8 @@ fn canonicalize(facts: &mut JsPayloadFacts) {
             .then_with(|| left.span.start.cmp(&right.span.start))
             .then_with(|| left.span.end.cmp(&right.span.end))
     });
+    facts.nonliteral_dynamic_imports.sort();
+    facts.nonliteral_dynamic_imports.dedup();
 }
 
 #[cfg(test)]

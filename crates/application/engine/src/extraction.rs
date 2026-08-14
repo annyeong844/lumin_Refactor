@@ -100,6 +100,7 @@ pub(super) fn extract_facts(
 
         let mut facts = physical_facts;
         facts.extend(sfc_facts);
+        lumin_js::scope_dynamic_import_limitations(&mut facts, sources);
         Ok(ExtractionOutput {
             facts: reduce_file_facts(facts),
             sfc_states,

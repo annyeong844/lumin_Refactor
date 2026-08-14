@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_model::{
     DeltaFact, DeltaFactFamily, DeltaIdentity, DeltaIdentityKind, DeltaKey, DeltaOwnerPayloadValue,
-    DeltaValue, FindingDisposition, Limitation, LogicalSourceId, ReviewOnlyReason,
-    UnresolvedTargetScope, append_length_prefixed,
+    DeltaValue, DynamicImportTargetScope, FindingDisposition, Limitation, LogicalSourceId,
+    ReviewOnlyReason, SourceUnitId, UnresolvedTargetScope, append_length_prefixed,
 };
 
 use crate::{Confidence, FindingRecord, RunEvidence, Severity};
@@ -167,6 +167,53 @@ fn limitation_delta(limitation: &Limitation) -> LimitationDelta {
                 owner_payload,
             })
         }
+        Limitation::DynamicImportNonLiteral {
+            source_id,
+            source_unit,
+            span,
+            static_prefix,
+            candidates,
+            target_scope,
+        } => {
+            if *target_scope == DynamicImportTargetScope::Workspace {
+                return LimitationDelta::RequiredEvidenceGap;
+            }
+            let semantic_identity = frame([
+                source_id.as_str().as_bytes(),
+                source_unit_identity(source_unit).as_slice(),
+                b"dynamic-import",
+                span.start.to_be_bytes().as_slice(),
+                span.end.to_be_bytes().as_slice(),
+            ]);
+            LimitationDelta::Fact(DeltaFact {
+                key: DeltaKey {
+                    owner_capability: "js/module-use.v1".to_owned(),
+                    family: DeltaFactFamily::Opacity,
+                    semantic_identity: semantic_identity.clone(),
+                },
+                targets: candidates
+                    .iter()
+                    .map(|candidate| target(candidate.as_str().as_bytes()))
+                    .collect(),
+                affected_identities: BTreeSet::from([logical_source(source_id)]),
+                confidence: lumin_model::ConfidenceRank::High,
+                grounding: lumin_model::GroundingRank::Opaque,
+                evidence_identity: DeltaValue::bytes(semantic_identity),
+                owner_payload: BTreeMap::from([
+                    (
+                        "staticPrefix".to_owned(),
+                        DeltaOwnerPayloadValue::unordered(match static_prefix {
+                            Some(prefix) => DeltaValue::text(prefix),
+                            None => DeltaValue::Absent,
+                        }),
+                    ),
+                    (
+                        "targetScope".to_owned(),
+                        DeltaOwnerPayloadValue::unordered(DeltaValue::text("explicit-targets")),
+                    ),
+                ]),
+            })
+        }
         Limitation::JsModuleUseUnknown { .. }
         | Limitation::SourcePayloadUnavailable { .. }
         | Limitation::PackageImportsUnsupported { .. }
@@ -239,6 +286,17 @@ fn disposition_bytes(disposition: &FindingDisposition) -> Vec<u8> {
 fn severity_name(severity: Severity) -> &'static str {
     match severity {
         Severity::Warning => "warning",
+    }
+}
+
+fn source_unit_identity(source_unit: &SourceUnitId) -> Vec<u8> {
+    match source_unit {
+        SourceUnitId::Logical(source_id) => {
+            frame([b"logical".as_slice(), source_id.as_str().as_bytes()])
+        }
+        SourceUnitId::Embedded(unit_id) => {
+            frame([b"embedded".as_slice(), unit_id.as_str().as_bytes()])
+        }
     }
 }
 
@@ -328,6 +386,80 @@ mod tests {
         assert!(fact.key.family.blocks_when_adverse());
         assert_eq!(fact.targets.len(), 1);
         Ok(())
+    }
+
+    #[test]
+    fn bounded_dynamic_import_is_a_comparable_opacity_fact() -> Result<(), &'static str> {
+        let candidate = LogicalSourceId::from_string("source-candidate".to_owned());
+        let delta = limitation_delta(&Limitation::DynamicImportNonLiteral {
+            source_id: LogicalSourceId::from_string("source-importer".to_owned()),
+            source_unit: SourceUnitId::Logical(LogicalSourceId::from_string(
+                "source-importer".to_owned(),
+            )),
+            span: SourceSpan { start: 7, end: 30 },
+            static_prefix: Some("./features/".to_owned()),
+            candidates: vec![candidate.clone()],
+            target_scope: DynamicImportTargetScope::ExplicitTargets,
+        });
+        let fact = match delta {
+            LimitationDelta::Fact(fact) => fact,
+            LimitationDelta::RequiredEvidenceGap => {
+                return Err("bounded dynamic import should produce an opacity fact");
+            }
+        };
+        assert_eq!(fact.key.family, DeltaFactFamily::Opacity);
+        assert!(!fact.key.family.blocks_when_adverse());
+        assert_eq!(fact.grounding, lumin_model::GroundingRank::Opaque);
+        assert_eq!(fact.targets.len(), 1);
+        assert!(
+            fact.targets
+                .iter()
+                .any(|target| { target.canonical == candidate.as_str().as_bytes() })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn embedded_dynamic_imports_with_equal_spans_have_distinct_keys() -> Result<(), &'static str> {
+        let fact = |unit: &str| {
+            limitation_delta(&Limitation::DynamicImportNonLiteral {
+                source_id: LogicalSourceId::from_string("source-parent".to_owned()),
+                source_unit: SourceUnitId::Embedded(
+                    lumin_model::EmbeddedSourceUnitId::from_string(unit.to_owned()),
+                ),
+                span: SourceSpan { start: 3, end: 20 },
+                static_prefix: Some("./features/".to_owned()),
+                candidates: Vec::new(),
+                target_scope: DynamicImportTargetScope::ExplicitTargets,
+            })
+        };
+        let first = match fact("embedded-first") {
+            LimitationDelta::Fact(fact) => fact,
+            LimitationDelta::RequiredEvidenceGap => return Err("first opacity was not a fact"),
+        };
+        let second = match fact("embedded-second") {
+            LimitationDelta::Fact(fact) => fact,
+            LimitationDelta::RequiredEvidenceGap => return Err("second opacity was not a fact"),
+        };
+        assert_ne!(first.key, second.key);
+        Ok(())
+    }
+
+    #[test]
+    fn unbounded_dynamic_import_remains_a_required_evidence_gap() {
+        assert!(matches!(
+            limitation_delta(&Limitation::DynamicImportNonLiteral {
+                source_id: LogicalSourceId::from_string("source-importer".to_owned()),
+                source_unit: SourceUnitId::Logical(LogicalSourceId::from_string(
+                    "source-importer".to_owned(),
+                )),
+                span: SourceSpan { start: 7, end: 20 },
+                static_prefix: None,
+                candidates: Vec::new(),
+                target_scope: DynamicImportTargetScope::Workspace,
+            }),
+            LimitationDelta::RequiredEvidenceGap
+        ));
     }
 
     #[test]

@@ -15,8 +15,11 @@ use oxc_span::GetSpan;
 use super::SourceUseTemplate;
 
 mod bindings;
+mod nonliteral;
 
 use bindings::{Binding, BindingCollection, Scope, ScopeKind, collect as collect_bindings};
+pub(crate) use nonliteral::scope_limitations;
+pub(super) use nonliteral::{NonLiteralDynamicImportTemplate, nonliteral_template};
 
 type SpanKey = (u32, u32);
 
