@@ -1,0 +1,492 @@
+use super::*;
+
+type UseView = (String, Option<String>, Option<String>, &'static str);
+
+#[test]
+fn literal_dynamic_members_are_exact_while_escaped_bindings_remain_broad()
+-> Result<(), Box<dyn std::error::Error>> {
+    let payload = parse_payload(
+        SourceKind::TypeScript,
+        concat!(
+            "async function run() {\n",
+            "  const loaded = await import('./awaited.js');\n",
+            "  console.log(loaded.selectedAwait);\n",
+            "  type AwaitedSnapshot = typeof loaded;\n",
+            "  import('./then.js').then((callback) => console.log(callback.selectedThen));\n",
+            "  console.log((await import('./direct.js')).selectedDirect);\n",
+            "  const escaped = await import('./broad.js');\n",
+            "  consume(escaped);\n",
+            "}\n",
+        )
+        .as_bytes(),
+    )?;
+
+    assert!(payload.limitation_details.is_empty());
+    assert_eq!(
+        use_views(&payload),
+        vec![
+            (
+                "./awaited.js".to_owned(),
+                Some("selectedAwait".to_owned()),
+                Some("loaded".to_owned()),
+                "named",
+            ),
+            (
+                "./awaited.js".to_owned(),
+                Some("then".to_owned()),
+                None,
+                "named",
+            ),
+            (
+                "./broad.js".to_owned(),
+                None,
+                Some("escaped".to_owned()),
+                "dynamic-broad",
+            ),
+            (
+                "./direct.js".to_owned(),
+                Some("selectedDirect".to_owned()),
+                None,
+                "named",
+            ),
+            (
+                "./direct.js".to_owned(),
+                Some("then".to_owned()),
+                None,
+                "named",
+            ),
+            (
+                "./then.js".to_owned(),
+                Some("selectedThen".to_owned()),
+                Some("callback".to_owned()),
+                "named",
+            ),
+            (
+                "./then.js".to_owned(),
+                Some("then".to_owned()),
+                None,
+                "named",
+            ),
+        ]
+    );
+    assert!(
+        payload
+            .uses
+            .iter()
+            .all(|source_use| source_use.request_kind == ModuleRequestKind::DynamicImport)
+    );
+    Ok(())
+}
+
+#[test]
+fn shadowed_dynamic_bindings_resolve_to_their_own_literal_imports()
+-> Result<(), Box<dyn std::error::Error>> {
+    let payload = parse_payload(
+        SourceKind::TypeScript,
+        concat!(
+            "async function run(flag: boolean) {\n",
+            "  const scoped = await import('./outer.js');\n",
+            "  if (flag) {\n",
+            "    const scoped = await import('./inner.js');\n",
+            "    console.log(scoped.selectedInner);\n",
+            "  }\n",
+            "  console.log(scoped.selectedOuter);\n",
+            "}\n",
+        )
+        .as_bytes(),
+    )?;
+
+    assert_eq!(
+        use_views(&payload),
+        vec![
+            (
+                "./inner.js".to_owned(),
+                Some("selectedInner".to_owned()),
+                Some("scoped".to_owned()),
+                "named",
+            ),
+            (
+                "./inner.js".to_owned(),
+                Some("then".to_owned()),
+                None,
+                "named",
+            ),
+            (
+                "./outer.js".to_owned(),
+                Some("selectedOuter".to_owned()),
+                Some("scoped".to_owned()),
+                "named",
+            ),
+            (
+                "./outer.js".to_owned(),
+                Some("then".to_owned()),
+                None,
+                "named",
+            ),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn computed_or_aliased_dynamic_bindings_degrade_the_whole_import()
+-> Result<(), Box<dyn std::error::Error>> {
+    for source in [
+        "async function run(key: string) { const loaded = await import('./mod.js'); loaded.safe; loaded[key]; }",
+        "async function run() { const loaded = await import('./mod.js'); const alias = loaded; alias.safe; }",
+    ] {
+        let payload = parse_payload(SourceKind::TypeScript, source.as_bytes())?;
+        assert_eq!(payload.uses.len(), 1, "unexpected uses for {source}");
+        assert_eq!(payload.uses[0].specifier, "./mod.js");
+        assert_eq!(payload.uses[0].kind, ImportKind::DynamicBroad);
+        assert_eq!(payload.uses[0].imported_name, None);
+    }
+    Ok(())
+}
+
+#[test]
+fn eval_and_import_options_cannot_publish_exact_dynamic_members()
+-> Result<(), Box<dyn std::error::Error>> {
+    let eval_payload = parse_payload(
+        SourceKind::TypeScript,
+        b"async function run() { const loaded = await import('./mod.js'); loaded.safe; eval('loaded.hidden'); }",
+    )?;
+    assert_eq!(eval_payload.uses.len(), 1);
+    assert_eq!(eval_payload.uses[0].kind, ImportKind::DynamicBroad);
+    assert_eq!(eval_payload.uses[0].imported_name, None);
+
+    let options_payload = parse_payload(
+        SourceKind::TypeScript,
+        b"async function run() { const loaded = await import('./mod.js', { with: { type: 'json' } }); loaded.safe; }",
+    )?;
+    assert_eq!(options_payload.uses.len(), 1);
+    assert_eq!(options_payload.uses[0].kind, ImportKind::DynamicBroad);
+    assert_eq!(options_payload.uses[0].imported_name, None);
+    assert!(
+        options_payload
+            .limitation_details
+            .iter()
+            .any(|detail| detail.contains("dynamic import options or phases"))
+    );
+    Ok(())
+}
+
+#[test]
+fn callback_arguments_exported_bindings_and_with_eval_remain_broad()
+-> Result<(), Box<dyn std::error::Error>> {
+    for source in [
+        "import('./mod.js').then(function (loaded) { loaded.safe; consume(arguments[0].hidden); });",
+        "export const loaded = await import('./mod.js'); loaded.safe;",
+    ] {
+        let payload = parse_payload(SourceKind::TypeScript, source.as_bytes())?;
+        assert_single_broad(&payload, source);
+    }
+
+    let with_eval = parse_payload(
+        SourceKind::CommonJs,
+        b"async function run(eval, env) { const loaded = await import('./mod.js'); loaded.safe; with (env) { eval('consume(loaded.hidden)'); } }",
+    )?;
+    assert_single_broad(&with_eval, "with-intercepted eval");
+    Ok(())
+}
+
+#[test]
+fn namespace_exports_jsx_and_receiver_preserving_calls_remain_broad()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (kind, source) in [
+        (
+            SourceKind::TypeScript,
+            "const loaded = await import('./mod.js'); loaded.safe; export { loaded };",
+        ),
+        (
+            SourceKind::Tsx,
+            "async function render() { const Loaded = await import('./mod.js'); Loaded.safe; return <Loaded />; }",
+        ),
+        (
+            SourceKind::TypeScript,
+            "async function run() { const loaded = await import('./mod.js'); loaded.safe(); }",
+        ),
+        (
+            SourceKind::TypeScript,
+            "async function run() { const loaded = await import('./mod.js'); (loaded.safe as Function)(); }",
+        ),
+        (
+            SourceKind::TypeScript,
+            "async function run() { const loaded = await import('./mod.js'); loaded.safe`value`; }",
+        ),
+        (
+            SourceKind::TypeScript,
+            "async function run() { const loaded = await import('./mod.js'); loaded?.safe(); }",
+        ),
+        (
+            SourceKind::TypeScript,
+            "async function run() { const loaded = await import('./mod.js'); (loaded?.safe)(); }",
+        ),
+        (
+            SourceKind::TypeScript,
+            "async function run() { const loaded = await import('./mod.js'); (loaded['safe'])(); }",
+        ),
+        (
+            SourceKind::TypeScript,
+            "async function run() { const loaded = await import('./mod.js'); (loaded[`safe`])`value`; }",
+        ),
+        (
+            SourceKind::TypeScript,
+            "const loaded = await import('./mod.js'); loaded.safe; export { loaded as default };",
+        ),
+        (
+            SourceKind::TypeScript,
+            "async function run() { (await import('./mod.js')).safe(); }",
+        ),
+        (
+            SourceKind::TypeScript,
+            "async function run() { (await import('./mod.js')).safe`value`; }",
+        ),
+        (
+            SourceKind::TypeScript,
+            "async function run() { ((await import('./mod.js'))?.safe)(); }",
+        ),
+        (
+            SourceKind::TypeScript,
+            "async function run() { ((await import('./mod.js')).safe)?.(); }",
+        ),
+    ] {
+        let payload = parse_payload(kind, source.as_bytes())?;
+        assert_single_broad(&payload, source);
+    }
+    Ok(())
+}
+
+#[test]
+fn runtime_namespaces_and_annex_b_follow_their_value_scopes()
+-> Result<(), Box<dyn std::error::Error>> {
+    let namespace = parse_payload(
+        SourceKind::TypeScript,
+        concat!(
+            "const loaded = await import('./mod.js');\n",
+            "namespace Outer { export namespace loaded {} consume(loaded); }\n",
+            "loaded.safe;\n",
+        )
+        .as_bytes(),
+    )?;
+    assert_single_exact(&namespace, "runtime namespace binding");
+
+    let ambient = parse_payload(
+        SourceKind::TypeScript,
+        concat!(
+            "const loaded = await import('./mod.js');\n",
+            "declare class TypeOnly extends loaded {}\n",
+            "loaded.safe;\n",
+        )
+        .as_bytes(),
+    )?;
+    assert_single_exact(&ambient, "ambient heritage reference");
+
+    let ambient_export = parse_payload(
+        SourceKind::TypeScript,
+        concat!(
+            "const loaded = await import('./mod.js');\n",
+            "declare module 'pkg' { export { loaded }; }\n",
+            "loaded.safe;\n",
+        )
+        .as_bytes(),
+    )?;
+    assert_single_exact(&ambient_export, "ambient named export");
+
+    let overload = parse_payload(
+        SourceKind::TypeScript,
+        concat!(
+            "function loaded(): void;\n",
+            "const loaded = await import('./mod.js');\n",
+            "loaded.safe;\n",
+        )
+        .as_bytes(),
+    )?;
+    assert_single_exact(&overload, "erased overload declaration");
+
+    let strict = parse_payload(
+        SourceKind::CommonJs,
+        concat!(
+            "'use strict';\n",
+            "async function run() {\n",
+            "  var loaded = await import('./mod.js');\n",
+            "  { function loaded() {} }\n",
+            "  loaded.safe;\n",
+            "}\n",
+        )
+        .as_bytes(),
+    )?;
+    assert_single_exact(&strict, "strict block function");
+
+    let sloppy = parse_payload(
+        SourceKind::CommonJs,
+        concat!(
+            "async function run() {\n",
+            "  var loaded = await import('./mod.js');\n",
+            "  { function loaded() {} }\n",
+            "  loaded.safe;\n",
+            "}\n",
+        )
+        .as_bytes(),
+    )?;
+    assert_single_broad(&sloppy, "sloppy Annex B block function");
+    Ok(())
+}
+
+#[test]
+fn mapped_arguments_aliases_degrade_only_sloppy_simple_parameters()
+-> Result<(), Box<dyn std::error::Error>> {
+    let sloppy = parse_payload(
+        SourceKind::CommonJs,
+        b"async function run(loaded) { var loaded = await import('./mod.js'); loaded.safe; consume(arguments[0].hidden); }",
+    )?;
+    assert_single_broad(&sloppy, "sloppy mapped arguments");
+
+    let selected_second_slot = parse_payload(
+        SourceKind::CommonJs,
+        b"async function run(other, loaded) { var loaded = await import('./mod.js'); loaded.safe; consume(arguments[1].hidden); }",
+    )?;
+    assert_single_broad(&selected_second_slot, "mapped arguments second slot");
+
+    for (context, source) in [
+        (
+            "mapped argument behind lexical shadow",
+            "async function run(loaded) { var loaded = await import('./mod.js'); { const loaded = {}; consume(arguments[0].hidden); } loaded.safe; }",
+        ),
+        (
+            "implicit arguments preserved by bare var redeclaration",
+            "async function run(loaded) { var loaded = await import('./mod.js'); var arguments; consume(arguments[0].hidden); loaded.safe; }",
+        ),
+        (
+            "initialized arguments binding is conservative",
+            "async function run(loaded) { var loaded = await import('./mod.js'); var arguments = arguments; consume(arguments[0].hidden); loaded.safe; }",
+        ),
+        (
+            "for-of arguments binding is conservative",
+            "async function run(loaded) { var loaded = await import('./mod.js'); for (var arguments of values) {} loaded.safe; }",
+        ),
+    ] {
+        let payload = parse_payload(SourceKind::CommonJs, source.as_bytes())?;
+        assert_single_broad(&payload, context);
+    }
+
+    for (context, source) in [
+        (
+            "unused mapped arguments alias",
+            "async function run(loaded) { var loaded = await import('./mod.js'); loaded.safe; }",
+        ),
+        (
+            "unrelated mapped arguments slot",
+            "async function run(other, loaded) { var loaded = await import('./mod.js'); consume(arguments[0].hidden); loaded.safe; }",
+        ),
+        (
+            "strict function arguments",
+            "'use strict'; async function run(loaded) { var loaded = await import('./mod.js'); loaded.safe; consume(arguments[0].hidden); }",
+        ),
+        (
+            "non-simple function arguments",
+            "async function run(loaded = undefined) { var loaded = await import('./mod.js'); loaded.safe; consume(arguments[0].hidden); }",
+        ),
+        (
+            "known mapped arguments property",
+            "async function run(loaded) { var loaded = await import('./mod.js'); consume(arguments.length); consume(arguments['length']); loaded.safe; }",
+        ),
+    ] {
+        let payload = parse_payload(SourceKind::CommonJs, source.as_bytes())?;
+        assert_single_exact(&payload, context);
+    }
+
+    let strict_module = parse_payload(
+        SourceKind::Mts,
+        b"async function run() { var loaded = await import('./mod.js'); { function loaded() {} } loaded.safe; }",
+    )?;
+    assert_single_exact(&strict_module, "module block function");
+    Ok(())
+}
+
+#[test]
+fn detached_or_constructed_namespace_members_remain_exact() -> Result<(), Box<dyn std::error::Error>>
+{
+    for source in [
+        "async function run() { const loaded = await import('./mod.js'); loaded.safe; type Snapshot = typeof loaded; }",
+        "async function run() { const loaded = await import('./mod.js'); type loaded = {}; loaded.safe; }",
+        "async function run() { const loaded = await import('./mod.js'); (0, loaded.safe)(); }",
+        "async function run() { const loaded = await import('./mod.js'); const invoke = loaded.safe; invoke(); }",
+        "async function run() { const loaded = await import('./mod.js'); new loaded.safe(); }",
+        "async function run() { const loaded = await import('./mod.js'); loaded.safe.call(); }",
+        "async function run() { const loaded = await import('./mod.js'); loaded?.safe.call(); }",
+        "async function run() { const loaded = await import('./mod.js'); (0, loaded?.safe)(); }",
+        "async function run() { declare const loaded: unknown; const loaded = await import('./mod.js'); loaded.safe; }",
+        "async function run() { declare enum loaded { Value } const loaded = await import('./mod.js'); loaded.safe; }",
+    ] {
+        let payload = parse_payload(SourceKind::TypeScript, source.as_bytes())?;
+        assert_eq!(
+            use_views(&payload),
+            vec![
+                (
+                    "./mod.js".to_owned(),
+                    Some("safe".to_owned()),
+                    Some("loaded".to_owned()),
+                    "named",
+                ),
+                (
+                    "./mod.js".to_owned(),
+                    Some("then".to_owned()),
+                    None,
+                    "named",
+                ),
+            ],
+            "detached or constructed member lost exactness for {source}",
+        );
+    }
+    Ok(())
+}
+
+fn assert_single_broad(payload: &JsPayloadFacts, context: &str) {
+    assert_eq!(payload.uses.len(), 1, "unexpected uses for {context}");
+    assert_eq!(payload.uses[0].specifier, "./mod.js");
+    assert_eq!(payload.uses[0].kind, ImportKind::DynamicBroad);
+    assert_eq!(payload.uses[0].imported_name, None);
+}
+
+fn assert_single_exact(payload: &JsPayloadFacts, context: &str) {
+    assert_eq!(
+        use_views(payload),
+        vec![
+            (
+                "./mod.js".to_owned(),
+                Some("safe".to_owned()),
+                Some("loaded".to_owned()),
+                "named",
+            ),
+            (
+                "./mod.js".to_owned(),
+                Some("then".to_owned()),
+                None,
+                "named",
+            ),
+        ],
+        "dynamic import lost exactness for {context}",
+    );
+}
+
+fn use_views(payload: &JsPayloadFacts) -> Vec<UseView> {
+    let mut views = payload
+        .uses
+        .iter()
+        .map(|source_use| {
+            (
+                source_use.specifier.clone(),
+                source_use.imported_name.clone(),
+                source_use.local_name.clone(),
+                match source_use.kind {
+                    ImportKind::Named => "named",
+                    ImportKind::DynamicBroad => "dynamic-broad",
+                    _ => "other",
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    views.sort();
+    views
+}

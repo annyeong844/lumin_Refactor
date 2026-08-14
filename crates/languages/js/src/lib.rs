@@ -15,11 +15,13 @@ use oxc_ast_visit::{Visit, walk};
 use oxc_parser::Parser;
 use oxc_span::{GetSpan, SourceType, Span};
 
+mod dynamic_import;
 mod require_scope;
 
+use dynamic_import::analyze_literal_dynamic_imports;
 use require_scope::RequireScopeTracker;
 
-pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v13";
+pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v19";
 
 const REQUIRE_ATTRIBUTION_OPAQUE: &str = "shadowed, mutated, dynamically resolved, or escaped require makes CommonJS module-use attribution opaque";
 const MODULE_REQUIRE_ATTRIBUTION_OPAQUE: &str =
@@ -211,6 +213,7 @@ fn contextualize_payload(
     mut facts: JsPayloadFacts,
     module_format: JsModuleFormat,
 ) -> JsPayloadFacts {
+    let dynamic_imports = analyze_literal_dynamic_imports(program);
     let commonjs_wrapper_exports_possible = module_format != JsModuleFormat::EsModule;
     let require_scopes = RequireScopeTracker::analyze(
         program,
@@ -228,6 +231,7 @@ fn contextualize_payload(
         commonjs_wrapper_exports_possible,
         module_member_object_references: BTreeSet::new(),
         non_escaping_module_require_members: BTreeSet::new(),
+        handled_dynamic_imports: dynamic_imports.handled_imports,
     };
     if escaped_require {
         detector.report_opaque_require();
@@ -243,6 +247,7 @@ fn contextualize_payload(
             .limitation_details
             .push(COMMONJS_EXPORT_LOWERING_UNSUPPORTED.to_owned());
     }
+    facts.uses.extend(dynamic_imports.uses);
     facts.uses.extend(detector.uses);
     facts.limitation_details.extend(detector.unknown_details);
     if kind.is_declaration() {
@@ -621,6 +626,7 @@ struct DynamicUseDetector {
     commonjs_wrapper_exports_possible: bool,
     module_member_object_references: BTreeSet<(u32, u32)>,
     non_escaping_module_require_members: BTreeSet<(u32, u32)>,
+    handled_dynamic_imports: BTreeSet<(u32, u32)>,
 }
 
 impl DynamicUseDetector {
@@ -656,7 +662,28 @@ impl<'a> Visit<'a> for DynamicUseDetector {
 
     fn visit_import_expression(&mut self, expression: &oxc_ast::ast::ImportExpression<'a>) {
         match &expression.source {
-            oxc_ast::ast::Expression::StringLiteral(source) => {
+            oxc_ast::ast::Expression::StringLiteral(source)
+                if expression.options.is_some() || expression.phase.is_some() =>
+            {
+                self.uses.push(SourceUseTemplate {
+                    specifier: source.value.to_string(),
+                    imported_name: None,
+                    local_name: None,
+                    namespace: SymbolNamespace::Value,
+                    kind: ImportKind::DynamicBroad,
+                    request_kind: ModuleRequestKind::DynamicImport,
+                    span: span(expression.span),
+                });
+                self.unknown_details.push(
+                    "dynamic import options or phases are not modeled and may change module semantics"
+                        .to_owned(),
+                );
+            }
+            oxc_ast::ast::Expression::StringLiteral(source)
+                if !self
+                    .handled_dynamic_imports
+                    .contains(&(expression.span.start, expression.span.end)) =>
+            {
                 self.uses.push(SourceUseTemplate {
                     specifier: source.value.to_string(),
                     imported_name: None,
@@ -667,6 +694,7 @@ impl<'a> Visit<'a> for DynamicUseDetector {
                     span: span(expression.span),
                 });
             }
+            oxc_ast::ast::Expression::StringLiteral(_) => {}
             _ => self
                 .unknown_details
                 .push("nonliteral dynamic import may hide an internal consumer".to_owned()),
