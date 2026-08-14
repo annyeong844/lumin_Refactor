@@ -341,7 +341,9 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("vue-non-source-asset", &[inv!("vue_public", "vue_non_source_asset_does_not_probe_declarations")]),
     row_sd!("sfc-dialect-boundary", &[inv!("vue_public", "sfc_dialect_boundary_vue_complete_svelte_astro_unavailable")]),
     row_sd!("next-route-group", &[inv!("path_and_declaration", "next_route_group_characters_are_ordinary_path_bytes")]),
-    row_sd!("dynamic-literal-member"),
+    row_sd!("dynamic-literal-member", &[
+        inv!("dynamic_literal_member", "literal_dynamic_members_preserve_precision_across_bindings_callbacks_and_shadowing"),
+    ]),
     row_sd!("dynamic-nonliteral"),
     row_sd!("import-meta-glob"),
     row_sd!("cjs-computed"),
