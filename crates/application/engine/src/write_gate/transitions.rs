@@ -1,10 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_evidence::{
-    ActualWriteSet, AnalysisSnapshot, GateBaseline, GateRecord, GateSignal,
-    PhysicalAliasClosureRecord, RepoPathProjection, SemanticInputRecord, WorktreeTransition,
-    seal_analysis_snapshot,
+    ActualWriteSet, AnalysisSnapshot, DEAD_CODE_CAPABILITY_ID, DEPENDENCY_OWNERSHIP_CAPABILITY_ID,
+    GateBaseline, GateRecord, GateSignal, PhysicalAliasClosureRecord, RepoPathProjection,
+    RunEvidence, SemanticInputRecord, WorktreeTransition, seal_analysis_snapshot,
 };
+use lumin_model::{CapabilityState, Limitation};
 use lumin_store::ActiveGateLease;
 
 pub(super) fn reconcile_transitions(
@@ -62,31 +63,85 @@ fn apply_transition(adjusted: &mut AnalysisSnapshot, transition: &WorktreeTransi
         *adjusted = transition.capsule.after_snapshot.clone();
         return true;
     }
-    if adjusted.evidence != transition.capsule.before_snapshot.evidence {
+    if !request_scopes_are_compatible(adjusted, &transition.capsule.before_snapshot) {
         return false;
     }
-    let mut inputs = adjusted
-        .inputs
+
+    let Some(transition_inputs) = apply_input_delta(
+        &transition.capsule.before_snapshot.inputs,
+        &transition.capsule.before_snapshot.inputs,
+        &transition.capsule.after_snapshot.inputs,
+        &transition.capsule.changed_paths,
+    ) else {
+        return false;
+    };
+    let verified_after = seal_analysis_snapshot(
+        transition_inputs,
+        transition.capsule.after_snapshot.evidence.clone(),
+        transition.capsule.after_snapshot.scan_invocation.clone(),
+        transition.capsule.after_snapshot.entry_selections.clone(),
+    );
+    if verified_after != transition.capsule.after_snapshot {
+        return false;
+    }
+
+    let Some(inputs) = apply_input_delta(
+        &adjusted.inputs,
+        &transition.capsule.before_snapshot.inputs,
+        &transition.capsule.after_snapshot.inputs,
+        &transition.capsule.changed_paths,
+    ) else {
+        return false;
+    };
+    let Some(evidence) = rebase_request_specific_evidence(
+        &adjusted.evidence,
+        &transition.capsule.before_snapshot.evidence,
+        &transition.capsule.after_snapshot.evidence,
+    ) else {
+        return false;
+    };
+    *adjusted = seal_analysis_snapshot(
+        inputs,
+        evidence,
+        adjusted.scan_invocation.clone(),
+        transition.capsule.after_snapshot.entry_selections.clone(),
+    );
+    true
+}
+
+fn request_scopes_are_compatible(
+    adjusted: &AnalysisSnapshot,
+    transition_before: &AnalysisSnapshot,
+) -> bool {
+    let mut adjusted_invocation = adjusted.scan_invocation.clone();
+    adjusted_invocation.dependency_intents.clear();
+    let mut transition_invocation = transition_before.scan_invocation.clone();
+    transition_invocation.dependency_intents.clear();
+    adjusted_invocation == transition_invocation
+        && adjusted.entry_selections == transition_before.entry_selections
+}
+
+fn apply_input_delta(
+    base: &[SemanticInputRecord],
+    before_inputs: &[SemanticInputRecord],
+    after_inputs: &[SemanticInputRecord],
+    changed_paths: &[RepoPathProjection],
+) -> Option<Vec<SemanticInputRecord>> {
+    let mut inputs = base
         .iter()
         .map(|input| (input.path.canonical.clone(), input.clone()))
         .collect::<BTreeMap<_, _>>();
-    let before = transition
-        .capsule
-        .before_snapshot
-        .inputs
+    let before = before_inputs
         .iter()
         .map(|input| (input.path.canonical.as_slice(), input))
         .collect::<BTreeMap<_, _>>();
-    let after = transition
-        .capsule
-        .after_snapshot
-        .inputs
+    let after = after_inputs
         .iter()
         .map(|input| (input.path.canonical.as_slice(), input))
         .collect::<BTreeMap<_, _>>();
-    for path in &transition.capsule.changed_paths {
+    for path in changed_paths {
         if inputs.get(&path.canonical) != before.get(path.canonical.as_slice()).copied() {
-            return false;
+            return None;
         }
         match after.get(path.canonical.as_slice()) {
             Some(input) => {
@@ -97,17 +152,81 @@ fn apply_transition(adjusted: &mut AnalysisSnapshot, transition: &WorktreeTransi
             }
         }
     }
-    let candidate = seal_analysis_snapshot(
-        inputs.into_values().collect(),
-        transition.capsule.after_snapshot.evidence.clone(),
-        transition.capsule.after_snapshot.scan_invocation.clone(),
-        transition.capsule.after_snapshot.entry_selections.clone(),
-    );
-    if candidate != transition.capsule.after_snapshot {
-        return false;
+    Some(inputs.into_values().collect())
+}
+
+fn rebase_request_specific_evidence(
+    adjusted: &RunEvidence,
+    transition_before: &RunEvidence,
+    transition_after: &RunEvidence,
+) -> Option<RunEvidence> {
+    if repository_evidence_projection(adjusted) != repository_evidence_projection(transition_before)
+    {
+        return None;
     }
-    *adjusted = candidate;
-    true
+
+    let mut evidence = transition_after.clone();
+    evidence.dependency_owners = adjusted.dependency_owners.clone();
+    evidence
+        .limitations
+        .retain(|limitation| !is_request_specific_dependency_limitation(limitation));
+    evidence.limitations.extend(
+        adjusted
+            .limitations
+            .iter()
+            .filter(|limitation| is_request_specific_dependency_limitation(limitation))
+            .cloned(),
+    );
+    evidence.limitations.sort_by(Limitation::canonical_cmp);
+    evidence.limitations.dedup();
+    refresh_request_sensitive_capabilities(&mut evidence).then_some(evidence)
+}
+
+fn repository_evidence_projection(evidence: &RunEvidence) -> RunEvidence {
+    let mut projection = evidence.clone();
+    projection.dependency_owners.clear();
+    projection
+        .limitations
+        .retain(|limitation| !is_request_specific_dependency_limitation(limitation));
+    projection.capabilities.retain(|capability| {
+        capability.capability_id != DEAD_CODE_CAPABILITY_ID
+            && capability.capability_id != DEPENDENCY_OWNERSHIP_CAPABILITY_ID
+    });
+    projection
+}
+
+// The architecture check must inspect Limitation variants outside macro token streams.
+#[allow(clippy::match_like_matches_macro)]
+fn is_request_specific_dependency_limitation(limitation: &Limitation) -> bool {
+    match limitation {
+        Limitation::DependencyOwnerAmbiguous {
+            required_intent: Some(_),
+            ..
+        } => true,
+        _ => false,
+    }
+}
+
+fn refresh_request_sensitive_capabilities(evidence: &mut RunEvidence) -> bool {
+    let dead_code_state = if evidence.limitations.is_empty() {
+        CapabilityState::Complete
+    } else {
+        CapabilityState::Incomplete
+    };
+    let dependency_ownership_state =
+        super::super::dependency_ownership_state(&evidence.limitations);
+    let mut dead_code_found = false;
+    let mut dependency_ownership_found = false;
+    for capability in &mut evidence.capabilities {
+        if capability.capability_id == DEAD_CODE_CAPABILITY_ID {
+            capability.state = dead_code_state;
+            dead_code_found = true;
+        } else if capability.capability_id == DEPENDENCY_OWNERSHIP_CAPABILITY_ID {
+            capability.state = dependency_ownership_state;
+            dependency_ownership_found = true;
+        }
+    }
+    dead_code_found && dependency_ownership_found
 }
 
 pub(super) fn changed_paths(
@@ -225,5 +344,181 @@ pub(super) fn closure_expanded_actual_write_set(
         paths: paths.into_iter().collect(),
         baseline_alias_closures,
         current_alias_closures,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use lumin_evidence::{
+        AnalysisMetrics, CapabilityRecord, DependencyIntentRecord, DependencyOwnerRecord,
+        ScanInvocationTier, SemanticInputState, TransitionCapsule,
+    };
+    use lumin_model::{GateId, LogicalSourceId, RepoPath};
+
+    use super::*;
+
+    #[test]
+    fn request_specific_dependency_evidence_rebases_disjoint_transition()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let changed_path = path("packages/b/src/main.ts")?;
+        let mut adjusted = snapshot(
+            input("packages/b/src/main.ts", "before")?,
+            owner("packages/a/src/main.ts", "left-pad", "packages/a")?,
+            intent("packages/a/src/main.ts", "left-pad")?,
+        );
+        let transition_before = snapshot(
+            input("packages/b/src/main.ts", "before")?,
+            owner("packages/b/src/main.ts", "is-odd", "packages/b")?,
+            intent("packages/b/src/main.ts", "is-odd")?,
+        );
+        let transition_after = snapshot(
+            input("packages/b/src/main.ts", "after")?,
+            owner("packages/b/src/main.ts", "is-odd", "packages/b")?,
+            intent("packages/b/src/main.ts", "is-odd")?,
+        );
+        let transition = WorktreeTransition {
+            sequence: 1,
+            capsule: TransitionCapsule {
+                gate_id: GateId::from_string("gate-b".to_owned()),
+                revision: 1,
+                before_snapshot: transition_before,
+                after_snapshot: transition_after,
+                changed_paths: vec![changed_path],
+                leased_write_set: Vec::new(),
+            },
+        };
+        let adjusted_owner = adjusted.evidence.dependency_owners.clone();
+        let adjusted_invocation = adjusted.scan_invocation.clone();
+
+        assert!(apply_transition(&mut adjusted, &transition));
+        assert_eq!(adjusted.evidence.dependency_owners, adjusted_owner);
+        assert_eq!(adjusted.scan_invocation, adjusted_invocation);
+        assert_eq!(adjusted.inputs[0].payload_sha256.as_deref(), Some("after"));
+        Ok(())
+    }
+
+    #[test]
+    fn request_specific_rebase_rejects_repository_evidence_drift()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let changed_path = path("packages/b/src/main.ts")?;
+        let mut adjusted = snapshot(
+            input("packages/b/src/main.ts", "before")?,
+            owner("packages/a/src/main.ts", "left-pad", "packages/a")?,
+            intent("packages/a/src/main.ts", "left-pad")?,
+        );
+        let mut drifted_evidence = adjusted.evidence.clone();
+        drifted_evidence.metrics.logical_source_count = 1;
+        adjusted = seal_analysis_snapshot(
+            adjusted.inputs,
+            drifted_evidence,
+            adjusted.scan_invocation,
+            adjusted.entry_selections,
+        );
+        let transition_before = snapshot(
+            input("packages/b/src/main.ts", "before")?,
+            owner("packages/b/src/main.ts", "is-odd", "packages/b")?,
+            intent("packages/b/src/main.ts", "is-odd")?,
+        );
+        let transition_after = snapshot(
+            input("packages/b/src/main.ts", "after")?,
+            owner("packages/b/src/main.ts", "is-odd", "packages/b")?,
+            intent("packages/b/src/main.ts", "is-odd")?,
+        );
+        let transition = WorktreeTransition {
+            sequence: 1,
+            capsule: TransitionCapsule {
+                gate_id: GateId::from_string("gate-b".to_owned()),
+                revision: 1,
+                before_snapshot: transition_before,
+                after_snapshot: transition_after,
+                changed_paths: vec![changed_path],
+                leased_write_set: Vec::new(),
+            },
+        };
+
+        assert!(!apply_transition(&mut adjusted, &transition));
+        assert_eq!(adjusted.inputs[0].payload_sha256.as_deref(), Some("before"));
+        Ok(())
+    }
+
+    fn snapshot(
+        input: SemanticInputRecord,
+        dependency_owner: DependencyOwnerRecord,
+        dependency_intent: DependencyIntentRecord,
+    ) -> AnalysisSnapshot {
+        seal_analysis_snapshot(
+            vec![input],
+            RunEvidence {
+                schema_version: "lumin-evidence.v1".to_owned(),
+                capabilities: vec![
+                    CapabilityRecord {
+                        capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
+                        state: CapabilityState::Complete,
+                    },
+                    CapabilityRecord {
+                        capability_id: DEPENDENCY_OWNERSHIP_CAPABILITY_ID.to_owned(),
+                        state: CapabilityState::Complete,
+                    },
+                ],
+                resolution_profiles: Vec::new(),
+                source_classifications: Vec::new(),
+                source_contexts: Vec::new(),
+                source_observations: Vec::new(),
+                dependency_owners: vec![dependency_owner],
+                resolutions: Vec::new(),
+                metrics: AnalysisMetrics::default(),
+                findings: Vec::new(),
+                limitations: Vec::new(),
+            },
+            ScanInvocationTier {
+                dependency_intents: vec![dependency_intent],
+                ..ScanInvocationTier::default()
+            },
+            Vec::new(),
+        )
+    }
+
+    fn input(
+        value: &str,
+        payload_sha256: &str,
+    ) -> Result<SemanticInputRecord, Box<dyn std::error::Error>> {
+        Ok(SemanticInputRecord {
+            path: path(value)?,
+            state: SemanticInputState::Source,
+            payload_sha256: Some(payload_sha256.to_owned()),
+            physical_identity: None,
+            absence_parent: None,
+            physical_redirect_sha256: None,
+        })
+    }
+
+    fn owner(
+        consumer: &str,
+        dependency: &str,
+        package_root: &str,
+    ) -> Result<DependencyOwnerRecord, Box<dyn std::error::Error>> {
+        let consumer_path = RepoPath::from_portable(consumer)?;
+        Ok(DependencyOwnerRecord {
+            consumer: LogicalSourceId::from_path(&consumer_path),
+            consumer_path: RepoPathProjection::from(&consumer_path),
+            dependency: dependency.to_owned(),
+            package_root: path(package_root)?,
+            manifest_path: path(&format!("{package_root}/package.json"))?,
+            lockfile_path: None,
+        })
+    }
+
+    fn intent(
+        consumer: &str,
+        dependency: &str,
+    ) -> Result<DependencyIntentRecord, Box<dyn std::error::Error>> {
+        Ok(DependencyIntentRecord {
+            path: path(consumer)?,
+            dependency: dependency.to_owned(),
+        })
+    }
+
+    fn path(value: &str) -> Result<RepoPathProjection, Box<dyn std::error::Error>> {
+        Ok(RepoPathProjection::from(&RepoPath::from_portable(value)?))
     }
 }

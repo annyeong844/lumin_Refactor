@@ -857,16 +857,16 @@ fn sfc_capability_records(states: &BTreeMap<SfcDialect, CapabilityState>) -> Vec
         .collect()
 }
 
+// The architecture check must inspect Limitation variants outside macro token streams.
+#[allow(clippy::match_like_matches_macro)]
 fn dependency_ownership_state(limitations: &[Limitation]) -> CapabilityState {
-    if limitations.iter().any(|limitation| {
-        matches!(
-            limitation,
-            Limitation::PackageMetadataUnobservable { .. }
-                | Limitation::PackageIdentityUnsupported { .. }
-                | Limitation::DependencyOwnerAmbiguous { .. }
-                | Limitation::WorkspaceOwnershipUnsupported { .. }
-                | Limitation::PnpmDependencySemanticsUnsupported { .. }
-        )
+    if limitations.iter().any(|limitation| match limitation {
+        Limitation::PackageMetadataUnobservable { .. }
+        | Limitation::PackageIdentityUnsupported { .. }
+        | Limitation::DependencyOwnerAmbiguous { .. }
+        | Limitation::WorkspaceOwnershipUnsupported { .. }
+        | Limitation::PnpmDependencySemanticsUnsupported { .. } => true,
+        _ => false,
     }) {
         CapabilityState::Incomplete
     } else {

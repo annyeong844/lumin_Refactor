@@ -470,6 +470,7 @@ fn pre_write_finish_rejects_a_baseline_that_omits_a_reserved_input()
             alias_closures: Vec::new(),
             signals: Vec::new(),
         },
+        Vec::new,
     ) {
         Ok(_) => return Err("an unbound semantic-read reservation was accepted".into()),
         Err(error) => error,
@@ -480,6 +481,58 @@ fn pre_write_finish_rejects_a_baseline_that_omits_a_reserved_input()
             if detail.contains("pre-write baseline omitted reserved semantic inputs")
                 && detail.contains("config/base.json")
     ));
+    Ok(())
+}
+
+#[test]
+fn final_validation_can_stop_pre_write_promotion() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation = store.begin_operation(&OperationId::from_string("op-open".to_owned()))?;
+    let source = path("src/main.ts")?;
+    let source_lease = lease(source.clone());
+    let (gate_id, transition_sequence) = match operation.reserve_pre_write(
+        "open-digest",
+        std::slice::from_ref(&source),
+        std::slice::from_ref(&source_lease),
+        &options(),
+    )? {
+        PreWriteStart::Analyze {
+            gate_id,
+            transition_sequence,
+        } => (gate_id, transition_sequence),
+        PreWriteStart::Committed(_) => return Err("the opening operation committed early".into()),
+    };
+
+    let result = operation.finish_pre_write(
+        "open-digest",
+        &gate_id,
+        PreWriteFinish {
+            baseline: Some(GateBaseline {
+                analysis_contract: "test-contract".to_owned(),
+                snapshot: empty_snapshot(),
+                protected_semantic_inputs: Vec::new(),
+                transition_sequence,
+            }),
+            leased_write_set: vec![source_lease],
+            alias_closures: Vec::new(),
+            signals: Vec::new(),
+        },
+        || {
+            vec![GateSignal::ProtectedInputChanged {
+                paths: vec![source.clone()],
+            }]
+        },
+    )?;
+
+    assert_eq!(result.lifecycle, GateLifecycle::Rejected);
+    assert!(!result.decision.authorizes());
+    assert_eq!(
+        result.signals,
+        [GateSignal::ProtectedInputChanged {
+            paths: vec![source]
+        }]
+    );
     Ok(())
 }
 
@@ -526,6 +579,7 @@ fn semantic_read_reservation_blocks_later_write_admission() -> Result<(), Box<dy
             alias_closures: Vec::new(),
             signals: Vec::new(),
         },
+        Vec::new,
     )?;
     assert!(opened.decision.authorizes());
 
@@ -740,6 +794,7 @@ fn open_active_gate(
             alias_closures: Vec::new(),
             signals: Vec::new(),
         },
+        Vec::new,
     )?;
     Ok(gate_id)
 }

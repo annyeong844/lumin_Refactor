@@ -33,7 +33,7 @@ use transitions::{
     reconcile_transitions,
 };
 
-const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v23";
+const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v24";
 
 fn analysis_contract_id() -> String {
     let inputs = [
@@ -117,7 +117,7 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         } => (gate_id, transition_sequence),
     };
 
-    let finish = if inspection.signals.is_empty() {
+    let promotion = if inspection.signals.is_empty() {
         match analyze_pre_write(
             &operation,
             &context,
@@ -127,19 +127,27 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
             &request_digest,
             &gate_id,
         )? {
-            PreWriteAnalysis::Finished(finish) => finish,
+            PreWriteAnalysis::Finished(promotion) => promotion,
             PreWriteAnalysis::Committed(result) => return Ok(result),
         }
     } else {
-        PreWriteFinish {
+        PreWritePromotion::without_validation(PreWriteFinish {
             baseline: None,
             leased_write_set: inspection.leases,
             alias_closures: Vec::new(),
             signals: inspection.signals,
-        }
+        })
     };
+    let PreWritePromotion {
+        finish,
+        final_validation,
+    } = promotion;
     operation
-        .finish_pre_write(&request_digest, &gate_id, finish)
+        .finish_pre_write(&request_digest, &gate_id, finish, || {
+            final_validation.map_or_else(Vec::new, |validation| {
+                final_pre_write_validation_signals(&context.root, &validation)
+            })
+        })
         .map_err(Into::into)
 }
 
@@ -174,8 +182,27 @@ fn build_gate_scan_invocation_tier(request: &PreWriteRequest) -> ScanInvocationT
 
 #[allow(clippy::large_enum_variant)]
 enum PreWriteAnalysis {
-    Finished(PreWriteFinish),
+    Finished(PreWritePromotion),
     Committed(GateOperationResult),
+}
+
+struct PreWritePromotion {
+    finish: PreWriteFinish,
+    final_validation: Option<PreWriteFinalValidation>,
+}
+
+impl PreWritePromotion {
+    fn without_validation(finish: PreWriteFinish) -> Self {
+        Self {
+            finish,
+            final_validation: None,
+        }
+    }
+}
+
+struct PreWriteFinalValidation {
+    bindings: Vec<(RepoPath, SemanticReadReservationBinding)>,
+    captured_inputs: Vec<SemanticInputRecord>,
 }
 
 fn analyze_pre_write(
@@ -204,30 +231,38 @@ fn analyze_pre_write(
                 .map_err(Into::into)
         },
     ) {
-        Ok(ReservedCapture::Finished { capture }) => capture,
+        Ok(ReservedCapture::Finished {
+            capture,
+            reserved_semantic_bindings,
+        }) => (capture, reserved_semantic_bindings),
         Ok(ReservedCapture::Blocked(signal)) => {
-            return Ok(PreWriteAnalysis::Finished(PreWriteFinish {
-                baseline: None,
-                leased_write_set: inspection.leases,
-                alias_closures: Vec::new(),
-                signals: vec![signal],
-            }));
+            return Ok(PreWriteAnalysis::Finished(
+                PreWritePromotion::without_validation(PreWriteFinish {
+                    baseline: None,
+                    leased_write_set: inspection.leases,
+                    alias_closures: Vec::new(),
+                    signals: vec![signal],
+                }),
+            ));
         }
         Ok(ReservedCapture::Committed(result)) => {
             return Ok(PreWriteAnalysis::Committed(result));
         }
         Err(EngineError::Store(error)) => return Err(EngineError::Store(error)),
         Err(error) => {
-            return Ok(PreWriteAnalysis::Finished(PreWriteFinish {
-                baseline: None,
-                leased_write_set: inspection.leases,
-                alias_closures: Vec::new(),
-                signals: vec![GateSignal::AnalysisFailed {
-                    detail: error.to_string(),
-                }],
-            }));
+            return Ok(PreWriteAnalysis::Finished(
+                PreWritePromotion::without_validation(PreWriteFinish {
+                    baseline: None,
+                    leased_write_set: inspection.leases,
+                    alias_closures: Vec::new(),
+                    signals: vec![GateSignal::AnalysisFailed {
+                        detail: error.to_string(),
+                    }],
+                }),
+            ));
         }
     };
+    let (capture, reserved_semantic_bindings) = capture;
     let (leased_write_set, alias_closures, mut signals) = expand_write_domain(
         &context.root,
         &inspection.observations,
@@ -239,17 +274,24 @@ fn analyze_pre_write(
         &capture.snapshot,
         &leased_write_set,
     ));
+    let final_validation = PreWriteFinalValidation {
+        bindings: reserved_semantic_bindings,
+        captured_inputs: capture.snapshot.inputs.clone(),
+    };
     let baseline = GateBaseline {
         analysis_contract: analysis_contract_id(),
         snapshot: capture.snapshot,
         protected_semantic_inputs,
         transition_sequence,
     };
-    Ok(PreWriteAnalysis::Finished(PreWriteFinish {
-        baseline: Some(baseline),
-        leased_write_set,
-        alias_closures,
-        signals,
+    Ok(PreWriteAnalysis::Finished(PreWritePromotion {
+        finish: PreWriteFinish {
+            baseline: Some(baseline),
+            leased_write_set,
+            alias_closures,
+            signals,
+        },
+        final_validation: Some(final_validation),
     }))
 }
 
@@ -318,7 +360,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                 .map_err(Into::into)
         },
     ) {
-        Ok(ReservedCapture::Finished { capture }) => capture,
+        Ok(ReservedCapture::Finished { capture, .. }) => capture,
         Ok(ReservedCapture::Blocked(signal)) => {
             return finish_failed_close(&operation, request, &request_digest, vec![signal]);
         }
@@ -439,7 +481,10 @@ fn finish_failed_close(
 }
 
 enum ReservedCapture {
-    Finished { capture: Box<RepositoryCapture> },
+    Finished {
+        capture: Box<RepositoryCapture>,
+        reserved_semantic_bindings: Vec<(RepoPath, SemanticReadReservationBinding)>,
+    },
     Blocked(GateSignal),
     Committed(GateOperationResult),
 }
@@ -517,6 +562,7 @@ fn capture_reserved_repository(
                 }
                 return Ok(ReservedCapture::Finished {
                     capture: Box::new(capture),
+                    reserved_semantic_bindings,
                 });
             }
         }
@@ -581,6 +627,19 @@ fn stale_reserved_semantic_paths(
     stale.sort();
     stale.dedup();
     Ok(stale)
+}
+
+fn final_pre_write_validation_signals(
+    root: &Path,
+    validation: &PreWriteFinalValidation,
+) -> Vec<GateSignal> {
+    match stale_reserved_semantic_paths(root, &validation.bindings, &validation.captured_inputs) {
+        Ok(paths) if paths.is_empty() => Vec::new(),
+        Ok(paths) => vec![GateSignal::ProtectedInputChanged { paths }],
+        Err(error) => vec![GateSignal::AnalysisFailed {
+            detail: error.to_string(),
+        }],
+    }
 }
 
 fn include_dependency_candidate_topology_inputs(
@@ -801,27 +860,22 @@ mod tests {
             physical_redirect_sha256: None,
         };
         let reserved = (candidate.clone(), binding.clone());
+        let validation = PreWriteFinalValidation {
+            bindings: vec![reserved.clone()],
+            captured_inputs: vec![captured.clone()],
+        };
 
-        assert!(
-            stale_reserved_semantic_paths(
-                root.path(),
-                std::slice::from_ref(&reserved),
-                std::slice::from_ref(&captured),
-            )?
-            .is_empty()
-        );
+        assert!(final_pre_write_validation_signals(root.path(), &validation).is_empty());
 
         std::fs::write(
             root.path().join("package.json"),
             r#"{"name":"root","workspaces":["changed/*"]}"#,
         )?;
         assert_eq!(
-            stale_reserved_semantic_paths(
-                root.path(),
-                std::slice::from_ref(&reserved),
-                std::slice::from_ref(&captured),
-            )?,
-            vec![binding.path],
+            final_pre_write_validation_signals(root.path(), &validation),
+            [GateSignal::ProtectedInputChanged {
+                paths: vec![binding.path]
+            }]
         );
         Ok(())
     }

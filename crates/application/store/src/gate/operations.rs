@@ -105,6 +105,7 @@ impl OperationSession<'_> {
         request_digest: &str,
         gate_id: &GateId,
         finish: PreWriteFinish,
+        final_validation: impl FnOnce() -> Vec<GateSignal>,
     ) -> Result<GateOperationResult, StoreError> {
         let PreWriteFinish {
             baseline,
@@ -135,6 +136,7 @@ impl OperationSession<'_> {
                 &leased_write_set,
                 &mut signals,
             )?;
+            signals.extend(final_validation());
             let (gate, result) = completed_pre_write_records(
                 &operation,
                 baseline,
