@@ -522,11 +522,7 @@ impl RepositoryAnalysisSession {
             &self.inventory.config,
             &limitations,
         );
-        let state = if limitations.is_empty() {
-            CapabilityState::Complete
-        } else {
-            CapabilityState::Incomplete
-        };
+        let state = dead_code_state(&limitations);
         let mut capabilities = vec![
             CapabilityRecord {
                 capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
@@ -868,6 +864,20 @@ fn dependency_ownership_state(limitations: &[Limitation]) -> CapabilityState {
         | Limitation::WorkspaceOwnershipUnsupported { .. }
         | Limitation::PnpmDependencySemanticsUnsupported { .. } => true,
         _ => false,
+    }) {
+        CapabilityState::Incomplete
+    } else {
+        CapabilityState::Complete
+    }
+}
+
+// The architecture check must inspect Limitation variants outside macro token streams.
+#[allow(clippy::match_like_matches_macro)]
+fn dead_code_state(limitations: &[Limitation]) -> CapabilityState {
+    if limitations.iter().any(|limitation| match limitation {
+        Limitation::DependencyOwnerAmbiguous { .. }
+        | Limitation::PnpmDependencySemanticsUnsupported { .. } => false,
+        _ => true,
     }) {
         CapabilityState::Incomplete
     } else {

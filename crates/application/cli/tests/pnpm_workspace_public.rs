@@ -38,7 +38,7 @@ fn package_configs_pinned_forms_emit_typed_limitations() -> Result<(), Box<dyn s
         let audit_json: Value = serde_json::from_str(&audit.stdout)?;
         assert_eq!(
             audit_json.get("status").and_then(Value::as_str),
-            Some("incomplete")
+            Some("complete")
         );
         assert_eq!(
             audit_json.get("limitationCount").and_then(Value::as_u64),
@@ -66,7 +66,11 @@ fn package_configs_pinned_forms_emit_typed_limitations() -> Result<(), Box<dyn s
             limitations[0].get("detail").and_then(Value::as_str),
             Some("pnpm packageConfigs semantics are unsupported")
         );
-        assert!(findings(root.path(), &run_id)?.is_empty());
+        assert_eq!(
+            findings(root.path(), &run_id)?,
+            BTreeSet::from([("src/main.ts".to_owned(), "dead".to_owned())]),
+            "pnpm dependency-only uncertainty must not suppress dead-code evidence",
+        );
     }
     Ok(())
 }

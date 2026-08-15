@@ -270,10 +270,16 @@ fn dependency_ownership_run_capability_reports_owner_gaps() -> Result<(), Box<dy
         root.path().join("package.json"),
         r#"{"name":"app","private":true,"dependencies":[]}"#,
     )?;
-    fs::write(root.path().join("lib.ts"), "console.log('app');\n")?;
+    fs::write(root.path().join("lib.ts"), "export const unused = 1;\n")?;
 
     let audit = run(root.path(), &["audit", "--jobs", "1", "--format", "json"])?;
     assert_status(&audit, 0);
+    let audit_json: Value = serde_json::from_str(&audit.stdout)?;
+    assert_eq!(
+        audit_json.get("findingCount").and_then(Value::as_u64),
+        Some(1),
+        "dependency-owner uncertainty must not suppress complete dead-code evidence",
+    );
     let run_id = field(&audit.stdout, "runId")?;
     let first = run(
         root.path(),
@@ -300,8 +306,13 @@ fn dependency_ownership_run_capability_reports_owner_gaps() -> Result<(), Box<dy
     assert_status(&second, 0);
     let second: Value = serde_json::from_str(&second.stdout)?;
 
+    let capabilities = capability_rows([&first, &second])?;
     assert_eq!(
-        capability_rows([&first, &second])?
+        capabilities.get("dead-code.v1").map(String::as_str),
+        Some("complete"),
+    );
+    assert_eq!(
+        capabilities
             .get("inventory/dependency-ownership.v1")
             .map(String::as_str),
         Some("incomplete"),
