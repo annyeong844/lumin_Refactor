@@ -143,6 +143,7 @@ pub(super) fn changed_paths(
                         input,
                         current_input,
                         leased_write_set,
+                        &current.inputs,
                     )
                 })
         })

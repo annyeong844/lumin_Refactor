@@ -393,7 +393,6 @@ pub fn begin_scan(
     )
     .map_err(InventoryError::MalformedConfiguration)?;
     let dependency_plan = dependency_ownership::plan(
-        root,
         &request.dependency_intents,
         &config,
         &mut collected.limitations,

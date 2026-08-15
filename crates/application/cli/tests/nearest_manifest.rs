@@ -153,6 +153,39 @@ fn dependency_intents_lease_each_nearest_manifest_and_lockfile()
     let combined_gate = field(&combined.stdout, "gateId")?;
     abandon(root.path(), &combined_gate, "nearest-combined-abandon")?;
 
+    let directory_context = run(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "nearest-directory-context-open",
+            "--path",
+            "packages/local",
+            "--dependency-at",
+            "packages/local",
+            "zod",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&directory_context, 0);
+    assert_eq!(
+        leased_paths(&directory_context.stdout)?,
+        BTreeSet::from([
+            "packages/local".to_owned(),
+            "packages/local/package-lock.json".to_owned(),
+            "packages/local/package.json".to_owned(),
+            "packages/local/src/main.ts".to_owned(),
+        ]),
+        "a directory package context must inspect its own manifest before its parent",
+    );
+    let directory_gate = field(&directory_context.stdout, "gateId")?;
+    abandon(
+        root.path(),
+        &directory_gate,
+        "nearest-directory-context-abandon",
+    )?;
+
     let inherited = run(
         root.path(),
         &dependency_prewrite(
@@ -191,6 +224,62 @@ fn dependency_intents_lease_each_nearest_manifest_and_lockfile()
     assert_eq!(field(&close.stdout, "decision")?, "stale");
     assert_signal(&close.stdout, "protected-input-changed")?;
     abandon(root.path(), &inherited_gate, "nearest-inherited-abandon")?;
+
+    let owner_change = standalone_fixture()?;
+    write(
+        owner_change.path(),
+        "package.json",
+        r#"{"name":"standalone","private":true,"workspaces":["app"]}"#,
+    )?;
+    write(
+        owner_change.path(),
+        "app/src/main.ts",
+        "console.log('nested app');\n",
+    )?;
+    let opened = run(
+        owner_change.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "nearest-owner-change-open",
+            "--path",
+            "app",
+            "--dependency-at",
+            "app/src/main.ts",
+            "zod",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&opened, 0);
+    let gate_id = field(&opened.stdout, "gateId")?;
+    write(
+        owner_change.path(),
+        "app/package.json",
+        r#"{"name":"@acme/app","private":true}"#,
+    )?;
+    let closed = run(
+        owner_change.path(),
+        &[
+            "post-write",
+            &gate_id,
+            "--operation-id",
+            "nearest-owner-change-close",
+        ],
+    )?;
+    assert_status(&closed, 4);
+    assert_eq!(field(&closed.stdout, "decision")?, "incomplete");
+    assert_signal(&closed.stdout, "lifecycle-delta-incomparable")?;
+    assert_delta(
+        &closed.stdout,
+        "dependency-ownership",
+        "changed-incomparable",
+    )?;
+    abandon(
+        owner_change.path(),
+        &gate_id,
+        "nearest-owner-change-abandon",
+    )?;
     Ok(())
 }
 
@@ -263,6 +352,36 @@ fn dependency_owner_uncertainty_never_infers_a_lockfile() -> Result<(), Box<dyn 
         BTreeSet::from(["generated/deep/main.ts".to_owned()]),
     );
 
+    let unexplained_parent = standalone_fixture()?;
+    let opened = run(
+        unexplained_parent.path(),
+        &dependency_prewrite(
+            "nearest-unexplained-parent-open",
+            "generated/deep/main.ts",
+            "zod",
+        ),
+    )?;
+    assert_status(&opened, 0);
+    let gate_id = field(&opened.stdout, "gateId")?;
+    fs::create_dir(unexplained_parent.path().join("generated"))?;
+    let closed = run(
+        unexplained_parent.path(),
+        &[
+            "post-write",
+            &gate_id,
+            "--operation-id",
+            "nearest-unexplained-parent-close",
+        ],
+    )?;
+    assert_status(&closed, 5);
+    assert_eq!(field(&closed.stdout, "decision")?, "stale");
+    assert_signal(&closed.stdout, "protected-input-changed")?;
+    abandon(
+        unexplained_parent.path(),
+        &gate_id,
+        "nearest-unexplained-parent-abandon",
+    )?;
+
     let ambiguous = standalone_fixture()?;
     write(ambiguous.path(), "package-lock.json", "{}\n")?;
     write(
@@ -323,6 +442,36 @@ fn dependency_owner_uncertainty_never_infers_a_lockfile() -> Result<(), Box<dyn 
         "an unobservable pnpm workspace must not fall back to package workspaces",
     );
 
+    let hard_excluded = standalone_fixture()?;
+    write(
+        hard_excluded.path(),
+        "node_modules/pkg/package.json",
+        r#"{"name":"pkg","private":true}"#,
+    )?;
+    let rejected = run(
+        hard_excluded.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "nearest-hard-excluded-context",
+            "--path",
+            "src/main.ts",
+            "--dependency-at",
+            "node_modules/pkg",
+            "zod",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&rejected, 4);
+    assert_eq!(field(&rejected.stdout, "decision")?, "incomplete");
+    assert_signal(&rejected.stdout, "required-evidence-incomplete")?;
+    assert_eq!(
+        leased_paths(&rejected.stdout)?,
+        BTreeSet::from(["src/main.ts".to_owned()]),
+        "hard-excluded dependency contexts must infer no write owner",
+    );
+
     let missing_manifest = tempfile::tempdir()?;
     fs::create_dir_all(missing_manifest.path().join("src"))?;
     write(
@@ -341,6 +490,47 @@ fn dependency_owner_uncertainty_never_infers_a_lockfile() -> Result<(), Box<dyn 
         leased_paths(&rejected.stdout)?,
         BTreeSet::from(["src/main.ts".to_owned()])
     );
+
+    let redirected_context = standalone_fixture()?;
+    fs::create_dir(redirected_context.path().join("context"))?;
+    let opened = run(
+        redirected_context.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "nearest-redirected-context-open",
+            "--path",
+            "src/main.ts",
+            "--dependency-at",
+            "context",
+            "zod",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&opened, 0);
+    let gate_id = field(&opened.stdout, "gateId")?;
+    fs::remove_dir(redirected_context.path().join("context"))?;
+    let outside = tempfile::tempdir()?;
+    create_directory_alias(outside.path(), &redirected_context.path().join("context"))?;
+    let closed = run(
+        redirected_context.path(),
+        &[
+            "post-write",
+            &gate_id,
+            "--operation-id",
+            "nearest-redirected-context-close",
+        ],
+    )?;
+    assert_status(&closed, 4);
+    assert_eq!(field(&closed.stdout, "decision")?, "incomplete");
+    assert_signal(&closed.stdout, "analysis-failed")?;
+    remove_directory_alias(&redirected_context.path().join("context"))?;
+    abandon(
+        redirected_context.path(),
+        &gate_id,
+        "nearest-redirected-context-abandon",
+    )?;
     Ok(())
 }
 
@@ -454,6 +644,30 @@ fn assert_signal(json: &str, expected: &str) -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
+fn assert_delta(
+    json: &str,
+    expected_family: &str,
+    expected_classification: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let response: Value = serde_json::from_str(json)?;
+    let deltas = response
+        .get("deltas")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("deltas are missing"))?;
+    assert_eq!(deltas.len(), 1, "unexpected delta set: {deltas:#?}");
+    assert_eq!(
+        deltas[0].pointer("/key/family").and_then(Value::as_str),
+        Some(expected_family),
+    );
+    assert_eq!(
+        deltas[0]
+            .pointer("/classification/kind")
+            .and_then(Value::as_str),
+        Some(expected_classification),
+    );
+    Ok(())
+}
+
 fn analysis_input_id(root: &Path, gate_id: &str) -> Result<String, Box<dyn std::error::Error>> {
     let shown = run(root, &["gate", "show", gate_id])?;
     assert_status(&shown, 0);
@@ -492,4 +706,35 @@ fn write(root: &Path, relative: &str, contents: &str) -> std::io::Result<()> {
         fs::create_dir_all(parent)?;
     }
     fs::write(path, contents)
+}
+
+#[cfg(unix)]
+fn create_directory_alias(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(unix)]
+fn remove_directory_alias(link: &Path) -> std::io::Result<()> {
+    fs::remove_file(link)
+}
+
+#[cfg(windows)]
+fn create_directory_alias(target: &Path, link: &Path) -> std::io::Result<()> {
+    let status = std::process::Command::new("cmd")
+        .args(["/d", "/c", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(format!(
+            "mklink /J failed with {status}"
+        )))
+    }
+}
+
+#[cfg(windows)]
+fn remove_directory_alias(link: &Path) -> std::io::Result<()> {
+    fs::remove_dir(link)
 }

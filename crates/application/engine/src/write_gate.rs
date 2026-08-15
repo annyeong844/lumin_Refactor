@@ -32,7 +32,7 @@ use transitions::{
     reconcile_transitions,
 };
 
-const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v20";
+const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v21";
 
 fn analysis_contract_id() -> String {
     let inputs = [
@@ -80,14 +80,8 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
     if request.jobs == 0 {
         return Err(EngineError::InvalidWorkerCount(0));
     }
-    // Fail closed: validate caller entries BEFORE opening/reserving an operation/gate
-    lumin_inventory::validate_caller_entries(&request.root, &request.entries)?;
-    let dependency_paths = request
-        .dependency_intents
-        .iter()
-        .map(|intent| intent.path.clone())
-        .collect::<Vec<_>>();
-    lumin_inventory::validate_caller_entries(&request.root, &dependency_paths)?;
+    // Fail closed: validate every caller path BEFORE opening/reserving an operation/gate.
+    validate_analysis_paths(&request.root, &request.entries, &request.dependency_intents)?;
     let mut paths = request.paths.clone();
     paths.sort();
     paths.dedup();
@@ -283,9 +277,11 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
 
     // Reconstruct InventoryRequest from persisted tier (not default)
     let inventory_request = inventory_request_from_tier(&gate.analysis_options.scan_invocation)?;
-    if let Err(error) =
-        lumin_inventory::validate_caller_entries(&context.root, &inventory_request.entries)
-    {
+    if let Err(error) = validate_analysis_paths(
+        &context.root,
+        &inventory_request.entries,
+        &inventory_request.dependency_intents,
+    ) {
         return finish_failed_close(
             &operation,
             request,
@@ -397,6 +393,20 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
             },
         )
         .map_err(Into::into)
+}
+
+fn validate_analysis_paths(
+    root: &Path,
+    entries: &[RepoPath],
+    dependency_intents: &[DependencyIntent],
+) -> Result<(), EngineError> {
+    lumin_inventory::validate_caller_entries(root, entries)?;
+    let dependency_paths = dependency_intents
+        .iter()
+        .map(|intent| intent.path.clone())
+        .collect::<Vec<_>>();
+    lumin_inventory::validate_caller_entries(root, &dependency_paths)?;
+    Ok(())
 }
 
 fn finish_failed_close(

@@ -31,7 +31,10 @@ pub(crate) fn capture_owner_candidates(
 ) -> Result<(), InventoryError> {
     let mut candidates = BTreeMap::<RepoPath, ConfigSyntax>::new();
     for intent in intents {
-        for directory in ancestor_directories(&intent.path) {
+        if context_is_hard_excluded(&intent.path)? {
+            continue;
+        }
+        for directory in reservation_directories(&intent.path) {
             candidates.insert(join(&directory, "package.json")?, ConfigSyntax::StrictJson);
             candidates.insert(
                 join(&directory, "pnpm-workspace.yaml")?,
@@ -58,7 +61,10 @@ pub(crate) fn reservation_paths(
 ) -> Result<Vec<RepoPath>, InventoryError> {
     let mut candidates = BTreeMap::<RepoPath, ()>::new();
     for intent in intents {
-        for directory in ancestor_directories(&intent.path) {
+        if context_is_hard_excluded(&intent.path)? {
+            continue;
+        }
+        for directory in reservation_directories(&intent.path) {
             for name in ["package.json", "pnpm-workspace.yaml"] {
                 candidates.insert(join(&directory, name)?, ());
             }
@@ -86,7 +92,6 @@ struct PendingOwner {
 }
 
 pub(crate) fn plan(
-    root: &Path,
     intents: &[DependencyIntent],
     config: &SemanticConfigSnapshot,
     limitations: &mut Vec<Limitation>,
@@ -98,6 +103,14 @@ pub(crate) fn plan(
     let mut owners = Vec::new();
     let mut input_paths = BTreeMap::<RepoPath, ()>::new();
     for intent in intents {
+        if context_is_hard_excluded(&intent.path)? {
+            limitations.push(Limitation::DependencyOwnerAmbiguous {
+                path: intent.path.display_escaped(),
+                detail: "dependency context is inside a hard-excluded repository subtree"
+                    .to_owned(),
+            });
+            continue;
+        }
         let package = match nearest_package(config, &intent)? {
             PackageSelection::Complete(package) => package,
             PackageSelection::Ambiguous(detail) => {
@@ -122,7 +135,7 @@ pub(crate) fn plan(
             Some(_) => continue,
             None => package.root.clone(),
         };
-        for path in lockfile_search_paths(root, &package.root, &workspace_root)? {
+        for path in lockfile_search_paths(&package.root, &workspace_root)? {
             input_paths.insert(path, ());
         }
         owners.push(PendingOwner {
@@ -179,7 +192,7 @@ fn nearest_package<'a>(
     config: &'a SemanticConfigSnapshot,
     intent: &DependencyIntent,
 ) -> Result<PackageSelection<'a>, InventoryError> {
-    for directory in ancestor_directories(&intent.path) {
+    for directory in reservation_directories(&intent.path) {
         let manifest_path = join(&directory, "package.json")?;
         match config.observations.get(&manifest_path) {
             Some(ConfigObservation::Present { .. }) => {
@@ -255,7 +268,6 @@ enum LockfileSelection {
 }
 
 fn lockfile_search_paths(
-    root: &Path,
     package_root: &RepoPath,
     workspace_root: &RepoPath,
 ) -> Result<Vec<RepoPath>, InventoryError> {
@@ -263,14 +275,10 @@ fn lockfile_search_paths(
     let mut paths = Vec::new();
     let mut directory = package_root.clone();
     loop {
-        let mut observed_at_directory = false;
         for name in LOCKFILE_NAMES {
-            let path = join(&directory, name)?;
-            let identity = observe_config_input_identity(root, &path)?;
-            observed_at_directory |= identity.absence_parent.is_none();
-            paths.push(path);
+            paths.push(join(&directory, name)?);
         }
-        if observed_at_directory || directory == *workspace_root {
+        if directory == *workspace_root {
             return Ok(paths);
         }
         directory = next_lockfile_directory(package_root, workspace_root, directory)?;
@@ -464,9 +472,17 @@ fn unreadable_input(
     }
 }
 
-fn ancestor_directories(path: &RepoPath) -> Vec<RepoPath> {
+fn reservation_directories(path: &RepoPath) -> Vec<RepoPath> {
+    ancestor_directories(path, true)
+}
+
+fn ancestor_directories(path: &RepoPath, starts_at_context: bool) -> Vec<RepoPath> {
     let mut directories = Vec::new();
-    let mut current = path.parent().unwrap_or_else(RepoPath::empty);
+    let mut current = if starts_at_context {
+        path.clone()
+    } else {
+        path.parent().unwrap_or_else(RepoPath::empty)
+    };
     loop {
         directories.push(current.clone());
         let Some(parent) = current.parent() else {
@@ -475,6 +491,13 @@ fn ancestor_directories(path: &RepoPath) -> Vec<RepoPath> {
         current = parent;
     }
     directories
+}
+
+fn context_is_hard_excluded(path: &RepoPath) -> Result<bool, InventoryError> {
+    let relative = native_relative(path)?;
+    Ok(relative
+        .iter()
+        .any(|component| crate::is_hard_excluded(Path::new(component))))
 }
 
 fn join(directory: &RepoPath, name: &str) -> Result<RepoPath, InventoryError> {
@@ -601,7 +624,74 @@ mod tests {
     }
 
     #[test]
-    fn a_nearer_lockfile_stops_the_pre_capture_demand_walk()
+    fn directory_context_selects_its_own_manifest() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        write(
+            root.path(),
+            "package.json",
+            r#"{"name":"root","private":true,"workspaces":["packages/*"]}"#,
+        )?;
+        write(
+            root.path(),
+            "packages/app/package.json",
+            r#"{"name":"@acme/app","private":true}"#,
+        )?;
+        write(
+            root.path(),
+            "packages/app/src/main.ts",
+            "console.log('app');\n",
+        )?;
+
+        let inventory = scan(
+            root.path(),
+            &InventoryRequest {
+                dependency_intents: vec![intent("packages/app", "zod")?],
+                ..Default::default()
+            },
+        )?;
+        assert_eq!(inventory.config.dependency_owners.len(), 1);
+        assert_eq!(
+            inventory.config.dependency_owners[0]
+                .manifest_path
+                .display_escaped(),
+            "packages/app/package.json"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn hard_excluded_context_never_manufactures_an_owner() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = tempfile::tempdir()?;
+        write(
+            root.path(),
+            "package.json",
+            r#"{"name":"root","private":true}"#,
+        )?;
+        write(
+            root.path(),
+            "node_modules/pkg/package.json",
+            r#"{"name":"pkg","private":true}"#,
+        )?;
+
+        let inventory = scan(
+            root.path(),
+            &InventoryRequest {
+                dependency_intents: vec![intent("node_modules/pkg", "zod")?],
+                ..Default::default()
+            },
+        )?;
+        assert!(inventory.config.dependency_owners.is_empty());
+        assert!(inventory.limitations.iter().any(|limitation| matches!(
+            limitation,
+            Limitation::DependencyOwnerAmbiguous { path, detail }
+                if path == "node_modules/pkg" && detail.contains("hard-excluded")
+        )));
+        Ok(())
+    }
+
+    #[test]
+    fn every_lockfile_candidate_is_demanded_before_observation()
     -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
         write(
@@ -634,13 +724,14 @@ mod tests {
             .iter()
             .map(RepoPath::display_escaped)
             .collect::<Vec<_>>();
-        assert_eq!(demanded.len(), LOCKFILE_NAMES.len());
+        assert_eq!(demanded.len(), LOCKFILE_NAMES.len() * 3);
         assert!(
             demanded
                 .iter()
-                .all(|path| path.starts_with("packages/app/"))
+                .any(|path| path == "packages/app/package-lock.json")
         );
-        assert!(!demanded.contains(&"pnpm-lock.yaml".to_owned()));
+        assert!(demanded.contains(&"packages/yarn.lock".to_owned()));
+        assert!(demanded.contains(&"pnpm-lock.yaml".to_owned()));
         Ok(())
     }
 

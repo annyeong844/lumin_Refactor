@@ -35,9 +35,10 @@ use std::path::{Path, PathBuf};
 
 use lumin_evidence::{
     AnalysisMetrics, AnalysisSnapshot, CapabilityRecord, DEAD_CODE_CAPABILITY_ID,
-    EntrySelectionRecord, PathPrefixIdentity, RepoPathProjection, RunEvidence, ScanInvocationTier,
-    SemanticInputRecord, SemanticInputState, SourceClassificationRecord, SourceContextRecord,
-    SourceObservationRecord, seal_analysis_snapshot,
+    DependencyOwnerRecord, EntrySelectionRecord, PathPrefixIdentity, RepoPathProjection,
+    RunEvidence, ScanInvocationTier, SemanticInputRecord, SemanticInputState,
+    SourceClassificationRecord, SourceContextRecord, SourceObservationRecord,
+    seal_analysis_snapshot,
 };
 use lumin_inventory::{
     InventoryError, InventoryRequest, InventorySnapshot, SemanticPolicyState, repository_admission,
@@ -567,6 +568,20 @@ impl RepositoryAnalysisSession {
                 payload_snapshot_id: source.payload_snapshot_id.clone(),
             })
             .collect::<Vec<_>>();
+        let dependency_owners = self
+            .inventory
+            .config
+            .dependency_owners
+            .iter()
+            .map(|owner| DependencyOwnerRecord {
+                consumer: lumin_model::LogicalSourceId::from_path(&owner.intent.path),
+                consumer_path: RepoPathProjection::from(&owner.intent.path),
+                dependency: owner.intent.dependency.clone(),
+                package_root: RepoPathProjection::from(&owner.package_root),
+                manifest_path: RepoPathProjection::from(&owner.manifest_path),
+                lockfile_path: owner.lockfile_path.as_ref().map(RepoPathProjection::from),
+            })
+            .collect::<Vec<_>>();
         let physical_source_count = source_observations
             .iter()
             .map(|observation| observation.physical_identity.clone())
@@ -590,6 +605,7 @@ impl RepositoryAnalysisSession {
             source_classifications,
             source_contexts,
             source_observations,
+            dependency_owners,
             resolutions: resolved,
             metrics,
             findings,

@@ -733,7 +733,12 @@ pub mod gate_policy {
             let current_input = current_by_path.get(path).copied();
             if current_input != Some(*baseline_input) {
                 if current_input.is_some_and(|current_input| {
-                    is_owned_missing_parent_shift(baseline_input, current_input, leased_write_set)
+                    is_owned_missing_parent_shift(
+                        baseline_input,
+                        current_input,
+                        leased_write_set,
+                        &current.inputs,
+                    )
                 }) {
                     continue;
                 }
@@ -800,6 +805,7 @@ pub mod gate_policy {
         baseline: &SemanticInputRecord,
         current: &SemanticInputRecord,
         leased_write_set: &[WriteLease],
+        current_inputs: &[SemanticInputRecord],
     ) -> bool {
         if baseline.state != SemanticInputState::Missing
             || current.state != SemanticInputState::Missing
@@ -830,6 +836,13 @@ pub mod gate_policy {
         leased_write_set.iter().any(|lease| {
             lease.kind == WriteLeaseKind::NewFile
                 && lease.path.components.starts_with(config_parent)
+                && current_inputs.iter().any(|input| {
+                    input.path == lease.path
+                        && matches!(
+                            input.state,
+                            SemanticInputState::Source | SemanticInputState::ConfigPresent
+                        )
+                })
                 && lease.nearest_existing_parent.as_ref() == Some(&baseline_parent.path)
                 && lease.prefix_identities.last().is_some_and(|prefix| {
                     prefix.path == baseline_parent.path
@@ -913,7 +926,9 @@ pub mod gate_policy {
                     }
                 }
                 GateDeltaClassification::Unchanged => {
-                    counts.unchanged_facts += 1;
+                    if delta.key.family != DeltaFactFamily::DependencyOwnership {
+                        counts.unchanged_facts += 1;
+                    }
                 }
                 GateDeltaClassification::Regressed { changes } => {
                     classify_regressions(delta.key.family, changes, &mut counts);
@@ -1165,21 +1180,39 @@ mod tests {
 
         let (signals, changed, _) = gate_policy::closing_signals(
             &snapshot(vec![baseline_input.clone()]),
-            &snapshot(vec![current_input]),
+            &snapshot(vec![current_input.clone()]),
+            std::slice::from_ref(&baseline_input),
+            std::slice::from_ref(&lease),
+        );
+        assert_eq!(changed, vec![baseline_input.path.clone()]);
+        assert!(matches!(
+            signals.as_slice(),
+            [GateSignal::ProtectedInputChanged { paths }]
+                if paths == std::slice::from_ref(&baseline_input.path)
+        ));
+
+        let created_source = input("generated/deep/main.ts", "new source")?;
+
+        let (signals, changed, _) = gate_policy::closing_signals(
+            &snapshot(vec![baseline_input.clone()]),
+            &snapshot(vec![current_input, created_source.clone()]),
             std::slice::from_ref(&baseline_input),
             std::slice::from_ref(&lease),
         );
         assert!(signals.is_empty());
-        assert!(changed.is_empty());
+        assert_eq!(changed, vec![created_source.path.clone()]);
 
         let now_present = input("generated/package.json", "new manifest")?;
         let (signals, changed, _) = gate_policy::closing_signals(
             &snapshot(vec![baseline_input.clone()]),
-            &snapshot(vec![now_present]),
+            &snapshot(vec![now_present, created_source.clone()]),
             std::slice::from_ref(&baseline_input),
             &[lease],
         );
-        assert_eq!(changed, vec![baseline_input.path.clone()]);
+        assert_eq!(
+            changed,
+            vec![baseline_input.path.clone(), created_source.path]
+        );
         assert!(matches!(
             signals.as_slice(),
             [GateSignal::ProtectedInputChanged { paths }]
@@ -1201,6 +1234,7 @@ mod tests {
                 source_classifications: Vec::new(),
                 source_contexts: Vec::new(),
                 source_observations: Vec::new(),
+                dependency_owners: Vec::new(),
                 resolutions: Vec::new(),
                 metrics: Default::default(),
                 findings: Vec::new(),
@@ -1264,6 +1298,7 @@ mod tests {
             source_classifications: Vec::new(),
             source_contexts: Vec::new(),
             source_observations: Vec::new(),
+            dependency_owners: Vec::new(),
             resolutions: Vec::new(),
             metrics: Default::default(),
             findings: Vec::new(),
@@ -1317,6 +1352,7 @@ mod tests {
             source_classifications: Vec::new(),
             source_contexts: Vec::new(),
             source_observations: Vec::new(),
+            dependency_owners: Vec::new(),
             resolutions: Vec::new(),
             metrics: Default::default(),
             findings: Vec::new(),
@@ -1402,6 +1438,7 @@ mod tests {
             source_classifications: Vec::new(),
             source_contexts: Vec::new(),
             source_observations: Vec::new(),
+            dependency_owners: Vec::new(),
             resolutions: Vec::new(),
             metrics: Default::default(),
             findings: Vec::new(),

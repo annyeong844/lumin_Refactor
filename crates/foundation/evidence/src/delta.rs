@@ -6,7 +6,9 @@ use lumin_model::{
     ReviewOnlyReason, UnresolvedTargetScope, append_length_prefixed,
 };
 
-use crate::{Confidence, FindingRecord, RunEvidence, Severity};
+use crate::{Confidence, DependencyOwnerRecord, FindingRecord, RunEvidence, Severity};
+
+const DEPENDENCY_OWNERSHIP_CAPABILITY_ID: &str = "inventory/dependency-ownership.v1";
 
 pub(crate) struct LifecycleDeltaInput {
     pub facts: Vec<DeltaFact>,
@@ -20,6 +22,12 @@ pub(crate) fn lifecycle_delta_input(evidence: &RunEvidence) -> LifecycleDeltaInp
         .iter()
         .map(finding_delta_fact)
         .collect::<Vec<_>>();
+    facts.extend(
+        evidence
+            .dependency_owners
+            .iter()
+            .map(dependency_owner_delta_fact),
+    );
     let mut advisory_limitation_count = 0;
     let mut required_evidence_gap_count = 0;
     let mut dynamic_import_occurrences = BTreeMap::<(LogicalSourceId, Option<String>), u64>::new();
@@ -53,6 +61,53 @@ pub(crate) fn lifecycle_delta_input(evidence: &RunEvidence) -> LifecycleDeltaInp
         facts,
         advisory_limitation_count,
         required_evidence_gap_count,
+    }
+}
+
+fn dependency_owner_delta_fact(owner: &DependencyOwnerRecord) -> DeltaFact {
+    let owner_payload = BTreeMap::from([
+        (
+            "packageRoot".to_owned(),
+            DeltaOwnerPayloadValue::unordered(DeltaValue::bytes(
+                owner.package_root.canonical.clone(),
+            )),
+        ),
+        (
+            "manifestPath".to_owned(),
+            DeltaOwnerPayloadValue::unordered(DeltaValue::bytes(
+                owner.manifest_path.canonical.clone(),
+            )),
+        ),
+        (
+            "lockfilePath".to_owned(),
+            DeltaOwnerPayloadValue::unordered(
+                owner
+                    .lockfile_path
+                    .as_ref()
+                    .map_or(DeltaValue::Absent, |path| {
+                        DeltaValue::bytes(path.canonical.clone())
+                    }),
+            ),
+        ),
+    ]);
+    DeltaFact {
+        key: DeltaKey {
+            owner_capability: DEPENDENCY_OWNERSHIP_CAPABILITY_ID.to_owned(),
+            family: DeltaFactFamily::DependencyOwnership,
+            semantic_identity: frame([
+                owner.consumer.as_str().as_bytes(),
+                owner.dependency.as_bytes(),
+            ]),
+        },
+        targets: BTreeSet::new(),
+        affected_identities: BTreeSet::from([logical_source(&owner.consumer)]),
+        confidence: lumin_model::ConfidenceRank::High,
+        grounding: lumin_model::GroundingRank::Grounded,
+        evidence_identity: DeltaValue::bytes(frame([
+            owner.consumer_path.canonical.as_slice(),
+            owner.dependency.as_bytes(),
+        ])),
+        owner_payload,
     }
 }
 
@@ -332,6 +387,7 @@ mod tests {
             source_classifications: Vec::new(),
             source_contexts: Vec::new(),
             source_observations: Vec::new(),
+            dependency_owners: Vec::new(),
             resolutions: Vec::new(),
             metrics: Default::default(),
             findings: Vec::new(),
@@ -411,6 +467,37 @@ mod tests {
                     if field_id == "claim"
             )
         ));
+    }
+
+    #[test]
+    fn dependency_owner_manifest_change_is_an_incomparable_payload_delta()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut baseline = evidence_with_limitations(Vec::new());
+        baseline.dependency_owners = vec![dependency_owner("package.json")?];
+        let mut current = evidence_with_limitations(Vec::new());
+        current.dependency_owners = vec![dependency_owner("packages/app/package.json")?];
+
+        let baseline = lifecycle_delta_input(&baseline);
+        let current = lifecycle_delta_input(&current);
+        assert_eq!(baseline.facts.len(), 1);
+        assert_eq!(current.facts.len(), 1);
+        assert_eq!(
+            baseline.facts[0].key.family,
+            DeltaFactFamily::DependencyOwnership
+        );
+        assert_eq!(baseline.facts[0].key, current.facts[0].key);
+        assert!(matches!(
+            &classify_lifecycle_deltas(Some(&baseline.facts), &current.facts)[0].classification,
+            GateDeltaClassification::ChangedIncomparable {
+                incomparable_changes,
+                ..
+            } if incomparable_changes.iter().any(|change| matches!(
+                change,
+                DeltaDimensionChange::OwnerPayloadChanged { field_id, .. }
+                    if field_id == "manifestPath"
+            ))
+        ));
+        Ok(())
     }
 
     #[test]
@@ -623,6 +710,22 @@ mod tests {
             evidence: Vec::new(),
             relations: Vec::new(),
         }
+    }
+
+    fn dependency_owner(
+        manifest_path: &str,
+    ) -> Result<DependencyOwnerRecord, Box<dyn std::error::Error>> {
+        let consumer_path = lumin_model::RepoPath::from_portable("packages/app/src/main.ts")?;
+        let package_root = lumin_model::RepoPath::from_portable("packages/app")?;
+        let manifest_path = lumin_model::RepoPath::from_portable(manifest_path)?;
+        Ok(DependencyOwnerRecord {
+            consumer: LogicalSourceId::from_path(&consumer_path),
+            consumer_path: RepoPathProjection::from(&consumer_path),
+            dependency: "zod".to_owned(),
+            package_root: RepoPathProjection::from(&package_root),
+            manifest_path: RepoPathProjection::from(&manifest_path),
+            lockfile_path: None,
+        })
     }
 
     fn bounded_unresolved_fact(specifier: &str) -> Result<DeltaFact, &'static str> {

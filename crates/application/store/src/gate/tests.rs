@@ -613,6 +613,7 @@ fn empty_snapshot() -> AnalysisSnapshot {
             source_classifications: Vec::new(),
             source_contexts: Vec::new(),
             source_observations: Vec::new(),
+            dependency_owners: Vec::new(),
             resolutions: Vec::new(),
             metrics: Default::default(),
             findings: Vec::new(),
