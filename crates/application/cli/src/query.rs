@@ -108,19 +108,36 @@ pub(super) fn files(root: &Path, arguments: &mut Arguments) -> Result<String, Cl
     let mut repo_path = None;
     let mut cursor = None;
     let mut format = "json".to_owned();
-    while let Some(argument) = arguments.next_utf8("files argument")? {
-        match argument.as_str() {
-            "--run" => {
+    while let Some(argument) = arguments.next_os() {
+        match argument.to_str() {
+            Some("--") if repo_path.is_none() => {
+                let value = arguments.required_os("repository path")?;
+                repo_path = Some(
+                    lumin_engine::lower_native_repo_path(value.as_os_str())
+                        .map_err(|error| CliError::InvalidRepoPath(error.to_string()))?,
+                );
+                if let Some(extra) = arguments.next_os() {
+                    return Err(CliError::UnknownArgument(
+                        extra.to_string_lossy().into_owned(),
+                    ));
+                }
+            }
+            Some("--run") => {
                 run_id = Some(RunId::from_string(arguments.required_utf8("--run")?));
             }
-            "--cursor" => cursor = Some(arguments.required_utf8("--cursor")?),
-            "--format" => format = arguments.required_utf8("--format")?,
-            _ if argument.starts_with("--") || repo_path.is_some() => {
-                return Err(CliError::UnknownArgument(argument));
+            Some("--cursor") => cursor = Some(arguments.required_utf8("--cursor")?),
+            Some("--format") => format = arguments.required_utf8("--format")?,
+            Some(value) if value.starts_with("--") || repo_path.is_some() => {
+                return Err(CliError::UnknownArgument(value.to_owned()));
+            }
+            None if repo_path.is_some() => {
+                return Err(CliError::UnknownArgument(
+                    argument.to_string_lossy().into_owned(),
+                ));
             }
             _ => {
                 repo_path = Some(
-                    RepoPath::from_portable(&argument)
+                    lumin_engine::lower_native_repo_path(argument.as_os_str())
                         .map_err(|error| CliError::InvalidRepoPath(error.to_string()))?,
                 );
             }
@@ -129,7 +146,7 @@ pub(super) fn files(root: &Path, arguments: &mut Arguments) -> Result<String, Cl
     require_json(&format)?;
     let run_id = run_id.ok_or(CliError::RunRequired)?;
     let repo_path =
-        repo_path.ok_or_else(|| CliError::MissingValue("portable RepoPath".to_owned()))?;
+        repo_path.ok_or_else(|| CliError::MissingValue("repository path".to_owned()))?;
     match lumin_engine::lookup_run(root, &run_id)? {
         (repository_id, lumin_engine::RecordLookup::Live((_, evidence))) => {
             let decoded_cursor = lumin_protocol::decode_run_query_cursor(cursor.as_deref())?;

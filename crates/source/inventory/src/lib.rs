@@ -50,6 +50,11 @@ pub fn decode_native_repo_path_stream(bytes: &[u8]) -> Result<Vec<RepoPath>, Rep
     RepoPath::decode_native_nul_stream(bytes)
 }
 
+pub fn is_reserved_state_path(path: &RepoPath) -> Result<bool, RepoPathError> {
+    let relative = path.to_native_relative()?;
+    Ok(relative.iter().next().is_some_and(reserved_state_component))
+}
+
 /// Validate caller entries BEFORE audit begins or pre-write opens/reserves a gate.
 /// Reject entries whose lexical or physical path enters the reserved `.lumin` namespace,
 /// or whose existing path or nearest existing parent physically escapes the canonical root.

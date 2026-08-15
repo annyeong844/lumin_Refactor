@@ -358,7 +358,9 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("parallel-gates", &[inv!("write_gate", "overlapping_gate_is_rejected_and_operation_reuse_is_malformed")]),
     row_sd!("intervening-gate-transitions", &[inv!("write_gate", "transition_retention::disjoint_gates_reconcile_a_terminal_transition_on_retry")]),
     row_sd!("gate-path-identity", &[inv!("write_gate", "new_source_path_is_admitted_before_it_exists")]),
-    row_sd!("repo-path-lossless"),
+    row_sd!("repo-path-lossless", &[
+        inv!("repo_path_lossless", "native_repository_paths_round_trip_through_public_queries_and_cursors"),
+    ]),
     row_sd!("reserved-state-namespace"),
     row_sdc!("state-namespace-initialization"),
     row_sdc!("state-lock-replacement-split-brain"),

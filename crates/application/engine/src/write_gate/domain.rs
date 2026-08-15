@@ -22,24 +22,31 @@ pub(super) fn inspect_declared_paths(root: &Path, paths: &[RepoPath]) -> Declare
     let mut signals = Vec::new();
     for path in paths {
         let projection = RepoPathProjection::from(path);
-        let Some(portable) = path.portable() else {
-            signals.push(unsupported_path(
-                projection,
-                lumin_evidence::DeclaredPathUnsupportedReason::NotAnalyzedSource,
-            ));
-            continue;
-        };
-        if portable == ".lumin" || portable.starts_with(".lumin/") {
-            signals.push(unsupported_path(
-                projection,
-                lumin_evidence::DeclaredPathUnsupportedReason::ReservedState,
-            ));
-            continue;
+        match lumin_inventory::is_reserved_state_path(path) {
+            Ok(true) => {
+                signals.push(unsupported_path(
+                    projection,
+                    lumin_evidence::DeclaredPathUnsupportedReason::ReservedState,
+                ));
+                continue;
+            }
+            Err(_) => {
+                signals.push(unsupported_path(
+                    projection,
+                    lumin_evidence::DeclaredPathUnsupportedReason::NotAnalyzedSource,
+                ));
+                continue;
+            }
+            Ok(false) => {}
         }
         match lumin_inventory::inspect_write_target(root, path) {
             Ok(observation) => {
-                if observation.kind == WriteTargetKind::NewFile
-                    && !lumin_inventory::is_supported_source_path(path)
+                let supported_source = lumin_inventory::is_supported_source_path(path);
+                let unsupported_native_file = observation.kind == WriteTargetKind::ExistingFile
+                    && path.file_name_portable().is_none()
+                    && !supported_source;
+                if unsupported_native_file
+                    || (observation.kind == WriteTargetKind::NewFile && !supported_source)
                 {
                     signals.push(unsupported_path(
                         projection,
@@ -479,6 +486,43 @@ fn validate_stable_lease_parents(root: &Path, leases: &[WriteLease]) -> Vec<Gate
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nonportable_descendant_of_reserved_state_is_rejected_before_inspection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let mut native = std::path::PathBuf::from(".lumin");
+        native.push(nonportable_component());
+        native.push("mod.ts");
+        let path = RepoPath::from_native_relative(&native)?;
+
+        let inspection = inspect_declared_paths(root.path(), std::slice::from_ref(&path));
+
+        assert!(inspection.observations.is_empty());
+        assert!(inspection.leases.is_empty());
+        assert_eq!(
+            inspection.signals,
+            [GateSignal::DeclaredPathUnsupported {
+                path: RepoPathProjection::from(&path),
+                reason: lumin_evidence::DeclaredPathUnsupportedReason::ReservedState,
+            }]
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn nonportable_component() -> std::ffi::OsString {
+        use std::os::unix::ffi::OsStringExt;
+
+        std::ffi::OsString::from_vec(vec![b'n', 0x80])
+    }
+
+    #[cfg(windows)]
+    fn nonportable_component() -> std::ffi::OsString {
+        use std::os::windows::ffi::OsStringExt;
+
+        std::ffi::OsString::from_wide(&[b'n' as u16, 0xd800])
+    }
 
     #[test]
     fn atomic_replacement_of_inferred_write_is_rejected_before_lease()
