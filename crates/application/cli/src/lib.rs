@@ -11,7 +11,7 @@ use lumin_engine::{
     PostWriteRequest, PreWriteRequest,
 };
 use lumin_model::{
-    BuildIdentity, DependencyIntent, FindingId, GateId, OperationId, RepoPath, ResolutionProfile,
+    BuildIdentity, DependencyIntent, FindingId, GateId, OperationId, ResolutionProfile,
     RoleOverride, RunId, ScanRole,
 };
 use lumin_protocol::ProtocolError;
@@ -979,14 +979,17 @@ impl Arguments {
     }
 
     fn next_utf8(&mut self, name: &str) -> Result<Option<String>, CliError> {
-        self.values
-            .next()
+        self.next_os()
             .map(|value| {
                 value.into_string().map_err(|value| {
                     CliError::NonUtf8(format!("{name}: {}", value.to_string_lossy()))
                 })
             })
             .transpose()
+    }
+
+    fn next_os(&mut self) -> Option<OsString> {
+        self.values.next()
     }
 
     fn required_utf8(&mut self, name: &str) -> Result<String, CliError> {
