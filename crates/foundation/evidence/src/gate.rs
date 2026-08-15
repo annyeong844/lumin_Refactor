@@ -733,7 +733,7 @@ pub mod gate_policy {
             let current_input = current_by_path.get(path).copied();
             if current_input != Some(*baseline_input) {
                 if current_input.is_some_and(|current_input| {
-                    is_owned_missing_parent_shift(
+                    is_owned_missing_boundary_change(
                         baseline_input,
                         current_input,
                         leased_write_set,
@@ -801,7 +801,7 @@ pub mod gate_policy {
         (signals, changed, deltas)
     }
 
-    pub fn is_owned_missing_parent_shift(
+    pub fn is_owned_missing_boundary_change(
         baseline: &SemanticInputRecord,
         current: &SemanticInputRecord,
         leased_write_set: &[WriteLease],
@@ -824,6 +824,19 @@ pub mod gate_policy {
         let Some((_, config_parent)) = baseline.path.components.split_last() else {
             return false;
         };
+        if baseline_parent.path == current_parent.path {
+            return leased_write_set.iter().any(|lease| {
+                lease.kind == WriteLeaseKind::ExistingFile
+                    && lease.path == baseline_parent.path
+                    && lease.physical_identity.as_ref() == Some(&baseline_parent.physical_identity)
+                    && current_inputs.iter().any(|input| {
+                        input.path == lease.path
+                            && input.state == SemanticInputState::Source
+                            && input.physical_identity.as_ref()
+                                == Some(&current_parent.physical_identity)
+                    })
+            });
+        }
         if current_parent.path.components.len() <= baseline_parent.path.components.len()
             || !current_parent
                 .path
@@ -1218,6 +1231,68 @@ mod tests {
             [GateSignal::ProtectedInputChanged { paths }]
                 if paths == std::slice::from_ref(&baseline_input.path)
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn existing_file_replacement_preserves_impossible_child_guard()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let baseline_identity = PhysicalFileIdentity::Unix {
+            device: 1,
+            inode: 10,
+        };
+        let current_identity = PhysicalFileIdentity::Unix {
+            device: 1,
+            inode: 11,
+        };
+        let baseline_guard = missing_input(
+            "src/main.ts/package.json",
+            "src/main.ts",
+            baseline_identity.clone(),
+        )?;
+        let current_guard = missing_input(
+            "src/main.ts/package.json",
+            "src/main.ts",
+            current_identity.clone(),
+        )?;
+        let source_path = path("src/main.ts")?;
+        let current_source = SemanticInputRecord {
+            path: source_path.clone(),
+            state: SemanticInputState::Source,
+            payload_sha256: Some("current".to_owned()),
+            physical_identity: Some(current_identity),
+            absence_parent: None,
+            physical_redirect_sha256: None,
+        };
+        let lease = WriteLease {
+            path: source_path,
+            kind: WriteLeaseKind::ExistingFile,
+            physical_identity: Some(baseline_identity),
+            nearest_existing_parent: None,
+            prefix_identities: Vec::new(),
+        };
+
+        let (signals, _, _) = gate_policy::closing_signals(
+            &snapshot(vec![baseline_guard.clone()]),
+            &snapshot(vec![current_guard.clone(), current_source.clone()]),
+            std::slice::from_ref(&baseline_guard),
+            &[],
+        );
+        assert!(signals.iter().any(|signal| matches!(
+            signal,
+            GateSignal::ProtectedInputChanged { paths }
+                if paths == std::slice::from_ref(&baseline_guard.path)
+        )));
+
+        let (signals, changed, _) = gate_policy::closing_signals(
+            &snapshot(vec![baseline_guard.clone()]),
+            &snapshot(vec![current_guard, current_source.clone()]),
+            std::slice::from_ref(&baseline_guard),
+            std::slice::from_ref(&lease),
+        );
+
+        assert!(signals.is_empty());
+        assert_eq!(changed, vec![current_source.path]);
         Ok(())
     }
 

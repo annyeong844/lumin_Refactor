@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Read;
 use std::path::Path;
@@ -28,7 +28,7 @@ pub(crate) fn capture_owner_candidates(
     observations: &mut BTreeMap<RepoPath, ConfigObservation>,
     consulted_config_paths: &mut Vec<RepoPath>,
     limitations: &mut Vec<Limitation>,
-) -> Result<(), InventoryError> {
+) -> Result<Vec<SemanticPolicyInput>, InventoryError> {
     let mut candidates = BTreeMap::<RepoPath, ConfigSyntax>::new();
     for intent in intents {
         if context_is_hard_excluded(&intent.path)? {
@@ -42,18 +42,122 @@ pub(crate) fn capture_owner_candidates(
             );
         }
     }
+    let mut captured = BTreeMap::new();
     for (path, syntax) in candidates {
         if observations.contains_key(&path) {
             continue;
         }
         let capture = capture_config(root, &path, syntax)?;
-        if let Some(limitation) = capture.limitation {
-            limitations.push(limitation);
-        }
-        consulted_config_paths.push(path.clone());
-        observations.insert(path, capture.observation);
+        captured.insert(path, capture);
     }
-    Ok(())
+
+    let mut nondirectory_contexts = BTreeSet::new();
+    for intent in intents {
+        // The direct child candidates were already reserved and captured. A missing
+        // child therefore binds the context's physical identity before this kind
+        // check; file contexts keep that observation only as a topology guard.
+        if !context_is_hard_excluded(&intent.path)?
+            && !context_is_directory(root, &intent.path, observations, &captured)?
+        {
+            nondirectory_contexts.insert(intent.path.clone());
+        }
+    }
+
+    let mut context_guards = Vec::new();
+    for (path, capture) in captured {
+        let is_context_guard = path
+            .parent()
+            .is_some_and(|parent| nondirectory_contexts.contains(&parent));
+        if is_context_guard {
+            if capture.limitation.is_some() {
+                return Err(InventoryError::MalformedConfiguration(format!(
+                    "non-directory dependency context produced an observable config candidate: {}",
+                    path.display_escaped()
+                )));
+            }
+            context_guards.push(context_guard_input(capture.observation)?);
+        } else {
+            if let Some(limitation) = capture.limitation {
+                limitations.push(limitation);
+            }
+            consulted_config_paths.push(path.clone());
+            observations.insert(path, capture.observation);
+        }
+    }
+    Ok(context_guards)
+}
+
+fn context_is_directory(
+    root: &Path,
+    context: &RepoPath,
+    observations: &BTreeMap<RepoPath, ConfigObservation>,
+    captured: &BTreeMap<RepoPath, crate::ConfigCapture>,
+) -> Result<bool, InventoryError> {
+    let package_path = join(context, "package.json")?;
+    let observation = observations
+        .get(&package_path)
+        .or_else(|| {
+            captured
+                .get(&package_path)
+                .map(|capture| &capture.observation)
+        })
+        .ok_or_else(|| {
+            InventoryError::MalformedConfiguration(format!(
+                "dependency context omitted its reserved package candidate: {}",
+                package_path.display_escaped()
+            ))
+        })?;
+    let ConfigObservation::Missing { parent, .. } = observation else {
+        return Ok(true);
+    };
+    if parent.path != *context {
+        return Ok(false);
+    }
+
+    let identity = observe_config_input_identity(root, context)?;
+    if identity.absence_parent.is_some()
+        || identity.physical_identity.as_ref() != Some(&parent.physical_identity)
+    {
+        return Err(InventoryError::PhysicalIdentity(format!(
+            "dependency context changed while classifying its reserved package candidate: {}",
+            context.display_escaped()
+        )));
+    }
+    let native = root.join(native_relative(context)?);
+    let metadata = fs::metadata(&native).map_err(|error| {
+        InventoryError::PhysicalIdentity(format!(
+            "cannot classify dependency context {}: {error}",
+            context.display_escaped()
+        ))
+    })?;
+    if metadata.is_dir() {
+        Ok(true)
+    } else if metadata.is_file() {
+        Ok(false)
+    } else {
+        Err(InventoryError::PhysicalIdentity(format!(
+            "dependency context is neither a file nor a directory: {}",
+            context.display_escaped()
+        )))
+    }
+}
+
+fn context_guard_input(
+    observation: ConfigObservation,
+) -> Result<SemanticPolicyInput, InventoryError> {
+    let ConfigObservation::Missing { path, parent } = observation else {
+        return Err(InventoryError::MalformedConfiguration(
+            "non-directory dependency context produced a non-missing config guard".to_owned(),
+        ));
+    };
+    Ok(SemanticPolicyInput {
+        path,
+        state: SemanticPolicyState::Missing,
+        payload_sha256: None,
+        physical_identity: None,
+        absence_parent: Some(parent),
+        detail: None,
+    })
 }
 
 pub(crate) fn reservation_paths(
@@ -656,6 +760,45 @@ mod tests {
                 .display_escaped(),
             "packages/app/package.json"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn file_context_starts_at_parent_and_retains_an_identity_guard()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        write(
+            root.path(),
+            "package.json",
+            r#"{"name":"root","private":true}"#,
+        )?;
+        write(root.path(), "src/main.ts", "console.log('app');\n")?;
+
+        let inventory = scan(
+            root.path(),
+            &InventoryRequest {
+                dependency_intents: vec![intent("src/main.ts", "zod")?],
+                ..Default::default()
+            },
+        )?;
+        let impossible = RepoPath::from_portable("src/main.ts/package.json")?;
+        let context = RepoPath::from_portable("src/main.ts")?;
+        assert_eq!(inventory.config.dependency_owners.len(), 1);
+        assert_eq!(
+            inventory.config.dependency_owners[0]
+                .manifest_path
+                .display_escaped(),
+            "package.json"
+        );
+        assert!(!inventory.config.observations.contains_key(&impossible));
+        assert!(inventory.policy_inputs.iter().any(|input| {
+            input.path == impossible
+                && input.state == SemanticPolicyState::Missing
+                && input
+                    .absence_parent
+                    .as_ref()
+                    .is_some_and(|parent| parent.path == context)
+        }));
         Ok(())
     }
 

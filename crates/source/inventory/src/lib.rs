@@ -375,13 +375,13 @@ pub fn begin_scan(
     let mut policy_inputs = vec![config_policy];
     policy_inputs.extend(ignore.policy_inputs.iter().cloned());
 
-    dependency_ownership::capture_owner_candidates(
+    policy_inputs.extend(dependency_ownership::capture_owner_candidates(
         root,
         &request.dependency_intents,
         &mut collected.config_observations,
         &mut collected.consulted_config_paths,
         &mut collected.limitations,
-    )?;
+    )?);
     collected.consulted_config_paths.sort();
     collected.consulted_config_paths.dedup();
 

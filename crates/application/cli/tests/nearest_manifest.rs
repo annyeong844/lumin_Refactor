@@ -186,6 +186,42 @@ fn dependency_intents_lease_each_nearest_manifest_and_lockfile()
         "nearest-directory-context-abandon",
     )?;
 
+    let replaced_source = standalone_fixture()?;
+    let opened = run(
+        replaced_source.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "nearest-source-replacement-open",
+            "--path",
+            "src/main.ts",
+            "--dependency-at",
+            "src/main.ts",
+            "zod",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&opened, 0);
+    let gate_id = field(&opened.stdout, "gateId")?;
+    fs::remove_file(replaced_source.path().join("src/main.ts"))?;
+    write(
+        replaced_source.path(),
+        "src/main.ts",
+        "console.log('atomically replaced');\n",
+    )?;
+    let closed = run(
+        replaced_source.path(),
+        &[
+            "post-write",
+            &gate_id,
+            "--operation-id",
+            "nearest-source-replacement-close",
+        ],
+    )?;
+    assert_status(&closed, 0);
+    assert_eq!(field(&closed.stdout, "decision")?, "allow");
+
     let inherited = run(
         root.path(),
         &dependency_prewrite(

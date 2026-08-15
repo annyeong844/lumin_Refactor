@@ -139,7 +139,7 @@ pub(super) fn changed_paths(
                 .copied();
             current_input != Some(*input)
                 && !current_input.is_some_and(|current_input| {
-                    lumin_evidence::gate_policy::is_owned_missing_parent_shift(
+                    lumin_evidence::gate_policy::is_owned_missing_boundary_change(
                         input,
                         current_input,
                         leased_write_set,
