@@ -477,6 +477,39 @@ pub enum ResolutionOutcome {
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DependencyIntentIdentity {
+    pub consumer: LogicalSourceId,
+    pub dependency: String,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PackageScopeId(String);
+
+impl PackageScopeId {
+    pub fn from_root(root: &RepoPath) -> Self {
+        Self(format!("package_{}", digest_hex(root.canonical_bytes())))
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageScope {
+    pub id: PackageScopeId,
+    pub root: String,
+}
+
+impl PackageScope {
+    pub fn from_root(root: &RepoPath) -> Self {
+        Self {
+            id: PackageScopeId::from_root(root),
+            root: root.display_escaped(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "kebab-case")]
 pub enum Limitation {
     JsModuleUseUnknown {
@@ -552,6 +585,20 @@ pub enum Limitation {
     },
     DependencyOwnerAmbiguous {
         path: String,
+        #[serde(
+            default,
+            rename = "packageScope",
+            alias = "package_scope",
+            skip_serializing_if = "Option::is_none"
+        )]
+        package_scope: Option<Box<PackageScope>>,
+        #[serde(
+            default,
+            rename = "requiredIntent",
+            alias = "required_intent",
+            skip_serializing_if = "Option::is_none"
+        )]
+        required_intent: Option<Box<DependencyIntentIdentity>>,
         detail: String,
     },
     WorkspaceOwnershipUnsupported {

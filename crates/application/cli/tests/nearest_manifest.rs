@@ -320,6 +320,58 @@ fn dependency_intents_lease_each_nearest_manifest_and_lockfile()
 }
 
 #[test]
+fn dependency_owner_gaps_are_scoped_to_the_requested_package()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"root","private":true,"workspaces":["packages/*"]}"#,
+    )?;
+    write(root.path(), "pnpm-lock.yaml", "lockfileVersion: '9.0'\n")?;
+    write(
+        root.path(),
+        "packages/a/package.json",
+        r#"{"name":"@acme/a","private":true}"#,
+    )?;
+    write(root.path(), "packages/a/src/main.ts", "console.log('a');\n")?;
+    write(
+        root.path(),
+        "packages/b/package.json",
+        r#"{"name":"@acme/b","private":true,"dependencies":[]}"#,
+    )?;
+    write(root.path(), "packages/b/src/main.ts", "console.log('b');\n")?;
+
+    let package_a = run(
+        root.path(),
+        &dependency_prewrite("nearest-scoped-gap-a", "packages/a/src/main.ts", "zod"),
+    )?;
+    assert_status(&package_a, 0);
+    assert_eq!(field(&package_a.stdout, "decision")?, "allow");
+    let gate_id = field(&package_a.stdout, "gateId")?;
+    let package_a_closed = run(
+        root.path(),
+        &[
+            "post-write",
+            &gate_id,
+            "--operation-id",
+            "nearest-scoped-gap-a-close",
+        ],
+    )?;
+    assert_status(&package_a_closed, 0);
+    assert_eq!(field(&package_a_closed.stdout, "decision")?, "allow");
+
+    let package_b = run(
+        root.path(),
+        &dependency_prewrite("nearest-scoped-gap-b", "packages/b/src/main.ts", "zod"),
+    )?;
+    assert_status(&package_b, 4);
+    assert_eq!(field(&package_b.stdout, "decision")?, "incomplete");
+    assert_signal(&package_b.stdout, "required-evidence-incomplete")?;
+    Ok(())
+}
+
+#[test]
 fn dependency_owner_uncertainty_never_infers_a_lockfile() -> Result<(), Box<dyn std::error::Error>>
 {
     let no_lock = standalone_fixture()?;

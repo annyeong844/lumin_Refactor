@@ -33,7 +33,7 @@ use transitions::{
     reconcile_transitions,
 };
 
-const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v21";
+const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v22";
 
 fn analysis_contract_id() -> String {
     let inputs = [
@@ -235,7 +235,7 @@ fn analyze_pre_write(
         &capture,
     );
     let protected_semantic_inputs = protected_semantic_inputs(&capture, &leased_write_set);
-    signals.extend(gate_policy::opening_signals(&capture.snapshot.evidence));
+    signals.extend(gate_policy::opening_signals(&capture.snapshot));
     let baseline = GateBaseline {
         analysis_contract: analysis_contract_id(),
         snapshot: capture.snapshot,

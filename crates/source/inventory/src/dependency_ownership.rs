@@ -5,8 +5,9 @@ use std::io::Read;
 use std::path::Path;
 
 use lumin_model::{
-    ConfigObservation, ConfigSyntax, DependencyIntent, DependencyOwnerFact, Limitation,
-    PackageFact, PackageIdentityState, RepoPath, SemanticConfigSnapshot, WorkspaceFact, digest_hex,
+    ConfigObservation, ConfigSyntax, DependencyIntent, DependencyIntentIdentity,
+    DependencyOwnerFact, Limitation, LogicalSourceId, PackageFact, PackageIdentityState,
+    PackageScope, RepoPath, SemanticConfigSnapshot, WorkspaceFact, digest_hex,
 };
 
 use crate::{
@@ -212,6 +213,8 @@ pub(crate) fn plan(
         if context_is_hard_excluded(root, &intent.path)? {
             limitations.push(Limitation::DependencyOwnerAmbiguous {
                 path: intent.path.display_escaped(),
+                package_scope: None,
+                required_intent: Some(dependency_intent_identity(&intent)),
                 detail: "dependency context is inside a hard-excluded repository subtree"
                     .to_owned(),
             });
@@ -222,14 +225,23 @@ pub(crate) fn plan(
             PackageSelection::Ambiguous(detail) => {
                 limitations.push(Limitation::DependencyOwnerAmbiguous {
                     path: intent.path.display_escaped(),
+                    package_scope: None,
+                    required_intent: Some(dependency_intent_identity(&intent)),
                     detail,
                 });
                 continue;
             }
         };
-        if !package_supports_dependency_ownership(package)
-            || workspace_ownership_is_unsupported(config, package)
-        {
+        if !package_supports_dependency_ownership(package) {
+            limitations.push(Limitation::DependencyOwnerAmbiguous {
+                path: intent.path.display_escaped(),
+                package_scope: Some(Box::new(PackageScope::from_root(&package.root))),
+                required_intent: Some(dependency_intent_identity(&intent)),
+                detail: "selected package dependency ownership is unsupported".to_owned(),
+            });
+            continue;
+        }
+        if workspace_ownership_is_unsupported(config, package) {
             continue;
         }
         let workspace_root = match selected_workspace(config, package)? {
@@ -287,6 +299,13 @@ fn owner_fact(owner: PendingOwner, lockfile_path: Option<RepoPath>) -> Dependenc
         manifest_path: owner.manifest_path,
         lockfile_path,
     }
+}
+
+fn dependency_intent_identity(intent: &DependencyIntent) -> Box<DependencyIntentIdentity> {
+    Box::new(DependencyIntentIdentity {
+        consumer: LogicalSourceId::from_path(&intent.path),
+        dependency: intent.dependency.clone(),
+    })
 }
 
 enum PackageSelection<'a> {
@@ -432,6 +451,8 @@ fn select_lockfile(
                 .join("; ");
             limitations.push(Limitation::DependencyOwnerAmbiguous {
                 path: owner.manifest_path.display_escaped(),
+                package_scope: Some(Box::new(PackageScope::from_root(&owner.package_root))),
+                required_intent: Some(dependency_intent_identity(&owner.intent)),
                 detail: format!("lockfile ownership is unobservable: {details}"),
             });
             return Ok(LockfileSelection::Ambiguous);
@@ -444,6 +465,8 @@ fn select_lockfile(
                 .join(", ");
             limitations.push(Limitation::DependencyOwnerAmbiguous {
                 path: owner.manifest_path.display_escaped(),
+                package_scope: Some(Box::new(PackageScope::from_root(&owner.package_root))),
+                required_intent: Some(dependency_intent_identity(&owner.intent)),
                 detail: format!(
                     "multiple supported lockfiles coexist at the nearest directory: {names}"
                 ),
@@ -912,7 +935,7 @@ mod tests {
         assert!(inventory.config.dependency_owners.is_empty());
         assert!(inventory.limitations.iter().any(|limitation| matches!(
             limitation,
-            Limitation::DependencyOwnerAmbiguous { path, detail }
+            Limitation::DependencyOwnerAmbiguous { path, detail, .. }
                 if path == "node_modules/pkg" && detail.contains("hard-excluded")
         )));
         Ok(())

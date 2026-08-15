@@ -8,7 +8,7 @@ use lumin_model::{
 };
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::{RepoPathProjection, RunEvidence, delta::lifecycle_delta_input};
+use crate::{RepoPathProjection, RunEvidence, delta::lifecycle_delta_input_for};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -699,8 +699,10 @@ fn entry_unavailable_reason_tag(reason: lumin_model::EntryUnavailableReason) -> 
 pub mod gate_policy {
     use super::*;
 
-    pub fn opening_signals(evidence: &RunEvidence) -> Vec<GateSignal> {
-        let delta_input = lifecycle_delta_input(evidence);
+    pub fn opening_signals(snapshot: &AnalysisSnapshot) -> Vec<GateSignal> {
+        let evidence = &snapshot.evidence;
+        let delta_input =
+            lifecycle_delta_input_for(evidence, &snapshot.scan_invocation.dependency_intents);
         let mut signals = Vec::new();
         if requires_complete_evidence(evidence, delta_input.required_evidence_gap_count) {
             signals.push(GateSignal::RequiredEvidenceIncomplete {
@@ -796,8 +798,14 @@ pub mod gate_policy {
         sort_paths(&mut protected);
         sort_paths(&mut unplanned);
 
-        let baseline_delta_input = lifecycle_delta_input(&baseline.evidence);
-        let current_delta_input = lifecycle_delta_input(&current.evidence);
+        let baseline_delta_input = lifecycle_delta_input_for(
+            &baseline.evidence,
+            &baseline.scan_invocation.dependency_intents,
+        );
+        let current_delta_input = lifecycle_delta_input_for(
+            &current.evidence,
+            &current.scan_invocation.dependency_intents,
+        );
         let deltas = classify_lifecycle_deltas(
             Some(&baseline_delta_input.facts),
             &current_delta_input.facts,

@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_model::{
     ConfigDocument, ConfigObservation, ConfigValue, Limitation, LogicalSourceId, PackageFact,
-    PackageIdentity, PackageIdentityState, PackagePrivacy, RepoPath, SemanticConfigSnapshot,
-    SourceSnapshot, WorkspaceFact, WorkspaceSource,
+    PackageIdentity, PackageIdentityState, PackagePrivacy, PackageScope, RepoPath,
+    SemanticConfigSnapshot, SourceSnapshot, WorkspaceFact, WorkspaceSource,
 };
 
 use crate::generated_config_policy::{self, FieldClassification, INVENTORY_PACKAGE_JSON_FIELDS};
@@ -441,6 +441,8 @@ fn package_fact(
             dependency_ownership_supported = false;
             limitations.push(Limitation::DependencyOwnerAmbiguous {
                 path: manifest.path.display_escaped(),
+                package_scope: Some(Box::new(PackageScope::from_root(&root))),
+                required_intent: None,
                 detail: format!("package {field} field must be object<string,string>"),
             });
         }

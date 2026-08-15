@@ -2,11 +2,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_model::{
     DeltaFact, DeltaFactFamily, DeltaIdentity, DeltaIdentityKind, DeltaKey, DeltaOwnerPayloadValue,
-    DeltaValue, DynamicImportTargetScope, FindingDisposition, Limitation, LogicalSourceId,
-    ReviewOnlyReason, UnresolvedTargetScope, append_length_prefixed,
+    DeltaValue, DependencyIntentIdentity, DynamicImportTargetScope, FindingDisposition, Limitation,
+    LogicalSourceId, PackageScopeId, RepoPath, ReviewOnlyReason, UnresolvedTargetScope,
+    append_length_prefixed,
 };
 
-use crate::{Confidence, DependencyOwnerRecord, FindingRecord, RunEvidence, Severity};
+use crate::{
+    Confidence, DependencyIntentRecord, DependencyOwnerRecord, FindingRecord, RepoPathProjection,
+    RunEvidence, Severity,
+};
 
 const DEPENDENCY_OWNERSHIP_CAPABILITY_ID: &str = "inventory/dependency-ownership.v1";
 
@@ -16,7 +20,15 @@ pub(crate) struct LifecycleDeltaInput {
     pub required_evidence_gap_count: usize,
 }
 
-pub(crate) fn lifecycle_delta_input(evidence: &RunEvidence) -> LifecycleDeltaInput {
+#[cfg(test)]
+fn lifecycle_delta_input(evidence: &RunEvidence) -> LifecycleDeltaInput {
+    lifecycle_delta_input_for(evidence, &[])
+}
+
+pub(crate) fn lifecycle_delta_input_for(
+    evidence: &RunEvidence,
+    dependency_intents: &[DependencyIntentRecord],
+) -> LifecycleDeltaInput {
     let mut facts = evidence
         .findings
         .iter()
@@ -53,7 +65,12 @@ pub(crate) fn lifecycle_delta_input(evidence: &RunEvidence) -> LifecycleDeltaInp
                 advisory_limitation_count += 1;
                 facts.push(fact);
             }
-            LimitationDelta::RequiredEvidenceGap => required_evidence_gap_count += 1,
+            LimitationDelta::RequiredEvidenceGap => {
+                if limitation_intersects_required_evidence(limitation, evidence, dependency_intents)
+                {
+                    required_evidence_gap_count += 1;
+                }
+            }
         }
     }
     facts.sort_by(|left, right| left.key.cmp(&right.key));
@@ -62,6 +79,61 @@ pub(crate) fn lifecycle_delta_input(evidence: &RunEvidence) -> LifecycleDeltaInp
         advisory_limitation_count,
         required_evidence_gap_count,
     }
+}
+
+fn limitation_intersects_required_evidence(
+    limitation: &Limitation,
+    evidence: &RunEvidence,
+    dependency_intents: &[DependencyIntentRecord],
+) -> bool {
+    let Limitation::DependencyOwnerAmbiguous {
+        package_scope,
+        required_intent,
+        ..
+    } = limitation
+    else {
+        return true;
+    };
+    if dependency_intents.is_empty() {
+        return false;
+    }
+    if let Some(required_intent) = required_intent {
+        return dependency_intents
+            .iter()
+            .any(|intent| dependency_intent_matches(required_intent, intent));
+    }
+    let Some(package_scope) = package_scope else {
+        return true;
+    };
+    dependency_intents.iter().any(|intent| {
+        let Some(owner) = evidence.dependency_owners.iter().find(|owner| {
+            owner.consumer_path == intent.path && owner.dependency == intent.dependency
+        }) else {
+            return false;
+        };
+        projected_package_scope(&owner.package_root)
+            .is_none_or(|scope| scope == package_scope.id.clone())
+    })
+}
+
+fn dependency_intent_matches(
+    required: &DependencyIntentIdentity,
+    actual: &DependencyIntentRecord,
+) -> bool {
+    actual.dependency == required.dependency
+        && projected_source_id(&actual.path).is_none_or(|consumer| consumer == required.consumer)
+}
+
+fn projected_source_id(path: &RepoPathProjection) -> Option<LogicalSourceId> {
+    RepoPath::from_canonical_bytes(&path.canonical)
+        .ok()
+        .map(|path| LogicalSourceId::from_path(&path))
+}
+
+fn projected_package_scope(path: &RepoPathProjection) -> Option<PackageScopeId> {
+    RepoPath::from_canonical_bytes(&path.canonical)
+        .ok()
+        .map(|path| PackageScopeId::from_root(&path))
 }
 
 fn dependency_owner_delta_fact(owner: &DependencyOwnerRecord) -> DeltaFact {
@@ -501,6 +573,74 @@ mod tests {
     }
 
     #[test]
+    fn dependency_owner_gaps_count_only_for_the_requested_owner_scope()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let package_b = lumin_model::RepoPath::from_portable("packages/b")?;
+        let mut evidence = evidence_with_limitations(vec![Limitation::DependencyOwnerAmbiguous {
+            path: "packages/b/package.json".to_owned(),
+            package_scope: Some(Box::new(lumin_model::PackageScope::from_root(&package_b))),
+            required_intent: None,
+            detail: "malformed dependencies".to_owned(),
+        }]);
+        evidence.dependency_owners = vec![dependency_owner("packages/app/package.json")?];
+        let app_intent = dependency_intent("packages/app/src/main.ts", "zod")?;
+
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, std::slice::from_ref(&app_intent))
+                .required_evidence_gap_count,
+            0,
+            "an unrelated package gap blocked a resolved dependency owner",
+        );
+
+        let package_b_intent = dependency_intent("packages/b/src/main.ts", "zod")?;
+        evidence
+            .limitations
+            .push(Limitation::DependencyOwnerAmbiguous {
+                path: "packages/b/src/main.ts".to_owned(),
+                package_scope: Some(Box::new(lumin_model::PackageScope::from_root(&package_b))),
+                required_intent: Some(Box::new(DependencyIntentIdentity {
+                    consumer: projected_source_id(&package_b_intent.path)
+                        .ok_or("invalid package B intent path")?,
+                    dependency: package_b_intent.dependency.clone(),
+                })),
+                detail: "selected package dependency ownership is unsupported".to_owned(),
+            });
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[package_b_intent]).required_evidence_gap_count,
+            1,
+            "the requested package's owner gap was ignored",
+        );
+
+        evidence.limitations = vec![Limitation::DependencyOwnerAmbiguous {
+            path: "package.json".to_owned(),
+            package_scope: Some(Box::new(lumin_model::PackageScope::from_root(
+                &lumin_model::RepoPath::empty(),
+            ))),
+            required_intent: None,
+            detail: "malformed root dependencies".to_owned(),
+        }];
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, std::slice::from_ref(&app_intent))
+                .required_evidence_gap_count,
+            0,
+            "a resolved nested owner inherited its ancestor package's gap",
+        );
+
+        evidence.limitations = vec![Limitation::DependencyOwnerAmbiguous {
+            path: "packages/unknown".to_owned(),
+            package_scope: None,
+            required_intent: None,
+            detail: "package ownership is ambiguous".to_owned(),
+        }];
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[app_intent]).required_evidence_gap_count,
+            1,
+            "a workspace-scoped owner gap must remain fail-closed",
+        );
+        Ok(())
+    }
+
+    #[test]
     fn bounded_unresolved_targets_are_comparable_adverse_facts() -> Result<(), &'static str> {
         let delta = limitation_delta(&Limitation::InternalSpecifierUnresolved {
             importer: LogicalSourceId::from_string("source-1".to_owned()),
@@ -725,6 +865,17 @@ mod tests {
             package_root: RepoPathProjection::from(&package_root),
             manifest_path: RepoPathProjection::from(&manifest_path),
             lockfile_path: None,
+        })
+    }
+
+    fn dependency_intent(
+        path: &str,
+        dependency: &str,
+    ) -> Result<DependencyIntentRecord, Box<dyn std::error::Error>> {
+        let path = lumin_model::RepoPath::from_portable(path)?;
+        Ok(DependencyIntentRecord {
+            path: RepoPathProjection::from(&path),
+            dependency: dependency.to_owned(),
         })
     }
 
