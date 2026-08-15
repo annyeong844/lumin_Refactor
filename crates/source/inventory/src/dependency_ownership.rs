@@ -194,6 +194,7 @@ struct PendingOwner {
     intent: DependencyIntent,
     package_root: RepoPath,
     manifest_path: RepoPath,
+    manifest_payload_sha256: String,
     workspace_root: RepoPath,
 }
 
@@ -256,10 +257,12 @@ pub(crate) fn plan(
         for path in lockfile_search_paths(&package.root, &workspace_root)? {
             input_paths.insert(path, ());
         }
+        let manifest_payload_sha256 = selected_manifest_payload_sha256(config, package)?;
         owners.push(PendingOwner {
             intent,
             package_root: package.root.clone(),
             manifest_path: package.manifest_path.clone(),
+            manifest_payload_sha256,
             workspace_root,
         });
     }
@@ -297,7 +300,21 @@ fn owner_fact(owner: PendingOwner, lockfile_path: Option<RepoPath>) -> Dependenc
         intent: owner.intent,
         package_root: owner.package_root,
         manifest_path: owner.manifest_path,
+        manifest_payload_sha256: owner.manifest_payload_sha256,
         lockfile_path,
+    }
+}
+
+fn selected_manifest_payload_sha256(
+    config: &SemanticConfigSnapshot,
+    package: &PackageFact,
+) -> Result<String, InventoryError> {
+    match config.observations.get(&package.manifest_path) {
+        Some(ConfigObservation::Present { document, .. }) => Ok(document.payload_sha256.clone()),
+        _ => Err(InventoryError::MalformedConfiguration(format!(
+            "selected dependency owner omitted its present manifest observation: {}",
+            package.manifest_path.display_escaped()
+        ))),
     }
 }
 

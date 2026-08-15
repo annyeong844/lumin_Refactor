@@ -51,26 +51,56 @@ pub fn decode_native_repo_path_stream(bytes: &[u8]) -> Result<Vec<RepoPath>, Rep
 }
 
 /// Validate caller entries BEFORE audit begins or pre-write opens/reserves a gate.
-/// Reject entries whose lexical first component is the reserved `.lumin` namespace,
+/// Reject entries whose lexical or physical path enters the reserved `.lumin` namespace,
 /// or whose existing path or nearest existing parent physically escapes the canonical root.
 /// Returns Err(InventoryError) on invalid entries (maps to CLI exit 2).
 pub fn validate_caller_entries(root: &Path, entries: &[RepoPath]) -> Result<(), InventoryError> {
     let canonical_root = fs::canonicalize(root)
         .map_err(|error| InventoryError::RepositoryIdentity(error.to_string()))?;
+    let canonical_state = canonical_reserved_state(root)?;
     for entry in entries {
         let relative = native_relative(entry)?;
         let first_component = relative.iter().next();
-        if first_component.is_some_and(|component| component == ".lumin") {
+        if first_component.is_some_and(reserved_state_component) {
             return Err(InventoryError::ReservedEntryPath(entry.display_escaped()));
         }
-        validate_entry_containment(root, &canonical_root, entry)?;
+        validate_entry_containment(root, &canonical_root, canonical_state.as_deref(), entry)?;
     }
     Ok(())
+}
+
+fn canonical_reserved_state(root: &Path) -> Result<Option<PathBuf>, InventoryError> {
+    let state = root.join(".lumin");
+    match fs::symlink_metadata(&state) {
+        Ok(_) => fs::canonicalize(&state).map(Some).map_err(|error| {
+            InventoryError::PhysicalIdentity(format!(
+                "cannot resolve reserved .lumin namespace: {error}"
+            ))
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(InventoryError::PhysicalIdentity(format!(
+            "cannot inspect reserved .lumin namespace: {error}"
+        ))),
+    }
+}
+
+fn reserved_state_component(component: &OsStr) -> bool {
+    #[cfg(windows)]
+    {
+        component
+            .to_str()
+            .is_some_and(|component| component.eq_ignore_ascii_case(".lumin"))
+    }
+    #[cfg(not(windows))]
+    {
+        component == ".lumin"
+    }
 }
 
 fn validate_entry_containment(
     root: &Path,
     canonical_root: &Path,
+    canonical_state: Option<&Path>,
     entry: &RepoPath,
 ) -> Result<(), InventoryError> {
     let mut candidate = root.join(native_relative(entry)?);
@@ -85,6 +115,9 @@ fn validate_entry_containment(
                 })?;
                 if !physical.starts_with(canonical_root) {
                     return Err(InventoryError::EntryEscapesRoot(entry.display_escaped()));
+                }
+                if canonical_state.is_some_and(|state| physical.starts_with(state)) {
+                    return Err(InventoryError::ReservedEntryPath(entry.display_escaped()));
                 }
                 return Ok(());
             }

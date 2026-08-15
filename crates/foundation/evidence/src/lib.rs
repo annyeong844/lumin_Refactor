@@ -306,6 +306,8 @@ pub struct DependencyOwnerRecord {
     pub dependency: String,
     pub package_root: RepoPathProjection,
     pub manifest_path: RepoPathProjection,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub manifest_payload_sha256: String,
     pub lockfile_path: Option<RepoPathProjection>,
 }
 

@@ -106,8 +106,14 @@ fn dependency_intents_lease_each_nearest_manifest_and_lockfile()
             "nearest-local-self-write-close",
         ],
     )?;
-    assert_status(&closed, 0);
-    assert_eq!(field(&closed.stdout, "decision")?, "allow");
+    assert_status(&closed, 4);
+    assert_eq!(field(&closed.stdout, "decision")?, "incomplete");
+    assert_signal(&closed.stdout, "lifecycle-delta-incomparable")?;
+    assert_delta(
+        &closed.stdout,
+        "dependency-ownership",
+        "changed-incomparable",
+    )?;
     assert_eq!(
         actual_write_paths(&closed.stdout)?,
         BTreeSet::from([
@@ -116,6 +122,11 @@ fn dependency_intents_lease_each_nearest_manifest_and_lockfile()
         ]),
         "the inferred manifest and lockfile changes must be attributed to this gate",
     );
+    abandon(
+        root.path(),
+        &self_write_gate,
+        "nearest-local-self-write-abandon",
+    )?;
 
     let combined = run(
         root.path(),
@@ -667,6 +678,62 @@ fn dependency_owner_uncertainty_never_infers_a_lockfile() -> Result<(), Box<dyn 
         "a physical alias of a hard-excluded context must infer no write owner",
     );
     remove_directory_alias(&aliased_hard_excluded.path().join("context"))?;
+
+    let aliased_reserved_state = standalone_fixture()?;
+    fs::create_dir(aliased_reserved_state.path().join(".lumin"))?;
+    create_directory_alias(
+        &aliased_reserved_state.path().join(".lumin"),
+        &aliased_reserved_state.path().join("state-context"),
+    )?;
+    let rejected = run(
+        aliased_reserved_state.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "nearest-aliased-reserved-state",
+            "--path",
+            "src/main.ts",
+            "--dependency-at",
+            "state-context",
+            "zod",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&rejected, 2);
+    assert!(
+        fs::read_dir(aliased_reserved_state.path().join(".lumin"))?
+            .next()
+            .is_none(),
+        "reserved-state alias validation mutated lifecycle storage",
+    );
+    remove_directory_alias(&aliased_reserved_state.path().join("state-context"))?;
+
+    #[cfg(windows)]
+    {
+        let rejected = run(
+            aliased_reserved_state.path(),
+            &[
+                "pre-write",
+                "--operation-id",
+                "nearest-case-aliased-reserved-state",
+                "--path",
+                "src/main.ts",
+                "--dependency-at",
+                ".LUMIN",
+                "zod",
+                "--jobs",
+                "1",
+            ],
+        )?;
+        assert_status(&rejected, 2);
+        assert!(
+            fs::read_dir(aliased_reserved_state.path().join(".lumin"))?
+                .next()
+                .is_none(),
+            "case-alias validation mutated lifecycle storage",
+        );
+    }
 
     let missing_manifest = tempfile::tempdir()?;
     fs::create_dir_all(missing_manifest.path().join("src"))?;

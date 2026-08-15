@@ -187,6 +187,7 @@ pub struct DependencyOwnerFact {
     pub intent: DependencyIntent,
     pub package_root: RepoPath,
     pub manifest_path: RepoPath,
+    pub manifest_payload_sha256: String,
     pub lockfile_path: Option<RepoPath>,
 }
 

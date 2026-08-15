@@ -202,6 +202,10 @@ fn dependency_owner_delta_fact(owner: &DependencyOwnerRecord) -> DeltaFact {
             )),
         ),
         (
+            "manifestPayloadSha256".to_owned(),
+            DeltaOwnerPayloadValue::unordered(DeltaValue::text(&owner.manifest_payload_sha256)),
+        ),
+        (
             "lockfilePath".to_owned(),
             DeltaOwnerPayloadValue::unordered(
                 owner
@@ -599,9 +603,12 @@ mod tests {
     fn dependency_owner_manifest_change_is_an_incomparable_payload_delta()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut baseline = evidence_with_limitations(Vec::new());
-        baseline.dependency_owners = vec![dependency_owner("package.json")?];
+        baseline.dependency_owners = vec![dependency_owner("package.json", "baseline-hash")?];
         let mut current = evidence_with_limitations(Vec::new());
-        current.dependency_owners = vec![dependency_owner("packages/app/package.json")?];
+        current.dependency_owners = vec![dependency_owner(
+            "packages/app/package.json",
+            "current-hash",
+        )?];
 
         let baseline = lifecycle_delta_input(&baseline);
         let current = lifecycle_delta_input(&current);
@@ -627,6 +634,36 @@ mod tests {
     }
 
     #[test]
+    fn dependency_owner_manifest_payload_change_is_incomparable_at_the_same_path()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut baseline = evidence_with_limitations(Vec::new());
+        baseline.dependency_owners = vec![dependency_owner(
+            "packages/app/package.json",
+            "baseline-hash",
+        )?];
+        let mut current = evidence_with_limitations(Vec::new());
+        current.dependency_owners = vec![dependency_owner(
+            "packages/app/package.json",
+            "current-hash",
+        )?];
+
+        let baseline = lifecycle_delta_input(&baseline);
+        let current = lifecycle_delta_input(&current);
+        assert!(matches!(
+            &classify_lifecycle_deltas(Some(&baseline.facts), &current.facts)[0].classification,
+            GateDeltaClassification::ChangedIncomparable {
+                incomparable_changes,
+                ..
+            } if incomparable_changes.iter().any(|change| matches!(
+                change,
+                DeltaDimensionChange::OwnerPayloadChanged { field_id, .. }
+                    if field_id == "manifestPayloadSha256"
+            ))
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn dependency_owner_gaps_count_only_for_the_requested_owner_scope()
     -> Result<(), Box<dyn std::error::Error>> {
         let package_b = lumin_model::RepoPath::from_portable("packages/b")?;
@@ -636,7 +673,10 @@ mod tests {
             required_intent: None,
             detail: "malformed dependencies".to_owned(),
         }]);
-        evidence.dependency_owners = vec![dependency_owner("packages/app/package.json")?];
+        evidence.dependency_owners = vec![dependency_owner(
+            "packages/app/package.json",
+            "manifest-hash",
+        )?];
         let app_intent = dependency_intent("packages/app/src/main.ts", "zod")?;
 
         assert_eq!(
@@ -980,6 +1020,7 @@ mod tests {
 
     fn dependency_owner(
         manifest_path: &str,
+        manifest_payload_sha256: &str,
     ) -> Result<DependencyOwnerRecord, Box<dyn std::error::Error>> {
         let consumer_path = lumin_model::RepoPath::from_portable("packages/app/src/main.ts")?;
         let package_root = lumin_model::RepoPath::from_portable("packages/app")?;
@@ -990,6 +1031,7 @@ mod tests {
             dependency: "zod".to_owned(),
             package_root: RepoPathProjection::from(&package_root),
             manifest_path: RepoPathProjection::from(&manifest_path),
+            manifest_payload_sha256: manifest_payload_sha256.to_owned(),
             lockfile_path: None,
         })
     }

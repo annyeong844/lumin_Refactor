@@ -585,6 +585,7 @@ impl RepositoryAnalysisSession {
                 dependency: owner.intent.dependency.clone(),
                 package_root: RepoPathProjection::from(&owner.package_root),
                 manifest_path: RepoPathProjection::from(&owner.manifest_path),
+                manifest_payload_sha256: owner.manifest_payload_sha256.clone(),
                 lockfile_path: owner.lockfile_path.as_ref().map(RepoPathProjection::from),
             })
             .collect::<Vec<_>>();

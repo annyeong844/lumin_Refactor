@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use lumin_evidence::{
     ActualWriteSet, AnalysisSnapshot, DEAD_CODE_CAPABILITY_ID, DEPENDENCY_OWNERSHIP_CAPABILITY_ID,
     GateBaseline, GateRecord, GateSignal, PhysicalAliasClosureRecord, RepoPathProjection,
-    RunEvidence, SemanticInputRecord, WorktreeTransition, seal_analysis_snapshot,
+    RunEvidence, SemanticInputRecord, WorktreeTransition, WriteLease, seal_analysis_snapshot,
 };
 use lumin_model::{CapabilityState, Limitation};
 use lumin_store::ActiveGateLease;
@@ -67,11 +67,24 @@ fn apply_transition(adjusted: &mut AnalysisSnapshot, transition: &WorktreeTransi
         return false;
     }
 
+    let Some(topology_paths) = owned_topology_replay_paths(
+        &transition.capsule.before_snapshot.inputs,
+        &transition.capsule.after_snapshot.inputs,
+        &transition.capsule.changed_paths,
+        &transition.capsule.leased_write_set,
+    ) else {
+        return false;
+    };
+    let mut complete_replay_paths = transition.capsule.changed_paths.clone();
+    complete_replay_paths.extend(topology_paths.iter().cloned());
+    complete_replay_paths.sort();
+    complete_replay_paths.dedup();
+
     let Some(transition_inputs) = apply_input_delta(
         &transition.capsule.before_snapshot.inputs,
         &transition.capsule.before_snapshot.inputs,
         &transition.capsule.after_snapshot.inputs,
-        &transition.capsule.changed_paths,
+        &complete_replay_paths,
     ) else {
         return false;
     };
@@ -85,11 +98,12 @@ fn apply_transition(adjusted: &mut AnalysisSnapshot, transition: &WorktreeTransi
         return false;
     }
 
-    let Some(inputs) = apply_input_delta(
+    let Some(inputs) = apply_rebased_input_delta(
         &adjusted.inputs,
         &transition.capsule.before_snapshot.inputs,
         &transition.capsule.after_snapshot.inputs,
         &transition.capsule.changed_paths,
+        &topology_paths,
     ) else {
         return false;
     };
@@ -107,6 +121,53 @@ fn apply_transition(adjusted: &mut AnalysisSnapshot, transition: &WorktreeTransi
         transition.capsule.after_snapshot.entry_selections.clone(),
     );
     true
+}
+
+fn owned_topology_replay_paths(
+    before_inputs: &[SemanticInputRecord],
+    after_inputs: &[SemanticInputRecord],
+    changed_paths: &[RepoPathProjection],
+    leased_write_set: &[WriteLease],
+) -> Option<Vec<RepoPathProjection>> {
+    let before = before_inputs
+        .iter()
+        .map(|input| (input.path.canonical.as_slice(), input))
+        .collect::<BTreeMap<_, _>>();
+    let after = after_inputs
+        .iter()
+        .map(|input| (input.path.canonical.as_slice(), input))
+        .collect::<BTreeMap<_, _>>();
+    let changed = changed_paths
+        .iter()
+        .map(|path| path.canonical.as_slice())
+        .collect::<BTreeSet<_>>();
+    let mut topology_paths = Vec::new();
+
+    for (path, baseline) in &before {
+        let current = after.get(path).copied();
+        if current == Some(*baseline) || changed.contains(path) {
+            continue;
+        }
+        let current = current?;
+        if !lumin_evidence::gate_policy::is_owned_missing_boundary_change(
+            baseline,
+            current,
+            leased_write_set,
+            after_inputs,
+        ) {
+            return None;
+        }
+        topology_paths.push(current.path.clone());
+    }
+    if after
+        .keys()
+        .any(|path| !before.contains_key(path) && !changed.contains(path))
+    {
+        return None;
+    }
+    topology_paths.sort();
+    topology_paths.dedup();
+    Some(topology_paths)
 }
 
 fn request_scopes_are_compatible(
@@ -150,6 +211,39 @@ fn apply_input_delta(
             None => {
                 inputs.remove(&path.canonical);
             }
+        }
+    }
+    Some(inputs.into_values().collect())
+}
+
+fn apply_rebased_input_delta(
+    base: &[SemanticInputRecord],
+    before_inputs: &[SemanticInputRecord],
+    after_inputs: &[SemanticInputRecord],
+    changed_paths: &[RepoPathProjection],
+    topology_paths: &[RepoPathProjection],
+) -> Option<Vec<SemanticInputRecord>> {
+    let mut inputs = apply_input_delta(base, before_inputs, after_inputs, changed_paths)?
+        .into_iter()
+        .map(|input| (input.path.canonical.clone(), input))
+        .collect::<BTreeMap<_, _>>();
+    let before = before_inputs
+        .iter()
+        .map(|input| (input.path.canonical.as_slice(), input))
+        .collect::<BTreeMap<_, _>>();
+    let after = after_inputs
+        .iter()
+        .map(|input| (input.path.canonical.as_slice(), input))
+        .collect::<BTreeMap<_, _>>();
+    for path in topology_paths {
+        let baseline = before.get(path.canonical.as_slice()).copied()?;
+        let current = after.get(path.canonical.as_slice()).copied()?;
+        match inputs.get(&path.canonical) {
+            None => {}
+            Some(input) if input == baseline => {
+                inputs.insert(path.canonical.clone(), current.clone());
+            }
+            Some(_) => return None,
         }
     }
     Some(inputs.into_values().collect())
@@ -351,9 +445,10 @@ pub(super) fn closure_expanded_actual_write_set(
 mod tests {
     use lumin_evidence::{
         AnalysisMetrics, CapabilityRecord, DependencyIntentRecord, DependencyOwnerRecord,
-        ScanInvocationTier, SemanticInputState, TransitionCapsule,
+        PathPrefixIdentity, ScanInvocationTier, SemanticInputState, TransitionCapsule,
+        WriteLeaseKind,
     };
-    use lumin_model::{GateId, LogicalSourceId, RepoPath};
+    use lumin_model::{GateId, LogicalSourceId, PhysicalFileIdentity, RepoPath};
 
     use super::*;
 
@@ -362,17 +457,17 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let changed_path = path("packages/b/src/main.ts")?;
         let mut adjusted = snapshot(
-            input("packages/b/src/main.ts", "before")?,
+            vec![input("packages/b/src/main.ts", "before")?],
             owner("packages/a/src/main.ts", "left-pad", "packages/a")?,
             intent("packages/a/src/main.ts", "left-pad")?,
         );
         let transition_before = snapshot(
-            input("packages/b/src/main.ts", "before")?,
+            vec![input("packages/b/src/main.ts", "before")?],
             owner("packages/b/src/main.ts", "is-odd", "packages/b")?,
             intent("packages/b/src/main.ts", "is-odd")?,
         );
         let transition_after = snapshot(
-            input("packages/b/src/main.ts", "after")?,
+            vec![input("packages/b/src/main.ts", "after")?],
             owner("packages/b/src/main.ts", "is-odd", "packages/b")?,
             intent("packages/b/src/main.ts", "is-odd")?,
         );
@@ -398,11 +493,88 @@ mod tests {
     }
 
     #[test]
+    fn request_specific_rebase_replays_owned_missing_topology()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source_path = path("packages/b/generated/main.ts")?;
+        let candidate_path = path("packages/b/generated/package.json")?;
+        let package_path = path("packages/b")?;
+        let generated_path = path("packages/b/generated")?;
+        let package_identity = PhysicalFileIdentity::Unix {
+            device: 1,
+            inode: 10,
+        };
+        let generated_identity = PhysicalFileIdentity::Unix {
+            device: 1,
+            inode: 11,
+        };
+        let source_before = missing_input(
+            source_path.clone(),
+            package_path.clone(),
+            package_identity.clone(),
+        );
+        let candidate_before = missing_input(
+            candidate_path.clone(),
+            package_path.clone(),
+            package_identity.clone(),
+        );
+        let source_after = input("packages/b/generated/main.ts", "after")?;
+        let candidate_after =
+            missing_input(candidate_path.clone(), generated_path, generated_identity);
+
+        let mut adjusted = snapshot(
+            vec![source_before.clone()],
+            owner("packages/a/src/main.ts", "left-pad", "packages/a")?,
+            intent("packages/a/src/main.ts", "left-pad")?,
+        );
+        let transition = WorktreeTransition {
+            sequence: 2,
+            capsule: TransitionCapsule {
+                gate_id: GateId::from_string("gate-b-topology".to_owned()),
+                revision: 1,
+                before_snapshot: snapshot(
+                    vec![source_before, candidate_before],
+                    owner("packages/b/generated/main.ts", "is-odd", "packages/b")?,
+                    intent("packages/b/generated/main.ts", "is-odd")?,
+                ),
+                after_snapshot: snapshot(
+                    vec![source_after, candidate_after],
+                    owner("packages/b/generated/main.ts", "is-odd", "packages/b")?,
+                    intent("packages/b/generated/main.ts", "is-odd")?,
+                ),
+                changed_paths: vec![source_path.clone()],
+                leased_write_set: vec![WriteLease {
+                    path: source_path.clone(),
+                    kind: WriteLeaseKind::NewFile,
+                    physical_identity: None,
+                    nearest_existing_parent: Some(package_path.clone()),
+                    prefix_identities: vec![PathPrefixIdentity {
+                        path: package_path,
+                        physical_identity: package_identity,
+                    }],
+                }],
+            },
+        };
+
+        assert!(apply_transition(&mut adjusted, &transition));
+        assert_eq!(adjusted.inputs.len(), 1);
+        assert_eq!(adjusted.inputs[0].path, source_path);
+        assert_eq!(adjusted.inputs[0].state, SemanticInputState::Source);
+        assert!(
+            adjusted
+                .inputs
+                .iter()
+                .all(|input| input.path != candidate_path),
+            "request-specific dependency topology leaked into the surviving gate",
+        );
+        Ok(())
+    }
+
+    #[test]
     fn request_specific_rebase_rejects_repository_evidence_drift()
     -> Result<(), Box<dyn std::error::Error>> {
         let changed_path = path("packages/b/src/main.ts")?;
         let mut adjusted = snapshot(
-            input("packages/b/src/main.ts", "before")?,
+            vec![input("packages/b/src/main.ts", "before")?],
             owner("packages/a/src/main.ts", "left-pad", "packages/a")?,
             intent("packages/a/src/main.ts", "left-pad")?,
         );
@@ -415,12 +587,12 @@ mod tests {
             adjusted.entry_selections,
         );
         let transition_before = snapshot(
-            input("packages/b/src/main.ts", "before")?,
+            vec![input("packages/b/src/main.ts", "before")?],
             owner("packages/b/src/main.ts", "is-odd", "packages/b")?,
             intent("packages/b/src/main.ts", "is-odd")?,
         );
         let transition_after = snapshot(
-            input("packages/b/src/main.ts", "after")?,
+            vec![input("packages/b/src/main.ts", "after")?],
             owner("packages/b/src/main.ts", "is-odd", "packages/b")?,
             intent("packages/b/src/main.ts", "is-odd")?,
         );
@@ -442,12 +614,12 @@ mod tests {
     }
 
     fn snapshot(
-        input: SemanticInputRecord,
+        inputs: Vec<SemanticInputRecord>,
         dependency_owner: DependencyOwnerRecord,
         dependency_intent: DependencyIntentRecord,
     ) -> AnalysisSnapshot {
         seal_analysis_snapshot(
-            vec![input],
+            inputs,
             RunEvidence {
                 schema_version: "lumin-evidence.v1".to_owned(),
                 capabilities: vec![
@@ -492,6 +664,24 @@ mod tests {
         })
     }
 
+    fn missing_input(
+        path: RepoPathProjection,
+        parent: RepoPathProjection,
+        parent_identity: PhysicalFileIdentity,
+    ) -> SemanticInputRecord {
+        SemanticInputRecord {
+            path,
+            state: SemanticInputState::Missing,
+            payload_sha256: None,
+            physical_identity: None,
+            absence_parent: Some(PathPrefixIdentity {
+                path: parent,
+                physical_identity: parent_identity,
+            }),
+            physical_redirect_sha256: None,
+        }
+    }
+
     fn owner(
         consumer: &str,
         dependency: &str,
@@ -504,6 +694,7 @@ mod tests {
             dependency: dependency.to_owned(),
             package_root: path(package_root)?,
             manifest_path: path(&format!("{package_root}/package.json"))?,
+            manifest_payload_sha256: "manifest-hash".to_owned(),
             lockfile_path: None,
         })
     }
