@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
@@ -31,7 +32,7 @@ pub(crate) fn capture_owner_candidates(
 ) -> Result<Vec<SemanticPolicyInput>, InventoryError> {
     let mut candidates = BTreeMap::<RepoPath, ConfigSyntax>::new();
     for intent in intents {
-        if context_is_hard_excluded(&intent.path)? {
+        if context_is_hard_excluded(root, &intent.path)? {
             continue;
         }
         for directory in reservation_directories(&intent.path) {
@@ -56,7 +57,7 @@ pub(crate) fn capture_owner_candidates(
         // The direct child candidates were already reserved and captured. A missing
         // child therefore binds the context's physical identity before this kind
         // check; file contexts keep that observation only as a topology guard.
-        if !context_is_hard_excluded(&intent.path)?
+        if !context_is_hard_excluded(root, &intent.path)?
             && !context_is_directory(root, &intent.path, observations, &captured)?
         {
             nondirectory_contexts.insert(intent.path.clone());
@@ -161,11 +162,12 @@ fn context_guard_input(
 }
 
 pub(crate) fn reservation_paths(
+    root: &Path,
     intents: &[DependencyIntent],
 ) -> Result<Vec<RepoPath>, InventoryError> {
     let mut candidates = BTreeMap::<RepoPath, ()>::new();
     for intent in intents {
-        if context_is_hard_excluded(&intent.path)? {
+        if context_is_hard_excluded(root, &intent.path)? {
             continue;
         }
         for directory in reservation_directories(&intent.path) {
@@ -196,6 +198,7 @@ struct PendingOwner {
 }
 
 pub(crate) fn plan(
+    root: &Path,
     intents: &[DependencyIntent],
     config: &SemanticConfigSnapshot,
     limitations: &mut Vec<Limitation>,
@@ -207,7 +210,7 @@ pub(crate) fn plan(
     let mut owners = Vec::new();
     let mut input_paths = BTreeMap::<RepoPath, ()>::new();
     for intent in intents {
-        if context_is_hard_excluded(&intent.path)? {
+        if context_is_hard_excluded(root, &intent.path)? {
             limitations.push(Limitation::DependencyOwnerAmbiguous {
                 path: intent.path.display_escaped(),
                 detail: "dependency context is inside a hard-excluded repository subtree"
@@ -597,11 +600,57 @@ fn ancestor_directories(path: &RepoPath, starts_at_context: bool) -> Vec<RepoPat
     directories
 }
 
-fn context_is_hard_excluded(path: &RepoPath) -> Result<bool, InventoryError> {
+fn context_is_hard_excluded(root: &Path, path: &RepoPath) -> Result<bool, InventoryError> {
     let relative = native_relative(path)?;
-    Ok(relative
-        .iter()
-        .any(|component| crate::is_hard_excluded(Path::new(component))))
+    if relative.iter().any(hard_excluded_component) {
+        return Ok(true);
+    }
+
+    let canonical_root = fs::canonicalize(root)
+        .map_err(|error| InventoryError::RepositoryIdentity(error.to_string()))?;
+    let mut native_prefix = root.to_path_buf();
+    for component in relative.iter() {
+        native_prefix.push(component);
+        match fs::symlink_metadata(&native_prefix) {
+            Ok(_) => {
+                let physical_prefix = fs::canonicalize(&native_prefix).map_err(|error| {
+                    InventoryError::PhysicalIdentity(format!(
+                        "cannot resolve dependency context prefix {}: {error}",
+                        path.display_escaped()
+                    ))
+                })?;
+                let physical_relative = physical_prefix
+                    .strip_prefix(&canonical_root)
+                    .map_err(|_| InventoryError::EntryEscapesRoot(path.display_escaped()))?;
+                if physical_relative.iter().any(hard_excluded_component) {
+                    return Ok(true);
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                break;
+            }
+            Err(error) => {
+                return Err(InventoryError::PhysicalIdentity(format!(
+                    "cannot inspect dependency context prefix {}: {error}",
+                    path.display_escaped()
+                )));
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn hard_excluded_component(component: &OsStr) -> bool {
+    component.to_str().is_some_and(|component| {
+        [".git", ".lumin", "node_modules"]
+            .into_iter()
+            .any(|excluded| component.eq_ignore_ascii_case(excluded))
+    })
 }
 
 fn join(directory: &RepoPath, name: &str) -> Result<RepoPath, InventoryError> {

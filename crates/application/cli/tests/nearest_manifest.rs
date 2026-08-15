@@ -508,6 +508,37 @@ fn dependency_owner_uncertainty_never_infers_a_lockfile() -> Result<(), Box<dyn 
         "hard-excluded dependency contexts must infer no write owner",
     );
 
+    let aliased_hard_excluded = standalone_fixture()?;
+    fs::create_dir(aliased_hard_excluded.path().join(".git"))?;
+    create_directory_alias(
+        &aliased_hard_excluded.path().join(".git"),
+        &aliased_hard_excluded.path().join("context"),
+    )?;
+    let rejected = run(
+        aliased_hard_excluded.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "nearest-aliased-hard-excluded-context",
+            "--path",
+            "src/main.ts",
+            "--dependency-at",
+            "context",
+            "zod",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&rejected, 4);
+    assert_eq!(field(&rejected.stdout, "decision")?, "incomplete");
+    assert_signal(&rejected.stdout, "required-evidence-incomplete")?;
+    assert_eq!(
+        leased_paths(&rejected.stdout)?,
+        BTreeSet::from(["src/main.ts".to_owned()]),
+        "a physical alias of a hard-excluded context must infer no write owner",
+    );
+    remove_directory_alias(&aliased_hard_excluded.path().join("context"))?;
+
     let missing_manifest = tempfile::tempdir()?;
     fs::create_dir_all(missing_manifest.path().join("src"))?;
     write(

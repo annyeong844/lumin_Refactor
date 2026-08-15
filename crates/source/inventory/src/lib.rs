@@ -393,6 +393,7 @@ pub fn begin_scan(
     )
     .map_err(InventoryError::MalformedConfiguration)?;
     let dependency_plan = dependency_ownership::plan(
+        root,
         &request.dependency_intents,
         &config,
         &mut collected.limitations,
@@ -414,9 +415,10 @@ pub fn begin_scan(
 }
 
 pub fn dependency_owner_candidate_paths(
+    root: &Path,
     intents: &[DependencyIntent],
 ) -> Result<Vec<RepoPath>, InventoryError> {
-    dependency_ownership::reservation_paths(intents)
+    dependency_ownership::reservation_paths(root, intents)
 }
 
 enum EntryClassification {

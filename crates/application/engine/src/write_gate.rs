@@ -449,8 +449,10 @@ fn capture_reserved_repository(
         &[SemanticReadReservationBinding],
     ) -> Result<SemanticReadReservation, EngineError>,
 ) -> Result<ReservedCapture, EngineError> {
-    let dependency_candidates =
-        lumin_inventory::dependency_owner_candidate_paths(&inventory_request.dependency_intents)?;
+    let dependency_candidates = lumin_inventory::dependency_owner_candidate_paths(
+        root,
+        &inventory_request.dependency_intents,
+    )?;
     if let Some(outcome) = reserve_semantic_paths(root, &dependency_candidates, &mut reserve)? {
         return Ok(outcome);
     }

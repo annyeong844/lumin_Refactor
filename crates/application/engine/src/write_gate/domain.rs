@@ -130,7 +130,13 @@ pub(super) fn expand_write_domain(
     let mut inferred_observations = Vec::new();
     for path in &capture.inferred_write_paths {
         match lumin_inventory::inspect_write_target(root, path) {
-            Ok(observation) if observation.kind == WriteTargetKind::ExistingFile => {
+            Ok(observation)
+                if observation.kind == WriteTargetKind::ExistingFile
+                    && inferred_observation_matches_capture(
+                        &capture.snapshot.inputs,
+                        &observation,
+                    ) =>
+            {
                 leases.push(write_lease(&observation));
                 inferred_observations.push(observation);
             }
@@ -194,6 +200,22 @@ pub(super) fn expand_write_domain(
     leases.sort();
     leases.dedup();
     (leases, alias_closures, signals)
+}
+
+fn inferred_observation_matches_capture(
+    inputs: &[SemanticInputRecord],
+    observation: &WriteTargetObservation,
+) -> bool {
+    let path = RepoPathProjection::from(&observation.path);
+    let mut matching = inputs.iter().filter(|input| input.path == path);
+    let Some(captured) = matching.next() else {
+        return false;
+    };
+    matching.next().is_none()
+        && captured.state == SemanticInputState::ConfigPresent
+        && captured.payload_sha256.is_some()
+        && captured.physical_identity == observation.physical_identity
+        && captured.absence_parent.is_none()
 }
 
 fn alias_closure_records(
@@ -446,6 +468,62 @@ fn validate_stable_lease_parents(root: &Path, leases: &[WriteLease]) -> Vec<Gate
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn atomic_replacement_of_inferred_write_is_rejected_before_lease()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        std::fs::create_dir(root.path().join("src"))?;
+        std::fs::write(
+            root.path().join("package.json"),
+            r#"{"name":"fixture","private":true}"#,
+        )?;
+        std::fs::write(root.path().join("src/main.ts"), "console.log('fixture');\n")?;
+        let path = RepoPath::from_portable("package.json")?;
+        let capture = crate::capture_repository(
+            root.path(),
+            &lumin_inventory::InventoryRequest {
+                dependency_intents: vec![lumin_model::DependencyIntent {
+                    path: RepoPath::from_portable("src/main.ts")?,
+                    dependency: "zod".to_owned(),
+                }],
+                ..Default::default()
+            },
+            1,
+            None,
+        )?;
+        let captured_identity = capture
+            .snapshot
+            .inputs
+            .iter()
+            .find(|input| input.path == RepoPathProjection::from(&path))
+            .and_then(|input| input.physical_identity.clone())
+            .ok_or("captured manifest identity is missing")?;
+
+        std::fs::remove_file(root.path().join("package.json"))?;
+        std::fs::write(
+            root.path().join("package.json"),
+            r#"{"name":"fixture","private":true}"#,
+        )?;
+        let replacement = lumin_inventory::inspect_write_target(root.path(), &path)?;
+        assert_ne!(
+            replacement.physical_identity,
+            Some(captured_identity),
+            "the fixture did not replace the manifest identity",
+        );
+
+        let (leases, alias_closures, signals) =
+            expand_write_domain(root.path(), &[], Vec::new(), &capture);
+        assert!(leases.is_empty());
+        assert!(alias_closures.is_empty());
+        assert_eq!(
+            signals,
+            [GateSignal::ProtectedInputChanged {
+                paths: vec![RepoPathProjection::from(&path)],
+            }]
+        );
+        Ok(())
+    }
 
     #[test]
     fn source_backed_redirect_is_protected_without_adjacency_selection()
