@@ -492,11 +492,14 @@ mod tests {
             .and_then(|input| input.physical_identity.clone())
             .ok_or("captured manifest identity is missing")?;
 
-        std::fs::remove_file(root.path().join("package.json"))?;
-        std::fs::write(
-            root.path().join("package.json"),
-            r#"{"name":"fixture","private":true}"#,
-        )?;
+        let manifest = root.path().join("package.json");
+        let replacement = root.path().join("package.replacement.json");
+        std::fs::write(&replacement, r#"{"name":"fixture","private":true}"#)?;
+        // Allocate the replacement while the captured file still exists so
+        // Unix filesystems cannot recycle its inode for the fixture.
+        #[cfg(windows)]
+        std::fs::remove_file(&manifest)?;
+        std::fs::rename(replacement, &manifest)?;
         let replacement = lumin_inventory::inspect_write_target(root.path(), &path)?;
         assert_ne!(
             replacement.physical_identity,
