@@ -114,6 +114,7 @@ pub(super) fn changed_paths(
     baseline: &AnalysisSnapshot,
     current: &AnalysisSnapshot,
     protected_semantic_inputs: &[SemanticInputRecord],
+    leased_write_set: &[lumin_evidence::WriteLease],
 ) -> Vec<RepoPathProjection> {
     let baseline_by_path = baseline
         .inputs
@@ -133,10 +134,17 @@ pub(super) fn changed_paths(
         .inputs
         .iter()
         .filter(|input| {
-            current_by_path
+            let current_input = current_by_path
                 .get(input.path.canonical.as_slice())
-                .copied()
-                != Some(*input)
+                .copied();
+            current_input != Some(*input)
+                && !current_input.is_some_and(|current_input| {
+                    lumin_evidence::gate_policy::is_owned_missing_parent_shift(
+                        input,
+                        current_input,
+                        leased_write_set,
+                    )
+                })
         })
         .map(|input| input.path.clone())
         .collect::<Vec<_>>();

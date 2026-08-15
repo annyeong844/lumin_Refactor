@@ -127,7 +127,20 @@ pub(super) fn expand_write_domain(
     };
     let mut seeds = BTreeSet::new();
     let mut signals = Vec::new();
-    for observation in observations {
+    let mut inferred_observations = Vec::new();
+    for path in &capture.inferred_write_paths {
+        match lumin_inventory::inspect_write_target(root, path) {
+            Ok(observation) if observation.kind == WriteTargetKind::ExistingFile => {
+                leases.push(write_lease(&observation));
+                inferred_observations.push(observation);
+            }
+            Ok(_) => signals.push(GateSignal::ProtectedInputChanged {
+                paths: vec![RepoPathProjection::from(path)],
+            }),
+            Err(error) => signals.push(write_target_signal(RepoPathProjection::from(path), error)),
+        }
+    }
+    for observation in observations.iter().chain(&inferred_observations) {
         match observation.kind {
             WriteTargetKind::ExistingFile => {
                 if semantic_paths.contains(&observation.path) {

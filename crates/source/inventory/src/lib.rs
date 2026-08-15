@@ -1,5 +1,6 @@
 mod capture;
 mod config_document;
+mod dependency_ownership;
 mod generated_config_policy;
 mod package_semantics;
 mod physical_path;
@@ -16,11 +17,11 @@ use std::sync::{Arc, Mutex};
 use ignore::WalkBuilder;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use lumin_model::{
-    ConfigObservation, ConfigSyntax, EntrySource, EntryUnavailableReason, Limitation,
-    PhysicalFileIdentity, PhysicalPathRedirect, RepoPath, RepoPathError, RoleOverride,
-    SOURCE_CLASSIFICATION_RULE_VERSION, ScanRole, SemanticConfigSnapshot, SourceClassificationRole,
-    SourceKind, SourceRoleClassification, SourceRoleConfigurationSource, SourceRoleReason,
-    SourceRoles, SourceSnapshot, digest_hex,
+    ConfigAbsenceParent, ConfigObservation, ConfigSyntax, DependencyIntent, EntrySource,
+    EntryUnavailableReason, Limitation, PhysicalFileIdentity, PhysicalPathRedirect, RepoPath,
+    RepoPathError, RoleOverride, SOURCE_CLASSIFICATION_RULE_VERSION, ScanRole,
+    SemanticConfigSnapshot, SourceClassificationRole, SourceKind, SourceRoleClassification,
+    SourceRoleConfigurationSource, SourceRoleReason, SourceRoles, SourceSnapshot, digest_hex,
 };
 use serde::Deserialize;
 use thiserror::Error;
@@ -110,6 +111,7 @@ pub struct InventoryRequest {
     pub excludes: Vec<String>,
     pub role_overrides: Vec<RoleOverride>,
     pub entries: Vec<RepoPath>,
+    pub dependency_intents: Vec<DependencyIntent>,
 }
 
 /// Non-serde internal entry selection result used during inventory.
@@ -125,6 +127,8 @@ pub struct EntrySelection {
 pub enum SemanticPolicyState {
     Present,
     Missing,
+    NonRegular,
+    Unreadable,
 }
 
 /// A single semantic policy input observation: configuration file or .gitignore.
@@ -134,6 +138,8 @@ pub struct SemanticPolicyInput {
     pub state: SemanticPolicyState,
     pub payload_sha256: Option<String>,
     pub physical_identity: Option<PhysicalFileIdentity>,
+    pub absence_parent: Option<ConfigAbsenceParent>,
+    pub detail: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -235,7 +241,46 @@ struct FileObservationContext<'a> {
     ignore: &'a ApplicableIgnore,
 }
 
+pub struct PendingInventoryScan {
+    canonical_root: PathBuf,
+    snapshot: InventorySnapshot,
+    dependency_plan: dependency_ownership::DependencyOwnershipPlan,
+}
+
+impl PendingInventoryScan {
+    pub fn dependency_input_paths(&self) -> &[RepoPath] {
+        self.dependency_plan.input_paths()
+    }
+
+    pub fn finish(mut self, root: &Path) -> Result<InventorySnapshot, InventoryError> {
+        let canonical_root = fs::canonicalize(root)
+            .map_err(|error| InventoryError::RepositoryIdentity(error.to_string()))?;
+        if canonical_root != self.canonical_root {
+            return Err(InventoryError::RepositoryIdentity(
+                "pending inventory scan was finished against a different repository root"
+                    .to_owned(),
+            ));
+        }
+        self.snapshot
+            .policy_inputs
+            .extend(dependency_ownership::capture(
+                root,
+                self.dependency_plan,
+                &mut self.snapshot.config,
+                &mut self.snapshot.limitations,
+            )?);
+        Ok(self.snapshot)
+    }
+}
+
 pub fn scan(root: &Path, request: &InventoryRequest) -> Result<InventorySnapshot, InventoryError> {
+    begin_scan(root, request)?.finish(root)
+}
+
+pub fn begin_scan(
+    root: &Path,
+    request: &InventoryRequest,
+) -> Result<PendingInventoryScan, InventoryError> {
     validate_root(root)?;
     let canonical_root = fs::canonicalize(root)
         .map_err(|error| InventoryError::RepositoryIdentity(error.to_string()))?;
@@ -330,6 +375,16 @@ pub fn scan(root: &Path, request: &InventoryRequest) -> Result<InventorySnapshot
     let mut policy_inputs = vec![config_policy];
     policy_inputs.extend(ignore.policy_inputs.iter().cloned());
 
+    dependency_ownership::capture_owner_candidates(
+        root,
+        &request.dependency_intents,
+        &mut collected.config_observations,
+        &mut collected.consulted_config_paths,
+        &mut collected.limitations,
+    )?;
+    collected.consulted_config_paths.sort();
+    collected.consulted_config_paths.dedup();
+
     let sources = collected.sources.into_values().collect::<Vec<_>>();
     let config = package_semantics::build(
         collected.config_observations,
@@ -337,16 +392,32 @@ pub fn scan(root: &Path, request: &InventoryRequest) -> Result<InventorySnapshot
         &mut collected.limitations,
     )
     .map_err(InventoryError::MalformedConfiguration)?;
+    let dependency_plan = dependency_ownership::plan(
+        root,
+        &request.dependency_intents,
+        &config,
+        &mut collected.limitations,
+    )?;
 
-    Ok(InventorySnapshot {
-        sources,
-        physical_path_redirects: collected.physical_path_redirects.into_values().collect(),
-        limitations: collected.limitations,
-        consulted_config_paths: collected.consulted_config_paths,
-        config,
-        entry_selections,
-        policy_inputs,
+    Ok(PendingInventoryScan {
+        canonical_root,
+        snapshot: InventorySnapshot {
+            sources,
+            physical_path_redirects: collected.physical_path_redirects.into_values().collect(),
+            limitations: collected.limitations,
+            consulted_config_paths: collected.consulted_config_paths,
+            config,
+            entry_selections,
+            policy_inputs,
+        },
+        dependency_plan,
     })
+}
+
+pub fn dependency_owner_candidate_paths(
+    intents: &[DependencyIntent],
+) -> Result<Vec<RepoPath>, InventoryError> {
+    dependency_ownership::reservation_paths(intents)
 }
 
 enum EntryClassification {
@@ -496,6 +567,8 @@ impl ApplicableIgnore {
                     state: SemanticPolicyState::Present,
                     payload_sha256: Some(payload_sha256),
                     physical_identity: Some(physical_identity),
+                    absence_parent: None,
+                    detail: None,
                 });
                 let content = std::str::from_utf8(&bytes).map_err(|error| {
                     InventoryError::InvalidPattern(format!(
@@ -610,6 +683,8 @@ fn read_root_config(
                 state: SemanticPolicyState::Missing,
                 payload_sha256: None,
                 physical_identity: None,
+                absence_parent: None,
+                detail: None,
             };
             return Ok((None, None, policy));
         }
@@ -628,6 +703,8 @@ fn read_root_config(
         state: SemanticPolicyState::Present,
         payload_sha256: Some(payload_sha256),
         physical_identity: Some(physical_identity),
+        absence_parent: None,
+        detail: None,
     };
     let config: RootConfig = serde_json::from_slice(&bytes)
         .map_err(|error| InventoryError::MalformedConfiguration(error.to_string()))?;

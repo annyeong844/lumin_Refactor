@@ -158,6 +158,7 @@ pub struct PackageFact {
     pub identity: PackageIdentityState,
     pub privacy: PackagePrivacy,
     pub workspace_root: Option<RepoPath>,
+    pub dependency_ownership_supported: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -171,6 +172,22 @@ pub struct WorkspaceFact {
     pub root: RepoPath,
     pub source: WorkspaceSource,
     pub members: Vec<RepoPath>,
+    pub ownership_supported: bool,
+    pub dependency_ownership_supported: bool,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct DependencyIntent {
+    pub path: RepoPath,
+    pub dependency: String,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct DependencyOwnerFact {
+    pub intent: DependencyIntent,
+    pub package_root: RepoPath,
+    pub manifest_path: RepoPath,
+    pub lockfile_path: Option<RepoPath>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -224,6 +241,7 @@ pub struct SemanticConfigSnapshot {
     pub packages: Vec<PackageFact>,
     pub workspaces: Vec<WorkspaceFact>,
     pub source_packages: BTreeMap<LogicalSourceId, RepoPath>,
+    pub dependency_owners: Vec<DependencyOwnerFact>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]

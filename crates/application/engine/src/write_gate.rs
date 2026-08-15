@@ -1,14 +1,14 @@
 use std::path::{Path, PathBuf};
 
 use lumin_evidence::{
-    GateAnalysisOptions, GateBaseline, GateOperationResult, GateRecord, GateSignal,
-    OperationRecord, PathPrefixIdentity, RepoPathProjection, ScanInvocationTier,
+    DependencyIntentRecord, GateAnalysisOptions, GateBaseline, GateOperationResult, GateRecord,
+    GateSignal, OperationRecord, PathPrefixIdentity, RepoPathProjection, ScanInvocationTier,
     SemanticReadReservationBinding, gate_policy,
 };
 use lumin_inventory::InventoryRequest;
 use lumin_model::{
-    GateDeltaRecord, GateId, OperationId, RepoPath, RepositoryRootIdentity, ResolutionProfile,
-    append_length_prefixed, digest_hex,
+    DependencyIntent, GateDeltaRecord, GateId, OperationId, RepoPath, RepositoryRootIdentity,
+    ResolutionProfile, append_length_prefixed, digest_hex,
 };
 use lumin_store::{
     OperationSession, PostWriteFinish, PostWriteStart, PreWriteFinish, PreWriteStart,
@@ -32,7 +32,7 @@ use transitions::{
     reconcile_transitions,
 };
 
-const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v19";
+const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v20";
 
 fn analysis_contract_id() -> String {
     let inputs = [
@@ -64,6 +64,7 @@ pub struct PreWriteRequest {
     pub excludes: Vec<String>,
     pub role_overrides: Vec<lumin_model::RoleOverride>,
     pub entries: Vec<RepoPath>,
+    pub dependency_intents: Vec<DependencyIntent>,
     pub jobs: usize,
     pub resolution_profile: Option<ResolutionProfile>,
 }
@@ -81,6 +82,12 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
     }
     // Fail closed: validate caller entries BEFORE opening/reserving an operation/gate
     lumin_inventory::validate_caller_entries(&request.root, &request.entries)?;
+    let dependency_paths = request
+        .dependency_intents
+        .iter()
+        .map(|intent| intent.path.clone())
+        .collect::<Vec<_>>();
+    lumin_inventory::validate_caller_entries(&request.root, &dependency_paths)?;
     let mut paths = request.paths.clone();
     paths.sort();
     paths.dedup();
@@ -150,11 +157,22 @@ fn build_gate_scan_invocation_tier(request: &PreWriteRequest) -> ScanInvocationT
         .collect();
     entries.sort();
     entries.dedup();
+    let mut dependency_intents = request
+        .dependency_intents
+        .iter()
+        .map(|intent| DependencyIntentRecord {
+            path: RepoPathProjection::from(&intent.path),
+            dependency: intent.dependency.clone(),
+        })
+        .collect::<Vec<_>>();
+    dependency_intents.sort();
+    dependency_intents.dedup();
     ScanInvocationTier {
         includes: request.includes.clone(),
         excludes: request.excludes.clone(),
         role_overrides: request.role_overrides.clone(),
         entries,
+        dependency_intents,
         resolution_profile: request.resolution_profile,
     }
 }
@@ -191,7 +209,7 @@ fn analyze_pre_write(
                 .map_err(Into::into)
         },
     ) {
-        Ok(ReservedCapture::Finished { capture, .. }) => capture,
+        Ok(ReservedCapture::Finished { capture }) => capture,
         Ok(ReservedCapture::Blocked(signal)) => {
             return Ok(PreWriteAnalysis::Finished(PreWriteFinish {
                 baseline: None,
@@ -325,6 +343,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         &reconciled_baseline,
         &capture.snapshot,
         &gate.protected_semantic_inputs,
+        &gate.leased_write_set,
     );
     signals.extend(active_transition_signals(
         &preliminary_changed_paths,
@@ -420,61 +439,91 @@ fn capture_reserved_repository(
         &[SemanticReadReservationBinding],
     ) -> Result<SemanticReadReservation, EngineError>,
 ) -> Result<ReservedCapture, EngineError> {
-    let mut session = RepositoryAnalysisSession::start(
+    let dependency_candidates =
+        lumin_inventory::dependency_owner_candidate_paths(&inventory_request.dependency_intents)?;
+    if let Some(outcome) = reserve_semantic_paths(root, &dependency_candidates, &mut reserve)? {
+        return Ok(outcome);
+    }
+
+    let pending_inventory = lumin_inventory::begin_scan(root, inventory_request)?;
+    if let Some(outcome) = reserve_semantic_paths(
         root,
+        pending_inventory.dependency_input_paths(),
+        &mut reserve,
+    )? {
+        return Ok(outcome);
+    }
+    let inventory = pending_inventory.finish(root)?;
+    let mut session = RepositoryAnalysisSession::start_with_inventory(
         repository_root.clone(),
-        inventory_request,
+        inventory,
         options.jobs,
         options.scan_invocation.clone(),
     )?;
     loop {
         match session.next_step(options.resolution_profile)? {
             RepositoryAnalysisStep::NeedsInputs(demands) => {
-                let reservations = demands
+                let paths = demands
                     .iter()
-                    .map(|demand| {
-                        let identity =
-                            lumin_inventory::observe_config_input_identity(root, &demand.path)?;
-                        Ok(SemanticReadReservationBinding {
-                            path: RepoPathProjection::from(&demand.path),
-                            physical_identity: identity.physical_identity,
-                            absence_parent: identity.absence_parent.map(|parent| {
-                                PathPrefixIdentity {
-                                    path: RepoPathProjection::from(&parent.path),
-                                    physical_identity: parent.physical_identity,
-                                }
-                            }),
-                        })
-                    })
-                    .collect::<Result<Vec<_>, EngineError>>()?;
-                match reserve(&reservations)? {
-                    SemanticReadReservation::Reserved => {
-                        session.capture_demands(root, demands)?;
-                    }
-                    SemanticReadReservation::Conflict { paths, gate_ids } => {
-                        return Ok(ReservedCapture::Blocked(
-                            GateSignal::SemanticInputConflict { paths, gate_ids },
-                        ));
-                    }
-                    SemanticReadReservation::TransitionCatalogChanged => {
-                        return Ok(ReservedCapture::Blocked(
-                            GateSignal::TransitionCatalogChanged,
-                        ));
-                    }
-                    SemanticReadReservation::Committed(result) => {
-                        return Ok(ReservedCapture::Committed(*result));
-                    }
+                    .map(|demand| demand.path.clone())
+                    .collect::<Vec<_>>();
+                if let Some(outcome) = reserve_semantic_paths(root, &paths, &mut reserve)? {
+                    return Ok(outcome);
                 }
+                session.capture_demands(root, demands)?;
             }
             RepositoryAnalysisStep::Finished(resolver) => {
-                return session
-                    .finish(resolver)
-                    .map(|capture| ReservedCapture::Finished {
-                        capture: Box::new(capture),
-                    });
+                let capture = session.finish(resolver)?;
+                return Ok(ReservedCapture::Finished {
+                    capture: Box::new(capture),
+                });
             }
         }
     }
+}
+
+fn reserve_semantic_paths(
+    root: &Path,
+    paths: &[RepoPath],
+    reserve: &mut impl FnMut(
+        &[SemanticReadReservationBinding],
+    ) -> Result<SemanticReadReservation, EngineError>,
+) -> Result<Option<ReservedCapture>, EngineError> {
+    if paths.is_empty() {
+        return Ok(None);
+    }
+    let reservations = semantic_read_reservations(root, paths)?;
+    let outcome = match reserve(&reservations)? {
+        SemanticReadReservation::Reserved => return Ok(None),
+        SemanticReadReservation::Conflict { paths, gate_ids } => {
+            ReservedCapture::Blocked(GateSignal::SemanticInputConflict { paths, gate_ids })
+        }
+        SemanticReadReservation::TransitionCatalogChanged => {
+            ReservedCapture::Blocked(GateSignal::TransitionCatalogChanged)
+        }
+        SemanticReadReservation::Committed(result) => ReservedCapture::Committed(*result),
+    };
+    Ok(Some(outcome))
+}
+
+fn semantic_read_reservations(
+    root: &Path,
+    paths: &[RepoPath],
+) -> Result<Vec<SemanticReadReservationBinding>, EngineError> {
+    paths
+        .iter()
+        .map(|path| {
+            let identity = lumin_inventory::observe_config_input_identity(root, path)?;
+            Ok(SemanticReadReservationBinding {
+                path: RepoPathProjection::from(path),
+                physical_identity: identity.physical_identity,
+                absence_parent: identity.absence_parent.map(|parent| PathPrefixIdentity {
+                    path: RepoPathProjection::from(&parent.path),
+                    physical_identity: parent.physical_identity,
+                }),
+            })
+        })
+        .collect()
 }
 
 pub fn load_gate(root: &Path, gate_id: &GateId) -> Result<GateRecord, EngineError> {
@@ -506,11 +555,31 @@ fn inventory_request_from_tier(tier: &ScanInvocationTier) -> Result<InventoryReq
         }
         entries.push(path);
     }
+    let mut dependency_intents = Vec::with_capacity(tier.dependency_intents.len());
+    for record in &tier.dependency_intents {
+        let path = RepoPath::from_canonical_bytes(&record.path.canonical).map_err(|error| {
+            EngineError::TierProjectionCorrupt(format!(
+                "failed to decode dependency-intent projection {}: {error}",
+                record.path.display
+            ))
+        })?;
+        if RepoPathProjection::from(&path) != record.path {
+            return Err(EngineError::TierProjectionCorrupt(format!(
+                "dependency-intent projection round-trip failed for {}",
+                record.path.display
+            )));
+        }
+        dependency_intents.push(DependencyIntent {
+            path,
+            dependency: record.dependency.clone(),
+        });
+    }
     Ok(InventoryRequest {
         includes: tier.includes.clone(),
         excludes: tier.excludes.clone(),
         role_overrides: tier.role_overrides.clone(),
         entries,
+        dependency_intents,
     })
 }
 
@@ -526,7 +595,7 @@ pub fn load_operation(
 
 fn pre_write_digest(paths: &[RepoPath], options: &GateAnalysisOptions) -> String {
     let mut bytes = Vec::new();
-    append_length_prefixed(&mut bytes, b"lumin-pre-write.v3");
+    append_length_prefixed(&mut bytes, b"lumin-pre-write.v4");
     // Use canonical tier framing for all invocation parameters
     options.scan_invocation.append_semantic_framing(&mut bytes);
     // Declared write paths

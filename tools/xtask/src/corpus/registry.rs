@@ -351,7 +351,10 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("cjs-computed"),
     row_sd!("parse-failure-propagation"),
     row_sd_arch!("limitation-scope-exhaustiveness"),
-    row_sd!("nearest-manifest"),
+    row_sd!("nearest-manifest", &[
+        inv!("nearest_manifest", "dependency_intents_lease_each_nearest_manifest_and_lockfile"),
+        inv!("nearest_manifest", "dependency_owner_uncertainty_never_infers_a_lockfile"),
+    ]),
     row_sd!("parallel-gates", &[inv!("write_gate", "overlapping_gate_is_rejected_and_operation_reuse_is_malformed")]),
     row_sd!("intervening-gate-transitions", &[inv!("write_gate", "transition_retention::disjoint_gates_reconcile_a_terminal_transition_on_retry")]),
     row_sd!("gate-path-identity", &[inv!("write_gate", "new_source_path_is_admitted_before_it_exists")]),

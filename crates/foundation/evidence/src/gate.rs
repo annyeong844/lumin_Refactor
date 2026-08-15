@@ -105,6 +105,13 @@ pub struct AnalysisSnapshot {
     pub evidence: RunEvidence,
 }
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DependencyIntentRecord {
+    pub path: RepoPathProjection,
+    pub dependency: String,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanInvocationTier {
@@ -116,6 +123,8 @@ pub struct ScanInvocationTier {
     pub role_overrides: Vec<lumin_model::RoleOverride>,
     #[serde(default)]
     pub entries: Vec<RepoPathProjection>,
+    #[serde(default)]
+    pub dependency_intents: Vec<DependencyIntentRecord>,
     #[serde(default)]
     pub resolution_profile: Option<ResolutionProfile>,
 }
@@ -146,6 +155,12 @@ impl ScanInvocationTier {
         output.extend_from_slice(&(self.entries.len() as u64).to_be_bytes());
         for entry in &self.entries {
             append_length_prefixed(output, &entry.canonical);
+        }
+        // Dependency intents (already sorted/deduped by construction)
+        output.extend_from_slice(&(self.dependency_intents.len() as u64).to_be_bytes());
+        for intent in &self.dependency_intents {
+            append_length_prefixed(output, &intent.path.canonical);
+            append_length_prefixed(output, intent.dependency.as_bytes());
         }
         // Resolution profile
         match self.resolution_profile {
@@ -715,7 +730,13 @@ pub mod gate_policy {
         let mut unplanned = Vec::new();
 
         for (path, baseline_input) in &baseline_by_path {
-            if current_by_path.get(path).copied() != Some(*baseline_input) {
+            let current_input = current_by_path.get(path).copied();
+            if current_input != Some(*baseline_input) {
+                if current_input.is_some_and(|current_input| {
+                    is_owned_missing_parent_shift(baseline_input, current_input, leased_write_set)
+                }) {
+                    continue;
+                }
                 changed.push(baseline_input.path.clone());
                 if !leased_write_set
                     .iter()
@@ -773,6 +794,48 @@ pub mod gate_policy {
             signals.push(GateSignal::UnplannedWrite { paths: unplanned });
         }
         (signals, changed, deltas)
+    }
+
+    pub fn is_owned_missing_parent_shift(
+        baseline: &SemanticInputRecord,
+        current: &SemanticInputRecord,
+        leased_write_set: &[WriteLease],
+    ) -> bool {
+        if baseline.state != SemanticInputState::Missing
+            || current.state != SemanticInputState::Missing
+            || baseline.path != current.path
+            || baseline.payload_sha256 != current.payload_sha256
+            || baseline.physical_identity != current.physical_identity
+            || baseline.physical_redirect_sha256 != current.physical_redirect_sha256
+        {
+            return false;
+        }
+        let (Some(baseline_parent), Some(current_parent)) =
+            (&baseline.absence_parent, &current.absence_parent)
+        else {
+            return false;
+        };
+        let Some((_, config_parent)) = baseline.path.components.split_last() else {
+            return false;
+        };
+        if current_parent.path.components.len() <= baseline_parent.path.components.len()
+            || !current_parent
+                .path
+                .components
+                .starts_with(&baseline_parent.path.components)
+            || !config_parent.starts_with(&current_parent.path.components)
+        {
+            return false;
+        }
+        leased_write_set.iter().any(|lease| {
+            lease.kind == WriteLeaseKind::NewFile
+                && lease.path.components.starts_with(config_parent)
+                && lease.nearest_existing_parent.as_ref() == Some(&baseline_parent.path)
+                && lease.prefix_identities.last().is_some_and(|prefix| {
+                    prefix.path == baseline_parent.path
+                        && prefix.physical_identity == baseline_parent.physical_identity
+                })
+        })
     }
 
     pub fn actual_write_attribution_is_complete(signals: &[GateSignal]) -> bool {
@@ -1074,6 +1137,57 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn new_file_parent_creation_preserves_missing_config_protection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root_identity = PhysicalFileIdentity::Unix {
+            device: 1,
+            inode: 1,
+        };
+        let generated_identity = PhysicalFileIdentity::Unix {
+            device: 1,
+            inode: 2,
+        };
+        let baseline_input = missing_input("generated/package.json", "", root_identity.clone())?;
+        let current_input =
+            missing_input("generated/package.json", "generated", generated_identity)?;
+        let root_path = RepoPathProjection::from(&RepoPath::empty());
+        let lease = WriteLease {
+            path: path("generated/deep/main.ts")?,
+            kind: WriteLeaseKind::NewFile,
+            physical_identity: None,
+            nearest_existing_parent: Some(root_path.clone()),
+            prefix_identities: vec![PathPrefixIdentity {
+                path: root_path,
+                physical_identity: root_identity,
+            }],
+        };
+
+        let (signals, changed, _) = gate_policy::closing_signals(
+            &snapshot(vec![baseline_input.clone()]),
+            &snapshot(vec![current_input]),
+            std::slice::from_ref(&baseline_input),
+            std::slice::from_ref(&lease),
+        );
+        assert!(signals.is_empty());
+        assert!(changed.is_empty());
+
+        let now_present = input("generated/package.json", "new manifest")?;
+        let (signals, changed, _) = gate_policy::closing_signals(
+            &snapshot(vec![baseline_input.clone()]),
+            &snapshot(vec![now_present]),
+            std::slice::from_ref(&baseline_input),
+            &[lease],
+        );
+        assert_eq!(changed, vec![baseline_input.path.clone()]);
+        assert!(matches!(
+            signals.as_slice(),
+            [GateSignal::ProtectedInputChanged { paths }]
+                if paths == std::slice::from_ref(&baseline_input.path)
+        ));
+        Ok(())
+    }
+
     fn snapshot(inputs: Vec<SemanticInputRecord>) -> AnalysisSnapshot {
         seal_analysis_snapshot(
             inputs,
@@ -1111,12 +1225,35 @@ mod tests {
         })
     }
 
+    fn missing_input(
+        value: &str,
+        parent: &str,
+        physical_identity: PhysicalFileIdentity,
+    ) -> Result<SemanticInputRecord, Box<dyn std::error::Error>> {
+        let parent = if parent.is_empty() {
+            RepoPathProjection::from(&RepoPath::empty())
+        } else {
+            path(parent)?
+        };
+        Ok(SemanticInputRecord {
+            path: path(value)?,
+            state: SemanticInputState::Missing,
+            payload_sha256: None,
+            physical_identity: None,
+            absence_parent: Some(PathPrefixIdentity {
+                path: parent,
+                physical_identity,
+            }),
+            physical_redirect_sha256: None,
+        })
+    }
+
     fn path(value: &str) -> Result<RepoPathProjection, Box<dyn std::error::Error>> {
         Ok(RepoPathProjection::from(&RepoPath::from_portable(value)?))
     }
 
     #[test]
-    fn scan_invocation_changes_analysis_input_id() {
+    fn scan_invocation_changes_analysis_input_id() -> Result<(), Box<dyn std::error::Error>> {
         let evidence = RunEvidence {
             schema_version: "lumin-evidence.v1".to_owned(),
             capabilities: vec![CapabilityRecord {
@@ -1151,6 +1288,24 @@ mod tests {
             without_invocation.analysis_input_id, with_includes.analysis_input_id,
             "scan invocation tier includes must affect the analysis input ID"
         );
+
+        let with_dependency_intent = seal_analysis_snapshot(
+            Vec::new(),
+            evidence,
+            ScanInvocationTier {
+                dependency_intents: vec![DependencyIntentRecord {
+                    path: path("packages/app/src/main.ts")?,
+                    dependency: "zod".to_owned(),
+                }],
+                ..Default::default()
+            },
+            Vec::new(),
+        );
+        assert_ne!(
+            without_invocation.analysis_input_id, with_dependency_intent.analysis_input_id,
+            "dependency intent must affect the analysis input ID"
+        );
+        Ok(())
     }
 
     #[test]
