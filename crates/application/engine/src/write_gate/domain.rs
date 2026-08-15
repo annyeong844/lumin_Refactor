@@ -130,15 +130,25 @@ pub(super) fn expand_write_domain(
     let mut inferred_observations = Vec::new();
     for path in &capture.inferred_write_paths {
         match lumin_inventory::inspect_write_target(root, path) {
-            Ok(observation)
-                if observation.kind == WriteTargetKind::ExistingFile
-                    && inferred_observation_matches_capture(
-                        &capture.snapshot.inputs,
-                        &observation,
-                    ) =>
-            {
-                leases.push(write_lease(&observation));
-                inferred_observations.push(observation);
+            Ok(observation) if observation.kind == WriteTargetKind::ExistingFile => {
+                match lumin_inventory::rehash_existing_write_target(root, &observation) {
+                    Ok(payload_sha256)
+                        if inferred_observation_matches_capture(
+                            &capture.snapshot.inputs,
+                            &observation,
+                            &payload_sha256,
+                        ) =>
+                    {
+                        leases.push(write_lease(&observation));
+                        inferred_observations.push(observation);
+                    }
+                    Ok(_) => signals.push(GateSignal::ProtectedInputChanged {
+                        paths: vec![RepoPathProjection::from(path)],
+                    }),
+                    Err(error) => signals.push(GateSignal::AnalysisFailed {
+                        detail: error.to_string(),
+                    }),
+                }
             }
             Ok(_) => signals.push(GateSignal::ProtectedInputChanged {
                 paths: vec![RepoPathProjection::from(path)],
@@ -205,6 +215,7 @@ pub(super) fn expand_write_domain(
 fn inferred_observation_matches_capture(
     inputs: &[SemanticInputRecord],
     observation: &WriteTargetObservation,
+    payload_sha256: &str,
 ) -> bool {
     let path = RepoPathProjection::from(&observation.path);
     let mut matching = inputs.iter().filter(|input| input.path == path);
@@ -213,7 +224,7 @@ fn inferred_observation_matches_capture(
     };
     matching.next().is_none()
         && captured.state == SemanticInputState::ConfigPresent
-        && captured.payload_sha256.is_some()
+        && captured.payload_sha256.as_deref() == Some(payload_sha256)
         && captured.physical_identity == observation.physical_identity
         && captured.absence_parent.is_none()
 }
@@ -472,26 +483,7 @@ mod tests {
     #[test]
     fn atomic_replacement_of_inferred_write_is_rejected_before_lease()
     -> Result<(), Box<dyn std::error::Error>> {
-        let root = tempfile::tempdir()?;
-        std::fs::create_dir(root.path().join("src"))?;
-        std::fs::write(
-            root.path().join("package.json"),
-            r#"{"name":"fixture","private":true}"#,
-        )?;
-        std::fs::write(root.path().join("src/main.ts"), "console.log('fixture');\n")?;
-        let path = RepoPath::from_portable("package.json")?;
-        let capture = crate::capture_repository(
-            root.path(),
-            &lumin_inventory::InventoryRequest {
-                dependency_intents: vec![lumin_model::DependencyIntent {
-                    path: RepoPath::from_portable("src/main.ts")?,
-                    dependency: "zod".to_owned(),
-                }],
-                ..Default::default()
-            },
-            1,
-            None,
-        )?;
+        let (root, capture, path) = inferred_manifest_fixture()?;
         let captured_identity = capture
             .snapshot
             .inputs
@@ -523,6 +515,66 @@ mod tests {
             }]
         );
         Ok(())
+    }
+
+    #[test]
+    fn in_place_rewrite_of_inferred_write_is_rejected_before_lease()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (root, capture, path) = inferred_manifest_fixture()?;
+        let captured_identity = capture
+            .snapshot
+            .inputs
+            .iter()
+            .find(|input| input.path == RepoPathProjection::from(&path))
+            .and_then(|input| input.physical_identity.clone())
+            .ok_or("captured manifest identity is missing")?;
+
+        std::fs::write(
+            root.path().join("package.json"),
+            r#"{"name":"fixture","private":true,"description":"external rewrite"}"#,
+        )?;
+        let rewritten = lumin_inventory::inspect_write_target(root.path(), &path)?;
+        assert_eq!(
+            rewritten.physical_identity,
+            Some(captured_identity),
+            "the in-place fixture unexpectedly replaced the manifest identity",
+        );
+
+        let (leases, alias_closures, signals) =
+            expand_write_domain(root.path(), &[], Vec::new(), &capture);
+        assert!(leases.is_empty());
+        assert!(alias_closures.is_empty());
+        assert_eq!(
+            signals,
+            [GateSignal::ProtectedInputChanged {
+                paths: vec![RepoPathProjection::from(&path)],
+            }]
+        );
+        Ok(())
+    }
+
+    fn inferred_manifest_fixture()
+    -> Result<(tempfile::TempDir, RepositoryCapture, RepoPath), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        std::fs::create_dir(root.path().join("src"))?;
+        std::fs::write(
+            root.path().join("package.json"),
+            r#"{"name":"fixture","private":true}"#,
+        )?;
+        std::fs::write(root.path().join("src/main.ts"), "console.log('fixture');\n")?;
+        let capture = crate::capture_repository(
+            root.path(),
+            &lumin_inventory::InventoryRequest {
+                dependency_intents: vec![lumin_model::DependencyIntent {
+                    path: RepoPath::from_portable("src/main.ts")?,
+                    dependency: "zod".to_owned(),
+                }],
+                ..Default::default()
+            },
+            1,
+            None,
+        )?;
+        Ok((root, capture, RepoPath::from_portable("package.json")?))
     }
 
     #[test]

@@ -646,11 +646,21 @@ fn context_is_hard_excluded(root: &Path, path: &RepoPath) -> Result<bool, Invent
 }
 
 fn hard_excluded_component(component: &OsStr) -> bool {
-    component.to_str().is_some_and(|component| {
-        [".git", ".lumin", "node_modules"]
-            .into_iter()
-            .any(|excluded| component.eq_ignore_ascii_case(excluded))
-    })
+    if crate::is_hard_excluded(Path::new(component)) {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        component.to_str().is_some_and(|component| {
+            [".git", ".lumin", "node_modules"]
+                .into_iter()
+                .any(|excluded| component.eq_ignore_ascii_case(excluded))
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
 }
 
 fn join(directory: &RepoPath, name: &str) -> Result<RepoPath, InventoryError> {
@@ -666,6 +676,15 @@ fn join(directory: &RepoPath, name: &str) -> Result<RepoPath, InventoryError> {
 mod tests {
     use super::*;
     use crate::{InventoryRequest, begin_scan, scan};
+
+    #[test]
+    fn hard_exclusion_case_semantics_match_the_supported_host() {
+        assert!(hard_excluded_component(OsStr::new(".git")));
+        #[cfg(windows)]
+        assert!(hard_excluded_component(OsStr::new(".GIT")));
+        #[cfg(not(windows))]
+        assert!(!hard_excluded_component(OsStr::new(".GIT")));
+    }
 
     #[test]
     fn selects_each_nearest_manifest_and_nearest_lockfile() -> Result<(), Box<dyn std::error::Error>>

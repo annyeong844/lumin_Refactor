@@ -846,21 +846,34 @@ pub mod gate_policy {
         {
             return false;
         }
-        leased_write_set.iter().any(|lease| {
-            lease.kind == WriteLeaseKind::NewFile
-                && lease.path.components.starts_with(config_parent)
-                && current_inputs.iter().any(|input| {
-                    input.path == lease.path
-                        && matches!(
-                            input.state,
-                            SemanticInputState::Source | SemanticInputState::ConfigPresent
-                        )
-                })
-                && lease.nearest_existing_parent.as_ref() == Some(&baseline_parent.path)
-                && lease.prefix_identities.last().is_some_and(|prefix| {
-                    prefix.path == baseline_parent.path
-                        && prefix.physical_identity == baseline_parent.physical_identity
-                })
+        leased_write_set.iter().any(|lease| match lease.kind {
+            WriteLeaseKind::NewFile => {
+                lease.path.components.starts_with(config_parent)
+                    && current_inputs.iter().any(|input| {
+                        input.path == lease.path
+                            && matches!(
+                                input.state,
+                                SemanticInputState::Source | SemanticInputState::ConfigPresent
+                            )
+                    })
+                    && lease.nearest_existing_parent.as_ref() == Some(&baseline_parent.path)
+                    && lease.prefix_identities.last().is_some_and(|prefix| {
+                        prefix.path == baseline_parent.path
+                            && prefix.physical_identity == baseline_parent.physical_identity
+                    })
+            }
+            WriteLeaseKind::Directory => {
+                config_parent.starts_with(&lease.path.components)
+                    && current_inputs.iter().any(|input| {
+                        input.path.components.starts_with(config_parent)
+                            && matches!(
+                                input.state,
+                                SemanticInputState::Source | SemanticInputState::ConfigPresent
+                            )
+                            && lease.covers(&input.path)
+                    })
+            }
+            WriteLeaseKind::ExistingFile => false,
         })
     }
 
@@ -1231,6 +1244,54 @@ mod tests {
             [GateSignal::ProtectedInputChanged { paths }]
                 if paths == std::slice::from_ref(&baseline_input.path)
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn directory_lease_attributes_a_created_descendant_parent_shift()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let app_identity = PhysicalFileIdentity::Unix {
+            device: 1,
+            inode: 20,
+        };
+        let generated_identity = PhysicalFileIdentity::Unix {
+            device: 1,
+            inode: 21,
+        };
+        let baseline_input =
+            missing_input("app/generated/package.json", "app", app_identity.clone())?;
+        let current_input = missing_input(
+            "app/generated/package.json",
+            "app/generated",
+            generated_identity,
+        )?;
+        let lease = WriteLease {
+            path: path("app")?,
+            kind: WriteLeaseKind::Directory,
+            physical_identity: Some(app_identity),
+            nearest_existing_parent: None,
+            prefix_identities: Vec::new(),
+        };
+
+        let (signals, changed, _) = gate_policy::closing_signals(
+            &snapshot(vec![baseline_input.clone()]),
+            &snapshot(vec![current_input.clone()]),
+            std::slice::from_ref(&baseline_input),
+            std::slice::from_ref(&lease),
+        );
+        assert!(signals.is_empty());
+        assert_eq!(changed, vec![baseline_input.path.clone()]);
+
+        let mut created_source = input("app/generated/main.ts", "new source")?;
+        created_source.state = SemanticInputState::Source;
+        let (signals, changed, _) = gate_policy::closing_signals(
+            &snapshot(vec![baseline_input.clone()]),
+            &snapshot(vec![current_input, created_source.clone()]),
+            std::slice::from_ref(&baseline_input),
+            &[lease],
+        );
+        assert!(signals.is_empty());
+        assert_eq!(changed, vec![created_source.path]);
         Ok(())
     }
 

@@ -38,6 +38,7 @@ pub use physical_path::{
     ConfigInputIdentity, WriteTargetError, WriteTargetKind, WriteTargetObservation,
     directory_physical_identity, inspect_write_target, observe_config_input_identity,
     observe_physical_file_identity, physical_alias_write_closure, physical_file_identity,
+    rehash_existing_write_target,
 };
 pub use root::{RepositoryAdmission, repository_admission};
 

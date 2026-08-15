@@ -388,6 +388,46 @@ fn dependency_owner_uncertainty_never_infers_a_lockfile() -> Result<(), Box<dyn 
         BTreeSet::from(["generated/deep/main.ts".to_owned()]),
     );
 
+    let directory_scope = standalone_fixture()?;
+    let opened = run(
+        directory_scope.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "nearest-directory-parent-open",
+            "--path",
+            "src",
+            "--dependency-at",
+            "src/generated/main.ts",
+            "zod",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&opened, 0);
+    let gate_id = field(&opened.stdout, "gateId")?;
+    write(
+        directory_scope.path(),
+        "src/generated/main.ts",
+        "console.log('directory-scoped source');\n",
+    )?;
+    let closed = run(
+        directory_scope.path(),
+        &[
+            "post-write",
+            &gate_id,
+            "--operation-id",
+            "nearest-directory-parent-close",
+        ],
+    )?;
+    assert_status(&closed, 0);
+    assert_eq!(field(&closed.stdout, "decision")?, "allow");
+    assert_eq!(
+        actual_write_paths(&closed.stdout)?,
+        BTreeSet::from(["src/generated/main.ts".to_owned()]),
+        "directory ownership must not attribute still-missing manifest candidates",
+    );
+
     let unexplained_parent = standalone_fixture()?;
     let opened = run(
         unexplained_parent.path(),
