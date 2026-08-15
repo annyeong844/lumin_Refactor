@@ -339,6 +339,86 @@ fn pre_write_semantic_read_reservation_blocks_later_write_admission()
 }
 
 #[test]
+fn new_path_cannot_advance_a_pending_missing_semantic_branch()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let options = options();
+    let root_path = RepoPathProjection::from(&RepoPath::empty());
+    let root_identity = lumin_model::PhysicalFileIdentity::Unix {
+        device: 7,
+        inode: 11,
+    };
+    let reader_operation = OperationId::from_string("op-missing-reader".to_owned());
+    let reader_source = path("src/new.ts")?;
+    let reader = store.begin_operation(&reader_operation)?;
+    let reader_gate = match reader.reserve_pre_write(
+        "missing-reader-digest",
+        std::slice::from_ref(&reader_source),
+        &[lease(reader_source.clone())],
+        &options,
+    )? {
+        PreWriteStart::Analyze { gate_id, .. } => gate_id,
+        PreWriteStart::Committed(_) => {
+            return Err("the missing-input reader was unexpectedly committed".into());
+        }
+    };
+    let missing_candidate = path("generated/deep/package.json")?;
+    let missing_binding = SemanticReadReservationBinding {
+        path: missing_candidate.clone(),
+        physical_identity: None,
+        absence_parent: Some(PathPrefixIdentity {
+            path: root_path.clone(),
+            physical_identity: root_identity.clone(),
+        }),
+    };
+    assert_eq!(
+        reader.reserve_pre_write_semantic_inputs(
+            "missing-reader-digest",
+            &reader_gate,
+            std::slice::from_ref(&missing_binding),
+        )?,
+        SemanticReadReservation::Reserved
+    );
+
+    let writer_path = path("generated/main.ts")?;
+    let writer_lease = WriteLease {
+        path: writer_path.clone(),
+        kind: lumin_evidence::WriteLeaseKind::NewFile,
+        physical_identity: None,
+        nearest_existing_parent: Some(root_path.clone()),
+        prefix_identities: vec![PathPrefixIdentity {
+            path: root_path,
+            physical_identity: root_identity,
+        }],
+    };
+    let writer = store.begin_operation(&OperationId::from_string(
+        "op-missing-branch-writer".to_owned(),
+    ))?;
+    let rejected = match writer.reserve_pre_write(
+        "missing-branch-writer-digest",
+        std::slice::from_ref(&writer_path),
+        std::slice::from_ref(&writer_lease),
+        &options,
+    )? {
+        PreWriteStart::Committed(result) => result,
+        PreWriteStart::Analyze { .. } => {
+            return Err("a new path advanced a reserved missing branch".into());
+        }
+    };
+    assert_eq!(rejected.decision, lumin_evidence::GateDecision::Incomplete);
+    assert!(rejected.signals.iter().any(|signal| {
+        matches!(
+            signal,
+            GateSignal::WriteConflict { paths, gate_ids }
+                if paths == std::slice::from_ref(&missing_candidate)
+                    && gate_ids == std::slice::from_ref(&reader_gate)
+        )
+    }));
+    Ok(())
+}
+
+#[test]
 fn pre_write_finish_rejects_a_baseline_that_omits_a_reserved_input()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;

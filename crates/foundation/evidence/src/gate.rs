@@ -248,12 +248,31 @@ impl WriteLease {
         &self,
         path: &RepoPathProjection,
         physical_identity: Option<&PhysicalFileIdentity>,
-        absence_parent_identity: Option<&PhysicalFileIdentity>,
+        absence_parent: Option<&PathPrefixIdentity>,
     ) -> bool {
         self.covers(path)
             || (physical_identity.is_some() && self.physical_identity.as_ref() == physical_identity)
-            || (absence_parent_identity.is_some()
-                && self.physical_identity.as_ref() == absence_parent_identity)
+            || absence_parent.is_some_and(|parent| {
+                self.physical_identity.as_ref() == Some(&parent.physical_identity)
+                    || self.enters_missing_semantic_branch(path, parent)
+            })
+    }
+
+    fn enters_missing_semantic_branch(
+        &self,
+        path: &RepoPathProjection,
+        parent: &PathPrefixIdentity,
+    ) -> bool {
+        let parent_components = &parent.path.components;
+        if !path.components.starts_with(parent_components)
+            || !self.path.components.starts_with(parent_components)
+            || !self.prefix_identities.iter().any(|prefix| prefix == parent)
+        {
+            return false;
+        }
+        let first_missing_component = path.components.get(parent_components.len());
+        first_missing_component.is_some()
+            && self.path.components.get(parent_components.len()) == first_missing_component
     }
 }
 
@@ -1175,6 +1194,39 @@ mod tests {
             [GateSignal::UnplannedWrite { paths }] if paths == std::slice::from_ref(&current_input.path)
         ));
         assert_eq!(gate_policy::decision(&signals), GateDecision::Deny);
+        Ok(())
+    }
+
+    #[test]
+    fn new_file_lease_conflicts_only_with_its_reserved_missing_branch()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root_identity = PhysicalFileIdentity::Unix {
+            device: 1,
+            inode: 1,
+        };
+        let root_path = RepoPathProjection::from(&RepoPath::empty());
+        let absence_parent = PathPrefixIdentity {
+            path: root_path.clone(),
+            physical_identity: root_identity.clone(),
+        };
+        let lease = WriteLease {
+            path: path("generated/main.ts")?,
+            kind: WriteLeaseKind::NewFile,
+            physical_identity: None,
+            nearest_existing_parent: Some(root_path),
+            prefix_identities: vec![absence_parent.clone()],
+        };
+
+        assert!(lease.conflicts_with_semantic_read(
+            &path("generated/deep/package.json")?,
+            None,
+            Some(&absence_parent),
+        ));
+        assert!(!lease.conflicts_with_semantic_read(
+            &path("other/deep/package.json")?,
+            None,
+            Some(&absence_parent),
+        ));
         Ok(())
     }
 
