@@ -699,10 +699,16 @@ fn entry_unavailable_reason_tag(reason: lumin_model::EntryUnavailableReason) -> 
 pub mod gate_policy {
     use super::*;
 
-    pub fn opening_signals(snapshot: &AnalysisSnapshot) -> Vec<GateSignal> {
+    pub fn opening_signals(
+        snapshot: &AnalysisSnapshot,
+        leased_write_set: &[WriteLease],
+    ) -> Vec<GateSignal> {
         let evidence = &snapshot.evidence;
-        let delta_input =
-            lifecycle_delta_input_for(evidence, &snapshot.scan_invocation.dependency_intents);
+        let delta_input = lifecycle_delta_input_for(
+            evidence,
+            &snapshot.scan_invocation.dependency_intents,
+            leased_write_set,
+        );
         let mut signals = Vec::new();
         if requires_complete_evidence(evidence, delta_input.required_evidence_gap_count) {
             signals.push(GateSignal::RequiredEvidenceIncomplete {
@@ -801,10 +807,12 @@ pub mod gate_policy {
         let baseline_delta_input = lifecycle_delta_input_for(
             &baseline.evidence,
             &baseline.scan_invocation.dependency_intents,
+            leased_write_set,
         );
         let current_delta_input = lifecycle_delta_input_for(
             &current.evidence,
             &current.scan_invocation.dependency_intents,
+            leased_write_set,
         );
         let deltas = classify_lifecycle_deltas(
             Some(&baseline_delta_input.facts),

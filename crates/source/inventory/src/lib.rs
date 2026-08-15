@@ -421,6 +421,13 @@ pub fn dependency_owner_candidate_paths(
     dependency_ownership::reservation_paths(intents)
 }
 
+pub fn dependency_input_payload_sha256(
+    root: &Path,
+    path: &RepoPath,
+) -> Result<String, InventoryError> {
+    dependency_ownership::present_input_payload_sha256(root, path)
+}
+
 enum EntryClassification {
     Available,
     Unavailable(EntryUnavailableReason),

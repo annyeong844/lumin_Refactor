@@ -12,6 +12,10 @@ use support::{assert_status, field, run};
 fn expected_capabilities() -> BTreeMap<String, String> {
     BTreeMap::from([
         ("dead-code.v1".to_owned(), "complete".to_owned()),
+        (
+            "inventory/dependency-ownership.v1".to_owned(),
+            "complete".to_owned(),
+        ),
         ("sfc/astro.v1".to_owned(), "unavailable".to_owned()),
         ("sfc/svelte.v1".to_owned(), "unavailable".to_owned()),
         ("sfc/vue.v1".to_owned(), "complete".to_owned()),
@@ -33,8 +37,8 @@ fn assert_collection_envelope(page: &Value, returned: u64, truncated: bool) {
             .map(serde_json::Map::is_empty),
         Some(true)
     );
-    assert_eq!(page.get("scopeTotal").and_then(Value::as_u64), Some(4));
-    assert_eq!(page.get("total").and_then(Value::as_u64), Some(4));
+    assert_eq!(page.get("scopeTotal").and_then(Value::as_u64), Some(5));
+    assert_eq!(page.get("total").and_then(Value::as_u64), Some(5));
     assert_eq!(page.get("returned").and_then(Value::as_u64), Some(returned));
     assert_eq!(
         page.get("truncated").and_then(Value::as_bool),
@@ -87,7 +91,7 @@ fn capability_rows<'a>(
     Ok(rows)
 }
 
-/// Binary capabilities 3+1 pagination before .lumin and no state creation.
+/// Binary capabilities 3+2 pagination before .lumin and no state creation.
 #[test]
 fn binary_capabilities_pagination_without_state_directory() -> Result<(), Box<dyn std::error::Error>>
 {
@@ -140,7 +144,7 @@ fn binary_capabilities_pagination_without_state_directory() -> Result<(), Box<dy
     assert_status(&second, 0);
 
     let second_json: Value = serde_json::from_str(&second.stdout)?;
-    assert_collection_envelope(&second_json, 1, false);
+    assert_collection_envelope(&second_json, 2, false);
 
     assert_eq!(
         capability_rows([&first_json, &second_json])?,
@@ -181,11 +185,11 @@ fn binary_cursor_works_across_directories() -> Result<(), Box<dyn std::error::Er
     )?;
     assert_status(&second, 0);
     let second_json: Value = serde_json::from_str(&second.stdout)?;
-    assert_eq!(second_json.get("returned").and_then(Value::as_u64), Some(1));
+    assert_eq!(second_json.get("returned").and_then(Value::as_u64), Some(2));
     Ok(())
 }
 
-/// Run capabilities 3+1 with exact sorted IDs/states and cursor survives unrelated audit.
+/// Run capabilities 3+2 with exact sorted IDs/states and cursor survives unrelated audit.
 #[test]
 fn run_capabilities_pagination_and_cursor_survives_audit() -> Result<(), Box<dyn std::error::Error>>
 {
@@ -249,11 +253,58 @@ fn run_capabilities_pagination_and_cursor_survives_audit() -> Result<(), Box<dyn
     )?;
     assert_status(&second, 0);
     let second_json: Value = serde_json::from_str(&second.stdout)?;
-    assert_collection_envelope(&second_json, 1, false);
+    assert_collection_envelope(&second_json, 2, false);
     assert_eq!(
         capability_rows([&first_json, &second_json])?,
         expected_capabilities(),
         "run pages must return exact recorded states exactly once",
+    );
+    Ok(())
+}
+
+#[test]
+fn dependency_ownership_run_capability_reports_owner_gaps() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("package.json"),
+        r#"{"name":"app","private":true,"dependencies":[]}"#,
+    )?;
+    fs::write(root.path().join("lib.ts"), "console.log('app');\n")?;
+
+    let audit = run(root.path(), &["audit", "--jobs", "1", "--format", "json"])?;
+    assert_status(&audit, 0);
+    let run_id = field(&audit.stdout, "runId")?;
+    let first = run(
+        root.path(),
+        &["capabilities", "--run", &run_id, "--format", "json"],
+    )?;
+    assert_status(&first, 0);
+    let first: Value = serde_json::from_str(&first.stdout)?;
+    let cursor = first
+        .get("nextCursor")
+        .and_then(Value::as_str)
+        .ok_or("missing capability continuation")?;
+    let second = run(
+        root.path(),
+        &[
+            "capabilities",
+            "--run",
+            &run_id,
+            "--cursor",
+            cursor,
+            "--format",
+            "json",
+        ],
+    )?;
+    assert_status(&second, 0);
+    let second: Value = serde_json::from_str(&second.stdout)?;
+
+    assert_eq!(
+        capability_rows([&first, &second])?
+            .get("inventory/dependency-ownership.v1")
+            .map(String::as_str),
+        Some("incomplete"),
     );
     Ok(())
 }

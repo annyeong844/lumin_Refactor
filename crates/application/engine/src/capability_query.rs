@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
 use lumin_evidence::{
-    CapabilityRecord, CollectionOrderingId, DEAD_CODE_CAPABILITY_ID, EvidencePage, EvidenceQuery,
-    EvidenceQueryScope, RunEvidence,
+    CapabilityRecord, CollectionOrderingId, DEAD_CODE_CAPABILITY_ID,
+    DEPENDENCY_OWNERSHIP_CAPABILITY_ID, EvidencePage, EvidenceQuery, EvidenceQueryScope,
+    RunEvidence,
 };
 use lumin_model::{BuildIdentity, CapabilityState, RepositoryId, RunId, digest_hex};
 
@@ -30,14 +31,18 @@ impl CompiledCapabilityRegistry {
     }
 }
 
-/// Build the compiled capability registry from 4 real rows: dead-code Complete + SFC owner rows.
+/// Build the compiled capability registry from the compiled analysis owners.
 /// Canonicalizes by capability_id, fails hard on duplicate IDs.
 pub fn compiled_capability_registry() -> Result<CompiledCapabilityRegistry, EngineError> {
-    let mut rows = Vec::with_capacity(4);
+    let mut rows = Vec::with_capacity(5);
 
     // dead-code Complete
     rows.push(CapabilityRecord {
         capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
+        state: CapabilityState::Complete,
+    });
+    rows.push(CapabilityRecord {
+        capability_id: DEPENDENCY_OWNERSHIP_CAPABILITY_ID.to_owned(),
         state: CapabilityState::Complete,
     });
 
@@ -150,9 +155,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_has_exactly_four_sorted_rows() -> Result<(), Box<dyn std::error::Error>> {
+    fn registry_has_exactly_five_sorted_rows() -> Result<(), Box<dyn std::error::Error>> {
         let registry = compiled_capability_registry()?;
-        assert_eq!(registry.rows.len(), 4);
+        assert_eq!(registry.rows.len(), 5);
         // Verify sorted by capability_id
         for window in registry.rows.windows(2) {
             assert!(window[0].capability_id < window[1].capability_id);
@@ -164,6 +169,10 @@ mod tests {
                 .iter()
                 .any(|r| r.capability_id == "dead-code.v1" && r.state == CapabilityState::Complete)
         );
+        assert!(registry.rows.iter().any(|r| {
+            r.capability_id == "inventory/dependency-ownership.v1"
+                && r.state == CapabilityState::Complete
+        }));
         assert!(
             registry
                 .rows
@@ -269,7 +278,7 @@ mod tests {
     }
 
     #[test]
-    fn binary_capabilities_pagination_3_plus_1() -> Result<(), Box<dyn std::error::Error>> {
+    fn binary_capabilities_pagination_3_plus_2() -> Result<(), Box<dyn std::error::Error>> {
         let registry = compiled_capability_registry()?;
         let build_identity = BuildIdentity::derive(
             "lumin-cli",
@@ -279,13 +288,13 @@ mod tests {
         );
         let first = query_binary_capabilities(&build_identity, &registry, None)?;
         assert_eq!(first.items.len(), 3);
-        assert_eq!(first.scope_total, 4);
+        assert_eq!(first.scope_total, 5);
         assert!(first.next_query.is_some());
 
         let second =
             query_binary_capabilities(&build_identity, &registry, first.next_query.clone())?;
-        assert_eq!(second.items.len(), 1);
-        assert_eq!(second.scope_total, 4);
+        assert_eq!(second.items.len(), 2);
+        assert_eq!(second.scope_total, 5);
         assert!(second.next_query.is_none());
         Ok(())
     }
@@ -308,7 +317,7 @@ mod tests {
         let first = query_binary_capabilities(&identity_a, &registry, None)?;
         let cursor = first
             .next_query
-            .ok_or("expected next_query for page 1 of 4 items")?;
+            .ok_or("expected next_query for page 1 of 5 items")?;
 
         // The cursor carries identity_a's scope, so validated_query rejects it
         // when the expected scope is identity_b.

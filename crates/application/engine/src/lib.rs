@@ -35,9 +35,9 @@ use std::path::{Path, PathBuf};
 
 use lumin_evidence::{
     AnalysisMetrics, AnalysisSnapshot, CapabilityRecord, DEAD_CODE_CAPABILITY_ID,
-    DependencyOwnerRecord, EntrySelectionRecord, PathPrefixIdentity, RepoPathProjection,
-    RunEvidence, ScanInvocationTier, SemanticInputRecord, SemanticInputState,
-    SourceClassificationRecord, SourceContextRecord, SourceObservationRecord,
+    DEPENDENCY_OWNERSHIP_CAPABILITY_ID, DependencyOwnerRecord, EntrySelectionRecord,
+    PathPrefixIdentity, RepoPathProjection, RunEvidence, ScanInvocationTier, SemanticInputRecord,
+    SemanticInputState, SourceClassificationRecord, SourceContextRecord, SourceObservationRecord,
     seal_analysis_snapshot,
 };
 use lumin_inventory::{
@@ -527,10 +527,16 @@ impl RepositoryAnalysisSession {
         } else {
             CapabilityState::Incomplete
         };
-        let mut capabilities = vec![CapabilityRecord {
-            capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
-            state,
-        }];
+        let mut capabilities = vec![
+            CapabilityRecord {
+                capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
+                state,
+            },
+            CapabilityRecord {
+                capability_id: DEPENDENCY_OWNERSHIP_CAPABILITY_ID.to_owned(),
+                state: dependency_ownership_state(&limitations),
+            },
+        ];
         capabilities.extend(sfc_capability_records(&extraction.sfc_states));
         let source_classifications = self
             .inventory
@@ -849,6 +855,23 @@ fn sfc_capability_records(states: &BTreeMap<SfcDialect, CapabilityState>) -> Vec
             state: states.get(&dialect).copied().unwrap_or(initial_state),
         })
         .collect()
+}
+
+fn dependency_ownership_state(limitations: &[Limitation]) -> CapabilityState {
+    if limitations.iter().any(|limitation| {
+        matches!(
+            limitation,
+            Limitation::PackageMetadataUnobservable { .. }
+                | Limitation::PackageIdentityUnsupported { .. }
+                | Limitation::DependencyOwnerAmbiguous { .. }
+                | Limitation::WorkspaceOwnershipUnsupported { .. }
+                | Limitation::PnpmDependencySemanticsUnsupported { .. }
+        )
+    }) {
+        CapabilityState::Incomplete
+    } else {
+        CapabilityState::Complete
+    }
 }
 
 fn collect_limitations(

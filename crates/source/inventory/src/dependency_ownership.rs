@@ -586,6 +586,23 @@ fn capture_lockfile(root: &Path, path: &RepoPath) -> Result<SemanticPolicyInput,
     })
 }
 
+pub(crate) fn present_input_payload_sha256(
+    root: &Path,
+    path: &RepoPath,
+) -> Result<String, InventoryError> {
+    let input = capture_lockfile(root, path)?;
+    if input.state == SemanticPolicyState::Present
+        && let Some(payload_sha256) = input.payload_sha256
+    {
+        Ok(payload_sha256)
+    } else {
+        Err(InventoryError::PhysicalIdentity(format!(
+            "reserved dependency input is no longer a readable regular file: {}",
+            path.display_escaped()
+        )))
+    }
+}
+
 fn unreadable_input(
     path: &RepoPath,
     physical_identity: Option<lumin_model::PhysicalFileIdentity>,

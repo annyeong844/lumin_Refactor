@@ -8,11 +8,9 @@ use lumin_model::{
 };
 
 use crate::{
-    Confidence, DependencyIntentRecord, DependencyOwnerRecord, FindingRecord, RepoPathProjection,
-    RunEvidence, Severity,
+    Confidence, DEPENDENCY_OWNERSHIP_CAPABILITY_ID, DependencyIntentRecord, DependencyOwnerRecord,
+    FindingRecord, RepoPathProjection, RunEvidence, Severity, WriteLease, WriteLeaseKind,
 };
-
-const DEPENDENCY_OWNERSHIP_CAPABILITY_ID: &str = "inventory/dependency-ownership.v1";
 
 pub(crate) struct LifecycleDeltaInput {
     pub facts: Vec<DeltaFact>,
@@ -22,12 +20,13 @@ pub(crate) struct LifecycleDeltaInput {
 
 #[cfg(test)]
 fn lifecycle_delta_input(evidence: &RunEvidence) -> LifecycleDeltaInput {
-    lifecycle_delta_input_for(evidence, &[])
+    lifecycle_delta_input_for(evidence, &[], &[])
 }
 
 pub(crate) fn lifecycle_delta_input_for(
     evidence: &RunEvidence,
     dependency_intents: &[DependencyIntentRecord],
+    leased_write_set: &[WriteLease],
 ) -> LifecycleDeltaInput {
     let mut facts = evidence
         .findings
@@ -66,8 +65,12 @@ pub(crate) fn lifecycle_delta_input_for(
                 facts.push(fact);
             }
             LimitationDelta::RequiredEvidenceGap => {
-                if limitation_intersects_required_evidence(limitation, evidence, dependency_intents)
-                {
+                if limitation_intersects_required_evidence(
+                    limitation,
+                    evidence,
+                    dependency_intents,
+                    leased_write_set,
+                ) {
                     required_evidence_gap_count += 1;
                 }
             }
@@ -85,6 +88,7 @@ fn limitation_intersects_required_evidence(
     limitation: &Limitation,
     evidence: &RunEvidence,
     dependency_intents: &[DependencyIntentRecord],
+    leased_write_set: &[WriteLease],
 ) -> bool {
     let Limitation::DependencyOwnerAmbiguous {
         package_scope,
@@ -94,9 +98,6 @@ fn limitation_intersects_required_evidence(
     else {
         return true;
     };
-    if dependency_intents.is_empty() {
-        return false;
-    }
     if let Some(required_intent) = required_intent {
         return dependency_intents
             .iter()
@@ -112,8 +113,58 @@ fn limitation_intersects_required_evidence(
             return false;
         };
         projected_package_scope(&owner.package_root)
-            .is_none_or(|scope| scope == package_scope.id.clone())
+            .is_none_or(|scope| &scope == package_scope.id())
+    }) || package_scope_intersects_write_set(package_scope, evidence, leased_write_set)
+}
+
+fn package_scope_intersects_write_set(
+    package_scope: &lumin_model::PackageScope,
+    evidence: &RunEvidence,
+    leased_write_set: &[WriteLease],
+) -> bool {
+    let scope_root = RepoPath::from_canonical_bytes(package_scope.canonical_root())
+        .ok()
+        .map(|root| RepoPathProjection::from(&root));
+    leased_write_set.iter().any(|lease| {
+        if lease.kind == WriteLeaseKind::Directory {
+            let covers_known_sources = evidence
+                .source_contexts
+                .iter()
+                .any(|context| lease.covers(&context.path));
+            if covers_known_sources {
+                return evidence.source_contexts.iter().any(|context| {
+                    lease.covers(&context.path)
+                        && context.package_root.as_ref().is_some_and(|root| {
+                            projected_package_scope(root)
+                                .is_some_and(|scope| &scope == package_scope.id())
+                        })
+                });
+            }
+            return scope_root.as_ref().is_some_and(|root| {
+                lease.path.components.starts_with(&root.components)
+                    || root.components.starts_with(&lease.path.components)
+            });
+        }
+        if let Some(owner_scope) = nearest_known_package_scope(evidence, &lease.path) {
+            return &owner_scope == package_scope.id();
+        }
+        scope_root
+            .as_ref()
+            .is_some_and(|root| lease.path.components.starts_with(&root.components))
     })
+}
+
+fn nearest_known_package_scope(
+    evidence: &RunEvidence,
+    path: &RepoPathProjection,
+) -> Option<PackageScopeId> {
+    evidence
+        .source_contexts
+        .iter()
+        .filter_map(|context| context.package_root.as_ref())
+        .filter(|root| path.components.starts_with(&root.components))
+        .max_by_key(|root| root.components.len())
+        .and_then(projected_package_scope)
 }
 
 fn dependency_intent_matches(
@@ -444,12 +495,15 @@ fn severity_name(severity: Severity) -> &'static str {
 #[cfg(test)]
 mod tests {
     use lumin_model::{
-        DeltaDimensionChange, FindingId, GateDeltaClassification, SourceSpan, SourceUnitId,
-        SymbolNamespace, classify_lifecycle_deltas,
+        DeltaDimensionChange, FindingId, GateDeltaClassification, SourceKind, SourceSpan,
+        SourceUnitId, SymbolNamespace, classify_lifecycle_deltas,
     };
 
     use super::*;
-    use crate::{DEAD_CODE_CAPABILITY_ID, DEAD_EXPORT_RULE_ID, RepoPathProjection};
+    use crate::{
+        DEAD_CODE_CAPABILITY_ID, DEAD_EXPORT_RULE_ID, RepoPathProjection, SourceContextRecord,
+        WriteLease, WriteLeaseKind,
+    };
 
     fn evidence_with_limitations(limitations: Vec<Limitation>) -> RunEvidence {
         RunEvidence {
@@ -586,7 +640,7 @@ mod tests {
         let app_intent = dependency_intent("packages/app/src/main.ts", "zod")?;
 
         assert_eq!(
-            lifecycle_delta_input_for(&evidence, std::slice::from_ref(&app_intent))
+            lifecycle_delta_input_for(&evidence, std::slice::from_ref(&app_intent), &[])
                 .required_evidence_gap_count,
             0,
             "an unrelated package gap blocked a resolved dependency owner",
@@ -606,7 +660,8 @@ mod tests {
                 detail: "selected package dependency ownership is unsupported".to_owned(),
             });
         assert_eq!(
-            lifecycle_delta_input_for(&evidence, &[package_b_intent]).required_evidence_gap_count,
+            lifecycle_delta_input_for(&evidence, &[package_b_intent], &[])
+                .required_evidence_gap_count,
             1,
             "the requested package's owner gap was ignored",
         );
@@ -620,7 +675,7 @@ mod tests {
             detail: "malformed root dependencies".to_owned(),
         }];
         assert_eq!(
-            lifecycle_delta_input_for(&evidence, std::slice::from_ref(&app_intent))
+            lifecycle_delta_input_for(&evidence, std::slice::from_ref(&app_intent), &[])
                 .required_evidence_gap_count,
             0,
             "a resolved nested owner inherited its ancestor package's gap",
@@ -633,9 +688,57 @@ mod tests {
             detail: "package ownership is ambiguous".to_owned(),
         }];
         assert_eq!(
-            lifecycle_delta_input_for(&evidence, &[app_intent]).required_evidence_gap_count,
+            lifecycle_delta_input_for(&evidence, &[app_intent], &[]).required_evidence_gap_count,
             1,
             "a workspace-scoped owner gap must remain fail-closed",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dependency_owner_gap_intersects_declared_writes_in_its_package()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let package_a = RepoPath::from_portable("packages/a")?;
+        let package_b = RepoPath::from_portable("packages/b")?;
+        let source_a = RepoPath::from_portable("packages/a/src/main.ts")?;
+        let source_b = RepoPath::from_portable("packages/b/src/main.ts")?;
+        let mut evidence = evidence_with_limitations(vec![Limitation::DependencyOwnerAmbiguous {
+            path: "packages/b/package.json".to_owned(),
+            package_scope: Some(Box::new(lumin_model::PackageScope::from_root(&package_b))),
+            required_intent: None,
+            detail: "malformed dependencies".to_owned(),
+        }]);
+        evidence.source_contexts = vec![
+            source_context(&source_a, &package_a),
+            source_context(&source_b, &package_b),
+        ];
+        let lease_a = existing_file_lease(&source_a);
+        let lease_b = existing_file_lease(&source_b);
+
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[lease_a]).required_evidence_gap_count,
+            0,
+            "an unrelated package gap blocked an ordinary source write",
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[lease_b]).required_evidence_gap_count,
+            1,
+            "the written package's owner gap was discarded without a dependency intent",
+        );
+
+        evidence.limitations = vec![Limitation::DependencyOwnerAmbiguous {
+            path: "package.json".to_owned(),
+            package_scope: Some(Box::new(lumin_model::PackageScope::from_root(
+                &RepoPath::empty(),
+            ))),
+            required_intent: None,
+            detail: "malformed root dependencies".to_owned(),
+        }];
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[directory_lease(&package_a)])
+                .required_evidence_gap_count,
+            0,
+            "a nested package directory inherited its ancestor package's gap",
         );
         Ok(())
     }
@@ -866,6 +969,35 @@ mod tests {
             manifest_path: RepoPathProjection::from(&manifest_path),
             lockfile_path: None,
         })
+    }
+
+    fn source_context(path: &RepoPath, package_root: &RepoPath) -> SourceContextRecord {
+        SourceContextRecord {
+            source_id: LogicalSourceId::from_path(path),
+            path: RepoPathProjection::from(path),
+            kind: SourceKind::TypeScript,
+            package_root: Some(RepoPathProjection::from(package_root)),
+        }
+    }
+
+    fn existing_file_lease(path: &RepoPath) -> WriteLease {
+        WriteLease {
+            path: RepoPathProjection::from(path),
+            kind: WriteLeaseKind::ExistingFile,
+            physical_identity: None,
+            nearest_existing_parent: None,
+            prefix_identities: Vec::new(),
+        }
+    }
+
+    fn directory_lease(path: &RepoPath) -> WriteLease {
+        WriteLease {
+            path: RepoPathProjection::from(path),
+            kind: WriteLeaseKind::Directory,
+            physical_identity: None,
+            nearest_existing_parent: None,
+            prefix_identities: Vec::new(),
+        }
     }
 
     fn dependency_intent(

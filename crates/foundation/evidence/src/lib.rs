@@ -17,6 +17,7 @@ use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
 pub const DEAD_EXPORT_RULE_ID: &str = "dead-code/zero-exact-fan-in.v1";
 pub const DEAD_CODE_CAPABILITY_ID: &str = "dead-code.v1";
+pub const DEPENDENCY_OWNERSHIP_CAPABILITY_ID: &str = "inventory/dependency-ownership.v1";
 pub const FINDINGS_ORDERING_ID: &str = "findings.v1";
 pub const EVIDENCE_ORDERING_ID: &str = "evidence.v1";
 pub const RELATIONS_ORDERING_ID: &str = "relations.v1";

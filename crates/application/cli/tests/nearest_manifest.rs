@@ -361,6 +361,43 @@ fn dependency_owner_gaps_are_scoped_to_the_requested_package()
     assert_status(&package_a_closed, 0);
     assert_eq!(field(&package_a_closed.stdout, "decision")?, "allow");
 
+    let ordinary_a = run(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "nearest-scoped-ordinary-a",
+            "--path",
+            "packages/a/src/main.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&ordinary_a, 0);
+    assert_eq!(field(&ordinary_a.stdout, "decision")?, "allow");
+    let ordinary_a_gate = field(&ordinary_a.stdout, "gateId")?;
+    abandon(
+        root.path(),
+        &ordinary_a_gate,
+        "nearest-scoped-ordinary-a-abandon",
+    )?;
+
+    let ordinary_b = run(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "nearest-scoped-ordinary-b",
+            "--path",
+            "packages/b/src/main.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&ordinary_b, 4);
+    assert_eq!(field(&ordinary_b.stdout, "decision")?, "incomplete");
+    assert_signal(&ordinary_b.stdout, "required-evidence-incomplete")?;
+
     let package_b = run(
         root.path(),
         &dependency_prewrite("nearest-scoped-gap-b", "packages/b/src/main.ts", "zod"),

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
 use crate::{
     EmbeddedSourceUnitId, LogicalSourceId, PayloadSnapshotId, PhysicalFileIdentity, RepoPath,
@@ -493,11 +493,47 @@ impl PackageScopeId {
     }
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PackageScope {
-    pub id: PackageScopeId,
-    pub root: String,
+    id: PackageScopeId,
+    root: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    canonical_root: Vec<u8>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PackageScopeWire {
+    id: PackageScopeId,
+    root: String,
+    #[serde(default)]
+    canonical_root: Vec<u8>,
+}
+
+impl<'de> Deserialize<'de> for PackageScope {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = PackageScopeWire::deserialize(deserializer)?;
+        if wire.canonical_root.is_empty() {
+            return Ok(Self {
+                id: wire.id,
+                root: wire.root,
+                canonical_root: wire.canonical_root,
+            });
+        }
+        let root = RepoPath::from_canonical_bytes(&wire.canonical_root)
+            .map_err(|error| D::Error::custom(error.to_string()))?;
+        let expected = Self::from_root(&root);
+        if wire.id != expected.id || wire.root != expected.root {
+            return Err(D::Error::custom(
+                "package scope identity disagrees with its canonical root",
+            ));
+        }
+        Ok(expected)
+    }
 }
 
 impl PackageScope {
@@ -505,7 +541,16 @@ impl PackageScope {
         Self {
             id: PackageScopeId::from_root(root),
             root: root.display_escaped(),
+            canonical_root: root.canonical_bytes().to_vec(),
         }
+    }
+
+    pub fn id(&self) -> &PackageScopeId {
+        &self.id
+    }
+
+    pub fn canonical_root(&self) -> &[u8] {
+        &self.canonical_root
     }
 }
 
