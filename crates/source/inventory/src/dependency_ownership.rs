@@ -162,12 +162,11 @@ fn context_guard_input(
 }
 
 pub(crate) fn reservation_paths(
-    root: &Path,
     intents: &[DependencyIntent],
 ) -> Result<Vec<RepoPath>, InventoryError> {
     let mut candidates = BTreeMap::<RepoPath, ()>::new();
     for intent in intents {
-        if context_is_hard_excluded(root, &intent.path)? {
+        if context_is_lexically_hard_excluded(&intent.path)? {
             continue;
         }
         for directory in reservation_directories(&intent.path) {
@@ -602,7 +601,7 @@ fn ancestor_directories(path: &RepoPath, starts_at_context: bool) -> Vec<RepoPat
 
 fn context_is_hard_excluded(root: &Path, path: &RepoPath) -> Result<bool, InventoryError> {
     let relative = native_relative(path)?;
-    if relative.iter().any(hard_excluded_component) {
+    if context_is_lexically_hard_excluded(path)? {
         return Ok(true);
     }
 
@@ -645,6 +644,10 @@ fn context_is_hard_excluded(root: &Path, path: &RepoPath) -> Result<bool, Invent
     Ok(false)
 }
 
+fn context_is_lexically_hard_excluded(path: &RepoPath) -> Result<bool, InventoryError> {
+    Ok(native_relative(path)?.iter().any(hard_excluded_component))
+}
+
 fn hard_excluded_component(component: &OsStr) -> bool {
     if crate::is_hard_excluded(Path::new(component)) {
         return true;
@@ -684,6 +687,20 @@ mod tests {
         assert!(hard_excluded_component(OsStr::new(".GIT")));
         #[cfg(not(windows))]
         assert!(!hard_excluded_component(OsStr::new(".GIT")));
+    }
+
+    #[test]
+    fn reservation_candidates_precede_physical_exclusion_checks()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let candidates = reservation_paths(&[intent("context/deep", "zod")?])?
+            .into_iter()
+            .map(|path| path.display_escaped())
+            .collect::<BTreeSet<_>>();
+
+        assert!(candidates.contains("context/deep/package.json"));
+        assert!(candidates.contains("context/package.json"));
+        assert!(candidates.contains("package.json"));
+        Ok(())
     }
 
     #[test]

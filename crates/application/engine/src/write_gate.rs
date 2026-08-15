@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use lumin_evidence::{
     DependencyIntentRecord, GateAnalysisOptions, GateBaseline, GateOperationResult, GateRecord,
     GateSignal, OperationRecord, PathPrefixIdentity, RepoPathProjection, ScanInvocationTier,
-    SemanticInputRecord, SemanticReadReservationBinding, gate_policy,
+    SemanticInputRecord, SemanticInputState, SemanticReadReservationBinding, gate_policy,
+    seal_analysis_snapshot,
 };
 use lumin_inventory::InventoryRequest;
 use lumin_model::{
@@ -449,25 +450,24 @@ fn capture_reserved_repository(
         &[SemanticReadReservationBinding],
     ) -> Result<SemanticReadReservation, EngineError>,
 ) -> Result<ReservedCapture, EngineError> {
-    let mut reserved_semantic_paths = Vec::new();
-    let dependency_candidates = lumin_inventory::dependency_owner_candidate_paths(
-        root,
-        &inventory_request.dependency_intents,
-    )?;
+    let mut reserved_semantic_bindings = Vec::new();
+    let dependency_candidates =
+        lumin_inventory::dependency_owner_candidate_paths(&inventory_request.dependency_intents)?;
     if let Some(outcome) = reserve_semantic_paths(
         root,
         &dependency_candidates,
-        &mut reserved_semantic_paths,
+        &mut reserved_semantic_bindings,
         &mut reserve,
     )? {
         return Ok(outcome);
     }
+    let dependency_candidate_binding_count = reserved_semantic_bindings.len();
 
     let pending_inventory = lumin_inventory::begin_scan(root, inventory_request)?;
     if let Some(outcome) = reserve_semantic_paths(
         root,
         pending_inventory.dependency_input_paths(),
-        &mut reserved_semantic_paths,
+        &mut reserved_semantic_bindings,
         &mut reserve,
     )? {
         return Ok(outcome);
@@ -489,7 +489,7 @@ fn capture_reserved_repository(
                 if let Some(outcome) = reserve_semantic_paths(
                     root,
                     &paths,
-                    &mut reserved_semantic_paths,
+                    &mut reserved_semantic_bindings,
                     &mut reserve,
                 )? {
                     return Ok(outcome);
@@ -497,14 +497,12 @@ fn capture_reserved_repository(
                 session.capture_demands(root, demands)?;
             }
             RepositoryAnalysisStep::Finished(resolver) => {
-                let capture = session.finish(resolver)?;
-                reserved_semantic_paths.sort();
-                reserved_semantic_paths.dedup();
-                let stale = stale_reserved_semantic_paths(
-                    root,
-                    &reserved_semantic_paths,
-                    &capture.snapshot.inputs,
-                )?;
+                let mut capture = session.finish(resolver)?;
+                include_dependency_candidate_topology_inputs(
+                    &mut capture,
+                    &reserved_semantic_bindings[..dependency_candidate_binding_count],
+                );
+                let stale = stale_reserved_semantic_paths(root, &reserved_semantic_bindings)?;
                 if !stale.is_empty() {
                     return Ok(ReservedCapture::Blocked(
                         GateSignal::ProtectedInputChanged { paths: stale },
@@ -521,7 +519,7 @@ fn capture_reserved_repository(
 fn reserve_semantic_paths(
     root: &Path,
     paths: &[RepoPath],
-    reserved_paths: &mut Vec<RepoPath>,
+    reserved_bindings: &mut Vec<(RepoPath, SemanticReadReservationBinding)>,
     reserve: &mut impl FnMut(
         &[SemanticReadReservationBinding],
     ) -> Result<SemanticReadReservation, EngineError>,
@@ -532,7 +530,7 @@ fn reserve_semantic_paths(
     let reservations = semantic_read_reservations(root, paths)?;
     let outcome = match reserve(&reservations)? {
         SemanticReadReservation::Reserved => {
-            reserved_paths.extend_from_slice(paths);
+            reserved_bindings.extend(paths.iter().cloned().zip(reservations));
             return Ok(None);
         }
         SemanticReadReservation::Conflict { paths, gate_ids } => {
@@ -548,24 +546,52 @@ fn reserve_semantic_paths(
 
 fn stale_reserved_semantic_paths(
     root: &Path,
-    paths: &[RepoPath],
-    inputs: &[SemanticInputRecord],
+    bindings: &[(RepoPath, SemanticReadReservationBinding)],
 ) -> Result<Vec<RepoPathProjection>, EngineError> {
-    let current = semantic_read_reservations(root, paths)?;
     let mut stale = Vec::new();
-    for binding in current {
-        let mut captured = inputs.iter().filter(|input| input.path == binding.path);
-        let matches_capture = captured.next().is_some_and(|input| {
-            input.physical_identity == binding.physical_identity
-                && input.absence_parent == binding.absence_parent
-        }) && captured.next().is_none();
-        if !matches_capture {
-            stale.push(binding.path);
+    for (path, reserved) in bindings {
+        let current = semantic_read_reservation(root, path)?;
+        if current != *reserved {
+            stale.push(current.path);
         }
     }
     stale.sort();
     stale.dedup();
     Ok(stale)
+}
+
+fn include_dependency_candidate_topology_inputs(
+    capture: &mut RepositoryCapture,
+    bindings: &[(RepoPath, SemanticReadReservationBinding)],
+) {
+    let mut inputs = capture.snapshot.inputs.clone();
+    for (_, binding) in bindings {
+        if inputs.iter().any(|input| input.path == binding.path) {
+            continue;
+        }
+        let (state, payload_sha256) = if binding.absence_parent.is_some() {
+            (SemanticInputState::Missing, None)
+        } else {
+            (
+                SemanticInputState::Unreadable,
+                Some(digest_hex(b"dependency-candidate-topology-only.v1")),
+            )
+        };
+        inputs.push(SemanticInputRecord {
+            path: binding.path.clone(),
+            state,
+            payload_sha256,
+            physical_identity: binding.physical_identity.clone(),
+            absence_parent: binding.absence_parent.clone(),
+            physical_redirect_sha256: None,
+        });
+    }
+    capture.snapshot = seal_analysis_snapshot(
+        inputs,
+        capture.snapshot.evidence.clone(),
+        capture.snapshot.scan_invocation.clone(),
+        capture.snapshot.entry_selections.clone(),
+    );
 }
 
 fn semantic_read_reservations(
@@ -574,18 +600,23 @@ fn semantic_read_reservations(
 ) -> Result<Vec<SemanticReadReservationBinding>, EngineError> {
     paths
         .iter()
-        .map(|path| {
-            let identity = lumin_inventory::observe_config_input_identity(root, path)?;
-            Ok(SemanticReadReservationBinding {
-                path: RepoPathProjection::from(path),
-                physical_identity: identity.physical_identity,
-                absence_parent: identity.absence_parent.map(|parent| PathPrefixIdentity {
-                    path: RepoPathProjection::from(&parent.path),
-                    physical_identity: parent.physical_identity,
-                }),
-            })
-        })
+        .map(|path| semantic_read_reservation(root, path))
         .collect()
+}
+
+fn semantic_read_reservation(
+    root: &Path,
+    path: &RepoPath,
+) -> Result<SemanticReadReservationBinding, EngineError> {
+    let identity = lumin_inventory::observe_config_input_identity(root, path)?;
+    Ok(SemanticReadReservationBinding {
+        path: RepoPathProjection::from(path),
+        physical_identity: identity.physical_identity,
+        absence_parent: identity.absence_parent.map(|parent| PathPrefixIdentity {
+            path: RepoPathProjection::from(&parent.path),
+            physical_identity: parent.physical_identity,
+        }),
+    })
 }
 
 pub fn load_gate(root: &Path, gate_id: &GateId) -> Result<GateRecord, EngineError> {
@@ -689,22 +720,10 @@ mod tests {
         let binding = semantic_read_reservations(root.path(), std::slice::from_ref(&candidate))?
             .pop()
             .ok_or("missing semantic-read reservation")?;
-        let captured = SemanticInputRecord {
-            path: binding.path.clone(),
-            state: lumin_evidence::SemanticInputState::Missing,
-            payload_sha256: None,
-            physical_identity: binding.physical_identity.clone(),
-            absence_parent: binding.absence_parent.clone(),
-            physical_redirect_sha256: None,
-        };
+        let reserved = (candidate.clone(), binding.clone());
 
         assert!(
-            stale_reserved_semantic_paths(
-                root.path(),
-                std::slice::from_ref(&candidate),
-                std::slice::from_ref(&captured),
-            )?
-            .is_empty()
+            stale_reserved_semantic_paths(root.path(), std::slice::from_ref(&reserved))?.is_empty()
         );
 
         std::fs::write(
@@ -712,11 +731,7 @@ mod tests {
             r#"{"name":"closer-owner"}"#,
         )?;
         assert_eq!(
-            stale_reserved_semantic_paths(
-                root.path(),
-                std::slice::from_ref(&candidate),
-                std::slice::from_ref(&captured),
-            )?,
+            stale_reserved_semantic_paths(root.path(), std::slice::from_ref(&reserved))?,
             vec![binding.path]
         );
         Ok(())

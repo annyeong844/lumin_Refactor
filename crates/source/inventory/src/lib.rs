@@ -416,10 +416,9 @@ pub fn begin_scan(
 }
 
 pub fn dependency_owner_candidate_paths(
-    root: &Path,
     intents: &[DependencyIntent],
 ) -> Result<Vec<RepoPath>, InventoryError> {
-    dependency_ownership::reservation_paths(root, intents)
+    dependency_ownership::reservation_paths(intents)
 }
 
 enum EntryClassification {
