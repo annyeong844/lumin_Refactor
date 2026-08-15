@@ -325,14 +325,21 @@ pub fn observe_config_input_identity(
                 absence_parent: None,
             })
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(ConfigInputIdentity {
-            physical_identity: None,
-            absence_parent: Some(config_absence_parent(
-                root,
-                &canonical_root,
-                path.parent().unwrap_or_else(RepoPath::empty),
-            )?),
-        }),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Ok(ConfigInputIdentity {
+                physical_identity: None,
+                absence_parent: Some(config_absence_parent(
+                    root,
+                    &canonical_root,
+                    path.parent().unwrap_or_else(RepoPath::empty),
+                )?),
+            })
+        }
         Err(error) => Err(InventoryError::PhysicalIdentity(error.to_string())),
     }
 }
@@ -363,7 +370,12 @@ fn config_absence_parent(
                     path,
                 });
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
                 path = path.parent().ok_or_else(|| {
                     InventoryError::PhysicalIdentity(
                         "repository root disappeared while binding a missing config".to_owned(),

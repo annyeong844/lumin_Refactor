@@ -55,6 +55,28 @@ fn missing_config_identity_is_bound_to_the_nearest_existing_parent()
 }
 
 #[test]
+fn impossible_config_descendant_is_bound_to_the_existing_file_prefix()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir(root.path().join("src"))?;
+    fs::write(root.path().join("src/main.ts"), "console.log('main');\n")?;
+    let missing = RepoPath::from_portable("src/main.ts/package.json")?;
+
+    let identity = observe_config_input_identity(root.path(), &missing)?;
+
+    assert!(identity.physical_identity.is_none());
+    let parent = identity
+        .absence_parent
+        .ok_or_else(|| std::io::Error::other("impossible config has no prefix binding"))?;
+    assert_eq!(parent.path, RepoPath::from_portable("src/main.ts")?);
+    assert_eq!(
+        parent.physical_identity,
+        physical_file_identity(&root.path().join("src/main.ts"))?
+    );
+    Ok(())
+}
+
+#[test]
 fn hard_link_sources_share_captured_payload_but_keep_logical_identity()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
