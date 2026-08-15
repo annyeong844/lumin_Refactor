@@ -339,6 +339,86 @@ fn pre_write_semantic_read_reservation_blocks_later_write_admission()
 }
 
 #[test]
+fn new_path_cannot_advance_a_pending_missing_semantic_branch()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let options = options();
+    let root_path = RepoPathProjection::from(&RepoPath::empty());
+    let root_identity = lumin_model::PhysicalFileIdentity::Unix {
+        device: 7,
+        inode: 11,
+    };
+    let reader_operation = OperationId::from_string("op-missing-reader".to_owned());
+    let reader_source = path("src/new.ts")?;
+    let reader = store.begin_operation(&reader_operation)?;
+    let reader_gate = match reader.reserve_pre_write(
+        "missing-reader-digest",
+        std::slice::from_ref(&reader_source),
+        &[lease(reader_source.clone())],
+        &options,
+    )? {
+        PreWriteStart::Analyze { gate_id, .. } => gate_id,
+        PreWriteStart::Committed(_) => {
+            return Err("the missing-input reader was unexpectedly committed".into());
+        }
+    };
+    let missing_candidate = path("generated/deep/package.json")?;
+    let missing_binding = SemanticReadReservationBinding {
+        path: missing_candidate.clone(),
+        physical_identity: None,
+        absence_parent: Some(PathPrefixIdentity {
+            path: root_path.clone(),
+            physical_identity: root_identity.clone(),
+        }),
+    };
+    assert_eq!(
+        reader.reserve_pre_write_semantic_inputs(
+            "missing-reader-digest",
+            &reader_gate,
+            std::slice::from_ref(&missing_binding),
+        )?,
+        SemanticReadReservation::Reserved
+    );
+
+    let writer_path = path("generated/main.ts")?;
+    let writer_lease = WriteLease {
+        path: writer_path.clone(),
+        kind: lumin_evidence::WriteLeaseKind::NewFile,
+        physical_identity: None,
+        nearest_existing_parent: Some(root_path.clone()),
+        prefix_identities: vec![PathPrefixIdentity {
+            path: root_path,
+            physical_identity: root_identity,
+        }],
+    };
+    let writer = store.begin_operation(&OperationId::from_string(
+        "op-missing-branch-writer".to_owned(),
+    ))?;
+    let rejected = match writer.reserve_pre_write(
+        "missing-branch-writer-digest",
+        std::slice::from_ref(&writer_path),
+        std::slice::from_ref(&writer_lease),
+        &options,
+    )? {
+        PreWriteStart::Committed(result) => result,
+        PreWriteStart::Analyze { .. } => {
+            return Err("a new path advanced a reserved missing branch".into());
+        }
+    };
+    assert_eq!(rejected.decision, lumin_evidence::GateDecision::Incomplete);
+    assert!(rejected.signals.iter().any(|signal| {
+        matches!(
+            signal,
+            GateSignal::WriteConflict { paths, gate_ids }
+                if paths == std::slice::from_ref(&missing_candidate)
+                    && gate_ids == std::slice::from_ref(&reader_gate)
+        )
+    }));
+    Ok(())
+}
+
+#[test]
 fn pre_write_finish_rejects_a_baseline_that_omits_a_reserved_input()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
@@ -390,6 +470,7 @@ fn pre_write_finish_rejects_a_baseline_that_omits_a_reserved_input()
             alias_closures: Vec::new(),
             signals: Vec::new(),
         },
+        Vec::new,
     ) {
         Ok(_) => return Err("an unbound semantic-read reservation was accepted".into()),
         Err(error) => error,
@@ -400,6 +481,108 @@ fn pre_write_finish_rejects_a_baseline_that_omits_a_reserved_input()
             if detail.contains("pre-write baseline omitted reserved semantic inputs")
                 && detail.contains("config/base.json")
     ));
+    Ok(())
+}
+
+#[test]
+fn final_validation_can_stop_pre_write_promotion() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation = store.begin_operation(&OperationId::from_string("op-open".to_owned()))?;
+    let source = path("src/main.ts")?;
+    let source_lease = lease(source.clone());
+    let (gate_id, transition_sequence) = match operation.reserve_pre_write(
+        "open-digest",
+        std::slice::from_ref(&source),
+        std::slice::from_ref(&source_lease),
+        &options(),
+    )? {
+        PreWriteStart::Analyze {
+            gate_id,
+            transition_sequence,
+        } => (gate_id, transition_sequence),
+        PreWriteStart::Committed(_) => return Err("the opening operation committed early".into()),
+    };
+
+    let result = operation.finish_pre_write(
+        "open-digest",
+        &gate_id,
+        PreWriteFinish {
+            baseline: Some(GateBaseline {
+                analysis_contract: "test-contract".to_owned(),
+                snapshot: empty_snapshot(),
+                protected_semantic_inputs: Vec::new(),
+                transition_sequence,
+            }),
+            leased_write_set: vec![source_lease],
+            alias_closures: Vec::new(),
+            signals: Vec::new(),
+        },
+        || {
+            vec![GateSignal::ProtectedInputChanged {
+                paths: vec![source.clone()],
+            }]
+        },
+    )?;
+
+    assert_eq!(result.lifecycle, GateLifecycle::Rejected);
+    assert!(!result.decision.authorizes());
+    assert_eq!(
+        result.signals,
+        [GateSignal::ProtectedInputChanged {
+            paths: vec![source]
+        }]
+    );
+    Ok(())
+}
+
+#[test]
+fn final_validation_can_stop_post_write_promotion() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate(&store, "op-open", "open-digest", "src/main.ts")?;
+    let operation = store.begin_operation(&OperationId::from_string("op-close".to_owned()))?;
+    let gate = match operation.begin_post_write("close-digest", &gate_id)? {
+        PostWriteStart::Analyze { gate, .. } => gate,
+        PostWriteStart::Committed(_) => return Err("the closing operation committed early".into()),
+    };
+    let baseline = gate
+        .baseline
+        .as_ref()
+        .ok_or("active gate fixture omitted its baseline")?
+        .snapshot
+        .clone();
+    let source = path("src/main.ts")?;
+
+    let result = operation.finish_post_write(
+        "close-digest",
+        &gate_id,
+        PostWriteFinish {
+            snapshot: Some(baseline.clone()),
+            protected_semantic_inputs: Vec::new(),
+            reconciled_baseline: Some(baseline),
+            changed_paths: Vec::new(),
+            actual_write_set: Some(Default::default()),
+            alias_closures: Vec::new(),
+            reconciled_transition_sequences: Vec::new(),
+            signals: Vec::new(),
+            deltas: Vec::new(),
+        },
+        || {
+            vec![GateSignal::ProtectedInputChanged {
+                paths: vec![source.clone()],
+            }]
+        },
+    )?;
+
+    assert!(!result.decision.authorizes());
+    assert!(result.actual_write_set.is_none());
+    assert_eq!(
+        result.signals,
+        [GateSignal::ProtectedInputChanged {
+            paths: vec![source]
+        }]
+    );
     Ok(())
 }
 
@@ -446,6 +629,7 @@ fn semantic_read_reservation_blocks_later_write_admission() -> Result<(), Box<dy
             alias_closures: Vec::new(),
             signals: Vec::new(),
         },
+        Vec::new,
     )?;
     assert!(opened.decision.authorizes());
 
@@ -613,6 +797,7 @@ fn empty_snapshot() -> AnalysisSnapshot {
             source_classifications: Vec::new(),
             source_contexts: Vec::new(),
             source_observations: Vec::new(),
+            dependency_owners: Vec::new(),
             resolutions: Vec::new(),
             metrics: Default::default(),
             findings: Vec::new(),
@@ -659,6 +844,7 @@ fn open_active_gate(
             alias_closures: Vec::new(),
             signals: Vec::new(),
         },
+        Vec::new,
     )?;
     Ok(gate_id)
 }
@@ -695,6 +881,7 @@ fn close_active_gate(
                 signals: Vec::new(),
                 deltas: Vec::new(),
             },
+            Vec::new,
         )
         .map_err(Into::into)
 }

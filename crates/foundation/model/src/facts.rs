@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
 use crate::{
     EmbeddedSourceUnitId, LogicalSourceId, PayloadSnapshotId, PhysicalFileIdentity, RepoPath,
@@ -477,6 +477,84 @@ pub enum ResolutionOutcome {
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DependencyIntentIdentity {
+    pub consumer: LogicalSourceId,
+    pub dependency: String,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PackageScopeId(String);
+
+impl PackageScopeId {
+    pub fn from_root(root: &RepoPath) -> Self {
+        Self(format!("package_{}", digest_hex(root.canonical_bytes())))
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageScope {
+    id: PackageScopeId,
+    root: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    canonical_root: Vec<u8>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PackageScopeWire {
+    id: PackageScopeId,
+    root: String,
+    #[serde(default)]
+    canonical_root: Vec<u8>,
+}
+
+impl<'de> Deserialize<'de> for PackageScope {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = PackageScopeWire::deserialize(deserializer)?;
+        if wire.canonical_root.is_empty() {
+            return Ok(Self {
+                id: wire.id,
+                root: wire.root,
+                canonical_root: wire.canonical_root,
+            });
+        }
+        let root = RepoPath::from_canonical_bytes(&wire.canonical_root)
+            .map_err(|error| D::Error::custom(error.to_string()))?;
+        let expected = Self::from_root(&root);
+        if wire.id != expected.id || wire.root != expected.root {
+            return Err(D::Error::custom(
+                "package scope identity disagrees with its canonical root",
+            ));
+        }
+        Ok(expected)
+    }
+}
+
+impl PackageScope {
+    pub fn from_root(root: &RepoPath) -> Self {
+        Self {
+            id: PackageScopeId::from_root(root),
+            root: root.display_escaped(),
+            canonical_root: root.canonical_bytes().to_vec(),
+        }
+    }
+
+    pub fn id(&self) -> &PackageScopeId {
+        &self.id
+    }
+
+    pub fn canonical_root(&self) -> &[u8] {
+        &self.canonical_root
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "kebab-case")]
 pub enum Limitation {
     JsModuleUseUnknown {
@@ -552,6 +630,20 @@ pub enum Limitation {
     },
     DependencyOwnerAmbiguous {
         path: String,
+        #[serde(
+            default,
+            rename = "packageScope",
+            alias = "package_scope",
+            skip_serializing_if = "Option::is_none"
+        )]
+        package_scope: Option<Box<PackageScope>>,
+        #[serde(
+            default,
+            rename = "requiredIntent",
+            alias = "required_intent",
+            skip_serializing_if = "Option::is_none"
+        )]
+        required_intent: Option<Box<DependencyIntentIdentity>>,
         detail: String,
     },
     WorkspaceOwnershipUnsupported {

@@ -17,6 +17,7 @@ use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
 pub const DEAD_EXPORT_RULE_ID: &str = "dead-code/zero-exact-fan-in.v1";
 pub const DEAD_CODE_CAPABILITY_ID: &str = "dead-code.v1";
+pub const DEPENDENCY_OWNERSHIP_CAPABILITY_ID: &str = "inventory/dependency-ownership.v1";
 pub const FINDINGS_ORDERING_ID: &str = "findings.v1";
 pub const EVIDENCE_ORDERING_ID: &str = "evidence.v1";
 pub const RELATIONS_ORDERING_ID: &str = "relations.v1";
@@ -297,6 +298,19 @@ pub struct SourceObservationRecord {
     pub payload_snapshot_id: PayloadSnapshotId,
 }
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DependencyOwnerRecord {
+    pub consumer: LogicalSourceId,
+    pub consumer_path: RepoPathProjection,
+    pub dependency: String,
+    pub package_root: RepoPathProjection,
+    pub manifest_path: RepoPathProjection,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub manifest_payload_sha256: String,
+    pub lockfile_path: Option<RepoPathProjection>,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalysisMetrics {
@@ -326,6 +340,8 @@ pub struct RunEvidence {
     #[serde(default)]
     pub source_observations: Vec<SourceObservationRecord>,
     #[serde(default)]
+    pub dependency_owners: Vec<DependencyOwnerRecord>,
+    #[serde(default)]
     pub resolutions: Vec<ResolvedSourceUse>,
     #[serde(default)]
     pub metrics: AnalysisMetrics,
@@ -348,6 +364,7 @@ impl RunEvidence {
             resolution_profiles: &self.resolution_profiles,
             source_classifications: &self.source_classifications,
             source_contexts: &self.source_contexts,
+            dependency_owners: &self.dependency_owners,
             resolutions: &self.resolutions,
             findings: &self.findings,
             limitations: &self.limitations,
@@ -363,6 +380,7 @@ pub struct SemanticRunEvidence<'a> {
     pub resolution_profiles: &'a [SelectedResolutionProfile],
     pub source_classifications: &'a [SourceClassificationRecord],
     pub source_contexts: &'a [SourceContextRecord],
+    pub dependency_owners: &'a [DependencyOwnerRecord],
     pub resolutions: &'a [ResolvedSourceUse],
     pub findings: &'a [FindingRecord],
     pub limitations: &'a [Limitation],

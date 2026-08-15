@@ -229,12 +229,13 @@ fn blocked_absence_scope(
             Limitation::PublicSurfaceUnsupported { path, .. }
             | Limitation::PackageImportsUnsupported { path, .. }
             | Limitation::ImporterFormatUnsupported { path, .. }
-            | Limitation::PackagePrivacyUnsupported { path, .. }
-            | Limitation::DependencyOwnerAmbiguous { path, .. } => {
+            | Limitation::PackagePrivacyUnsupported { path, .. } => {
                 if !block_owned_package(path, sources, config, &mut blocked_paths) {
                     workspace_blocked = true;
                 }
             }
+            Limitation::DependencyOwnerAmbiguous { .. }
+            | Limitation::PnpmDependencySemanticsUnsupported { .. } => {}
             Limitation::PackageMetadataUnobservable { path, .. } => {
                 if !block_manifest_parent(path, sources, config, &mut blocked_paths) {
                     workspace_blocked = true;
@@ -246,8 +247,7 @@ fn blocked_absence_scope(
                     workspace_blocked = true;
                 }
             }
-            Limitation::WorkspaceOwnershipUnsupported { path, .. }
-            | Limitation::PnpmDependencySemanticsUnsupported { path, .. } => {
+            Limitation::WorkspaceOwnershipUnsupported { path, .. } => {
                 if !block_workspace(path, sources, config, &mut blocked_paths) {
                     workspace_blocked = true;
                 }

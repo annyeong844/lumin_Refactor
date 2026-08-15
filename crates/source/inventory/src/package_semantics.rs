@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_model::{
     ConfigDocument, ConfigObservation, ConfigValue, Limitation, LogicalSourceId, PackageFact,
-    PackageIdentity, PackageIdentityState, PackagePrivacy, RepoPath, SemanticConfigSnapshot,
-    SourceSnapshot, WorkspaceFact, WorkspaceSource,
+    PackageIdentity, PackageIdentityState, PackagePrivacy, PackageScope, RepoPath,
+    SemanticConfigSnapshot, SourceSnapshot, WorkspaceFact, WorkspaceSource,
 };
 
 use crate::generated_config_policy::{self, FieldClassification, INVENTORY_PACKAGE_JSON_FIELDS};
@@ -15,6 +15,7 @@ pub(crate) fn build(
 ) -> Result<SemanticConfigSnapshot, String> {
     let manifests = package_manifests(&observations);
     let pnpm_workspaces = pnpm_workspace_documents(&observations);
+    let unavailable_pnpm_roots = unavailable_pnpm_workspace_roots(&observations);
     let mut packages = manifests
         .iter()
         .map(|manifest| package_fact(manifest, limitations))
@@ -25,7 +26,13 @@ pub(crate) fn build(
         .iter()
         .map(|package| package.root.clone())
         .collect::<Vec<_>>();
-    let workspaces = build_workspaces(&manifests, &pnpm_workspaces, &package_roots, limitations)?;
+    let workspaces = build_workspaces(
+        &manifests,
+        &pnpm_workspaces,
+        &unavailable_pnpm_roots,
+        &package_roots,
+        limitations,
+    )?;
     assign_workspace_roots(&mut packages, &workspaces);
     reject_duplicate_identities(&mut packages, limitations);
     let source_packages = map_source_packages(sources, &packages);
@@ -35,6 +42,7 @@ pub(crate) fn build(
         packages,
         workspaces,
         source_packages,
+        dependency_owners: Vec::new(),
     })
 }
 
@@ -68,23 +76,54 @@ fn package_manifests(observations: &BTreeMap<RepoPath, ConfigObservation>) -> Ve
         .collect()
 }
 
+fn unavailable_pnpm_workspace_roots(
+    observations: &BTreeMap<RepoPath, ConfigObservation>,
+) -> Vec<RepoPath> {
+    observations
+        .values()
+        .filter_map(|observation| match observation {
+            ConfigObservation::NonRegular { path, .. }
+            | ConfigObservation::Unreadable { path, .. }
+                if path.file_name_portable() == Some("pnpm-workspace.yaml") =>
+            {
+                Some(path.parent().unwrap_or_else(RepoPath::empty))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 fn build_workspaces(
     manifests: &[&ConfigDocument],
     pnpm_documents: &[&ConfigDocument],
+    unavailable_pnpm_roots: &[RepoPath],
     package_roots: &[RepoPath],
     limitations: &mut Vec<Limitation>,
 ) -> Result<Vec<WorkspaceFact>, String> {
     let mut workspaces = Vec::new();
-    let pnpm_roots = pnpm_documents
+    let mut pnpm_roots = pnpm_documents
         .iter()
         .map(|document| document.path.parent().unwrap_or_else(RepoPath::empty))
         .collect::<BTreeSet<_>>();
+    pnpm_roots.extend(unavailable_pnpm_roots.iter().cloned());
+    for root in unavailable_pnpm_roots {
+        workspaces.push(WorkspaceFact {
+            root: root.clone(),
+            source: WorkspaceSource::PnpmWorkspace,
+            members: vec![root.clone()],
+            ownership_supported: false,
+            dependency_ownership_supported: false,
+        });
+    }
     for document in pnpm_documents {
         let root = document.path.parent().unwrap_or_else(RepoPath::empty);
+        let workspace = pnpm_workspace_members(document, &root, package_roots, limitations)?;
         workspaces.push(WorkspaceFact {
-            members: pnpm_workspace_members(document, &root, package_roots, limitations)?,
+            members: workspace.members,
             root,
             source: WorkspaceSource::PnpmWorkspace,
+            ownership_supported: workspace.ownership_supported,
+            dependency_ownership_supported: workspace.dependency_ownership_supported,
         });
     }
     for &manifest in manifests {
@@ -111,6 +150,8 @@ fn build_workspaces(
                     root: root.clone(),
                     source: WorkspaceSource::PackageJson,
                     members: vec![root],
+                    ownership_supported: false,
+                    dependency_ownership_supported: false,
                 });
                 continue;
             }
@@ -136,10 +177,18 @@ fn build_workspaces(
             root,
             source: WorkspaceSource::PackageJson,
             members,
+            ownership_supported: true,
+            dependency_ownership_supported: true,
         });
     }
     workspaces.sort_by(|left, right| left.root.cmp(&right.root));
     Ok(workspaces)
+}
+
+struct PnpmWorkspaceResult {
+    members: Vec<RepoPath>,
+    ownership_supported: bool,
+    dependency_ownership_supported: bool,
 }
 
 fn pnpm_workspace_members(
@@ -147,13 +196,20 @@ fn pnpm_workspace_members(
     root: &RepoPath,
     package_roots: &[RepoPath],
     limitations: &mut Vec<Limitation>,
-) -> Result<Vec<RepoPath>, String> {
+) -> Result<PnpmWorkspaceResult, String> {
     let Some(entries) = document.root.as_object() else {
-        return Ok(vec![root.clone()]);
+        return Ok(PnpmWorkspaceResult {
+            members: vec![root.clone()],
+            ownership_supported: true,
+            dependency_ownership_supported: true,
+        });
     };
     let mut patterns = None;
+    let mut ownership_supported = true;
+    let mut dependency_ownership_supported = true;
     for entry in entries {
         let Some(policy) = generated_config_policy::pnpm_workspace_field(&entry.key) else {
+            ownership_supported = false;
             limitations.push(Limitation::WorkspaceOwnershipUnsupported {
                 path: document.path.display_escaped(),
                 detail: format!("unknown pnpm workspace field {}", entry.key),
@@ -161,6 +217,13 @@ fn pnpm_workspace_members(
             continue;
         };
         if !pnpm_shape_matches(policy.shape, &entry.value) {
+            match policy.shape_mismatch_limitation.or(policy.limitation) {
+                Some("WorkspaceOwnershipUnsupported") => ownership_supported = false,
+                Some("PnpmDependencySemanticsUnsupported") => {
+                    dependency_ownership_supported = false;
+                }
+                _ => {}
+            }
             push_pnpm_limitation(
                 policy.shape_mismatch_limitation.or(policy.limitation),
                 document,
@@ -173,23 +236,33 @@ fn pnpm_workspace_members(
             FieldClassification::SupportedAndModeled => match pnpm_workspace_patterns(&entry.value)
             {
                 Ok(value) => patterns = Some(value),
-                Err(detail) => limitations.push(Limitation::WorkspaceOwnershipUnsupported {
-                    path: document.path.display_escaped(),
-                    detail,
-                }),
+                Err(detail) => {
+                    ownership_supported = false;
+                    limitations.push(Limitation::WorkspaceOwnershipUnsupported {
+                        path: document.path.display_escaped(),
+                        detail,
+                    });
+                }
             },
-            FieldClassification::UnsupportedInventoryAffecting => push_pnpm_limitation(
-                policy.limitation,
-                document,
-                format!("pnpm {} semantics are unsupported", entry.key),
-                limitations,
-            )?,
+            FieldClassification::UnsupportedInventoryAffecting => {
+                dependency_ownership_supported = false;
+                push_pnpm_limitation(
+                    policy.limitation,
+                    document,
+                    format!("pnpm {} semantics are unsupported", entry.key),
+                    limitations,
+                )?;
+            }
         }
     }
 
     let mut members = vec![root.clone()];
     let Some(patterns) = patterns else {
-        return Ok(members);
+        return Ok(PnpmWorkspaceResult {
+            members,
+            ownership_supported,
+            dependency_ownership_supported,
+        });
     };
     for package_root in package_roots {
         if package_root == root || !package_root.is_within(root) {
@@ -212,7 +285,11 @@ fn pnpm_workspace_members(
     }
     members.sort();
     members.dedup();
-    Ok(members)
+    Ok(PnpmWorkspaceResult {
+        members,
+        ownership_supported,
+        dependency_ownership_supported,
+    })
 }
 
 fn pnpm_shape_matches(shape: &str, value: &ConfigValue) -> bool {
@@ -346,6 +423,7 @@ fn package_fact(
             PackagePrivacy::Unsupported
         }
     };
+    let mut dependency_ownership_supported = true;
     for field in INVENTORY_PACKAGE_JSON_FIELDS
         .iter()
         .filter(|policy| policy.rule == Some("dependency-ownership"))
@@ -360,8 +438,11 @@ fn package_fact(
                 .all(|entry| matches!(entry.value, ConfigValue::String(_)))
         });
         if !valid {
+            dependency_ownership_supported = false;
             limitations.push(Limitation::DependencyOwnerAmbiguous {
                 path: manifest.path.display_escaped(),
+                package_scope: Some(Box::new(PackageScope::from_root(&root))),
+                required_intent: None,
                 detail: format!("package {field} field must be object<string,string>"),
             });
         }
@@ -372,6 +453,7 @@ fn package_fact(
         identity,
         privacy,
         workspace_root: None,
+        dependency_ownership_supported,
     })
 }
 

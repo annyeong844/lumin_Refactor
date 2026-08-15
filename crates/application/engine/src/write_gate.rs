@@ -1,14 +1,15 @@
 use std::path::{Path, PathBuf};
 
 use lumin_evidence::{
-    GateAnalysisOptions, GateBaseline, GateOperationResult, GateRecord, GateSignal,
-    OperationRecord, PathPrefixIdentity, RepoPathProjection, ScanInvocationTier,
-    SemanticReadReservationBinding, gate_policy,
+    DependencyIntentRecord, GateAnalysisOptions, GateBaseline, GateOperationResult, GateRecord,
+    GateSignal, OperationRecord, PathPrefixIdentity, RepoPathProjection, ScanInvocationTier,
+    SemanticInputRecord, SemanticInputState, SemanticReadReservationBinding, gate_policy,
+    seal_analysis_snapshot,
 };
 use lumin_inventory::InventoryRequest;
 use lumin_model::{
-    GateDeltaRecord, GateId, OperationId, RepoPath, RepositoryRootIdentity, ResolutionProfile,
-    append_length_prefixed, digest_hex,
+    DependencyIntent, GateDeltaRecord, GateId, OperationId, RepoPath, RepositoryRootIdentity,
+    ResolutionProfile, append_length_prefixed, digest_hex,
 };
 use lumin_store::{
     OperationSession, PostWriteFinish, PostWriteStart, PreWriteFinish, PreWriteStart,
@@ -32,7 +33,7 @@ use transitions::{
     reconcile_transitions,
 };
 
-const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v19";
+const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v26";
 
 fn analysis_contract_id() -> String {
     let inputs = [
@@ -64,6 +65,7 @@ pub struct PreWriteRequest {
     pub excludes: Vec<String>,
     pub role_overrides: Vec<lumin_model::RoleOverride>,
     pub entries: Vec<RepoPath>,
+    pub dependency_intents: Vec<DependencyIntent>,
     pub jobs: usize,
     pub resolution_profile: Option<ResolutionProfile>,
 }
@@ -79,8 +81,8 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
     if request.jobs == 0 {
         return Err(EngineError::InvalidWorkerCount(0));
     }
-    // Fail closed: validate caller entries BEFORE opening/reserving an operation/gate
-    lumin_inventory::validate_caller_entries(&request.root, &request.entries)?;
+    // Fail closed: validate every caller path BEFORE opening/reserving an operation/gate.
+    validate_analysis_paths(&request.root, &request.entries, &request.dependency_intents)?;
     let mut paths = request.paths.clone();
     paths.sort();
     paths.dedup();
@@ -115,7 +117,7 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         } => (gate_id, transition_sequence),
     };
 
-    let finish = if inspection.signals.is_empty() {
+    let promotion = if inspection.signals.is_empty() {
         match analyze_pre_write(
             &operation,
             &context,
@@ -125,19 +127,27 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
             &request_digest,
             &gate_id,
         )? {
-            PreWriteAnalysis::Finished(finish) => finish,
+            PreWriteAnalysis::Finished(promotion) => promotion,
             PreWriteAnalysis::Committed(result) => return Ok(result),
         }
     } else {
-        PreWriteFinish {
+        PreWritePromotion::without_validation(PreWriteFinish {
             baseline: None,
             leased_write_set: inspection.leases,
             alias_closures: Vec::new(),
             signals: inspection.signals,
-        }
+        })
     };
+    let PreWritePromotion {
+        finish,
+        final_validation,
+    } = promotion;
     operation
-        .finish_pre_write(&request_digest, &gate_id, finish)
+        .finish_pre_write(&request_digest, &gate_id, finish, || {
+            final_validation.map_or_else(Vec::new, |validation| {
+                final_freshness_validation_signals(&context.root, &validation)
+            })
+        })
         .map_err(Into::into)
 }
 
@@ -150,19 +160,49 @@ fn build_gate_scan_invocation_tier(request: &PreWriteRequest) -> ScanInvocationT
         .collect();
     entries.sort();
     entries.dedup();
+    let mut dependency_intents = request
+        .dependency_intents
+        .iter()
+        .map(|intent| DependencyIntentRecord {
+            path: RepoPathProjection::from(&intent.path),
+            dependency: intent.dependency.clone(),
+        })
+        .collect::<Vec<_>>();
+    dependency_intents.sort();
+    dependency_intents.dedup();
     ScanInvocationTier {
         includes: request.includes.clone(),
         excludes: request.excludes.clone(),
         role_overrides: request.role_overrides.clone(),
         entries,
+        dependency_intents,
         resolution_profile: request.resolution_profile,
     }
 }
 
 #[allow(clippy::large_enum_variant)]
 enum PreWriteAnalysis {
-    Finished(PreWriteFinish),
+    Finished(PreWritePromotion),
     Committed(GateOperationResult),
+}
+
+struct PreWritePromotion {
+    finish: PreWriteFinish,
+    final_validation: Option<FinalFreshnessValidation>,
+}
+
+impl PreWritePromotion {
+    fn without_validation(finish: PreWriteFinish) -> Self {
+        Self {
+            finish,
+            final_validation: None,
+        }
+    }
+}
+
+struct FinalFreshnessValidation {
+    bindings: Vec<(RepoPath, SemanticReadReservationBinding)>,
+    captured_inputs: Vec<SemanticInputRecord>,
 }
 
 fn analyze_pre_write(
@@ -191,30 +231,38 @@ fn analyze_pre_write(
                 .map_err(Into::into)
         },
     ) {
-        Ok(ReservedCapture::Finished { capture, .. }) => capture,
+        Ok(ReservedCapture::Finished {
+            capture,
+            reserved_semantic_bindings,
+        }) => (capture, reserved_semantic_bindings),
         Ok(ReservedCapture::Blocked(signal)) => {
-            return Ok(PreWriteAnalysis::Finished(PreWriteFinish {
-                baseline: None,
-                leased_write_set: inspection.leases,
-                alias_closures: Vec::new(),
-                signals: vec![signal],
-            }));
+            return Ok(PreWriteAnalysis::Finished(
+                PreWritePromotion::without_validation(PreWriteFinish {
+                    baseline: None,
+                    leased_write_set: inspection.leases,
+                    alias_closures: Vec::new(),
+                    signals: vec![signal],
+                }),
+            ));
         }
         Ok(ReservedCapture::Committed(result)) => {
             return Ok(PreWriteAnalysis::Committed(result));
         }
         Err(EngineError::Store(error)) => return Err(EngineError::Store(error)),
         Err(error) => {
-            return Ok(PreWriteAnalysis::Finished(PreWriteFinish {
-                baseline: None,
-                leased_write_set: inspection.leases,
-                alias_closures: Vec::new(),
-                signals: vec![GateSignal::AnalysisFailed {
-                    detail: error.to_string(),
-                }],
-            }));
+            return Ok(PreWriteAnalysis::Finished(
+                PreWritePromotion::without_validation(PreWriteFinish {
+                    baseline: None,
+                    leased_write_set: inspection.leases,
+                    alias_closures: Vec::new(),
+                    signals: vec![GateSignal::AnalysisFailed {
+                        detail: error.to_string(),
+                    }],
+                }),
+            ));
         }
     };
+    let (capture, reserved_semantic_bindings) = capture;
     let (leased_write_set, alias_closures, mut signals) = expand_write_domain(
         &context.root,
         &inspection.observations,
@@ -222,18 +270,28 @@ fn analyze_pre_write(
         &capture,
     );
     let protected_semantic_inputs = protected_semantic_inputs(&capture, &leased_write_set);
-    signals.extend(gate_policy::opening_signals(&capture.snapshot.evidence));
+    signals.extend(gate_policy::opening_signals(
+        &capture.snapshot,
+        &leased_write_set,
+    ));
+    let final_validation = FinalFreshnessValidation {
+        bindings: reserved_semantic_bindings,
+        captured_inputs: capture.snapshot.inputs.clone(),
+    };
     let baseline = GateBaseline {
         analysis_contract: analysis_contract_id(),
         snapshot: capture.snapshot,
         protected_semantic_inputs,
         transition_sequence,
     };
-    Ok(PreWriteAnalysis::Finished(PreWriteFinish {
-        baseline: Some(baseline),
-        leased_write_set,
-        alias_closures,
-        signals,
+    Ok(PreWriteAnalysis::Finished(PreWritePromotion {
+        finish: PreWriteFinish {
+            baseline: Some(baseline),
+            leased_write_set,
+            alias_closures,
+            signals,
+        },
+        final_validation: Some(final_validation),
     }))
 }
 
@@ -265,9 +323,11 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
 
     // Reconstruct InventoryRequest from persisted tier (not default)
     let inventory_request = inventory_request_from_tier(&gate.analysis_options.scan_invocation)?;
-    if let Err(error) =
-        lumin_inventory::validate_caller_entries(&context.root, &inventory_request.entries)
-    {
+    if let Err(error) = validate_analysis_paths(
+        &context.root,
+        &inventory_request.entries,
+        &inventory_request.dependency_intents,
+    ) {
         return finish_failed_close(
             &operation,
             request,
@@ -289,7 +349,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         )));
     }
 
-    let capture = match capture_reserved_repository(
+    let (capture, reserved_semantic_bindings) = match capture_reserved_repository(
         &context.root,
         &context.repository_root,
         &gate.analysis_options,
@@ -300,7 +360,10 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                 .map_err(Into::into)
         },
     ) {
-        Ok(ReservedCapture::Finished { capture }) => capture,
+        Ok(ReservedCapture::Finished {
+            capture,
+            reserved_semantic_bindings,
+        }) => (capture, reserved_semantic_bindings),
         Ok(ReservedCapture::Blocked(signal)) => {
             return finish_failed_close(&operation, request, &request_digest, vec![signal]);
         }
@@ -325,6 +388,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         &reconciled_baseline,
         &capture.snapshot,
         &gate.protected_semantic_inputs,
+        &gate.leased_write_set,
     );
     signals.extend(active_transition_signals(
         &preliminary_changed_paths,
@@ -361,6 +425,10 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         .as_ref()
         .map_or(preliminary_changed_paths, |actual| actual.paths.clone());
 
+    let final_validation = FinalFreshnessValidation {
+        bindings: reserved_semantic_bindings,
+        captured_inputs: capture.snapshot.inputs.clone(),
+    };
     operation
         .finish_post_write(
             &request_digest,
@@ -376,8 +444,23 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                 signals,
                 deltas,
             },
+            || final_freshness_validation_signals(&context.root, &final_validation),
         )
         .map_err(Into::into)
+}
+
+fn validate_analysis_paths(
+    root: &Path,
+    entries: &[RepoPath],
+    dependency_intents: &[DependencyIntent],
+) -> Result<(), EngineError> {
+    lumin_inventory::validate_caller_entries(root, entries)?;
+    let dependency_paths = dependency_intents
+        .iter()
+        .map(|intent| intent.path.clone())
+        .collect::<Vec<_>>();
+    lumin_inventory::validate_caller_entries(root, &dependency_paths)?;
+    Ok(())
 }
 
 fn finish_failed_close(
@@ -401,12 +484,16 @@ fn finish_failed_close(
                 signals,
                 deltas: Vec::new(),
             },
+            Vec::new,
         )
         .map_err(Into::into)
 }
 
 enum ReservedCapture {
-    Finished { capture: Box<RepositoryCapture> },
+    Finished {
+        capture: Box<RepositoryCapture>,
+        reserved_semantic_bindings: Vec<(RepoPath, SemanticReadReservationBinding)>,
+    },
     Blocked(GateSignal),
     Committed(GateOperationResult),
 }
@@ -420,61 +507,207 @@ fn capture_reserved_repository(
         &[SemanticReadReservationBinding],
     ) -> Result<SemanticReadReservation, EngineError>,
 ) -> Result<ReservedCapture, EngineError> {
-    let mut session = RepositoryAnalysisSession::start(
+    let mut reserved_semantic_bindings = Vec::new();
+    let dependency_candidates =
+        lumin_inventory::dependency_owner_candidate_paths(&inventory_request.dependency_intents)?;
+    if let Some(outcome) = reserve_semantic_paths(
         root,
+        &dependency_candidates,
+        &mut reserved_semantic_bindings,
+        &mut reserve,
+    )? {
+        return Ok(outcome);
+    }
+    let dependency_candidate_binding_count = reserved_semantic_bindings.len();
+
+    let pending_inventory = lumin_inventory::begin_scan(root, inventory_request)?;
+    if let Some(outcome) = reserve_semantic_paths(
+        root,
+        pending_inventory.dependency_input_paths(),
+        &mut reserved_semantic_bindings,
+        &mut reserve,
+    )? {
+        return Ok(outcome);
+    }
+    let inventory = pending_inventory.finish(root)?;
+    let mut session = RepositoryAnalysisSession::start_with_inventory(
         repository_root.clone(),
-        inventory_request,
+        inventory,
         options.jobs,
         options.scan_invocation.clone(),
     )?;
     loop {
         match session.next_step(options.resolution_profile)? {
             RepositoryAnalysisStep::NeedsInputs(demands) => {
-                let reservations = demands
+                let paths = demands
                     .iter()
-                    .map(|demand| {
-                        let identity =
-                            lumin_inventory::observe_config_input_identity(root, &demand.path)?;
-                        Ok(SemanticReadReservationBinding {
-                            path: RepoPathProjection::from(&demand.path),
-                            physical_identity: identity.physical_identity,
-                            absence_parent: identity.absence_parent.map(|parent| {
-                                PathPrefixIdentity {
-                                    path: RepoPathProjection::from(&parent.path),
-                                    physical_identity: parent.physical_identity,
-                                }
-                            }),
-                        })
-                    })
-                    .collect::<Result<Vec<_>, EngineError>>()?;
-                match reserve(&reservations)? {
-                    SemanticReadReservation::Reserved => {
-                        session.capture_demands(root, demands)?;
-                    }
-                    SemanticReadReservation::Conflict { paths, gate_ids } => {
-                        return Ok(ReservedCapture::Blocked(
-                            GateSignal::SemanticInputConflict { paths, gate_ids },
-                        ));
-                    }
-                    SemanticReadReservation::TransitionCatalogChanged => {
-                        return Ok(ReservedCapture::Blocked(
-                            GateSignal::TransitionCatalogChanged,
-                        ));
-                    }
-                    SemanticReadReservation::Committed(result) => {
-                        return Ok(ReservedCapture::Committed(*result));
-                    }
+                    .map(|demand| demand.path.clone())
+                    .collect::<Vec<_>>();
+                if let Some(outcome) = reserve_semantic_paths(
+                    root,
+                    &paths,
+                    &mut reserved_semantic_bindings,
+                    &mut reserve,
+                )? {
+                    return Ok(outcome);
                 }
+                session.capture_demands(root, demands)?;
             }
             RepositoryAnalysisStep::Finished(resolver) => {
-                return session
-                    .finish(resolver)
-                    .map(|capture| ReservedCapture::Finished {
-                        capture: Box::new(capture),
-                    });
+                let mut capture = session.finish(resolver)?;
+                include_dependency_candidate_topology_inputs(
+                    &mut capture,
+                    &reserved_semantic_bindings[..dependency_candidate_binding_count],
+                );
+                let stale = stale_reserved_semantic_paths(
+                    root,
+                    &reserved_semantic_bindings,
+                    &capture.snapshot.inputs,
+                )?;
+                if !stale.is_empty() {
+                    return Ok(ReservedCapture::Blocked(
+                        GateSignal::ProtectedInputChanged { paths: stale },
+                    ));
+                }
+                return Ok(ReservedCapture::Finished {
+                    capture: Box::new(capture),
+                    reserved_semantic_bindings,
+                });
             }
         }
     }
+}
+
+fn reserve_semantic_paths(
+    root: &Path,
+    paths: &[RepoPath],
+    reserved_bindings: &mut Vec<(RepoPath, SemanticReadReservationBinding)>,
+    reserve: &mut impl FnMut(
+        &[SemanticReadReservationBinding],
+    ) -> Result<SemanticReadReservation, EngineError>,
+) -> Result<Option<ReservedCapture>, EngineError> {
+    if paths.is_empty() {
+        return Ok(None);
+    }
+    let reservations = semantic_read_reservations(root, paths)?;
+    let outcome = match reserve(&reservations)? {
+        SemanticReadReservation::Reserved => {
+            reserved_bindings.extend(paths.iter().cloned().zip(reservations));
+            return Ok(None);
+        }
+        SemanticReadReservation::Conflict { paths, gate_ids } => {
+            ReservedCapture::Blocked(GateSignal::SemanticInputConflict { paths, gate_ids })
+        }
+        SemanticReadReservation::TransitionCatalogChanged => {
+            ReservedCapture::Blocked(GateSignal::TransitionCatalogChanged)
+        }
+        SemanticReadReservation::Committed(result) => ReservedCapture::Committed(*result),
+    };
+    Ok(Some(outcome))
+}
+
+fn stale_reserved_semantic_paths(
+    root: &Path,
+    bindings: &[(RepoPath, SemanticReadReservationBinding)],
+    captured_inputs: &[SemanticInputRecord],
+) -> Result<Vec<RepoPathProjection>, EngineError> {
+    let captured_by_path = captured_inputs
+        .iter()
+        .map(|input| (input.path.canonical.as_slice(), input))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut stale = Vec::new();
+    for (path, reserved) in bindings {
+        let current = semantic_read_reservation(root, path)?;
+        if current != *reserved {
+            stale.push(current.path);
+            continue;
+        }
+        let Some(captured) = captured_by_path.get(reserved.path.canonical.as_slice()) else {
+            stale.push(current.path);
+            continue;
+        };
+        if captured.state == SemanticInputState::ConfigPresent {
+            let current_payload = lumin_inventory::dependency_input_payload_sha256(root, path)?;
+            if captured.payload_sha256.as_deref() != Some(current_payload.as_str()) {
+                stale.push(current.path);
+            }
+        }
+    }
+    stale.sort();
+    stale.dedup();
+    Ok(stale)
+}
+
+fn final_freshness_validation_signals(
+    root: &Path,
+    validation: &FinalFreshnessValidation,
+) -> Vec<GateSignal> {
+    match stale_reserved_semantic_paths(root, &validation.bindings, &validation.captured_inputs) {
+        Ok(paths) if paths.is_empty() => Vec::new(),
+        Ok(paths) => vec![GateSignal::ProtectedInputChanged { paths }],
+        Err(error) => vec![GateSignal::AnalysisFailed {
+            detail: error.to_string(),
+        }],
+    }
+}
+
+fn include_dependency_candidate_topology_inputs(
+    capture: &mut RepositoryCapture,
+    bindings: &[(RepoPath, SemanticReadReservationBinding)],
+) {
+    let mut inputs = capture.snapshot.inputs.clone();
+    for (_, binding) in bindings {
+        if inputs.iter().any(|input| input.path == binding.path) {
+            continue;
+        }
+        let (state, payload_sha256) = if binding.absence_parent.is_some() {
+            (SemanticInputState::Missing, None)
+        } else {
+            (
+                SemanticInputState::Unreadable,
+                Some(digest_hex(b"dependency-candidate-topology-only.v1")),
+            )
+        };
+        inputs.push(SemanticInputRecord {
+            path: binding.path.clone(),
+            state,
+            payload_sha256,
+            physical_identity: binding.physical_identity.clone(),
+            absence_parent: binding.absence_parent.clone(),
+            physical_redirect_sha256: None,
+        });
+    }
+    capture.snapshot = seal_analysis_snapshot(
+        inputs,
+        capture.snapshot.evidence.clone(),
+        capture.snapshot.scan_invocation.clone(),
+        capture.snapshot.entry_selections.clone(),
+    );
+}
+
+fn semantic_read_reservations(
+    root: &Path,
+    paths: &[RepoPath],
+) -> Result<Vec<SemanticReadReservationBinding>, EngineError> {
+    paths
+        .iter()
+        .map(|path| semantic_read_reservation(root, path))
+        .collect()
+}
+
+fn semantic_read_reservation(
+    root: &Path,
+    path: &RepoPath,
+) -> Result<SemanticReadReservationBinding, EngineError> {
+    let identity = lumin_inventory::observe_config_input_identity(root, path)?;
+    Ok(SemanticReadReservationBinding {
+        path: RepoPathProjection::from(path),
+        physical_identity: identity.physical_identity,
+        absence_parent: identity.absence_parent.map(|parent| PathPrefixIdentity {
+            path: RepoPathProjection::from(&parent.path),
+            physical_identity: parent.physical_identity,
+        }),
+    })
 }
 
 pub fn load_gate(root: &Path, gate_id: &GateId) -> Result<GateRecord, EngineError> {
@@ -506,11 +739,31 @@ fn inventory_request_from_tier(tier: &ScanInvocationTier) -> Result<InventoryReq
         }
         entries.push(path);
     }
+    let mut dependency_intents = Vec::with_capacity(tier.dependency_intents.len());
+    for record in &tier.dependency_intents {
+        let path = RepoPath::from_canonical_bytes(&record.path.canonical).map_err(|error| {
+            EngineError::TierProjectionCorrupt(format!(
+                "failed to decode dependency-intent projection {}: {error}",
+                record.path.display
+            ))
+        })?;
+        if RepoPathProjection::from(&path) != record.path {
+            return Err(EngineError::TierProjectionCorrupt(format!(
+                "dependency-intent projection round-trip failed for {}",
+                record.path.display
+            )));
+        }
+        dependency_intents.push(DependencyIntent {
+            path,
+            dependency: record.dependency.clone(),
+        });
+    }
     Ok(InventoryRequest {
         includes: tier.includes.clone(),
         excludes: tier.excludes.clone(),
         role_overrides: tier.role_overrides.clone(),
         entries,
+        dependency_intents,
     })
 }
 
@@ -526,7 +779,7 @@ pub fn load_operation(
 
 fn pre_write_digest(paths: &[RepoPath], options: &GateAnalysisOptions) -> String {
     let mut bytes = Vec::new();
-    append_length_prefixed(&mut bytes, b"lumin-pre-write.v3");
+    append_length_prefixed(&mut bytes, b"lumin-pre-write.v4");
     // Use canonical tier framing for all invocation parameters
     options.scan_invocation.append_semantic_framing(&mut bytes);
     // Declared write paths
@@ -543,4 +796,96 @@ fn post_write_digest(gate_id: &GateId) -> String {
     append_length_prefixed(&mut bytes, b"lumin-post-write.v2");
     append_length_prefixed(&mut bytes, gate_id.as_str().as_bytes());
     digest_hex(&bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn final_freshness_rejects_a_created_reserved_dependency_candidate()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        std::fs::create_dir_all(root.path().join("apps/project/src"))?;
+        let candidate = RepoPath::from_portable("apps/project/package.json")?;
+        let binding = semantic_read_reservations(root.path(), std::slice::from_ref(&candidate))?
+            .pop()
+            .ok_or("missing semantic-read reservation")?;
+        let reserved = (candidate.clone(), binding.clone());
+        let captured = SemanticInputRecord {
+            path: binding.path.clone(),
+            state: SemanticInputState::Missing,
+            payload_sha256: None,
+            physical_identity: binding.physical_identity.clone(),
+            absence_parent: binding.absence_parent.clone(),
+            physical_redirect_sha256: None,
+        };
+
+        assert!(
+            stale_reserved_semantic_paths(
+                root.path(),
+                std::slice::from_ref(&reserved),
+                std::slice::from_ref(&captured),
+            )?
+            .is_empty()
+        );
+
+        std::fs::write(
+            root.path().join("apps/project/package.json"),
+            r#"{"name":"closer-owner"}"#,
+        )?;
+        assert_eq!(
+            stale_reserved_semantic_paths(
+                root.path(),
+                std::slice::from_ref(&reserved),
+                std::slice::from_ref(&captured),
+            )?,
+            vec![binding.path]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn final_freshness_rehashes_present_reserved_dependency_inputs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let candidate = RepoPath::from_portable("package.json")?;
+        std::fs::write(
+            root.path().join("package.json"),
+            r#"{"name":"root","workspaces":["packages/*"]}"#,
+        )?;
+        let binding = semantic_read_reservations(root.path(), std::slice::from_ref(&candidate))?
+            .pop()
+            .ok_or("missing semantic-read reservation")?;
+        let captured = SemanticInputRecord {
+            path: binding.path.clone(),
+            state: SemanticInputState::ConfigPresent,
+            payload_sha256: Some(lumin_inventory::dependency_input_payload_sha256(
+                root.path(),
+                &candidate,
+            )?),
+            physical_identity: binding.physical_identity.clone(),
+            absence_parent: None,
+            physical_redirect_sha256: None,
+        };
+        let reserved = (candidate.clone(), binding.clone());
+        let validation = FinalFreshnessValidation {
+            bindings: vec![reserved.clone()],
+            captured_inputs: vec![captured.clone()],
+        };
+
+        assert!(final_freshness_validation_signals(root.path(), &validation).is_empty());
+
+        std::fs::write(
+            root.path().join("package.json"),
+            r#"{"name":"root","workspaces":["changed/*"]}"#,
+        )?;
+        assert_eq!(
+            final_freshness_validation_signals(root.path(), &validation),
+            [GateSignal::ProtectedInputChanged {
+                paths: vec![binding.path]
+            }]
+        );
+        Ok(())
+    }
 }

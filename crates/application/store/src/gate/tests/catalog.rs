@@ -37,7 +37,7 @@ fn post_write_catalog_race_discards_actual_write_attribution_idempotently()
         signals: Vec::new(),
         deltas: Vec::new(),
     };
-    let first = close_a.finish_post_write("close-a", &gate_a, finish())?;
+    let first = close_a.finish_post_write("close-a", &gate_a, finish(), Vec::new)?;
     assert!(!first.decision.authorizes());
     assert!(first.actual_write_set.is_none());
     assert!(
@@ -46,7 +46,7 @@ fn post_write_catalog_race_discards_actual_write_attribution_idempotently()
             .contains(&GateSignal::TransitionCatalogChanged)
     );
 
-    let retry = close_a.finish_post_write("close-a", &gate_a, finish())?;
+    let retry = close_a.finish_post_write("close-a", &gate_a, finish(), Vec::new)?;
     assert_eq!(retry, first);
     let persisted = store.load_gate(&gate_a)?;
     assert!(

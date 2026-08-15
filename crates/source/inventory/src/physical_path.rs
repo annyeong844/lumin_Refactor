@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use lumin_model::{
@@ -138,6 +139,53 @@ pub fn inspect_write_target(
         nearest_existing_parent: None,
         prefix_identities,
     })
+}
+
+pub fn rehash_existing_write_target(
+    root: &Path,
+    observation: &WriteTargetObservation,
+) -> Result<String, WriteTargetError> {
+    if observation.kind != WriteTargetKind::ExistingFile {
+        return Err(WriteTargetError::NonRegular(
+            observation.path.display_escaped(),
+        ));
+    }
+    let expected_identity = observation.physical_identity.as_ref().ok_or_else(|| {
+        WriteTargetError::PhysicalIdentity(InventoryError::PhysicalIdentity(format!(
+            "existing write target omitted its physical identity: {}",
+            observation.path.display_escaped()
+        )))
+    })?;
+    let native = root.join(native_relative(&observation.path)?);
+    let mut file = fs::File::open(&native).map_err(|error| WriteTargetError::Io {
+        path: observation.path.display_escaped(),
+        detail: error.to_string(),
+    })?;
+    let opened_identity = super::capture::physical_identity_from_file(&file)?;
+    if &opened_identity != expected_identity {
+        return Err(WriteTargetError::PhysicalIdentity(
+            InventoryError::PhysicalIdentity(format!(
+                "write target changed before payload rehash: {}",
+                observation.path.display_escaped()
+            )),
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|error| WriteTargetError::Io {
+            path: observation.path.display_escaped(),
+            detail: error.to_string(),
+        })?;
+    let current = inspect_write_target(root, &observation.path)?;
+    if current != *observation {
+        return Err(WriteTargetError::PhysicalIdentity(
+            InventoryError::PhysicalIdentity(format!(
+                "write target changed during payload rehash: {}",
+                observation.path.display_escaped()
+            )),
+        ));
+    }
+    Ok(digest_hex(&bytes))
 }
 
 fn nearest_existing_parent(root: &Path, path: &RepoPath) -> Result<RepoPath, WriteTargetError> {
@@ -325,14 +373,21 @@ pub fn observe_config_input_identity(
                 absence_parent: None,
             })
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(ConfigInputIdentity {
-            physical_identity: None,
-            absence_parent: Some(config_absence_parent(
-                root,
-                &canonical_root,
-                path.parent().unwrap_or_else(RepoPath::empty),
-            )?),
-        }),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Ok(ConfigInputIdentity {
+                physical_identity: None,
+                absence_parent: Some(config_absence_parent(
+                    root,
+                    &canonical_root,
+                    path.parent().unwrap_or_else(RepoPath::empty),
+                )?),
+            })
+        }
         Err(error) => Err(InventoryError::PhysicalIdentity(error.to_string())),
     }
 }
@@ -363,7 +418,12 @@ fn config_absence_parent(
                     path,
                 });
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
                 path = path.parent().ok_or_else(|| {
                     InventoryError::PhysicalIdentity(
                         "repository root disappeared while binding a missing config".to_owned(),

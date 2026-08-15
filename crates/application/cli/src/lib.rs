@@ -11,8 +11,8 @@ use lumin_engine::{
     PostWriteRequest, PreWriteRequest,
 };
 use lumin_model::{
-    BuildIdentity, FindingId, GateId, OperationId, RepoPath, ResolutionProfile, RoleOverride,
-    RunId, ScanRole,
+    BuildIdentity, DependencyIntent, FindingId, GateId, OperationId, RepoPath, ResolutionProfile,
+    RoleOverride, RunId, ScanRole,
 };
 use lumin_protocol::ProtocolError;
 use thiserror::Error;
@@ -515,6 +515,7 @@ fn pre_write(
 ) -> Result<CommandOutput, CliError> {
     let mut operation_id = None;
     let mut paths = Vec::new();
+    let mut dependency_intents = Vec::new();
     let mut includes = Vec::new();
     let mut excludes = Vec::new();
     let mut role_overrides = Vec::new();
@@ -561,6 +562,16 @@ fn pre_write(
                         .map_err(|error| CliError::InvalidRepoPath(error.to_string()))?,
                 );
             }
+            "--dependency-at" => {
+                let value = arguments.required_os("--dependency-at path")?;
+                let path = lumin_engine::lower_native_repo_path(&value)
+                    .map_err(|error| CliError::InvalidRepoPath(error.to_string()))?;
+                let dependency = arguments.required_utf8("--dependency-at dependency")?;
+                if dependency.is_empty() {
+                    return Err(CliError::EmptyIdentifier("dependency".to_owned()));
+                }
+                dependency_intents.push(DependencyIntent { path, dependency });
+            }
             "--include" => includes.push(arguments.required_utf8("--include")?),
             "--exclude" => excludes.push(arguments.required_utf8("--exclude")?),
             "--role-at" => {
@@ -596,6 +607,7 @@ fn pre_write(
         excludes,
         role_overrides,
         entries,
+        dependency_intents,
         jobs,
         resolution_profile,
     })?;

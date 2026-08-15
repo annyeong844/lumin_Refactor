@@ -8,7 +8,7 @@ use lumin_model::{
 };
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::{RepoPathProjection, RunEvidence, delta::lifecycle_delta_input};
+use crate::{RepoPathProjection, RunEvidence, delta::lifecycle_delta_input_for};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -105,6 +105,13 @@ pub struct AnalysisSnapshot {
     pub evidence: RunEvidence,
 }
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DependencyIntentRecord {
+    pub path: RepoPathProjection,
+    pub dependency: String,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanInvocationTier {
@@ -116,6 +123,8 @@ pub struct ScanInvocationTier {
     pub role_overrides: Vec<lumin_model::RoleOverride>,
     #[serde(default)]
     pub entries: Vec<RepoPathProjection>,
+    #[serde(default)]
+    pub dependency_intents: Vec<DependencyIntentRecord>,
     #[serde(default)]
     pub resolution_profile: Option<ResolutionProfile>,
 }
@@ -146,6 +155,12 @@ impl ScanInvocationTier {
         output.extend_from_slice(&(self.entries.len() as u64).to_be_bytes());
         for entry in &self.entries {
             append_length_prefixed(output, &entry.canonical);
+        }
+        // Dependency intents (already sorted/deduped by construction)
+        output.extend_from_slice(&(self.dependency_intents.len() as u64).to_be_bytes());
+        for intent in &self.dependency_intents {
+            append_length_prefixed(output, &intent.path.canonical);
+            append_length_prefixed(output, intent.dependency.as_bytes());
         }
         // Resolution profile
         match self.resolution_profile {
@@ -233,12 +248,31 @@ impl WriteLease {
         &self,
         path: &RepoPathProjection,
         physical_identity: Option<&PhysicalFileIdentity>,
-        absence_parent_identity: Option<&PhysicalFileIdentity>,
+        absence_parent: Option<&PathPrefixIdentity>,
     ) -> bool {
         self.covers(path)
             || (physical_identity.is_some() && self.physical_identity.as_ref() == physical_identity)
-            || (absence_parent_identity.is_some()
-                && self.physical_identity.as_ref() == absence_parent_identity)
+            || absence_parent.is_some_and(|parent| {
+                self.physical_identity.as_ref() == Some(&parent.physical_identity)
+                    || self.enters_missing_semantic_branch(path, parent)
+            })
+    }
+
+    fn enters_missing_semantic_branch(
+        &self,
+        path: &RepoPathProjection,
+        parent: &PathPrefixIdentity,
+    ) -> bool {
+        let parent_components = &parent.path.components;
+        if !path.components.starts_with(parent_components)
+            || !self.path.components.starts_with(parent_components)
+            || !self.prefix_identities.iter().any(|prefix| prefix == parent)
+        {
+            return false;
+        }
+        let first_missing_component = path.components.get(parent_components.len());
+        first_missing_component.is_some()
+            && self.path.components.get(parent_components.len()) == first_missing_component
     }
 }
 
@@ -665,8 +699,16 @@ fn entry_unavailable_reason_tag(reason: lumin_model::EntryUnavailableReason) -> 
 pub mod gate_policy {
     use super::*;
 
-    pub fn opening_signals(evidence: &RunEvidence) -> Vec<GateSignal> {
-        let delta_input = lifecycle_delta_input(evidence);
+    pub fn opening_signals(
+        snapshot: &AnalysisSnapshot,
+        leased_write_set: &[WriteLease],
+    ) -> Vec<GateSignal> {
+        let evidence = &snapshot.evidence;
+        let delta_input = lifecycle_delta_input_for(
+            evidence,
+            &snapshot.scan_invocation.dependency_intents,
+            leased_write_set,
+        );
         let mut signals = Vec::new();
         if requires_complete_evidence(evidence, delta_input.required_evidence_gap_count) {
             signals.push(GateSignal::RequiredEvidenceIncomplete {
@@ -715,7 +757,18 @@ pub mod gate_policy {
         let mut unplanned = Vec::new();
 
         for (path, baseline_input) in &baseline_by_path {
-            if current_by_path.get(path).copied() != Some(*baseline_input) {
+            let current_input = current_by_path.get(path).copied();
+            if current_input != Some(*baseline_input) {
+                if current_input.is_some_and(|current_input| {
+                    is_owned_missing_boundary_change(
+                        baseline_input,
+                        current_input,
+                        leased_write_set,
+                        &current.inputs,
+                    )
+                }) {
+                    continue;
+                }
                 changed.push(baseline_input.path.clone());
                 if !leased_write_set
                     .iter()
@@ -751,8 +804,16 @@ pub mod gate_policy {
         sort_paths(&mut protected);
         sort_paths(&mut unplanned);
 
-        let baseline_delta_input = lifecycle_delta_input(&baseline.evidence);
-        let current_delta_input = lifecycle_delta_input(&current.evidence);
+        let baseline_delta_input = lifecycle_delta_input_for(
+            &baseline.evidence,
+            &baseline.scan_invocation.dependency_intents,
+            leased_write_set,
+        );
+        let current_delta_input = lifecycle_delta_input_for(
+            &current.evidence,
+            &current.scan_invocation.dependency_intents,
+            leased_write_set,
+        );
         let deltas = classify_lifecycle_deltas(
             Some(&baseline_delta_input.facts),
             &current_delta_input.facts,
@@ -773,6 +834,82 @@ pub mod gate_policy {
             signals.push(GateSignal::UnplannedWrite { paths: unplanned });
         }
         (signals, changed, deltas)
+    }
+
+    pub fn is_owned_missing_boundary_change(
+        baseline: &SemanticInputRecord,
+        current: &SemanticInputRecord,
+        leased_write_set: &[WriteLease],
+        current_inputs: &[SemanticInputRecord],
+    ) -> bool {
+        if baseline.state != SemanticInputState::Missing
+            || current.state != SemanticInputState::Missing
+            || baseline.path != current.path
+            || baseline.payload_sha256 != current.payload_sha256
+            || baseline.physical_identity != current.physical_identity
+            || baseline.physical_redirect_sha256 != current.physical_redirect_sha256
+        {
+            return false;
+        }
+        let (Some(baseline_parent), Some(current_parent)) =
+            (&baseline.absence_parent, &current.absence_parent)
+        else {
+            return false;
+        };
+        let Some((_, config_parent)) = baseline.path.components.split_last() else {
+            return false;
+        };
+        if baseline_parent.path == current_parent.path {
+            return leased_write_set.iter().any(|lease| {
+                lease.kind == WriteLeaseKind::ExistingFile
+                    && lease.path == baseline_parent.path
+                    && lease.physical_identity.as_ref() == Some(&baseline_parent.physical_identity)
+                    && current_inputs.iter().any(|input| {
+                        input.path == lease.path
+                            && input.state == SemanticInputState::Source
+                            && input.physical_identity.as_ref()
+                                == Some(&current_parent.physical_identity)
+                    })
+            });
+        }
+        if current_parent.path.components.len() <= baseline_parent.path.components.len()
+            || !current_parent
+                .path
+                .components
+                .starts_with(&baseline_parent.path.components)
+            || !config_parent.starts_with(&current_parent.path.components)
+        {
+            return false;
+        }
+        leased_write_set.iter().any(|lease| match lease.kind {
+            WriteLeaseKind::NewFile => {
+                lease.path.components.starts_with(config_parent)
+                    && current_inputs.iter().any(|input| {
+                        input.path == lease.path
+                            && matches!(
+                                input.state,
+                                SemanticInputState::Source | SemanticInputState::ConfigPresent
+                            )
+                    })
+                    && lease.nearest_existing_parent.as_ref() == Some(&baseline_parent.path)
+                    && lease.prefix_identities.last().is_some_and(|prefix| {
+                        prefix.path == baseline_parent.path
+                            && prefix.physical_identity == baseline_parent.physical_identity
+                    })
+            }
+            WriteLeaseKind::Directory => {
+                config_parent.starts_with(&lease.path.components)
+                    && current_inputs.iter().any(|input| {
+                        input.path.components.starts_with(config_parent)
+                            && matches!(
+                                input.state,
+                                SemanticInputState::Source | SemanticInputState::ConfigPresent
+                            )
+                            && lease.covers(&input.path)
+                    })
+            }
+            WriteLeaseKind::ExistingFile => false,
+        })
     }
 
     pub fn actual_write_attribution_is_complete(signals: &[GateSignal]) -> bool {
@@ -850,7 +987,9 @@ pub mod gate_policy {
                     }
                 }
                 GateDeltaClassification::Unchanged => {
-                    counts.unchanged_facts += 1;
+                    if delta.key.family != DeltaFactFamily::DependencyOwnership {
+                        counts.unchanged_facts += 1;
+                    }
                 }
                 GateDeltaClassification::Regressed { changes } => {
                     classify_regressions(delta.key.family, changes, &mut counts);
@@ -1074,6 +1213,218 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn new_file_lease_conflicts_only_with_its_reserved_missing_branch()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root_identity = PhysicalFileIdentity::Unix {
+            device: 1,
+            inode: 1,
+        };
+        let root_path = RepoPathProjection::from(&RepoPath::empty());
+        let absence_parent = PathPrefixIdentity {
+            path: root_path.clone(),
+            physical_identity: root_identity.clone(),
+        };
+        let lease = WriteLease {
+            path: path("generated/main.ts")?,
+            kind: WriteLeaseKind::NewFile,
+            physical_identity: None,
+            nearest_existing_parent: Some(root_path),
+            prefix_identities: vec![absence_parent.clone()],
+        };
+
+        assert!(lease.conflicts_with_semantic_read(
+            &path("generated/deep/package.json")?,
+            None,
+            Some(&absence_parent),
+        ));
+        assert!(!lease.conflicts_with_semantic_read(
+            &path("other/deep/package.json")?,
+            None,
+            Some(&absence_parent),
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn new_file_parent_creation_preserves_missing_config_protection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root_identity = PhysicalFileIdentity::Unix {
+            device: 1,
+            inode: 1,
+        };
+        let generated_identity = PhysicalFileIdentity::Unix {
+            device: 1,
+            inode: 2,
+        };
+        let baseline_input = missing_input("generated/package.json", "", root_identity.clone())?;
+        let current_input =
+            missing_input("generated/package.json", "generated", generated_identity)?;
+        let root_path = RepoPathProjection::from(&RepoPath::empty());
+        let lease = WriteLease {
+            path: path("generated/deep/main.ts")?,
+            kind: WriteLeaseKind::NewFile,
+            physical_identity: None,
+            nearest_existing_parent: Some(root_path.clone()),
+            prefix_identities: vec![PathPrefixIdentity {
+                path: root_path,
+                physical_identity: root_identity,
+            }],
+        };
+
+        let (signals, changed, _) = gate_policy::closing_signals(
+            &snapshot(vec![baseline_input.clone()]),
+            &snapshot(vec![current_input.clone()]),
+            std::slice::from_ref(&baseline_input),
+            std::slice::from_ref(&lease),
+        );
+        assert_eq!(changed, vec![baseline_input.path.clone()]);
+        assert!(matches!(
+            signals.as_slice(),
+            [GateSignal::ProtectedInputChanged { paths }]
+                if paths == std::slice::from_ref(&baseline_input.path)
+        ));
+
+        let created_source = input("generated/deep/main.ts", "new source")?;
+
+        let (signals, changed, _) = gate_policy::closing_signals(
+            &snapshot(vec![baseline_input.clone()]),
+            &snapshot(vec![current_input, created_source.clone()]),
+            std::slice::from_ref(&baseline_input),
+            std::slice::from_ref(&lease),
+        );
+        assert!(signals.is_empty());
+        assert_eq!(changed, vec![created_source.path.clone()]);
+
+        let now_present = input("generated/package.json", "new manifest")?;
+        let (signals, changed, _) = gate_policy::closing_signals(
+            &snapshot(vec![baseline_input.clone()]),
+            &snapshot(vec![now_present, created_source.clone()]),
+            std::slice::from_ref(&baseline_input),
+            &[lease],
+        );
+        assert_eq!(
+            changed,
+            vec![baseline_input.path.clone(), created_source.path]
+        );
+        assert!(matches!(
+            signals.as_slice(),
+            [GateSignal::ProtectedInputChanged { paths }]
+                if paths == std::slice::from_ref(&baseline_input.path)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn directory_lease_attributes_a_created_descendant_parent_shift()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let app_identity = PhysicalFileIdentity::Unix {
+            device: 1,
+            inode: 20,
+        };
+        let generated_identity = PhysicalFileIdentity::Unix {
+            device: 1,
+            inode: 21,
+        };
+        let baseline_input =
+            missing_input("app/generated/package.json", "app", app_identity.clone())?;
+        let current_input = missing_input(
+            "app/generated/package.json",
+            "app/generated",
+            generated_identity,
+        )?;
+        let lease = WriteLease {
+            path: path("app")?,
+            kind: WriteLeaseKind::Directory,
+            physical_identity: Some(app_identity),
+            nearest_existing_parent: None,
+            prefix_identities: Vec::new(),
+        };
+
+        let (signals, changed, _) = gate_policy::closing_signals(
+            &snapshot(vec![baseline_input.clone()]),
+            &snapshot(vec![current_input.clone()]),
+            std::slice::from_ref(&baseline_input),
+            std::slice::from_ref(&lease),
+        );
+        assert!(signals.is_empty());
+        assert_eq!(changed, vec![baseline_input.path.clone()]);
+
+        let mut created_source = input("app/generated/main.ts", "new source")?;
+        created_source.state = SemanticInputState::Source;
+        let (signals, changed, _) = gate_policy::closing_signals(
+            &snapshot(vec![baseline_input.clone()]),
+            &snapshot(vec![current_input, created_source.clone()]),
+            std::slice::from_ref(&baseline_input),
+            &[lease],
+        );
+        assert!(signals.is_empty());
+        assert_eq!(changed, vec![created_source.path]);
+        Ok(())
+    }
+
+    #[test]
+    fn existing_file_replacement_preserves_impossible_child_guard()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let baseline_identity = PhysicalFileIdentity::Unix {
+            device: 1,
+            inode: 10,
+        };
+        let current_identity = PhysicalFileIdentity::Unix {
+            device: 1,
+            inode: 11,
+        };
+        let baseline_guard = missing_input(
+            "src/main.ts/package.json",
+            "src/main.ts",
+            baseline_identity.clone(),
+        )?;
+        let current_guard = missing_input(
+            "src/main.ts/package.json",
+            "src/main.ts",
+            current_identity.clone(),
+        )?;
+        let source_path = path("src/main.ts")?;
+        let current_source = SemanticInputRecord {
+            path: source_path.clone(),
+            state: SemanticInputState::Source,
+            payload_sha256: Some("current".to_owned()),
+            physical_identity: Some(current_identity),
+            absence_parent: None,
+            physical_redirect_sha256: None,
+        };
+        let lease = WriteLease {
+            path: source_path,
+            kind: WriteLeaseKind::ExistingFile,
+            physical_identity: Some(baseline_identity),
+            nearest_existing_parent: None,
+            prefix_identities: Vec::new(),
+        };
+
+        let (signals, _, _) = gate_policy::closing_signals(
+            &snapshot(vec![baseline_guard.clone()]),
+            &snapshot(vec![current_guard.clone(), current_source.clone()]),
+            std::slice::from_ref(&baseline_guard),
+            &[],
+        );
+        assert!(signals.iter().any(|signal| matches!(
+            signal,
+            GateSignal::ProtectedInputChanged { paths }
+                if paths == std::slice::from_ref(&baseline_guard.path)
+        )));
+
+        let (signals, changed, _) = gate_policy::closing_signals(
+            &snapshot(vec![baseline_guard.clone()]),
+            &snapshot(vec![current_guard, current_source.clone()]),
+            std::slice::from_ref(&baseline_guard),
+            std::slice::from_ref(&lease),
+        );
+
+        assert!(signals.is_empty());
+        assert_eq!(changed, vec![current_source.path]);
+        Ok(())
+    }
+
     fn snapshot(inputs: Vec<SemanticInputRecord>) -> AnalysisSnapshot {
         seal_analysis_snapshot(
             inputs,
@@ -1087,6 +1438,7 @@ mod tests {
                 source_classifications: Vec::new(),
                 source_contexts: Vec::new(),
                 source_observations: Vec::new(),
+                dependency_owners: Vec::new(),
                 resolutions: Vec::new(),
                 metrics: Default::default(),
                 findings: Vec::new(),
@@ -1111,12 +1463,35 @@ mod tests {
         })
     }
 
+    fn missing_input(
+        value: &str,
+        parent: &str,
+        physical_identity: PhysicalFileIdentity,
+    ) -> Result<SemanticInputRecord, Box<dyn std::error::Error>> {
+        let parent = if parent.is_empty() {
+            RepoPathProjection::from(&RepoPath::empty())
+        } else {
+            path(parent)?
+        };
+        Ok(SemanticInputRecord {
+            path: path(value)?,
+            state: SemanticInputState::Missing,
+            payload_sha256: None,
+            physical_identity: None,
+            absence_parent: Some(PathPrefixIdentity {
+                path: parent,
+                physical_identity,
+            }),
+            physical_redirect_sha256: None,
+        })
+    }
+
     fn path(value: &str) -> Result<RepoPathProjection, Box<dyn std::error::Error>> {
         Ok(RepoPathProjection::from(&RepoPath::from_portable(value)?))
     }
 
     #[test]
-    fn scan_invocation_changes_analysis_input_id() {
+    fn scan_invocation_changes_analysis_input_id() -> Result<(), Box<dyn std::error::Error>> {
         let evidence = RunEvidence {
             schema_version: "lumin-evidence.v1".to_owned(),
             capabilities: vec![CapabilityRecord {
@@ -1127,6 +1502,7 @@ mod tests {
             source_classifications: Vec::new(),
             source_contexts: Vec::new(),
             source_observations: Vec::new(),
+            dependency_owners: Vec::new(),
             resolutions: Vec::new(),
             metrics: Default::default(),
             findings: Vec::new(),
@@ -1151,6 +1527,24 @@ mod tests {
             without_invocation.analysis_input_id, with_includes.analysis_input_id,
             "scan invocation tier includes must affect the analysis input ID"
         );
+
+        let with_dependency_intent = seal_analysis_snapshot(
+            Vec::new(),
+            evidence,
+            ScanInvocationTier {
+                dependency_intents: vec![DependencyIntentRecord {
+                    path: path("packages/app/src/main.ts")?,
+                    dependency: "zod".to_owned(),
+                }],
+                ..Default::default()
+            },
+            Vec::new(),
+        );
+        assert_ne!(
+            without_invocation.analysis_input_id, with_dependency_intent.analysis_input_id,
+            "dependency intent must affect the analysis input ID"
+        );
+        Ok(())
     }
 
     #[test]
@@ -1162,6 +1556,7 @@ mod tests {
             source_classifications: Vec::new(),
             source_contexts: Vec::new(),
             source_observations: Vec::new(),
+            dependency_owners: Vec::new(),
             resolutions: Vec::new(),
             metrics: Default::default(),
             findings: Vec::new(),
@@ -1247,6 +1642,7 @@ mod tests {
             source_classifications: Vec::new(),
             source_contexts: Vec::new(),
             source_observations: Vec::new(),
+            dependency_owners: Vec::new(),
             resolutions: Vec::new(),
             metrics: Default::default(),
             findings: Vec::new(),

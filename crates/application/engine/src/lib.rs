@@ -35,9 +35,10 @@ use std::path::{Path, PathBuf};
 
 use lumin_evidence::{
     AnalysisMetrics, AnalysisSnapshot, CapabilityRecord, DEAD_CODE_CAPABILITY_ID,
-    EntrySelectionRecord, PathPrefixIdentity, RepoPathProjection, RunEvidence, ScanInvocationTier,
-    SemanticInputRecord, SemanticInputState, SourceClassificationRecord, SourceContextRecord,
-    SourceObservationRecord, seal_analysis_snapshot,
+    DEPENDENCY_OWNERSHIP_CAPABILITY_ID, DependencyOwnerRecord, EntrySelectionRecord,
+    PathPrefixIdentity, RepoPathProjection, RunEvidence, ScanInvocationTier, SemanticInputRecord,
+    SemanticInputState, SourceClassificationRecord, SourceContextRecord, SourceObservationRecord,
+    seal_analysis_snapshot,
 };
 use lumin_inventory::{
     InventoryError, InventoryRequest, InventorySnapshot, SemanticPolicyState, repository_admission,
@@ -204,6 +205,7 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
         excludes: request.excludes.clone(),
         role_overrides: request.role_overrides.clone(),
         entries: request.entries.clone(),
+        dependency_intents: Vec::new(),
     };
     let evidence = match capture_admitted_repository(
         &context.root,
@@ -288,6 +290,7 @@ struct RepositoryCapture {
     snapshot: AnalysisSnapshot,
     source_paths: Vec<lumin_model::RepoPath>,
     source_adjacency: BTreeMap<lumin_model::RepoPath, BTreeSet<lumin_model::RepoPath>>,
+    inferred_write_paths: Vec<lumin_model::RepoPath>,
 }
 
 struct RepositoryAnalysisSession {
@@ -359,6 +362,7 @@ fn build_scan_invocation_tier(
         excludes: request.excludes.clone(),
         role_overrides: request.role_overrides.clone(),
         entries,
+        dependency_intents: Vec::new(),
         resolution_profile,
     }
 }
@@ -371,12 +375,22 @@ impl RepositoryAnalysisSession {
         jobs: usize,
         scan_invocation: ScanInvocationTier,
     ) -> Result<Self, EngineError> {
+        let inventory = lumin_inventory::scan(root, request)?;
+        Self::start_with_inventory(repository_root, inventory, jobs, scan_invocation)
+    }
+
+    fn start_with_inventory(
+        repository_root: RepositoryRootIdentity,
+        inventory: InventorySnapshot,
+        jobs: usize,
+        scan_invocation: ScanInvocationTier,
+    ) -> Result<Self, EngineError> {
         if jobs == 0 {
             return Err(EngineError::InvalidWorkerCount(0));
         }
         Ok(Self {
             repository_root,
-            inventory: lumin_inventory::scan(root, request)?,
+            inventory,
             extraction: None,
             js_parse_product_count: 0,
             jobs,
@@ -508,15 +522,17 @@ impl RepositoryAnalysisSession {
             &self.inventory.config,
             &limitations,
         );
-        let state = if limitations.is_empty() {
-            CapabilityState::Complete
-        } else {
-            CapabilityState::Incomplete
-        };
-        let mut capabilities = vec![CapabilityRecord {
-            capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
-            state,
-        }];
+        let state = dead_code_state(&limitations);
+        let mut capabilities = vec![
+            CapabilityRecord {
+                capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
+                state,
+            },
+            CapabilityRecord {
+                capability_id: DEPENDENCY_OWNERSHIP_CAPABILITY_ID.to_owned(),
+                state: dependency_ownership_state(&limitations),
+            },
+        ];
         capabilities.extend(sfc_capability_records(&extraction.sfc_states));
         let source_classifications = self
             .inventory
@@ -554,6 +570,21 @@ impl RepositoryAnalysisSession {
                 payload_snapshot_id: source.payload_snapshot_id.clone(),
             })
             .collect::<Vec<_>>();
+        let dependency_owners = self
+            .inventory
+            .config
+            .dependency_owners
+            .iter()
+            .map(|owner| DependencyOwnerRecord {
+                consumer: lumin_model::LogicalSourceId::from_path(&owner.intent.path),
+                consumer_path: RepoPathProjection::from(&owner.intent.path),
+                dependency: owner.intent.dependency.clone(),
+                package_root: RepoPathProjection::from(&owner.package_root),
+                manifest_path: RepoPathProjection::from(&owner.manifest_path),
+                manifest_payload_sha256: owner.manifest_payload_sha256.clone(),
+                lockfile_path: owner.lockfile_path.as_ref().map(RepoPathProjection::from),
+            })
+            .collect::<Vec<_>>();
         let physical_source_count = source_observations
             .iter()
             .map(|observation| observation.physical_identity.clone())
@@ -577,6 +608,7 @@ impl RepositoryAnalysisSession {
             source_classifications,
             source_contexts,
             source_observations,
+            dependency_owners,
             resolutions: resolved,
             metrics,
             findings,
@@ -588,6 +620,17 @@ impl RepositoryAnalysisSession {
             .iter()
             .map(|source| source.path.clone())
             .collect();
+        let mut inferred_write_paths = self
+            .inventory
+            .config
+            .dependency_owners
+            .iter()
+            .flat_map(|owner| {
+                std::iter::once(owner.manifest_path.clone()).chain(owner.lockfile_path.clone())
+            })
+            .collect::<Vec<_>>();
+        inferred_write_paths.sort();
+        inferred_write_paths.dedup();
 
         // Build entry selection records from ALL inventory entries (available + unavailable)
         let entry_selections: Vec<EntrySelectionRecord> = self
@@ -610,6 +653,7 @@ impl RepositoryAnalysisSession {
             ),
             source_paths,
             source_adjacency,
+            inferred_write_paths,
         })
     }
 }
@@ -686,16 +730,33 @@ fn semantic_input_records(inventory: &InventorySnapshot) -> Vec<SemanticInputRec
     }
     // Convert policy inputs (lumin.json, .gitignore files) to semantic input records
     for policy_input in &inventory.policy_inputs {
-        let state = match policy_input.state {
-            SemanticPolicyState::Present => SemanticInputState::ConfigPresent,
-            SemanticPolicyState::Missing => SemanticInputState::Missing,
+        let (state, payload_sha256) = match policy_input.state {
+            SemanticPolicyState::Present => (
+                SemanticInputState::ConfigPresent,
+                policy_input.payload_sha256.clone(),
+            ),
+            SemanticPolicyState::Missing => (SemanticInputState::Missing, None),
+            SemanticPolicyState::NonRegular => (SemanticInputState::NonRegular, None),
+            SemanticPolicyState::Unreadable => (
+                SemanticInputState::Unreadable,
+                policy_input
+                    .detail
+                    .as_ref()
+                    .map(|detail| digest_hex(detail.as_bytes())),
+            ),
         };
         inputs.push(SemanticInputRecord {
             path: RepoPathProjection::from(&policy_input.path),
             state,
-            payload_sha256: policy_input.payload_sha256.clone(),
+            payload_sha256,
             physical_identity: policy_input.physical_identity.clone(),
-            absence_parent: None,
+            absence_parent: policy_input
+                .absence_parent
+                .as_ref()
+                .map(|parent| PathPrefixIdentity {
+                    path: RepoPathProjection::from(&parent.path),
+                    physical_identity: parent.physical_identity.clone(),
+                }),
             physical_redirect_sha256: None,
         });
     }
@@ -791,6 +852,37 @@ fn sfc_capability_records(states: &BTreeMap<SfcDialect, CapabilityState>) -> Vec
             state: states.get(&dialect).copied().unwrap_or(initial_state),
         })
         .collect()
+}
+
+// The architecture check must inspect Limitation variants outside macro token streams.
+#[allow(clippy::match_like_matches_macro)]
+fn dependency_ownership_state(limitations: &[Limitation]) -> CapabilityState {
+    if limitations.iter().any(|limitation| match limitation {
+        Limitation::PackageMetadataUnobservable { .. }
+        | Limitation::PackageIdentityUnsupported { .. }
+        | Limitation::DependencyOwnerAmbiguous { .. }
+        | Limitation::WorkspaceOwnershipUnsupported { .. }
+        | Limitation::PnpmDependencySemanticsUnsupported { .. } => true,
+        _ => false,
+    }) {
+        CapabilityState::Incomplete
+    } else {
+        CapabilityState::Complete
+    }
+}
+
+// The architecture check must inspect Limitation variants outside macro token streams.
+#[allow(clippy::match_like_matches_macro)]
+fn dead_code_state(limitations: &[Limitation]) -> CapabilityState {
+    if limitations.iter().any(|limitation| match limitation {
+        Limitation::DependencyOwnerAmbiguous { .. }
+        | Limitation::PnpmDependencySemanticsUnsupported { .. } => false,
+        _ => true,
+    }) {
+        CapabilityState::Incomplete
+    } else {
+        CapabilityState::Complete
+    }
 }
 
 fn collect_limitations(
