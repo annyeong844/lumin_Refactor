@@ -33,7 +33,7 @@ use transitions::{
     reconcile_transitions,
 };
 
-const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v24";
+const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v25";
 
 fn analysis_contract_id() -> String {
     let inputs = [
@@ -145,7 +145,7 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
     operation
         .finish_pre_write(&request_digest, &gate_id, finish, || {
             final_validation.map_or_else(Vec::new, |validation| {
-                final_pre_write_validation_signals(&context.root, &validation)
+                final_freshness_validation_signals(&context.root, &validation)
             })
         })
         .map_err(Into::into)
@@ -188,7 +188,7 @@ enum PreWriteAnalysis {
 
 struct PreWritePromotion {
     finish: PreWriteFinish,
-    final_validation: Option<PreWriteFinalValidation>,
+    final_validation: Option<FinalFreshnessValidation>,
 }
 
 impl PreWritePromotion {
@@ -200,7 +200,7 @@ impl PreWritePromotion {
     }
 }
 
-struct PreWriteFinalValidation {
+struct FinalFreshnessValidation {
     bindings: Vec<(RepoPath, SemanticReadReservationBinding)>,
     captured_inputs: Vec<SemanticInputRecord>,
 }
@@ -274,7 +274,7 @@ fn analyze_pre_write(
         &capture.snapshot,
         &leased_write_set,
     ));
-    let final_validation = PreWriteFinalValidation {
+    let final_validation = FinalFreshnessValidation {
         bindings: reserved_semantic_bindings,
         captured_inputs: capture.snapshot.inputs.clone(),
     };
@@ -349,7 +349,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         )));
     }
 
-    let capture = match capture_reserved_repository(
+    let (capture, reserved_semantic_bindings) = match capture_reserved_repository(
         &context.root,
         &context.repository_root,
         &gate.analysis_options,
@@ -360,7 +360,10 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                 .map_err(Into::into)
         },
     ) {
-        Ok(ReservedCapture::Finished { capture, .. }) => capture,
+        Ok(ReservedCapture::Finished {
+            capture,
+            reserved_semantic_bindings,
+        }) => (capture, reserved_semantic_bindings),
         Ok(ReservedCapture::Blocked(signal)) => {
             return finish_failed_close(&operation, request, &request_digest, vec![signal]);
         }
@@ -422,6 +425,10 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         .as_ref()
         .map_or(preliminary_changed_paths, |actual| actual.paths.clone());
 
+    let final_validation = FinalFreshnessValidation {
+        bindings: reserved_semantic_bindings,
+        captured_inputs: capture.snapshot.inputs.clone(),
+    };
     operation
         .finish_post_write(
             &request_digest,
@@ -437,6 +444,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                 signals,
                 deltas,
             },
+            || final_freshness_validation_signals(&context.root, &final_validation),
         )
         .map_err(Into::into)
 }
@@ -476,6 +484,7 @@ fn finish_failed_close(
                 signals,
                 deltas: Vec::new(),
             },
+            Vec::new,
         )
         .map_err(Into::into)
 }
@@ -629,9 +638,9 @@ fn stale_reserved_semantic_paths(
     Ok(stale)
 }
 
-fn final_pre_write_validation_signals(
+fn final_freshness_validation_signals(
     root: &Path,
-    validation: &PreWriteFinalValidation,
+    validation: &FinalFreshnessValidation,
 ) -> Vec<GateSignal> {
     match stale_reserved_semantic_paths(root, &validation.bindings, &validation.captured_inputs) {
         Ok(paths) if paths.is_empty() => Vec::new(),
@@ -860,19 +869,19 @@ mod tests {
             physical_redirect_sha256: None,
         };
         let reserved = (candidate.clone(), binding.clone());
-        let validation = PreWriteFinalValidation {
+        let validation = FinalFreshnessValidation {
             bindings: vec![reserved.clone()],
             captured_inputs: vec![captured.clone()],
         };
 
-        assert!(final_pre_write_validation_signals(root.path(), &validation).is_empty());
+        assert!(final_freshness_validation_signals(root.path(), &validation).is_empty());
 
         std::fs::write(
             root.path().join("package.json"),
             r#"{"name":"root","workspaces":["changed/*"]}"#,
         )?;
         assert_eq!(
-            final_pre_write_validation_signals(root.path(), &validation),
+            final_freshness_validation_signals(root.path(), &validation),
             [GateSignal::ProtectedInputChanged {
                 paths: vec![binding.path]
             }]

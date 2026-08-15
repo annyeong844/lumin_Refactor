@@ -16,7 +16,7 @@ type FindingView = (String, String, String);
 type LimitationView = (String, String, String);
 
 const FROZEN_ANALYSIS_CONTRACT: &str =
-    "5549a7b90f1fb0f100c0bea2ce5217f9a2db2d5c2855f874c5961f4fe5aed9e4";
+    "03feb621003ecf28081853b156376214feb409bc642b041fe366292ef6b3a732";
 
 #[test]
 fn resolver_artifact_identity_is_public_and_frozen() -> Result<(), Box<dyn std::error::Error>> {

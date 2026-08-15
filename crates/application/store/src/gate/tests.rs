@@ -537,6 +537,56 @@ fn final_validation_can_stop_pre_write_promotion() -> Result<(), Box<dyn std::er
 }
 
 #[test]
+fn final_validation_can_stop_post_write_promotion() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate(&store, "op-open", "open-digest", "src/main.ts")?;
+    let operation = store.begin_operation(&OperationId::from_string("op-close".to_owned()))?;
+    let gate = match operation.begin_post_write("close-digest", &gate_id)? {
+        PostWriteStart::Analyze { gate, .. } => gate,
+        PostWriteStart::Committed(_) => return Err("the closing operation committed early".into()),
+    };
+    let baseline = gate
+        .baseline
+        .as_ref()
+        .ok_or("active gate fixture omitted its baseline")?
+        .snapshot
+        .clone();
+    let source = path("src/main.ts")?;
+
+    let result = operation.finish_post_write(
+        "close-digest",
+        &gate_id,
+        PostWriteFinish {
+            snapshot: Some(baseline.clone()),
+            protected_semantic_inputs: Vec::new(),
+            reconciled_baseline: Some(baseline),
+            changed_paths: Vec::new(),
+            actual_write_set: Some(Default::default()),
+            alias_closures: Vec::new(),
+            reconciled_transition_sequences: Vec::new(),
+            signals: Vec::new(),
+            deltas: Vec::new(),
+        },
+        || {
+            vec![GateSignal::ProtectedInputChanged {
+                paths: vec![source.clone()],
+            }]
+        },
+    )?;
+
+    assert!(!result.decision.authorizes());
+    assert!(result.actual_write_set.is_none());
+    assert_eq!(
+        result.signals,
+        [GateSignal::ProtectedInputChanged {
+            paths: vec![source]
+        }]
+    );
+    Ok(())
+}
+
+#[test]
 fn semantic_read_reservation_blocks_later_write_admission() -> Result<(), Box<dyn std::error::Error>>
 {
     let root = tempfile::tempdir()?;
@@ -831,6 +881,7 @@ fn close_active_gate(
                 signals: Vec::new(),
                 deltas: Vec::new(),
             },
+            Vec::new,
         )
         .map_err(Into::into)
 }

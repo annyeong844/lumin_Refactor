@@ -122,49 +122,49 @@ fn package_scope_intersects_write_set(
     evidence: &RunEvidence,
     leased_write_set: &[WriteLease],
 ) -> bool {
-    let scope_root = RepoPath::from_canonical_bytes(package_scope.canonical_root())
+    let Some(scope_root) = RepoPath::from_canonical_bytes(package_scope.canonical_root())
         .ok()
-        .map(|root| RepoPathProjection::from(&root));
+        .map(|root| RepoPathProjection::from(&root))
+    else {
+        return true;
+    };
     leased_write_set.iter().any(|lease| {
-        if lease.kind == WriteLeaseKind::Directory {
-            let covers_known_sources = evidence
-                .source_contexts
-                .iter()
-                .any(|context| lease.covers(&context.path));
-            if covers_known_sources {
-                return evidence.source_contexts.iter().any(|context| {
-                    lease.covers(&context.path)
-                        && context.package_root.as_ref().is_some_and(|root| {
-                            projected_package_scope(root)
-                                .is_some_and(|scope| &scope == package_scope.id())
-                        })
-                });
+        if lease.kind == WriteLeaseKind::Directory
+            && scope_root.components.starts_with(&lease.path.components)
+        {
+            return true;
+        }
+        if !lease.path.components.starts_with(&scope_root.components) {
+            return false;
+        }
+        match nearest_known_package_root(evidence, &lease.path) {
+            Some(root)
+                if projected_package_scope(root)
+                    .is_some_and(|scope| &scope == package_scope.id()) =>
+            {
+                true
             }
-            return scope_root.as_ref().is_some_and(|root| {
-                lease.path.components.starts_with(&root.components)
-                    || root.components.starts_with(&lease.path.components)
-            });
+            Some(root)
+                if root.components.len() > scope_root.components.len()
+                    && root.components.starts_with(&scope_root.components) =>
+            {
+                false
+            }
+            _ => true,
         }
-        if let Some(owner_scope) = nearest_known_package_scope(evidence, &lease.path) {
-            return &owner_scope == package_scope.id();
-        }
-        scope_root
-            .as_ref()
-            .is_some_and(|root| lease.path.components.starts_with(&root.components))
     })
 }
 
-fn nearest_known_package_scope(
-    evidence: &RunEvidence,
+fn nearest_known_package_root<'a>(
+    evidence: &'a RunEvidence,
     path: &RepoPathProjection,
-) -> Option<PackageScopeId> {
+) -> Option<&'a RepoPathProjection> {
     evidence
         .source_contexts
         .iter()
         .filter_map(|context| context.package_root.as_ref())
         .filter(|root| path.components.starts_with(&root.components))
         .max_by_key(|root| root.components.len())
-        .and_then(projected_package_scope)
 }
 
 fn dependency_intent_matches(
@@ -739,6 +739,29 @@ mod tests {
                 .required_evidence_gap_count,
             0,
             "a nested package directory inherited its ancestor package's gap",
+        );
+
+        let parent_package = RepoPath::from_portable("packages/app")?;
+        let nested_package = RepoPath::from_portable("packages/app/nested")?;
+        let nested_source = RepoPath::from_portable("packages/app/nested/src/main.ts")?;
+        let root_source = RepoPath::from_portable("src/root.ts")?;
+        evidence.source_contexts = vec![
+            source_context(&root_source, &RepoPath::empty()),
+            source_context(&nested_source, &nested_package),
+        ];
+        evidence.limitations = vec![Limitation::DependencyOwnerAmbiguous {
+            path: "packages/app/package.json".to_owned(),
+            package_scope: Some(Box::new(lumin_model::PackageScope::from_root(
+                &parent_package,
+            ))),
+            required_intent: None,
+            detail: "malformed parent dependencies".to_owned(),
+        }];
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[directory_lease(&parent_package)])
+                .required_evidence_gap_count,
+            1,
+            "a broad directory lease discarded its own package-scoped gap",
         );
         Ok(())
     }

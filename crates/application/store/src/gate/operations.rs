@@ -374,6 +374,7 @@ impl OperationSession<'_> {
         request_digest: &str,
         gate_id: &GateId,
         finish: PostWriteFinish,
+        final_validation: impl FnOnce() -> Vec<GateSignal>,
     ) -> Result<GateOperationResult, StoreError> {
         let PostWriteFinish {
             snapshot,
@@ -418,6 +419,7 @@ impl OperationSession<'_> {
                 &reconciled_transition_sequences,
                 &mut signals,
             )?;
+            signals.extend(final_validation());
             if !gate_policy::actual_write_attribution_is_complete(&signals) {
                 actual_write_set = None;
             }
