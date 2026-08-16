@@ -57,8 +57,11 @@ impl RepositoryStore {
         &self,
         attempt: &mut AttemptSession<'_>,
         evidence: &RunEvidence,
+        final_validation: impl FnOnce(
+            &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
+        ) -> Result<(), StoreError>,
     ) -> Result<crate::PublishedRun, StoreError> {
-        run::publish(self, attempt, evidence)
+        run::publish(self, attempt, evidence, final_validation)
     }
 
     pub fn latest_snapshot(&self) -> Result<LatestRunSnapshot, StoreError> {

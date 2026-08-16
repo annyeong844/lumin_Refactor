@@ -89,7 +89,7 @@ fn migration_rejects_hard_linked_run_evidence() -> Result<(), Box<dyn std::error
     let root = tempfile::tempdir()?;
     let store = open_store(root.path())?;
     let mut attempt = store.begin_attempt()?;
-    let published = store.publish_run(&mut attempt, &evidence())?;
+    let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
     drop(store);
 
     let evidence_path = root

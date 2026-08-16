@@ -348,7 +348,7 @@ fn open_store(root: &std::path::Path) -> Result<crate::RepositoryStore, crate::S
 
 fn publish(store: &crate::RepositoryStore) -> Result<crate::PublishedRun, crate::StoreError> {
     let mut attempt = store.begin_attempt()?;
-    store.publish_run(&mut attempt, &evidence())
+    store.publish_run(&mut attempt, &evidence(), |_| Ok(()))
 }
 
 fn evidence() -> RunEvidence {

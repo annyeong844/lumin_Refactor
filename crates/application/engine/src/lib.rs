@@ -1,3 +1,4 @@
+mod audit_publication;
 mod capability_query;
 mod extraction;
 mod gate_abandon;
@@ -216,17 +217,15 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
         entries: request.entries.clone(),
         dependency_intents: Vec::new(),
     };
-    let evidence = match capture_admitted_repository(
+    let capture = match capture_admitted_repository(
         &context.root,
         context.repository_root.clone(),
         &inventory_request,
         request.jobs,
         request.resolution_profile,
         &reserved_state_lookup,
-    )
-    .map(|capture| capture.snapshot.evidence)
-    {
-        Ok(evidence) => evidence,
+    ) {
+        Ok(capture) => capture,
         Err(error) => {
             if let Err(persistence) = store.fail_attempt(&mut attempt, &error.to_string()) {
                 return Err(EngineError::AnalysisAndPersistence {
@@ -237,7 +236,13 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
             return Err(error);
         }
     };
-    let published = match store.publish_run(&mut attempt, &evidence) {
+    let published = match audit_publication::publish(
+        store,
+        &mut attempt,
+        &context.root,
+        &reserved_state_lookup,
+        &capture.snapshot,
+    ) {
         Ok(published) => published,
         Err(error @ StoreError::RunRetentionState(_)) => {
             return Err(EngineError::Store(error));
@@ -252,6 +257,7 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
             return Err(EngineError::Store(error));
         }
     };
+    let evidence = capture.snapshot.evidence;
     Ok(AuditResult {
         published,
         repository_root: context.repository_root.clone(),
