@@ -48,6 +48,37 @@ fn rejects_preexisting_empty_state_directory() -> Result<(), Box<dyn std::error:
 }
 
 #[test]
+fn open_if_bound_never_bootstraps_absent_or_unbound_state() -> Result<(), Box<dyn std::error::Error>>
+{
+    let absent = tempfile::tempdir()?;
+    let admission = lumin_inventory::repository_admission(absent.path())?;
+    assert!(
+        RepositoryStore::open_if_bound(&admission.canonical_root, &admission.binding)?.is_none()
+    );
+    assert!(!absent.path().join(".lumin").exists());
+
+    let unbound = tempfile::tempdir()?;
+    fs::create_dir(unbound.path().join(".lumin"))?;
+    let admission = lumin_inventory::repository_admission(unbound.path())?;
+    assert!(
+        RepositoryStore::open_if_bound(&admission.canonical_root, &admission.binding)?.is_none()
+    );
+    assert!(
+        fs::read_dir(unbound.path().join(".lumin"))?
+            .next()
+            .is_none()
+    );
+
+    let bound = tempfile::tempdir()?;
+    drop(open_store(bound.path())?);
+    let admission = lumin_inventory::repository_admission(bound.path())?;
+    assert!(
+        RepositoryStore::open_if_bound(&admission.canonical_root, &admission.binding)?.is_some()
+    );
+    Ok(())
+}
+
+#[test]
 fn rejects_a_binding_observed_from_another_repository() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     let other = tempfile::tempdir()?;

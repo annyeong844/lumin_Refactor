@@ -55,6 +55,36 @@ struct HeldManagedParent {
 }
 
 impl NamespaceState {
+    pub(super) fn open_if_bound(
+        root: &Path,
+        binding: &RepositoryBinding,
+    ) -> Result<Option<Self>, StoreError> {
+        let repository = HeldRepository::open(root, binding.clone())?;
+        let state_dir = repository.path.join(".lumin");
+        match fs::symlink_metadata(&state_dir) {
+            Ok(metadata) if metadata.file_type().is_dir() => {}
+            Ok(_) => {
+                return Err(StoreError::Integrity(
+                    ".lumin must be a real directory".to_owned(),
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(io_error(error)),
+        }
+        let marker_path = state_dir.join("repository.json");
+        if !entry_exists(&marker_path)? {
+            return Ok(None);
+        }
+        let state_directory = HeldEntry::open(
+            &state_dir,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            ".lumin",
+        )?;
+        Self::open_bound(repository, state_dir, state_directory, marker_path).map(Some)
+    }
+
     pub(super) fn open(root: &Path, binding: &RepositoryBinding) -> Result<Self, StoreError> {
         let repository = HeldRepository::open(root, binding.clone())?;
         let state_dir = repository.path.join(".lumin");
@@ -76,6 +106,15 @@ impl NamespaceState {
             );
         }
 
+        Self::open_bound(repository, state_dir, state_directory, marker_path)
+    }
+
+    fn open_bound(
+        repository: HeldRepository,
+        state_dir: PathBuf,
+        state_directory: HeldEntry,
+        marker_path: PathBuf,
+    ) -> Result<Self, StoreError> {
         let marker: RepositoryMarker = read_canonical_path(&marker_path, "repository marker")?;
         validate_marker(&marker)?;
         verify_repository_binding(&marker.binding.global, &repository.binding)?;

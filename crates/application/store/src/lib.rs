@@ -155,6 +155,20 @@ pub enum StoreError {
 impl RepositoryStore {
     pub fn open(root: &Path, binding: &RepositoryBinding) -> Result<Self, StoreError> {
         let namespace = namespace::NamespaceState::open(root, binding)?;
+        Self::from_namespace(namespace)
+    }
+
+    /// Open only a marker-bound namespace without creating or resuming state.
+    pub fn open_if_bound(
+        root: &Path,
+        binding: &RepositoryBinding,
+    ) -> Result<Option<Self>, StoreError> {
+        namespace::NamespaceState::open_if_bound(root, binding)?
+            .map(Self::from_namespace)
+            .transpose()
+    }
+
+    fn from_namespace(namespace: namespace::NamespaceState) -> Result<Self, StoreError> {
         let state_dir = namespace.state_dir().to_path_buf();
         let store = Self {
             state_dir,

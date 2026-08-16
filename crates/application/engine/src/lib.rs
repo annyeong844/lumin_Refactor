@@ -41,7 +41,8 @@ use lumin_evidence::{
     seal_analysis_snapshot,
 };
 use lumin_inventory::{
-    InventoryError, InventoryRequest, InventorySnapshot, SemanticPolicyState, repository_admission,
+    InventoryError, InventoryRequest, InventorySnapshot, RepositoryAdmission, SemanticPolicyState,
+    repository_admission,
 };
 use lumin_model::{
     AttemptId, AttemptStatus, CapabilityState, ConfigObservation, FileFacts, Limitation,
@@ -284,15 +285,20 @@ struct RepositoryContext {
 
 fn open_repository_context(root: &Path) -> Result<RepositoryContext, EngineError> {
     let admission = repository_admission(root)?;
-    let repository_id = admission.binding.repository_id().clone();
-    let repository_root = admission.binding.root().clone();
     let store = RepositoryStore::open(&admission.canonical_root, &admission.binding)?;
-    Ok(RepositoryContext {
+    Ok(repository_context_from_admission(admission, store))
+}
+
+fn repository_context_from_admission(
+    admission: RepositoryAdmission,
+    store: RepositoryStore,
+) -> RepositoryContext {
+    RepositoryContext {
         root: admission.canonical_root,
-        repository_id,
-        repository_root,
+        repository_id: admission.binding.repository_id().clone(),
+        repository_root: admission.binding.root().clone(),
         store,
-    })
+    }
 }
 
 struct RepositoryCapture {
@@ -305,6 +311,7 @@ struct RepositoryCapture {
 struct RepositoryAnalysisSession {
     repository_root: RepositoryRootIdentity,
     inventory: InventorySnapshot,
+    reserved_state_identities: BTreeSet<PhysicalFileIdentity>,
     extraction: Option<ExtractionOutput>,
     js_parse_product_count: usize,
     jobs: usize,
@@ -401,7 +408,13 @@ impl RepositoryAnalysisSession {
             reserved_state_identities,
         )?
         .finish(root)?;
-        Self::start_with_inventory(repository_root, inventory, jobs, scan_invocation)
+        Self::start_with_inventory(
+            repository_root,
+            inventory,
+            jobs,
+            scan_invocation,
+            reserved_state_identities.clone(),
+        )
     }
 
     fn start_with_inventory(
@@ -409,6 +422,7 @@ impl RepositoryAnalysisSession {
         inventory: InventorySnapshot,
         jobs: usize,
         scan_invocation: ScanInvocationTier,
+        reserved_state_identities: BTreeSet<PhysicalFileIdentity>,
     ) -> Result<Self, EngineError> {
         if jobs == 0 {
             return Err(EngineError::InvalidWorkerCount(0));
@@ -416,6 +430,7 @@ impl RepositoryAnalysisSession {
         Ok(Self {
             repository_root,
             inventory,
+            reserved_state_identities,
             extraction: None,
             js_parse_product_count: 0,
             jobs,
@@ -511,7 +526,12 @@ impl RepositoryAnalysisSession {
         root: &Path,
         demands: Vec<ConfigDemand>,
     ) -> Result<(), EngineError> {
-        capture_config_demands(root, &mut self.inventory, demands)?;
+        capture_config_demands(
+            root,
+            &mut self.inventory,
+            demands,
+            &self.reserved_state_identities,
+        )?;
         Ok(())
     }
 
@@ -687,6 +707,7 @@ fn capture_config_demands(
     root: &Path,
     inventory: &mut InventorySnapshot,
     demands: Vec<ConfigDemand>,
+    reserved_state_identities: &BTreeSet<PhysicalFileIdentity>,
 ) -> Result<(), EngineError> {
     let requested = demands
         .iter()
@@ -702,7 +723,12 @@ fn capture_config_demands(
         return Err(EngineError::ResolverDemandStalled(requested.join(", ")));
     }
     for demand in uncaptured {
-        let capture = lumin_inventory::capture_config(root, &demand.path, demand.syntax)?;
+        let capture = lumin_inventory::capture_config_with_reserved_state_identities(
+            root,
+            &demand.path,
+            demand.syntax,
+            reserved_state_identities,
+        )?;
         if let Some(limitation) = capture.limitation {
             inventory.limitations.push(limitation);
         }

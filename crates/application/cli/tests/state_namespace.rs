@@ -269,7 +269,7 @@ fn state_payload_aliases_never_enter_source_evidence_or_gate_writes()
         .join(&initialized_run_id)
         .join("evidence.store");
     let alias = root.path().join("src/state-payload-alias.ts");
-    fs::hard_link(state_payload, &alias)?;
+    fs::hard_link(&state_payload, &alias)?;
 
     let audited = run(root.path(), &["audit", "--jobs", "1"])?;
     assert_status(&audited, 0);
@@ -303,6 +303,22 @@ fn state_payload_aliases_never_enter_source_evidence_or_gate_writes()
     )?;
     assert_status(&operation, 2);
     assert!(operation.stderr.contains("operation does not exist"));
+
+    for semantic_input in ["lumin.json", ".gitignore", "package.json", "tsconfig.json"] {
+        let semantic_alias = root.path().join(semantic_input);
+        fs::hard_link(&state_payload, &semantic_alias)?;
+        let rejected = run(root.path(), &["audit", "--jobs", "1"])?;
+        assert_status(&rejected, 1);
+        assert!(rejected.stdout.is_empty());
+        assert!(
+            rejected
+                .stderr
+                .contains("semantic input aliases the reserved .lumin namespace"),
+            "unexpected semantic-input diagnostic for {semantic_input}: {}",
+            rejected.stderr,
+        );
+        fs::remove_file(semantic_alias)?;
+    }
 
     for parent in ["attempts", "runs", "trash", "cache"] {
         assert!(

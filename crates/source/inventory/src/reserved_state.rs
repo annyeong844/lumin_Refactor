@@ -66,6 +66,20 @@ pub fn validate_caller_entry_identities(
     Ok(())
 }
 
+pub(crate) fn validate_semantic_input_identity(
+    path: &RepoPath,
+    physical_identity: &PhysicalFileIdentity,
+    reserved_state_identities: &BTreeSet<PhysicalFileIdentity>,
+) -> Result<(), InventoryError> {
+    if reserved_state_identities.contains(physical_identity) {
+        Err(InventoryError::ReservedSemanticInputPath(
+            path.display_escaped(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 fn canonical_reserved_state(root: &Path) -> Result<Option<PathBuf>, InventoryError> {
     let state = root.join(".lumin");
     match fs::symlink_metadata(&state) {

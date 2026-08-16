@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use lumin_evidence::{
@@ -8,8 +9,8 @@ use lumin_evidence::{
 };
 use lumin_inventory::InventoryRequest;
 use lumin_model::{
-    DependencyIntent, GateDeltaRecord, GateId, OperationId, RepoPath, RepositoryRootIdentity,
-    ResolutionProfile, append_length_prefixed, digest_hex,
+    DependencyIntent, GateDeltaRecord, GateId, OperationId, PhysicalFileIdentity, RepoPath,
+    RepositoryRootIdentity, ResolutionProfile, append_length_prefixed, digest_hex,
 };
 use lumin_store::{
     OperationSession, PostWriteFinish, PostWriteStart, PreWriteFinish, PreWriteStart,
@@ -18,7 +19,7 @@ use lumin_store::{
 
 use super::{
     EngineError, RepositoryAnalysisSession, RepositoryAnalysisStep, RepositoryCapture,
-    RepositoryContext, open_repository_context,
+    RepositoryContext, open_repository_context, repository_context_from_admission,
 };
 
 mod domain;
@@ -101,7 +102,23 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         scan_invocation: scan_invocation.clone(),
     };
     let request_digest = pre_write_digest(&paths, &analysis_options);
-    let context = open_repository_context(&request.root)?;
+    let admission = lumin_inventory::repository_admission(&request.root)?;
+    let store = match lumin_store::RepositoryStore::open_if_bound(
+        &admission.canonical_root,
+        &admission.binding,
+    )? {
+        Some(store) => store,
+        None => {
+            lumin_inventory::validate_caller_entries(&admission.canonical_root, &paths)?;
+            validate_analysis_paths(
+                &admission.canonical_root,
+                &request.entries,
+                &request.dependency_intents,
+            )?;
+            lumin_store::RepositoryStore::open(&admission.canonical_root, &admission.binding)?
+        }
+    };
+    let context = repository_context_from_admission(admission, store);
     if let Some(result) = context
         .store
         .replay_pre_write_result(&request.operation_id, &request_digest)?
@@ -223,6 +240,7 @@ impl PreWritePromotion {
 struct FinalFreshnessValidation {
     bindings: Vec<(RepoPath, SemanticReadReservationBinding)>,
     captured_inputs: Vec<SemanticInputRecord>,
+    reserved_state_identities: BTreeSet<PhysicalFileIdentity>,
 }
 
 fn analyze_pre_write(
@@ -298,6 +316,7 @@ fn analyze_pre_write(
     let final_validation = FinalFreshnessValidation {
         bindings: reserved_semantic_bindings,
         captured_inputs: capture.snapshot.inputs.clone(),
+        reserved_state_identities: context.store.reserved_state_identities()?,
     };
     let baseline = GateBaseline {
         analysis_contract: analysis_contract_id(),
@@ -450,6 +469,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
     let final_validation = FinalFreshnessValidation {
         bindings: reserved_semantic_bindings,
         captured_inputs: capture.snapshot.inputs.clone(),
+        reserved_state_identities: context.store.reserved_state_identities()?,
     };
     operation
         .finish_post_write(
@@ -595,6 +615,7 @@ fn capture_reserved_repository(
         inventory,
         options.jobs,
         options.scan_invocation.clone(),
+        reserved_state_identities.clone(),
     )?;
     loop {
         match session.next_step(options.resolution_profile)? {
@@ -623,6 +644,7 @@ fn capture_reserved_repository(
                     root,
                     &reserved_semantic_bindings,
                     &capture.snapshot.inputs,
+                    &reserved_state_identities,
                 )?;
                 if !stale.is_empty() {
                     return Ok(ReservedCapture::Blocked(
@@ -670,6 +692,7 @@ fn stale_reserved_semantic_paths(
     root: &Path,
     bindings: &[(RepoPath, SemanticReadReservationBinding)],
     captured_inputs: &[SemanticInputRecord],
+    reserved_state_identities: &BTreeSet<PhysicalFileIdentity>,
 ) -> Result<Vec<RepoPathProjection>, EngineError> {
     let captured_by_path = captured_inputs
         .iter()
@@ -687,7 +710,12 @@ fn stale_reserved_semantic_paths(
             continue;
         };
         if captured.state == SemanticInputState::ConfigPresent {
-            let current_payload = lumin_inventory::dependency_input_payload_sha256(root, path)?;
+            let current_payload =
+                lumin_inventory::dependency_input_payload_sha256_with_reserved_state_identities(
+                    root,
+                    path,
+                    reserved_state_identities,
+                )?;
             if captured.payload_sha256.as_deref() != Some(current_payload.as_str()) {
                 stale.push(current.path);
             }
@@ -702,7 +730,12 @@ fn final_freshness_validation_signals(
     root: &Path,
     validation: &FinalFreshnessValidation,
 ) -> Vec<GateSignal> {
-    match stale_reserved_semantic_paths(root, &validation.bindings, &validation.captured_inputs) {
+    match stale_reserved_semantic_paths(
+        root,
+        &validation.bindings,
+        &validation.captured_inputs,
+        &validation.reserved_state_identities,
+    ) {
         Ok(paths) if paths.is_empty() => Vec::new(),
         Ok(paths) => vec![GateSignal::ProtectedInputChanged { paths }],
         Err(error) => vec![GateSignal::AnalysisFailed {
@@ -886,6 +919,7 @@ mod tests {
                 root.path(),
                 std::slice::from_ref(&reserved),
                 std::slice::from_ref(&captured),
+                &BTreeSet::new(),
             )?
             .is_empty()
         );
@@ -899,6 +933,7 @@ mod tests {
                 root.path(),
                 std::slice::from_ref(&reserved),
                 std::slice::from_ref(&captured),
+                &BTreeSet::new(),
             )?,
             vec![binding.path]
         );
@@ -932,6 +967,7 @@ mod tests {
         let validation = FinalFreshnessValidation {
             bindings: vec![reserved.clone()],
             captured_inputs: vec![captured.clone()],
+            reserved_state_identities: BTreeSet::new(),
         };
 
         assert!(final_freshness_validation_signals(root.path(), &validation).is_empty());
