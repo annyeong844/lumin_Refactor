@@ -181,6 +181,15 @@ fn assert_native_file_query(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut arguments: Vec<OsString> = vec!["files".into(), "--run".into(), run_id.into()];
     if case.component.native_io.starts_with(b"--") {
+        let mut unescaped = arguments.clone();
+        unescaped.push(case.relative.clone());
+        let rejected = run_os_with_stdin(root, &unescaped, &[])?;
+        assert_status(&rejected, 2);
+        assert!(
+            rejected.stderr.contains("unknown command or argument"),
+            "option-shaped native path did not fail as an unknown argument: {}",
+            rejected.stderr,
+        );
         arguments.push("--".into());
     }
     arguments.push(case.relative.clone());
