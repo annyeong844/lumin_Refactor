@@ -3,6 +3,7 @@ pub(crate) mod database;
 mod migration;
 mod platform;
 pub(crate) mod records;
+mod reserved_state;
 mod store_header;
 
 #[cfg(test)]
@@ -94,6 +95,12 @@ impl NamespaceState {
 
     pub(super) fn state_dir(&self) -> &Path {
         &self.state_dir
+    }
+
+    pub(super) fn reserved_state_identities(
+        &self,
+    ) -> Result<std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>, StoreError> {
+        self.with_shared_lock(reserved_state::collect_identities)
     }
 
     pub(super) fn with_exclusive_lock<T>(

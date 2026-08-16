@@ -33,7 +33,8 @@ impl HeldEntry {
         one_link: bool,
         label: &str,
     ) -> Result<Self, StoreError> {
-        let file = open_nofollow(path, kind, access).map_err(io_error)?;
+        let file = open_nofollow(path, kind, access)
+            .map_err(|error| classify_expected_entry_error(error, kind, label))?;
         Self::from_file(file, kind, one_link, label)
     }
 
@@ -137,6 +138,36 @@ impl HeldEntry {
             "managed state directory flush supports Windows and Linux".to_owned(),
         ))
     }
+}
+
+fn classify_expected_entry_error(
+    error: std::io::Error,
+    kind: EntryKind,
+    label: &str,
+) -> StoreError {
+    let redirected_or_wrong_kind = {
+        #[cfg(target_os = "linux")]
+        {
+            matches!(error.raw_os_error(), Some(20 | 40))
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            false
+        }
+    };
+    if redirected_or_wrong_kind {
+        return StoreError::Integrity(format!(
+            "{label} must be a no-follow real {}",
+            match kind {
+                EntryKind::Directory => "directory",
+                EntryKind::RegularFile => "regular file",
+            }
+        ));
+    }
+    if error.kind() == std::io::ErrorKind::NotFound {
+        return StoreError::Integrity(format!("{label} is missing"));
+    }
+    io_error(error)
 }
 
 pub(crate) fn same_volume(left: &PhysicalFileIdentity, right: &PhysicalFileIdentity) -> bool {

@@ -124,6 +124,31 @@ pub enum SemanticReadReservation {
 }
 
 impl RepositoryStore {
+    /// Return an exact committed pre-write result without allocating or joining
+    /// operation liveness. Current filesystem validation belongs only to a new
+    /// or interrupted attempt, not to delivery recovery for a committed result.
+    pub fn replay_pre_write_result(
+        &self,
+        operation_id: &OperationId,
+        request_digest: &str,
+    ) -> Result<Option<GateOperationResult>, StoreError> {
+        self.with_shared_lock(|guard| {
+            let database = guard.open_database()?;
+            let Some(operation) =
+                load_record::<OperationRecord>(&database, OPERATIONS, operation_id.as_str())?
+            else {
+                return Ok(None);
+            };
+            validate_operation(
+                &operation,
+                GateOperationKind::PreWrite,
+                request_digest,
+                None,
+            )?;
+            Ok(operation.result)
+        })
+    }
+
     pub fn load_gate(&self, gate_id: &GateId) -> Result<GateRecord, StoreError> {
         self.with_shared_lock(|guard| {
             let database = guard.open_database()?;

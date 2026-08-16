@@ -5,9 +5,10 @@ mod generated_config_policy;
 mod package_semantics;
 mod physical_path;
 mod pnpm_workspace;
+mod reserved_state;
 mod root;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fs;
 use std::io::Read;
@@ -40,6 +41,10 @@ pub use physical_path::{
     observe_physical_file_identity, physical_alias_write_closure, physical_file_identity,
     rehash_existing_write_target,
 };
+pub use reserved_state::{
+    is_reserved_state_path, validate_caller_entries, validate_caller_entry_identities,
+    validate_caller_paths_lexically,
+};
 pub use root::{RepositoryAdmission, repository_admission};
 
 pub fn lower_native_repo_path(value: &OsStr) -> Result<RepoPath, RepoPathError> {
@@ -48,100 +53,6 @@ pub fn lower_native_repo_path(value: &OsStr) -> Result<RepoPath, RepoPathError> 
 
 pub fn decode_native_repo_path_stream(bytes: &[u8]) -> Result<Vec<RepoPath>, RepoPathError> {
     RepoPath::decode_native_nul_stream(bytes)
-}
-
-pub fn is_reserved_state_path(path: &RepoPath) -> Result<bool, RepoPathError> {
-    let relative = path.to_native_relative()?;
-    Ok(relative.iter().next().is_some_and(reserved_state_component))
-}
-
-/// Validate caller entries BEFORE audit begins or pre-write opens/reserves a gate.
-/// Reject entries whose lexical or physical path enters the reserved `.lumin` namespace,
-/// or whose existing path or nearest existing parent physically escapes the canonical root.
-/// Returns Err(InventoryError) on invalid entries (maps to CLI exit 2).
-pub fn validate_caller_entries(root: &Path, entries: &[RepoPath]) -> Result<(), InventoryError> {
-    let canonical_root = fs::canonicalize(root)
-        .map_err(|error| InventoryError::RepositoryIdentity(error.to_string()))?;
-    let canonical_state = canonical_reserved_state(root)?;
-    for entry in entries {
-        let relative = native_relative(entry)?;
-        let first_component = relative.iter().next();
-        if first_component.is_some_and(reserved_state_component) {
-            return Err(InventoryError::ReservedEntryPath(entry.display_escaped()));
-        }
-        validate_entry_containment(root, &canonical_root, canonical_state.as_deref(), entry)?;
-    }
-    Ok(())
-}
-
-fn canonical_reserved_state(root: &Path) -> Result<Option<PathBuf>, InventoryError> {
-    let state = root.join(".lumin");
-    match fs::symlink_metadata(&state) {
-        Ok(_) => fs::canonicalize(&state).map(Some).map_err(|error| {
-            InventoryError::PhysicalIdentity(format!(
-                "cannot resolve reserved .lumin namespace: {error}"
-            ))
-        }),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(InventoryError::PhysicalIdentity(format!(
-            "cannot inspect reserved .lumin namespace: {error}"
-        ))),
-    }
-}
-
-fn reserved_state_component(component: &OsStr) -> bool {
-    #[cfg(windows)]
-    {
-        component
-            .to_str()
-            .is_some_and(|component| component.eq_ignore_ascii_case(".lumin"))
-    }
-    #[cfg(not(windows))]
-    {
-        component == ".lumin"
-    }
-}
-
-fn validate_entry_containment(
-    root: &Path,
-    canonical_root: &Path,
-    canonical_state: Option<&Path>,
-    entry: &RepoPath,
-) -> Result<(), InventoryError> {
-    let mut candidate = root.join(native_relative(entry)?);
-    loop {
-        match fs::symlink_metadata(&candidate) {
-            Ok(_) => {
-                let physical = fs::canonicalize(&candidate).map_err(|error| {
-                    InventoryError::PhysicalIdentity(format!(
-                        "cannot resolve entry {}: {error}",
-                        entry.display_escaped()
-                    ))
-                })?;
-                if !physical.starts_with(canonical_root) {
-                    return Err(InventoryError::EntryEscapesRoot(entry.display_escaped()));
-                }
-                if canonical_state.is_some_and(|state| physical.starts_with(state)) {
-                    return Err(InventoryError::ReservedEntryPath(entry.display_escaped()));
-                }
-                return Ok(());
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                if candidate == root || !candidate.pop() {
-                    return Err(InventoryError::PhysicalIdentity(format!(
-                        "cannot find an existing parent for entry {}",
-                        entry.display_escaped()
-                    )));
-                }
-            }
-            Err(error) => {
-                return Err(InventoryError::PhysicalIdentity(format!(
-                    "cannot inspect entry {}: {error}",
-                    entry.display_escaped()
-                )));
-            }
-        }
-    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -278,6 +189,7 @@ struct FileObservationContext<'a> {
     canonical_root: &'a Path,
     patterns: &'a PatternSet,
     ignore: &'a ApplicableIgnore,
+    reserved_state_identities: &'a BTreeSet<PhysicalFileIdentity>,
 }
 
 pub struct PendingInventoryScan {
@@ -320,6 +232,14 @@ pub fn begin_scan(
     root: &Path,
     request: &InventoryRequest,
 ) -> Result<PendingInventoryScan, InventoryError> {
+    begin_scan_with_reserved_state_identities(root, request, &BTreeSet::new())
+}
+
+pub fn begin_scan_with_reserved_state_identities(
+    root: &Path,
+    request: &InventoryRequest,
+    reserved_state_identities: &BTreeSet<PhysicalFileIdentity>,
+) -> Result<PendingInventoryScan, InventoryError> {
     validate_root(root)?;
     let canonical_root = fs::canonicalize(root)
         .map_err(|error| InventoryError::RepositoryIdentity(error.to_string()))?;
@@ -333,6 +253,7 @@ pub fn begin_scan(
         canonical_root: &canonical_root,
         patterns: &patterns,
         ignore: &ignore,
+        reserved_state_identities,
     };
 
     let mut collected = collect_repository_files(&observation_context)?;
@@ -888,6 +809,12 @@ fn collect_repository_files(
         if !is_file {
             continue;
         }
+        if context
+            .reserved_state_identities
+            .contains(&physical_file_identity(entry.path())?)
+        {
+            continue;
+        }
         collected.observe_file(context, entry.path(), relative, path)?;
     }
     let mut pruned_redirects = pruned_redirects
@@ -973,6 +900,12 @@ impl CollectedFiles {
                 }
             };
         let physical_identity = opened.physical_identity().clone();
+        if context
+            .reserved_state_identities
+            .contains(&physical_identity)
+        {
+            return Ok(());
+        }
         let bytes = match self.payloads.get(&physical_identity) {
             Some(bytes) => Arc::clone(bytes),
             None => match opened.read_payload(&logical_path) {

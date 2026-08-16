@@ -45,8 +45,8 @@ use lumin_inventory::{
 };
 use lumin_model::{
     AttemptId, AttemptStatus, CapabilityState, ConfigObservation, FileFacts, Limitation,
-    RepositoryRootIdentity, ResolutionOutcome, ResolutionProfile, ResolvedSourceUse, RoleOverride,
-    RunId, SfcDialect, SourceSnapshot, digest_hex,
+    PhysicalFileIdentity, RepositoryRootIdentity, ResolutionOutcome, ResolutionProfile,
+    ResolvedSourceUse, RoleOverride, RunId, SfcDialect, SourceSnapshot, digest_hex,
 };
 use lumin_resolve::{ConfigDemand, ResolverError, ResolverOutput};
 use lumin_store::{PublishedRun, RepositoryStore, RunCatalogRecord, StoreError};
@@ -195,10 +195,16 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
     if request.jobs == 0 {
         return Err(EngineError::InvalidWorkerCount(0));
     }
-    // Fail closed: validate caller entries BEFORE audit begins an attempt
-    lumin_inventory::validate_caller_entries(&request.root, &request.entries)?;
+    lumin_inventory::validate_caller_paths_lexically(&request.entries)?;
     let context = open_repository_context(&request.root)?;
     let store = &context.store;
+    lumin_inventory::validate_caller_entries(&context.root, &request.entries)?;
+    let reserved_state_identities = store.reserved_state_identities()?;
+    lumin_inventory::validate_caller_entry_identities(
+        &context.root,
+        &request.entries,
+        &reserved_state_identities,
+    )?;
     let mut attempt = store.begin_attempt()?;
     let inventory_request = InventoryRequest {
         includes: request.includes.clone(),
@@ -213,6 +219,7 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
         &inventory_request,
         request.jobs,
         request.resolution_profile,
+        &reserved_state_identities,
     )
     .map(|capture| capture.snapshot.evidence)
     {
@@ -256,12 +263,14 @@ pub fn analyze_repository(
     resolution_profile: Option<ResolutionProfile>,
 ) -> Result<RunEvidence, EngineError> {
     let admission = repository_admission(root)?;
+    let reserved_state_identities = BTreeSet::new();
     capture_admitted_repository(
         &admission.canonical_root,
         admission.binding.root().clone(),
         request,
         jobs,
         resolution_profile,
+        &reserved_state_identities,
     )
     .map(|capture| capture.snapshot.evidence)
 }
@@ -315,12 +324,14 @@ fn capture_repository(
     resolution_profile: Option<ResolutionProfile>,
 ) -> Result<RepositoryCapture, EngineError> {
     let admission = repository_admission(root)?;
+    let reserved_state_identities = BTreeSet::new();
     capture_admitted_repository(
         &admission.canonical_root,
         admission.binding.root().clone(),
         request,
         jobs,
         resolution_profile,
+        &reserved_state_identities,
     )
 }
 
@@ -330,9 +341,17 @@ fn capture_admitted_repository(
     request: &InventoryRequest,
     jobs: usize,
     resolution_profile: Option<ResolutionProfile>,
+    reserved_state_identities: &BTreeSet<PhysicalFileIdentity>,
 ) -> Result<RepositoryCapture, EngineError> {
     let tier = build_scan_invocation_tier(request, resolution_profile);
-    let mut session = RepositoryAnalysisSession::start(root, repository_root, request, jobs, tier)?;
+    let mut session = RepositoryAnalysisSession::start(
+        root,
+        repository_root,
+        request,
+        jobs,
+        tier,
+        reserved_state_identities,
+    )?;
     loop {
         match session.next_step(resolution_profile)? {
             RepositoryAnalysisStep::NeedsInputs(demands) => {
@@ -374,8 +393,14 @@ impl RepositoryAnalysisSession {
         request: &InventoryRequest,
         jobs: usize,
         scan_invocation: ScanInvocationTier,
+        reserved_state_identities: &BTreeSet<PhysicalFileIdentity>,
     ) -> Result<Self, EngineError> {
-        let inventory = lumin_inventory::scan(root, request)?;
+        let inventory = lumin_inventory::begin_scan_with_reserved_state_identities(
+            root,
+            request,
+            reserved_state_identities,
+        )?
+        .finish(root)?;
         Self::start_with_inventory(repository_root, inventory, jobs, scan_invocation)
     }
 

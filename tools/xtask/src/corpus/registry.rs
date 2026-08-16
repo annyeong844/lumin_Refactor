@@ -363,11 +363,12 @@ pub static REGISTRY: &[RegistryRow] = &[
     ]),
     row_sd!("reserved-state-namespace", &[
         inv!("state_namespace", "caller_state_paths_are_malformed_before_lifecycle_mutation"),
+        inv!("state_namespace", "committed_pre_write_retry_precedes_current_path_revalidation"),
         inv!("state_namespace", "public_process_rejects_state_directory_replacement"),
         inv!("state_namespace", "public_process_rejects_lifecycle_lock_replacement"),
         inv!("state_namespace", "public_process_rejects_foreign_and_redirected_state_namespaces"),
         inv!("state_namespace", "public_process_rejects_managed_parent_anchor_and_marker_replacement"),
-        inv!("state_namespace", "reserved_state_never_enters_source_evidence_and_anchors_survive_cache_payloads"),
+        inv!("state_namespace", "state_payload_aliases_never_enter_source_evidence_or_gate_writes"),
     ]),
     row_sdc!("state-namespace-initialization"),
     row_sdc!("state-lock-replacement-split-brain"),

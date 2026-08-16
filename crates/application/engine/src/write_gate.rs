@@ -81,9 +81,8 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
     if request.jobs == 0 {
         return Err(EngineError::InvalidWorkerCount(0));
     }
-    // Fail closed: validate every caller path BEFORE opening/reserving an operation/gate.
-    lumin_inventory::validate_caller_entries(&request.root, &request.paths)?;
-    validate_analysis_paths(&request.root, &request.entries, &request.dependency_intents)?;
+    lumin_inventory::validate_caller_paths_lexically(&request.paths)?;
+    validate_analysis_path_names(&request.entries, &request.dependency_intents)?;
     let mut paths = request.paths.clone();
     paths.sort();
     paths.dedup();
@@ -103,6 +102,26 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
     };
     let request_digest = pre_write_digest(&paths, &analysis_options);
     let context = open_repository_context(&request.root)?;
+    if let Some(result) = context
+        .store
+        .replay_pre_write_result(&request.operation_id, &request_digest)?
+    {
+        return Ok(result);
+    }
+    lumin_inventory::validate_caller_entries(&context.root, &paths)?;
+    validate_analysis_paths(&context.root, &request.entries, &request.dependency_intents)?;
+    let reserved_state_identities = context.store.reserved_state_identities()?;
+    lumin_inventory::validate_caller_entry_identities(
+        &context.root,
+        &paths,
+        &reserved_state_identities,
+    )?;
+    validate_analysis_path_identities(
+        &context.root,
+        &request.entries,
+        &request.dependency_intents,
+        &reserved_state_identities,
+    )?;
     let inspection = inspect_declared_paths(&context.root, &paths);
     let operation = context.store.begin_operation(&request.operation_id)?;
     let (gate_id, transition_sequence) = match operation.reserve_pre_write(
@@ -222,6 +241,7 @@ fn analyze_pre_write(
     };
     let inventory_request = inventory_request_from_tier(&options.scan_invocation)?;
     let capture = match capture_reserved_repository(
+        &context.store,
         &context.root,
         &context.repository_root,
         &options,
@@ -351,6 +371,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
     }
 
     let (capture, reserved_semantic_bindings) = match capture_reserved_repository(
+        &context.store,
         &context.root,
         &context.repository_root,
         &gate.analysis_options,
@@ -464,6 +485,38 @@ fn validate_analysis_paths(
     Ok(())
 }
 
+fn validate_analysis_path_names(
+    entries: &[RepoPath],
+    dependency_intents: &[DependencyIntent],
+) -> Result<(), EngineError> {
+    lumin_inventory::validate_caller_paths_lexically(entries)?;
+    let dependency_paths = dependency_intents
+        .iter()
+        .map(|intent| intent.path.clone())
+        .collect::<Vec<_>>();
+    lumin_inventory::validate_caller_paths_lexically(&dependency_paths)?;
+    Ok(())
+}
+
+fn validate_analysis_path_identities(
+    root: &Path,
+    entries: &[RepoPath],
+    dependency_intents: &[DependencyIntent],
+    reserved_state_identities: &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
+) -> Result<(), EngineError> {
+    lumin_inventory::validate_caller_entry_identities(root, entries, reserved_state_identities)?;
+    let dependency_paths = dependency_intents
+        .iter()
+        .map(|intent| intent.path.clone())
+        .collect::<Vec<_>>();
+    lumin_inventory::validate_caller_entry_identities(
+        root,
+        &dependency_paths,
+        reserved_state_identities,
+    )?;
+    Ok(())
+}
+
 fn finish_failed_close(
     operation: &OperationSession<'_>,
     request: &PostWriteRequest,
@@ -500,6 +553,7 @@ enum ReservedCapture {
 }
 
 fn capture_reserved_repository(
+    store: &lumin_store::RepositoryStore,
     root: &Path,
     repository_root: &RepositoryRootIdentity,
     options: &GateAnalysisOptions,
@@ -521,7 +575,12 @@ fn capture_reserved_repository(
     }
     let dependency_candidate_binding_count = reserved_semantic_bindings.len();
 
-    let pending_inventory = lumin_inventory::begin_scan(root, inventory_request)?;
+    let reserved_state_identities = store.reserved_state_identities()?;
+    let pending_inventory = lumin_inventory::begin_scan_with_reserved_state_identities(
+        root,
+        inventory_request,
+        &reserved_state_identities,
+    )?;
     if let Some(outcome) = reserve_semantic_paths(
         root,
         pending_inventory.dependency_input_paths(),

@@ -88,6 +88,34 @@ fn caller_state_paths_are_malformed_before_lifecycle_mutation()
 }
 
 #[test]
+fn committed_pre_write_retry_precedes_current_path_revalidation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    fs::create_dir(root.path().join("planned"))?;
+    let arguments = [
+        "pre-write",
+        "--operation-id",
+        "op-committed-retry",
+        "--path",
+        "planned/output.ts",
+        "--jobs",
+        "1",
+    ];
+    let first = run(root.path(), &arguments)?;
+    assert_status(&first, 0);
+
+    fs::remove_dir(root.path().join("planned"))?;
+    let alias = root.path().join("planned");
+    create_directory_alias(&root.path().join(".lumin").join("cache"), &alias)?;
+    let retry = run(root.path(), &arguments)?;
+    assert_status(&retry, 0);
+    assert_eq!(retry.stdout, first.stdout);
+    assert!(retry.stderr.is_empty());
+    remove_directory_alias(&alias)?;
+    Ok(())
+}
+
+#[test]
 fn public_process_rejects_state_directory_replacement() -> Result<(), Box<dyn std::error::Error>> {
     let root = fixture()?;
     let initial = run(root.path(), &["audit", "--jobs", "1"])?;
@@ -229,29 +257,52 @@ fn public_process_rejects_managed_parent_anchor_and_marker_replacement()
 }
 
 #[test]
-fn reserved_state_never_enters_source_evidence_and_anchors_survive_cache_payloads()
+fn state_payload_aliases_never_enter_source_evidence_or_gate_writes()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = fixture()?;
     let initialized = run(root.path(), &["audit", "--jobs", "1"])?;
     assert_status(&initialized, 0);
+    let initialized_run_id = field(&initialized.stdout, "runId")?;
     let state = root.path().join(".lumin");
-    let payload = state.join("cache/payload");
-    fs::create_dir(&payload)?;
-    fs::write(
-        payload.join("poison.ts"),
-        "export const mustNeverBecomeSourceEvidence = 1;\n",
-    )?;
+    let state_payload = state
+        .join("runs")
+        .join(&initialized_run_id)
+        .join("evidence.store");
+    let alias = root.path().join("src/state-payload-alias.ts");
+    fs::hard_link(state_payload, &alias)?;
 
     let audited = run(root.path(), &["audit", "--jobs", "1"])?;
     assert_status(&audited, 0);
     let run_id = field(&audited.stdout, "runId")?;
     let files = run(
         root.path(),
-        &["files", "--run", &run_id, ".lumin/cache/payload/poison.ts"],
+        &["files", "--run", &run_id, "src/state-payload-alias.ts"],
     )?;
     assert_status(&files, 0);
     let response: Value = serde_json::from_str(&files.stdout)?;
     assert_eq!(response.get("total").and_then(Value::as_u64), Some(0));
+
+    let rejected = run(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-state-payload-alias",
+            "--path",
+            "src/state-payload-alias.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&rejected, 2);
+    assert!(rejected.stdout.is_empty());
+    assert!(rejected.stderr.contains("reserved .lumin namespace"));
+    let operation = run(
+        root.path(),
+        &["operation", "show", "op-state-payload-alias"],
+    )?;
+    assert_status(&operation, 2);
+    assert!(operation.stderr.contains("operation does not exist"));
 
     for parent in ["attempts", "runs", "trash", "cache"] {
         assert!(

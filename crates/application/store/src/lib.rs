@@ -14,12 +14,15 @@ pub use namespace::MigrationIntent;
 pub use publication::{AttemptEnvelope, AttemptSession, AttemptState, LatestRunSnapshot};
 pub use retention::{RETENTION_PLAN_ITEMS_ORDERING, RetentionPlanRequest};
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use lumin_evidence::RunEvidence;
-use lumin_model::{AttemptId, RepositoryBinding, RepositoryId, RunId, digest_hex};
+use lumin_model::{
+    AttemptId, PhysicalFileIdentity, RepositoryBinding, RepositoryId, RunId, digest_hex,
+};
 use redb::{
     Database, ReadOnlyDatabase, ReadableDatabase, ReadableTable, TableDefinition, TableError,
 };
@@ -159,6 +162,12 @@ impl RepositoryStore {
         };
         store.recover_publication()?;
         Ok(store)
+    }
+
+    /// Snapshot every object identity currently owned by the reserved state
+    /// namespace while holding the validated lifecycle lock.
+    pub fn reserved_state_identities(&self) -> Result<BTreeSet<PhysicalFileIdentity>, StoreError> {
+        self.namespace.reserved_state_identities()
     }
 
     pub fn load_run(&self, run_id: &RunId) -> Result<(RunCatalogRecord, RunEvidence), StoreError> {
