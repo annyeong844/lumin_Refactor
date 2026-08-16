@@ -214,9 +214,9 @@ pub enum InventoryError {
     PhysicalIdentity(String),
     #[error("failed to establish canonical repository identity: {0}")]
     RepositoryIdentity(String),
-    #[error("caller entry path is in the reserved .lumin namespace: {0}")]
+    #[error("caller path is in the reserved .lumin namespace: {0}")]
     ReservedEntryPath(String),
-    #[error("caller entry resolves outside repository root: {0}")]
+    #[error("caller path resolves outside repository root: {0}")]
     EntryEscapesRoot(String),
 }
 

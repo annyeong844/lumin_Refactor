@@ -82,6 +82,7 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         return Err(EngineError::InvalidWorkerCount(0));
     }
     // Fail closed: validate every caller path BEFORE opening/reserving an operation/gate.
+    lumin_inventory::validate_caller_entries(&request.root, &request.paths)?;
     validate_analysis_paths(&request.root, &request.entries, &request.dependency_intents)?;
     let mut paths = request.paths.clone();
     paths.sort();

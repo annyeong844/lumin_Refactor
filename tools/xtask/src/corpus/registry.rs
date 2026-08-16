@@ -361,7 +361,14 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("repo-path-lossless", &[
         inv!("repo_path_lossless", "native_repository_paths_round_trip_through_public_queries_and_cursors"),
     ]),
-    row_sd!("reserved-state-namespace"),
+    row_sd!("reserved-state-namespace", &[
+        inv!("state_namespace", "caller_state_paths_are_malformed_before_lifecycle_mutation"),
+        inv!("state_namespace", "public_process_rejects_state_directory_replacement"),
+        inv!("state_namespace", "public_process_rejects_lifecycle_lock_replacement"),
+        inv!("state_namespace", "public_process_rejects_foreign_and_redirected_state_namespaces"),
+        inv!("state_namespace", "public_process_rejects_managed_parent_anchor_and_marker_replacement"),
+        inv!("state_namespace", "reserved_state_never_enters_source_evidence_and_anchors_survive_cache_payloads"),
+    ]),
     row_sdc!("state-namespace-initialization"),
     row_sdc!("state-lock-replacement-split-brain"),
     row_sdc!("state-managed-parent-replacement"),
