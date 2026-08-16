@@ -1,26 +1,40 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use lumin_model::{PhysicalFileIdentity, RepoPath, RepoPathError};
 
 use super::{InventoryError, native_relative};
-use crate::physical_path::physical_file_identity_and_links;
+use crate::capture::{PhysicalFileObservation, physical_file_observation};
 
 type IdentityCheck =
     dyn Fn(&PhysicalFileIdentity) -> Result<bool, InventoryError> + Send + Sync + 'static;
 
 /// Store-owned identity membership is evaluated lazily. Ordinary one-link
 /// evidence candidates never require enumerating the retained state tree;
-/// redirected paths are rejected separately through canonical containment.
+/// redirected paths use canonical containment and Linux mount crossings force
+/// an identity lookup even when their link count remains one.
 #[derive(Clone)]
 pub struct ReservedStateIdentityLookup {
     check: Arc<IdentityCheck>,
-    queried: Arc<AtomicBool>,
+    observations: Arc<Mutex<LookupObservations>>,
+    frozen: bool,
+}
+
+#[derive(Default)]
+struct LookupObservations {
+    root_mount: Option<(PathBuf, Option<u64>)>,
+    candidates: BTreeMap<PhysicalFileIdentity, CandidateObservation>,
+}
+
+#[derive(Clone, Copy)]
+struct CandidateObservation {
+    links: u64,
+    mount_id: Option<u64>,
+    reserved: Option<bool>,
 }
 
 impl ReservedStateIdentityLookup {
@@ -29,7 +43,8 @@ impl ReservedStateIdentityLookup {
     ) -> Self {
         Self {
             check: Arc::new(check),
-            queried: Arc::new(AtomicBool::new(false)),
+            observations: Arc::new(Mutex::new(LookupObservations::default())),
+            frozen: false,
         }
     }
 
@@ -41,31 +56,117 @@ impl ReservedStateIdentityLookup {
         Self::from_identities(BTreeSet::new())
     }
 
-    pub(crate) fn contains_shared(
+    pub(crate) fn contains_candidate(
         &self,
-        identity: &PhysicalFileIdentity,
-        links: u64,
+        root: &Path,
+        observation: &PhysicalFileObservation,
     ) -> Result<bool, InventoryError> {
-        if links <= 1 {
-            return Ok(false);
+        let root_mount = self.root_mount(root)?;
+        let requires_lookup = observation.links > 1
+            || matches!(
+                (root_mount, observation.mount_id),
+                (Some(root_mount), Some(candidate_mount)) if root_mount != candidate_mount
+            );
+        {
+            let mut observed = self.observations.lock().map_err(|_| {
+                InventoryError::PhysicalIdentity(
+                    "reserved-state candidate observation lock failed".to_owned(),
+                )
+            })?;
+            if let Some(previous) = observed.candidates.get(&observation.identity) {
+                if previous.links != observation.links || previous.mount_id != observation.mount_id
+                {
+                    return Err(candidate_topology_changed());
+                }
+                if let Some(reserved) = previous.reserved {
+                    return Ok(reserved);
+                }
+                if !requires_lookup {
+                    return Ok(false);
+                }
+            } else {
+                if self.frozen {
+                    return Err(candidate_topology_changed());
+                }
+                observed.candidates.insert(
+                    observation.identity.clone(),
+                    CandidateObservation {
+                        links: observation.links,
+                        mount_id: observation.mount_id,
+                        reserved: None,
+                    },
+                );
+                if !requires_lookup {
+                    return Ok(false);
+                }
+            }
         }
-        self.queried.store(true, Ordering::Release);
-        (self.check)(identity)
+
+        let reserved = (self.check)(&observation.identity)?;
+        let mut observed = self.observations.lock().map_err(|_| {
+            InventoryError::PhysicalIdentity(
+                "reserved-state candidate observation lock failed".to_owned(),
+            )
+        })?;
+        let candidate = observed
+            .candidates
+            .get_mut(&observation.identity)
+            .ok_or_else(candidate_topology_changed)?;
+        if candidate.links != observation.links || candidate.mount_id != observation.mount_id {
+            return Err(candidate_topology_changed());
+        }
+        candidate.reserved = Some(reserved);
+        Ok(reserved)
     }
 
     /// Freeze a lookup for a final validation that runs under the store lock.
-    /// If analysis never needed the state index, a newly shared input is itself
-    /// stale topology and must fail without trying to acquire the store lock.
+    /// Final validation accepts only the exact link and mount topology observed
+    /// during capture, so it never reacquires the store lock or trusts a stale
+    /// identity index after a new alias appears.
     pub fn for_final_validation(&self) -> Self {
-        if self.queried.load(Ordering::Acquire) {
-            return self.clone();
+        Self {
+            check: Arc::clone(&self.check),
+            observations: Arc::clone(&self.observations),
+            frozen: true,
         }
-        Self::new(|_| {
-            Err(InventoryError::PhysicalIdentity(
-                "semantic input acquired an additional physical link after capture".to_owned(),
-            ))
-        })
     }
+
+    fn root_mount(&self, root: &Path) -> Result<Option<u64>, InventoryError> {
+        let mut observed = self.observations.lock().map_err(|_| {
+            InventoryError::PhysicalIdentity(
+                "reserved-state candidate observation lock failed".to_owned(),
+            )
+        })?;
+        if let Some((observed_root, mount_id)) = &observed.root_mount {
+            if observed_root != root {
+                return Err(InventoryError::RepositoryIdentity(
+                    "reserved-state lookup was reused for another repository".to_owned(),
+                ));
+            }
+            return Ok(*mount_id);
+        }
+        let mount_id = repository_mount_id(root)?;
+        observed.root_mount = Some((root.to_owned(), mount_id));
+        Ok(mount_id)
+    }
+}
+
+fn repository_mount_id(root: &Path) -> Result<Option<u64>, InventoryError> {
+    #[cfg(target_os = "linux")]
+    {
+        physical_file_observation(root).map(|observation| observation.mount_id)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = root;
+        Ok(None)
+    }
+}
+
+fn candidate_topology_changed() -> InventoryError {
+    InventoryError::PhysicalIdentity(
+        "semantic input link or mount topology changed after capture".to_owned(),
+    )
 }
 
 impl fmt::Debug for ReservedStateIdentityLookup {
@@ -128,8 +229,8 @@ pub fn validate_caller_entry_identity_lookup(
         let native = root.join(native_relative(entry)?);
         match fs::symlink_metadata(&native) {
             Ok(_) => {
-                let (identity, links) = physical_file_identity_and_links(&native)?;
-                if reserved_state_lookup.contains_shared(&identity, links)? {
+                let observation = physical_file_observation(&native)?;
+                if reserved_state_lookup.contains_candidate(root, &observation)? {
                     return Err(InventoryError::ReservedEntryPath(entry.display_escaped()));
                 }
             }
@@ -146,18 +247,35 @@ pub fn validate_caller_entry_identity_lookup(
 }
 
 pub(crate) fn validate_semantic_input_identity(
+    root: &Path,
     path: &RepoPath,
-    physical_identity: &PhysicalFileIdentity,
-    links: u64,
+    observation: &PhysicalFileObservation,
     reserved_state_lookup: &ReservedStateIdentityLookup,
 ) -> Result<(), InventoryError> {
-    if reserved_state_lookup.contains_shared(physical_identity, links)? {
+    if reserved_state_lookup.contains_candidate(root, observation)? {
         Err(InventoryError::ReservedSemanticInputPath(
             path.display_escaped(),
         ))
     } else {
         Ok(())
     }
+}
+
+pub fn validate_captured_semantic_input_topology(
+    root: &Path,
+    path: &RepoPath,
+    expected_identity: &PhysicalFileIdentity,
+    reserved_state_lookup: &ReservedStateIdentityLookup,
+) -> Result<(), InventoryError> {
+    validate_semantic_input_path(root, path)?;
+    let observation = physical_file_observation(&root.join(native_relative(path)?))?;
+    if &observation.identity != expected_identity {
+        return Err(InventoryError::PhysicalIdentity(format!(
+            "semantic input changed physical identity after capture: {}",
+            path.display_escaped()
+        )));
+    }
+    validate_semantic_input_identity(root, path, &observation, reserved_state_lookup)
 }
 
 pub(crate) fn validate_semantic_input_path(

@@ -57,6 +57,26 @@ fn caller_state_paths_are_malformed_before_lifecycle_mutation()
         );
     }
 
+    let escaping = fixture()?;
+    let outside = tempfile::tempdir()?;
+    fs::write(
+        outside.path().join("entry.ts"),
+        "export const outside = 1;\n",
+    )?;
+    create_directory_alias(outside.path(), &escaping.path().join("outside-alias"))?;
+    let rejected = run(
+        escaping.path(),
+        &["audit", "--entry", "outside-alias/entry.ts", "--jobs", "1"],
+    )?;
+    assert_status(&rejected, 2);
+    assert!(rejected.stdout.is_empty());
+    assert!(rejected.stderr.contains("resolves outside repository root"));
+    assert!(
+        !escaping.path().join(".lumin").exists(),
+        "invalid audit entry initialized reserved state",
+    );
+    remove_directory_alias(&escaping.path().join("outside-alias"))?;
+
     let root = fixture()?;
     let initialized = run(root.path(), &["audit", "--jobs", "1"])?;
     assert_status(&initialized, 0);
@@ -336,6 +356,46 @@ fn state_payload_aliases_never_enter_source_evidence_or_gate_writes()
         );
         fs::remove_file(semantic_alias)?;
     }
+    fs::remove_file(&alias)?;
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::MetadataExt;
+
+        assert_eq!(fs::metadata(&state_payload)?.nlink(), 1);
+        let bind_alias = root.path().join("src/state-payload-bind.ts");
+        let mut bind = FileBindMount::install(&state_payload, &bind_alias)?;
+        let audited = run(root.path(), &["audit", "--jobs", "1"])?;
+        assert_status(&audited, 0);
+        let bind_run_id = field(&audited.stdout, "runId")?;
+        let files = run(
+            root.path(),
+            &["files", "--run", &bind_run_id, "src/state-payload-bind.ts"],
+        )?;
+        assert_status(&files, 0);
+        let response: Value = serde_json::from_str(&files.stdout)?;
+        assert_eq!(response.get("total").and_then(Value::as_u64), Some(0));
+
+        let rejected = run(
+            root.path(),
+            &[
+                "pre-write",
+                "--operation-id",
+                "op-state-payload-bind",
+                "--path",
+                "src/state-payload-bind.ts",
+                "--jobs",
+                "1",
+            ],
+        )?;
+        assert_status(&rejected, 2);
+        assert!(rejected.stdout.is_empty());
+        assert!(rejected.stderr.contains("reserved .lumin namespace"));
+        let operation = run(root.path(), &["operation", "show", "op-state-payload-bind"])?;
+        assert_status(&operation, 2);
+        assert!(operation.stderr.contains("operation does not exist"));
+        bind.remove()?;
+    }
 
     for parent in ["attempts", "runs", "trash", "cache"] {
         assert!(
@@ -460,6 +520,43 @@ impl StateMountCrossing {
 
 #[cfg(target_os = "linux")]
 impl Drop for StateMountCrossing {
+    fn drop(&mut self) {
+        let _ = self.remove();
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct FileBindMount {
+    target: std::path::PathBuf,
+    active: bool,
+}
+
+#[cfg(target_os = "linux")]
+impl FileBindMount {
+    fn install(source: &Path, target: &Path) -> std::io::Result<Self> {
+        fs::write(target, b"mount target")?;
+        if let Err(error) = run_linux_mount_command("mount", &["--bind"], source, Some(target)) {
+            fs::remove_file(target)?;
+            return Err(error);
+        }
+        Ok(Self {
+            target: target.to_owned(),
+            active: true,
+        })
+    }
+
+    fn remove(&mut self) -> std::io::Result<()> {
+        if self.active {
+            run_linux_mount_command("umount", &[], &self.target, None)?;
+            fs::remove_file(&self.target)?;
+            self.active = false;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for FileBindMount {
     fn drop(&mut self) {
         let _ = self.remove();
     }

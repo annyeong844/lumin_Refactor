@@ -10,7 +10,6 @@ use lumin_model::{
     PackageScope, RepoPath, SemanticConfigSnapshot, WorkspaceFact, digest_hex,
 };
 
-use crate::physical_path::physical_file_identity_and_links;
 use crate::{
     InventoryError, ReservedStateIdentityLookup, SemanticPolicyInput, SemanticPolicyState,
     capture_config_with_reserved_state_lookup, native_relative, observe_config_input_identity,
@@ -588,11 +587,12 @@ fn capture_lockfile(
             ));
         }
     };
-    let (physical_identity, links) = crate::capture::physical_identity_and_links_from_file(&file)?;
+    let observation = crate::capture::physical_file_observation_from_file(&file)?;
+    let physical_identity = observation.identity.clone();
     reserved_state::validate_semantic_input_identity(
+        root,
         path,
-        &physical_identity,
-        links,
+        &observation,
         reserved_state_lookup,
     )?;
     let mut bytes = Vec::new();
@@ -612,13 +612,8 @@ fn capture_lockfile(
             path.display_escaped()
         )));
     }
-    let (_, current_links) = physical_file_identity_and_links(&native)?;
-    reserved_state::validate_semantic_input_identity(
-        path,
-        &physical_identity,
-        current_links,
-        reserved_state_lookup,
-    )?;
+    let current = crate::capture::physical_file_observation(&native)?;
+    reserved_state::validate_semantic_input_identity(root, path, &current, reserved_state_lookup)?;
     Ok(SemanticPolicyInput {
         path: path.clone(),
         state: SemanticPolicyState::Present,

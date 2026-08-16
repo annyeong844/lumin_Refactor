@@ -27,9 +27,7 @@ use lumin_model::{
 use serde::Deserialize;
 use thiserror::Error;
 
-use physical_path::{
-    is_physical_path_redirect, observe_physical_path_redirect, physical_file_identity_and_links,
-};
+use physical_path::{is_physical_path_redirect, observe_physical_path_redirect};
 
 pub use generated_config_policy::{
     FieldClassification as InventoryConfigFieldClassification,
@@ -46,7 +44,7 @@ pub use physical_path::{
 pub use reserved_state::{
     ReservedStateIdentityLookup, is_reserved_state_path, validate_caller_entries,
     validate_caller_entry_identities, validate_caller_entry_identity_lookup,
-    validate_caller_paths_lexically,
+    validate_caller_paths_lexically, validate_captured_semantic_input_topology,
 };
 pub use root::{RepositoryAdmission, repository_admission};
 
@@ -581,12 +579,12 @@ impl ApplicableIgnore {
         reserved_state::validate_semantic_input_path(root, &repo_path)?;
         match fs::File::open(&gitignore_path) {
             Ok(mut file) => {
-                let (physical_identity, links) =
-                    capture::physical_identity_and_links_from_file(&file)?;
+                let observation = capture::physical_file_observation_from_file(&file)?;
+                let physical_identity = observation.identity.clone();
                 reserved_state::validate_semantic_input_identity(
+                    root,
                     &repo_path,
-                    &physical_identity,
-                    links,
+                    &observation,
                     reserved_state_lookup,
                 )?;
                 let mut bytes = Vec::new();
@@ -597,18 +595,17 @@ impl ApplicableIgnore {
                     ))
                 })?;
                 let payload_sha256 = digest_hex(&bytes);
-                let (current_identity, current_links) =
-                    physical_file_identity_and_links(&gitignore_path)?;
-                if current_identity != physical_identity {
+                let current = capture::physical_file_observation(&gitignore_path)?;
+                if current.identity != physical_identity {
                     return Err(InventoryError::PhysicalIdentity(format!(
                         ".gitignore changed physical identity during capture: {}",
                         repo_path.display_escaped()
                     )));
                 }
                 reserved_state::validate_semantic_input_identity(
+                    root,
                     &repo_path,
-                    &current_identity,
-                    current_links,
+                    &current,
                     reserved_state_lookup,
                 )?;
                 policy_inputs.push(SemanticPolicyInput {
@@ -751,11 +748,12 @@ fn read_root_config(
         Ok(file) => file,
         Err(error) => return Err(InventoryError::MalformedConfiguration(error.to_string())),
     };
-    let (physical_identity, links) = capture::physical_identity_and_links_from_file(&file)?;
+    let observation = capture::physical_file_observation_from_file(&file)?;
+    let physical_identity = observation.identity.clone();
     reserved_state::validate_semantic_input_identity(
+        root,
         &repo_path,
-        &physical_identity,
-        links,
+        &observation,
         reserved_state_lookup,
     )?;
     let mut bytes = Vec::new();
@@ -763,16 +761,16 @@ fn read_root_config(
         .map_err(|error| InventoryError::MalformedConfiguration(error.to_string()))?;
     // Compute observation from the SAME captured bytes — do not re-read
     let payload_sha256 = digest_hex(&bytes);
-    let (current_identity, current_links) = physical_file_identity_and_links(&path)?;
-    if current_identity != physical_identity {
+    let current = capture::physical_file_observation(&path)?;
+    if current.identity != physical_identity {
         return Err(InventoryError::PhysicalIdentity(
             "lumin.json changed physical identity during capture".to_owned(),
         ));
     }
     reserved_state::validate_semantic_input_identity(
+        root,
         &repo_path,
-        &current_identity,
-        current_links,
+        &current,
         reserved_state_lookup,
     )?;
     let policy = SemanticPolicyInput {
@@ -1011,10 +1009,10 @@ impl CollectedFiles {
                     return Ok(());
                 }
             };
-        let physical_identity = opened.physical_identity().clone();
+        let physical_identity = opened.observation().identity.clone();
         if context
             .reserved_state_lookup
-            .contains_shared(&physical_identity, opened.links())?
+            .contains_candidate(context.root, opened.observation())?
         {
             return Ok(());
         }
@@ -1035,13 +1033,24 @@ impl CollectedFiles {
                 }
             },
         };
-        if let Err(error) =
-            opened.validate_path(context.canonical_root, native_path, &path.display_escaped())
+        let current = match opened.validate_path(
+            context.canonical_root,
+            native_path,
+            &path.display_escaped(),
+        ) {
+            Ok(current) => current,
+            Err(error) => {
+                self.limitations.push(Limitation::SourcePayloadUnavailable {
+                    path: path.display_escaped(),
+                    detail: error.to_string(),
+                });
+                return Ok(());
+            }
+        };
+        if context
+            .reserved_state_lookup
+            .contains_candidate(context.root, &current)?
         {
-            self.limitations.push(Limitation::SourcePayloadUnavailable {
-                path: path.display_escaped(),
-                detail: error.to_string(),
-            });
             return Ok(());
         }
         let roles = classify_roles(&path, relative, kind, &bytes, context.patterns)?;
@@ -1189,11 +1198,12 @@ fn observe_config(
             });
         }
     };
-    let (physical_identity, links) = capture::physical_identity_and_links_from_file(&file)?;
+    let observation = capture::physical_file_observation_from_file(&file)?;
+    let physical_identity = observation.identity.clone();
     reserved_state::validate_semantic_input_identity(
+        root,
         path,
-        &physical_identity,
-        links,
+        &observation,
         reserved_state_lookup,
     )?;
     let mut bytes = Vec::new();
@@ -1213,13 +1223,8 @@ fn observe_config(
             path.display_escaped()
         )));
     }
-    let (_, current_links) = physical_file_identity_and_links(&native)?;
-    reserved_state::validate_semantic_input_identity(
-        path,
-        &physical_identity,
-        current_links,
-        reserved_state_lookup,
-    )?;
+    let current = capture::physical_file_observation(&native)?;
+    reserved_state::validate_semantic_input_identity(root, path, &current, reserved_state_lookup)?;
     let parsed = match syntax {
         ConfigSyntax::StrictJson | ConfigSyntax::Jsonc => {
             config_document::parse(path.clone(), &bytes, syntax)

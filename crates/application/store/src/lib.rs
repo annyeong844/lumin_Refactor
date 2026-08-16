@@ -183,7 +183,7 @@ impl RepositoryStore {
 
     /// Resolve one actual shared evidence candidate against store ownership.
     /// The retained state tree is indexed at most once per command, and only
-    /// when inventory observes a candidate with multiple physical links.
+    /// when inventory observes a shared or mount-crossing candidate.
     pub fn owns_reserved_state_identity(
         &self,
         identity: &PhysicalFileIdentity,

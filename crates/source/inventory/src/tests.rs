@@ -130,6 +130,35 @@ fn one_link_evidence_does_not_query_retained_state_ownership()
     Ok(())
 }
 
+#[test]
+fn final_validation_rejects_new_link_topology_without_reusing_the_state_index()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::create_dir_all(root.path().join(".lumin/cache"))?;
+    let source = root.path().join("src/lib.ts");
+    fs::write(&source, "export const value = 1;\n")?;
+    let queries = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = Arc::clone(&queries);
+    let lookup = ReservedStateIdentityLookup::new(move |_| {
+        observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(false)
+    });
+    let initial = crate::capture::physical_file_observation(&source)?;
+    assert!(!lookup.contains_candidate(root.path(), &initial)?);
+
+    let final_lookup = lookup.for_final_validation();
+    fs::hard_link(&source, root.path().join(".lumin/cache/alias.ts"))?;
+    let current = crate::capture::physical_file_observation(&source)?;
+    assert!(
+        final_lookup
+            .contains_candidate(root.path(), &current)
+            .is_err()
+    );
+    assert_eq!(queries.load(std::sync::atomic::Ordering::Relaxed), 0);
+    Ok(())
+}
+
 #[cfg(windows)]
 #[test]
 fn explicit_case_spelling_is_a_distinct_logical_source_on_case_insensitive_storage()

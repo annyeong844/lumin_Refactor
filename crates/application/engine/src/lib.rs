@@ -197,9 +197,11 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
         return Err(EngineError::InvalidWorkerCount(0));
     }
     lumin_inventory::validate_caller_paths_lexically(&request.entries)?;
-    let context = open_repository_context(&request.root)?;
+    let admission = repository_admission(&request.root)?;
+    lumin_inventory::validate_caller_entries(&admission.canonical_root, &request.entries)?;
+    let store = RepositoryStore::open(&admission.canonical_root, &admission.binding)?;
+    let context = repository_context_from_admission(admission, store);
     let store = &context.store;
-    lumin_inventory::validate_caller_entries(&context.root, &request.entries)?;
     let reserved_state_lookup = reserved_state_identity_lookup(store);
     lumin_inventory::validate_caller_entry_identity_lookup(
         &context.root,

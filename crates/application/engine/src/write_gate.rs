@@ -699,7 +699,8 @@ fn stale_reserved_semantic_paths(
         .iter()
         .map(|input| (input.path.canonical.as_slice(), input))
         .collect::<std::collections::BTreeMap<_, _>>();
-    let mut stale = Vec::new();
+    let mut stale =
+        stale_captured_input_topology_paths(root, captured_inputs, reserved_state_lookup)?;
     for (path, reserved) in bindings {
         let current = semantic_read_reservation(root, path)?;
         if current != *reserved {
@@ -724,6 +725,49 @@ fn stale_reserved_semantic_paths(
     }
     stale.sort();
     stale.dedup();
+    Ok(stale)
+}
+
+fn stale_captured_input_topology_paths(
+    root: &Path,
+    captured_inputs: &[SemanticInputRecord],
+    reserved_state_lookup: &lumin_inventory::ReservedStateIdentityLookup,
+) -> Result<Vec<RepoPathProjection>, EngineError> {
+    let mut stale = Vec::new();
+    for input in captured_inputs {
+        if !matches!(
+            input.state,
+            SemanticInputState::Source | SemanticInputState::ConfigPresent
+        ) {
+            continue;
+        }
+        let Some(expected_identity) = &input.physical_identity else {
+            stale.push(input.path.clone());
+            continue;
+        };
+        let path = RepoPath::from_canonical_bytes(&input.path.canonical).map_err(|error| {
+            EngineError::TierProjectionCorrupt(format!(
+                "failed to decode captured input {}: {error}",
+                input.path.display
+            ))
+        })?;
+        if RepoPathProjection::from(&path) != input.path {
+            return Err(EngineError::TierProjectionCorrupt(format!(
+                "captured input projection round-trip failed for {}",
+                input.path.display
+            )));
+        }
+        if lumin_inventory::validate_captured_semantic_input_topology(
+            root,
+            &path,
+            expected_identity,
+            reserved_state_lookup,
+        )
+        .is_err()
+        {
+            stale.push(input.path.clone());
+        }
+    }
     Ok(stale)
 }
 
@@ -981,6 +1025,46 @@ mod tests {
             final_freshness_validation_signals(root.path(), &validation),
             [GateSignal::ProtectedInputChanged {
                 paths: vec![binding.path]
+            }]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn final_freshness_rejects_a_new_reserved_link_to_a_captured_source()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        std::fs::create_dir_all(root.path().join("src"))?;
+        std::fs::create_dir_all(root.path().join(".lumin/cache"))?;
+        let path = RepoPath::from_portable("src/lib.ts")?;
+        let native = root.path().join("src/lib.ts");
+        std::fs::write(&native, "export const value = 1;\n")?;
+        let identity = lumin_inventory::observe_physical_file_identity(root.path(), &path)?;
+        let lookup = lumin_inventory::ReservedStateIdentityLookup::empty();
+        lumin_inventory::validate_captured_semantic_input_topology(
+            root.path(),
+            &path,
+            &identity,
+            &lookup,
+        )?;
+        let validation = FinalFreshnessValidation {
+            bindings: Vec::new(),
+            captured_inputs: vec![SemanticInputRecord {
+                path: RepoPathProjection::from(&path),
+                state: SemanticInputState::Source,
+                payload_sha256: Some(digest_hex(b"export const value = 1;\n")),
+                physical_identity: Some(identity),
+                absence_parent: None,
+                physical_redirect_sha256: None,
+            }],
+            reserved_state_lookup: lookup.for_final_validation(),
+        };
+
+        std::fs::hard_link(&native, root.path().join(".lumin/cache/alias.ts"))?;
+        assert_eq!(
+            final_freshness_validation_signals(root.path(), &validation),
+            [GateSignal::ProtectedInputChanged {
+                paths: vec![RepoPathProjection::from(&path)]
             }]
         );
         Ok(())
