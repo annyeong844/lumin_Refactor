@@ -103,6 +103,30 @@ pub(super) fn related(root: &Path, arguments: &mut Arguments) -> Result<String, 
     }
 }
 
+#[cfg(unix)]
+fn native_argument_is_option_shaped(argument: &std::ffi::OsStr) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+
+    argument.as_bytes().starts_with(b"--")
+}
+
+#[cfg(windows)]
+fn native_argument_is_option_shaped(argument: &std::ffi::OsStr) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+
+    argument
+        .encode_wide()
+        .take(2)
+        .eq([b'-' as u16, b'-' as u16])
+}
+
+#[cfg(not(any(unix, windows)))]
+fn native_argument_is_option_shaped(argument: &std::ffi::OsStr) -> bool {
+    argument
+        .to_str()
+        .is_none_or(|value| value.starts_with("--"))
+}
+
 pub(super) fn files(root: &Path, arguments: &mut Arguments) -> Result<String, CliError> {
     let mut run_id = None;
     let mut repo_path = None;
@@ -127,10 +151,7 @@ pub(super) fn files(root: &Path, arguments: &mut Arguments) -> Result<String, Cl
             }
             Some("--cursor") => cursor = Some(arguments.required_utf8("--cursor")?),
             Some("--format") => format = arguments.required_utf8("--format")?,
-            Some(value) if value.starts_with("--") || repo_path.is_some() => {
-                return Err(CliError::UnknownArgument(value.to_owned()));
-            }
-            None if repo_path.is_some() => {
+            _ if native_argument_is_option_shaped(argument.as_os_str()) || repo_path.is_some() => {
                 return Err(CliError::UnknownArgument(
                     argument.to_string_lossy().into_owned(),
                 ));
