@@ -1151,6 +1151,29 @@ fn config_capture_limitation(
     }
 }
 
+fn validate_config_observation_identity(
+    root: &Path,
+    path: &RepoPath,
+    native: &Path,
+    expected_identity: Option<&PhysicalFileIdentity>,
+    reserved_state_lookup: &ReservedStateIdentityLookup,
+) -> Result<PhysicalFileIdentity, InventoryError> {
+    let observation = capture::physical_file_observation(native)?;
+    if expected_identity != Some(&observation.identity) {
+        return Err(InventoryError::PhysicalIdentity(format!(
+            "config path changed physical identity before observation: {}",
+            path.display_escaped()
+        )));
+    }
+    reserved_state::validate_semantic_input_identity(
+        root,
+        path,
+        &observation,
+        reserved_state_lookup,
+    )?;
+    Ok(observation.identity)
+}
+
 fn observe_config(
     root: &Path,
     path: &RepoPath,
@@ -1173,6 +1196,15 @@ fn observe_config(
             parent,
         });
     }
+    let validate_unavailable_identity = |expected_identity| {
+        validate_config_observation_identity(
+            root,
+            path,
+            &native,
+            expected_identity,
+            reserved_state_lookup,
+        )
+    };
     let metadata = match fs::symlink_metadata(&native) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -1182,26 +1214,32 @@ fn observe_config(
             )));
         }
         Err(error) => {
+            let physical_identity =
+                validate_unavailable_identity(input_identity.physical_identity.as_ref())?;
             return Ok(ConfigObservation::Unreadable {
                 path: path.clone(),
                 detail: error.to_string(),
-                physical_identity: input_identity.physical_identity,
+                physical_identity: Some(physical_identity),
             });
         }
     };
     if metadata.file_type().is_symlink() || !metadata.is_file() {
+        let physical_identity =
+            validate_unavailable_identity(input_identity.physical_identity.as_ref())?;
         return Ok(ConfigObservation::NonRegular {
             path: path.clone(),
-            physical_identity: input_identity.physical_identity,
+            physical_identity: Some(physical_identity),
         });
     }
     let mut file = match fs::File::open(&native) {
         Ok(file) => file,
         Err(error) => {
+            let physical_identity =
+                validate_unavailable_identity(input_identity.physical_identity.as_ref())?;
             return Ok(ConfigObservation::Unreadable {
                 path: path.clone(),
                 detail: error.to_string(),
-                physical_identity: input_identity.physical_identity,
+                physical_identity: Some(physical_identity),
             });
         }
     };
@@ -1215,10 +1253,11 @@ fn observe_config(
     )?;
     let mut bytes = Vec::new();
     if let Err(error) = file.read_to_end(&mut bytes) {
+        let current_identity = validate_unavailable_identity(Some(&physical_identity))?;
         return Ok(ConfigObservation::Unreadable {
             path: path.clone(),
             detail: error.to_string(),
-            physical_identity: Some(physical_identity),
+            physical_identity: Some(current_identity),
         });
     }
     let current_identity = observe_config_input_identity(root, path)?;

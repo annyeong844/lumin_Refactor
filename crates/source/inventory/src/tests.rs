@@ -440,6 +440,38 @@ fn demanded_nonregular_configs_keep_fact_owner_limitations()
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn nonregular_config_rejects_a_reserved_physical_identity() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    let config = root.path().join("package.json");
+    fs::create_dir(&config)?;
+    let reserved = BTreeSet::from([physical_file_identity(&config)?]);
+    let lookup = ReservedStateIdentityLookup::from_identities(reserved);
+
+    let error = match capture_config_with_reserved_state_lookup(
+        root.path(),
+        &RepoPath::from_portable("package.json")?,
+        ConfigSyntax::StrictJson,
+        &lookup,
+    ) {
+        Err(error) => error,
+        Ok(_) => {
+            return Err(std::io::Error::other(
+                "a reserved non-regular config was published as limitation evidence",
+            )
+            .into());
+        }
+    };
+
+    assert!(matches!(
+        error,
+        InventoryError::ReservedSemanticInputPath(path) if path == "package.json"
+    ));
+    Ok(())
+}
+
 #[test]
 fn scans_generated_and_explicit_vendor_roles() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
