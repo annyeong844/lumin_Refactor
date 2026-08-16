@@ -14,11 +14,8 @@ pub use namespace::MigrationIntent;
 pub use publication::{AttemptEnvelope, AttemptSession, AttemptState, LatestRunSnapshot};
 pub use retention::{RETENTION_PLAN_ITEMS_ORDERING, RetentionPlanRequest};
 
-use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use lumin_evidence::RunEvidence;
@@ -43,24 +40,6 @@ const MAX_RUN_CATALOG_PAGE_SIZE: usize = 100;
 pub struct RepositoryStore {
     state_dir: PathBuf,
     namespace: namespace::NamespaceState,
-    reserved_state_identities: Arc<Mutex<Option<ReservedStateIdentitySnapshot>>>,
-    reserved_state_generation: Arc<AtomicU64>,
-}
-
-#[derive(Debug)]
-struct ReservedStateIdentitySnapshot {
-    generation: u64,
-    identities: BTreeSet<PhysicalFileIdentity>,
-}
-
-struct ReservedStateMutationEpoch<'a> {
-    generation: &'a AtomicU64,
-}
-
-impl Drop for ReservedStateMutationEpoch<'_> {
-    fn drop(&mut self) {
-        self.generation.fetch_add(1, Ordering::Release);
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -193,57 +172,22 @@ impl RepositoryStore {
         let store = Self {
             state_dir,
             namespace,
-            reserved_state_identities: Arc::new(Mutex::new(None)),
-            reserved_state_generation: Arc::new(AtomicU64::new(0)),
         };
         store.recover_publication()?;
         Ok(store)
     }
 
     /// Resolve one actual shared evidence candidate against store ownership.
-    /// The retained state tree is indexed at most once per stable store
-    /// generation, and only when inventory observes a shared or mount-crossing
-    /// candidate.
+    /// Suspicious shared or mount-crossing candidates re-index retained state
+    /// under the cross-process lifecycle lock. Ordinary one-link evidence never
+    /// enters this path.
     pub fn owns_reserved_state_identity(
         &self,
         identity: &PhysicalFileIdentity,
     ) -> Result<bool, StoreError> {
-        self.with_reserved_state_identities(|identities| identities.contains(identity))
-    }
-
-    fn with_reserved_state_identities<T>(
-        &self,
-        inspect: impl Fn(&BTreeSet<PhysicalFileIdentity>) -> T,
-    ) -> Result<T, StoreError> {
-        loop {
-            let generation = self.reserved_state_generation.load(Ordering::Acquire);
-            if !generation.is_multiple_of(2) {
-                std::thread::yield_now();
-                continue;
-            }
-            let mut cached = self.reserved_state_identities.lock().map_err(|_| {
-                StoreError::Integrity("reserved state identity cache failed".to_owned())
-            })?;
-            if self.reserved_state_generation.load(Ordering::Acquire) != generation {
-                continue;
-            }
-            if cached
-                .as_ref()
-                .is_none_or(|snapshot| snapshot.generation != generation)
-            {
-                *cached = Some(ReservedStateIdentitySnapshot {
-                    generation,
-                    identities: self.namespace.reserved_state_identities()?,
-                });
-            }
-            let snapshot = cached.as_ref().ok_or_else(|| {
-                StoreError::Integrity("reserved state identity cache remained empty".to_owned())
-            })?;
-            let output = inspect(&snapshot.identities);
-            if self.reserved_state_generation.load(Ordering::Acquire) == generation {
-                return Ok(output);
-            }
-        }
+        self.namespace
+            .reserved_state_identities()
+            .map(|identities| identities.contains(identity))
     }
 
     pub fn load_run(&self, run_id: &RunId) -> Result<(RunCatalogRecord, RunEvidence), StoreError> {
@@ -317,10 +261,7 @@ impl RepositoryStore {
         &self,
         operation: impl FnOnce(&namespace::NamespaceGuard) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
-        self.namespace.with_exclusive_lock(|guard| {
-            let _epoch = self.begin_reserved_state_mutation()?;
-            operation(guard)
-        })
+        self.namespace.with_exclusive_lock(operation)
     }
 
     #[cfg(feature = "publication-test-crash")]
@@ -330,10 +271,7 @@ impl RepositoryStore {
         operation: impl FnOnce(&namespace::NamespaceGuard) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
         self.namespace
-            .with_exclusive_lock_after_contention(on_contention, |guard| {
-                let _epoch = self.begin_reserved_state_mutation()?;
-                operation(guard)
-            })
+            .with_exclusive_lock_after_contention(on_contention, operation)
     }
 
     fn with_shared_lock<T>(
@@ -341,24 +279,6 @@ impl RepositoryStore {
         operation: impl FnOnce(&namespace::NamespaceGuard) -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
         self.namespace.with_shared_lock(operation)
-    }
-}
-
-impl RepositoryStore {
-    fn begin_reserved_state_mutation(&self) -> Result<ReservedStateMutationEpoch<'_>, StoreError> {
-        let previous = self
-            .reserved_state_generation
-            .fetch_add(1, Ordering::AcqRel);
-        if !previous.is_multiple_of(2) {
-            self.reserved_state_generation
-                .fetch_add(1, Ordering::Release);
-            return Err(StoreError::Integrity(
-                "reserved state mutation generation overlapped".to_owned(),
-            ));
-        }
-        Ok(ReservedStateMutationEpoch {
-            generation: &self.reserved_state_generation,
-        })
     }
 }
 
