@@ -6,7 +6,7 @@ use serde::de::DeserializeOwned;
 
 use crate::namespace::{
     EntryAccess, EntryKind, HeldEntry, entry_exists, publish_file_atomic, replace_file_atomic,
-    same_volume,
+    same_volume_and_mount,
 };
 use crate::{StoreError, io_error, serialization_error};
 
@@ -127,9 +127,9 @@ pub(super) fn require_parent_volume(
     parent: &HeldEntry,
     label: &str,
 ) -> Result<(), StoreError> {
-    if !same_volume(entry.identity(), parent.identity()) {
+    if !same_volume_and_mount(entry, parent) {
         return Err(StoreError::Integrity(format!(
-            "{label} must remain on its parent volume"
+            "{label} must remain on its parent volume and mount"
         )));
     }
     Ok(())

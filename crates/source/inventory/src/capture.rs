@@ -10,6 +10,7 @@ use crate::InventoryError;
 pub(crate) struct OpenedSource {
     file: File,
     physical_identity: PhysicalFileIdentity,
+    links: u64,
 }
 
 impl OpenedSource {
@@ -34,15 +35,20 @@ impl OpenedSource {
                 "opened source is not a regular file".to_owned(),
             ));
         }
-        let physical_identity = physical_identity_from_file(&file)?;
+        let (physical_identity, links) = physical_identity_and_links_from_file(&file)?;
         Ok(Self {
             file,
             physical_identity,
+            links,
         })
     }
 
     pub(crate) fn physical_identity(&self) -> &PhysicalFileIdentity {
         &self.physical_identity
+    }
+
+    pub(crate) fn links(&self) -> u64 {
+        self.links
     }
 
     pub(crate) fn read_payload(&mut self, logical_path: &str) -> Result<Arc<[u8]>, InventoryError> {
@@ -98,6 +104,12 @@ fn source_capture_error(path: &str, detail: String) -> InventoryError {
 pub(crate) fn physical_identity_from_file(
     file: &File,
 ) -> Result<PhysicalFileIdentity, InventoryError> {
+    physical_identity_and_links_from_file(file).map(|(identity, _)| identity)
+}
+
+pub(crate) fn physical_identity_and_links_from_file(
+    file: &File,
+) -> Result<(PhysicalFileIdentity, u64), InventoryError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -105,10 +117,13 @@ pub(crate) fn physical_identity_from_file(
         let metadata = file
             .metadata()
             .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
-        Ok(PhysicalFileIdentity::Unix {
-            device: metadata.dev(),
-            inode: metadata.ino(),
-        })
+        Ok((
+            PhysicalFileIdentity::Unix {
+                device: metadata.dev(),
+                inode: metadata.ino(),
+            },
+            metadata.nlink(),
+        ))
     }
     #[cfg(windows)]
     {
@@ -117,9 +132,12 @@ pub(crate) fn physical_identity_from_file(
         let volume_serial = u32::try_from(information.volume_serial_number()).map_err(|_| {
             InventoryError::PhysicalIdentity("volume serial number exceeds u32".to_owned())
         })?;
-        Ok(PhysicalFileIdentity::Windows {
-            volume_serial,
-            file_index: information.file_index(),
-        })
+        Ok((
+            PhysicalFileIdentity::Windows {
+                volume_serial,
+                file_index: information.file_index(),
+            },
+            information.number_of_links(),
+        ))
     }
 }

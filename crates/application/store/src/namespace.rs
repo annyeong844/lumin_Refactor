@@ -22,7 +22,8 @@ pub(crate) use database::StoreDatabase;
 pub use migration::MigrationIntent;
 use platform::repository_root_physical_identity;
 pub(crate) use platform::{
-    EntryAccess, EntryKind, HeldEntry, publish_file_atomic, replace_file_atomic, same_volume,
+    EntryAccess, EntryKind, HeldEntry, publish_file_atomic, replace_file_atomic,
+    same_volume_and_mount,
 };
 use records::*;
 use store_header::*;
@@ -82,6 +83,7 @@ impl NamespaceState {
             false,
             ".lumin",
         )?;
+        require_state_volume(&state_directory, repository.directory.as_ref(), ".lumin")?;
         Self::open_bound(repository, state_dir, state_directory, marker_path).map(Some)
     }
 
@@ -96,6 +98,7 @@ impl NamespaceState {
             false,
             ".lumin",
         )?;
+        require_state_volume(&state_directory, repository.directory.as_ref(), ".lumin")?;
         let marker_path = state_dir.join("repository.json");
         if !entry_exists(&marker_path)? {
             return bootstrap_namespace(
@@ -492,9 +495,9 @@ impl NamespaceGuard {
             label,
         )?;
         let parent = self.managed_parent_entry(kind)?;
-        if !same_volume(entry.identity(), parent.identity()) {
+        if !same_volume_and_mount(&entry, parent) {
             return Err(StoreError::Integrity(format!(
-                "{label} must remain on its managed parent volume"
+                "{label} must remain on its managed parent volume and mount"
             )));
         }
         Ok(entry)
@@ -698,9 +701,9 @@ fn require_state_volume(
     state_directory: &HeldEntry,
     label: &str,
 ) -> Result<(), StoreError> {
-    if !same_volume(entry.identity(), state_directory.identity()) {
+    if !same_volume_and_mount(entry, state_directory) {
         return Err(StoreError::Integrity(format!(
-            "{label} crosses the state filesystem or volume"
+            "{label} crosses the state filesystem, volume, or mount"
         )));
     }
     Ok(())

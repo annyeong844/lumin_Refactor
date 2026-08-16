@@ -143,6 +143,23 @@ fn public_process_rejects_state_directory_replacement() -> Result<(), Box<dyn st
 }
 
 #[test]
+fn public_process_rejects_state_mount_crossing() -> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    let initial = run(root.path(), &["audit", "--jobs", "1"])?;
+    assert_status(&initial, 0);
+    let run_id = field(&initial.stdout, "runId")?;
+    let state = root.path().join(".lumin");
+
+    let mut crossing = StateMountCrossing::install(&state)?;
+    assert_public_integrity_failure(&run(root.path(), &["audit", "--jobs", "1"])?);
+    crossing.remove()?;
+
+    let recovered = run(root.path(), &["overview", "--run", &run_id])?;
+    assert_status(&recovered, 0);
+    Ok(())
+}
+
+#[test]
 fn public_process_rejects_lifecycle_lock_replacement() -> Result<(), Box<dyn std::error::Error>> {
     let root = fixture()?;
     let initial = run(root.path(), &["audit", "--jobs", "1"])?;
@@ -329,6 +346,27 @@ fn state_payload_aliases_never_enter_source_evidence_or_gate_writes()
     Ok(())
 }
 
+#[test]
+fn irrelevant_files_are_filtered_before_identity_capture() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = fixture()?;
+    let irrelevant = root.path().join("README.locked");
+    fs::write(&irrelevant, "not source or configuration evidence\n")?;
+    #[cfg(windows)]
+    let _exclusive = {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&irrelevant)?
+    };
+
+    let audited = run(root.path(), &["audit", "--jobs", "1"])?;
+    assert_status(&audited, 0);
+    Ok(())
+}
+
 fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     fs::create_dir(root.path().join("src"))?;
@@ -393,4 +431,128 @@ fn create_directory_alias(target: &Path, link: &Path) -> std::io::Result<()> {
 #[cfg(windows)]
 fn remove_directory_alias(link: &Path) -> std::io::Result<()> {
     fs::remove_dir(link)
+}
+
+#[cfg(target_os = "linux")]
+struct StateMountCrossing {
+    state: std::path::PathBuf,
+    active: bool,
+}
+
+#[cfg(target_os = "linux")]
+impl StateMountCrossing {
+    fn install(state: &Path) -> std::io::Result<Self> {
+        run_linux_mount_command("mount", &["--bind"], state, Some(state))?;
+        Ok(Self {
+            state: state.to_owned(),
+            active: true,
+        })
+    }
+
+    fn remove(&mut self) -> std::io::Result<()> {
+        if self.active {
+            run_linux_mount_command("umount", &[], &self.state, None)?;
+            self.active = false;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for StateMountCrossing {
+    fn drop(&mut self) {
+        let _ = self.remove();
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn run_linux_mount_command(
+    program: &str,
+    arguments: &[&str],
+    path: &Path,
+    second_path: Option<&Path>,
+) -> std::io::Result<()> {
+    let mut diagnostics = Vec::new();
+    for privileged in [false, true] {
+        let mut command = if privileged {
+            let mut command = std::process::Command::new("sudo");
+            command.args(["-n", program]);
+            command
+        } else {
+            std::process::Command::new(program)
+        };
+        command.args(arguments).arg(path);
+        if let Some(second_path) = second_path {
+            command.arg(second_path);
+        }
+        match command.output() {
+            Ok(output) if output.status.success() => return Ok(()),
+            Ok(output) => diagnostics.push(format!(
+                "{}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            )),
+            Err(error) => diagnostics.push(error.to_string()),
+        }
+    }
+    Err(std::io::Error::other(format!(
+        "cannot execute Linux {program} fixture: {}",
+        diagnostics.join("; ")
+    )))
+}
+
+#[cfg(windows)]
+struct StateMountCrossing {
+    state: std::path::PathBuf,
+    target: std::path::PathBuf,
+    active: bool,
+}
+
+#[cfg(windows)]
+impl StateMountCrossing {
+    fn install(state: &Path) -> std::io::Result<Self> {
+        let target = state.with_extension("mount-target");
+        fs::rename(state, &target)?;
+        if let Err(error) = create_directory_alias(&target, state) {
+            fs::rename(&target, state)?;
+            return Err(error);
+        }
+        Ok(Self {
+            state: state.to_owned(),
+            target,
+            active: true,
+        })
+    }
+
+    fn remove(&mut self) -> std::io::Result<()> {
+        if self.active {
+            remove_directory_alias(&self.state)?;
+            fs::rename(&self.target, &self.state)?;
+            self.active = false;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+impl Drop for StateMountCrossing {
+    fn drop(&mut self) {
+        let _ = self.remove();
+    }
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+struct StateMountCrossing;
+
+#[cfg(not(any(target_os = "linux", windows)))]
+impl StateMountCrossing {
+    fn install(_state: &Path) -> std::io::Result<Self> {
+        Err(std::io::Error::other(
+            "state mount fixture supports Windows and Linux",
+        ))
+    }
+
+    fn remove(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }

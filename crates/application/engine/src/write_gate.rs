@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use lumin_evidence::{
@@ -9,8 +8,8 @@ use lumin_evidence::{
 };
 use lumin_inventory::InventoryRequest;
 use lumin_model::{
-    DependencyIntent, GateDeltaRecord, GateId, OperationId, PhysicalFileIdentity, RepoPath,
-    RepositoryRootIdentity, ResolutionProfile, append_length_prefixed, digest_hex,
+    DependencyIntent, GateDeltaRecord, GateId, OperationId, RepoPath, RepositoryRootIdentity,
+    ResolutionProfile, append_length_prefixed, digest_hex,
 };
 use lumin_store::{
     OperationSession, PostWriteFinish, PostWriteStart, PreWriteFinish, PreWriteStart,
@@ -20,6 +19,7 @@ use lumin_store::{
 use super::{
     EngineError, RepositoryAnalysisSession, RepositoryAnalysisStep, RepositoryCapture,
     RepositoryContext, open_repository_context, repository_context_from_admission,
+    reserved_state_identity_lookup,
 };
 
 mod domain;
@@ -127,17 +127,17 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
     }
     lumin_inventory::validate_caller_entries(&context.root, &paths)?;
     validate_analysis_paths(&context.root, &request.entries, &request.dependency_intents)?;
-    let reserved_state_identities = context.store.reserved_state_identities()?;
-    lumin_inventory::validate_caller_entry_identities(
+    let reserved_state_lookup = reserved_state_identity_lookup(&context.store);
+    lumin_inventory::validate_caller_entry_identity_lookup(
         &context.root,
         &paths,
-        &reserved_state_identities,
+        &reserved_state_lookup,
     )?;
     validate_analysis_path_identities(
         &context.root,
         &request.entries,
         &request.dependency_intents,
-        &reserved_state_identities,
+        &reserved_state_lookup,
     )?;
     let inspection = inspect_declared_paths(&context.root, &paths);
     let operation = context.store.begin_operation(&request.operation_id)?;
@@ -240,7 +240,7 @@ impl PreWritePromotion {
 struct FinalFreshnessValidation {
     bindings: Vec<(RepoPath, SemanticReadReservationBinding)>,
     captured_inputs: Vec<SemanticInputRecord>,
-    reserved_state_identities: BTreeSet<PhysicalFileIdentity>,
+    reserved_state_lookup: lumin_inventory::ReservedStateIdentityLookup,
 }
 
 fn analyze_pre_write(
@@ -258,12 +258,13 @@ fn analyze_pre_write(
         scan_invocation: build_gate_scan_invocation_tier(request),
     };
     let inventory_request = inventory_request_from_tier(&options.scan_invocation)?;
+    let reserved_state_lookup = reserved_state_identity_lookup(&context.store);
     let capture = match capture_reserved_repository(
-        &context.store,
         &context.root,
         &context.repository_root,
         &options,
         &inventory_request,
+        &reserved_state_lookup,
         |paths| {
             operation
                 .reserve_pre_write_semantic_inputs(request_digest, gate_id, paths)
@@ -316,7 +317,7 @@ fn analyze_pre_write(
     let final_validation = FinalFreshnessValidation {
         bindings: reserved_semantic_bindings,
         captured_inputs: capture.snapshot.inputs.clone(),
-        reserved_state_identities: context.store.reserved_state_identities()?,
+        reserved_state_lookup: reserved_state_lookup.for_final_validation(),
     };
     let baseline = GateBaseline {
         analysis_contract: analysis_contract_id(),
@@ -389,12 +390,13 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         )));
     }
 
+    let reserved_state_lookup = reserved_state_identity_lookup(&context.store);
     let (capture, reserved_semantic_bindings) = match capture_reserved_repository(
-        &context.store,
         &context.root,
         &context.repository_root,
         &gate.analysis_options,
         &inventory_request,
+        &reserved_state_lookup,
         |paths| {
             operation
                 .reserve_post_write_semantic_inputs(&request_digest, &request.gate_id, paths)
@@ -469,7 +471,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
     let final_validation = FinalFreshnessValidation {
         bindings: reserved_semantic_bindings,
         captured_inputs: capture.snapshot.inputs.clone(),
-        reserved_state_identities: context.store.reserved_state_identities()?,
+        reserved_state_lookup: reserved_state_lookup.for_final_validation(),
     };
     operation
         .finish_post_write(
@@ -522,17 +524,17 @@ fn validate_analysis_path_identities(
     root: &Path,
     entries: &[RepoPath],
     dependency_intents: &[DependencyIntent],
-    reserved_state_identities: &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
+    reserved_state_lookup: &lumin_inventory::ReservedStateIdentityLookup,
 ) -> Result<(), EngineError> {
-    lumin_inventory::validate_caller_entry_identities(root, entries, reserved_state_identities)?;
+    lumin_inventory::validate_caller_entry_identity_lookup(root, entries, reserved_state_lookup)?;
     let dependency_paths = dependency_intents
         .iter()
         .map(|intent| intent.path.clone())
         .collect::<Vec<_>>();
-    lumin_inventory::validate_caller_entry_identities(
+    lumin_inventory::validate_caller_entry_identity_lookup(
         root,
         &dependency_paths,
-        reserved_state_identities,
+        reserved_state_lookup,
     )?;
     Ok(())
 }
@@ -573,11 +575,11 @@ enum ReservedCapture {
 }
 
 fn capture_reserved_repository(
-    store: &lumin_store::RepositoryStore,
     root: &Path,
     repository_root: &RepositoryRootIdentity,
     options: &GateAnalysisOptions,
     inventory_request: &InventoryRequest,
+    reserved_state_lookup: &lumin_inventory::ReservedStateIdentityLookup,
     mut reserve: impl FnMut(
         &[SemanticReadReservationBinding],
     ) -> Result<SemanticReadReservation, EngineError>,
@@ -595,11 +597,10 @@ fn capture_reserved_repository(
     }
     let dependency_candidate_binding_count = reserved_semantic_bindings.len();
 
-    let reserved_state_identities = store.reserved_state_identities()?;
-    let pending_inventory = lumin_inventory::begin_scan_with_reserved_state_identities(
+    let pending_inventory = lumin_inventory::begin_scan_with_reserved_state_lookup(
         root,
         inventory_request,
-        &reserved_state_identities,
+        reserved_state_lookup,
     )?;
     if let Some(outcome) = reserve_semantic_paths(
         root,
@@ -615,7 +616,7 @@ fn capture_reserved_repository(
         inventory,
         options.jobs,
         options.scan_invocation.clone(),
-        reserved_state_identities.clone(),
+        reserved_state_lookup.clone(),
     )?;
     loop {
         match session.next_step(options.resolution_profile)? {
@@ -644,7 +645,7 @@ fn capture_reserved_repository(
                     root,
                     &reserved_semantic_bindings,
                     &capture.snapshot.inputs,
-                    &reserved_state_identities,
+                    reserved_state_lookup,
                 )?;
                 if !stale.is_empty() {
                     return Ok(ReservedCapture::Blocked(
@@ -692,7 +693,7 @@ fn stale_reserved_semantic_paths(
     root: &Path,
     bindings: &[(RepoPath, SemanticReadReservationBinding)],
     captured_inputs: &[SemanticInputRecord],
-    reserved_state_identities: &BTreeSet<PhysicalFileIdentity>,
+    reserved_state_lookup: &lumin_inventory::ReservedStateIdentityLookup,
 ) -> Result<Vec<RepoPathProjection>, EngineError> {
     let captured_by_path = captured_inputs
         .iter()
@@ -711,10 +712,10 @@ fn stale_reserved_semantic_paths(
         };
         if captured.state == SemanticInputState::ConfigPresent {
             let current_payload =
-                lumin_inventory::dependency_input_payload_sha256_with_reserved_state_identities(
+                lumin_inventory::dependency_input_payload_sha256_with_reserved_state_lookup(
                     root,
                     path,
-                    reserved_state_identities,
+                    reserved_state_lookup,
                 )?;
             if captured.payload_sha256.as_deref() != Some(current_payload.as_str()) {
                 stale.push(current.path);
@@ -734,7 +735,7 @@ fn final_freshness_validation_signals(
         root,
         &validation.bindings,
         &validation.captured_inputs,
-        &validation.reserved_state_identities,
+        &validation.reserved_state_lookup,
     ) {
         Ok(paths) if paths.is_empty() => Vec::new(),
         Ok(paths) => vec![GateSignal::ProtectedInputChanged { paths }],
@@ -919,7 +920,7 @@ mod tests {
                 root.path(),
                 std::slice::from_ref(&reserved),
                 std::slice::from_ref(&captured),
-                &BTreeSet::new(),
+                &lumin_inventory::ReservedStateIdentityLookup::empty(),
             )?
             .is_empty()
         );
@@ -933,7 +934,7 @@ mod tests {
                 root.path(),
                 std::slice::from_ref(&reserved),
                 std::slice::from_ref(&captured),
-                &BTreeSet::new(),
+                &lumin_inventory::ReservedStateIdentityLookup::empty(),
             )?,
             vec![binding.path]
         );
@@ -967,7 +968,7 @@ mod tests {
         let validation = FinalFreshnessValidation {
             bindings: vec![reserved.clone()],
             captured_inputs: vec![captured.clone()],
-            reserved_state_identities: BTreeSet::new(),
+            reserved_state_lookup: lumin_inventory::ReservedStateIdentityLookup::empty(),
         };
 
         assert!(final_freshness_validation_signals(root.path(), &validation).is_empty());

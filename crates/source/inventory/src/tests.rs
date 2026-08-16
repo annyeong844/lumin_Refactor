@@ -110,6 +110,26 @@ fn hard_link_sources_share_captured_payload_but_keep_logical_identity()
     Ok(())
 }
 
+#[test]
+fn one_link_evidence_does_not_query_retained_state_ownership()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir(root.path().join("src"))?;
+    fs::write(root.path().join("src/lib.ts"), "export const value = 1;\n")?;
+    let queries = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = Arc::clone(&queries);
+    let lookup = ReservedStateIdentityLookup::new(move |_| {
+        observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(false)
+    });
+
+    begin_scan_with_reserved_state_lookup(root.path(), &InventoryRequest::default(), &lookup)?
+        .finish(root.path())?;
+
+    assert_eq!(queries.load(std::sync::atomic::Ordering::Relaxed), 0);
+    Ok(())
+}
+
 #[cfg(windows)]
 #[test]
 fn explicit_case_spelling_is_a_distinct_logical_source_on_case_insensitive_storage()

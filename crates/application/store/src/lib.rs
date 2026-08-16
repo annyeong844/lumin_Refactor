@@ -17,6 +17,7 @@ pub use retention::{RETENTION_PLAN_ITEMS_ORDERING, RetentionPlanRequest};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use lumin_evidence::RunEvidence;
@@ -41,6 +42,7 @@ const MAX_RUN_CATALOG_PAGE_SIZE: usize = 100;
 pub struct RepositoryStore {
     state_dir: PathBuf,
     namespace: namespace::NamespaceState,
+    reserved_state_identities: Arc<Mutex<Option<BTreeSet<PhysicalFileIdentity>>>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -173,15 +175,36 @@ impl RepositoryStore {
         let store = Self {
             state_dir,
             namespace,
+            reserved_state_identities: Arc::new(Mutex::new(None)),
         };
         store.recover_publication()?;
         Ok(store)
     }
 
-    /// Snapshot every object identity currently owned by the reserved state
-    /// namespace while holding the validated lifecycle lock.
-    pub fn reserved_state_identities(&self) -> Result<BTreeSet<PhysicalFileIdentity>, StoreError> {
-        self.namespace.reserved_state_identities()
+    /// Resolve one actual shared evidence candidate against store ownership.
+    /// The retained state tree is indexed at most once per command, and only
+    /// when inventory observes a candidate with multiple physical links.
+    pub fn owns_reserved_state_identity(
+        &self,
+        identity: &PhysicalFileIdentity,
+    ) -> Result<bool, StoreError> {
+        self.with_reserved_state_identities(|identities| identities.contains(identity))
+    }
+
+    fn with_reserved_state_identities<T>(
+        &self,
+        inspect: impl FnOnce(&BTreeSet<PhysicalFileIdentity>) -> T,
+    ) -> Result<T, StoreError> {
+        let mut cached = self.reserved_state_identities.lock().map_err(|_| {
+            StoreError::Integrity("reserved state identity cache failed".to_owned())
+        })?;
+        if cached.is_none() {
+            *cached = Some(self.namespace.reserved_state_identities()?);
+        }
+        let identities = cached.as_ref().ok_or_else(|| {
+            StoreError::Integrity("reserved state identity cache remained empty".to_owned())
+        })?;
+        Ok(inspect(identities))
     }
 
     pub fn load_run(&self, run_id: &RunId) -> Result<(RunCatalogRecord, RunEvidence), StoreError> {

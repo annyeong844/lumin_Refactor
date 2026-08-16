@@ -23,6 +23,7 @@ pub(crate) struct HeldEntry {
     file: File,
     identity: PhysicalFileIdentity,
     links: u64,
+    mount_id: Option<u64>,
 }
 
 impl HeldEntry {
@@ -72,6 +73,7 @@ impl HeldEntry {
             file,
             identity: facts.identity,
             links: facts.links,
+            mount_id: facts.mount_id,
         })
     }
 
@@ -92,7 +94,10 @@ impl HeldEntry {
         label: &str,
     ) -> Result<(), StoreError> {
         let current = Self::open(path, kind, access, one_link, label)?;
-        if current.identity != self.identity || (one_link && current.links != self.links) {
+        if current.identity != self.identity
+            || current.mount_id != self.mount_id
+            || (one_link && current.links != self.links)
+        {
             return Err(StoreError::Integrity(format!(
                 "{label} physical identity changed"
             )));
@@ -188,6 +193,10 @@ pub(crate) fn same_volume(left: &PhysicalFileIdentity, right: &PhysicalFileIdent
         ) => left == right,
         _ => false,
     }
+}
+
+pub(crate) fn same_volume_and_mount(left: &HeldEntry, right: &HeldEntry) -> bool {
+    same_volume(left.identity(), right.identity()) && left.mount_id == right.mount_id
 }
 
 #[cfg(target_os = "linux")]
@@ -328,6 +337,7 @@ pub(super) fn repository_root_physical_identity(
 struct FileFacts {
     identity: PhysicalFileIdentity,
     links: u64,
+    mount_id: Option<u64>,
     is_directory: bool,
     is_regular_file: bool,
     is_redirect: bool,
@@ -428,6 +438,7 @@ fn file_facts(file: &File) -> Result<FileFacts, StoreError> {
             inode: metadata.ino(),
         },
         links: metadata.nlink(),
+        mount_id: Some(linux_mount_id(file)?),
         is_directory: metadata.is_dir(),
         is_regular_file: metadata.is_file(),
         is_redirect: metadata.file_type().is_symlink(),
@@ -452,10 +463,62 @@ fn file_facts(file: &File) -> Result<FileFacts, StoreError> {
             file_index: information.file_index(),
         },
         links: information.number_of_links(),
+        mount_id: None,
         is_directory: attributes & FILE_ATTRIBUTE_DIRECTORY != 0,
         is_regular_file: attributes & FILE_ATTRIBUTE_DIRECTORY == 0,
         is_redirect: attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0,
     })
+}
+
+#[cfg(target_os = "linux")]
+fn linux_mount_id(file: &File) -> Result<u64, StoreError> {
+    use std::os::fd::AsRawFd;
+
+    let source = std::fs::read_to_string(format!("/proc/self/fdinfo/{}", file.as_raw_fd()))
+        .map_err(io_error)?;
+    parse_linux_mount_id(&source)
+}
+
+#[cfg(target_os = "linux")]
+fn parse_linux_mount_id(source: &str) -> Result<u64, StoreError> {
+    let mut mount_id = None;
+    for line in source.lines() {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        if name != "mnt_id" {
+            continue;
+        }
+        if mount_id.is_some() {
+            return Err(StoreError::Integrity(
+                "opened state object reported duplicate Linux mount IDs".to_owned(),
+            ));
+        }
+        mount_id = Some(value.trim().parse::<u64>().map_err(|error| {
+            StoreError::Integrity(format!(
+                "opened state object reported invalid mount ID: {error}"
+            ))
+        })?);
+    }
+    mount_id.ok_or_else(|| {
+        StoreError::Integrity("opened state object omitted its Linux mount ID".to_owned())
+    })
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::parse_linux_mount_id;
+
+    #[test]
+    fn parses_exact_linux_mount_identity() -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(
+            parse_linux_mount_id("pos:\t0\nflags:\t0100000\nmnt_id:\t47\nino:\t5\n")?,
+            47
+        );
+        assert!(parse_linux_mount_id("pos:\t0\nino:\t5\n").is_err());
+        assert!(parse_linux_mount_id("mnt_id:\t47\nmnt_id:\t48\n").is_err());
+        Ok(())
+    }
 }
 
 #[cfg(not(any(target_os = "linux", windows)))]

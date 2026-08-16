@@ -252,15 +252,24 @@ fn observe_directory_prefixes(
 }
 
 pub fn physical_file_identity(path: &Path) -> Result<PhysicalFileIdentity, InventoryError> {
+    physical_file_identity_and_links(path).map(|(identity, _)| identity)
+}
+
+pub(crate) fn physical_file_identity_and_links(
+    path: &Path,
+) -> Result<(PhysicalFileIdentity, u64), InventoryError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
         let metadata = fs::metadata(path)
             .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
-        Ok(PhysicalFileIdentity::Unix {
-            device: metadata.dev(),
-            inode: metadata.ino(),
-        })
+        Ok((
+            PhysicalFileIdentity::Unix {
+                device: metadata.dev(),
+                inode: metadata.ino(),
+            },
+            metadata.nlink(),
+        ))
     }
     #[cfg(windows)]
     {
@@ -268,7 +277,10 @@ pub fn physical_file_identity(path: &Path) -> Result<PhysicalFileIdentity, Inven
             .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
         let information = winapi_util::file::information(&handle)
             .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
-        windows_physical_identity(&information)
+        Ok((
+            windows_physical_identity(&information)?,
+            information.number_of_links(),
+        ))
     }
 }
 

@@ -7,13 +7,13 @@ use std::path::Path;
 use lumin_model::{
     ConfigObservation, ConfigSyntax, DependencyIntent, DependencyIntentIdentity,
     DependencyOwnerFact, Limitation, LogicalSourceId, PackageFact, PackageIdentityState,
-    PackageScope, PhysicalFileIdentity, RepoPath, SemanticConfigSnapshot, WorkspaceFact,
-    digest_hex,
+    PackageScope, RepoPath, SemanticConfigSnapshot, WorkspaceFact, digest_hex,
 };
 
+use crate::physical_path::physical_file_identity_and_links;
 use crate::{
-    InventoryError, SemanticPolicyInput, SemanticPolicyState,
-    capture_config_with_reserved_state_identities, native_relative, observe_config_input_identity,
+    InventoryError, ReservedStateIdentityLookup, SemanticPolicyInput, SemanticPolicyState,
+    capture_config_with_reserved_state_lookup, native_relative, observe_config_input_identity,
     reserved_state,
 };
 
@@ -32,7 +32,7 @@ pub(crate) fn capture_owner_candidates(
     observations: &mut BTreeMap<RepoPath, ConfigObservation>,
     consulted_config_paths: &mut Vec<RepoPath>,
     limitations: &mut Vec<Limitation>,
-    reserved_state_identities: &BTreeSet<PhysicalFileIdentity>,
+    reserved_state_lookup: &ReservedStateIdentityLookup,
 ) -> Result<Vec<SemanticPolicyInput>, InventoryError> {
     let mut candidates = BTreeMap::<RepoPath, ConfigSyntax>::new();
     for intent in intents {
@@ -52,12 +52,8 @@ pub(crate) fn capture_owner_candidates(
         if observations.contains_key(&path) {
             continue;
         }
-        let capture = capture_config_with_reserved_state_identities(
-            root,
-            &path,
-            syntax,
-            reserved_state_identities,
-        )?;
+        let capture =
+            capture_config_with_reserved_state_lookup(root, &path, syntax, reserved_state_lookup)?;
         captured.insert(path, capture);
     }
 
@@ -285,13 +281,13 @@ pub(crate) fn capture(
     plan: DependencyOwnershipPlan,
     config: &mut SemanticConfigSnapshot,
     limitations: &mut Vec<Limitation>,
-    reserved_state_identities: &BTreeSet<PhysicalFileIdentity>,
+    reserved_state_lookup: &ReservedStateIdentityLookup,
 ) -> Result<Vec<SemanticPolicyInput>, InventoryError> {
     let mut lockfile_inputs = BTreeMap::<RepoPath, SemanticPolicyInput>::new();
     for path in &plan.input_paths {
         lockfile_inputs.insert(
             path.clone(),
-            capture_lockfile(root, path, reserved_state_identities)?,
+            capture_lockfile(root, path, reserved_state_lookup)?,
         );
     }
     let mut facts = Vec::new();
@@ -544,16 +540,10 @@ fn next_lockfile_directory(
 fn capture_lockfile(
     root: &Path,
     path: &RepoPath,
-    reserved_state_identities: &BTreeSet<PhysicalFileIdentity>,
+    reserved_state_lookup: &ReservedStateIdentityLookup,
 ) -> Result<SemanticPolicyInput, InventoryError> {
+    reserved_state::validate_semantic_input_path(root, path)?;
     let identity = observe_config_input_identity(root, path)?;
-    if let Some(physical_identity) = &identity.physical_identity {
-        reserved_state::validate_semantic_input_identity(
-            path,
-            physical_identity,
-            reserved_state_identities,
-        )?;
-    }
     if let Some(parent) = identity.absence_parent {
         return Ok(SemanticPolicyInput {
             path: path.clone(),
@@ -598,11 +588,12 @@ fn capture_lockfile(
             ));
         }
     };
-    let physical_identity = crate::capture::physical_identity_from_file(&file)?;
+    let (physical_identity, links) = crate::capture::physical_identity_and_links_from_file(&file)?;
     reserved_state::validate_semantic_input_identity(
         path,
         &physical_identity,
-        reserved_state_identities,
+        links,
+        reserved_state_lookup,
     )?;
     let mut bytes = Vec::new();
     if let Err(error) = file.read_to_end(&mut bytes) {
@@ -621,10 +612,12 @@ fn capture_lockfile(
             path.display_escaped()
         )));
     }
+    let (_, current_links) = physical_file_identity_and_links(&native)?;
     reserved_state::validate_semantic_input_identity(
         path,
         &physical_identity,
-        reserved_state_identities,
+        current_links,
+        reserved_state_lookup,
     )?;
     Ok(SemanticPolicyInput {
         path: path.clone(),
@@ -639,9 +632,9 @@ fn capture_lockfile(
 pub(crate) fn present_input_payload_sha256(
     root: &Path,
     path: &RepoPath,
-    reserved_state_identities: &BTreeSet<PhysicalFileIdentity>,
+    reserved_state_lookup: &ReservedStateIdentityLookup,
 ) -> Result<String, InventoryError> {
-    let input = capture_lockfile(root, path, reserved_state_identities)?;
+    let input = capture_lockfile(root, path, reserved_state_lookup)?;
     if input.state == SemanticPolicyState::Present
         && let Some(payload_sha256) = input.payload_sha256
     {

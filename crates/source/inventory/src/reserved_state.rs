@@ -1,11 +1,80 @@
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
+use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use lumin_model::{PhysicalFileIdentity, RepoPath, RepoPathError};
 
-use super::{InventoryError, native_relative, physical_file_identity};
+use super::{InventoryError, native_relative};
+use crate::physical_path::physical_file_identity_and_links;
+
+type IdentityCheck =
+    dyn Fn(&PhysicalFileIdentity) -> Result<bool, InventoryError> + Send + Sync + 'static;
+
+/// Store-owned identity membership is evaluated lazily. Ordinary one-link
+/// evidence candidates never require enumerating the retained state tree;
+/// redirected paths are rejected separately through canonical containment.
+#[derive(Clone)]
+pub struct ReservedStateIdentityLookup {
+    check: Arc<IdentityCheck>,
+    queried: Arc<AtomicBool>,
+}
+
+impl ReservedStateIdentityLookup {
+    pub fn new(
+        check: impl Fn(&PhysicalFileIdentity) -> Result<bool, InventoryError> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            check: Arc::new(check),
+            queried: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub fn from_identities(identities: BTreeSet<PhysicalFileIdentity>) -> Self {
+        Self::new(move |identity| Ok(identities.contains(identity)))
+    }
+
+    pub fn empty() -> Self {
+        Self::from_identities(BTreeSet::new())
+    }
+
+    pub(crate) fn contains_shared(
+        &self,
+        identity: &PhysicalFileIdentity,
+        links: u64,
+    ) -> Result<bool, InventoryError> {
+        if links <= 1 {
+            return Ok(false);
+        }
+        self.queried.store(true, Ordering::Release);
+        (self.check)(identity)
+    }
+
+    /// Freeze a lookup for a final validation that runs under the store lock.
+    /// If analysis never needed the state index, a newly shared input is itself
+    /// stale topology and must fail without trying to acquire the store lock.
+    pub fn for_final_validation(&self) -> Self {
+        if self.queried.load(Ordering::Acquire) {
+            return self.clone();
+        }
+        Self::new(|_| {
+            Err(InventoryError::PhysicalIdentity(
+                "semantic input acquired an additional physical link after capture".to_owned(),
+            ))
+        })
+    }
+}
+
+impl fmt::Debug for ReservedStateIdentityLookup {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ReservedStateIdentityLookup")
+            .finish_non_exhaustive()
+    }
+}
 
 pub fn is_reserved_state_path(path: &RepoPath) -> Result<bool, RepoPathError> {
     let relative = path.to_native_relative()?;
@@ -46,11 +115,21 @@ pub fn validate_caller_entry_identities(
     entries: &[RepoPath],
     reserved_state_identities: &BTreeSet<PhysicalFileIdentity>,
 ) -> Result<(), InventoryError> {
+    let lookup = ReservedStateIdentityLookup::from_identities(reserved_state_identities.clone());
+    validate_caller_entry_identity_lookup(root, entries, &lookup)
+}
+
+pub fn validate_caller_entry_identity_lookup(
+    root: &Path,
+    entries: &[RepoPath],
+    reserved_state_lookup: &ReservedStateIdentityLookup,
+) -> Result<(), InventoryError> {
     for entry in entries {
         let native = root.join(native_relative(entry)?);
         match fs::symlink_metadata(&native) {
             Ok(_) => {
-                if reserved_state_identities.contains(&physical_file_identity(&native)?) {
+                let (identity, links) = physical_file_identity_and_links(&native)?;
+                if reserved_state_lookup.contains_shared(&identity, links)? {
                     return Err(InventoryError::ReservedEntryPath(entry.display_escaped()));
                 }
             }
@@ -69,14 +148,52 @@ pub fn validate_caller_entry_identities(
 pub(crate) fn validate_semantic_input_identity(
     path: &RepoPath,
     physical_identity: &PhysicalFileIdentity,
-    reserved_state_identities: &BTreeSet<PhysicalFileIdentity>,
+    links: u64,
+    reserved_state_lookup: &ReservedStateIdentityLookup,
 ) -> Result<(), InventoryError> {
-    if reserved_state_identities.contains(physical_identity) {
+    if reserved_state_lookup.contains_shared(physical_identity, links)? {
         Err(InventoryError::ReservedSemanticInputPath(
             path.display_escaped(),
         ))
     } else {
         Ok(())
+    }
+}
+
+pub(crate) fn validate_semantic_input_path(
+    root: &Path,
+    path: &RepoPath,
+) -> Result<(), InventoryError> {
+    if semantic_input_resolves_into_reserved_state(root, path)? {
+        return Err(InventoryError::ReservedSemanticInputPath(
+            path.display_escaped(),
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn semantic_input_resolves_into_reserved_state(
+    root: &Path,
+    path: &RepoPath,
+) -> Result<bool, InventoryError> {
+    let Some(canonical_state) = canonical_reserved_state(root)? else {
+        return Ok(false);
+    };
+    let native = root.join(native_relative(path)?);
+    match fs::canonicalize(&native) {
+        Ok(canonical) => Ok(canonical.starts_with(canonical_state)),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(InventoryError::PhysicalIdentity(format!(
+            "cannot resolve semantic input {}: {error}",
+            path.display_escaped()
+        ))),
     }
 }
 
