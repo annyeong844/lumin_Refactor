@@ -583,6 +583,12 @@ impl NamespaceGuard {
         }
         Ok(())
     }
+
+    pub(crate) fn reserved_state_identities(
+        &self,
+    ) -> Result<std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>, StoreError> {
+        reserved_state::collect_identities(self)
+    }
 }
 
 fn open_managed_parent(

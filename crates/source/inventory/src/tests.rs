@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 mod physical_path_redirect;
@@ -247,7 +248,7 @@ fn final_validation_rejects_new_link_topology_without_reusing_the_state_index()
     let initial = crate::capture::physical_file_observation(&source)?;
     assert!(!lookup.contains_candidate(root.path(), &path, &initial)?);
 
-    let final_lookup = lookup.for_final_validation();
+    let final_lookup = lookup.for_final_validation(&BTreeSet::new());
     fs::hard_link(&source, root.path().join(".lumin/cache/alias.ts"))?;
     let current = crate::capture::physical_file_observation(&source)?;
     assert!(
@@ -256,6 +257,24 @@ fn final_validation_rejects_new_link_topology_without_reusing_the_state_index()
             .is_err()
     );
     assert_eq!(queries.load(std::sync::atomic::Ordering::Relaxed), 0);
+    Ok(())
+}
+
+#[test]
+fn final_validation_rechecks_membership_when_candidate_topology_is_unchanged()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    let source = root.path().join("src/lib.ts");
+    fs::write(&source, "export const value = 1;\n")?;
+    let path = RepoPath::from_portable("src/lib.ts")?;
+    let observation = crate::capture::physical_file_observation(&source)?;
+    let lookup = ReservedStateIdentityLookup::empty();
+    assert!(!lookup.contains_candidate(root.path(), &path, &observation)?);
+
+    let reserved = BTreeSet::from([observation.identity.clone()]);
+    let final_lookup = lookup.for_final_validation(&reserved);
+    assert!(final_lookup.contains_candidate(root.path(), &path, &observation)?);
     Ok(())
 }
 

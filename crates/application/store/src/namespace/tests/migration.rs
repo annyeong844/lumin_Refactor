@@ -400,7 +400,7 @@ fn open_active_gate_for(
             alias_closures: Vec::new(),
             signals: Vec::new(),
         },
-        Vec::new,
+        |_| Vec::new(),
     )?;
     Ok(gate_id)
 }

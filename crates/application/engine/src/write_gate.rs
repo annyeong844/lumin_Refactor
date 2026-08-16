@@ -180,9 +180,9 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         final_validation,
     } = promotion;
     operation
-        .finish_pre_write(&request_digest, &gate_id, finish, || {
+        .finish_pre_write(&request_digest, &gate_id, finish, |reserved_identities| {
             final_validation.map_or_else(Vec::new, |validation| {
-                final_freshness_validation_signals(&context.root, &validation)
+                final_freshness_validation_signals(&context.root, &validation, reserved_identities)
             })
         })
         .map_err(Into::into)
@@ -317,7 +317,7 @@ fn analyze_pre_write(
     let final_validation = FinalFreshnessValidation {
         bindings: reserved_semantic_bindings,
         captured_inputs: capture.snapshot.inputs.clone(),
-        reserved_state_lookup: reserved_state_lookup.for_final_validation(),
+        reserved_state_lookup,
     };
     let baseline = GateBaseline {
         analysis_contract: analysis_contract_id(),
@@ -471,7 +471,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
     let final_validation = FinalFreshnessValidation {
         bindings: reserved_semantic_bindings,
         captured_inputs: capture.snapshot.inputs.clone(),
-        reserved_state_lookup: reserved_state_lookup.for_final_validation(),
+        reserved_state_lookup,
     };
     operation
         .finish_post_write(
@@ -488,7 +488,13 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                 signals,
                 deltas,
             },
-            || final_freshness_validation_signals(&context.root, &final_validation),
+            |reserved_identities| {
+                final_freshness_validation_signals(
+                    &context.root,
+                    &final_validation,
+                    reserved_identities,
+                )
+            },
         )
         .map_err(Into::into)
 }
@@ -560,7 +566,7 @@ fn finish_failed_close(
                 signals,
                 deltas: Vec::new(),
             },
-            Vec::new,
+            |_| Vec::new(),
         )
         .map_err(Into::into)
 }
@@ -774,12 +780,16 @@ fn stale_captured_input_topology_paths(
 fn final_freshness_validation_signals(
     root: &Path,
     validation: &FinalFreshnessValidation,
+    reserved_identities: &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
 ) -> Vec<GateSignal> {
+    let final_lookup = validation
+        .reserved_state_lookup
+        .for_final_validation(reserved_identities);
     match stale_reserved_semantic_paths(
         root,
         &validation.bindings,
         &validation.captured_inputs,
-        &validation.reserved_state_lookup,
+        &final_lookup,
     ) {
         Ok(paths) if paths.is_empty() => Vec::new(),
         Ok(paths) => vec![GateSignal::ProtectedInputChanged { paths }],
@@ -1009,20 +1019,41 @@ mod tests {
             physical_redirect_sha256: None,
         };
         let reserved = (candidate.clone(), binding.clone());
+        let reserved_state_lookup = lumin_inventory::ReservedStateIdentityLookup::empty();
+        lumin_inventory::validate_captured_semantic_input_topology(
+            root.path(),
+            &candidate,
+            binding
+                .physical_identity
+                .as_ref()
+                .ok_or("present dependency reservation omitted its physical identity")?,
+            &reserved_state_lookup,
+        )?;
         let validation = FinalFreshnessValidation {
             bindings: vec![reserved.clone()],
             captured_inputs: vec![captured.clone()],
-            reserved_state_lookup: lumin_inventory::ReservedStateIdentityLookup::empty(),
+            reserved_state_lookup,
         };
 
-        assert!(final_freshness_validation_signals(root.path(), &validation).is_empty());
+        assert!(
+            final_freshness_validation_signals(
+                root.path(),
+                &validation,
+                &std::collections::BTreeSet::new(),
+            )
+            .is_empty()
+        );
 
         std::fs::write(
             root.path().join("package.json"),
             r#"{"name":"root","workspaces":["changed/*"]}"#,
         )?;
         assert_eq!(
-            final_freshness_validation_signals(root.path(), &validation),
+            final_freshness_validation_signals(
+                root.path(),
+                &validation,
+                &std::collections::BTreeSet::new(),
+            ),
             [GateSignal::ProtectedInputChanged {
                 paths: vec![binding.path]
             }]
@@ -1057,12 +1088,54 @@ mod tests {
                 absence_parent: None,
                 physical_redirect_sha256: None,
             }],
-            reserved_state_lookup: lookup.for_final_validation(),
+            reserved_state_lookup: lookup,
         };
 
         std::fs::hard_link(&native, root.path().join(".lumin/cache/alias.ts"))?;
         assert_eq!(
-            final_freshness_validation_signals(root.path(), &validation),
+            final_freshness_validation_signals(
+                root.path(),
+                &validation,
+                &std::collections::BTreeSet::new(),
+            ),
+            [GateSignal::ProtectedInputChanged {
+                paths: vec![RepoPathProjection::from(&path)]
+            }]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn final_freshness_rechecks_reserved_membership_without_candidate_topology_change()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        std::fs::create_dir_all(root.path().join("src"))?;
+        let path = RepoPath::from_portable("src/lib.ts")?;
+        std::fs::write(root.path().join("src/lib.ts"), "export const value = 1;\n")?;
+        let identity = lumin_inventory::observe_physical_file_identity(root.path(), &path)?;
+        let lookup = lumin_inventory::ReservedStateIdentityLookup::empty();
+        lumin_inventory::validate_captured_semantic_input_topology(
+            root.path(),
+            &path,
+            &identity,
+            &lookup,
+        )?;
+        let validation = FinalFreshnessValidation {
+            bindings: Vec::new(),
+            captured_inputs: vec![SemanticInputRecord {
+                path: RepoPathProjection::from(&path),
+                state: SemanticInputState::Source,
+                payload_sha256: Some(digest_hex(b"export const value = 1;\n")),
+                physical_identity: Some(identity.clone()),
+                absence_parent: None,
+                physical_redirect_sha256: None,
+            }],
+            reserved_state_lookup: lookup,
+        };
+        let reserved_identities = std::collections::BTreeSet::from([identity]);
+
+        assert_eq!(
+            final_freshness_validation_signals(root.path(), &validation, &reserved_identities,),
             [GateSignal::ProtectedInputChanged {
                 paths: vec![RepoPathProjection::from(&path)]
             }]

@@ -40,7 +40,7 @@ fn process_death_releases_pre_write_reservations_and_allows_same_operation_retry
                 detail: "test rejection".to_owned(),
             }],
         },
-        Vec::new,
+        |_| Vec::new(),
     )?;
     let committed_writer = store.load_operation(&writer_id)?;
     assert_eq!(committed_writer.status, GateOperationStatus::Committed);

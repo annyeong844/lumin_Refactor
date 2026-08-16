@@ -21,7 +21,7 @@ type IdentityCheck =
 pub struct ReservedStateIdentityLookup {
     check: Arc<IdentityCheck>,
     observations: Arc<Mutex<LookupObservations>>,
-    frozen: bool,
+    final_reserved_identities: Option<Arc<BTreeSet<PhysicalFileIdentity>>>,
 }
 
 #[derive(Default)]
@@ -45,7 +45,7 @@ impl ReservedStateIdentityLookup {
         Self {
             check: Arc::new(check),
             observations: Arc::new(Mutex::new(LookupObservations::default())),
-            frozen: false,
+            final_reserved_identities: None,
         }
     }
 
@@ -92,6 +92,9 @@ impl ReservedStateIdentityLookup {
                 {
                     return Err(candidate_topology_changed());
                 }
+                if let Some(final_identities) = &self.final_reserved_identities {
+                    return Ok(final_identities.contains(&observation.identity));
+                }
                 if let Some(reserved) = observed.reserved_by_identity.get(&observation.identity) {
                     return Ok(*reserved);
                 }
@@ -99,7 +102,7 @@ impl ReservedStateIdentityLookup {
                     return Ok(false);
                 }
             } else {
-                if self.frozen {
+                if self.final_reserved_identities.is_some() {
                     return Err(candidate_topology_changed());
                 }
                 observed.candidates.insert(
@@ -145,15 +148,18 @@ impl ReservedStateIdentityLookup {
         Ok(reserved)
     }
 
-    /// Freeze a lookup for a final validation that runs under the store lock.
-    /// Final validation accepts only the exact link and mount topology observed
-    /// during capture, so it never reacquires the store lock or trusts a stale
-    /// identity index after a new alias appears.
-    pub fn for_final_validation(&self) -> Self {
+    /// Freeze capture topology against a fresh reserved-state identity set
+    /// collected under the store's final promotion lock. Final validation
+    /// rechecks every observed candidate against this set even when its own
+    /// link and mount observations did not change.
+    pub fn for_final_validation(
+        &self,
+        reserved_identities: &BTreeSet<PhysicalFileIdentity>,
+    ) -> Self {
         Self {
             check: Arc::clone(&self.check),
             observations: Arc::clone(&self.observations),
-            frozen: true,
+            final_reserved_identities: Some(Arc::new(reserved_identities.clone())),
         }
     }
 

@@ -105,7 +105,9 @@ impl OperationSession<'_> {
         request_digest: &str,
         gate_id: &GateId,
         finish: PreWriteFinish,
-        final_validation: impl FnOnce() -> Vec<GateSignal>,
+        final_validation: impl FnOnce(
+            &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
+        ) -> Vec<GateSignal>,
     ) -> Result<GateOperationResult, StoreError> {
         let PreWriteFinish {
             baseline,
@@ -136,7 +138,8 @@ impl OperationSession<'_> {
                 &leased_write_set,
                 &mut signals,
             )?;
-            signals.extend(final_validation());
+            let reserved_state_identities = guard.reserved_state_identities()?;
+            signals.extend(final_validation(&reserved_state_identities));
             let (gate, result) = completed_pre_write_records(
                 &operation,
                 baseline,
@@ -374,7 +377,9 @@ impl OperationSession<'_> {
         request_digest: &str,
         gate_id: &GateId,
         finish: PostWriteFinish,
-        final_validation: impl FnOnce() -> Vec<GateSignal>,
+        final_validation: impl FnOnce(
+            &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
+        ) -> Vec<GateSignal>,
     ) -> Result<GateOperationResult, StoreError> {
         let PostWriteFinish {
             snapshot,
@@ -419,7 +424,8 @@ impl OperationSession<'_> {
                 &reconciled_transition_sequences,
                 &mut signals,
             )?;
-            signals.extend(final_validation());
+            let reserved_state_identities = guard.reserved_state_identities()?;
+            signals.extend(final_validation(&reserved_state_identities));
             if !gate_policy::actual_write_attribution_is_complete(&signals) {
                 actual_write_set = None;
             }

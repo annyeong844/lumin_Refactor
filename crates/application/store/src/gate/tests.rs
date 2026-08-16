@@ -470,7 +470,7 @@ fn pre_write_finish_rejects_a_baseline_that_omits_a_reserved_input()
             alias_closures: Vec::new(),
             signals: Vec::new(),
         },
-        Vec::new,
+        |_| Vec::new(),
     ) {
         Ok(_) => return Err("an unbound semantic-read reservation was accepted".into()),
         Err(error) => error,
@@ -504,6 +504,9 @@ fn final_validation_can_stop_pre_write_promotion() -> Result<(), Box<dyn std::er
         PreWriteStart::Committed(_) => return Err("the opening operation committed early".into()),
     };
 
+    let cache_anchor = lumin_inventory::physical_file_identity(
+        &root.path().join(".lumin/cache/namespace.anchor"),
+    )?;
     let result = operation.finish_pre_write(
         "open-digest",
         &gate_id,
@@ -518,7 +521,8 @@ fn final_validation_can_stop_pre_write_promotion() -> Result<(), Box<dyn std::er
             alias_closures: Vec::new(),
             signals: Vec::new(),
         },
-        || {
+        |reserved_identities| {
+            assert!(reserved_identities.contains(&cache_anchor));
             vec![GateSignal::ProtectedInputChanged {
                 paths: vec![source.clone()],
             }]
@@ -568,7 +572,7 @@ fn final_validation_can_stop_post_write_promotion() -> Result<(), Box<dyn std::e
             signals: Vec::new(),
             deltas: Vec::new(),
         },
-        || {
+        |_| {
             vec![GateSignal::ProtectedInputChanged {
                 paths: vec![source.clone()],
             }]
@@ -629,7 +633,7 @@ fn semantic_read_reservation_blocks_later_write_admission() -> Result<(), Box<dy
             alias_closures: Vec::new(),
             signals: Vec::new(),
         },
-        Vec::new,
+        |_| Vec::new(),
     )?;
     assert!(opened.decision.authorizes());
 
@@ -844,7 +848,7 @@ fn open_active_gate(
             alias_closures: Vec::new(),
             signals: Vec::new(),
         },
-        Vec::new,
+        |_| Vec::new(),
     )?;
     Ok(gate_id)
 }
@@ -881,7 +885,7 @@ fn close_active_gate(
                 signals: Vec::new(),
                 deltas: Vec::new(),
             },
-            Vec::new,
+            |_| Vec::new(),
         )
         .map_err(Into::into)
 }
