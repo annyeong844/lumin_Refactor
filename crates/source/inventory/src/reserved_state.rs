@@ -61,8 +61,17 @@ impl ReservedStateIdentityLookup {
         root: &Path,
         observation: &PhysicalFileObservation,
     ) -> Result<bool, InventoryError> {
+        self.contains_candidate_with_link_aliases(root, observation, true)
+    }
+
+    fn contains_candidate_with_link_aliases(
+        &self,
+        root: &Path,
+        observation: &PhysicalFileObservation,
+        link_aliases_possible: bool,
+    ) -> Result<bool, InventoryError> {
         let root_mount = self.root_mount(root)?;
-        let requires_lookup = observation.links > 1
+        let requires_lookup = (link_aliases_possible && observation.links > 1)
             || matches!(
                 (root_mount, observation.mount_id),
                 (Some(root_mount), Some(candidate_mount)) if root_mount != candidate_mount
@@ -227,14 +236,39 @@ pub fn validate_caller_entry_identity_lookup(
 ) -> Result<(), InventoryError> {
     for entry in entries {
         let native = root.join(native_relative(entry)?);
-        match fs::symlink_metadata(&native) {
-            Ok(_) => {
-                let observation = physical_file_observation(&native)?;
-                if reserved_state_lookup.contains_candidate(root, &observation)? {
-                    return Err(InventoryError::ReservedEntryPath(entry.display_escaped()));
+        let existing = nearest_existing_path(root, &native, entry)?;
+        let observation = physical_file_observation(&existing)?;
+        let is_directory = fs::metadata(&existing)
+            .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?
+            .is_dir();
+        if reserved_state_lookup.contains_candidate_with_link_aliases(
+            root,
+            &observation,
+            !is_directory,
+        )? {
+            return Err(InventoryError::ReservedEntryPath(entry.display_escaped()));
+        }
+    }
+    Ok(())
+}
+
+fn nearest_existing_path(
+    root: &Path,
+    native: &Path,
+    entry: &RepoPath,
+) -> Result<PathBuf, InventoryError> {
+    let mut candidate = native.to_owned();
+    loop {
+        match fs::symlink_metadata(&candidate) {
+            Ok(_) => return Ok(candidate),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if candidate == root || !candidate.pop() {
+                    return Err(InventoryError::RepositoryIdentity(format!(
+                        "cannot locate an existing parent for entry {}",
+                        entry.display_escaped()
+                    )));
                 }
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => {
                 return Err(InventoryError::PhysicalIdentity(format!(
                     "cannot inspect entry {}: {error}",
@@ -243,7 +277,6 @@ pub fn validate_caller_entry_identity_lookup(
             }
         }
     }
-    Ok(())
 }
 
 pub(crate) fn validate_semantic_input_identity(

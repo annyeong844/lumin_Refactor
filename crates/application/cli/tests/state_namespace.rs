@@ -395,6 +395,32 @@ fn state_payload_aliases_never_enter_source_evidence_or_gate_writes()
         assert_status(&operation, 2);
         assert!(operation.stderr.contains("operation does not exist"));
         bind.remove()?;
+
+        let directory_alias = root.path().join("state-cache-bind");
+        let mut directory_bind =
+            DirectoryBindMount::install(&state.join("cache"), &directory_alias)?;
+        let rejected = run(
+            root.path(),
+            &[
+                "pre-write",
+                "--operation-id",
+                "op-state-cache-bind-child",
+                "--path",
+                "state-cache-bind/new.ts",
+                "--jobs",
+                "1",
+            ],
+        )?;
+        assert_status(&rejected, 2);
+        assert!(rejected.stdout.is_empty());
+        assert!(rejected.stderr.contains("reserved .lumin namespace"));
+        let operation = run(
+            root.path(),
+            &["operation", "show", "op-state-cache-bind-child"],
+        )?;
+        assert_status(&operation, 2);
+        assert!(operation.stderr.contains("operation does not exist"));
+        directory_bind.remove()?;
     }
 
     for parent in ["attempts", "runs", "trash", "cache"] {
@@ -557,6 +583,43 @@ impl FileBindMount {
 
 #[cfg(target_os = "linux")]
 impl Drop for FileBindMount {
+    fn drop(&mut self) {
+        let _ = self.remove();
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct DirectoryBindMount {
+    target: std::path::PathBuf,
+    active: bool,
+}
+
+#[cfg(target_os = "linux")]
+impl DirectoryBindMount {
+    fn install(source: &Path, target: &Path) -> std::io::Result<Self> {
+        fs::create_dir(target)?;
+        if let Err(error) = run_linux_mount_command("mount", &["--bind"], source, Some(target)) {
+            fs::remove_dir(target)?;
+            return Err(error);
+        }
+        Ok(Self {
+            target: target.to_owned(),
+            active: true,
+        })
+    }
+
+    fn remove(&mut self) -> std::io::Result<()> {
+        if self.active {
+            run_linux_mount_command("umount", &[], &self.target, None)?;
+            fs::remove_dir(&self.target)?;
+            self.active = false;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for DirectoryBindMount {
     fn drop(&mut self) {
         let _ = self.remove();
     }

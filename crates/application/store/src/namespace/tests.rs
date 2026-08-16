@@ -28,6 +28,27 @@ fn require_integrity_failure(
 }
 
 #[test]
+fn reserved_identity_snapshot_advances_after_state_mutation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let ordinary = root.path().join("ordinary.ts");
+    fs::write(&ordinary, "export const ordinary = 1;\n")?;
+    let ordinary_identity = lumin_inventory::physical_file_identity(&ordinary)?;
+    assert!(!store.owns_reserved_state_identity(&ordinary_identity)?);
+
+    let attempt = store.begin_attempt()?;
+    let envelope = root
+        .path()
+        .join(".lumin/attempts")
+        .join(attempt.attempt_id().as_str())
+        .join("attempt.json");
+    let envelope_identity = lumin_inventory::physical_file_identity(&envelope)?;
+    assert!(store.owns_reserved_state_identity(&envelope_identity)?);
+    Ok(())
+}
+
+#[test]
 fn rejects_state_namespace_file() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     let admission = lumin_inventory::repository_admission(root.path())?;
