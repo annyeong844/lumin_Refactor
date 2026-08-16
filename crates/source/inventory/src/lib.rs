@@ -39,7 +39,7 @@ pub use physical_path::{
     ConfigInputIdentity, WriteTargetError, WriteTargetKind, WriteTargetObservation,
     directory_physical_identity, inspect_write_target, observe_config_input_identity,
     observe_physical_file_identity, physical_alias_write_closure, physical_file_identity,
-    rehash_existing_write_target,
+    rehash_existing_write_target, validate_captured_physical_path_redirect,
 };
 pub use reserved_state::{
     ReservedStateIdentityLookup, is_reserved_state_path, validate_caller_entries,

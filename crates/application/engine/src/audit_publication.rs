@@ -31,7 +31,9 @@ fn validate_snapshot(
 ) -> Result<(), StoreError> {
     let final_lookup = reserved_state_lookup.for_final_validation(reserved_identities);
     for input in inputs {
-        if let Some(identity) = &input.physical_identity {
+        if let Some(sha256) = &input.physical_redirect_sha256 {
+            validate_redirect_path(root, &input.path, sha256, reserved_identities)?;
+        } else if let Some(identity) = &input.physical_identity {
             validate_input_path(root, &input.path, identity, &final_lookup)?;
         }
         if let Some(parent) = &input.absence_parent {
@@ -41,24 +43,34 @@ fn validate_snapshot(
     Ok(())
 }
 
+fn validate_redirect_path(
+    root: &Path,
+    projection: &RepoPathProjection,
+    expected_sha256: &str,
+    reserved_state_identities: &BTreeSet<PhysicalFileIdentity>,
+) -> Result<(), StoreError> {
+    let path = decode_input_path(projection)?;
+    lumin_inventory::validate_captured_physical_path_redirect(
+        root,
+        &path,
+        expected_sha256,
+        reserved_state_identities,
+    )
+    .map_err(|error| {
+        StoreError::Integrity(format!(
+            "captured audit redirect changed before publication ({}): {error}",
+            projection.display
+        ))
+    })
+}
+
 fn validate_input_path(
     root: &Path,
     projection: &RepoPathProjection,
     expected_identity: &PhysicalFileIdentity,
     reserved_state_lookup: &ReservedStateIdentityLookup,
 ) -> Result<(), StoreError> {
-    let path = RepoPath::from_canonical_bytes(&projection.canonical).map_err(|error| {
-        StoreError::Integrity(format!(
-            "captured audit input path is corrupt before publication ({}): {error}",
-            projection.display
-        ))
-    })?;
-    if &RepoPathProjection::from(&path) != projection {
-        return Err(StoreError::Integrity(format!(
-            "captured audit input projection changed before publication: {}",
-            projection.display
-        )));
-    }
+    let path = decode_input_path(projection)?;
     lumin_inventory::validate_captured_semantic_input_topology(
         root,
         &path,
@@ -71,6 +83,22 @@ fn validate_input_path(
             projection.display
         ))
     })
+}
+
+fn decode_input_path(projection: &RepoPathProjection) -> Result<RepoPath, StoreError> {
+    let path = RepoPath::from_canonical_bytes(&projection.canonical).map_err(|error| {
+        StoreError::Integrity(format!(
+            "captured audit input path is corrupt before publication ({}): {error}",
+            projection.display
+        ))
+    })?;
+    if &RepoPathProjection::from(&path) != projection {
+        return Err(StoreError::Integrity(format!(
+            "captured audit input projection changed before publication: {}",
+            projection.display
+        )));
+    }
+    Ok(path)
 }
 
 #[cfg(test)]
@@ -129,6 +157,45 @@ mod tests {
                 .all(|entry| !entry.file_name().to_string_lossy().starts_with("run_")),
             "failed final validation left a publishable run directory",
         );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unchanged_redirect_can_publish_audit() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::symlink;
+
+        let fixture = tempfile::tempdir()?;
+        let outside = tempfile::tempdir()?;
+        fs::create_dir_all(fixture.path().join("packages/lib"))?;
+        fs::write(
+            outside.path().join("target.ts"),
+            "export const value = 1;\n",
+        )?;
+        symlink(
+            outside.path().join("target.ts"),
+            fixture.path().join("packages/lib/escape.ts"),
+        )?;
+        let admission = repository_admission(fixture.path())?;
+        let store = RepositoryStore::open(&admission.canonical_root, &admission.binding)?;
+        let reserved_state_lookup = reserved_state_identity_lookup(&store);
+        let mut attempt = store.begin_attempt()?;
+        let capture = capture_admitted_repository(
+            &admission.canonical_root,
+            admission.binding.root().clone(),
+            &InventoryRequest::default(),
+            1,
+            None,
+            &reserved_state_lookup,
+        )?;
+
+        publish(
+            &store,
+            &mut attempt,
+            &admission.canonical_root,
+            &reserved_state_lookup,
+            &capture.snapshot,
+        )?;
         Ok(())
     }
 }
