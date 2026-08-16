@@ -289,7 +289,9 @@ pub(super) fn is_physical_path_redirect(path: &Path, file_type: &fs::FileType) -
     }
 }
 
-fn physical_redirect_entry_identity(path: &Path) -> Result<PhysicalFileIdentity, InventoryError> {
+pub(super) fn physical_redirect_entry_identity(
+    path: &Path,
+) -> Result<PhysicalFileIdentity, InventoryError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;

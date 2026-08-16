@@ -1,9 +1,11 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use lumin_evidence::{AnalysisSnapshot, RepoPathProjection};
-use lumin_inventory::ReservedStateIdentityLookup;
-use lumin_model::{PhysicalFileIdentity, RepoPath};
+use lumin_evidence::{AnalysisSnapshot, RepoPathProjection, SemanticInputState};
+use lumin_inventory::{
+    ReservedStateIdentityLookup, SemanticInputExpectation, SemanticInputValidationState,
+};
+use lumin_model::{ConfigAbsenceParent, PhysicalFileIdentity, RepoPath};
 use lumin_store::{AttemptSession, PublishedRun, RepositoryStore, StoreError};
 
 pub(super) fn publish(
@@ -33,11 +35,9 @@ fn validate_snapshot(
     for input in inputs {
         if let Some(sha256) = &input.physical_redirect_sha256 {
             validate_redirect_path(root, &input.path, sha256, reserved_identities)?;
-        } else if let Some(identity) = &input.physical_identity {
-            validate_input_path(root, &input.path, identity, &final_lookup)?;
         }
-        if let Some(parent) = &input.absence_parent {
-            validate_input_path(root, &parent.path, &parent.physical_identity, &final_lookup)?;
+        if input.state != SemanticInputState::PathRedirect {
+            validate_input(root, input, &final_lookup)?;
         }
     }
     Ok(())
@@ -64,25 +64,47 @@ fn validate_redirect_path(
     })
 }
 
-fn validate_input_path(
+fn validate_input(
     root: &Path,
-    projection: &RepoPathProjection,
-    expected_identity: &PhysicalFileIdentity,
+    input: &lumin_evidence::SemanticInputRecord,
     reserved_state_lookup: &ReservedStateIdentityLookup,
 ) -> Result<(), StoreError> {
-    let path = decode_input_path(projection)?;
-    lumin_inventory::validate_captured_semantic_input_topology(
-        root,
-        &path,
-        expected_identity,
-        reserved_state_lookup,
-    )
-    .map_err(|error| {
-        StoreError::Integrity(format!(
-            "captured audit input changed before publication ({}): {error}",
-            projection.display
-        ))
-    })
+    let expectation = SemanticInputExpectation {
+        path: decode_input_path(&input.path)?,
+        state: match input.state {
+            SemanticInputState::Source | SemanticInputState::ConfigPresent => {
+                SemanticInputValidationState::Regular
+            }
+            SemanticInputState::Missing => SemanticInputValidationState::Missing,
+            SemanticInputState::NonRegular => SemanticInputValidationState::NonRegular,
+            SemanticInputState::Unreadable => SemanticInputValidationState::Unreadable,
+            SemanticInputState::PathRedirect => {
+                return Err(StoreError::Integrity(format!(
+                    "standalone redirect entered ordinary audit-input validation: {}",
+                    input.path.display
+                )));
+            }
+        },
+        payload_sha256: input.payload_sha256.clone(),
+        physical_identity: input.physical_identity.clone(),
+        absence_parent: input
+            .absence_parent
+            .as_ref()
+            .map(|parent| {
+                Ok(ConfigAbsenceParent {
+                    path: decode_input_path(&parent.path)?,
+                    physical_identity: parent.physical_identity.clone(),
+                })
+            })
+            .transpose()?,
+    };
+    lumin_inventory::validate_captured_semantic_input(root, &expectation, reserved_state_lookup)
+        .map_err(|error| {
+            StoreError::Integrity(format!(
+                "captured audit input changed before publication ({}): {error}",
+                input.path.display
+            ))
+        })
 }
 
 fn decode_input_path(projection: &RepoPathProjection) -> Result<RepoPath, StoreError> {
@@ -160,6 +182,119 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn late_in_place_config_rewrite_stops_audit_before_run_publication()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = tempfile::tempdir()?;
+        fs::create_dir(fixture.path().join("src"))?;
+        fs::write(
+            fixture.path().join("src/lib.ts"),
+            "export const value = 1;\n",
+        )?;
+        let manifest = fixture.path().join("package.json");
+        fs::write(&manifest, "{\"name\":\"before\"}\n")?;
+        let admission = repository_admission(fixture.path())?;
+        let store = RepositoryStore::open(&admission.canonical_root, &admission.binding)?;
+        let reserved_state_lookup = reserved_state_identity_lookup(&store);
+        let mut attempt = store.begin_attempt()?;
+        let capture = capture_admitted_repository(
+            &admission.canonical_root,
+            admission.binding.root().clone(),
+            &InventoryRequest::default(),
+            1,
+            None,
+            &reserved_state_lookup,
+        )?;
+        let captured_identity = capture
+            .snapshot
+            .inputs
+            .iter()
+            .find(|input| input.path.display == "package.json")
+            .and_then(|input| input.physical_identity.clone())
+            .ok_or("package.json was not captured as a semantic input")?;
+
+        fs::write(&manifest, "{\"name\":\"after\"}\n")?;
+        assert_eq!(
+            lumin_inventory::observe_physical_file_identity(
+                &admission.canonical_root,
+                &RepoPath::from_portable("package.json")?,
+            )?,
+            captured_identity,
+            "fixture replaced the manifest instead of rewriting it in place",
+        );
+        let error = match publish(
+            &store,
+            &mut attempt,
+            &admission.canonical_root,
+            &reserved_state_lookup,
+            &capture.snapshot,
+        ) {
+            Err(error) => error,
+            Ok(_) => return Err("an in-place config rewrite published stale audit evidence".into()),
+        };
+
+        assert!(matches!(
+            error,
+            StoreError::Integrity(detail)
+                if detail.contains("captured audit input changed before publication")
+                    && detail.contains("package.json")
+                    && detail.contains("payload changed after capture")
+        ));
+        assert_no_published_run(&admission.canonical_root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn late_missing_config_creation_stops_audit_before_run_publication()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let fixture = tempfile::tempdir()?;
+        fs::create_dir(fixture.path().join("src"))?;
+        fs::write(
+            fixture.path().join("src/lib.ts"),
+            "export const value = 1;\n",
+        )?;
+        let admission = repository_admission(fixture.path())?;
+        let store = RepositoryStore::open(&admission.canonical_root, &admission.binding)?;
+        let reserved_state_lookup = reserved_state_identity_lookup(&store);
+        let mut attempt = store.begin_attempt()?;
+        let capture = capture_admitted_repository(
+            &admission.canonical_root,
+            admission.binding.root().clone(),
+            &InventoryRequest::default(),
+            1,
+            None,
+            &reserved_state_lookup,
+        )?;
+        assert!(capture.snapshot.inputs.iter().any(|input| {
+            input.path.display == "lumin.json" && input.state == SemanticInputState::Missing
+        }));
+
+        fs::write(
+            admission.canonical_root.join("lumin.json"),
+            "{\"schemaVersion\":\"lumin-config.v1\"}\n",
+        )?;
+        let error = match publish(
+            &store,
+            &mut attempt,
+            &admission.canonical_root,
+            &reserved_state_lookup,
+            &capture.snapshot,
+        ) {
+            Err(error) => error,
+            Ok(_) => return Err("a newly created config published stale audit evidence".into()),
+        };
+
+        assert!(matches!(
+            error,
+            StoreError::Integrity(detail)
+                if detail.contains("captured audit input changed before publication")
+                    && detail.contains("lumin.json")
+                    && detail.contains("missing input state changed after capture")
+        ));
+        assert_no_published_run(&admission.canonical_root)?;
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[test]
     fn unchanged_redirect_can_publish_audit() -> Result<(), Box<dyn std::error::Error>> {
@@ -196,6 +331,18 @@ mod tests {
             &reserved_state_lookup,
             &capture.snapshot,
         )?;
+        Ok(())
+    }
+
+    fn assert_no_published_run(root: &Path) -> Result<(), std::io::Error> {
+        if fs::read_dir(root.join(".lumin/runs"))?
+            .filter_map(Result::ok)
+            .any(|entry| entry.file_name().to_string_lossy().starts_with("run_"))
+        {
+            return Err(std::io::Error::other(
+                "failed final validation left a publishable run directory",
+            ));
+        }
         Ok(())
     }
 }

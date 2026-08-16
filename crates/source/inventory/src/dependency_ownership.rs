@@ -544,6 +544,12 @@ fn capture_lockfile(
     reserved_state::validate_semantic_input_path(root, path)?;
     let identity = observe_config_input_identity(root, path)?;
     if let Some(parent) = identity.absence_parent {
+        reserved_state::validate_captured_semantic_input_topology(
+            root,
+            &parent.path,
+            &parent.physical_identity,
+            reserved_state_lookup,
+        )?;
         return Ok(SemanticPolicyInput {
             path: path.clone(),
             state: SemanticPolicyState::Missing,
@@ -565,11 +571,17 @@ fn capture_lockfile(
         }
     };
     if metadata.file_type().is_symlink() || !metadata.is_file() {
+        let physical_identity = crate::semantic_input::observe_non_regular_semantic_input_identity(
+            root,
+            path,
+            identity.physical_identity.as_ref(),
+            reserved_state_lookup,
+        )?;
         return Ok(SemanticPolicyInput {
             path: path.clone(),
             state: SemanticPolicyState::NonRegular,
             payload_sha256: None,
-            physical_identity: identity.physical_identity,
+            physical_identity: Some(physical_identity),
             absence_parent: None,
             detail: Some(format!(
                 "{} is a symlink or non-regular file",
@@ -580,9 +592,22 @@ fn capture_lockfile(
     let mut file = match fs::File::open(&native) {
         Ok(file) => file,
         Err(error) => {
+            let observation = crate::capture::physical_file_observation(&native)?;
+            if identity.physical_identity.as_ref() != Some(&observation.identity) {
+                return Err(InventoryError::PhysicalIdentity(format!(
+                    "lockfile path changed physical identity during capture: {}",
+                    path.display_escaped()
+                )));
+            }
+            reserved_state::validate_semantic_input_identity(
+                root,
+                path,
+                &observation,
+                reserved_state_lookup,
+            )?;
             return Ok(unreadable_input(
                 path,
-                identity.physical_identity,
+                Some(observation.identity),
                 error.to_string(),
             ));
         }
@@ -1084,6 +1109,29 @@ mod tests {
             error,
             InventoryError::ReservedSemanticInputPath(path) if path == "package-lock.json"
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn unchanged_non_regular_lockfile_survives_final_validation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        std::fs::create_dir(root.path().join("package-lock.json"))?;
+        let path = RepoPath::from_portable("package-lock.json")?;
+        let lookup = ReservedStateIdentityLookup::empty();
+
+        let input = capture_lockfile(root.path(), &path, &lookup)?;
+        assert_eq!(input.state, SemanticPolicyState::NonRegular);
+        let expected = crate::SemanticInputExpectation {
+            path: input.path,
+            state: crate::SemanticInputValidationState::NonRegular,
+            payload_sha256: input.payload_sha256,
+            physical_identity: input.physical_identity,
+            absence_parent: input.absence_parent,
+        };
+        let final_lookup = lookup.for_final_validation(&BTreeSet::new());
+
+        crate::validate_captured_semantic_input(root.path(), &expected, &final_lookup)?;
         Ok(())
     }
 

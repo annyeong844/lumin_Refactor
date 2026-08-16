@@ -36,6 +36,7 @@ struct CandidateObservation {
     identity: PhysicalFileIdentity,
     links: u64,
     mount_id: Option<u64>,
+    link_aliases_possible: bool,
 }
 
 impl ReservedStateIdentityLookup {
@@ -55,6 +56,16 @@ impl ReservedStateIdentityLookup {
 
     pub fn empty() -> Self {
         Self::from_identities(BTreeSet::new())
+    }
+
+    pub(crate) fn contains_identity(
+        &self,
+        identity: &PhysicalFileIdentity,
+    ) -> Result<bool, InventoryError> {
+        if let Some(final_identities) = &self.final_reserved_identities {
+            return Ok(final_identities.contains(identity));
+        }
+        (self.check)(identity)
     }
 
     pub(crate) fn contains_candidate(
@@ -87,7 +98,8 @@ impl ReservedStateIdentityLookup {
             })?;
             if let Some(previous) = observed.candidates.get(path) {
                 if previous.identity != observation.identity
-                    || previous.links != observation.links
+                    || previous.link_aliases_possible != link_aliases_possible
+                    || (link_aliases_possible && previous.links != observation.links)
                     || previous.mount_id != observation.mount_id
                 {
                     return Err(candidate_topology_changed());
@@ -111,6 +123,7 @@ impl ReservedStateIdentityLookup {
                         identity: observation.identity.clone(),
                         links: observation.links,
                         mount_id: observation.mount_id,
+                        link_aliases_possible,
                     },
                 );
                 if !requires_lookup {
@@ -133,7 +146,8 @@ impl ReservedStateIdentityLookup {
             .get(path)
             .ok_or_else(candidate_topology_changed)?;
         if candidate.identity != observation.identity
-            || candidate.links != observation.links
+            || candidate.link_aliases_possible != link_aliases_possible
+            || (link_aliases_possible && candidate.links != observation.links)
             || candidate.mount_id != observation.mount_id
         {
             return Err(candidate_topology_changed());
@@ -309,7 +323,18 @@ pub(crate) fn validate_semantic_input_identity(
     observation: &PhysicalFileObservation,
     reserved_state_lookup: &ReservedStateIdentityLookup,
 ) -> Result<(), InventoryError> {
-    if reserved_state_lookup.contains_candidate(root, path, observation)? {
+    let native = root.join(native_relative(path)?);
+    let is_directory = fs::metadata(&native)
+        .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?
+        .is_dir();
+    let reserved = reserved_state_lookup.contains_candidate_with_link_aliases(
+        root,
+        path,
+        observation,
+        !is_directory,
+    )? || (is_directory
+        && reserved_state_lookup.contains_identity(&observation.identity)?);
+    if reserved {
         Err(InventoryError::ReservedSemanticInputPath(
             path.display_escaped(),
         ))
@@ -325,14 +350,29 @@ pub fn validate_captured_semantic_input_topology(
     reserved_state_lookup: &ReservedStateIdentityLookup,
 ) -> Result<(), InventoryError> {
     validate_semantic_input_path(root, path)?;
-    let observation = physical_file_observation(&root.join(native_relative(path)?))?;
+    let native = root.join(native_relative(path)?);
+    let observation = physical_file_observation(&native)?;
     if &observation.identity != expected_identity {
         return Err(InventoryError::PhysicalIdentity(format!(
             "semantic input changed physical identity after capture: {}",
             path.display_escaped()
         )));
     }
-    validate_semantic_input_identity(root, path, &observation, reserved_state_lookup)
+    let is_directory = fs::metadata(&native)
+        .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?
+        .is_dir();
+    let reserved = reserved_state_lookup.contains_candidate_with_link_aliases(
+        root,
+        path,
+        &observation,
+        !is_directory,
+    )?;
+    if reserved {
+        return Err(InventoryError::ReservedSemanticInputPath(
+            path.display_escaped(),
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_semantic_input_path(

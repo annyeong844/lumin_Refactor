@@ -2,7 +2,10 @@ use super::*;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+#[cfg(target_os = "linux")]
+mod linux_mount;
 mod physical_path_redirect;
+mod semantic_input;
 
 #[test]
 fn generated_marker_must_be_in_leading_comment() {

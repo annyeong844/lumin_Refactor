@@ -7,6 +7,7 @@ mod physical_path;
 mod pnpm_workspace;
 mod reserved_state;
 mod root;
+mod semantic_input;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
@@ -28,6 +29,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use physical_path::{is_physical_path_redirect, observe_physical_path_redirect};
+use semantic_input::observe_non_regular_semantic_input_identity;
 
 pub use generated_config_policy::{
     FieldClassification as InventoryConfigFieldClassification,
@@ -47,6 +49,9 @@ pub use reserved_state::{
     validate_caller_paths_lexically, validate_captured_semantic_input_topology,
 };
 pub use root::{RepositoryAdmission, repository_admission};
+pub use semantic_input::{
+    SemanticInputExpectation, SemanticInputValidationState, validate_captured_semantic_input,
+};
 
 pub fn lower_native_repo_path(value: &OsStr) -> Result<RepoPath, RepoPathError> {
     RepoPath::from_native_relative(Path::new(value))
@@ -628,7 +633,21 @@ impl ApplicableIgnore {
                         .map_err(|error| InventoryError::InvalidPattern(error.to_string()))?;
                 }
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let identity = observe_config_input_identity(root, &repo_path)?;
+                let parent = identity.absence_parent.ok_or_else(|| {
+                    InventoryError::PhysicalIdentity(format!(
+                        "missing .gitignore omitted its absence parent: {}",
+                        repo_path.display_escaped()
+                    ))
+                })?;
+                reserved_state::validate_captured_semantic_input_topology(
+                    root,
+                    &parent.path,
+                    &parent.physical_identity,
+                    reserved_state_lookup,
+                )?;
+            }
             Err(error) => {
                 return Err(InventoryError::PhysicalIdentity(format!(
                     "unreadable .gitignore at {}: {error}",
@@ -1224,8 +1243,12 @@ fn observe_config(
         }
     };
     if metadata.file_type().is_symlink() || !metadata.is_file() {
-        let physical_identity =
-            validate_unavailable_identity(input_identity.physical_identity.as_ref())?;
+        let physical_identity = observe_non_regular_semantic_input_identity(
+            root,
+            path,
+            input_identity.physical_identity.as_ref(),
+            reserved_state_lookup,
+        )?;
         return Ok(ConfigObservation::NonRegular {
             path: path.clone(),
             physical_identity: Some(physical_identity),

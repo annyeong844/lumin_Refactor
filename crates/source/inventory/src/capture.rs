@@ -155,7 +155,7 @@ pub(crate) fn physical_file_observation_from_file(
 }
 
 #[cfg(target_os = "linux")]
-fn open_source_file(path: &Path) -> std::io::Result<File> {
+pub(crate) fn open_source_file(path: &Path) -> std::io::Result<File> {
     use std::os::unix::fs::OpenOptionsExt;
 
     const O_NONBLOCK: i32 = 0x800;
@@ -166,7 +166,7 @@ fn open_source_file(path: &Path) -> std::io::Result<File> {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn open_source_file(path: &Path) -> std::io::Result<File> {
+pub(crate) fn open_source_file(path: &Path) -> std::io::Result<File> {
     File::open(path)
 }
 
