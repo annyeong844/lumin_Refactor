@@ -6,7 +6,7 @@ use lumin_model::PhysicalFileIdentity;
 
 use crate::StoreError;
 
-use super::{EntryAccess, EntryKind, HeldEntry, NamespaceGuard};
+use super::{EntryAccess, EntryKind, HeldEntry, NamespaceGuard, same_volume_and_mount};
 
 pub(super) fn collect_identities(
     guard: &NamespaceGuard,
@@ -25,12 +25,13 @@ pub(super) fn collect_identities(
 
 fn collect_snapshot(root: &Path) -> Result<BTreeSet<PhysicalFileIdentity>, StoreError> {
     let mut identities = BTreeSet::new();
-    collect_tree(root, &mut identities)?;
+    collect_tree(root, None, &mut identities)?;
     Ok(identities)
 }
 
 fn collect_tree(
     path: &Path,
+    parent: Option<&HeldEntry>,
     identities: &mut BTreeSet<PhysicalFileIdentity>,
 ) -> Result<(), StoreError> {
     let metadata = fs::symlink_metadata(path).map_err(|error| changed(path, error))?;
@@ -51,6 +52,12 @@ fn collect_tree(
         false,
         "reserved state object",
     )?;
+    if parent.is_some_and(|parent| !same_volume_and_mount(parent, &held)) {
+        return Err(StoreError::Integrity(format!(
+            "reserved state mount crossing detected at {}",
+            path.display()
+        )));
+    }
     identities.insert(held.identity().clone());
     let is_directory = matches!(kind, EntryKind::Directory);
     if !is_directory {
@@ -67,7 +74,7 @@ fn collect_tree(
     let entries = fs::read_dir(path).map_err(|error| changed(path, error))?;
     for entry in entries {
         let entry = entry.map_err(|error| changed(path, error))?;
-        collect_tree(&entry.path(), identities)?;
+        collect_tree(&entry.path(), Some(&held), identities)?;
     }
     held.validate_path(
         path,

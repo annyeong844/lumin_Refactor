@@ -176,6 +176,42 @@ fn public_process_rejects_state_mount_crossing() -> Result<(), Box<dyn std::erro
 
     let recovered = run(root.path(), &["overview", "--run", &run_id])?;
     assert_status(&recovered, 0);
+
+    #[cfg(target_os = "linux")]
+    {
+        let foreign = tempfile::tempdir()?;
+        fs::write(foreign.path().join("payload"), b"foreign state payload")?;
+        fs::write(
+            root.path().join("src/shared.ts"),
+            "export const shared = 1;\n",
+        )?;
+        fs::hard_link(
+            root.path().join("src/shared.ts"),
+            root.path().join("src/shared-alias.ts"),
+        )?;
+        let mut nested =
+            DirectoryBindMount::install(foreign.path(), &state.join("cache/foreign-mount"))?;
+
+        assert_public_integrity_failure(&run(
+            root.path(),
+            &["audit", "--entry", "src/shared.ts", "--jobs", "1"],
+        )?);
+        nested.remove()?;
+    }
+    Ok(())
+}
+
+#[test]
+fn configured_state_entry_cannot_complete_an_audit() -> Result<(), Box<dyn std::error::Error>> {
+    let lexical = fixture()?;
+    fs::write(
+        lexical.path().join("lumin.json"),
+        r#"{"schemaVersion":"lumin-config.v1","entries":[".lumin/cache/namespace.anchor"]}"#,
+    )?;
+    let rejected = run(lexical.path(), &["audit", "--jobs", "1"])?;
+    assert_status(&rejected, 2);
+    assert!(rejected.stdout.is_empty());
+    assert!(rejected.stderr.contains("reserved .lumin namespace"));
     Ok(())
 }
 

@@ -55,6 +55,105 @@ fn missing_config_identity_is_bound_to_the_nearest_existing_parent()
 }
 
 #[test]
+fn missing_config_rejects_a_reserved_absence_parent() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::write(root.path().join("state-object"), b"reserved state")?;
+    fs::hard_link(
+        root.path().join("state-object"),
+        root.path().join("state-alias"),
+    )?;
+    let parent = RepoPath::from_portable("state-alias")?;
+    let reserved = BTreeSet::from([physical_file_identity(&root.path().join("state-object"))?]);
+    let lookup = ReservedStateIdentityLookup::from_identities(reserved);
+
+    let error = match capture_config_with_reserved_state_lookup(
+        root.path(),
+        &RepoPath::from_portable("state-alias/package.json")?,
+        ConfigSyntax::StrictJson,
+        &lookup,
+    ) {
+        Err(error) => error,
+        Ok(_) => {
+            return Err(std::io::Error::other(
+                "a missing config beneath reserved state was accepted",
+            )
+            .into());
+        }
+    };
+
+    assert!(matches!(
+        error,
+        InventoryError::ReservedSemanticInputPath(path) if path == parent.display_escaped()
+    ));
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn missing_config_rejects_a_symlinked_state_parent() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir(root.path().join(".lumin"))?;
+    std::os::unix::fs::symlink(root.path().join(".lumin"), root.path().join("state-alias"))?;
+
+    let error = match capture_config(
+        root.path(),
+        &RepoPath::from_portable("state-alias/package.json")?,
+        ConfigSyntax::StrictJson,
+    ) {
+        Err(error) => error,
+        Ok(_) => {
+            return Err(std::io::Error::other(
+                "a missing config beneath a state symlink was accepted",
+            )
+            .into());
+        }
+    };
+
+    assert!(matches!(
+        error,
+        InventoryError::ReservedSemanticInputPath(path) if path == "state-alias"
+    ));
+    Ok(())
+}
+
+#[test]
+fn configured_entry_rejects_a_reserved_hard_link_identity() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    fs::create_dir(root.path().join("src"))?;
+    fs::write(root.path().join("state-object"), b"reserved state")?;
+    fs::hard_link(
+        root.path().join("state-object"),
+        root.path().join("src/state-alias.ts"),
+    )?;
+    fs::write(
+        root.path().join("lumin.json"),
+        r#"{"schemaVersion":"lumin-config.v1","entries":["src/state-alias.ts"]}"#,
+    )?;
+    let reserved = BTreeSet::from([physical_file_identity(&root.path().join("state-object"))?]);
+    let lookup = ReservedStateIdentityLookup::from_identities(reserved);
+
+    let error = match begin_scan_with_reserved_state_lookup(
+        root.path(),
+        &InventoryRequest::default(),
+        &lookup,
+    ) {
+        Err(error) => error,
+        Ok(_) => {
+            return Err(
+                std::io::Error::other("a configured reserved-state alias was accepted").into(),
+            );
+        }
+    };
+
+    assert!(matches!(
+        error,
+        InventoryError::ReservedEntryPath(path) if path == "src/state-alias.ts"
+    ));
+    Ok(())
+}
+
+#[test]
 fn impossible_config_descendant_is_bound_to_the_existing_file_prefix()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;

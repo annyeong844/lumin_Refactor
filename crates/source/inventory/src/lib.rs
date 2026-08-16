@@ -258,6 +258,34 @@ pub fn begin_scan_with_reserved_state_lookup(
     let canonical_root = fs::canonicalize(root)
         .map_err(|error| InventoryError::RepositoryIdentity(error.to_string()))?;
     let (config, config_path, config_policy) = read_root_config(root, reserved_state_lookup)?;
+
+    // Resolve and validate the effective entry tier before repository walking.
+    // Invocation entries replace configured entries, but both are repository
+    // inputs and neither may name or physically alias store-owned state.
+    let (raw_entries, entry_source) = if !request.entries.is_empty() {
+        (request.entries.clone(), EntrySource::Invocation)
+    } else {
+        let config_entries = config
+            .as_ref()
+            .map(|cfg| cfg.entries.clone())
+            .unwrap_or_default();
+        let parsed = config_entries
+            .iter()
+            .map(|entry| RepoPath::from_portable(entry))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| InventoryError::MalformedConfiguration(error.to_string()))?;
+        (parsed, EntrySource::Configuration)
+    };
+    let mut deduplicated_entries = raw_entries;
+    deduplicated_entries.sort();
+    deduplicated_entries.dedup();
+    reserved_state::validate_caller_entries(root, &deduplicated_entries)?;
+    reserved_state::validate_caller_entry_identity_lookup(
+        root,
+        &deduplicated_entries,
+        reserved_state_lookup,
+    )?;
+
     let patterns = PatternSet::compile(root, config.as_ref(), request)?;
 
     // Build hierarchical gitignore matcher before entry classification
@@ -277,34 +305,6 @@ pub fn begin_scan_with_reserved_state_lookup(
     }
     collected.consulted_config_paths.sort();
     collected.consulted_config_paths.dedup();
-
-    // Determine entry selections: caller entries replace config entries
-    let (raw_entries, entry_source) = if !request.entries.is_empty() {
-        (request.entries.clone(), EntrySource::Invocation)
-    } else {
-        let config_entries = config
-            .as_ref()
-            .map(|cfg| cfg.entries.clone())
-            .unwrap_or_default();
-        if config_entries.is_empty() {
-            (Vec::new(), EntrySource::Configuration)
-        } else {
-            let parsed: Result<Vec<RepoPath>, _> = config_entries
-                .iter()
-                .map(|entry| RepoPath::from_portable(entry))
-                .collect();
-            (
-                parsed
-                    .map_err(|error| InventoryError::MalformedConfiguration(error.to_string()))?,
-                EntrySource::Configuration,
-            )
-        }
-    };
-
-    // Lexical sort/dedup
-    let mut deduplicated_entries = raw_entries;
-    deduplicated_entries.sort();
-    deduplicated_entries.dedup();
 
     // Classify entries and record all (available + unavailable) with reason
     let mut entry_selections = Vec::new();
@@ -1162,6 +1162,12 @@ fn observe_config(
     let native = root.join(native_relative(path)?);
     let input_identity = observe_config_input_identity(root, path)?;
     if let Some(parent) = input_identity.absence_parent {
+        reserved_state::validate_captured_semantic_input_topology(
+            root,
+            &parent.path,
+            &parent.physical_identity,
+            reserved_state_lookup,
+        )?;
         return Ok(ConfigObservation::Missing {
             path: path.clone(),
             parent,
