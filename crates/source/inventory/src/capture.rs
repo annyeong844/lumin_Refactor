@@ -26,7 +26,7 @@ impl OpenedSource {
         logical_path: &str,
     ) -> Result<Self, InventoryError> {
         ensure_contained(canonical_root, native_path, logical_path)?;
-        let file = File::open(native_path).map_err(|error| {
+        let file = open_source_file(native_path).map_err(|error| {
             source_capture_error(logical_path, format!("cannot open source: {error}"))
         })?;
         let metadata = file.metadata().map_err(|error| {
@@ -108,11 +108,17 @@ pub(crate) fn physical_identity_from_file(
 pub(crate) fn physical_file_observation(
     path: &Path,
 ) -> Result<PhysicalFileObservation, InventoryError> {
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     {
-        let file = File::open(path)
+        let file = open_identity_file(path)
             .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
         physical_file_observation_from_file(&file)
+    }
+    #[cfg(all(unix, not(target_os = "linux")))]
+    {
+        let metadata = std::fs::metadata(path)
+            .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
+        Ok(unix_observation(&metadata, None))
     }
     #[cfg(windows)]
     {
@@ -122,6 +128,12 @@ pub(crate) fn physical_file_observation(
             .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
         windows_observation(&information)
     }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let file = File::open(path)
+            .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
+        physical_file_observation_from_file(&file)
+    }
 }
 
 pub(crate) fn physical_file_observation_from_file(
@@ -129,25 +141,57 @@ pub(crate) fn physical_file_observation_from_file(
 ) -> Result<PhysicalFileObservation, InventoryError> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::MetadataExt;
-
         let metadata = file
             .metadata()
             .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
-        Ok(PhysicalFileObservation {
-            identity: PhysicalFileIdentity::Unix {
-                device: metadata.dev(),
-                inode: metadata.ino(),
-            },
-            links: metadata.nlink(),
-            mount_id: linux_mount_id(file)?,
-        })
+        Ok(unix_observation(&metadata, linux_mount_id(file)?))
     }
     #[cfg(windows)]
     {
         let information = winapi_util::file::information(file)
             .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
         windows_observation(&information)
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn open_source_file(path: &Path) -> std::io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    const O_NONBLOCK: i32 = 0x800;
+    File::options()
+        .read(true)
+        .custom_flags(O_NONBLOCK)
+        .open(path)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn open_source_file(path: &Path) -> std::io::Result<File> {
+    File::open(path)
+}
+
+#[cfg(target_os = "linux")]
+fn open_identity_file(path: &Path) -> std::io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    const O_PATH: i32 = 0x20_0000;
+    File::options().read(true).custom_flags(O_PATH).open(path)
+}
+
+#[cfg(unix)]
+fn unix_observation(
+    metadata: &std::fs::Metadata,
+    mount_id: Option<u64>,
+) -> PhysicalFileObservation {
+    use std::os::unix::fs::MetadataExt;
+
+    PhysicalFileObservation {
+        identity: PhysicalFileIdentity::Unix {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        },
+        links: metadata.nlink(),
+        mount_id,
     }
 }
 
@@ -172,8 +216,29 @@ fn windows_observation(
 fn linux_mount_id(file: &File) -> Result<Option<u64>, InventoryError> {
     use std::os::fd::AsRawFd;
 
-    let source = std::fs::read_to_string(format!("/proc/self/fdinfo/{}", file.as_raw_fd()))
-        .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
+    match linux_statx_mount_id(file) {
+        Ok(mount_id) => Ok(Some(mount_id)),
+        Err(statx_error) => {
+            let source = std::fs::read_to_string(format!(
+                "/proc/self/fdinfo/{}",
+                file.as_raw_fd()
+            ))
+            .map_err(|proc_error| {
+                InventoryError::PhysicalIdentity(format!(
+                    "cannot observe Linux mount ID through statx ({statx_error}) or procfs ({proc_error})"
+                ))
+            })?;
+            parse_linux_mount_id(&source).map(Some).map_err(|proc_error| {
+                InventoryError::PhysicalIdentity(format!(
+                    "cannot observe Linux mount ID through statx ({statx_error}) or procfs ({proc_error})"
+                ))
+            })
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn parse_linux_mount_id(source: &str) -> Result<u64, InventoryError> {
     let mut mount_id = None;
     for line in source.lines() {
         let Some((name, value)) = line.split_once(':') else {
@@ -193,9 +258,102 @@ fn linux_mount_id(file: &File) -> Result<Option<u64>, InventoryError> {
             ))
         })?);
     }
-    mount_id.map(Some).ok_or_else(|| {
+    mount_id.ok_or_else(|| {
         InventoryError::PhysicalIdentity("opened input omitted its Linux mount ID".to_owned())
     })
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[repr(C)]
+#[derive(Default)]
+struct LinuxStatxTimestamp {
+    _seconds: i64,
+    _nanoseconds: u32,
+    _reserved: i32,
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[repr(C)]
+#[derive(Default)]
+struct LinuxStatx {
+    mask: u32,
+    _block_size: u32,
+    _attributes: u64,
+    _links: u32,
+    _user: u32,
+    _group: u32,
+    _mode: u16,
+    _spare0: u16,
+    _inode: u64,
+    _size: u64,
+    _blocks: u64,
+    _attributes_mask: u64,
+    _accessed: LinuxStatxTimestamp,
+    _created: LinuxStatxTimestamp,
+    _changed: LinuxStatxTimestamp,
+    _modified: LinuxStatxTimestamp,
+    _device_major: u32,
+    _device_minor: u32,
+    _filesystem_device_major: u32,
+    _filesystem_device_minor: u32,
+    mount_id: u64,
+    _direct_io_memory_alignment: u32,
+    _direct_io_offset_alignment: u32,
+    _spare3: [u64; 12],
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const _: [(); 256] = [(); std::mem::size_of::<LinuxStatx>()];
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[allow(
+    unsafe_code,
+    reason = "the supported Linux x64 lane has no standard-library statx wrapper"
+)]
+fn linux_statx_mount_id(file: &File) -> std::io::Result<u64> {
+    use std::ffi::{c_char, c_int, c_long};
+    use std::os::fd::AsRawFd;
+
+    const SYS_STATX: c_long = 332;
+    const AT_EMPTY_PATH: c_int = 0x1000;
+    const STATX_MNT_ID: u32 = 0x1000;
+    const EMPTY_PATH: &[u8] = b"\0";
+
+    unsafe extern "C" {
+        fn syscall(number: c_long, ...) -> c_long;
+    }
+
+    let mut facts = LinuxStatx::default();
+    // SAFETY: `file` owns a live descriptor, `EMPTY_PATH` is NUL-terminated,
+    // and `LinuxStatx` is compile-time checked against the 256-byte Linux ABI.
+    let result = unsafe {
+        syscall(
+            SYS_STATX,
+            file.as_raw_fd(),
+            EMPTY_PATH.as_ptr().cast::<c_char>(),
+            AT_EMPTY_PATH,
+            STATX_MNT_ID,
+            &mut facts as *mut LinuxStatx,
+        )
+    };
+    if result != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    if facts.mask & STATX_MNT_ID == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "statx omitted the Linux mount ID",
+        ));
+    }
+    Ok(facts.mount_id)
+}
+
+#[cfg(all(target_os = "linux", not(target_arch = "x86_64")))]
+fn linux_statx_mount_id(_file: &File) -> std::io::Result<u64> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "statx mount observation is supported on the required Linux x64 lane",
+    ))
 }
 
 #[cfg(all(unix, not(target_os = "linux")))]

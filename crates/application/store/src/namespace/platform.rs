@@ -474,9 +474,118 @@ fn file_facts(file: &File) -> Result<FileFacts, StoreError> {
 fn linux_mount_id(file: &File) -> Result<u64, StoreError> {
     use std::os::fd::AsRawFd;
 
-    let source = std::fs::read_to_string(format!("/proc/self/fdinfo/{}", file.as_raw_fd()))
-        .map_err(io_error)?;
-    parse_linux_mount_id(&source)
+    match linux_statx_mount_id(file) {
+        Ok(mount_id) => Ok(mount_id),
+        Err(statx_error) => {
+            let source = std::fs::read_to_string(format!(
+                "/proc/self/fdinfo/{}",
+                file.as_raw_fd()
+            ))
+            .map_err(|proc_error| {
+                StoreError::Integrity(format!(
+                    "cannot observe Linux mount ID through statx ({statx_error}) or procfs ({proc_error})"
+                ))
+            })?;
+            parse_linux_mount_id(&source).map_err(|proc_error| {
+                StoreError::Integrity(format!(
+                    "cannot observe Linux mount ID through statx ({statx_error}) or procfs ({proc_error})"
+                ))
+            })
+        }
+    }
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[repr(C)]
+#[derive(Default)]
+struct LinuxStatxTimestamp {
+    _seconds: i64,
+    _nanoseconds: u32,
+    _reserved: i32,
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[repr(C)]
+#[derive(Default)]
+struct LinuxStatx {
+    mask: u32,
+    _block_size: u32,
+    _attributes: u64,
+    _links: u32,
+    _user: u32,
+    _group: u32,
+    _mode: u16,
+    _spare0: u16,
+    _inode: u64,
+    _size: u64,
+    _blocks: u64,
+    _attributes_mask: u64,
+    _accessed: LinuxStatxTimestamp,
+    _created: LinuxStatxTimestamp,
+    _changed: LinuxStatxTimestamp,
+    _modified: LinuxStatxTimestamp,
+    _device_major: u32,
+    _device_minor: u32,
+    _filesystem_device_major: u32,
+    _filesystem_device_minor: u32,
+    mount_id: u64,
+    _direct_io_memory_alignment: u32,
+    _direct_io_offset_alignment: u32,
+    _spare3: [u64; 12],
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const _: [(); 256] = [(); std::mem::size_of::<LinuxStatx>()];
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[allow(
+    unsafe_code,
+    reason = "the supported Linux x64 lane has no standard-library statx wrapper"
+)]
+fn linux_statx_mount_id(file: &File) -> std::io::Result<u64> {
+    use std::ffi::{c_char, c_int, c_long};
+    use std::os::fd::AsRawFd;
+
+    const SYS_STATX: c_long = 332;
+    const AT_EMPTY_PATH: c_int = 0x1000;
+    const STATX_MNT_ID: u32 = 0x1000;
+    const EMPTY_PATH: &[u8] = b"\0";
+
+    unsafe extern "C" {
+        fn syscall(number: c_long, ...) -> c_long;
+    }
+
+    let mut facts = LinuxStatx::default();
+    // SAFETY: `file` owns a live descriptor, `EMPTY_PATH` is NUL-terminated,
+    // and `LinuxStatx` is compile-time checked against the 256-byte Linux ABI.
+    let result = unsafe {
+        syscall(
+            SYS_STATX,
+            file.as_raw_fd(),
+            EMPTY_PATH.as_ptr().cast::<c_char>(),
+            AT_EMPTY_PATH,
+            STATX_MNT_ID,
+            &mut facts as *mut LinuxStatx,
+        )
+    };
+    if result != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    if facts.mask & STATX_MNT_ID == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "statx omitted the Linux mount ID",
+        ));
+    }
+    Ok(facts.mount_id)
+}
+
+#[cfg(all(target_os = "linux", not(target_arch = "x86_64")))]
+fn linux_statx_mount_id(_file: &File) -> std::io::Result<u64> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "statx mount observation is supported on the required Linux x64 lane",
+    ))
 }
 
 #[cfg(target_os = "linux")]
@@ -507,7 +616,9 @@ fn parse_linux_mount_id(source: &str) -> Result<u64, StoreError> {
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
-    use super::parse_linux_mount_id;
+    use std::fs::File;
+
+    use super::{linux_statx_mount_id, parse_linux_mount_id};
 
     #[test]
     fn parses_exact_linux_mount_identity() -> Result<(), Box<dyn std::error::Error>> {
@@ -517,6 +628,17 @@ mod tests {
         );
         assert!(parse_linux_mount_id("pos:\t0\nino:\t5\n").is_err());
         assert!(parse_linux_mount_id("mnt_id:\t47\nmnt_id:\t48\n").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn observes_mount_identity_without_procfs() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let path = directory.path().join("mount-id");
+        std::fs::write(&path, b"identity")?;
+        let file = File::open(path)?;
+
+        assert!(linux_statx_mount_id(&file)? > 0);
         Ok(())
     }
 }

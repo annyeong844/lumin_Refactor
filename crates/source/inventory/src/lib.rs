@@ -1010,10 +1010,11 @@ impl CollectedFiles {
                 }
             };
         let physical_identity = opened.observation().identity.clone();
-        if context
-            .reserved_state_lookup
-            .contains_candidate(context.root, opened.observation())?
-        {
+        if context.reserved_state_lookup.contains_candidate(
+            context.root,
+            &path,
+            opened.observation(),
+        )? {
             return Ok(());
         }
         let bytes = match self.payloads.get(&physical_identity) {
@@ -1049,7 +1050,7 @@ impl CollectedFiles {
         };
         if context
             .reserved_state_lookup
-            .contains_candidate(context.root, &current)?
+            .contains_candidate(context.root, &path, &current)?
         {
             return Ok(());
         }

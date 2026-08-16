@@ -27,14 +27,15 @@ pub struct ReservedStateIdentityLookup {
 #[derive(Default)]
 struct LookupObservations {
     root_mount: Option<(PathBuf, Option<u64>)>,
-    candidates: BTreeMap<PhysicalFileIdentity, CandidateObservation>,
+    candidates: BTreeMap<RepoPath, CandidateObservation>,
+    reserved_by_identity: BTreeMap<PhysicalFileIdentity, bool>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct CandidateObservation {
+    identity: PhysicalFileIdentity,
     links: u64,
     mount_id: Option<u64>,
-    reserved: Option<bool>,
 }
 
 impl ReservedStateIdentityLookup {
@@ -59,14 +60,16 @@ impl ReservedStateIdentityLookup {
     pub(crate) fn contains_candidate(
         &self,
         root: &Path,
+        path: &RepoPath,
         observation: &PhysicalFileObservation,
     ) -> Result<bool, InventoryError> {
-        self.contains_candidate_with_link_aliases(root, observation, true)
+        self.contains_candidate_with_link_aliases(root, path, observation, true)
     }
 
     fn contains_candidate_with_link_aliases(
         &self,
         root: &Path,
+        path: &RepoPath,
         observation: &PhysicalFileObservation,
         link_aliases_possible: bool,
     ) -> Result<bool, InventoryError> {
@@ -82,13 +85,15 @@ impl ReservedStateIdentityLookup {
                     "reserved-state candidate observation lock failed".to_owned(),
                 )
             })?;
-            if let Some(previous) = observed.candidates.get(&observation.identity) {
-                if previous.links != observation.links || previous.mount_id != observation.mount_id
+            if let Some(previous) = observed.candidates.get(path) {
+                if previous.identity != observation.identity
+                    || previous.links != observation.links
+                    || previous.mount_id != observation.mount_id
                 {
                     return Err(candidate_topology_changed());
                 }
-                if let Some(reserved) = previous.reserved {
-                    return Ok(reserved);
+                if let Some(reserved) = observed.reserved_by_identity.get(&observation.identity) {
+                    return Ok(*reserved);
                 }
                 if !requires_lookup {
                     return Ok(false);
@@ -98,15 +103,18 @@ impl ReservedStateIdentityLookup {
                     return Err(candidate_topology_changed());
                 }
                 observed.candidates.insert(
-                    observation.identity.clone(),
+                    path.clone(),
                     CandidateObservation {
+                        identity: observation.identity.clone(),
                         links: observation.links,
                         mount_id: observation.mount_id,
-                        reserved: None,
                     },
                 );
                 if !requires_lookup {
                     return Ok(false);
+                }
+                if let Some(reserved) = observed.reserved_by_identity.get(&observation.identity) {
+                    return Ok(*reserved);
                 }
             }
         }
@@ -119,12 +127,21 @@ impl ReservedStateIdentityLookup {
         })?;
         let candidate = observed
             .candidates
-            .get_mut(&observation.identity)
+            .get(path)
             .ok_or_else(candidate_topology_changed)?;
-        if candidate.links != observation.links || candidate.mount_id != observation.mount_id {
+        if candidate.identity != observation.identity
+            || candidate.links != observation.links
+            || candidate.mount_id != observation.mount_id
+        {
             return Err(candidate_topology_changed());
         }
-        candidate.reserved = Some(reserved);
+        if observed
+            .reserved_by_identity
+            .insert(observation.identity.clone(), reserved)
+            .is_some_and(|previous| previous != reserved)
+        {
+            return Err(candidate_topology_changed());
+        }
         Ok(reserved)
     }
 
@@ -243,6 +260,7 @@ pub fn validate_caller_entry_identity_lookup(
             .is_dir();
         if reserved_state_lookup.contains_candidate_with_link_aliases(
             root,
+            entry,
             &observation,
             !is_directory,
         )? {
@@ -285,7 +303,7 @@ pub(crate) fn validate_semantic_input_identity(
     observation: &PhysicalFileObservation,
     reserved_state_lookup: &ReservedStateIdentityLookup,
 ) -> Result<(), InventoryError> {
-    if reserved_state_lookup.contains_candidate(root, observation)? {
+    if reserved_state_lookup.contains_candidate(root, path, observation)? {
         Err(InventoryError::ReservedSemanticInputPath(
             path.display_escaped(),
         ))

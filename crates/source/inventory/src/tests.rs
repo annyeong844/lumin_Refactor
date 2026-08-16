@@ -144,18 +144,95 @@ fn final_validation_rejects_new_link_topology_without_reusing_the_state_index()
         observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(false)
     });
+    let path = RepoPath::from_portable("src/lib.ts")?;
     let initial = crate::capture::physical_file_observation(&source)?;
-    assert!(!lookup.contains_candidate(root.path(), &initial)?);
+    assert!(!lookup.contains_candidate(root.path(), &path, &initial)?);
 
     let final_lookup = lookup.for_final_validation();
     fs::hard_link(&source, root.path().join(".lumin/cache/alias.ts"))?;
     let current = crate::capture::physical_file_observation(&source)?;
     assert!(
         final_lookup
-            .contains_candidate(root.path(), &current)
+            .contains_candidate(root.path(), &path, &current)
             .is_err()
     );
     assert_eq!(queries.load(std::sync::atomic::Ordering::Relaxed), 0);
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn mount_topology_is_tracked_per_logical_alias() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir(root.path().join("src"))?;
+    let source = root.path().join("src/shared.ts");
+    fs::write(&source, "export const value = 1;\n")?;
+    let observed = crate::capture::physical_file_observation(&source)?;
+    let original_mount = observed
+        .mount_id
+        .ok_or_else(|| std::io::Error::other("Linux observation omitted its mount ID"))?;
+    let alias_mount = original_mount
+        .checked_add(1)
+        .ok_or_else(|| std::io::Error::other("Linux mount ID overflowed test fixture"))?;
+    let left = RepoPath::from_portable("src/shared.ts")?;
+    let right = RepoPath::from_portable("src/mounted.ts")?;
+    let queries = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let query_count = Arc::clone(&queries);
+    let lookup = ReservedStateIdentityLookup::new(move |_| {
+        query_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(false)
+    });
+    let first = crate::capture::PhysicalFileObservation {
+        identity: observed.identity.clone(),
+        links: 1,
+        mount_id: Some(original_mount),
+    };
+    let second = crate::capture::PhysicalFileObservation {
+        identity: observed.identity,
+        links: 1,
+        mount_id: Some(alias_mount),
+    };
+
+    assert!(!lookup.contains_candidate(root.path(), &left, &first)?);
+    assert!(!lookup.contains_candidate(root.path(), &right, &second)?);
+    assert!(
+        lookup
+            .contains_candidate(root.path(), &left, &second)
+            .is_err(),
+        "one logical alias accepted changed mount topology",
+    );
+    assert_eq!(queries.load(std::sync::atomic::Ordering::Relaxed), 1);
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn identity_observation_does_not_block_on_fifo() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let fifo = root.path().join("declared.ts");
+    let status = std::process::Command::new("mkfifo")
+        .arg("--")
+        .arg(&fifo)
+        .status()?;
+    if !status.success() {
+        return Err(std::io::Error::other("mkfifo failed for identity observation fixture").into());
+    }
+
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let _ = sender.send(crate::capture::physical_file_observation(&fifo));
+    });
+    let observation = receiver
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .map_err(|_| std::io::Error::other("identity-only FIFO open blocked"))??;
+    worker
+        .join()
+        .map_err(|_| std::io::Error::other("FIFO observation worker panicked"))?;
+
+    assert!(matches!(
+        observation.identity,
+        PhysicalFileIdentity::Unix { .. }
+    ));
     Ok(())
 }
 
