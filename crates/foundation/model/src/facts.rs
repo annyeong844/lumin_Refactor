@@ -359,6 +359,7 @@ pub enum ImportKind {
 pub enum ModuleRequestKind {
     StaticImport,
     DynamicImport,
+    ImportMetaGlob,
     Require,
 }
 
@@ -445,6 +446,13 @@ pub enum DynamicImportTargetScope {
     ExplicitTargets,
     SourceInventory,
     Workspace,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum ImportMetaGlobTargetScope {
+    ExplicitTargets,
+    Package,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -575,6 +583,16 @@ pub enum Limitation {
         candidates: Vec<LogicalSourceId>,
         #[serde(rename = "targetScope", alias = "target_scope")]
         target_scope: DynamicImportTargetScope,
+    },
+    ImportMetaGlobUnsupported {
+        source_id: LogicalSourceId,
+        source_unit: Box<SourceUnitId>,
+        span: SourceSpan,
+        patterns: Box<[String]>,
+        candidates: Vec<LogicalSourceId>,
+        #[serde(rename = "targetScope", alias = "target_scope")]
+        target_scope: ImportMetaGlobTargetScope,
+        detail: String,
     },
     SourcePayloadUnavailable {
         path: String,
@@ -794,6 +812,12 @@ define_limitation_registry! {
     DynamicImportNonLiteral => {
         owner: Js,
         scope: ExplicitTargetsOrSourceInventoryOrWorkspace,
+        absence: CandidateConsumers,
+        gate: NormalizedOpacityOrRequiredEvidence,
+    },
+    ImportMetaGlobUnsupported => {
+        owner: Js,
+        scope: ImportedTargetsOrPackage,
         absence: CandidateConsumers,
         gate: NormalizedOpacityOrRequiredEvidence,
     },

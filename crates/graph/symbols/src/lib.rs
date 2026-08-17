@@ -1,12 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_model::{
-    DynamicImportTargetScope, ExportFact, FileFacts, ImportKind, Limitation, LogicalSourceId,
-    PackageSurfaceDeclaration, ResolutionOutcome, ResolvedSourceUse, SourceRoles, SourceSnapshot,
-    SourceSpan, SymbolNamespace,
+    DynamicImportTargetScope, ExportFact, FileFacts, ImportKind, ImportMetaGlobTargetScope,
+    Limitation, LogicalSourceId, PackageSurfaceDeclaration, ResolutionOutcome, ResolvedSourceUse,
+    SourceRoles, SourceSnapshot, SourceSpan, SymbolNamespace,
 };
 
-pub const SYMBOL_GRAPH_SEMANTICS_VERSION: &str = "symbol-graph-semantics.v5";
+pub const SYMBOL_GRAPH_SEMANTICS_VERSION: &str = "symbol-graph-semantics.v6";
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ExportIdentity {
@@ -251,38 +251,57 @@ fn bounded_dynamic_fan_in(
 ) -> DynamicFanIn {
     let mut fan_in = DynamicFanIn::default();
     for limitation in limitations {
-        let Limitation::DynamicImportNonLiteral {
-            source_id,
-            candidates,
-            target_scope,
-            ..
-        } = limitation
-        else {
-            continue;
-        };
-        let importer_is_test = roles.get(source_id).is_some_and(SourceRoles::is_test_like);
-        match target_scope {
-            DynamicImportTargetScope::ExplicitTargets => {
-                for candidate in candidates.iter().collect::<BTreeSet<_>>() {
-                    let counts = fan_in.by_source.entry(candidate.clone()).or_default();
-                    if importer_is_test {
-                        counts.test += 1;
-                    } else {
-                        counts.production += 1;
+        match limitation {
+            Limitation::DynamicImportNonLiteral {
+                source_id,
+                candidates,
+                target_scope,
+                ..
+            } => {
+                let importer_is_test = roles.get(source_id).is_some_and(SourceRoles::is_test_like);
+                match target_scope {
+                    DynamicImportTargetScope::ExplicitTargets => {
+                        add_candidate_fan_in(&mut fan_in, candidates, importer_is_test)
                     }
+                    DynamicImportTargetScope::SourceInventory => {
+                        if importer_is_test {
+                            fan_in.source_inventory.test += 1;
+                        } else {
+                            fan_in.source_inventory.production += 1;
+                        }
+                    }
+                    DynamicImportTargetScope::Workspace => {}
                 }
             }
-            DynamicImportTargetScope::SourceInventory => {
-                if importer_is_test {
-                    fan_in.source_inventory.test += 1;
-                } else {
-                    fan_in.source_inventory.production += 1;
-                }
-            }
-            DynamicImportTargetScope::Workspace => {}
+            Limitation::ImportMetaGlobUnsupported {
+                source_id,
+                candidates,
+                target_scope: ImportMetaGlobTargetScope::ExplicitTargets,
+                ..
+            } => add_candidate_fan_in(
+                &mut fan_in,
+                candidates,
+                roles.get(source_id).is_some_and(SourceRoles::is_test_like),
+            ),
+            _ => {}
         }
     }
     fan_in
+}
+
+fn add_candidate_fan_in(
+    fan_in: &mut DynamicFanIn,
+    candidates: &[LogicalSourceId],
+    importer_is_test: bool,
+) {
+    for candidate in candidates.iter().collect::<BTreeSet<_>>() {
+        let counts = fan_in.by_source.entry(candidate.clone()).or_default();
+        if importer_is_test {
+            counts.test += 1;
+        } else {
+            counts.production += 1;
+        }
+    }
 }
 
 fn increment_broad_fan_in(

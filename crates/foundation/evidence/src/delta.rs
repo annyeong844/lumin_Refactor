@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_model::{
     DeltaFact, DeltaFactFamily, DeltaIdentity, DeltaIdentityKind, DeltaKey, DeltaOwnerPayloadValue,
-    DeltaValue, DependencyIntentIdentity, DynamicImportTargetScope, FindingDisposition, Limitation,
-    LogicalSourceId, PackageScopeId, RepoPath, ReviewOnlyReason, UnresolvedTargetScope,
-    append_length_prefixed,
+    DeltaValue, DependencyIntentIdentity, DynamicImportTargetScope, FindingDisposition,
+    ImportMetaGlobTargetScope, Limitation, LogicalSourceId, PackageScopeId, RepoPath,
+    ReviewOnlyReason, UnresolvedTargetScope, append_length_prefixed,
 };
 
 use crate::{
@@ -42,6 +42,7 @@ pub(crate) fn lifecycle_delta_input_for(
     let mut advisory_limitation_count = 0;
     let mut required_evidence_gap_count = 0;
     let mut dynamic_import_occurrences = BTreeMap::<(LogicalSourceId, Option<String>), u64>::new();
+    let mut import_meta_glob_occurrences = BTreeMap::<(LogicalSourceId, Vec<String>), u64>::new();
     for limitation in &evidence.limitations {
         let construct_ordinal = match limitation {
             Limitation::DynamicImportNonLiteral {
@@ -52,6 +53,19 @@ pub(crate) fn lifecycle_delta_input_for(
             } => {
                 let next = dynamic_import_occurrences
                     .entry((source_id.clone(), static_prefix.clone()))
+                    .or_default();
+                let ordinal = *next;
+                *next += 1;
+                ordinal
+            }
+            Limitation::ImportMetaGlobUnsupported {
+                source_id,
+                patterns,
+                target_scope: ImportMetaGlobTargetScope::ExplicitTargets,
+                ..
+            } => {
+                let next = import_meta_glob_occurrences
+                    .entry((source_id.clone(), patterns.to_vec()))
                     .or_default();
                 let ordinal = *next;
                 *next += 1;
@@ -90,6 +104,27 @@ fn limitation_intersects_required_evidence(
     dependency_intents: &[DependencyIntentRecord],
     leased_write_set: &[WriteLease],
 ) -> bool {
+    if let Limitation::ImportMetaGlobUnsupported {
+        source_id,
+        target_scope: ImportMetaGlobTargetScope::Package,
+        ..
+    } = limitation
+    {
+        let Some(root) = evidence
+            .source_contexts
+            .iter()
+            .find(|context| &context.source_id == source_id)
+            .and_then(|context| context.package_root.as_ref())
+            .and_then(|root| RepoPath::from_canonical_bytes(&root.canonical).ok())
+        else {
+            return true;
+        };
+        return package_scope_intersects_write_set(
+            &lumin_model::PackageScope::from_root(&root),
+            evidence,
+            leased_write_set,
+        );
+    }
     let Limitation::DependencyOwnerAmbiguous {
         package_scope,
         required_intent,
@@ -413,6 +448,55 @@ fn limitation_delta_at(limitation: &Limitation, construct_ordinal: u64) -> Limit
                             Some(prefix) => DeltaValue::text(prefix),
                             None => DeltaValue::Absent,
                         }),
+                    ),
+                    (
+                        "targetScope".to_owned(),
+                        DeltaOwnerPayloadValue::unordered(DeltaValue::text("explicit-targets")),
+                    ),
+                ]),
+            })
+        }
+        Limitation::ImportMetaGlobUnsupported {
+            source_id,
+            patterns,
+            candidates,
+            target_scope,
+            detail,
+            ..
+        } => {
+            if *target_scope == ImportMetaGlobTargetScope::Package {
+                return LimitationDelta::RequiredEvidenceGap;
+            }
+            let normalized_patterns = frame(patterns.iter().map(|pattern| pattern.as_bytes()));
+            let ordinal = construct_ordinal.to_be_bytes();
+            let semantic_identity = frame([
+                source_id.as_str().as_bytes(),
+                b"import-meta-glob-opacity.v1",
+                normalized_patterns.as_slice(),
+                ordinal.as_slice(),
+            ]);
+            LimitationDelta::Fact(DeltaFact {
+                key: DeltaKey {
+                    owner_capability: "js/module-use.v1".to_owned(),
+                    family: DeltaFactFamily::Opacity,
+                    semantic_identity: semantic_identity.clone(),
+                },
+                targets: candidates
+                    .iter()
+                    .map(|candidate| target(candidate.as_str().as_bytes()))
+                    .collect(),
+                affected_identities: BTreeSet::from([logical_source(source_id)]),
+                confidence: lumin_model::ConfidenceRank::High,
+                grounding: lumin_model::GroundingRank::Opaque,
+                evidence_identity: DeltaValue::bytes(semantic_identity),
+                owner_payload: BTreeMap::from([
+                    (
+                        "patterns".to_owned(),
+                        DeltaOwnerPayloadValue::unordered(DeltaValue::bytes(normalized_patterns)),
+                    ),
+                    (
+                        "detail".to_owned(),
+                        DeltaOwnerPayloadValue::unordered(DeltaValue::text(detail)),
                     ),
                     (
                         "targetScope".to_owned(),
@@ -853,6 +937,72 @@ mod tests {
             fact.targets
                 .iter()
                 .any(|target| { target.canonical == candidate.as_str().as_bytes() })
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn import_meta_glob_scope_is_comparable_only_for_explicit_targets()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let importer = LogicalSourceId::from_string("source-importer".to_owned());
+        let candidate = LogicalSourceId::from_string("source-candidate".to_owned());
+        let limitation = |target_scope| Limitation::ImportMetaGlobUnsupported {
+            source_id: importer.clone(),
+            source_unit: Box::new(SourceUnitId::Logical(importer.clone())),
+            span: SourceSpan { start: 7, end: 40 },
+            patterns: vec!["./features/*.ts".to_owned()].into_boxed_slice(),
+            candidates: vec![candidate.clone()],
+            target_scope,
+            detail: "glob options are unsupported".to_owned(),
+        };
+
+        let fact = match limitation_delta(&limitation(ImportMetaGlobTargetScope::ExplicitTargets)) {
+            LimitationDelta::Fact(fact) => fact,
+            LimitationDelta::RequiredEvidenceGap => {
+                return Err("explicit glob candidates were not comparable".into());
+            }
+        };
+        assert_eq!(fact.key.family, DeltaFactFamily::Opacity);
+        assert_eq!(fact.targets.len(), 1);
+        assert!(matches!(
+            limitation_delta(&limitation(ImportMetaGlobTargetScope::Package)),
+            LimitationDelta::RequiredEvidenceGap
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn package_glob_gap_intersects_only_its_owner_package() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let package_a = RepoPath::from_portable("packages/a")?;
+        let package_b = RepoPath::from_portable("packages/b")?;
+        let source_a = RepoPath::from_portable("packages/a/src/main.ts")?;
+        let source_b = RepoPath::from_portable("packages/b/src/main.ts")?;
+        let source_a_id = LogicalSourceId::from_path(&source_a);
+        let limitation = Limitation::ImportMetaGlobUnsupported {
+            source_id: source_a_id.clone(),
+            source_unit: Box::new(SourceUnitId::Logical(source_a_id)),
+            span: SourceSpan { start: 0, end: 32 },
+            patterns: vec!["@alias/*.ts".to_owned()].into_boxed_slice(),
+            candidates: Vec::new(),
+            target_scope: ImportMetaGlobTargetScope::Package,
+            detail: "aliases are unsupported".to_owned(),
+        };
+        let mut evidence = evidence_with_limitations(vec![limitation]);
+        evidence.source_contexts = vec![
+            source_context(&source_a, &package_a),
+            source_context(&source_b, &package_b),
+        ];
+
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&source_b)])
+                .required_evidence_gap_count,
+            0,
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&source_a)])
+                .required_evidence_gap_count,
+            1,
         );
         Ok(())
     }

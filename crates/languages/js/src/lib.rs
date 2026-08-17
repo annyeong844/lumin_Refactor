@@ -1,9 +1,9 @@
 use std::collections::BTreeSet;
 
 use lumin_model::{
-    DynamicImportTargetScope, EmbeddedSourceUnit, ExportFact, FileFacts, ImportKind, Limitation,
-    LogicalSourceId, ModuleRequestKind, SourceKind, SourceSnapshot, SourceSpan, SourceUnitId,
-    SourceUseFact, SymbolNamespace,
+    DynamicImportTargetScope, EmbeddedSourceUnit, ExportFact, FileFacts, ImportKind,
+    ImportMetaGlobTargetScope, Limitation, LogicalSourceId, ModuleRequestKind, SourceKind,
+    SourceSnapshot, SourceSpan, SourceUnitId, SourceUseFact, SymbolNamespace,
 };
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
@@ -16,15 +16,17 @@ use oxc_parser::Parser;
 use oxc_span::{GetSpan, SourceType, Span};
 
 mod dynamic_import;
+mod import_meta_glob;
 mod require_scope;
 
 use dynamic_import::{
     NonLiteralDynamicImportTemplate, analyze_literal_dynamic_imports,
-    literal_dynamic_import_specifier, nonliteral_template,
+    literal_dynamic_import_specifier, nonliteral_template, transparent_runtime_expression,
 };
+use import_meta_glob::{ParsedImportMetaGlob, UnsupportedImportMetaGlobTemplate};
 use require_scope::RequireScopeTracker;
 
-pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v21";
+pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v22";
 
 const REQUIRE_ATTRIBUTION_OPAQUE: &str = "shadowed, mutated, dynamically resolved, or escaped require makes CommonJS module-use attribution opaque";
 const MODULE_REQUIRE_ATTRIBUTION_OPAQUE: &str =
@@ -71,6 +73,7 @@ pub struct JsPayloadFacts {
     exports: Vec<ExportTemplate>,
     uses: Vec<SourceUseTemplate>,
     nonliteral_dynamic_imports: Vec<NonLiteralDynamicImportTemplate>,
+    unsupported_import_meta_globs: Vec<UnsupportedImportMetaGlobTemplate>,
     limitation_details: Vec<String>,
 }
 
@@ -190,6 +193,7 @@ pub fn parse_payload_with_module_formats(
         exports: Vec::new(),
         uses: Vec::new(),
         nonliteral_dynamic_imports: Vec::new(),
+        unsupported_import_meta_globs: Vec::new(),
         limitation_details: Vec::new(),
     };
     if matches!(kind, SourceKind::CommonJs | SourceKind::Cts) {
@@ -238,6 +242,7 @@ fn contextualize_payload(
         non_escaping_module_require_members: BTreeSet::new(),
         handled_dynamic_imports: dynamic_imports.handled_imports,
         nonliteral_dynamic_imports: Vec::new(),
+        unsupported_import_meta_globs: Vec::new(),
     };
     if escaped_require {
         detector.report_opaque_require();
@@ -258,6 +263,9 @@ fn contextualize_payload(
     facts
         .nonliteral_dynamic_imports
         .extend(detector.nonliteral_dynamic_imports);
+    facts
+        .unsupported_import_meta_globs
+        .extend(detector.unsupported_import_meta_globs);
     facts.limitation_details.extend(detector.unknown_details);
     if kind.is_declaration() {
         for export in &mut facts.exports {
@@ -321,12 +329,31 @@ pub fn bind_payload(
                     target_scope: DynamicImportTargetScope::Workspace,
                 }
             }))
+            .chain(payload.unsupported_import_meta_globs.iter().map(|glob| {
+                Limitation::ImportMetaGlobUnsupported {
+                    source_id: source_id.clone(),
+                    source_unit: Box::new(source_unit.clone()),
+                    span: glob.span.clone(),
+                    patterns: glob.patterns.clone().into_boxed_slice(),
+                    candidates: Vec::new(),
+                    target_scope: ImportMetaGlobTargetScope::Package,
+                    detail: glob.detail.clone(),
+                }
+            }))
             .collect(),
     }
 }
 
 pub fn scope_dynamic_import_limitations(facts: &mut [FileFacts], sources: &[SourceSnapshot]) {
     dynamic_import::scope_limitations(facts, sources);
+}
+
+pub fn scope_import_meta_globs(
+    facts: &mut [FileFacts],
+    sources: &[SourceSnapshot],
+    is_hard_excluded_component: fn(&str) -> bool,
+) {
+    import_meta_glob::scope(facts, sources, is_hard_excluded_component);
 }
 
 fn lower_statement(statement: &Statement<'_>, facts: &mut JsPayloadFacts) {
@@ -651,6 +678,7 @@ struct DynamicUseDetector {
     non_escaping_module_require_members: BTreeSet<(u32, u32)>,
     handled_dynamic_imports: BTreeSet<(u32, u32)>,
     nonliteral_dynamic_imports: Vec<NonLiteralDynamicImportTemplate>,
+    unsupported_import_meta_globs: Vec<UnsupportedImportMetaGlobTemplate>,
 }
 
 impl DynamicUseDetector {
@@ -761,9 +789,23 @@ impl<'a> Visit<'a> for DynamicUseDetector {
             self.unknown_details
                 .push("nonliteral CommonJS require may hide an internal consumer".to_owned());
         } else if is_import_meta_glob(&expression.callee) {
-            self.unknown_details.push(
-                "import.meta.glob target expansion is not implemented in this increment".to_owned(),
-            );
+            match import_meta_glob::parse_call(expression) {
+                ParsedImportMetaGlob::Supported { span, patterns } => {
+                    self.uses
+                        .extend(patterns.into_iter().map(|specifier| SourceUseTemplate {
+                            specifier,
+                            imported_name: None,
+                            local_name: None,
+                            namespace: SymbolNamespace::Value,
+                            kind: ImportKind::DynamicBroad,
+                            request_kind: ModuleRequestKind::ImportMetaGlob,
+                            span: span.clone(),
+                        }));
+                }
+                ParsedImportMetaGlob::Unsupported(glob) => {
+                    self.unsupported_import_meta_globs.push(glob);
+                }
+            }
         }
         walk::walk_call_expression(self, expression);
     }
@@ -842,7 +884,7 @@ fn is_module_require_member(expression: &oxc_ast::ast::MemberExpression<'_>) -> 
 }
 
 fn is_import_meta_glob(expression: &oxc_ast::ast::Expression<'_>) -> bool {
-    let Some(member) = expression.as_member_expression() else {
+    let Some(member) = transparent_runtime_expression(expression).get_member_expr() else {
         return false;
     };
     if member.static_property_name() != Some("glob") {
@@ -912,6 +954,7 @@ fn unknown_payload(detail: String) -> JsPayloadFacts {
         exports: Vec::new(),
         uses: Vec::new(),
         nonliteral_dynamic_imports: Vec::new(),
+        unsupported_import_meta_globs: Vec::new(),
         limitation_details: vec![detail],
     }
 }
@@ -934,6 +977,12 @@ fn canonicalize(facts: &mut JsPayloadFacts) {
     });
     facts.nonliteral_dynamic_imports.sort();
     facts.nonliteral_dynamic_imports.dedup();
+    for glob in &mut facts.unsupported_import_meta_globs {
+        glob.patterns.sort();
+        glob.patterns.dedup();
+    }
+    facts.unsupported_import_meta_globs.sort();
+    facts.unsupported_import_meta_globs.dedup();
 }
 
 #[cfg(test)]

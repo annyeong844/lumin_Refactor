@@ -559,7 +559,9 @@ fn emit_uses(records: Vec<DynamicRecord>) -> Vec<SourceUseTemplate> {
     uses
 }
 
-fn transparent_runtime_expression<'a, 'b>(expression: &'b Expression<'a>) -> &'b Expression<'a> {
+pub(crate) fn transparent_runtime_expression<'a, 'b>(
+    expression: &'b Expression<'a>,
+) -> &'b Expression<'a> {
     let expression = expression.without_parentheses();
     match expression {
         Expression::TSAsExpression(wrapper) => transparent_runtime_expression(&wrapper.expression),

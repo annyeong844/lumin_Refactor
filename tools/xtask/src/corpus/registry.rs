@@ -347,7 +347,9 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("dynamic-nonliteral", &[
         inv!("dynamic_nonliteral", "nonliteral_dynamic_imports_preserve_bounded_and_workspace_opacity"),
     ]),
-    row_sd!("import-meta-glob"),
+    row_sd!("import-meta-glob", &[
+        inv!("import_meta_glob", "relative_import_meta_globs_expand_and_unsupported_patterns_remain_scoped"),
+    ]),
     row_sd!("cjs-computed"),
     row_sd!("parse-failure-propagation"),
     row_sd_arch!("limitation-scope-exhaustiveness"),
