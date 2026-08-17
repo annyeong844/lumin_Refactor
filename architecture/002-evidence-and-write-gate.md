@@ -4,7 +4,7 @@ Document role: evidence delivery and lifecycle architecture owner
 
 Status: frozen
 
-Revision: 2026-07-19
+Revision: 2026-08-17
 
 Parent: ARCH-000
 
@@ -143,6 +143,18 @@ The repository lock order is fixed: root handle -> marker-bound state-directory 
 ### 2.5 Cache
 
 Cache payload content below the immutable `cache/namespace.anchor` is disposable and noncanonical. Deleting payload descendants may affect performance but cannot change the meaning of a completed run or gate. The cache parent, anchor, binding, and parent nonce are canonical namespace bootstrap and cannot be deleted or replaced by ordinary cleanup; cache corruption below the anchor becomes a visible miss.
+
+The public cleanup surface is:
+
+```text
+lumin cache clean [--format json]
+```
+
+It accepts at most one split-form `--format json` and no other option or positional argument. JSON is the only format in Architecture v1. A successful invocation emits exactly one `lumin.cache-cleanup.v1` object whose only fields are `schemaVersion` and `status`, with `status: "clean"`, followed by the normal single transport newline and with empty stderr. Exit `0` is permitted only after the held cache parent contains exactly the original bound `namespace.anchor` and the complete Section 2.0 namespace proof passes. Malformed command input exits `2`; integrity, persistence, or output-delivery failure exits `1`. Failures discovered before transport leave stdout empty and use the ordinary `lumin:` stderr diagnostic. A stream failure may have transferred a nonauthoritative JSON prefix, but no incomplete value is a delivered success object. Cleanup is an idempotent disposable mutation, not a gate or retention lifecycle mutation: it allocates no operation ID or canonical result record. If output delivery fails after payload removal, repeating the same command is the recovery protocol and must return the same clean response.
+
+Cleanup acquires the exclusive marker-bound lifecycle lock and holds validated cache-parent and anchor handles for the operation. Before the first removal it validates the complete deterministic payload set without following redirects or crossing the cache-parent volume/mount; unsupported entry kinds, multiply linked regular files, redirects, or topology disagreement hard-stop before ordinary deletion begins. Each top-level payload is then atomically claimed by a no-replace move from its current name into a cleanup-owned name relative to held same-mount directory handles. The claim preserves whichever object won the source-name race until it is reopened; its kind, physical identity, and mount identity must equal the validated entry before any descendant removal. A mismatching substitute remains intact and cleanup fails. Directory traversal and child removal use held directory handles and apply the same no-follow claim-and-revalidate rule at every level. No recursive deletion starts from the original caller-visible payload pathname, and no identity mismatch authorizes deletion of the substitute. A race may leave already removed disposable payloads absent, but it emits no clean response and never rolls forward through unvalidated state. The complete namespace proof runs around every physical mutation and again before success.
+
+The required concurrency proof stops cleanup after the initial payload validation and before the first atomic claim, substitutes another entry at that exact name, then resumes. Cleanup must report integrity failure, preserve the substitute object, preserve the physical cache parent and anchor, and publish no success. A paired non-racing run removes nested regular payloads, an empty cache is idempotent, and completed run/gate evidence remains queryable.
 
 A cache lookup may replay one owner-authored `CachedOwnerStep` keyed by the exact snapshots and semantic owner-task/profile parameters already supplied in that iteration. `NeedsInputs` metadata may depend only on those keyed prerequisites, is not a semantic hit, and cannot reveal a downstream demand derived from uncaptured bytes. During gate analysis every demanded path is conflict-checked and reserved before inventory captures it; only then may the next cold/cached step run. An accepted finished envelope replays the exact owner outcome/capability state, facts or opaque/failure payload, diagnostics, limitations, gate-neutral signals, and consulted inputs. Request-specific signals and lifecycle deltas are recomputed by the owning capability from that validated outcome and current model-owned `GateProjectionContext`.
 
@@ -839,4 +851,4 @@ Every migration crash point has one recovery rule:
 39. Independent `PinId` and active-gate transition references protect one another, minimal tombstones remain auditable, and generation-fenced lifecycle-store migration preserves the complete logical catalog.
 40. Concurrent latest publishers, recovery, retention confirmation, and migration serialize through one marker-bound exclusive guard; field-wise monotonic keys cannot regress, strand a terminal attempt behind `Running`, lose an independent pointer update, or split across replacement lock objects.
 41. Every repository path/root, machine DTO, NUL-stream input, stable ID, ordering key, cursor, and gate set reproduces the exact checked-in path-codec vectors and rejects noncanonical encodings; logical sources and alias-write closure survive physical aliases while payload reuse cannot erase package/config/role context.
-42. `.lumin` and every alias/descendant are no-follow reserved state; state-directory/lifecycle-lock identities and the exact four-kind managed-parent directory/anchor/nonce set are durably bound and revalidated, so foreign identity, copied/replaced state, lock, or parent objects, redirected managed parents, caller writes, or external mutation fail before scan evidence or gate success can treat them as ordinary source state.
+42. `.lumin` and every alias/descendant are no-follow reserved state; state-directory/lifecycle-lock identities and the exact four-kind managed-parent directory/anchor/nonce set are durably bound and revalidated, so foreign identity, copied/replaced state, lock, parent or payload objects, redirected managed parents, caller writes, validation-to-delete substitution, or external mutation fail before scan evidence, gate success, or cache-cleanup success can treat them as ordinary state.

@@ -4,7 +4,7 @@ Document role: product source of truth
 
 Status: frozen
 
-Revision: 2026-07-19
+Revision: 2026-08-17
 
 Scope: final Lumin v2 product, independent of implementation phase
 
@@ -113,6 +113,8 @@ Repository path identity is lossless and byte-complete under one exact checked-i
 
 `.lumin` and every physical alias/descendant are a product-owned reserved state namespace, not authored repository content. Lumin creates one immutable lifecycle-lock object plus one immutable anchor for each managed `attempts`, `runs`, `trash`, and `cache` parent. The repository marker and lifecycle-store header bind the state-directory/lock identities, namespace nonce, and the exact kind/directory/anchor/parent-nonce tuple for every managed parent. Every ordinary shared/exclusive acquisition and state mutation proves those directory entries still name the bound objects; pre-marker bootstrap authority cannot publish ordinary state success. Cache payloads are disposable, but the bound cache parent and its anchor are not silently replaceable. Foreign, copied, redirected, replaced, multiply linked, mismatched, or externally mutated state fails closed; a caller cannot scan or lease that namespace as a planned write.
 
+The public cache-cleanup operation may remove only disposable payload descendants. It is idempotent and changes no canonical run, gate, lifecycle, or operation record. Success means the held cache parent contains exactly its original bound anchor after cleanup and the complete state namespace passes final validation. A payload name that changes after validation is never permission to delete the replacement; cleanup fails closed instead. Because cleanup has no canonical mutation result to recover, a result-delivery failure is recovered by safely repeating the whole cleanup command rather than by allocating an operation ID.
+
 Latest pointer publication is one cross-process serialized compare/merge/replace operation. Concurrent attempts merge `latestAttempt` by `(sequence, Running < Terminal)` and `latestCompleted` by successful originating sequence, while retention confirmation uses the same guard; atomic file replacement alone is not treated as lost-update protection.
 
 ### 2.10 Resolver Configuration Honesty
@@ -154,7 +156,7 @@ Lumin v2 does not:
 18. Public retention commands and lookups preserve one crash-recoverable, queryable state at every deletion boundary and cannot break latest, independent pin, active-gate transition, operation, attempt, run, gate, or lifecycle-generation referential integrity.
 19. Concurrent latest publication, recovery, retention confirmation, and migration cannot regress either pointer, lose an independent pointer-field update, strand terminal state behind same-sequence `Running`, or publish a pruned target.
 20. Every admitted native repository path/root has one byte-complete canonical identity, strict decoder, canonical `RepoPathDto`/`RepositoryRootDto`, and golden machine round trip; distinct Linux byte names and Windows native names cannot merge, and a write to one physical alias expands leases, actual-write attribution, and reanalysis to every admitted logical context without merging them.
-21. `.lumin` is a no-follow reserved namespace bound to one repository/root, state-directory, immutable lock-object, namespace nonce, and exact immutable managed-parent binding set; replacement split brain, copied/swapped `attempts`/`runs`/`trash`/`cache` parents, foreign/redirected state, and caller writes fail before scan evidence or gate authorization.
+21. `.lumin` is a no-follow reserved namespace bound to one repository/root, state-directory, immutable lock-object, namespace nonce, and exact immutable managed-parent binding set; replacement split brain, copied/swapped `attempts`/`runs`/`trash`/`cache` parents, foreign/redirected state, caller writes, and validation-to-delete substitution fail before scan evidence, gate authorization, or cache-cleanup success, while cleanup preserves the bound cache parent and anchor.
 22. Every inventory/workspace- or resolver-affecting configuration field/shape is present under one owner in the exact reviewed registry artifacts; profile-disabled fields are not consulted, enabled unsupported or malformed fields emit the correct semantic-family limitation before ownership or target probing, `extends` dispatch and relative/package selection are exact, workspace config/package entry and target-lowering order is deterministic, valid unsupported pnpm forms reach their named limitation, duplicate package identity fails closed, and artifact/owner-partition/generated-table drift is a contract failure.
 
 ## 5. Verification Contract
