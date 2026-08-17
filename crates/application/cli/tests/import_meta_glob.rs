@@ -19,6 +19,47 @@ fn relative_import_meta_globs_expand_and_unsupported_patterns_remain_scoped()
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+fn native_only_glob_matches_preserve_value_liveness() -> Result<(), Box<dyn std::error::Error>> {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"glob-native","private":true,"type":"module"}"#,
+    )?;
+    write(
+        root.path(),
+        "src/main.ts",
+        "const pages = import.meta.glob('./pages/*.ts'); console.log(pages);\n",
+    )?;
+    let mut native_relative = std::path::PathBuf::from("src/pages");
+    native_relative.push(OsString::from_vec(b"\x80.ts".to_vec()));
+    fs::create_dir_all(root.path().join("src/pages"))?;
+    fs::write(
+        root.path().join(&native_relative),
+        "export const nativeValue = 1; export type NativeType = string;\n",
+    )?;
+    let display = lumin_model::RepoPath::from_native_relative(&native_relative)?.display_escaped();
+
+    let audit = run(root.path(), &["audit", "--jobs", "1"])?;
+    assert_status(&audit, 0);
+    let run_id = field(&audit.stdout, "runId")?;
+    assert_eq!(
+        findings(root.path(), &run_id)?,
+        BTreeSet::from([finding(
+            &display,
+            "NativeType",
+            "type",
+            "zero grounded exact fan-in",
+        )]),
+    );
+    Ok(())
+}
+
 fn verify_supported_patterns_and_roles() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     write(
@@ -31,9 +72,10 @@ fn verify_supported_patterns_and_roles() -> Result<(), Box<dyn std::error::Error
         "src/main.ts",
         concat!(
             "const pages = import.meta.glob([",
-            "'./pages/*.ts', './pages/**/*.ts', '!./pages/private/**'",
+            "'./pages/*.ts', './pages/nested/*.ts', '!./pages/private/*.ts'",
             "]);\n",
-            "console.log(pages);\n",
+            "const scripts = import.meta.glob('./scripts/*.js');\n",
+            "console.log(pages, scripts);\n",
         ),
     )?;
     write(
@@ -54,6 +96,17 @@ fn verify_supported_patterns_and_roles() -> Result<(), Box<dyn std::error::Error
         "secretValue",
         "SecretType",
     )?;
+    write(
+        root.path(),
+        "src/scripts/dual.js",
+        "export const javascriptValue = 1;\n",
+    )?;
+    write_exports(
+        root.path(),
+        "src/scripts/dual.ts",
+        "typescriptValue",
+        "TypeScriptType",
+    )?;
     write_exports(
         root.path(),
         "src/test-target/only.ts",
@@ -70,16 +123,17 @@ fn verify_supported_patterns_and_roles() -> Result<(), Box<dyn std::error::Error
     let audit = run(root.path(), &["audit", "--jobs", "1"])?;
     assert_status(&audit, 0);
     let audit_json: Value = serde_json::from_str(&audit.stdout)?;
+    let run_id = field(&audit.stdout, "runId")?;
+    let audit_overview = overview(root.path(), &run_id)?;
     assert_eq!(
         audit_json.get("status").and_then(Value::as_str),
-        Some("complete")
+        Some("complete"),
+        "supported glob audit was not complete: {audit_overview:#?}",
     );
     assert_eq!(
         audit_json.get("limitationCount").and_then(Value::as_u64),
         Some(0)
     );
-    let run_id = field(&audit.stdout, "runId")?;
-
     let observed = findings(root.path(), &run_id)?;
     assert_eq!(
         observed,
@@ -105,6 +159,18 @@ fn verify_supported_patterns_and_roles() -> Result<(), Box<dyn std::error::Error
             finding(
                 "src/pages/private/secret.ts",
                 "SecretType",
+                "type",
+                "zero grounded exact fan-in",
+            ),
+            finding(
+                "src/scripts/dual.ts",
+                "typescriptValue",
+                "value",
+                "zero grounded exact fan-in",
+            ),
+            finding(
+                "src/scripts/dual.ts",
+                "TypeScriptType",
                 "type",
                 "zero grounded exact fan-in",
             ),
@@ -135,9 +201,21 @@ fn verify_supported_patterns_and_roles() -> Result<(), Box<dyn std::error::Error
         ])
     );
 
+    let main = file_response(root.path(), &run_id, "src/main.ts")?;
     assert_glob_resolutions(
-        &file_response(root.path(), &run_id, "src/main.ts")?,
-        &["./pages/nested/two.ts", "./pages/one.ts"],
+        &main,
+        &[
+            "./pages/nested/two.ts",
+            "./pages/one.ts",
+            "./scripts/dual.js",
+        ],
+    )?;
+    assert_resolution_target(
+        root.path(),
+        &run_id,
+        &main,
+        "./scripts/dual.js",
+        "src/scripts/dual.js",
     )?;
     assert_glob_resolutions(
         &file_response(root.path(), &run_id, "tests/loader.test.ts")?,
@@ -163,7 +241,11 @@ fn verify_unsupported_scopes_and_gate_decisions() -> Result<(), Box<dyn std::err
     write(
         root.path(),
         "packages/explicit/src/main.ts",
-        "const modules = import.meta.glob('./targets/*.ts', { eager: true }); console.log(modules);\n",
+        concat!(
+            "const modules = import.meta.glob('./targets/*.ts', { eager: true });\n",
+            "const cross = import.meta.glob('../../other/src/*.{ts,tsx}');\n",
+            "console.log(modules, cross);\n",
+        ),
     )?;
     write_exports(
         root.path(),
@@ -183,8 +265,9 @@ fn verify_unsupported_scopes_and_gate_decisions() -> Result<(), Box<dyn std::err
         concat!(
             "const modules = import.meta.glob('@opaque/*.ts');\n",
             "const excluded = import.meta.glob('./.lumin/*.ts');\n",
+            "const wildcardExcluded = import.meta.glob('./node*/**/*.ts');\n",
             "const escaped = import.meta.glob('../../../../outside/*.ts');\n",
-            "console.log(modules, excluded, escaped);\n",
+            "console.log(modules, excluded, wildcardExcluded, escaped);\n",
         ),
     )?;
     write_exports(
@@ -209,7 +292,7 @@ fn verify_unsupported_scopes_and_gate_decisions() -> Result<(), Box<dyn std::err
     );
     assert_eq!(
         audit_json.get("limitationCount").and_then(Value::as_u64),
-        Some(4)
+        Some(6)
     );
     let run_id = field(&audit.stdout, "runId")?;
 
@@ -232,12 +315,6 @@ fn verify_unsupported_scopes_and_gate_decisions() -> Result<(), Box<dyn std::err
                 "packages/explicit/src/unrelated.ts",
                 "ExplicitDeadType",
                 "type",
-                "zero grounded exact fan-in",
-            ),
-            finding(
-                "packages/other/src/dead.ts",
-                "otherDeadValue",
-                "value",
                 "zero grounded exact fan-in",
             ),
             finding(
@@ -267,12 +344,33 @@ fn verify_unsupported_scopes_and_gate_decisions() -> Result<(), Box<dyn std::err
             "/sourceContext/sourceId",
         )?,
     );
+    let cross = limitation_for_pattern(limitations, "../../other/src/*.{ts,tsx}")?;
+    assert_eq!(
+        required_str(cross, "/targetScope/kind")?,
+        "explicit-targets"
+    );
+    assert_eq!(required_array(cross, "/candidates")?.len(), 1);
+    assert_eq!(
+        required_array(cross, "/candidates")?[0]
+            .as_str()
+            .ok_or_else(|| std::io::Error::other("cross-package candidate is missing"))?,
+        required_str(
+            &file_response(root.path(), &run_id, "packages/other/src/dead.ts")?,
+            "/sourceContext/sourceId",
+        )?,
+    );
     let package = limitation_for_pattern(limitations, "@opaque/*.ts")?;
     assert_eq!(required_str(package, "/targetScope/kind")?, "package");
     assert!(required_array(package, "/candidates")?.is_empty());
     let excluded = limitation_for_pattern(limitations, "./.lumin/*.ts")?;
     assert_eq!(required_str(excluded, "/targetScope/kind")?, "package");
     assert!(required_array(excluded, "/candidates")?.is_empty());
+    let wildcard_excluded = limitation_for_pattern(limitations, "./node*/**/*.ts")?;
+    assert_eq!(
+        required_str(wildcard_excluded, "/targetScope/kind")?,
+        "package"
+    );
+    assert!(required_array(wildcard_excluded, "/candidates")?.is_empty());
     let escaped = limitation_for_pattern(limitations, "../../../../outside/*.ts")?;
     assert_eq!(required_str(escaped, "/targetScope/kind")?, "package");
     assert!(required_array(escaped, "/candidates")?.is_empty());
@@ -354,6 +452,10 @@ fn verify_embedded_limitation_span() -> Result<(), Box<dyn std::error::Error>> {
         required_str(limitation, "/targetScope/kind")?,
         "explicit-targets"
     );
+    assert_eq!(
+        capability_state(&overview, "sfc/vue.v1"),
+        Some("incomplete")
+    );
     Ok(())
 }
 
@@ -377,6 +479,34 @@ fn assert_glob_resolutions(source: &Value, expected: &[&str]) -> Result<(), std:
     assert_eq!(
         observed,
         expected.iter().map(|value| (*value).to_owned()).collect(),
+    );
+    Ok(())
+}
+
+fn assert_resolution_target(
+    root: &Path,
+    run_id: &str,
+    source: &Value,
+    specifier: &str,
+    target_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let resolution = required_array(source, "/resolutions")?
+        .iter()
+        .find(|resolution| {
+            resolution
+                .pointer("/sourceUse/specifier")
+                .and_then(Value::as_str)
+                == Some(specifier)
+        })
+        .ok_or_else(|| std::io::Error::other(format!("resolution for {specifier} is missing")))?;
+    let expected_target = required_str(
+        &file_response(root, run_id, target_path)?,
+        "/sourceContext/sourceId",
+    )?;
+    assert_eq!(
+        required_str(resolution, "/outcome/target")?,
+        expected_target,
+        "glob target was re-resolved instead of preserving the expanded source",
     );
     Ok(())
 }
@@ -453,6 +583,16 @@ fn has_required_gap(response: &Value) -> bool {
                 signal.get("kind").and_then(Value::as_str) == Some("required-evidence-incomplete")
             })
         })
+}
+
+fn capability_state<'a>(overview: &'a Value, capability_id: &str) -> Option<&'a str> {
+    overview
+        .get("capabilityStates")?
+        .as_array()?
+        .iter()
+        .find(|row| row.get("capabilityId").and_then(Value::as_str) == Some(capability_id))?
+        .get("state")?
+        .as_str()
 }
 
 fn required_array<'a>(value: &'a Value, pointer: &str) -> Result<&'a Vec<Value>, std::io::Error> {

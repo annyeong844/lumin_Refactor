@@ -2,8 +2,9 @@ use std::collections::BTreeSet;
 
 use lumin_model::{
     DynamicImportTargetScope, EmbeddedSourceUnit, ExportFact, FileFacts, ImportKind,
-    ImportMetaGlobTargetScope, Limitation, LogicalSourceId, ModuleRequestKind, SourceKind,
-    SourceSnapshot, SourceSpan, SourceUnitId, SourceUseFact, SymbolNamespace,
+    ImportMetaGlobTargetScope, InventoryBoundSourceUse, Limitation, LogicalSourceId,
+    ModuleRequestKind, SourceKind, SourceSnapshot, SourceSpan, SourceUnitId, SourceUseFact,
+    SymbolNamespace,
 };
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
@@ -26,7 +27,7 @@ use dynamic_import::{
 use import_meta_glob::{ParsedImportMetaGlob, UnsupportedImportMetaGlobTemplate};
 use require_scope::RequireScopeTracker;
 
-pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v22";
+pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v23";
 
 const REQUIRE_ATTRIBUTION_OPAQUE: &str = "shadowed, mutated, dynamically resolved, or escaped require makes CommonJS module-use attribution opaque";
 const MODULE_REQUIRE_ATTRIBUTION_OPAQUE: &str =
@@ -351,9 +352,9 @@ pub fn scope_dynamic_import_limitations(facts: &mut [FileFacts], sources: &[Sour
 pub fn scope_import_meta_globs(
     facts: &mut [FileFacts],
     sources: &[SourceSnapshot],
-    is_hard_excluded_component: fn(&str) -> bool,
-) {
-    import_meta_glob::scope(facts, sources, is_hard_excluded_component);
+    hard_excluded_components: &[&str],
+) -> Vec<InventoryBoundSourceUse> {
+    import_meta_glob::scope(facts, sources, hard_excluded_components)
 }
 
 fn lower_statement(statement: &Statement<'_>, facts: &mut JsPayloadFacts) {

@@ -5,10 +5,10 @@ mod package_surface;
 use std::collections::BTreeMap;
 
 use lumin_model::{
-    ConfigSyntax, FileFacts, Limitation, LogicalSourceId, PackageSurfaceDeclaration,
-    PhysicalPathRedirect, RepoPath, RepositoryRootIdentity, ResolutionOutcome, ResolutionProfile,
-    ResolvedSourceUse, SelectedResolutionProfile, SemanticConfigSnapshot, SourceSnapshot,
-    SourceUseFact, SymbolNamespace, UnresolvedTargetScope,
+    ConfigSyntax, FileFacts, InventoryBoundSourceUse, Limitation, LogicalSourceId,
+    PackageSurfaceDeclaration, PhysicalPathRedirect, RepoPath, RepositoryRootIdentity,
+    ResolutionOutcome, ResolutionProfile, ResolvedSourceUse, SelectedResolutionProfile,
+    SemanticConfigSnapshot, SourceSnapshot, SourceUseFact, SymbolNamespace, UnresolvedTargetScope,
 };
 use thiserror::Error;
 
@@ -19,7 +19,7 @@ pub use generated_config_policy::{
     RESOLVER_PACKAGE_JSON_FIELDS, RESOLVER_TSCONFIG_TOP_LEVEL,
 };
 
-pub const RESOLVER_VERSION: &str = "config-package-resolution.v5";
+pub const RESOLVER_VERSION: &str = "config-package-resolution.v6";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ImporterFormatClassification {
@@ -82,6 +82,7 @@ pub fn resolve_all(
     sources: &[SourceSnapshot],
     physical_path_redirects: &[PhysicalPathRedirect],
     facts: &[FileFacts],
+    inventory_bound_uses: &[InventoryBoundSourceUse],
     semantic_config: &SemanticConfigSnapshot,
     repository_root: &RepositoryRootIdentity,
     override_profile: Option<ResolutionProfile>,
@@ -131,6 +132,19 @@ pub fn resolve_all(
     let mut package_surfaces = public_surfaces.declarations;
     selection.limitations.extend(public_surfaces.limitations);
     let mut resolved = Vec::new();
+    for bound in inventory_bound_uses {
+        let Some(settings) = selection.settings.get(&bound.source_use.importer) else {
+            continue;
+        };
+        let (outcome, limitation) = resolve_inventory_bound_use(bound, &path_by_source, settings);
+        if let Some(limitation) = limitation {
+            selection.limitations.push(limitation);
+        }
+        resolved.push(ResolvedSourceUse {
+            source_use: bound.source_use.clone(),
+            outcome,
+        });
+    }
     for file in facts {
         let Some(importer_path) = path_by_source.get(&file.source_id) else {
             continue;
@@ -191,6 +205,41 @@ pub fn resolve_all(
         limitations: selection.limitations,
         demands: Vec::new(),
     })
+}
+
+fn resolve_inventory_bound_use(
+    bound: &InventoryBoundSourceUse,
+    path_by_source: &BTreeMap<LogicalSourceId, RepoPath>,
+    settings: &config::ImporterSettings,
+) -> (ResolutionOutcome, Option<Limitation>) {
+    if settings.blocked {
+        return (
+            ResolutionOutcome::Unsupported {
+                specifier: bound.source_use.specifier.clone(),
+                reason: "the importer's semantic configuration is incomplete".to_owned(),
+            },
+            None,
+        );
+    }
+    if !path_by_source.contains_key(&bound.target) {
+        let detail = "inventory-bound source target is unavailable".to_owned();
+        return (
+            ResolutionOutcome::Unsupported {
+                specifier: bound.source_use.specifier.clone(),
+                reason: detail.clone(),
+            },
+            Some(Limitation::AliasShapeUnsupported {
+                source_id: bound.source_use.importer.clone(),
+                detail,
+            }),
+        );
+    }
+    (
+        ResolutionOutcome::Internal {
+            target: bound.target.clone(),
+        },
+        None,
+    )
 }
 
 fn collect_relative_directory_demands(
@@ -733,6 +782,72 @@ mod tests {
     }
 
     #[test]
+    fn inventory_bound_glob_target_bypasses_typescript_substitution()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let importer = SourceSnapshot::new(
+            RepoPath::from_portable("src/main.ts")?,
+            SourceKind::TypeScript,
+            SourceRoles::default(),
+            lumin_model::PhysicalFileIdentity::Unix {
+                device: 1,
+                inode: 1,
+            },
+            Vec::new(),
+        );
+        let javascript = SourceSnapshot::new(
+            RepoPath::from_portable("src/pages/foo.js")?,
+            SourceKind::JavaScript,
+            SourceRoles::default(),
+            lumin_model::PhysicalFileIdentity::Unix {
+                device: 1,
+                inode: 2,
+            },
+            Vec::new(),
+        );
+        let typescript = SourceSnapshot::new(
+            RepoPath::from_portable("src/pages/foo.ts")?,
+            SourceKind::TypeScript,
+            SourceRoles::default(),
+            lumin_model::PhysicalFileIdentity::Unix {
+                device: 1,
+                inode: 3,
+            },
+            Vec::new(),
+        );
+        let facts = FileFacts::physical(importer.id.clone());
+        let bound = InventoryBoundSourceUse {
+            source_use: SourceUseFact {
+                importer: importer.id.clone(),
+                specifier: "./pages/foo.js".to_owned(),
+                imported_name: None,
+                local_name: None,
+                namespace: SymbolNamespace::Value,
+                kind: ImportKind::DynamicBroad,
+                request_kind: ModuleRequestKind::ImportMetaGlob,
+                span: SourceSpan { start: 0, end: 10 },
+            },
+            target: javascript.id.clone(),
+        };
+        let expected = javascript.id.clone();
+        let output = resolve_all(
+            &[importer, javascript, typescript],
+            &[],
+            &[facts],
+            &[bound],
+            &SemanticConfigSnapshot::default(),
+            &test_repository_root()?,
+            None,
+        )?;
+
+        assert_eq!(output.resolved.len(), 1);
+        assert_eq!(
+            output.resolved[0].outcome,
+            ResolutionOutcome::Internal { target: expected }
+        );
+        Ok(())
+    }
+
+    #[test]
     fn extensionless_directory_manifest_is_demanded_before_index_resolution()
     -> Result<(), Box<dyn std::error::Error>> {
         let importer = SourceSnapshot::new(
@@ -775,6 +890,7 @@ mod tests {
             &sources,
             &[],
             std::slice::from_ref(&facts),
+            &[],
             &config,
             &repository_root,
             None,
@@ -801,7 +917,15 @@ mod tests {
                 },
             },
         );
-        let second = resolve_all(&sources, &[], &[facts], &config, &repository_root, None)?;
+        let second = resolve_all(
+            &sources,
+            &[],
+            &[facts],
+            &[],
+            &config,
+            &repository_root,
+            None,
+        )?;
         assert!(second.demands.is_empty());
         assert_eq!(second.resolved.len(), 1);
         assert_eq!(
@@ -853,7 +977,15 @@ mod tests {
         );
 
         let repository_root = test_repository_root()?;
-        let selection = resolve_all(&[importer], &[], &[facts], &config, &repository_root, None)?;
+        let selection = resolve_all(
+            &[importer],
+            &[],
+            &[facts],
+            &[],
+            &config,
+            &repository_root,
+            None,
+        )?;
 
         assert!(selection.demands.is_empty());
         assert!(matches!(

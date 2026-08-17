@@ -1602,8 +1602,10 @@ fn generated_marker(bytes: &[u8]) -> bool {
     false
 }
 
+pub const HARD_EXCLUDED_COMPONENTS: &[&str] = &[".git", ".lumin", "node_modules"];
+
 pub fn is_hard_excluded_component(name: &str) -> bool {
-    matches!(name, ".git" | ".lumin" | "node_modules")
+    HARD_EXCLUDED_COMPONENTS.contains(&name)
 }
 
 fn is_hard_excluded(path: &Path) -> bool {
