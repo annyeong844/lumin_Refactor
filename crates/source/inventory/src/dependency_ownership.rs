@@ -11,8 +11,9 @@ use lumin_model::{
 };
 
 use crate::{
-    InventoryError, SemanticPolicyInput, SemanticPolicyState, capture_config, native_relative,
-    observe_config_input_identity,
+    InventoryError, ReservedStateIdentityLookup, SemanticPolicyInput, SemanticPolicyState,
+    capture_config_with_reserved_state_lookup, native_relative, observe_config_input_identity,
+    reserved_state,
 };
 
 const LOCKFILE_NAMES: [&str; 6] = [
@@ -30,6 +31,7 @@ pub(crate) fn capture_owner_candidates(
     observations: &mut BTreeMap<RepoPath, ConfigObservation>,
     consulted_config_paths: &mut Vec<RepoPath>,
     limitations: &mut Vec<Limitation>,
+    reserved_state_lookup: &ReservedStateIdentityLookup,
 ) -> Result<Vec<SemanticPolicyInput>, InventoryError> {
     let mut candidates = BTreeMap::<RepoPath, ConfigSyntax>::new();
     for intent in intents {
@@ -49,7 +51,8 @@ pub(crate) fn capture_owner_candidates(
         if observations.contains_key(&path) {
             continue;
         }
-        let capture = capture_config(root, &path, syntax)?;
+        let capture =
+            capture_config_with_reserved_state_lookup(root, &path, syntax, reserved_state_lookup)?;
         captured.insert(path, capture);
     }
 
@@ -277,10 +280,14 @@ pub(crate) fn capture(
     plan: DependencyOwnershipPlan,
     config: &mut SemanticConfigSnapshot,
     limitations: &mut Vec<Limitation>,
+    reserved_state_lookup: &ReservedStateIdentityLookup,
 ) -> Result<Vec<SemanticPolicyInput>, InventoryError> {
     let mut lockfile_inputs = BTreeMap::<RepoPath, SemanticPolicyInput>::new();
     for path in &plan.input_paths {
-        lockfile_inputs.insert(path.clone(), capture_lockfile(root, path)?);
+        lockfile_inputs.insert(
+            path.clone(),
+            capture_lockfile(root, path, reserved_state_lookup)?,
+        );
     }
     let mut facts = Vec::new();
     for owner in plan.owners {
@@ -529,9 +536,20 @@ fn next_lockfile_directory(
     })
 }
 
-fn capture_lockfile(root: &Path, path: &RepoPath) -> Result<SemanticPolicyInput, InventoryError> {
+fn capture_lockfile(
+    root: &Path,
+    path: &RepoPath,
+    reserved_state_lookup: &ReservedStateIdentityLookup,
+) -> Result<SemanticPolicyInput, InventoryError> {
+    reserved_state::validate_semantic_input_path(root, path)?;
     let identity = observe_config_input_identity(root, path)?;
     if let Some(parent) = identity.absence_parent {
+        reserved_state::validate_captured_semantic_input_topology(
+            root,
+            &parent.path,
+            &parent.physical_identity,
+            reserved_state_lookup,
+        )?;
         return Ok(SemanticPolicyInput {
             path: path.clone(),
             state: SemanticPolicyState::Missing,
@@ -553,11 +571,17 @@ fn capture_lockfile(root: &Path, path: &RepoPath) -> Result<SemanticPolicyInput,
         }
     };
     if metadata.file_type().is_symlink() || !metadata.is_file() {
+        let physical_identity = crate::semantic_input::observe_non_regular_semantic_input_identity(
+            root,
+            path,
+            identity.physical_identity.as_ref(),
+            reserved_state_lookup,
+        )?;
         return Ok(SemanticPolicyInput {
             path: path.clone(),
             state: SemanticPolicyState::NonRegular,
             payload_sha256: None,
-            physical_identity: identity.physical_identity,
+            physical_identity: Some(physical_identity),
             absence_parent: None,
             detail: Some(format!(
                 "{} is a symlink or non-regular file",
@@ -568,14 +592,34 @@ fn capture_lockfile(root: &Path, path: &RepoPath) -> Result<SemanticPolicyInput,
     let mut file = match fs::File::open(&native) {
         Ok(file) => file,
         Err(error) => {
+            let observation = crate::capture::physical_file_observation(&native)?;
+            if identity.physical_identity.as_ref() != Some(&observation.identity) {
+                return Err(InventoryError::PhysicalIdentity(format!(
+                    "lockfile path changed physical identity during capture: {}",
+                    path.display_escaped()
+                )));
+            }
+            reserved_state::validate_semantic_input_identity(
+                root,
+                path,
+                &observation,
+                reserved_state_lookup,
+            )?;
             return Ok(unreadable_input(
                 path,
-                identity.physical_identity,
+                Some(observation.identity),
                 error.to_string(),
             ));
         }
     };
-    let physical_identity = crate::capture::physical_identity_from_file(&file)?;
+    let observation = crate::capture::physical_file_observation_from_file(&file)?;
+    let physical_identity = observation.identity.clone();
+    reserved_state::validate_semantic_input_identity(
+        root,
+        path,
+        &observation,
+        reserved_state_lookup,
+    )?;
     let mut bytes = Vec::new();
     if let Err(error) = file.read_to_end(&mut bytes) {
         return Ok(unreadable_input(
@@ -593,6 +637,8 @@ fn capture_lockfile(root: &Path, path: &RepoPath) -> Result<SemanticPolicyInput,
             path.display_escaped()
         )));
     }
+    let current = crate::capture::physical_file_observation(&native)?;
+    reserved_state::validate_semantic_input_identity(root, path, &current, reserved_state_lookup)?;
     Ok(SemanticPolicyInput {
         path: path.clone(),
         state: SemanticPolicyState::Present,
@@ -606,8 +652,9 @@ fn capture_lockfile(root: &Path, path: &RepoPath) -> Result<SemanticPolicyInput,
 pub(crate) fn present_input_payload_sha256(
     root: &Path,
     path: &RepoPath,
+    reserved_state_lookup: &ReservedStateIdentityLookup,
 ) -> Result<String, InventoryError> {
-    let input = capture_lockfile(root, path)?;
+    let input = capture_lockfile(root, path, reserved_state_lookup)?;
     if input.state == SemanticPolicyState::Present
         && let Some(payload_sha256) = input.payload_sha256
     {
@@ -735,7 +782,10 @@ fn join(directory: &RepoPath, name: &str) -> Result<RepoPath, InventoryError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{InventoryRequest, begin_scan, scan};
+    use crate::{
+        InventoryRequest, begin_scan, begin_scan_with_reserved_state_identities,
+        physical_file_identity, scan,
+    };
 
     #[test]
     fn hard_exclusion_case_semantics_match_the_supported_host() {
@@ -1017,6 +1067,71 @@ mod tests {
         );
         assert!(demanded.contains(&"packages/yarn.lock".to_owned()));
         assert!(demanded.contains(&"pnpm-lock.yaml".to_owned()));
+        Ok(())
+    }
+
+    #[test]
+    fn reserved_state_alias_never_enters_lockfile_evidence()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        write(
+            root.path(),
+            "package.json",
+            r#"{"name":"root","private":true}"#,
+        )?;
+        write(root.path(), "src/main.ts", "console.log('app');\n")?;
+        write(
+            root.path(),
+            ".lumin/cache/payload",
+            "reserved state payload\n",
+        )?;
+        std::fs::hard_link(
+            root.path().join(".lumin/cache/payload"),
+            root.path().join("package-lock.json"),
+        )?;
+        let reserved_state_identities = BTreeSet::from([physical_file_identity(
+            &root.path().join(".lumin/cache/payload"),
+        )?]);
+
+        let pending = begin_scan_with_reserved_state_identities(
+            root.path(),
+            &InventoryRequest {
+                dependency_intents: vec![intent("src/main.ts", "zod")?],
+                ..Default::default()
+            },
+            &reserved_state_identities,
+        )?;
+        let error = match pending.finish(root.path()) {
+            Err(error) => error,
+            Ok(_) => return Err("reserved lockfile alias accepted".into()),
+        };
+        assert!(matches!(
+            error,
+            InventoryError::ReservedSemanticInputPath(path) if path == "package-lock.json"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn unchanged_non_regular_lockfile_survives_final_validation()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        std::fs::create_dir(root.path().join("package-lock.json"))?;
+        let path = RepoPath::from_portable("package-lock.json")?;
+        let lookup = ReservedStateIdentityLookup::empty();
+
+        let input = capture_lockfile(root.path(), &path, &lookup)?;
+        assert_eq!(input.state, SemanticPolicyState::NonRegular);
+        let expected = crate::SemanticInputExpectation {
+            path: input.path,
+            state: crate::SemanticInputValidationState::NonRegular,
+            payload_sha256: input.payload_sha256,
+            physical_identity: input.physical_identity,
+            absence_parent: input.absence_parent,
+        };
+        let final_lookup = lookup.for_final_validation(&BTreeSet::new());
+
+        crate::validate_captured_semantic_input(root.path(), &expected, &final_lookup)?;
         Ok(())
     }
 

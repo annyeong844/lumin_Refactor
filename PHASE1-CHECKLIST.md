@@ -45,8 +45,8 @@ These are execution-matrix counts, not a percentage estimate of product code.
 
 | Lane | Applicable | Mapped | Remaining | Verified aggregate |
 | --- | ---: | ---: | ---: | --- |
-| Standard | 86 | 64 | 22 | Focused `corpus::tests::mode_counts`: 64 mapped, 22 unmapped; `repo-path-lossless`: 1 invocation passed, 0 failed. Last required public CI mapped aggregate: 59 passed, 0 failed. |
-| Determinism | 86 | 64 | 22 | Focused `corpus::tests::mode_counts`: 64 mapped, 22 unmapped; `repo-path-lossless`: 1 invocation passed with 3 semantic captures, 0 failed. Last required public CI mapped aggregate: 59 passed, 0 failed. |
+| Standard | 86 | 64 | 22 | Focused `corpus::tests::mode_counts`: 64 mapped, 22 unmapped. The reserved-state row remains open until public cache cleanup is implemented and verified. |
+| Determinism | 86 | 64 | 22 | Focused `corpus::tests::mode_counts`: 64 mapped, 22 unmapped. The reserved-state row remains open until the same cleanup proof is deterministic. |
 | Store crash | 10 | 4 | 6 | Mapping count only; Phase 1 exit still requires the complete lane. |
 | **Total execution obligations** | **182** | **132** | **50** | This total deliberately counts each required lane execution. |
 

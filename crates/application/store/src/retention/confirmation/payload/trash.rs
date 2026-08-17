@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::namespace::records::ManagedStateParentKind;
-use crate::namespace::{EntryAccess, EntryKind, HeldEntry, NamespaceGuard, same_volume};
+use crate::namespace::{EntryAccess, EntryKind, HeldEntry, NamespaceGuard, same_volume_and_mount};
 use crate::{StoreError, io_error};
 
 pub(super) use crate::namespace::entry_exists;
@@ -129,7 +129,7 @@ pub(super) fn bind_directory(
         }
         Err(error) => return Err(io_error(error)),
     };
-    if !same_volume(anchor.identity(), directory.identity()) {
+    if !same_volume_and_mount(&anchor, &directory) {
         return Err(StoreError::Integrity(
             "retention trash anchor left its plan directory volume".to_owned(),
         ));
@@ -177,7 +177,7 @@ pub(super) fn open_bound(
         true,
         "retention trash anchor",
     )?;
-    if !same_volume(anchor.identity(), directory.identity()) {
+    if !same_volume_and_mount(&anchor, &directory) {
         return Err(StoreError::Integrity(
             "retention trash anchor left its plan directory volume".to_owned(),
         ));
@@ -236,7 +236,7 @@ pub(super) fn reclaim_state(
         true,
         "retention trash anchor",
     )?;
-    if !same_volume(anchor.identity(), directory.identity()) {
+    if !same_volume_and_mount(&anchor, &directory) {
         return Err(StoreError::Integrity(
             "retention trash anchor left its plan directory volume".to_owned(),
         ));

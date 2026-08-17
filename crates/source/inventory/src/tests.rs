@@ -1,7 +1,11 @@
 use super::*;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
+#[cfg(target_os = "linux")]
+mod linux_mount;
 mod physical_path_redirect;
+mod semantic_input;
 
 #[test]
 fn generated_marker_must_be_in_leading_comment() {
@@ -51,6 +55,105 @@ fn missing_config_identity_is_bound_to_the_nearest_existing_parent()
         parent.physical_identity,
         physical_file_identity(&root.path().join("config"))?
     );
+    Ok(())
+}
+
+#[test]
+fn missing_config_rejects_a_reserved_absence_parent() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::write(root.path().join("state-object"), b"reserved state")?;
+    fs::hard_link(
+        root.path().join("state-object"),
+        root.path().join("state-alias"),
+    )?;
+    let parent = RepoPath::from_portable("state-alias")?;
+    let reserved = BTreeSet::from([physical_file_identity(&root.path().join("state-object"))?]);
+    let lookup = ReservedStateIdentityLookup::from_identities(reserved);
+
+    let error = match capture_config_with_reserved_state_lookup(
+        root.path(),
+        &RepoPath::from_portable("state-alias/package.json")?,
+        ConfigSyntax::StrictJson,
+        &lookup,
+    ) {
+        Err(error) => error,
+        Ok(_) => {
+            return Err(std::io::Error::other(
+                "a missing config beneath reserved state was accepted",
+            )
+            .into());
+        }
+    };
+
+    assert!(matches!(
+        error,
+        InventoryError::ReservedSemanticInputPath(path) if path == parent.display_escaped()
+    ));
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn missing_config_rejects_a_symlinked_state_parent() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir(root.path().join(".lumin"))?;
+    std::os::unix::fs::symlink(root.path().join(".lumin"), root.path().join("state-alias"))?;
+
+    let error = match capture_config(
+        root.path(),
+        &RepoPath::from_portable("state-alias/package.json")?,
+        ConfigSyntax::StrictJson,
+    ) {
+        Err(error) => error,
+        Ok(_) => {
+            return Err(std::io::Error::other(
+                "a missing config beneath a state symlink was accepted",
+            )
+            .into());
+        }
+    };
+
+    assert!(matches!(
+        error,
+        InventoryError::ReservedSemanticInputPath(path) if path == "state-alias"
+    ));
+    Ok(())
+}
+
+#[test]
+fn configured_entry_rejects_a_reserved_hard_link_identity() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    fs::create_dir(root.path().join("src"))?;
+    fs::write(root.path().join("state-object"), b"reserved state")?;
+    fs::hard_link(
+        root.path().join("state-object"),
+        root.path().join("src/state-alias.ts"),
+    )?;
+    fs::write(
+        root.path().join("lumin.json"),
+        r#"{"schemaVersion":"lumin-config.v1","entries":["src/state-alias.ts"]}"#,
+    )?;
+    let reserved = BTreeSet::from([physical_file_identity(&root.path().join("state-object"))?]);
+    let lookup = ReservedStateIdentityLookup::from_identities(reserved);
+
+    let error = match begin_scan_with_reserved_state_lookup(
+        root.path(),
+        &InventoryRequest::default(),
+        &lookup,
+    ) {
+        Err(error) => error,
+        Ok(_) => {
+            return Err(
+                std::io::Error::other("a configured reserved-state alias was accepted").into(),
+            );
+        }
+    };
+
+    assert!(matches!(
+        error,
+        InventoryError::ReservedEntryPath(path) if path == "src/state-alias.ts"
+    ));
     Ok(())
 }
 
@@ -107,6 +210,150 @@ fn hard_link_sources_share_captured_payload_but_keep_logical_identity()
     assert_eq!(left.physical_identity, right.physical_identity);
     assert_eq!(left.payload_snapshot_id, right.payload_snapshot_id);
     assert!(Arc::ptr_eq(&left.bytes, &right.bytes));
+    Ok(())
+}
+
+#[test]
+fn one_link_evidence_does_not_query_retained_state_ownership()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir(root.path().join("src"))?;
+    fs::write(root.path().join("src/lib.ts"), "export const value = 1;\n")?;
+    let queries = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = Arc::clone(&queries);
+    let lookup = ReservedStateIdentityLookup::new(move |_| {
+        observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(false)
+    });
+
+    begin_scan_with_reserved_state_lookup(root.path(), &InventoryRequest::default(), &lookup)?
+        .finish(root.path())?;
+
+    assert_eq!(queries.load(std::sync::atomic::Ordering::Relaxed), 0);
+    Ok(())
+}
+
+#[test]
+fn final_validation_rejects_new_link_topology_without_reusing_the_state_index()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::create_dir_all(root.path().join(".lumin/cache"))?;
+    let source = root.path().join("src/lib.ts");
+    fs::write(&source, "export const value = 1;\n")?;
+    let queries = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = Arc::clone(&queries);
+    let lookup = ReservedStateIdentityLookup::new(move |_| {
+        observed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(false)
+    });
+    let path = RepoPath::from_portable("src/lib.ts")?;
+    let initial = crate::capture::physical_file_observation(&source)?;
+    assert!(!lookup.contains_candidate(root.path(), &path, &initial)?);
+
+    let final_lookup = lookup.for_final_validation(&BTreeSet::new());
+    fs::hard_link(&source, root.path().join(".lumin/cache/alias.ts"))?;
+    let current = crate::capture::physical_file_observation(&source)?;
+    assert!(
+        final_lookup
+            .contains_candidate(root.path(), &path, &current)
+            .is_err()
+    );
+    assert_eq!(queries.load(std::sync::atomic::Ordering::Relaxed), 0);
+    Ok(())
+}
+
+#[test]
+fn final_validation_rechecks_membership_when_candidate_topology_is_unchanged()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    let source = root.path().join("src/lib.ts");
+    fs::write(&source, "export const value = 1;\n")?;
+    let path = RepoPath::from_portable("src/lib.ts")?;
+    let observation = crate::capture::physical_file_observation(&source)?;
+    let lookup = ReservedStateIdentityLookup::empty();
+    assert!(!lookup.contains_candidate(root.path(), &path, &observation)?);
+
+    let reserved = BTreeSet::from([observation.identity.clone()]);
+    let final_lookup = lookup.for_final_validation(&reserved);
+    assert!(final_lookup.contains_candidate(root.path(), &path, &observation)?);
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn mount_topology_is_tracked_per_logical_alias() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir(root.path().join("src"))?;
+    let source = root.path().join("src/shared.ts");
+    fs::write(&source, "export const value = 1;\n")?;
+    let observed = crate::capture::physical_file_observation(&source)?;
+    let original_mount = observed
+        .mount_id
+        .ok_or_else(|| std::io::Error::other("Linux observation omitted its mount ID"))?;
+    let alias_mount = original_mount
+        .checked_add(1)
+        .ok_or_else(|| std::io::Error::other("Linux mount ID overflowed test fixture"))?;
+    let left = RepoPath::from_portable("src/shared.ts")?;
+    let right = RepoPath::from_portable("src/mounted.ts")?;
+    let queries = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let query_count = Arc::clone(&queries);
+    let lookup = ReservedStateIdentityLookup::new(move |_| {
+        query_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(false)
+    });
+    let first = crate::capture::PhysicalFileObservation {
+        identity: observed.identity.clone(),
+        links: 1,
+        mount_id: Some(original_mount),
+    };
+    let second = crate::capture::PhysicalFileObservation {
+        identity: observed.identity,
+        links: 1,
+        mount_id: Some(alias_mount),
+    };
+
+    assert!(!lookup.contains_candidate(root.path(), &left, &first)?);
+    assert!(!lookup.contains_candidate(root.path(), &right, &second)?);
+    assert!(
+        lookup
+            .contains_candidate(root.path(), &left, &second)
+            .is_err(),
+        "one logical alias accepted changed mount topology",
+    );
+    assert_eq!(queries.load(std::sync::atomic::Ordering::Relaxed), 1);
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn identity_observation_does_not_block_on_fifo() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let fifo = root.path().join("declared.ts");
+    let status = std::process::Command::new("mkfifo")
+        .arg("--")
+        .arg(&fifo)
+        .status()?;
+    if !status.success() {
+        return Err(std::io::Error::other("mkfifo failed for identity observation fixture").into());
+    }
+
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let _ = sender.send(crate::capture::physical_file_observation(&fifo));
+    });
+    let observation = receiver
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .map_err(|_| std::io::Error::other("identity-only FIFO open blocked"))??;
+    worker
+        .join()
+        .map_err(|_| std::io::Error::other("FIFO observation worker panicked"))?;
+
+    assert!(matches!(
+        observation.identity,
+        PhysicalFileIdentity::Unix { .. }
+    ));
     Ok(())
 }
 
@@ -192,6 +439,38 @@ fn demanded_nonregular_configs_keep_fact_owner_limitations()
     assert!(matches!(
         workspace.limitation,
         Some(Limitation::WorkspaceOwnershipUnsupported { .. })
+    ));
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn nonregular_config_rejects_a_reserved_physical_identity() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    let config = root.path().join("package.json");
+    fs::create_dir(&config)?;
+    let reserved = BTreeSet::from([physical_file_identity(&config)?]);
+    let lookup = ReservedStateIdentityLookup::from_identities(reserved);
+
+    let error = match capture_config_with_reserved_state_lookup(
+        root.path(),
+        &RepoPath::from_portable("package.json")?,
+        ConfigSyntax::StrictJson,
+        &lookup,
+    ) {
+        Err(error) => error,
+        Ok(_) => {
+            return Err(std::io::Error::other(
+                "a reserved non-regular config was published as limitation evidence",
+            )
+            .into());
+        }
+    };
+
+    assert!(matches!(
+        error,
+        InventoryError::ReservedSemanticInputPath(path) if path == "package.json"
     ));
     Ok(())
 }

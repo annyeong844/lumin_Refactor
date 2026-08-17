@@ -1,3 +1,4 @@
+mod audit_publication;
 mod capability_query;
 mod extraction;
 mod gate_abandon;
@@ -41,7 +42,8 @@ use lumin_evidence::{
     seal_analysis_snapshot,
 };
 use lumin_inventory::{
-    InventoryError, InventoryRequest, InventorySnapshot, SemanticPolicyState, repository_admission,
+    InventoryError, InventoryRequest, InventorySnapshot, RepositoryAdmission, SemanticPolicyState,
+    repository_admission,
 };
 use lumin_model::{
     AttemptId, AttemptStatus, CapabilityState, ConfigObservation, FileFacts, Limitation,
@@ -195,10 +197,18 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
     if request.jobs == 0 {
         return Err(EngineError::InvalidWorkerCount(0));
     }
-    // Fail closed: validate caller entries BEFORE audit begins an attempt
-    lumin_inventory::validate_caller_entries(&request.root, &request.entries)?;
-    let context = open_repository_context(&request.root)?;
+    lumin_inventory::validate_caller_paths_lexically(&request.entries)?;
+    let admission = repository_admission(&request.root)?;
+    lumin_inventory::validate_caller_entries(&admission.canonical_root, &request.entries)?;
+    let store = RepositoryStore::open(&admission.canonical_root, &admission.binding)?;
+    let context = repository_context_from_admission(admission, store);
     let store = &context.store;
+    let reserved_state_lookup = reserved_state_identity_lookup(store);
+    lumin_inventory::validate_caller_entry_identity_lookup(
+        &context.root,
+        &request.entries,
+        &reserved_state_lookup,
+    )?;
     let mut attempt = store.begin_attempt()?;
     let inventory_request = InventoryRequest {
         includes: request.includes.clone(),
@@ -207,16 +217,15 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
         entries: request.entries.clone(),
         dependency_intents: Vec::new(),
     };
-    let evidence = match capture_admitted_repository(
+    let capture = match capture_admitted_repository(
         &context.root,
         context.repository_root.clone(),
         &inventory_request,
         request.jobs,
         request.resolution_profile,
-    )
-    .map(|capture| capture.snapshot.evidence)
-    {
-        Ok(evidence) => evidence,
+        &reserved_state_lookup,
+    ) {
+        Ok(capture) => capture,
         Err(error) => {
             if let Err(persistence) = store.fail_attempt(&mut attempt, &error.to_string()) {
                 return Err(EngineError::AnalysisAndPersistence {
@@ -227,7 +236,13 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
             return Err(error);
         }
     };
-    let published = match store.publish_run(&mut attempt, &evidence) {
+    let published = match audit_publication::publish(
+        store,
+        &mut attempt,
+        &context.root,
+        &reserved_state_lookup,
+        &capture.snapshot,
+    ) {
         Ok(published) => published,
         Err(error @ StoreError::RunRetentionState(_)) => {
             return Err(EngineError::Store(error));
@@ -242,6 +257,7 @@ pub fn audit(request: &AuditRequest) -> Result<AuditResult, EngineError> {
             return Err(EngineError::Store(error));
         }
     };
+    let evidence = capture.snapshot.evidence;
     Ok(AuditResult {
         published,
         repository_root: context.repository_root.clone(),
@@ -256,12 +272,14 @@ pub fn analyze_repository(
     resolution_profile: Option<ResolutionProfile>,
 ) -> Result<RunEvidence, EngineError> {
     let admission = repository_admission(root)?;
+    let reserved_state_lookup = lumin_inventory::ReservedStateIdentityLookup::empty();
     capture_admitted_repository(
         &admission.canonical_root,
         admission.binding.root().clone(),
         request,
         jobs,
         resolution_profile,
+        &reserved_state_lookup,
     )
     .map(|capture| capture.snapshot.evidence)
 }
@@ -275,14 +293,30 @@ struct RepositoryContext {
 
 fn open_repository_context(root: &Path) -> Result<RepositoryContext, EngineError> {
     let admission = repository_admission(root)?;
-    let repository_id = admission.binding.repository_id().clone();
-    let repository_root = admission.binding.root().clone();
     let store = RepositoryStore::open(&admission.canonical_root, &admission.binding)?;
-    Ok(RepositoryContext {
+    Ok(repository_context_from_admission(admission, store))
+}
+
+fn repository_context_from_admission(
+    admission: RepositoryAdmission,
+    store: RepositoryStore,
+) -> RepositoryContext {
+    RepositoryContext {
         root: admission.canonical_root,
-        repository_id,
-        repository_root,
+        repository_id: admission.binding.repository_id().clone(),
+        repository_root: admission.binding.root().clone(),
         store,
+    }
+}
+
+fn reserved_state_identity_lookup(
+    store: &RepositoryStore,
+) -> lumin_inventory::ReservedStateIdentityLookup {
+    let store = store.clone();
+    lumin_inventory::ReservedStateIdentityLookup::new(move |identity| {
+        store
+            .owns_reserved_state_identity(identity)
+            .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))
     })
 }
 
@@ -296,6 +330,7 @@ struct RepositoryCapture {
 struct RepositoryAnalysisSession {
     repository_root: RepositoryRootIdentity,
     inventory: InventorySnapshot,
+    reserved_state_lookup: lumin_inventory::ReservedStateIdentityLookup,
     extraction: Option<ExtractionOutput>,
     js_parse_product_count: usize,
     jobs: usize,
@@ -315,12 +350,14 @@ fn capture_repository(
     resolution_profile: Option<ResolutionProfile>,
 ) -> Result<RepositoryCapture, EngineError> {
     let admission = repository_admission(root)?;
+    let reserved_state_lookup = lumin_inventory::ReservedStateIdentityLookup::empty();
     capture_admitted_repository(
         &admission.canonical_root,
         admission.binding.root().clone(),
         request,
         jobs,
         resolution_profile,
+        &reserved_state_lookup,
     )
 }
 
@@ -330,9 +367,17 @@ fn capture_admitted_repository(
     request: &InventoryRequest,
     jobs: usize,
     resolution_profile: Option<ResolutionProfile>,
+    reserved_state_lookup: &lumin_inventory::ReservedStateIdentityLookup,
 ) -> Result<RepositoryCapture, EngineError> {
     let tier = build_scan_invocation_tier(request, resolution_profile);
-    let mut session = RepositoryAnalysisSession::start(root, repository_root, request, jobs, tier)?;
+    let mut session = RepositoryAnalysisSession::start(
+        root,
+        repository_root,
+        request,
+        jobs,
+        tier,
+        reserved_state_lookup,
+    )?;
     loop {
         match session.next_step(resolution_profile)? {
             RepositoryAnalysisStep::NeedsInputs(demands) => {
@@ -374,9 +419,21 @@ impl RepositoryAnalysisSession {
         request: &InventoryRequest,
         jobs: usize,
         scan_invocation: ScanInvocationTier,
+        reserved_state_lookup: &lumin_inventory::ReservedStateIdentityLookup,
     ) -> Result<Self, EngineError> {
-        let inventory = lumin_inventory::scan(root, request)?;
-        Self::start_with_inventory(repository_root, inventory, jobs, scan_invocation)
+        let inventory = lumin_inventory::begin_scan_with_reserved_state_lookup(
+            root,
+            request,
+            reserved_state_lookup,
+        )?
+        .finish(root)?;
+        Self::start_with_inventory(
+            repository_root,
+            inventory,
+            jobs,
+            scan_invocation,
+            reserved_state_lookup.clone(),
+        )
     }
 
     fn start_with_inventory(
@@ -384,6 +441,7 @@ impl RepositoryAnalysisSession {
         inventory: InventorySnapshot,
         jobs: usize,
         scan_invocation: ScanInvocationTier,
+        reserved_state_lookup: lumin_inventory::ReservedStateIdentityLookup,
     ) -> Result<Self, EngineError> {
         if jobs == 0 {
             return Err(EngineError::InvalidWorkerCount(0));
@@ -391,6 +449,7 @@ impl RepositoryAnalysisSession {
         Ok(Self {
             repository_root,
             inventory,
+            reserved_state_lookup,
             extraction: None,
             js_parse_product_count: 0,
             jobs,
@@ -486,7 +545,12 @@ impl RepositoryAnalysisSession {
         root: &Path,
         demands: Vec<ConfigDemand>,
     ) -> Result<(), EngineError> {
-        capture_config_demands(root, &mut self.inventory, demands)?;
+        capture_config_demands(
+            root,
+            &mut self.inventory,
+            demands,
+            &self.reserved_state_lookup,
+        )?;
         Ok(())
     }
 
@@ -662,6 +726,7 @@ fn capture_config_demands(
     root: &Path,
     inventory: &mut InventorySnapshot,
     demands: Vec<ConfigDemand>,
+    reserved_state_lookup: &lumin_inventory::ReservedStateIdentityLookup,
 ) -> Result<(), EngineError> {
     let requested = demands
         .iter()
@@ -677,7 +742,12 @@ fn capture_config_demands(
         return Err(EngineError::ResolverDemandStalled(requested.join(", ")));
     }
     for demand in uncaptured {
-        let capture = lumin_inventory::capture_config(root, &demand.path, demand.syntax)?;
+        let capture = lumin_inventory::capture_config_with_reserved_state_lookup(
+            root,
+            &demand.path,
+            demand.syntax,
+            reserved_state_lookup,
+        )?;
         if let Some(limitation) = capture.limitation {
             inventory.limitations.push(limitation);
         }

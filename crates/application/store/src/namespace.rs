@@ -3,6 +3,7 @@ pub(crate) mod database;
 mod migration;
 mod platform;
 pub(crate) mod records;
+mod reserved_state;
 mod store_header;
 
 #[cfg(test)]
@@ -21,7 +22,8 @@ pub(crate) use database::StoreDatabase;
 pub use migration::MigrationIntent;
 use platform::repository_root_physical_identity;
 pub(crate) use platform::{
-    EntryAccess, EntryKind, HeldEntry, publish_file_atomic, replace_file_atomic, same_volume,
+    EntryAccess, EntryKind, HeldEntry, publish_file_atomic, replace_file_atomic,
+    same_volume_and_mount,
 };
 use records::*;
 use store_header::*;
@@ -54,6 +56,37 @@ struct HeldManagedParent {
 }
 
 impl NamespaceState {
+    pub(super) fn open_if_bound(
+        root: &Path,
+        binding: &RepositoryBinding,
+    ) -> Result<Option<Self>, StoreError> {
+        let repository = HeldRepository::open(root, binding.clone())?;
+        let state_dir = repository.path.join(".lumin");
+        match fs::symlink_metadata(&state_dir) {
+            Ok(metadata) if metadata.file_type().is_dir() => {}
+            Ok(_) => {
+                return Err(StoreError::Integrity(
+                    ".lumin must be a real directory".to_owned(),
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(io_error(error)),
+        }
+        let marker_path = state_dir.join("repository.json");
+        if !entry_exists(&marker_path)? {
+            return Ok(None);
+        }
+        let state_directory = HeldEntry::open(
+            &state_dir,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            ".lumin",
+        )?;
+        require_state_volume(&state_directory, repository.directory.as_ref(), ".lumin")?;
+        Self::open_bound(repository, state_dir, state_directory, marker_path).map(Some)
+    }
+
     pub(super) fn open(root: &Path, binding: &RepositoryBinding) -> Result<Self, StoreError> {
         let repository = HeldRepository::open(root, binding.clone())?;
         let state_dir = repository.path.join(".lumin");
@@ -65,6 +98,7 @@ impl NamespaceState {
             false,
             ".lumin",
         )?;
+        require_state_volume(&state_directory, repository.directory.as_ref(), ".lumin")?;
         let marker_path = state_dir.join("repository.json");
         if !entry_exists(&marker_path)? {
             return bootstrap_namespace(
@@ -75,6 +109,15 @@ impl NamespaceState {
             );
         }
 
+        Self::open_bound(repository, state_dir, state_directory, marker_path)
+    }
+
+    fn open_bound(
+        repository: HeldRepository,
+        state_dir: PathBuf,
+        state_directory: HeldEntry,
+        marker_path: PathBuf,
+    ) -> Result<Self, StoreError> {
         let marker: RepositoryMarker = read_canonical_path(&marker_path, "repository marker")?;
         validate_marker(&marker)?;
         verify_repository_binding(&marker.binding.global, &repository.binding)?;
@@ -94,6 +137,12 @@ impl NamespaceState {
 
     pub(super) fn state_dir(&self) -> &Path {
         &self.state_dir
+    }
+
+    pub(super) fn reserved_state_identities(
+        &self,
+    ) -> Result<std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>, StoreError> {
+        self.with_shared_lock(reserved_state::collect_identities)
     }
 
     pub(super) fn with_exclusive_lock<T>(
@@ -446,9 +495,9 @@ impl NamespaceGuard {
             label,
         )?;
         let parent = self.managed_parent_entry(kind)?;
-        if !same_volume(entry.identity(), parent.identity()) {
+        if !same_volume_and_mount(&entry, parent) {
             return Err(StoreError::Integrity(format!(
-                "{label} must remain on its managed parent volume"
+                "{label} must remain on its managed parent volume and mount"
             )));
         }
         Ok(entry)
@@ -533,6 +582,12 @@ impl NamespaceGuard {
             validate_managed_parent(&self.state, &self.state_directory, held)?;
         }
         Ok(())
+    }
+
+    pub(crate) fn reserved_state_identities(
+        &self,
+    ) -> Result<std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>, StoreError> {
+        reserved_state::collect_identities(self)
     }
 }
 
@@ -652,9 +707,9 @@ fn require_state_volume(
     state_directory: &HeldEntry,
     label: &str,
 ) -> Result<(), StoreError> {
-    if !same_volume(entry.identity(), state_directory.identity()) {
+    if !same_volume_and_mount(entry, state_directory) {
         return Err(StoreError::Integrity(format!(
-            "{label} crosses the state filesystem or volume"
+            "{label} crosses the state filesystem, volume, or mount"
         )));
     }
     Ok(())

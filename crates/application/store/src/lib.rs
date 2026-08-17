@@ -19,7 +19,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use lumin_evidence::RunEvidence;
-use lumin_model::{AttemptId, RepositoryBinding, RepositoryId, RunId, digest_hex};
+use lumin_model::{
+    AttemptId, PhysicalFileIdentity, RepositoryBinding, RepositoryId, RunId, digest_hex,
+};
 use redb::{
     Database, ReadOnlyDatabase, ReadableDatabase, ReadableTable, TableDefinition, TableError,
 };
@@ -152,6 +154,20 @@ pub enum StoreError {
 impl RepositoryStore {
     pub fn open(root: &Path, binding: &RepositoryBinding) -> Result<Self, StoreError> {
         let namespace = namespace::NamespaceState::open(root, binding)?;
+        Self::from_namespace(namespace)
+    }
+
+    /// Open only a marker-bound namespace without creating or resuming state.
+    pub fn open_if_bound(
+        root: &Path,
+        binding: &RepositoryBinding,
+    ) -> Result<Option<Self>, StoreError> {
+        namespace::NamespaceState::open_if_bound(root, binding)?
+            .map(Self::from_namespace)
+            .transpose()
+    }
+
+    fn from_namespace(namespace: namespace::NamespaceState) -> Result<Self, StoreError> {
         let state_dir = namespace.state_dir().to_path_buf();
         let store = Self {
             state_dir,
@@ -159,6 +175,19 @@ impl RepositoryStore {
         };
         store.recover_publication()?;
         Ok(store)
+    }
+
+    /// Resolve one actual shared evidence candidate against store ownership.
+    /// Suspicious shared or mount-crossing candidates re-index retained state
+    /// under the cross-process lifecycle lock. Ordinary one-link evidence never
+    /// enters this path.
+    pub fn owns_reserved_state_identity(
+        &self,
+        identity: &PhysicalFileIdentity,
+    ) -> Result<bool, StoreError> {
+        self.namespace
+            .reserved_state_identities()
+            .map(|identities| identities.contains(identity))
     }
 
     pub fn load_run(&self, run_id: &RunId) -> Result<(RunCatalogRecord, RunEvidence), StoreError> {

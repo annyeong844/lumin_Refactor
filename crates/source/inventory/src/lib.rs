@@ -5,9 +5,11 @@ mod generated_config_policy;
 mod package_semantics;
 mod physical_path;
 mod pnpm_workspace;
+mod reserved_state;
 mod root;
+mod semantic_input;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fs;
 use std::io::Read;
@@ -27,6 +29,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use physical_path::{is_physical_path_redirect, observe_physical_path_redirect};
+use semantic_input::observe_non_regular_semantic_input_identity;
 
 pub use generated_config_policy::{
     FieldClassification as InventoryConfigFieldClassification,
@@ -38,9 +41,17 @@ pub use physical_path::{
     ConfigInputIdentity, WriteTargetError, WriteTargetKind, WriteTargetObservation,
     directory_physical_identity, inspect_write_target, observe_config_input_identity,
     observe_physical_file_identity, physical_alias_write_closure, physical_file_identity,
-    rehash_existing_write_target,
+    rehash_existing_write_target, validate_captured_physical_path_redirect,
+};
+pub use reserved_state::{
+    ReservedStateIdentityLookup, is_reserved_state_path, validate_caller_entries,
+    validate_caller_entry_identities, validate_caller_entry_identity_lookup,
+    validate_caller_paths_lexically, validate_captured_semantic_input_topology,
 };
 pub use root::{RepositoryAdmission, repository_admission};
+pub use semantic_input::{
+    SemanticInputExpectation, SemanticInputValidationState, validate_captured_semantic_input,
+};
 
 pub fn lower_native_repo_path(value: &OsStr) -> Result<RepoPath, RepoPathError> {
     RepoPath::from_native_relative(Path::new(value))
@@ -48,100 +59,6 @@ pub fn lower_native_repo_path(value: &OsStr) -> Result<RepoPath, RepoPathError> 
 
 pub fn decode_native_repo_path_stream(bytes: &[u8]) -> Result<Vec<RepoPath>, RepoPathError> {
     RepoPath::decode_native_nul_stream(bytes)
-}
-
-pub fn is_reserved_state_path(path: &RepoPath) -> Result<bool, RepoPathError> {
-    let relative = path.to_native_relative()?;
-    Ok(relative.iter().next().is_some_and(reserved_state_component))
-}
-
-/// Validate caller entries BEFORE audit begins or pre-write opens/reserves a gate.
-/// Reject entries whose lexical or physical path enters the reserved `.lumin` namespace,
-/// or whose existing path or nearest existing parent physically escapes the canonical root.
-/// Returns Err(InventoryError) on invalid entries (maps to CLI exit 2).
-pub fn validate_caller_entries(root: &Path, entries: &[RepoPath]) -> Result<(), InventoryError> {
-    let canonical_root = fs::canonicalize(root)
-        .map_err(|error| InventoryError::RepositoryIdentity(error.to_string()))?;
-    let canonical_state = canonical_reserved_state(root)?;
-    for entry in entries {
-        let relative = native_relative(entry)?;
-        let first_component = relative.iter().next();
-        if first_component.is_some_and(reserved_state_component) {
-            return Err(InventoryError::ReservedEntryPath(entry.display_escaped()));
-        }
-        validate_entry_containment(root, &canonical_root, canonical_state.as_deref(), entry)?;
-    }
-    Ok(())
-}
-
-fn canonical_reserved_state(root: &Path) -> Result<Option<PathBuf>, InventoryError> {
-    let state = root.join(".lumin");
-    match fs::symlink_metadata(&state) {
-        Ok(_) => fs::canonicalize(&state).map(Some).map_err(|error| {
-            InventoryError::PhysicalIdentity(format!(
-                "cannot resolve reserved .lumin namespace: {error}"
-            ))
-        }),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(InventoryError::PhysicalIdentity(format!(
-            "cannot inspect reserved .lumin namespace: {error}"
-        ))),
-    }
-}
-
-fn reserved_state_component(component: &OsStr) -> bool {
-    #[cfg(windows)]
-    {
-        component
-            .to_str()
-            .is_some_and(|component| component.eq_ignore_ascii_case(".lumin"))
-    }
-    #[cfg(not(windows))]
-    {
-        component == ".lumin"
-    }
-}
-
-fn validate_entry_containment(
-    root: &Path,
-    canonical_root: &Path,
-    canonical_state: Option<&Path>,
-    entry: &RepoPath,
-) -> Result<(), InventoryError> {
-    let mut candidate = root.join(native_relative(entry)?);
-    loop {
-        match fs::symlink_metadata(&candidate) {
-            Ok(_) => {
-                let physical = fs::canonicalize(&candidate).map_err(|error| {
-                    InventoryError::PhysicalIdentity(format!(
-                        "cannot resolve entry {}: {error}",
-                        entry.display_escaped()
-                    ))
-                })?;
-                if !physical.starts_with(canonical_root) {
-                    return Err(InventoryError::EntryEscapesRoot(entry.display_escaped()));
-                }
-                if canonical_state.is_some_and(|state| physical.starts_with(state)) {
-                    return Err(InventoryError::ReservedEntryPath(entry.display_escaped()));
-                }
-                return Ok(());
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                if candidate == root || !candidate.pop() {
-                    return Err(InventoryError::PhysicalIdentity(format!(
-                        "cannot find an existing parent for entry {}",
-                        entry.display_escaped()
-                    )));
-                }
-            }
-            Err(error) => {
-                return Err(InventoryError::PhysicalIdentity(format!(
-                    "cannot inspect entry {}: {error}",
-                    entry.display_escaped()
-                )));
-            }
-        }
-    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -214,9 +131,11 @@ pub enum InventoryError {
     PhysicalIdentity(String),
     #[error("failed to establish canonical repository identity: {0}")]
     RepositoryIdentity(String),
-    #[error("caller entry path is in the reserved .lumin namespace: {0}")]
+    #[error("caller path is in the reserved .lumin namespace: {0}")]
     ReservedEntryPath(String),
-    #[error("caller entry resolves outside repository root: {0}")]
+    #[error("semantic input aliases the reserved .lumin namespace: {0}")]
+    ReservedSemanticInputPath(String),
+    #[error("caller path resolves outside repository root: {0}")]
     EntryEscapesRoot(String),
 }
 
@@ -278,12 +197,14 @@ struct FileObservationContext<'a> {
     canonical_root: &'a Path,
     patterns: &'a PatternSet,
     ignore: &'a ApplicableIgnore,
+    reserved_state_lookup: &'a ReservedStateIdentityLookup,
 }
 
 pub struct PendingInventoryScan {
     canonical_root: PathBuf,
     snapshot: InventorySnapshot,
     dependency_plan: dependency_ownership::DependencyOwnershipPlan,
+    reserved_state_lookup: ReservedStateIdentityLookup,
 }
 
 impl PendingInventoryScan {
@@ -307,6 +228,7 @@ impl PendingInventoryScan {
                 self.dependency_plan,
                 &mut self.snapshot.config,
                 &mut self.snapshot.limitations,
+                &self.reserved_state_lookup,
             )?);
         Ok(self.snapshot)
     }
@@ -320,19 +242,65 @@ pub fn begin_scan(
     root: &Path,
     request: &InventoryRequest,
 ) -> Result<PendingInventoryScan, InventoryError> {
+    begin_scan_with_reserved_state_lookup(root, request, &ReservedStateIdentityLookup::empty())
+}
+
+pub fn begin_scan_with_reserved_state_identities(
+    root: &Path,
+    request: &InventoryRequest,
+    reserved_state_identities: &BTreeSet<PhysicalFileIdentity>,
+) -> Result<PendingInventoryScan, InventoryError> {
+    let lookup = ReservedStateIdentityLookup::from_identities(reserved_state_identities.clone());
+    begin_scan_with_reserved_state_lookup(root, request, &lookup)
+}
+
+pub fn begin_scan_with_reserved_state_lookup(
+    root: &Path,
+    request: &InventoryRequest,
+    reserved_state_lookup: &ReservedStateIdentityLookup,
+) -> Result<PendingInventoryScan, InventoryError> {
     validate_root(root)?;
     let canonical_root = fs::canonicalize(root)
         .map_err(|error| InventoryError::RepositoryIdentity(error.to_string()))?;
-    let (config, config_path, config_policy) = read_root_config(root)?;
+    let (config, config_path, config_policy) = read_root_config(root, reserved_state_lookup)?;
+
+    // Resolve and validate the effective entry tier before repository walking.
+    // Invocation entries replace configured entries, but both are repository
+    // inputs and neither may name or physically alias store-owned state.
+    let (raw_entries, entry_source) = if !request.entries.is_empty() {
+        (request.entries.clone(), EntrySource::Invocation)
+    } else {
+        let config_entries = config
+            .as_ref()
+            .map(|cfg| cfg.entries.clone())
+            .unwrap_or_default();
+        let parsed = config_entries
+            .iter()
+            .map(|entry| RepoPath::from_portable(entry))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| InventoryError::MalformedConfiguration(error.to_string()))?;
+        (parsed, EntrySource::Configuration)
+    };
+    let mut deduplicated_entries = raw_entries;
+    deduplicated_entries.sort();
+    deduplicated_entries.dedup();
+    reserved_state::validate_caller_entries(root, &deduplicated_entries)?;
+    reserved_state::validate_caller_entry_identity_lookup(
+        root,
+        &deduplicated_entries,
+        reserved_state_lookup,
+    )?;
+
     let patterns = PatternSet::compile(root, config.as_ref(), request)?;
 
     // Build hierarchical gitignore matcher before entry classification
-    let ignore = ApplicableIgnore::build(root)?;
+    let ignore = ApplicableIgnore::build_with_reserved_state_lookup(root, reserved_state_lookup)?;
     let observation_context = FileObservationContext {
         root,
         canonical_root: &canonical_root,
         patterns: &patterns,
         ignore: &ignore,
+        reserved_state_lookup,
     };
 
     let mut collected = collect_repository_files(&observation_context)?;
@@ -342,34 +310,6 @@ pub fn begin_scan(
     }
     collected.consulted_config_paths.sort();
     collected.consulted_config_paths.dedup();
-
-    // Determine entry selections: caller entries replace config entries
-    let (raw_entries, entry_source) = if !request.entries.is_empty() {
-        (request.entries.clone(), EntrySource::Invocation)
-    } else {
-        let config_entries = config
-            .as_ref()
-            .map(|cfg| cfg.entries.clone())
-            .unwrap_or_default();
-        if config_entries.is_empty() {
-            (Vec::new(), EntrySource::Configuration)
-        } else {
-            let parsed: Result<Vec<RepoPath>, _> = config_entries
-                .iter()
-                .map(|entry| RepoPath::from_portable(entry))
-                .collect();
-            (
-                parsed
-                    .map_err(|error| InventoryError::MalformedConfiguration(error.to_string()))?,
-                EntrySource::Configuration,
-            )
-        }
-    };
-
-    // Lexical sort/dedup
-    let mut deduplicated_entries = raw_entries;
-    deduplicated_entries.sort();
-    deduplicated_entries.dedup();
 
     // Classify entries and record all (available + unavailable) with reason
     let mut entry_selections = Vec::new();
@@ -420,6 +360,7 @@ pub fn begin_scan(
         &mut collected.config_observations,
         &mut collected.consulted_config_paths,
         &mut collected.limitations,
+        reserved_state_lookup,
     )?);
     collected.consulted_config_paths.sort();
     collected.consulted_config_paths.dedup();
@@ -450,6 +391,7 @@ pub fn begin_scan(
             policy_inputs,
         },
         dependency_plan,
+        reserved_state_lookup: reserved_state_lookup.clone(),
     })
 }
 
@@ -463,7 +405,28 @@ pub fn dependency_input_payload_sha256(
     root: &Path,
     path: &RepoPath,
 ) -> Result<String, InventoryError> {
-    dependency_ownership::present_input_payload_sha256(root, path)
+    dependency_input_payload_sha256_with_reserved_state_lookup(
+        root,
+        path,
+        &ReservedStateIdentityLookup::empty(),
+    )
+}
+
+pub fn dependency_input_payload_sha256_with_reserved_state_identities(
+    root: &Path,
+    path: &RepoPath,
+    reserved_state_identities: &BTreeSet<PhysicalFileIdentity>,
+) -> Result<String, InventoryError> {
+    let lookup = ReservedStateIdentityLookup::from_identities(reserved_state_identities.clone());
+    dependency_input_payload_sha256_with_reserved_state_lookup(root, path, &lookup)
+}
+
+pub fn dependency_input_payload_sha256_with_reserved_state_lookup(
+    root: &Path,
+    path: &RepoPath,
+    reserved_state_lookup: &ReservedStateIdentityLookup,
+) -> Result<String, InventoryError> {
+    dependency_ownership::present_input_payload_sha256(root, path, reserved_state_lookup)
 }
 
 enum EntryClassification {
@@ -576,9 +539,22 @@ impl ApplicableIgnore {
     /// Returns error on unreadable .gitignore, read_dir failure, parser/build error, or
     /// physical identity failure.
     pub fn build(root: &Path) -> Result<Self, InventoryError> {
+        Self::build_with_reserved_state_lookup(root, &ReservedStateIdentityLookup::empty())
+    }
+
+    fn build_with_reserved_state_lookup(
+        root: &Path,
+        reserved_state_lookup: &ReservedStateIdentityLookup,
+    ) -> Result<Self, InventoryError> {
         let mut builder = GitignoreBuilder::new(root);
         let mut policy_inputs = Vec::new();
-        Self::walk_gitignores(root, root, &mut builder, &mut policy_inputs)?;
+        Self::walk_gitignores(
+            root,
+            root,
+            &mut builder,
+            &mut policy_inputs,
+            reserved_state_lookup,
+        )?;
         let matcher = builder
             .build()
             .map_err(|error| InventoryError::InvalidPattern(error.to_string()))?;
@@ -600,14 +576,43 @@ impl ApplicableIgnore {
         dir: &Path,
         builder: &mut GitignoreBuilder,
         policy_inputs: &mut Vec<SemanticPolicyInput>,
+        reserved_state_lookup: &ReservedStateIdentityLookup,
     ) -> Result<(), InventoryError> {
         let gitignore_path = dir.join(".gitignore");
-        match fs::read(&gitignore_path) {
-            Ok(bytes) => {
-                let relative = dir.strip_prefix(root).unwrap_or(Path::new(""));
-                let repo_path = gitignore_repo_path(relative)?;
+        let relative = dir.strip_prefix(root).unwrap_or(Path::new(""));
+        let repo_path = gitignore_repo_path(relative)?;
+        reserved_state::validate_semantic_input_path(root, &repo_path)?;
+        match fs::File::open(&gitignore_path) {
+            Ok(mut file) => {
+                let observation = capture::physical_file_observation_from_file(&file)?;
+                let physical_identity = observation.identity.clone();
+                reserved_state::validate_semantic_input_identity(
+                    root,
+                    &repo_path,
+                    &observation,
+                    reserved_state_lookup,
+                )?;
+                let mut bytes = Vec::new();
+                file.read_to_end(&mut bytes).map_err(|error| {
+                    InventoryError::PhysicalIdentity(format!(
+                        "unreadable .gitignore at {}: {error}",
+                        gitignore_path.display()
+                    ))
+                })?;
                 let payload_sha256 = digest_hex(&bytes);
-                let physical_identity = physical_file_identity(&gitignore_path)?;
+                let current = capture::physical_file_observation(&gitignore_path)?;
+                if current.identity != physical_identity {
+                    return Err(InventoryError::PhysicalIdentity(format!(
+                        ".gitignore changed physical identity during capture: {}",
+                        repo_path.display_escaped()
+                    )));
+                }
+                reserved_state::validate_semantic_input_identity(
+                    root,
+                    &repo_path,
+                    &current,
+                    reserved_state_lookup,
+                )?;
                 policy_inputs.push(SemanticPolicyInput {
                     path: repo_path,
                     state: SemanticPolicyState::Present,
@@ -628,7 +633,21 @@ impl ApplicableIgnore {
                         .map_err(|error| InventoryError::InvalidPattern(error.to_string()))?;
                 }
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let identity = observe_config_input_identity(root, &repo_path)?;
+                let parent = identity.absence_parent.ok_or_else(|| {
+                    InventoryError::PhysicalIdentity(format!(
+                        "missing .gitignore omitted its absence parent: {}",
+                        repo_path.display_escaped()
+                    ))
+                })?;
+                reserved_state::validate_captured_semantic_input_topology(
+                    root,
+                    &parent.path,
+                    &parent.physical_identity,
+                    reserved_state_lookup,
+                )?;
+            }
             Err(error) => {
                 return Err(InventoryError::PhysicalIdentity(format!(
                     "unreadable .gitignore at {}: {error}",
@@ -684,7 +703,13 @@ impl ApplicableIgnore {
             {
                 continue;
             }
-            Self::walk_gitignores(root, &entry_path, builder, policy_inputs)?;
+            Self::walk_gitignores(
+                root,
+                &entry_path,
+                builder,
+                policy_inputs,
+                reserved_state_lookup,
+            )?;
         }
         Ok(())
     }
@@ -710,10 +735,12 @@ fn gitignore_repo_path(relative: &Path) -> Result<RepoPath, InventoryError> {
 
 fn read_root_config(
     root: &Path,
+    reserved_state_lookup: &ReservedStateIdentityLookup,
 ) -> Result<(Option<RootConfig>, Option<RepoPath>, SemanticPolicyInput), InventoryError> {
     let path = root.join("lumin.json");
     let repo_path = RepoPath::from_portable("lumin.json")
         .map_err(|error| InventoryError::MalformedConfiguration(error.to_string()))?;
+    reserved_state::validate_semantic_input_path(root, &repo_path)?;
     // Check symlink/nonregular before reading
     match fs::symlink_metadata(&path) {
         Ok(metadata) => {
@@ -736,14 +763,35 @@ fn read_root_config(
         }
         Err(error) => return Err(InventoryError::MalformedConfiguration(error.to_string())),
     }
-    let bytes = match fs::read(&path) {
-        Ok(bytes) => bytes,
+    let mut file = match fs::File::open(&path) {
+        Ok(file) => file,
         Err(error) => return Err(InventoryError::MalformedConfiguration(error.to_string())),
     };
+    let observation = capture::physical_file_observation_from_file(&file)?;
+    let physical_identity = observation.identity.clone();
+    reserved_state::validate_semantic_input_identity(
+        root,
+        &repo_path,
+        &observation,
+        reserved_state_lookup,
+    )?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|error| InventoryError::MalformedConfiguration(error.to_string()))?;
     // Compute observation from the SAME captured bytes — do not re-read
     let payload_sha256 = digest_hex(&bytes);
-    // Real file identity failure is an error, never `.ok()`
-    let physical_identity = physical_file_identity(&path)?;
+    let current = capture::physical_file_observation(&path)?;
+    if current.identity != physical_identity {
+        return Err(InventoryError::PhysicalIdentity(
+            "lumin.json changed physical identity during capture".to_owned(),
+        ));
+    }
+    reserved_state::validate_semantic_input_identity(
+        root,
+        &repo_path,
+        &current,
+        reserved_state_lookup,
+    )?;
     let policy = SemanticPolicyInput {
         path: repo_path.clone(),
         state: SemanticPolicyState::Present,
@@ -943,7 +991,12 @@ impl CollectedFiles {
     ) -> Result<(), InventoryError> {
         if let Some(syntax) = config_syntax(relative) {
             self.consulted_config_paths.push(path.clone());
-            let capture = capture_config(context.root, &path, syntax)?;
+            let capture = capture_config_with_reserved_state_lookup(
+                context.root,
+                &path,
+                syntax,
+                context.reserved_state_lookup,
+            )?;
             if let Some(limitation) = capture.limitation {
                 self.limitations.push(limitation);
             }
@@ -959,6 +1012,9 @@ impl CollectedFiles {
         let Some(kind) = source_kind(relative) else {
             return Ok(());
         };
+        if reserved_state::semantic_input_resolves_into_reserved_state(context.root, &path)? {
+            return Ok(());
+        }
 
         let logical_path = path.display_escaped();
         let mut opened =
@@ -972,7 +1028,14 @@ impl CollectedFiles {
                     return Ok(());
                 }
             };
-        let physical_identity = opened.physical_identity().clone();
+        let physical_identity = opened.observation().identity.clone();
+        if context.reserved_state_lookup.contains_candidate(
+            context.root,
+            &path,
+            opened.observation(),
+        )? {
+            return Ok(());
+        }
         let bytes = match self.payloads.get(&physical_identity) {
             Some(bytes) => Arc::clone(bytes),
             None => match opened.read_payload(&logical_path) {
@@ -990,13 +1053,24 @@ impl CollectedFiles {
                 }
             },
         };
-        if let Err(error) =
-            opened.validate_path(context.canonical_root, native_path, &path.display_escaped())
+        let current = match opened.validate_path(
+            context.canonical_root,
+            native_path,
+            &path.display_escaped(),
+        ) {
+            Ok(current) => current,
+            Err(error) => {
+                self.limitations.push(Limitation::SourcePayloadUnavailable {
+                    path: path.display_escaped(),
+                    detail: error.to_string(),
+                });
+                return Ok(());
+            }
+        };
+        if context
+            .reserved_state_lookup
+            .contains_candidate(context.root, &path, &current)?
         {
-            self.limitations.push(Limitation::SourcePayloadUnavailable {
-                path: path.display_escaped(),
-                detail: error.to_string(),
-            });
             return Ok(());
         }
         let roles = classify_roles(&path, relative, kind, &bytes, context.patterns)?;
@@ -1018,7 +1092,31 @@ pub fn capture_config(
     path: &RepoPath,
     syntax: ConfigSyntax,
 ) -> Result<ConfigCapture, InventoryError> {
-    let observation = observe_config(root, path, syntax)?;
+    capture_config_with_reserved_state_lookup(
+        root,
+        path,
+        syntax,
+        &ReservedStateIdentityLookup::empty(),
+    )
+}
+
+pub fn capture_config_with_reserved_state_identities(
+    root: &Path,
+    path: &RepoPath,
+    syntax: ConfigSyntax,
+    reserved_state_identities: &BTreeSet<PhysicalFileIdentity>,
+) -> Result<ConfigCapture, InventoryError> {
+    let lookup = ReservedStateIdentityLookup::from_identities(reserved_state_identities.clone());
+    capture_config_with_reserved_state_lookup(root, path, syntax, &lookup)
+}
+
+pub fn capture_config_with_reserved_state_lookup(
+    root: &Path,
+    path: &RepoPath,
+    syntax: ConfigSyntax,
+    reserved_state_lookup: &ReservedStateIdentityLookup,
+) -> Result<ConfigCapture, InventoryError> {
+    let observation = observe_config(root, path, syntax, reserved_state_lookup)?;
     let limitation = config_capture_limitation(&observation, syntax);
     Ok(ConfigCapture {
         observation,
@@ -1072,20 +1170,60 @@ fn config_capture_limitation(
     }
 }
 
+fn validate_config_observation_identity(
+    root: &Path,
+    path: &RepoPath,
+    native: &Path,
+    expected_identity: Option<&PhysicalFileIdentity>,
+    reserved_state_lookup: &ReservedStateIdentityLookup,
+) -> Result<PhysicalFileIdentity, InventoryError> {
+    let observation = capture::physical_file_observation(native)?;
+    if expected_identity != Some(&observation.identity) {
+        return Err(InventoryError::PhysicalIdentity(format!(
+            "config path changed physical identity before observation: {}",
+            path.display_escaped()
+        )));
+    }
+    reserved_state::validate_semantic_input_identity(
+        root,
+        path,
+        &observation,
+        reserved_state_lookup,
+    )?;
+    Ok(observation.identity)
+}
+
 fn observe_config(
     root: &Path,
     path: &RepoPath,
     syntax: ConfigSyntax,
+    reserved_state_lookup: &ReservedStateIdentityLookup,
 ) -> Result<ConfigObservation, InventoryError> {
     validate_root(root)?;
+    reserved_state::validate_semantic_input_path(root, path)?;
     let native = root.join(native_relative(path)?);
     let input_identity = observe_config_input_identity(root, path)?;
     if let Some(parent) = input_identity.absence_parent {
+        reserved_state::validate_captured_semantic_input_topology(
+            root,
+            &parent.path,
+            &parent.physical_identity,
+            reserved_state_lookup,
+        )?;
         return Ok(ConfigObservation::Missing {
             path: path.clone(),
             parent,
         });
     }
+    let validate_unavailable_identity = |expected_identity| {
+        validate_config_observation_identity(
+            root,
+            path,
+            &native,
+            expected_identity,
+            reserved_state_lookup,
+        )
+    };
     let metadata = match fs::symlink_metadata(&native) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -1095,36 +1233,54 @@ fn observe_config(
             )));
         }
         Err(error) => {
+            let physical_identity =
+                validate_unavailable_identity(input_identity.physical_identity.as_ref())?;
             return Ok(ConfigObservation::Unreadable {
                 path: path.clone(),
                 detail: error.to_string(),
-                physical_identity: input_identity.physical_identity,
+                physical_identity: Some(physical_identity),
             });
         }
     };
     if metadata.file_type().is_symlink() || !metadata.is_file() {
+        let physical_identity = observe_non_regular_semantic_input_identity(
+            root,
+            path,
+            input_identity.physical_identity.as_ref(),
+            reserved_state_lookup,
+        )?;
         return Ok(ConfigObservation::NonRegular {
             path: path.clone(),
-            physical_identity: input_identity.physical_identity,
+            physical_identity: Some(physical_identity),
         });
     }
     let mut file = match fs::File::open(&native) {
         Ok(file) => file,
         Err(error) => {
+            let physical_identity =
+                validate_unavailable_identity(input_identity.physical_identity.as_ref())?;
             return Ok(ConfigObservation::Unreadable {
                 path: path.clone(),
                 detail: error.to_string(),
-                physical_identity: input_identity.physical_identity,
+                physical_identity: Some(physical_identity),
             });
         }
     };
-    let physical_identity = capture::physical_identity_from_file(&file)?;
+    let observation = capture::physical_file_observation_from_file(&file)?;
+    let physical_identity = observation.identity.clone();
+    reserved_state::validate_semantic_input_identity(
+        root,
+        path,
+        &observation,
+        reserved_state_lookup,
+    )?;
     let mut bytes = Vec::new();
     if let Err(error) = file.read_to_end(&mut bytes) {
+        let current_identity = validate_unavailable_identity(Some(&physical_identity))?;
         return Ok(ConfigObservation::Unreadable {
             path: path.clone(),
             detail: error.to_string(),
-            physical_identity: Some(physical_identity),
+            physical_identity: Some(current_identity),
         });
     }
     let current_identity = observe_config_input_identity(root, path)?;
@@ -1136,6 +1292,8 @@ fn observe_config(
             path.display_escaped()
         )));
     }
+    let current = capture::physical_file_observation(&native)?;
+    reserved_state::validate_semantic_input_identity(root, path, &current, reserved_state_lookup)?;
     let parsed = match syntax {
         ConfigSyntax::StrictJson | ConfigSyntax::Jsonc => {
             config_document::parse(path.clone(), &bytes, syntax)

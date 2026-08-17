@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -252,24 +253,7 @@ fn observe_directory_prefixes(
 }
 
 pub fn physical_file_identity(path: &Path) -> Result<PhysicalFileIdentity, InventoryError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        let metadata = fs::metadata(path)
-            .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
-        Ok(PhysicalFileIdentity::Unix {
-            device: metadata.dev(),
-            inode: metadata.ino(),
-        })
-    }
-    #[cfg(windows)]
-    {
-        let handle = winapi_util::Handle::from_path_any(path)
-            .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
-        let information = winapi_util::file::information(&handle)
-            .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?;
-        windows_physical_identity(&information)
-    }
+    crate::capture::physical_file_observation(path).map(|observation| observation.identity)
 }
 
 #[cfg(windows)]
@@ -305,7 +289,9 @@ pub(super) fn is_physical_path_redirect(path: &Path, file_type: &fs::FileType) -
     }
 }
 
-fn physical_redirect_entry_identity(path: &Path) -> Result<PhysicalFileIdentity, InventoryError> {
+pub(super) fn physical_redirect_entry_identity(
+    path: &Path,
+) -> Result<PhysicalFileIdentity, InventoryError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -446,6 +432,46 @@ pub fn observe_physical_file_identity(
 ) -> Result<PhysicalFileIdentity, InventoryError> {
     validate_root(root)?;
     physical_file_identity(&root.join(native_relative(path)?))
+}
+
+pub fn validate_captured_physical_path_redirect(
+    root: &Path,
+    path: &RepoPath,
+    expected_sha256: &str,
+    reserved_state_identities: &BTreeSet<PhysicalFileIdentity>,
+) -> Result<(), InventoryError> {
+    validate_root(root)?;
+    super::reserved_state::validate_semantic_input_path(root, path)?;
+    let canonical_root = fs::canonicalize(root)
+        .map_err(|error| InventoryError::RepositoryIdentity(error.to_string()))?;
+    let native = root.join(native_relative(path)?);
+    let file_type = fs::symlink_metadata(&native)
+        .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?
+        .file_type();
+    if !is_physical_path_redirect(&native, &file_type) {
+        return Err(InventoryError::PhysicalIdentity(format!(
+            "physical redirect disappeared after capture: {}",
+            path.display_escaped()
+        )));
+    }
+    let (observed, _) = observe_physical_path_redirect(&canonical_root, &native, path.clone());
+    if observed.semantic_sha256() != expected_sha256 {
+        return Err(InventoryError::PhysicalIdentity(format!(
+            "physical redirect changed after capture: {}",
+            path.display_escaped()
+        )));
+    }
+    if observed
+        .entry_physical_identity
+        .iter()
+        .chain(observed.target_physical_identity.iter())
+        .any(|identity| reserved_state_identities.contains(identity))
+    {
+        return Err(InventoryError::ReservedSemanticInputPath(
+            path.display_escaped(),
+        ));
+    }
+    Ok(())
 }
 
 pub fn directory_physical_identity(

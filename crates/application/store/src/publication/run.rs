@@ -18,13 +18,16 @@ pub(super) fn publish(
     store: &RepositoryStore,
     session: &mut liveness::AttemptSession<'_>,
     evidence: &RunEvidence,
+    final_validation: impl FnOnce(
+        &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
+    ) -> Result<(), StoreError>,
 ) -> Result<PublishedRun, StoreError> {
     if !session.belongs_to(store) {
         return Err(StoreError::Integrity(
             "attempt session belongs to another repository store".to_owned(),
         ));
     }
-    let (envelope, record) = prepare_publication(store, session, evidence)?;
+    let (envelope, record) = prepare_publication(store, session, evidence, final_validation)?;
     #[cfg(feature = "publication-test-crash")]
     super::barrier::wait_prepared(session.attempt_id())?;
 
@@ -35,6 +38,9 @@ fn prepare_publication(
     store: &RepositoryStore,
     session: &liveness::AttemptSession<'_>,
     evidence: &RunEvidence,
+    final_validation: impl FnOnce(
+        &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
+    ) -> Result<(), StoreError>,
 ) -> Result<(AttemptEnvelope, RunCatalogRecord), StoreError> {
     store.with_shared_lock(|guard| {
         session
@@ -43,6 +49,9 @@ fn prepare_publication(
         let mut envelope = latest::read_attempt(store, guard, session.attempt_id())
             .map_err(|error| publication_error("read running attempt", error))?;
         session.require_running(&envelope)?;
+        let reserved_state_identities = guard.reserved_state_identities()?;
+        final_validation(&reserved_state_identities)
+            .map_err(|error| publication_error("validate run publication inputs", error))?;
 
         let record = publish_directory(store, guard, &envelope, evidence, session.generation())
             .map_err(|error| publication_error("publish run directory", error))?;
