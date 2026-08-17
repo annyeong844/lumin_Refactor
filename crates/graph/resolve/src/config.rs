@@ -34,7 +34,9 @@ impl ImporterSettings {
             ResolutionProfile::Bundler => PackageConditionMode::Import,
             ResolutionProfile::Node => PackageConditionMode::Require,
             ResolutionProfile::Node16 | ResolutionProfile::NodeNext => match request_kind {
-                ModuleRequestKind::DynamicImport => PackageConditionMode::Import,
+                ModuleRequestKind::DynamicImport | ModuleRequestKind::ImportMetaGlob => {
+                    PackageConditionMode::Import
+                }
                 ModuleRequestKind::Require => PackageConditionMode::Require,
                 ModuleRequestKind::StaticImport => self.static_condition,
             },

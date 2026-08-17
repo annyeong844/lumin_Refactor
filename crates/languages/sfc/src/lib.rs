@@ -336,8 +336,12 @@ fn shift_file_spans(facts: &mut FileFacts, offset: u32, unit_id: &str) -> Result
         shift_span(&mut source_use.span, offset, unit_id)?;
     }
     for limitation in &mut facts.limitations {
-        if let Limitation::DynamicImportNonLiteral { span, .. } = limitation {
-            shift_span(span, offset, unit_id)?;
+        match limitation {
+            Limitation::DynamicImportNonLiteral { span, .. }
+            | Limitation::ImportMetaGlobUnsupported { span, .. } => {
+                shift_span(span, offset, unit_id)?;
+            }
+            _ => {}
         }
     }
     Ok(())

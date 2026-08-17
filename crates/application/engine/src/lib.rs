@@ -885,14 +885,20 @@ fn source_adjacency(
             .insert(importer.clone());
     }
     for limitation in limitations {
-        let Limitation::DynamicImportNonLiteral {
-            source_id,
-            candidates,
-            target_scope: lumin_model::DynamicImportTargetScope::ExplicitTargets,
-            ..
-        } = limitation
-        else {
-            continue;
+        let (source_id, candidates) = match limitation {
+            Limitation::DynamicImportNonLiteral {
+                source_id,
+                candidates,
+                target_scope: lumin_model::DynamicImportTargetScope::ExplicitTargets,
+                ..
+            }
+            | Limitation::ImportMetaGlobUnsupported {
+                source_id,
+                candidates,
+                target_scope: lumin_model::ImportMetaGlobTargetScope::ExplicitTargets,
+                ..
+            } => (source_id, candidates),
+            _ => continue,
         };
         let Some(importer) = paths_by_id.get(source_id) else {
             continue;

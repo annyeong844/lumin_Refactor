@@ -1602,11 +1602,15 @@ fn generated_marker(bytes: &[u8]) -> bool {
     false
 }
 
+pub fn is_hard_excluded_component(name: &str) -> bool {
+    matches!(name, ".git" | ".lumin" | "node_modules")
+}
+
 fn is_hard_excluded(path: &Path) -> bool {
     let Some(name) = path.file_name() else {
         return false;
     };
-    name == ".git" || name == ".lumin" || name == "node_modules"
+    name.to_str().is_some_and(is_hard_excluded_component)
 }
 
 fn source_kind(path: &Path) -> Option<SourceKind> {
