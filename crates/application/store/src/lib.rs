@@ -1,3 +1,4 @@
+mod cache;
 mod gate;
 mod generation;
 mod namespace;

@@ -65,6 +65,13 @@ pub struct AttemptOverviewResponseDto {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CacheCleanupResponseDto {
+    pub schema_version: &'static str,
+    pub status: &'static str,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AttemptSummaryDto {
     pub attempt_id: AttemptId,
     pub sequence: u64,
@@ -375,6 +382,13 @@ pub fn attempt_overview_response(latest_attempt: AttemptSummaryDto) -> AttemptOv
             id: latest_attempt.attempt_id.clone(),
         },
         latest_attempt,
+    }
+}
+
+pub const fn cache_cleanup_response() -> CacheCleanupResponseDto {
+    CacheCleanupResponseDto {
+        schema_version: "lumin.cache-cleanup.v1",
+        status: "clean",
     }
 }
 
