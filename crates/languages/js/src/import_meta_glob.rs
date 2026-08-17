@@ -1,8 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_model::{
-    FileFacts, ImportKind, ImportMetaGlobTargetScope, Limitation, LogicalSourceId,
-    ModuleRequestKind, RepoPath, SourceSnapshot, SourceSpan, SourceUseFact, SymbolNamespace,
+    FileFacts, ImportKind, ImportMetaGlobTargetScope, InventoryBoundSourceUse, Limitation,
+    LogicalSourceId, ModuleRequestKind, RepoPath, SourceSnapshot, SourceSpan, SourceUseFact,
+    SymbolNamespace,
 };
 use oxc_ast::ast::{Argument, ArrayExpressionElement, CallExpression, MemberExpression};
 
@@ -69,12 +70,13 @@ pub(crate) fn parse_call(expression: &CallExpression<'_>) -> ParsedImportMetaGlo
 pub(crate) fn scope(
     facts: &mut [FileFacts],
     sources: &[SourceSnapshot],
-    is_hard_excluded_component: fn(&str) -> bool,
-) {
+    hard_excluded_components: &[&str],
+) -> Vec<InventoryBoundSourceUse> {
     let paths = sources
         .iter()
         .map(|source| (source.id.clone(), &source.path))
         .collect::<BTreeMap<_, _>>();
+    let mut inventory_bound_uses = Vec::new();
 
     for file in facts {
         let mut groups = BTreeMap::<(u32, u32), Vec<String>>::new();
@@ -108,7 +110,7 @@ pub(crate) fn scope(
 
         for ((start, end), mut patterns) in groups {
             canonicalize_patterns(&mut patterns);
-            if patterns_enter_hard_excluded_context(&patterns, is_hard_excluded_component) {
+            if patterns_enter_hard_excluded_context(&patterns, hard_excluded_components) {
                 file.limitations
                     .push(Limitation::ImportMetaGlobUnsupported {
                         source_id: file.source_id.clone(),
@@ -137,18 +139,20 @@ pub(crate) fn scope(
                 continue;
             };
             for candidate in expanded {
-                let Some(specifier) = relative_specifier(importer_path, &candidate.path) else {
-                    continue;
-                };
-                file.uses.push(SourceUseFact {
-                    importer: file.source_id.clone(),
-                    specifier,
-                    imported_name: None,
-                    local_name: None,
-                    namespace: SymbolNamespace::Value,
-                    kind: ImportKind::DynamicBroad,
-                    request_kind: ModuleRequestKind::ImportMetaGlob,
-                    span: SourceSpan { start, end },
+                let specifier = relative_specifier(importer_path, &candidate.path)
+                    .unwrap_or_else(|| candidate.path.display_escaped());
+                inventory_bound_uses.push(InventoryBoundSourceUse {
+                    source_use: SourceUseFact {
+                        importer: file.source_id.clone(),
+                        specifier,
+                        imported_name: None,
+                        local_name: None,
+                        namespace: SymbolNamespace::Value,
+                        kind: ImportKind::DynamicBroad,
+                        request_kind: ModuleRequestKind::ImportMetaGlob,
+                        span: SourceSpan { start, end },
+                    },
+                    target: candidate.id.clone(),
                 });
             }
         }
@@ -165,7 +169,7 @@ pub(crate) fn scope(
             };
             candidates.clear();
             *target_scope = ImportMetaGlobTargetScope::Package;
-            if patterns_enter_hard_excluded_context(patterns, is_hard_excluded_component) {
+            if patterns_enter_hard_excluded_context(patterns, hard_excluded_components) {
                 continue;
             }
             let Some(scoped) = unsupported_candidates(importer_path, patterns, sources) else {
@@ -185,6 +189,18 @@ pub(crate) fn scope(
         });
         file.uses.dedup();
     }
+
+    inventory_bound_uses.sort_by(|left, right| {
+        left.source_use
+            .importer
+            .cmp(&right.source_use.importer)
+            .then_with(|| left.source_use.span.start.cmp(&right.source_use.span.start))
+            .then_with(|| left.source_use.span.end.cmp(&right.source_use.span.end))
+            .then_with(|| left.source_use.specifier.cmp(&right.source_use.specifier))
+            .then_with(|| left.target.cmp(&right.target))
+    });
+    inventory_bound_uses.dedup();
+    inventory_bound_uses
 }
 
 fn literal_patterns(argument: &Argument<'_>) -> Option<Vec<String>> {
@@ -276,15 +292,16 @@ fn canonicalize_patterns(patterns: &mut Vec<String>) {
 
 fn patterns_enter_hard_excluded_context(
     patterns: &[String],
-    is_hard_excluded_component: fn(&str) -> bool,
+    hard_excluded_components: &[&str],
 ) -> bool {
     patterns.iter().any(|pattern| {
         let (negative, pattern) = strip_negative(pattern);
         !negative
-            && pattern
-                .split('/')
-                .filter(|component| !component.contains('*'))
-                .any(is_hard_excluded_component)
+            && pattern.split('/').any(|component| {
+                hard_excluded_components.iter().any(|excluded| {
+                    wildcard_segment_matches(component.as_bytes(), excluded.as_bytes())
+                })
+            })
     })
 }
 
@@ -297,19 +314,27 @@ fn expand_patterns<'a>(
         .iter()
         .map(|pattern| GlobPattern::parse(importer, pattern))
         .collect::<Option<Vec<_>>>()?;
-    let mut matched = sources
-        .iter()
-        .filter(|source| {
-            parsed
-                .iter()
-                .any(|pattern| !pattern.negative && pattern.matches(&source.path))
-                && !parsed
-                    .iter()
-                    .any(|pattern| pattern.negative && pattern.matches(&source.path))
-        })
-        .collect::<Vec<_>>();
+    let mut matched = Vec::new();
+    for source in sources {
+        let positive = patterns_match(&parsed, false, &source.path)?;
+        let negative = patterns_match(&parsed, true, &source.path)?;
+        if positive && !negative {
+            matched.push(source);
+        }
+    }
     matched.sort_by(|left, right| left.id.cmp(&right.id));
     matched.dedup_by(|left, right| left.id == right.id);
+    Some(matched)
+}
+
+fn patterns_match(patterns: &[GlobPattern], negative: bool, path: &RepoPath) -> Option<bool> {
+    let mut matched = false;
+    for pattern in patterns
+        .iter()
+        .filter(|pattern| pattern.negative == negative)
+    {
+        matched |= pattern.matches(path)?;
+    }
     Some(matched)
 }
 
@@ -346,11 +371,13 @@ enum StaticDomain {
 
 impl StaticDomain {
     fn from_pattern(importer: &RepoPath, pattern: &str) -> Option<Self> {
-        validate_relative_pattern(pattern).ok()?;
+        if !(pattern.starts_with("./") || pattern.starts_with("../")) {
+            return None;
+        }
         let components = pattern.split('/').collect::<Vec<_>>();
         let first_meta = components
             .iter()
-            .position(|component| component.contains('*'));
+            .position(|component| static_component_boundary(component));
         match first_meta {
             None => importer.resolve_portable_relative(pattern).map(Self::Exact),
             Some(index) => {
@@ -370,6 +397,16 @@ impl StaticDomain {
     }
 }
 
+fn static_component_boundary(component: &str) -> bool {
+    component.is_empty()
+        || component.bytes().any(|byte| {
+            matches!(
+                byte,
+                b'*' | b'?' | b'#' | b'%' | b'[' | b']' | b'{' | b'}' | b'\\' | 0
+            )
+        })
+}
+
 struct GlobPattern {
     negative: bool,
     base: RepoPath,
@@ -378,7 +415,7 @@ struct GlobPattern {
 
 enum GlobComponent {
     GlobStar,
-    Segment(String),
+    Segment(Vec<u8>),
 }
 
 impl GlobPattern {
@@ -397,7 +434,7 @@ impl GlobPattern {
                 if *component == "**" {
                     GlobComponent::GlobStar
                 } else {
-                    GlobComponent::Segment((*component).to_owned())
+                    GlobComponent::Segment(component.as_bytes().to_vec())
                 }
             })
             .collect();
@@ -408,22 +445,35 @@ impl GlobPattern {
         })
     }
 
-    fn matches(&self, path: &RepoPath) -> bool {
-        let Some(relative) = path.portable_relative_to(&self.base) else {
-            return false;
-        };
-        if relative.is_empty() {
-            return false;
+    fn matches(&self, path: &RepoPath) -> Option<bool> {
+        if !path.is_within(&self.base) {
+            return Some(false);
         }
-        let components = relative.split('/').collect::<Vec<_>>();
+        if path == &self.base {
+            return Some(false);
+        }
+        let component_keys = path.component_keys();
+        // RepoPath owns native decoding. Match only its canonical component payloads;
+        // the leading byte is the model-owned portable/native encoding tag.
+        let components = component_keys
+            .get(self.base.components_len()..)?
+            .iter()
+            .map(|component| component.get(1..))
+            .collect::<Option<Vec<_>>>()?;
         let mut memo = vec![vec![None; components.len() + 1]; self.components.len() + 1];
-        match_components(&self.components, &components, 0, 0, &mut memo)
+        Some(match_components(
+            &self.components,
+            &components,
+            0,
+            0,
+            &mut memo,
+        ))
     }
 }
 
 fn match_components(
     pattern: &[GlobComponent],
-    path: &[&str],
+    path: &[&[u8]],
     pattern_index: usize,
     path_index: usize,
     memo: &mut [Vec<Option<bool>>],
@@ -440,7 +490,7 @@ fn match_components(
         Some(GlobComponent::GlobStar) => {
             match_components(pattern, path, pattern_index + 1, path_index, memo)
                 || path.get(path_index).is_some_and(|component| {
-                    !component.starts_with('.')
+                    !component.starts_with(b".")
                         && match_components(pattern, path, pattern_index, path_index + 1, memo)
                 })
         }
@@ -449,12 +499,10 @@ fn match_components(
     matched
 }
 
-fn wildcard_segment_matches(pattern: &str, value: &str) -> bool {
-    if value.starts_with('.') && !pattern.starts_with('.') {
+fn wildcard_segment_matches(pattern: &[u8], value: &[u8]) -> bool {
+    if value.starts_with(b".") && !pattern.starts_with(b".") {
         return false;
     }
-    let pattern = pattern.as_bytes();
-    let value = value.as_bytes();
     let mut previous = vec![false; value.len() + 1];
     previous[0] = true;
     for byte in pattern {
@@ -506,9 +554,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wildcard_and_globstar_match_only_portable_components() {
-        assert!(wildcard_segment_matches("*.ts", "one.ts"));
-        assert!(!wildcard_segment_matches("*.ts", ".hidden.ts"));
-        assert!(!wildcard_segment_matches("*.ts", "one.js"));
+    fn wildcard_and_globstar_match_native_component_bytes() {
+        assert!(wildcard_segment_matches(b"*.ts", b"one.ts"));
+        assert!(wildcard_segment_matches(b"*.ts", b"\x80.ts"));
+        assert!(!wildcard_segment_matches(b"*.ts", b".hidden.ts"));
+        assert!(!wildcard_segment_matches(b"*.ts", b"one.js"));
     }
 }

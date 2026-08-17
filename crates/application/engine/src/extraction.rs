@@ -2,8 +2,9 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use lumin_model::{
-    CapabilityState, FileFacts, PayloadSnapshotId, ResolutionProfile, SelectedResolutionProfile,
-    SemanticConfigSnapshot, SfcDialect, SourceKind, SourceSnapshot, SourceUnitId,
+    CapabilityState, FileFacts, InventoryBoundSourceUse, LogicalSourceId, PayloadSnapshotId,
+    ResolutionProfile, SelectedResolutionProfile, SemanticConfigSnapshot, SfcDialect, SourceKind,
+    SourceSnapshot, SourceUnitId,
 };
 use rayon::prelude::*;
 
@@ -13,6 +14,7 @@ const WORKER_STACK_BYTES: usize = 4_194_304;
 
 pub(super) struct ExtractionOutput {
     pub(super) facts: Vec<FileFacts>,
+    pub(super) inventory_bound_uses: Vec<InventoryBoundSourceUse>,
     pub(super) sfc_states: BTreeMap<SfcDialect, CapabilityState>,
     pub(super) js_parse_product_count: usize,
 }
@@ -84,6 +86,7 @@ pub(super) fn extract_facts(
             sfc_states.insert(dialect, initial_state);
         }
         let mut sfc_facts = Vec::new();
+        let mut sfc_dialects_by_source = BTreeMap::<LogicalSourceId, SfcDialect>::new();
         for (decomposition, _module_format) in decompositions {
             let parent = decomposition.source_id.clone();
             let analysis = lumin_sfc::finalize(
@@ -95,23 +98,42 @@ pub(super) fn extract_facts(
                 .entry(analysis.dialect)
                 .and_modify(|state| *state = less_complete(*state, analysis.state))
                 .or_insert(analysis.state);
+            sfc_dialects_by_source.insert(analysis.source_id.clone(), analysis.dialect);
             sfc_facts.extend(analysis.file_facts);
         }
 
         let mut facts = physical_facts;
         facts.extend(sfc_facts);
         lumin_js::scope_dynamic_import_limitations(&mut facts, sources);
-        lumin_js::scope_import_meta_globs(
+        let inventory_bound_uses = lumin_js::scope_import_meta_globs(
             &mut facts,
             sources,
-            lumin_inventory::is_hard_excluded_component,
+            lumin_inventory::HARD_EXCLUDED_COMPONENTS,
         );
+        synchronize_sfc_states(&facts, &sfc_dialects_by_source, &mut sfc_states);
         Ok(ExtractionOutput {
             facts: reduce_file_facts(facts),
+            inventory_bound_uses,
             sfc_states,
             js_parse_product_count: physical_parse_product_count + embedded_parse_product_count,
         })
     })
+}
+
+fn synchronize_sfc_states(
+    facts: &[FileFacts],
+    dialects_by_source: &BTreeMap<LogicalSourceId, SfcDialect>,
+    states: &mut BTreeMap<SfcDialect, CapabilityState>,
+) {
+    for facts in facts.iter().filter(|facts| !facts.limitations.is_empty()) {
+        let Some(dialect) = dialects_by_source.get(&facts.source_id) else {
+            continue;
+        };
+        states
+            .entry(*dialect)
+            .and_modify(|state| *state = less_complete(*state, CapabilityState::Incomplete))
+            .or_insert(CapabilityState::Incomplete);
+    }
 }
 
 type PayloadGroup<'a> = (

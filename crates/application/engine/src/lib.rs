@@ -502,6 +502,7 @@ impl RepositoryAnalysisSession {
             &self.inventory.sources,
             &self.inventory.physical_path_redirects,
             &extraction.facts,
+            &extraction.inventory_bound_uses,
             &self.inventory.config,
             &self.repository_root,
             resolution_profile,

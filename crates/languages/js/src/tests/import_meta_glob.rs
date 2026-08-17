@@ -31,22 +31,27 @@ fn relative_literal_arrays_expand_with_negative_and_globstar_patterns()
         snapshot("src/other.ts", b"export const other = 4;", 5)?,
     ];
     let mut facts = vec![extract(&sources[0])?];
-    scope_import_meta_globs(&mut facts, &sources, |_| false);
+    let bound = scope_import_meta_globs(&mut facts, &sources, &[]);
 
     assert!(facts[0].limitations.is_empty());
     assert_eq!(
-        facts[0]
-            .uses
+        bound
             .iter()
-            .map(|source_use| source_use.specifier.as_str())
+            .map(|bound| bound.source_use.specifier.as_str())
             .collect::<BTreeSet<_>>(),
         BTreeSet::from(["./pages/nested/two.ts", "./pages/one.ts"]),
     );
     assert!(
-        facts[0]
-            .uses
+        bound
             .iter()
-            .all(|source_use| source_use.request_kind == ModuleRequestKind::ImportMetaGlob)
+            .all(|bound| bound.source_use.request_kind == ModuleRequestKind::ImportMetaGlob)
+    );
+    assert_eq!(
+        bound
+            .iter()
+            .map(|bound| bound.target.clone())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([sources[1].id.clone(), sources[2].id.clone()]),
     );
     Ok(())
 }
@@ -72,9 +77,10 @@ fn unsupported_options_keep_relative_candidates_while_aliases_remain_package_sco
         snapshot("src/unrelated.ts", b"export const unrelated = 1;", 3)?,
     ];
     let mut facts = vec![extract(&sources[0])?];
-    scope_import_meta_globs(&mut facts, &sources, |_| false);
+    let bound = scope_import_meta_globs(&mut facts, &sources, &[]);
 
     assert!(facts[0].uses.is_empty());
+    assert!(bound.is_empty());
     assert_eq!(facts[0].limitations.len(), 4);
     let feature_id = sources[1].id.clone();
     let explicit = facts[0]
@@ -132,13 +138,12 @@ fn no_substitution_templates_are_supported_literals() -> Result<(), Box<dyn std:
         snapshot("src/other.ts", b"export const other = 1;", 3)?,
     ];
     let mut facts = vec![extract(&sources[0])?];
-    scope_import_meta_globs(&mut facts, &sources, |_| false);
+    let bound = scope_import_meta_globs(&mut facts, &sources, &[]);
     assert!(facts[0].limitations.is_empty());
     assert_eq!(
-        facts[0]
-            .uses
+        bound
             .iter()
-            .map(|source_use| source_use.specifier.as_str())
+            .map(|bound| bound.source_use.specifier.as_str())
             .collect::<BTreeSet<_>>(),
         BTreeSet::from(["./other.ts", "./used.ts"]),
     );
@@ -154,9 +159,10 @@ fn repository_escape_never_becomes_a_clean_empty_expansion()
         1,
     )?];
     let mut facts = vec![extract(&sources[0])?];
-    scope_import_meta_globs(&mut facts, &sources, |_| false);
+    let bound = scope_import_meta_globs(&mut facts, &sources, &[]);
 
     assert!(facts[0].uses.is_empty());
+    assert!(bound.is_empty());
     assert!(matches!(
         facts[0].limitations.as_slice(),
         [Limitation::ImportMetaGlobUnsupported {
@@ -177,11 +183,10 @@ fn hard_excluded_literal_contexts_remain_package_scoped() -> Result<(), Box<dyn 
         1,
     )?];
     let mut facts = vec![extract(&sources[0])?];
-    scope_import_meta_globs(&mut facts, &sources, |component| {
-        component == "node_modules"
-    });
+    let bound = scope_import_meta_globs(&mut facts, &sources, &["node_modules"]);
 
     assert!(facts[0].uses.is_empty());
+    assert!(bound.is_empty());
     assert!(matches!(
         facts[0].limitations.as_slice(),
         [Limitation::ImportMetaGlobUnsupported {
@@ -190,6 +195,87 @@ fn hard_excluded_literal_contexts_remain_package_scoped() -> Result<(), Box<dyn 
             ..
         }] if candidates.is_empty()
     ));
+    Ok(())
+}
+
+#[test]
+fn wildcard_hard_excluded_contexts_remain_package_scoped() -> Result<(), Box<dyn std::error::Error>>
+{
+    let sources = vec![snapshot(
+        "src/main.ts",
+        b"import.meta.glob('./node*/**/*.ts');",
+        1,
+    )?];
+    let mut facts = vec![extract(&sources[0])?];
+    let bound = scope_import_meta_globs(&mut facts, &sources, &["node_modules"]);
+
+    assert!(bound.is_empty());
+    assert!(matches!(
+        facts[0].limitations.as_slice(),
+        [Limitation::ImportMetaGlobUnsupported {
+            target_scope: ImportMetaGlobTargetScope::Package,
+            candidates,
+            ..
+        }] if candidates.is_empty()
+    ));
+    Ok(())
+}
+
+#[test]
+fn unsupported_relative_grammar_keeps_its_cross_package_static_domain()
+-> Result<(), Box<dyn std::error::Error>> {
+    let sources = vec![
+        snapshot(
+            "packages/a/src/main.ts",
+            b"import.meta.glob('../../b/src/*.{ts,tsx}');",
+            1,
+        )?,
+        snapshot("packages/b/src/one.ts", b"export const one = 1;", 2)?,
+        snapshot("packages/a/src/unrelated.ts", b"export const other = 1;", 3)?,
+    ];
+    let mut facts = vec![extract(&sources[0])?];
+    let bound = scope_import_meta_globs(&mut facts, &sources, &[]);
+
+    assert!(bound.is_empty());
+    assert!(matches!(
+        facts[0].limitations.as_slice(),
+        [Limitation::ImportMetaGlobUnsupported {
+            target_scope: ImportMetaGlobTargetScope::ExplicitTargets,
+            candidates,
+            ..
+        }] if candidates == &vec![sources[1].id.clone()]
+    ));
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn native_only_components_match_wildcards_without_display_lowering()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::Path;
+
+    let importer = snapshot("src/main.ts", b"import.meta.glob('./pages/*.ts');", 1)?;
+    let native_path =
+        RepoPath::from_native_relative(Path::new(OsStr::from_bytes(b"src/pages/\x80.ts")))?;
+    let target = SourceSnapshot::new(
+        native_path,
+        SourceKind::TypeScript,
+        SourceRoles::default(),
+        PhysicalFileIdentity::Unix {
+            device: 1,
+            inode: 2,
+        },
+        b"export const native = 1;".to_vec(),
+    );
+    let sources = vec![importer, target.clone()];
+    let mut facts = vec![extract(&sources[0])?];
+    let bound = scope_import_meta_globs(&mut facts, &sources, &[]);
+
+    assert!(facts[0].limitations.is_empty());
+    assert_eq!(bound.len(), 1);
+    assert_eq!(bound[0].target, target.id);
     Ok(())
 }
 

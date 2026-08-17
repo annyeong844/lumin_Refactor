@@ -393,6 +393,12 @@ pub struct SourceUseFact {
     pub span: SourceSpan,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InventoryBoundSourceUse {
+    pub source_use: SourceUseFact,
+    pub target: LogicalSourceId,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileFacts {
