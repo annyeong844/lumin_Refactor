@@ -977,6 +977,13 @@ fn collect_limitations(
     limitations
 }
 
+pub fn clean_cache(root: &Path) -> Result<(), EngineError> {
+    open_repository_context(root)?
+        .store
+        .clean_cache_payloads()
+        .map_err(Into::into)
+}
+
 pub fn load_run(
     root: &Path,
     run_id: &RunId,
