@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use lumin_model::{
@@ -86,7 +86,7 @@ pub(super) fn extract_facts(
             sfc_states.insert(dialect, initial_state);
         }
         let mut sfc_facts = Vec::new();
-        let mut sfc_dialects_by_source = BTreeMap::<LogicalSourceId, SfcDialect>::new();
+        let mut sfc_dialects_by_source = BTreeMap::<LogicalSourceId, BTreeSet<SfcDialect>>::new();
         for (decomposition, _module_format) in decompositions {
             let parent = decomposition.source_id.clone();
             let analysis = lumin_sfc::finalize(
@@ -98,7 +98,16 @@ pub(super) fn extract_facts(
                 .entry(analysis.dialect)
                 .and_modify(|state| *state = less_complete(*state, analysis.state))
                 .or_insert(analysis.state);
-            sfc_dialects_by_source.insert(analysis.source_id.clone(), analysis.dialect);
+            sfc_dialects_by_source
+                .entry(analysis.source_id.clone())
+                .or_default()
+                .insert(analysis.dialect);
+            for attachment in &analysis.script_attachments {
+                sfc_dialects_by_source
+                    .entry(attachment.target_source_id.clone())
+                    .or_default()
+                    .insert(analysis.dialect);
+            }
             sfc_facts.extend(analysis.file_facts);
         }
 
@@ -122,17 +131,19 @@ pub(super) fn extract_facts(
 
 fn synchronize_sfc_states(
     facts: &[FileFacts],
-    dialects_by_source: &BTreeMap<LogicalSourceId, SfcDialect>,
+    dialects_by_source: &BTreeMap<LogicalSourceId, BTreeSet<SfcDialect>>,
     states: &mut BTreeMap<SfcDialect, CapabilityState>,
 ) {
     for facts in facts.iter().filter(|facts| !facts.limitations.is_empty()) {
-        let Some(dialect) = dialects_by_source.get(&facts.source_id) else {
+        let Some(dialects) = dialects_by_source.get(&facts.source_id) else {
             continue;
         };
-        states
-            .entry(*dialect)
-            .and_modify(|state| *state = less_complete(*state, CapabilityState::Incomplete))
-            .or_insert(CapabilityState::Incomplete);
+        for dialect in dialects {
+            states
+                .entry(*dialect)
+                .and_modify(|state| *state = less_complete(*state, CapabilityState::Incomplete))
+                .or_insert(CapabilityState::Incomplete);
+        }
     }
 }
 

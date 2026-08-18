@@ -296,11 +296,14 @@ fn patterns_enter_hard_excluded_context(
 ) -> bool {
     patterns.iter().any(|pattern| {
         let (negative, pattern) = strip_negative(pattern);
+        let components = pattern.split('/').collect::<Vec<_>>();
         !negative
-            && pattern.split('/').any(|component| {
-                hard_excluded_components.iter().any(|excluded| {
-                    wildcard_segment_matches(component.as_bytes(), excluded.as_bytes())
-                })
+            && components.iter().enumerate().any(|(index, component)| {
+                let can_traverse_directory = index + 1 < components.len() || *component == "**";
+                can_traverse_directory
+                    && hard_excluded_components.iter().any(|excluded| {
+                        wildcard_segment_matches(component.as_bytes(), excluded.as_bytes())
+                    })
             })
     })
 }
@@ -452,14 +455,11 @@ impl GlobPattern {
         if path == &self.base {
             return Some(false);
         }
-        let component_keys = path.component_keys();
-        // RepoPath owns native decoding. Match only its canonical component payloads;
-        // the leading byte is the model-owned portable/native encoding tag.
-        let components = component_keys
-            .get(self.base.components_len()..)?
-            .iter()
-            .map(|component| component.get(1..))
-            .collect::<Option<Vec<_>>>()?;
+        let match_bytes = path.match_bytes().ok()?;
+        let components = match_bytes
+            .components()
+            .skip(self.base.components_len())
+            .collect::<Vec<_>>();
         let mut memo = vec![vec![None; components.len() + 1]; self.components.len() + 1];
         Some(match_components(
             &self.components,

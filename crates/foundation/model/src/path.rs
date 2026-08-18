@@ -18,6 +18,19 @@ pub struct RepoPath {
     canonical: Vec<u8>,
 }
 
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RepoPathMatchBytes(Vec<u8>);
+
+impl RepoPathMatchBytes {
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    pub fn components(&self) -> impl Iterator<Item = &[u8]> {
+        self.0.split(|byte| *byte == b'/')
+    }
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum RepoPathComponent {
     PortableUtf8(String),
@@ -337,7 +350,11 @@ impl RepoPath {
     }
 
     pub fn native_match_bytes(&self) -> Result<Vec<u8>, RepoPathError> {
-        self.native_io_bytes()
+        self.match_bytes().map(|bytes| bytes.0)
+    }
+
+    pub fn match_bytes(&self) -> Result<RepoPathMatchBytes, RepoPathError> {
+        self.native_io_bytes().map(RepoPathMatchBytes)
     }
 
     fn native_io_bytes(&self) -> Result<Vec<u8>, RepoPathError> {
@@ -640,6 +657,7 @@ mod tests {
         let unpaired = b"\xed\xa0\x80a\0";
         let decoded = RepoPath::decode_native_nul_stream(unpaired)?;
         assert_eq!(RepoPath::encode_native_nul_stream(&decoded)?, unpaired);
+        assert_eq!(decoded[0].match_bytes()?.as_bytes(), b"\xed\xa0\x80a");
 
         let cesu_pair = b"\xed\xa0\xbd\xed\xb8\x80\0";
         assert_eq!(
