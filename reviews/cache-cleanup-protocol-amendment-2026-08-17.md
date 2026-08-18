@@ -69,6 +69,21 @@ manifest-bearing move could become permanently unverifiable after power loss. Th
 no-operation-ID decision is withdrawn. The replacement decision makes one canonical
 operation record the pre-move authority and binds success to bottom-up tree durability.
 
+## Fifth Review Result
+
+Independent review bound exact candidate
+`8dc487ae3bab8a7705a92e57ba240586523c2f50` and returned `REOPEN`. It found three
+remaining consistency and recovery gaps. First, the newly added cleanup/publication race
+raised the store-crash registry to eleven rows while PLAN-001 still allowed a ten-row
+exit. Second, the lock header was correctly defined and initialized as global bootstrap
+only, but a later sentence incorrectly required it to carry the nested quarantine
+binding, making every fresh repository incompatible on reopen. Third, the cleanup
+projection exposed `interrupted` and `interruptionCount` without assigning the exact
+liveness proof, transition owner, transaction boundary, or read-only `operation show`
+behavior. The replacement decision counts the eleventh crash obligation, keeps parent
+bindings in marker/store headers only, and makes same-ID mutating retry the sole owner of
+an idempotent pending/interrupted/pending recovery transition.
+
 ## Decision
 
 The owner amendments define one public command:
@@ -89,9 +104,17 @@ Delivery recovery uses the same operation ID or the bounded
 `lumin.cache-cleanup-operation.v1` projection from `lumin operation show`, never a new
 whole-command mutation. That projection exposes only its operation identity/kind/digest,
 status and interruption count, authorized/validated counts, stored result, and last
-delivery status; it never embeds unbounded manifests. A replayed `clean` is the immutable
-result of that operation's final observation. Cache payloads added later require a new
-operation ID and are never silently consumed by replay.
+delivery status; it never embeds unbounded manifests. Show is strictly read-only and
+does not prove process liveness or change a record. Immediately after child death the
+canonical state remains `pending`. Under the exclusive catalog guard, only an identical
+mutating retry proves the exact execution lease dead, atomically records that execution
+ID as `interrupted`, increments the count once, and persists a recovery reservation that
+blocks cache mutation. It then releases the guard at an exact public-show barrier. A
+second guarded transaction attaches a fresh lease, releases the reservation, and returns
+to `pending` before physical reconciliation. Repeated show or recovery of the same
+interrupted attempt does not increment again. A replayed `clean` is the immutable result
+of that operation's final observation. Cache payloads added later require a new operation
+ID and are never silently consumed by replay.
 
 ARCH-000 owns the command. ARCH-002 owns its state transition and recovery. Namespace
 bootstrap creates and binds `trash/cache-evictions` and its immutable `namespace.anchor`
@@ -99,9 +122,11 @@ under the existing `Trash` parent. This is one nested `CacheEvictionParentBindin
 fifth top-level managed-parent kind. The marker and store header bind it with the four
 top-level parents, and every complete namespace proof revalidates it. Payload children
 remain noncanonical; their authorization rows are canonical integrity and recovery state.
-The namespace-binding schema is immutable and distinct from backend schema: a repository
-whose marker, lock, or store lacks the nested binding fails as `IncompatibleStateSchema`.
-It is never lazily upgraded or adopted through ordinary lifecycle-store migration.
+The namespace-binding schema is immutable and distinct from backend schema. The lock
+header remains global-bootstrap-only and carries no parent binding. A repository whose
+marker or store lacks the nested binding fails as `IncompatibleStateSchema`; absence of
+that binding from the lock header is not an error. The marker/store binding is never
+lazily upgraded or adopted through ordinary lifecycle-store migration.
 
 Before any move, cleanup authenticates every existing quarantine child through exactly
 one retained store-owned `CacheEvictionAuthorization` row. Name grammar and the manifest
@@ -165,10 +190,12 @@ finding for each item:
 1. ARCH-000 authorizes the exact operation-ID command; Product, ARCH-002, Slice, adapters,
    acceptance criteria, and traceability expose no conflicting command or exception.
 2. The v2 field set/order, request digest, exits, stdout/stderr rules, lock release, retry,
-   and `operation show` recovery are complete and mutually consistent.
-3. Namespace bootstrap durably binds the nested quarantine parent/anchor; replacement,
-   mount, copied-state, or crash recovery cannot form a second binding, and a schema
-   lacking it fails closed without lazy adoption or backend-only migration.
+   and strictly read-only `operation show` recovery are complete; exact dead-attempt
+   proof, interruption counting, and pending/interrupted/pending transitions agree.
+3. Namespace bootstrap durably binds the nested quarantine parent/anchor in marker/store
+   while the lock remains global-bootstrap-only; replacement, mount, copied-state, or
+   crash recovery cannot form a second binding, and a marker/store schema lacking it
+   fails closed without lazy adoption or backend-only migration.
 4. Every pre-existing or new quarantine child has one exact store-owned authorization;
    self-hashed foreign state, duplicate/missing rows, and generation disagreement fail.
 5. The operation record, authorization-set ID/count, and complete `Authorized` plan commit
@@ -177,8 +204,10 @@ finding for each item:
 6. Every regular file and directory is flushed bottom-up and remanifested before
    authorization and after movement; cache, quarantine, and trash entries are flushed
    before validation and result commit, including recovered and empty-cache runs.
-7. Same-ID recovery distinguishes authorized source, moved destination, validated row,
-   and committed result; another ID cannot adopt or duplicate any transition.
+7. Same-ID recovery distinguishes pending live execution, one idempotently recorded
+   interrupted attempt, fresh pending lease, authorized source, moved destination,
+   validated row, and committed result; another ID or read-only show cannot adopt or
+   duplicate any transition.
 8. Top-level and nested substitution barriers stop the exact turn, preserve the winning
    object and remaining order, and assert authorization states plus final snapshot.
 9. Public process-death fixtures cover after authorization, rename visibility, physical
