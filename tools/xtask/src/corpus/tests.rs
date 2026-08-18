@@ -114,8 +114,8 @@ fn missing_fmt() {
 }
 
 #[test]
-fn registry_90() {
-    assert_eq!(REGISTRY.len(), 90);
+fn registry_91() {
+    assert_eq!(REGISTRY.len(), 91);
 }
 
 #[test]
@@ -256,9 +256,9 @@ fn store_crash_has_applicable_rows() {
 }
 
 #[test]
-fn spec_90() -> Result<(), String> {
+fn spec_91() -> Result<(), String> {
     let ids = extract_spec_ids(include_str!("../../../../specs/001-foundation-slice.md"))?;
-    assert_eq!(ids.len(), 90, "{ids:?}");
+    assert_eq!(ids.len(), 91, "{ids:?}");
     Ok(())
 }
 

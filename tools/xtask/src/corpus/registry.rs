@@ -130,7 +130,7 @@ static INV_RET_CRASH: &[CorpusInvocation] = &[
 ];
 
 // ---------------------------------------------------------------------------
-// Registry — 90 Section 9 IDs, canonical order.
+// Registry — 91 Section 9 IDs, canonical order.
 // Per-mode fields: None = not applicable, Some(&[]) = required but unmapped,
 // Some(&[..]) = mapped.
 // ---------------------------------------------------------------------------
@@ -393,6 +393,7 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_c!("crash-publication", INV_CRASH_PUB),
     row_c!("concurrent-latest-publication", INV_CONC_PUB),
     row_c!("publication-retention-race", INV_PUB_RET_RACE),
+    row_c!("cache-cleanup-publication-race"),
     row_sdc!("retention-latest-protection", INV_RET_LATEST),
     row_sd!("retention-plan-pagination", INV_RET_PAGINATION),
     row_sdc!("retention-public-lookup", INV_RET_LOOKUP),
