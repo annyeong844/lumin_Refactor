@@ -2,7 +2,7 @@
 
 Document role: focused Architecture v1 amendment and independent-review record
 
-Status: review candidate; implementation is blocked
+Status: independent PASS; owner merge pending; implementation is blocked until merge
 
 Date: 2026-08-18
 
@@ -83,6 +83,17 @@ liveness proof, transition owner, transaction boundary, or read-only `operation 
 behavior. The replacement decision counts the eleventh crash obligation, keeps parent
 bindings in marker/store headers only, and makes same-ID mutating retry the sole owner of
 an idempotent pending/interrupted/pending recovery transition.
+
+## Sixth Review Result
+
+Independent review bound exact candidate
+`0db2bf15d2861157952a106123d995c18b358de7` and reported no major issues. The
+normalized REVIEW-004 verdict is `PASS`: no remaining P1/P2 gap was found in the
+eleven-row crash ledger, global-only lock bootstrap, marker/store nested binding,
+read-only projection, or guarded pending/interrupted/pending recovery protocol. This
+result section and the Workboard status are record-only follow-up; they do not change the
+reviewed PRODUCT-000, ARCH-000, ARCH-002, SLICE-001, or PLAN-001 owner bytes. Owner merge
+is still required before Rust implementation begins.
 
 ## Decision
 
@@ -219,9 +230,9 @@ finding for each item:
     without weakening any existing reserved-state or durability rule.
 12. No implementation code or mapped-progress claim is accepted as independent truth.
 
-The candidate remains `REOPEN` until that exact review passes. Rust implementation and
-corpus completion must be based on the reviewed owner bytes, not this document's draft
-status.
+The exact owner candidate above passed independent review. Rust implementation and corpus
+completion must be based on those reviewed owner bytes and may begin only after owner
+merge makes them authoritative on the base branch.
 
 ## Verification After Freeze
 
