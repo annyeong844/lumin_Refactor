@@ -423,10 +423,11 @@ lumin operation
 lumin gate
 lumin runs
 lumin export
+lumin cache clean [--format json]
 lumin help-agent
 ```
 
-`lumin-protocol` owns command DTOs and machine formats; `lumin-cli` owns parsing and exit mapping. Other documents may narrow a slice's available subset but cannot add commands. Codex and Claude Code skills teach this small surface without embedding schemas, classification logic, platform binary selection policy, or internal capability lists.
+`lumin-protocol` owns command DTOs and machine formats; `lumin-cli` owns parsing and exit mapping. ARCH-002 owns the cache-cleanup state transition, integrity, crash-retry, and delivery contract. Other documents may narrow a slice's available subset but cannot add commands. Codex and Claude Code skills teach this small surface without embedding schemas, classification logic, platform binary selection policy, or internal capability lists.
 
 ## 9. Build and Distribution
 

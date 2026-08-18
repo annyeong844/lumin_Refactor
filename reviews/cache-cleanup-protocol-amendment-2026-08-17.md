@@ -6,7 +6,7 @@ Status: review candidate; implementation is blocked
 
 Date: 2026-08-18
 
-Owners: PRODUCT-000 Section 2.9, ARCH-002 Sections 2 and 2.5, SLICE-001 Sections 6, 9, 11, 14, and 15
+Owners: PRODUCT-000 Section 2.9, ARCH-000 Section 8, ARCH-002 Sections 2 and 2.5, SLICE-001 Sections 6, 9, 11, 14, and 15
 
 ## Trigger
 
@@ -22,8 +22,9 @@ was validated and its handle dropped, a concurrent actor could replace its pathn
 therefore destroy the immutable anchor or traverse bytes that had never passed admission,
 then detect the integrity failure only after damage.
 
-These are architecture findings, not test-only omissions. They reopen only the cache
-cleanup portion of the frozen state-namespace contract.
+These are architecture findings, not test-only omissions. They reopen only ARCH-000's
+cache-cleanup command registration and the cache-cleanup portion of the frozen
+state-namespace contract.
 
 ## First Review Result
 
@@ -47,6 +48,17 @@ parent before payload moves, and stdout stream failure left stderr behavior
 platform-dependent. The replacement decision below makes those four states explicit and
 keeps implementation blocked.
 
+## Third Review Result
+
+Independent review bound exact candidate
+`9be3fe613bac12162eabd32c6a6ca59b648be7a0` and returned `REOPEN`. It found that
+a process death after a racing substitute was moved but before post-move comparison
+discarded the only expected manifest, allowing retry to admit the substitute as ordinary
+prior quarantine. It also found that ARCH-000's canonical command set did not authorize
+`lumin cache clean`, while its ownership rule forbids lower-level documents from adding
+commands. The replacement decision below puts a recomputable pre-move manifest digest in
+each quarantine child name and adds the command through the blueprint owner.
+
 ## Decision
 
 The owner amendments define one narrow public command:
@@ -68,14 +80,20 @@ intentionally has no operation ID. The generic adapter and AC rules now name onl
 and retention lifecycle mutations. Repeating the idempotent command is the recovery path
 when output delivery fails after active-cache eviction.
 
-Cleanup first admits the complete pre-existing quarantine even when the active cache is
-empty, then validates the complete deterministic active-cache tree and atomically moves
-each top-level object without replacement from the held cache parent to a disjoint
-`trash/cache-evictions/<invocation-id>.<ordinal>` entry. The literal quarantine directory
-is reserved from retention-plan allocation and opened without following; every existing
-child name and tree must pass the full grammar, kind, link, and mount admission before
-mutation or success. If the directory is absent and active payloads exist, it is created
-without replacement and the held trash parent is durably flushed before any payload move.
+ARCH-000 authorizes the command in the canonical product surface; ARCH-002 owns its
+cache-state transition, integrity, crash-retry, and delivery semantics. Cleanup first
+admits the complete pre-existing quarantine even when the active cache is empty, then
+validates the complete deterministic active-cache tree and atomically moves each
+top-level object without replacement from the held cache parent to a disjoint
+`trash/cache-evictions/<invocation-id>.<ordinal>.<manifest-sha256>` entry. The manifest
+digest is computed before the move over the canonical top-level physical/tree manifest
+and excludes both source and destination names so it can be recomputed after a restart.
+The literal quarantine directory is reserved from retention-plan allocation and opened
+without following; every existing
+child name and tree must pass the full grammar, manifest-digest, kind, link, and mount
+admission before mutation or success. If the directory is absent and active payloads
+exist, it is created without replacement and the held trash parent is durably flushed
+before any payload move.
 The directory is then held and revalidated relative to the same-volume trash parent for
 the invocation; it is not a fifth canonical managed parent. Cleanup reopens the moved
 winner and compares its top-level identity and complete read-only descendant manifest
@@ -91,14 +109,20 @@ enforceable isolation boundary. On a platform with neither, quarantine remains. 
 deterministic barriers own the top-level and nested-child validation-to-move races and
 assert remaining order plus the final durable failed snapshot.
 
-Process death creates no cleanup operation record. Whole-command retry first validates
-the complete existing quarantine, retains it, and freshly evicts only the current
-active-cache set; missing or duplicated disposable payload bytes are never promoted into
-canonical deletion truth, while malformed quarantine topology remains an integrity
-hard-stop even when the active cache is empty. A deterministic public child-process
-fixture terminates after the first move and its durability flushes but before the second
-move, then proves that restart preserves prior quarantine, evicts the remaining active
-set under a new invocation ID, and publishes exactly one clean response.
+Process death creates no cleanup operation record. The no-replace move atomically couples
+the moved winner with the expected pre-move manifest digest in its destination name, so
+whole-command retry can rederive the moved tree and reject a mismatch without the first
+process's memory or a completion marker. Retry first validates the complete existing
+quarantine, retains it, and freshly evicts only the current active-cache set; missing or
+duplicated disposable payload bytes are never promoted into canonical deletion truth,
+while malformed or digest-mismatching quarantine remains an integrity hard-stop even
+when the active cache is empty. One deterministic public child-process fixture terminates
+after a fully validated first move and its durability flushes but before the second move,
+then proves that restart preserves prior quarantine, evicts the remaining active set
+under a new invocation ID, and publishes exactly one clean response. A second substitutes
+the manifested source, terminates after its durable move but before comparison, and proves
+that restart preserves the substitute yet rejects its name-bound digest mismatch before
+any further move or success.
 
 ## Non-Goals
 
@@ -120,29 +144,34 @@ finding for each item:
 1. The public grammar, JSON fields, success/failure exits, stable `BrokenPipe` versus
    non-pipe stdout/stderr behavior, and delivery recovery are complete and mutually
    consistent.
-2. The Product, Slice adapter, and Slice AC wording consistently require operation IDs
+2. ARCH-000's canonical command set authorizes `lumin cache clean`, ARCH-002 owns its
+   lower-level state/recovery semantics, and no lower owner invents a command outside the
+   blueprint surface.
+3. The Product, Slice adapter, and Slice AC wording consistently require operation IDs
    only for gate/retention lifecycle mutations and explicitly route cache delivery
    recovery through whole-command rerun.
-3. Every invocation admits the full existing quarantine before active-cache work or
+4. Every invocation admits the full existing quarantine before active-cache work or
    success, including empty-cache retry, and final validation allows exactly the admitted
-   initial tree plus this invocation's additions.
-4. First creation of the quarantine is durably flushed in the held trash parent before
+   initial tree plus this invocation's manifest-digest-matching additions.
+5. First creation of the quarantine is durably flushed in the held trash parent before
    any payload move, and success cannot publish before the anchor-only active-cache state,
    durable cache/quarantine moves, and complete namespace proof.
-5. Cache cleanup performs no final unlink/rmdir; moved objects remain quarantined, and
+6. Cache cleanup performs no final unlink/rmdir; moved objects remain quarantined, and
    physical reclamation cannot silently fall back to pathname revalidation.
-6. Post-move top-level and full descendant-manifest comparison preserve a racing
-   substitute and fail on either top-level or child disagreement.
-7. Both substitution barriers stop the exact turn, assert prior/later relative order and
+7. Each destination name durably binds the canonical expected pre-move manifest before
+   the atomic move; both immediate post-move comparison and restart admission preserve a
+   racing substitute and fail on top-level, child, or digest disagreement.
+8. Both substitution barriers stop the exact turn, assert prior/later relative order and
    the final durable snapshot, and do not rely on timing.
-8. The public process-death fixture stops after one durable move, terminates the child,
-   and proves restart without a canonical operation record or interpretation of
-   quarantine as lifecycle truth; delivery failure is likewise safely rerunnable.
-9. Standard, determinism, store-crash, Windows/Linux package, and skill-adapter commands
+9. The two public process-death fixtures distinguish a fully validated move from death
+   after a substitute's durable move but before comparison; restart accepts only the
+   former, without a canonical operation record or interpretation of quarantine as
+   lifecycle truth. Delivery failure is likewise safely rerunnable.
+10. Standard, determinism, store-crash, Windows/Linux package, and skill-adapter commands
    are assigned only to rows and behavior they can actually execute.
-10. PRODUCT-000, ARCH-002, SLICE-001 truth, acceptance, and traceability agree without
-   weakening any existing reserved-state rule.
-11. No implementation code or mapped-progress claim is accepted as independent truth.
+11. PRODUCT-000, ARCH-000, ARCH-002, SLICE-001 truth, acceptance, and traceability agree
+   without weakening any existing reserved-state rule.
+12. No implementation code or mapped-progress claim is accepted as independent truth.
 
 The candidate remains `REOPEN` until that exact review passes. Rust implementation and
 corpus completion must be based on the reviewed owner bytes, not this document's draft
@@ -152,10 +181,10 @@ status.
 
 Implementation may begin only after the candidate's exact commit receives both owner
 approval and independent `PASS`. The implementation must then preserve focused checks
-for the store eviction/quarantine owner, existing-quarantine admission, durable first
-creation, CLI grammar/response/exits and exact stream-failure behavior, delivery rerun,
-public process-death restart, and both barrier-forced substitutions before broader
-validation. The public
+for the store eviction/quarantine owner, manifest-bound existing-quarantine admission,
+durable first creation, CLI grammar/response/exits and exact stream-failure behavior,
+delivery rerun, both public process-death restart outcomes, and both barrier-forced
+substitutions before broader validation. The public
 `reserved-state-namespace` row remains unmapped until standard and determinism lanes plus
 Windows/Linux package checks run those behaviors through the packaged CLI and the skill
 package check proves the no-operation-ID exception. Store-crash continues to prove its
