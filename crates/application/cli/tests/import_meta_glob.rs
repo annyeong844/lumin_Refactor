@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
@@ -16,6 +16,8 @@ fn relative_import_meta_globs_expand_and_unsupported_patterns_remain_scoped()
     verify_supported_patterns_and_roles()?;
     verify_unsupported_scopes_and_gate_decisions()?;
     verify_embedded_limitation_span()?;
+    verify_terminal_file_wildcard()?;
+    verify_external_script_late_limitation_state()?;
     Ok(())
 }
 
@@ -25,6 +27,28 @@ fn native_only_glob_matches_preserve_value_liveness() -> Result<(), Box<dyn std:
     use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt;
 
+    let mut native_relative = PathBuf::from("src/pages");
+    native_relative.push(OsString::from_vec(b"\x80.ts".to_vec()));
+    verify_native_only_glob(native_relative)
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_wtf8_glob_matches_preserve_value_liveness() -> Result<(), Box<dyn std::error::Error>> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+
+    let mut native_relative = PathBuf::from("src/pages");
+    native_relative.push(OsString::from_wide(&[
+        0xd800,
+        u16::from(b'.'),
+        u16::from(b't'),
+        u16::from(b's'),
+    ]));
+    verify_native_only_glob(native_relative)
+}
+
+fn verify_native_only_glob(native_relative: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     write(
         root.path(),
@@ -36,8 +60,6 @@ fn native_only_glob_matches_preserve_value_liveness() -> Result<(), Box<dyn std:
         "src/main.ts",
         "const pages = import.meta.glob('./pages/*.ts'); console.log(pages);\n",
     )?;
-    let mut native_relative = std::path::PathBuf::from("src/pages");
-    native_relative.push(OsString::from_vec(b"\x80.ts".to_vec()));
     fs::create_dir_all(root.path().join("src/pages"))?;
     fs::write(
         root.path().join(&native_relative),
@@ -56,6 +78,106 @@ fn native_only_glob_matches_preserve_value_liveness() -> Result<(), Box<dyn std:
             "type",
             "zero grounded exact fan-in",
         )]),
+    );
+    Ok(())
+}
+
+fn verify_terminal_file_wildcard() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"glob-terminal","private":true,"type":"module"}"#,
+    )?;
+    write(
+        root.path(),
+        "src/main.ts",
+        "const direct = import.meta.glob(['./*', '!./main.ts']); console.log(direct);\n",
+    )?;
+    write_exports(root.path(), "src/used.ts", "usedValue", "UsedType")?;
+    write_exports(
+        root.path(),
+        "src/nested/dead.ts",
+        "nestedDeadValue",
+        "NestedDeadType",
+    )?;
+
+    let audit = run(root.path(), &["audit", "--jobs", "1"])?;
+    assert_status(&audit, 0);
+    let audit_json: Value = serde_json::from_str(&audit.stdout)?;
+    assert_eq!(
+        audit_json.get("status").and_then(Value::as_str),
+        Some("complete")
+    );
+    assert_eq!(
+        audit_json.get("limitationCount").and_then(Value::as_u64),
+        Some(0),
+    );
+    let run_id = field(&audit.stdout, "runId")?;
+    assert_eq!(
+        findings(root.path(), &run_id)?,
+        BTreeSet::from([
+            finding(
+                "src/used.ts",
+                "UsedType",
+                "type",
+                "zero grounded exact fan-in",
+            ),
+            finding(
+                "src/nested/dead.ts",
+                "nestedDeadValue",
+                "value",
+                "zero grounded exact fan-in",
+            ),
+            finding(
+                "src/nested/dead.ts",
+                "NestedDeadType",
+                "type",
+                "zero grounded exact fan-in",
+            ),
+        ]),
+    );
+    Ok(())
+}
+
+fn verify_external_script_late_limitation_state() -> Result<(), Box<dyn std::error::Error>> {
+    const PATTERN: &str = "./node*/**/*.ts";
+
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"glob-vue-external","private":true,"type":"module"}"#,
+    )?;
+    write(
+        root.path(),
+        "src/App.vue",
+        "<template><div /></template><script lang=\"ts\" src=\"./logic.ts\"></script>\n",
+    )?;
+    write(
+        root.path(),
+        "src/logic.ts",
+        &format!("const views = import.meta.glob('{PATTERN}'); console.log(views);\n"),
+    )?;
+
+    let audit = run(root.path(), &["audit", "--jobs", "1"])?;
+    assert_status(&audit, 0);
+    let audit_json: Value = serde_json::from_str(&audit.stdout)?;
+    assert_eq!(
+        audit_json.get("status").and_then(Value::as_str),
+        Some("incomplete"),
+    );
+    assert_eq!(
+        audit_json.get("limitationCount").and_then(Value::as_u64),
+        Some(1),
+    );
+    let run_id = field(&audit.stdout, "runId")?;
+    let overview = overview(root.path(), &run_id)?;
+    let limitation = limitation_for_pattern(required_array(&overview, "/limitations")?, PATTERN)?;
+    assert_eq!(required_str(limitation, "/targetScope/kind")?, "package");
+    assert_eq!(
+        capability_state(&overview, "sfc/vue.v1"),
+        Some("incomplete"),
     );
     Ok(())
 }

@@ -222,6 +222,45 @@ fn wildcard_hard_excluded_contexts_remain_package_scoped() -> Result<(), Box<dyn
 }
 
 #[test]
+fn terminal_file_wildcards_do_not_imply_hard_excluded_traversal()
+-> Result<(), Box<dyn std::error::Error>> {
+    let sources = vec![
+        snapshot(
+            "src/main.ts",
+            b"import.meta.glob(['./*', '!./main.ts']);",
+            1,
+        )?,
+        snapshot("src/one.ts", b"export const one = 1;", 2)?,
+    ];
+    let mut facts = vec![extract(&sources[0])?];
+    let bound = scope_import_meta_globs(&mut facts, &sources, &["node_modules"]);
+
+    assert!(facts[0].limitations.is_empty());
+    assert_eq!(bound.len(), 1);
+    assert_eq!(bound[0].target, sources[1].id);
+    Ok(())
+}
+
+#[test]
+fn terminal_globstars_remain_opaque_when_they_can_traverse_excluded_directories()
+-> Result<(), Box<dyn std::error::Error>> {
+    let sources = vec![snapshot("src/main.ts", b"import.meta.glob('./**');", 1)?];
+    let mut facts = vec![extract(&sources[0])?];
+    let bound = scope_import_meta_globs(&mut facts, &sources, &["node_modules"]);
+
+    assert!(bound.is_empty());
+    assert!(matches!(
+        facts[0].limitations.as_slice(),
+        [Limitation::ImportMetaGlobUnsupported {
+            target_scope: ImportMetaGlobTargetScope::Package,
+            candidates,
+            ..
+        }] if candidates.is_empty()
+    ));
+    Ok(())
+}
+
+#[test]
 fn unsupported_relative_grammar_keeps_its_cross_package_static_domain()
 -> Result<(), Box<dyn std::error::Error>> {
     let sources = vec![
@@ -266,6 +305,43 @@ fn native_only_components_match_wildcards_without_display_lowering()
         PhysicalFileIdentity::Unix {
             device: 1,
             inode: 2,
+        },
+        b"export const native = 1;".to_vec(),
+    );
+    let sources = vec![importer, target.clone()];
+    let mut facts = vec![extract(&sources[0])?];
+    let bound = scope_import_meta_globs(&mut facts, &sources, &[]);
+
+    assert!(facts[0].limitations.is_empty());
+    assert_eq!(bound.len(), 1);
+    assert_eq!(bound[0].target, target.id);
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_wtf8_components_match_wildcards_without_utf16_payload_bytes()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use std::path::PathBuf;
+
+    let importer = snapshot("src/main.ts", b"import.meta.glob('./pages/*.ts');", 1)?;
+    let mut native_relative = PathBuf::from("src/pages");
+    native_relative.push(OsString::from_wide(&[
+        0xd800,
+        u16::from(b'.'),
+        u16::from(b't'),
+        u16::from(b's'),
+    ]));
+    let native_path = RepoPath::from_native_relative(&native_relative)?;
+    let target = SourceSnapshot::new(
+        native_path,
+        SourceKind::TypeScript,
+        SourceRoles::default(),
+        PhysicalFileIdentity::Windows {
+            volume_serial: 1,
+            file_index: 2,
         },
         b"export const native = 1;".to_vec(),
     );
