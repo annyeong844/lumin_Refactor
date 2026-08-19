@@ -10,7 +10,7 @@ use super::{NamespaceBinding, NamespaceGuard, entry_exists, require_state_volume
 
 const STORE_HEADER: TableDefinition<&str, &[u8]> = TableDefinition::new("store-header");
 const STORE_HEADER_KEY: &str = "namespace";
-pub(super) const STORE_HEADER_SCHEMA: &str = "lumin-lifecycle-store-header.v3";
+pub(super) const STORE_HEADER_SCHEMA: &str = "lumin-lifecycle-store-header.v4";
 pub(super) const STORE_HEADER_TABLE_NAME: &str = "store-header";
 
 #[derive(Deserialize, Serialize)]
@@ -114,10 +114,15 @@ fn verify_store_header_bytes(
         StoreError::Integrity(format!("lifecycle.store header is malformed: {error}"))
     })?;
     if header.schema_version != STORE_HEADER_SCHEMA {
-        return Err(StoreError::Integrity(format!(
+        return Err(StoreError::IncompatibleStateSchema(format!(
             "lifecycle.store schema {} is unsupported; expected {STORE_HEADER_SCHEMA}",
             header.schema_version
         )));
+    }
+    if header.binding.cache_evictions.is_none() {
+        return Err(StoreError::IncompatibleStateSchema(
+            "lifecycle.store omitted the cache-eviction parent binding".to_owned(),
+        ));
     }
     if header.binding != *binding {
         return Err(StoreError::Integrity(

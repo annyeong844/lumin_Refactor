@@ -17,7 +17,8 @@ pub use gate_query::{
     query_run_source_classification, query_run_source_envelope,
 };
 pub use lumin_evidence::{
-    GateDecision, GateOperationResult, RecordLookup, RetentionMutationResult, RetentionPlanScope,
+    CacheCleanupDeliveryStatus, CacheCleanupResult, GateDecision, GateOperationResult,
+    RecordLookup, RetentionMutationResult, RetentionPlanScope,
 };
 pub use lumin_store::RunCatalogCursor;
 pub use retention::{
@@ -47,8 +48,8 @@ use lumin_inventory::{
 };
 use lumin_model::{
     AttemptId, AttemptStatus, CapabilityState, ConfigObservation, FileFacts, Limitation,
-    RepositoryRootIdentity, ResolutionOutcome, ResolutionProfile, ResolvedSourceUse, RoleOverride,
-    RunId, SfcDialect, SourceSnapshot, digest_hex,
+    OperationId, RepositoryRootIdentity, ResolutionOutcome, ResolutionProfile, ResolvedSourceUse,
+    RoleOverride, RunId, SfcDialect, SourceSnapshot, append_length_prefixed, digest_hex,
 };
 use lumin_resolve::{ConfigDemand, ResolverError, ResolverOutput};
 use lumin_store::{PublishedRun, RepositoryStore, RunCatalogRecord, StoreError};
@@ -977,11 +978,40 @@ fn collect_limitations(
     limitations
 }
 
-pub fn clean_cache(root: &Path) -> Result<(), EngineError> {
+#[derive(Clone, Debug)]
+pub struct CleanCacheRequest {
+    pub root: PathBuf,
+    pub operation_id: OperationId,
+}
+
+pub fn clean_cache(request: &CleanCacheRequest) -> Result<CacheCleanupResult, EngineError> {
+    let context = open_repository_context(&request.root)?;
+    let request_digest = cache_cleanup_request_digest(&context.repository_id);
+    context
+        .store
+        .clean_cache_payloads(&request.operation_id, &request_digest)
+        .map_err(Into::into)
+}
+
+pub fn record_cache_cleanup_delivery(
+    root: &Path,
+    operation_id: &OperationId,
+    request_digest: &str,
+    delivery: CacheCleanupDeliveryStatus,
+) -> Result<(), EngineError> {
     open_repository_context(root)?
         .store
-        .clean_cache_payloads()
+        .record_cache_cleanup_delivery(operation_id, request_digest, delivery)
         .map_err(Into::into)
+}
+
+fn cache_cleanup_request_digest(repository_id: &lumin_model::RepositoryId) -> String {
+    let mut framed = Vec::new();
+    append_length_prefixed(&mut framed, b"lumin-cache-clean-request.v2");
+    append_length_prefixed(&mut framed, repository_id.as_str().as_bytes());
+    append_length_prefixed(&mut framed, b"cache-clean");
+    append_length_prefixed(&mut framed, b"lumin.cache-cleanup.v2");
+    digest_hex(&framed)
 }
 
 pub fn load_run(

@@ -27,6 +27,7 @@ pub enum FeatureSet {
     LifecycleFault,
     PublicationCrash,
     RetentionCrash,
+    LifecycleAndPublicationCrash,
     PublicationAndRetentionCrash,
 }
 impl FeatureSet {
@@ -36,6 +37,9 @@ impl FeatureSet {
             Self::LifecycleFault => &["lifecycle-test-fault"],
             Self::PublicationCrash => &["publication-test-crash"],
             Self::RetentionCrash => &["retention-test-crash"],
+            Self::LifecycleAndPublicationCrash => {
+                &["lifecycle-test-fault", "publication-test-crash"]
+            }
             Self::PublicationAndRetentionCrash => {
                 &["publication-test-crash", "retention-test-crash"]
             }
@@ -47,13 +51,17 @@ impl FeatureSet {
             Self::LifecycleFault => "lf",
             Self::PublicationCrash => "pc",
             Self::RetentionCrash => "rc",
+            Self::LifecycleAndPublicationCrash => "lfpc",
             Self::PublicationAndRetentionCrash => "pcrc",
         }
     }
     pub fn is_crash(self) -> bool {
         matches!(
             self,
-            Self::PublicationCrash | Self::RetentionCrash | Self::PublicationAndRetentionCrash
+            Self::PublicationCrash
+                | Self::RetentionCrash
+                | Self::LifecycleAndPublicationCrash
+                | Self::PublicationAndRetentionCrash
         )
     }
 }

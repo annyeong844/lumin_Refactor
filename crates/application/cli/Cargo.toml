@@ -7,7 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-lifecycle-test-fault = []
+lifecycle-test-fault = ["lumin-engine/cache-cleanup-test-fault"]
 publication-test-crash = ["lumin-engine/publication-test-crash"]
 retention-test-crash = ["lumin-engine/retention-test-crash"]
 
@@ -39,6 +39,11 @@ required-features = ["publication-test-crash"]
 name = "publication_retention_race"
 path = "tests/publication_retention_race.rs"
 required-features = ["publication-test-crash", "retention-test-crash"]
+
+[[test]]
+name = "cache_cleanup_publication_race"
+path = "tests/cache_cleanup_publication_race.rs"
+required-features = ["lifecycle-test-fault", "publication-test-crash"]
 
 [dependencies]
 lumin-engine = { path = "../engine" }

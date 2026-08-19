@@ -82,6 +82,8 @@ pub struct RunCatalogCursor {
 
 #[derive(Debug, Error)]
 pub enum StoreError {
+    #[error("incompatible state schema: {0}")]
+    IncompatibleStateSchema(String),
     #[error("state namespace integrity failure: {0}")]
     Integrity(String),
     #[error("state I/O failure: {0}")]

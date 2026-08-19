@@ -5,6 +5,7 @@ use redb::{
     WriteTransaction,
 };
 
+use crate::cache::{CACHE_CLEANUP_OPERATIONS, CACHE_EVICTION_AUTHORIZATIONS};
 use crate::gate::{GATES, OPERATIONS, TRANSITIONS};
 use crate::retention::{RETENTION_OPERATIONS, RETENTION_PLANS, RETENTION_TOMBSTONES, RUN_PINS};
 use crate::{ATTEMPT_LEASES, POINTERS, RUN_CATALOG, SEQUENCES, StoreError, backend_error};
@@ -13,8 +14,10 @@ use super::super::super::store_header::STORE_HEADER_TABLE_NAME;
 use super::LogicalStoreSnapshot;
 use super::validation::validate_referential_closure;
 
-const KNOWN_TABLES: [&str; 12] = [
+const KNOWN_TABLES: [&str; 14] = [
     "attempt-leases",
+    "cache-cleanup-operations",
+    "cache-eviction-authorizations",
     "gates",
     "operations",
     "pointers",
@@ -42,6 +45,8 @@ pub(super) fn read_snapshot(read: &ReadTransaction) -> Result<LogicalStoreSnapsh
         retention_operations: read_bytes_table(read, RETENTION_OPERATIONS)?,
         retention_tombstones: read_bytes_table(read, RETENTION_TOMBSTONES)?,
         run_pins: read_bytes_table(read, RUN_PINS)?,
+        cache_cleanup_operations: read_bytes_table(read, CACHE_CLEANUP_OPERATIONS)?,
+        cache_eviction_authorizations: read_bytes_table(read, CACHE_EVICTION_AUTHORIZATIONS)?,
     };
     validate_referential_closure(&snapshot)?;
     Ok(snapshot)
@@ -63,6 +68,16 @@ pub(super) fn write_snapshot(
     write_bytes_table(&write, RETENTION_OPERATIONS, &snapshot.retention_operations)?;
     write_bytes_table(&write, RETENTION_TOMBSTONES, &snapshot.retention_tombstones)?;
     write_bytes_table(&write, RUN_PINS, &snapshot.run_pins)?;
+    write_bytes_table(
+        &write,
+        CACHE_CLEANUP_OPERATIONS,
+        &snapshot.cache_cleanup_operations,
+    )?;
+    write_bytes_table(
+        &write,
+        CACHE_EVICTION_AUTHORIZATIONS,
+        &snapshot.cache_eviction_authorizations,
+    )?;
     write.commit().map_err(backend_error)
 }
 

@@ -256,6 +256,7 @@ fn mutation_output(
         exit_code,
         stdout,
         result_delivery: CommandResultDelivery::RecoverableMutation,
+        mutation_delivery: None,
     }
     .into())
 }
@@ -282,6 +283,7 @@ fn json_output(
                 exit_code: 0,
                 stdout,
                 result_delivery,
+                mutation_delivery: None,
             }
             .into()
         })

@@ -27,6 +27,18 @@ fn require_integrity_failure(
     }
 }
 
+fn require_incompatible_schema(
+    result: Result<RepositoryStore, StoreError>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match result {
+        Err(StoreError::IncompatibleStateSchema(_)) => Ok(()),
+        Err(error) => Err(Box::new(error)),
+        Ok(_) => Err(Box::new(std::io::Error::other(
+            "incompatible state schema was adopted",
+        ))),
+    }
+}
+
 #[test]
 fn reserved_identity_snapshot_advances_after_state_mutation()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -167,6 +179,23 @@ fn marker_and_lock_bind_the_inventory_owned_repository_identity()
 }
 
 #[test]
+fn prior_marker_without_cache_eviction_binding_is_never_adopted()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    drop(open_store(root.path())?);
+    let marker_path = root.path().join(".lumin/repository.json");
+    let mut marker = serde_json::from_slice::<RepositoryMarker>(&fs::read(&marker_path)?)?;
+    marker.binding.cache_evictions = None;
+    let mut prior_bytes = serde_json::to_vec_pretty(&marker)?;
+    prior_bytes.push(b'\n');
+    fs::write(&marker_path, &prior_bytes)?;
+
+    require_incompatible_schema(open_store(root.path()))?;
+    assert_eq!(fs::read(marker_path)?, prior_bytes);
+    Ok(())
+}
+
+#[test]
 fn state_directory_replacement_cannot_form_a_second_domain()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
@@ -247,6 +276,38 @@ fn rejects_copied_real_parent_for_every_managed_kind() -> Result<(), Box<dyn std
 }
 
 #[test]
+fn rejects_copied_cache_eviction_parent() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    drop(open_store(root.path())?);
+    let trash = root.path().join(".lumin/trash");
+    let parent = trash.join("cache-evictions");
+    let original = trash.join("cache-evictions.original");
+    fs::rename(&parent, &original)?;
+    fs::create_dir(&parent)?;
+    fs::copy(
+        original.join("namespace.anchor"),
+        parent.join("namespace.anchor"),
+    )?;
+
+    require_integrity_failure(open_store(root.path()))
+}
+
+#[test]
+fn rejects_byte_identical_cache_eviction_anchor_replacement()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    drop(open_store(root.path())?);
+    let parent = root.path().join(".lumin/trash/cache-evictions");
+    let anchor = parent.join("namespace.anchor");
+    let replacement = parent.join("replacement.anchor");
+    fs::write(&replacement, fs::read(&anchor)?)?;
+    fs::remove_file(&anchor)?;
+    fs::rename(replacement, anchor)?;
+
+    require_integrity_failure(open_store(root.path()))
+}
+
+#[test]
 fn rejects_byte_identical_anchor_replacement() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     drop(open_store(root.path())?);
@@ -301,6 +362,37 @@ fn resumes_exact_nonce_bound_pre_marker_parents() -> Result<(), Box<dyn std::err
     assert!(state.join("lifecycle.store").is_file());
     assert!(state.join("trash/namespace.anchor").is_file());
     assert!(state.join("cache/namespace.anchor").is_file());
+    Ok(())
+}
+
+#[test]
+fn resumes_exact_nonce_bound_pre_marker_cache_eviction_parent()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    drop(open_store(root.path())?);
+    let state = root.path().join(".lumin");
+    let parent = state.join("trash/cache-evictions");
+    let parent_identity = lumin_inventory::physical_file_identity(&parent)?;
+    let anchor_identity =
+        lumin_inventory::physical_file_identity(&parent.join("namespace.anchor"))?;
+    fs::rename(
+        state.join("repository.json"),
+        root.path().join("marker.saved"),
+    )?;
+    fs::rename(
+        state.join("lifecycle.store"),
+        root.path().join("store.saved"),
+    )?;
+
+    drop(open_store(root.path())?);
+    assert_eq!(
+        lumin_inventory::physical_file_identity(&parent)?,
+        parent_identity
+    );
+    assert_eq!(
+        lumin_inventory::physical_file_identity(&parent.join("namespace.anchor"))?,
+        anchor_identity
+    );
     Ok(())
 }
 

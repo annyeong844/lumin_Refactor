@@ -47,8 +47,8 @@ These are execution-matrix counts, not a percentage estimate of product code.
 | --- | ---: | ---: | ---: | --- |
 | Standard | 86 | 65 | 21 | Focused `corpus::tests::mode_counts`: 65 mapped, 21 unmapped. |
 | Determinism | 86 | 65 | 21 | Focused `corpus::tests::mode_counts`: 65 mapped, 21 unmapped. |
-| Store crash | 11 | 4 | 7 | Mapping count only; Phase 1 exit still requires the complete lane. |
-| **Total execution obligations** | **183** | **134** | **49** | This total deliberately counts each required lane execution. |
+| Store crash | 11 | 5 | 6 | Focused `corpus::tests::mode_counts`: 5 mapped, 6 unmapped; `cache-cleanup-publication-race`: 1 passed, 0 failed. |
+| **Total execution obligations** | **183** | **135** | **48** | This total deliberately counts each required lane execution. |
 
 Known non-corpus exit gaps:
 
@@ -143,7 +143,7 @@ unmapped row or silent fallback.
 
 Owner routes: ARCH-002 and SLICE-001 AC 17, 18, 25, 28, 30, 31, 34, and 36.
 
-- [ ] Map and pass the remaining seven store-crash rows through real public child
+- [ ] Map and pass the remaining six store-crash rows through real public child
   processes and named fault points.
 - [ ] Prove operation retry, publication, retention, migration, namespace, and
   latest-pointer recovery agree with public lookup state after every death.

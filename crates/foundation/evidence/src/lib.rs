@@ -1,7 +1,9 @@
+mod cache;
 mod delta;
 mod gate;
 mod retention;
 
+pub use cache::*;
 pub use gate::*;
 pub use retention::*;
 

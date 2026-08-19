@@ -23,7 +23,7 @@ AI agents grounded, queryable evidence before and after they change code.
 | REVIEW-001 | superseded | `reviews/architecture-v1-adversarial-2026-07-15.md` | Records the first adversarial findings and first amendment decisions. |
 | REVIEW-002 | complete, monitoring | `reviews/architecture-v1-independent-verification-2026-07-15.md` | Preserves the exact independent verification and may reopen only on a concrete regression or counterexample. |
 | REVIEW-003 | frozen | `reviews/dependency-edge-identity-amendment-2026-08-10.md` | Owns the proportional workspace dependency policy, isolated Cargo admission, and loaded-source boundary. |
-| REVIEW-004 | independent PASS; owner merge pending | `reviews/cache-cleanup-protocol-amendment-2026-08-17.md` | Owns ARCH-000 cache-command registration and the operation-authenticated, durability-bound active-cache eviction amendment; exact owner candidate `0db2bf15d2` passed independent review and implementation remains blocked until owner merge. |
+| REVIEW-004 | frozen; implementation active | `reviews/cache-cleanup-protocol-amendment-2026-08-17.md` | Owns ARCH-000 cache-command registration and the operation-authenticated, durability-bound active-cache eviction amendment; implementation follows the merged independent-PASS owner. |
 
 ## Active Work
 
