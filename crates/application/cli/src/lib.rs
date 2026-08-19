@@ -24,6 +24,7 @@ pub struct CommandOutput {
     pub stdout: String,
     pub stderr: String,
     pub result_delivery: CommandResultDelivery,
+    pub mutation_delivery: Option<MutationDeliveryRecord>,
 }
 
 impl CommandOutput {
@@ -39,6 +40,14 @@ impl CommandOutput {
 pub enum CommandResultDelivery {
     ReadOnly,
     RecoverableMutation,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MutationDeliveryRecord {
+    CacheCleanup {
+        operation_id: OperationId,
+        request_digest: String,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -98,6 +107,7 @@ pub fn execute(root: &Path, arguments: Vec<OsString>) -> CommandOutput {
                 stdout: String::new(),
                 stderr: format!("lumin: {error}\n"),
                 result_delivery: CommandResultDelivery::ReadOnly,
+                mutation_delivery: None,
             };
         }
     };
@@ -128,6 +138,7 @@ fn execute_with_input(
             stdout: String::new(),
             stderr: format!("lumin: {error}\n"),
             result_delivery: CommandResultDelivery::ReadOnly,
+            mutation_delivery: None,
         },
     }
 }
@@ -149,6 +160,7 @@ struct CommandSuccess {
     exit_code: i32,
     stdout: String,
     result_delivery: CommandResultDelivery,
+    mutation_delivery: Option<MutationDeliveryRecord>,
 }
 
 impl From<CommandSuccess> for CommandOutput {
@@ -158,6 +170,7 @@ impl From<CommandSuccess> for CommandOutput {
             stdout: success.stdout,
             stderr: String::new(),
             result_delivery: success.result_delivery,
+            mutation_delivery: success.mutation_delivery,
         }
     }
 }
@@ -195,6 +208,7 @@ fn success(stdout: String) -> CommandOutput {
         exit_code: 0,
         stdout,
         result_delivery: CommandResultDelivery::ReadOnly,
+        mutation_delivery: None,
     }
     .into()
 }
@@ -847,6 +861,7 @@ fn gate_command_output(result: &GateOperationResult) -> Result<CommandOutput, Cl
         exit_code: decision_exit_code(result.decision),
         stdout,
         result_delivery: CommandResultDelivery::RecoverableMutation,
+        mutation_delivery: None,
     }
     .into())
 }

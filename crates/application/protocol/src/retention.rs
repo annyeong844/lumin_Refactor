@@ -1,6 +1,7 @@
 mod runs;
 
 use lumin_evidence::{
+    CacheCleanupDeliveryStatus, CacheCleanupOperationRecord, CacheCleanupOperationStatus,
     GateRecord, LifecycleOperationRecord, RecordLookup, RetentionMutationResult,
     RetentionOperationRecord, RetentionPlanExclusion, RetentionPlanItem, RetentionPlanRecord,
     RetentionPlanScope, RetentionPlanState, RetentionTombstoneEnvelope, RunPinRecord,
@@ -78,7 +79,23 @@ pub enum LookupTombstoneResponseDto {
 #[serde(untagged)]
 pub enum LifecycleOperationShowResponseDto {
     Gate(OperationShowResponseDto),
+    CacheCleanup(CacheCleanupOperationResponseDto),
     Retention(RetentionOperationResponseDto),
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheCleanupOperationResponseDto {
+    pub schema_version: &'static str,
+    pub operation_id: OperationId,
+    pub kind: &'static str,
+    pub request_digest: String,
+    pub status: CacheCleanupOperationStatus,
+    pub interruption_count: u64,
+    pub authorized_count: u64,
+    pub validated_count: u64,
+    pub result: Option<crate::CacheCleanupResponseDto>,
+    pub last_delivery_status: CacheCleanupDeliveryStatus,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -225,6 +242,11 @@ pub fn lifecycle_operation_response(
         LifecycleOperationRecord::Gate(operation) => {
             LifecycleOperationShowResponseDto::Gate(operation_show_response(operation))
         }
+        LifecycleOperationRecord::CacheCleanup(operation) => {
+            LifecycleOperationShowResponseDto::CacheCleanup(cache_cleanup_operation_response(
+                operation,
+            ))
+        }
         LifecycleOperationRecord::Retention {
             operation,
             current_physical_reclamation_pending,
@@ -234,6 +256,23 @@ pub fn lifecycle_operation_response(
             operation: operation.as_ref().clone(),
             current_physical_reclamation_pending: *current_physical_reclamation_pending,
         }),
+    }
+}
+
+fn cache_cleanup_operation_response(
+    operation: &CacheCleanupOperationRecord,
+) -> CacheCleanupOperationResponseDto {
+    CacheCleanupOperationResponseDto {
+        schema_version: "lumin.cache-cleanup-operation.v1",
+        operation_id: operation.operation_id.clone(),
+        kind: "cache-clean",
+        request_digest: operation.request_digest.clone(),
+        status: operation.status,
+        interruption_count: operation.interruption_count,
+        authorized_count: operation.authorized_count(),
+        validated_count: operation.validated_count,
+        result: operation.result.as_ref().map(crate::cache_cleanup_response),
+        last_delivery_status: operation.last_delivery_status,
     }
 }
 

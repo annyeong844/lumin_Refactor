@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -16,6 +17,7 @@ pub(crate) enum EntryKind {
 pub(crate) enum EntryAccess {
     ReadOnly,
     ReadWrite,
+    Move,
 }
 
 #[derive(Debug)]
@@ -83,6 +85,10 @@ impl HeldEntry {
 
     pub(crate) fn identity(&self) -> &PhysicalFileIdentity {
         &self.identity
+    }
+
+    pub(crate) fn links(&self) -> u64 {
+        self.links
     }
 
     pub(crate) fn validate_path(
@@ -197,6 +203,184 @@ pub(crate) fn same_volume(left: &PhysicalFileIdentity, right: &PhysicalFileIdent
 
 pub(crate) fn same_volume_and_mount(left: &HeldEntry, right: &HeldEntry) -> bool {
     same_volume(left.identity(), right.identity()) && left.mount_id == right.mount_id
+}
+
+pub(crate) fn move_entry_noreplace(
+    source_parent: &HeldEntry,
+    source_name: &OsStr,
+    source: &HeldEntry,
+    destination_parent: &HeldEntry,
+    destination_name: &OsStr,
+) -> Result<(), StoreError> {
+    require_normal_component(source_name, "cache move source")?;
+    require_normal_component(destination_name, "cache move destination")?;
+    if !same_volume_and_mount(source_parent, destination_parent)
+        || !same_volume_and_mount(source_parent, source)
+    {
+        return Err(StoreError::Integrity(
+            "cache move crossed its bound volume or mount".to_owned(),
+        ));
+    }
+    move_entry_noreplace_platform(
+        source_parent,
+        source_name,
+        source,
+        destination_parent,
+        destination_name,
+    )
+}
+
+fn require_normal_component(component: &OsStr, label: &str) -> Result<(), StoreError> {
+    let path = Path::new(component);
+    let mut components = path.components();
+    if !matches!(components.next(), Some(std::path::Component::Normal(_)))
+        || components.next().is_some()
+    {
+        return Err(StoreError::Integrity(format!(
+            "{label} must be one normal component"
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[allow(
+    unsafe_code,
+    reason = "the supported Linux x64 lane requires renameat2 for a no-replace relative move"
+)]
+fn move_entry_noreplace_platform(
+    source_parent: &HeldEntry,
+    source_name: &OsStr,
+    _source: &HeldEntry,
+    destination_parent: &HeldEntry,
+    destination_name: &OsStr,
+) -> Result<(), StoreError> {
+    use std::ffi::{CString, c_char, c_int, c_long, c_uint};
+    use std::os::fd::AsRawFd;
+    use std::os::unix::ffi::OsStrExt;
+
+    const SYS_RENAMEAT2: c_long = 316;
+    const RENAME_NOREPLACE: c_uint = 1;
+    unsafe extern "C" {
+        fn syscall(number: c_long, ...) -> c_long;
+    }
+
+    let source_name = CString::new(source_name.as_bytes())
+        .map_err(|_| StoreError::Integrity("cache move source contains NUL".to_owned()))?;
+    let destination_name = CString::new(destination_name.as_bytes())
+        .map_err(|_| StoreError::Integrity("cache move destination contains NUL".to_owned()))?;
+    // SAFETY: both parent descriptors and NUL-terminated component names remain
+    // live for the syscall; RENAME_NOREPLACE forbids destination replacement.
+    let result = unsafe {
+        syscall(
+            SYS_RENAMEAT2,
+            source_parent.file().as_raw_fd() as c_int,
+            source_name.as_ptr().cast::<c_char>(),
+            destination_parent.file().as_raw_fd() as c_int,
+            destination_name.as_ptr().cast::<c_char>(),
+            RENAME_NOREPLACE,
+        )
+    };
+    if result != 0 {
+        return Err(io_error(std::io::Error::last_os_error()));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+#[allow(
+    unsafe_code,
+    reason = "Windows requires NtSetInformationFile to bind a no-replace move to the opened source and destination-parent handles"
+)]
+fn move_entry_noreplace_platform(
+    _source_parent: &HeldEntry,
+    _source_name: &OsStr,
+    source: &HeldEntry,
+    destination_parent: &HeldEntry,
+    destination_name: &OsStr,
+) -> Result<(), StoreError> {
+    use std::mem::{offset_of, size_of};
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::io::AsRawHandle;
+
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::Storage::FileSystem::FILE_RENAME_INFO;
+
+    #[repr(C)]
+    struct IoStatusBlock {
+        status_or_pointer: usize,
+        information: usize,
+    }
+
+    #[link(name = "ntdll")]
+    unsafe extern "system" {
+        fn NtSetInformationFile(
+            file_handle: HANDLE,
+            io_status_block: *mut IoStatusBlock,
+            file_information: *const core::ffi::c_void,
+            length: u32,
+            file_information_class: i32,
+        ) -> i32;
+    }
+
+    const FILE_RENAME_INFORMATION: i32 = 10;
+
+    let name = destination_name.encode_wide().collect::<Vec<_>>();
+    let name_bytes = name
+        .len()
+        .checked_mul(size_of::<u16>())
+        .and_then(|length| u32::try_from(length).ok())
+        .ok_or_else(|| StoreError::Integrity("cache move destination is too long".to_owned()))?;
+    let bytes = offset_of!(FILE_RENAME_INFO, FileName)
+        .checked_add(name.len() * size_of::<u16>())
+        .ok_or_else(|| StoreError::Integrity("cache move buffer overflow".to_owned()))?;
+    let words = bytes.div_ceil(size_of::<u64>());
+    let mut buffer = vec![0_u64; words];
+    let information = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+    // SAFETY: `buffer` is aligned by u64 and sized for the fixed header plus
+    // the exact UTF-16 component payload. Both handles remain live for the call.
+    unsafe {
+        (*information).Anonymous.ReplaceIfExists = false;
+        (*information).RootDirectory = destination_parent.file().as_raw_handle() as HANDLE;
+        (*information).FileNameLength = name_bytes;
+        std::ptr::copy_nonoverlapping(
+            name.as_ptr(),
+            std::ptr::addr_of_mut!((*information).FileName).cast::<u16>(),
+            name.len(),
+        );
+        let mut io_status = IoStatusBlock {
+            status_or_pointer: 0,
+            information: 0,
+        };
+        let status = NtSetInformationFile(
+            source.file().as_raw_handle() as HANDLE,
+            &mut io_status,
+            information.cast(),
+            u32::try_from(bytes)
+                .map_err(|_| StoreError::Integrity("cache move buffer exceeds u32".to_owned()))?,
+            FILE_RENAME_INFORMATION,
+        );
+        if status < 0 {
+            return Err(StoreError::Io(format!(
+                "cache handle-bound move failed with NTSTATUS 0x{:08x}",
+                status as u32
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(any(all(target_os = "linux", target_arch = "x86_64"), windows)))]
+fn move_entry_noreplace_platform(
+    _source_parent: &HeldEntry,
+    _source_name: &OsStr,
+    _source: &HeldEntry,
+    _destination_parent: &HeldEntry,
+    _destination_name: &OsStr,
+) -> Result<(), StoreError> {
+    Err(StoreError::Integrity(
+        "cache no-replace movement supports Windows and Linux x64".to_owned(),
+    ))
 }
 
 #[cfg(target_os = "linux")]
@@ -372,16 +556,33 @@ fn open_nofollow(path: &Path, kind: EntryKind, access: EntryAccess) -> std::io::
 
     let mut options = OpenOptions::new();
     options.read(true);
+    use windows_sys::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        DELETE, FILE_FLAG_WRITE_THROUGH, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
     if matches!(access, EntryAccess::ReadWrite) {
         options.write(true);
+    } else if matches!(access, EntryAccess::Move) {
+        let write = if matches!(kind, EntryKind::RegularFile) {
+            GENERIC_WRITE
+        } else {
+            0
+        };
+        options.access_mode(GENERIC_READ | write | DELETE);
     }
     let directory = if matches!(kind, EntryKind::Directory) {
         FILE_FLAG_BACKUP_SEMANTICS
     } else {
         0
     };
+    let write_through = if matches!(access, EntryAccess::Move) {
+        FILE_FLAG_WRITE_THROUGH
+    } else {
+        0
+    };
     options
-        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | directory)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | directory | write_through)
         .open(path)
 }
 

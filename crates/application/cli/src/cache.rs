@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use crate::{
-    Arguments, CliError, CommandOutput, CommandResultDelivery, CommandSuccess, parse_read_format,
-    require_json,
+    Arguments, CliError, CommandOutput, CommandResultDelivery, CommandSuccess,
+    MutationDeliveryRecord, parse_operation_id, require_json,
 };
 
 pub(super) fn execute(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {
@@ -13,14 +13,38 @@ pub(super) fn execute(root: &Path, arguments: &mut Arguments) -> Result<CommandO
         return Err(CliError::UnknownArgument(subcommand));
     }
 
-    let format = parse_read_format(arguments, "cache clean argument")?;
+    let mut operation_id = None;
+    let mut format = None;
+    while let Some(argument) = arguments.next_utf8("cache clean argument")? {
+        match argument.as_str() {
+            "--operation-id" if operation_id.is_none() => {
+                operation_id = Some(parse_operation_id(
+                    arguments.required_utf8("--operation-id")?,
+                )?);
+            }
+            "--format" if format.is_none() => {
+                format = Some(arguments.required_utf8("--format")?);
+            }
+            _ => return Err(CliError::UnknownArgument(argument)),
+        }
+    }
+    let operation_id =
+        operation_id.ok_or_else(|| CliError::MissingValue("--operation-id".to_owned()))?;
+    let format = format.unwrap_or_else(|| "json".to_owned());
     require_json(&format)?;
-    lumin_engine::clean_cache(root)?;
-    let stdout = lumin_protocol::to_json(&lumin_protocol::cache_cleanup_response())?;
+    let result = lumin_engine::clean_cache(&lumin_engine::CleanCacheRequest {
+        root: root.to_path_buf(),
+        operation_id: operation_id.clone(),
+    })?;
+    let stdout = lumin_protocol::to_json(&lumin_protocol::cache_cleanup_response(&result))?;
     Ok(CommandSuccess {
         exit_code: 0,
         stdout,
         result_delivery: CommandResultDelivery::RecoverableMutation,
+        mutation_delivery: Some(MutationDeliveryRecord::CacheCleanup {
+            operation_id,
+            request_digest: result.request_digest,
+        }),
     }
     .into())
 }

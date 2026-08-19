@@ -1,3 +1,4 @@
+mod cache;
 mod external;
 mod retention;
 
@@ -32,6 +33,7 @@ pub(super) fn validate_referential_closure(
     validate_transition_gate_refs(&transitions, &gates)?;
     crate::publication::validate_attempt_leases(&snapshot.attempt_leases)?;
     validate_run_catalog(snapshot)?;
+    cache::validate_cache(snapshot, &operations)?;
     retention::validate_retention(snapshot, &operations)?;
     validate_pointers(snapshot)
 }

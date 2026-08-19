@@ -333,6 +333,10 @@ fn marker_empty_line() -> Result<(), String> {
 fn feat_flags() {
     assert!(FeatureSet::None.cargo_features().is_empty());
     assert_eq!(
+        FeatureSet::LifecycleAndPublicationCrash.cargo_features(),
+        &["lifecycle-test-fault", "publication-test-crash"]
+    );
+    assert_eq!(
         FeatureSet::PublicationAndRetentionCrash
             .cargo_features()
             .len(),

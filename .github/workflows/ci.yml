@@ -244,6 +244,10 @@ jobs:
         shell: pwsh
         run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy -p lumin-cli --test publication_retention_race --features publication-test-crash,retention-test-crash --locked -- -D warnings'
 
+      - name: Lint cache cleanup publication race corpus
+        shell: pwsh
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy -p lumin-cli --test cache_cleanup_publication_race --features lifecycle-test-fault,publication-test-crash --locked -- -D warnings'
+
       - name: Test all targets
         shell: pwsh
         run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --workspace --all-targets --locked'

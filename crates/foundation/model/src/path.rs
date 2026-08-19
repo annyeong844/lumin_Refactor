@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
@@ -56,6 +57,39 @@ pub enum RepoPathError {
     ForeignPlatformComponent,
     #[error("native NUL path stream is malformed or noncanonical")]
     InvalidNativeNulStream,
+}
+
+pub fn encode_native_path_component(value: &OsStr) -> Result<Vec<u8>, RepoPathError> {
+    let component = native_io::native_component(value)?;
+    let (tag, payload) = component_payload(&component);
+    let mut canonical = Vec::with_capacity(payload.len() + 1);
+    canonical.push(tag);
+    canonical.extend_from_slice(&payload);
+    Ok(canonical)
+}
+
+pub fn decode_native_path_component(canonical: &[u8]) -> Result<OsString, RepoPathError> {
+    let (&tag, payload) = canonical
+        .split_first()
+        .ok_or(RepoPathError::InvalidCanonicalEncoding)?;
+    let component = decode_component(tag, payload)?;
+    let (observed_tag, observed_payload) = component_payload(&component);
+    if observed_tag != tag || observed_payload != payload {
+        return Err(RepoPathError::InvalidCanonicalEncoding);
+    }
+    native_io::native_os_string(&component)
+}
+
+pub fn portable_path_component(canonical: &[u8]) -> Result<Option<String>, RepoPathError> {
+    let (&tag, payload) = canonical
+        .split_first()
+        .ok_or(RepoPathError::InvalidCanonicalEncoding)?;
+    let component = decode_component(tag, payload)?;
+    let (observed_tag, observed_payload) = component_payload(&component);
+    if observed_tag != tag || observed_payload != payload {
+        return Err(RepoPathError::InvalidCanonicalEncoding);
+    }
+    Ok(portable_component(&component).map(str::to_owned))
 }
 
 impl From<CanonicalReadError> for RepoPathError {
@@ -640,6 +674,21 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn native_component_codec_round_trips_portable_names() -> Result<(), RepoPathError> {
+        let canonical = encode_native_path_component(OsStr::new("payload.bin"))?;
+        assert_eq!(canonical, b"\x01payload.bin");
+        assert_eq!(
+            decode_native_path_component(&canonical)?,
+            OsString::from("payload.bin")
+        );
+        assert_eq!(
+            portable_path_component(&canonical)?.as_deref(),
+            Some("payload.bin")
+        );
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[test]
     fn unix_non_utf8_native_stream_round_trips_exact_bytes() -> Result<(), RepoPathError> {
@@ -647,6 +696,22 @@ mod tests {
         let decoded = RepoPath::decode_native_nul_stream(encoded)?;
         assert_eq!(RepoPath::encode_native_nul_stream(&decoded)?, encoded);
         assert_eq!(decoded[0].native_match_bytes()?, b"f\x80o");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_native_component_codec_preserves_non_utf8_bytes() -> Result<(), RepoPathError> {
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let name = OsStr::from_bytes(b"f\x80o");
+        let canonical = encode_native_path_component(name)?;
+        assert_eq!(canonical, b"\x02f\x80o");
+        assert_eq!(
+            decode_native_path_component(&canonical)?.into_vec(),
+            b"f\x80o"
+        );
+        assert_eq!(portable_path_component(&canonical)?, None);
         Ok(())
     }
 
@@ -668,6 +733,27 @@ mod tests {
             RepoPath::decode_native_nul_stream(b"src\\a.ts\0"),
             Err(RepoPathError::InvalidNativeNulStream)
         );
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_native_component_codec_preserves_unpaired_surrogates() -> Result<(), RepoPathError> {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+        let name = OsString::from_wide(&[0xd800, b'a' as u16]);
+        let canonical = encode_native_path_component(&name)?;
+        assert_eq!(
+            canonical,
+            [vec![WINDOWS_WTF16_TAG], vec![0xd8, 0x00, 0x00, b'a']].concat()
+        );
+        assert_eq!(
+            decode_native_path_component(&canonical)?
+                .encode_wide()
+                .collect::<Vec<_>>(),
+            [0xd800, b'a' as u16]
+        );
+        assert_eq!(portable_path_component(&canonical)?, None);
         Ok(())
     }
 }

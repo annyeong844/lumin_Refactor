@@ -16,6 +16,11 @@ pub(super) fn validate_external_references(
     guard: &NamespaceGuard,
 ) -> Result<(), StoreError> {
     guard.validate_bound_entries()?;
+    crate::cache::validate_external_snapshot(
+        guard,
+        &snapshot.cache_cleanup_operations,
+        &snapshot.cache_eviction_authorizations,
+    )?;
     validate_latest_attempt(snapshot, guard)?;
     let moved_runs = validate_retention_payloads(snapshot, guard)?;
     for (key, bytes) in &snapshot.run_catalog {
