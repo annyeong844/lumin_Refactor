@@ -49,7 +49,7 @@ const CORPUS_RUN: &str = concat!(
 const WINDOWS_INTEGRATION_RUN: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
     "-- cargo run --locked -p lumin-xtask -- ci-test-shard ",
-    "--index ${{ matrix.shard }} --count 5"
+    "--index ${{ matrix.shard }} --count 6"
 );
 const ALL_TARGET_TEST: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
@@ -665,7 +665,7 @@ fn validate_windows_integration_job(jobs: &BTreeMap<String, String>, violations:
     };
     for required_line in [
         "fail-fast: false",
-        "shard: [0, 1, 2, 3, 4]",
+        "shard: [0, 1, 2, 3, 4, 5]",
         "runs-on: windows-2022",
     ] {
         if block
@@ -686,9 +686,8 @@ fn validate_windows_integration_job(jobs: &BTreeMap<String, String>, violations:
         .count()
         != 1
     {
-        violations.push(
-            "Windows integration tests must execute all five owner-derived shards".to_owned(),
-        );
+        violations
+            .push("Windows integration tests must execute all six owner-derived shards".to_owned());
     }
 }
 
@@ -738,11 +737,13 @@ fn validate_corpus_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<Str
             ));
         }
     }
-    for (mode, mode_flag) in [("standard", ""), ("determinism", "--determinism ")] {
-        for index in 0..4 {
+    for (mode, mode_flag, shard_count) in
+        [("standard", "", 4), ("determinism", "--determinism ", 8)]
+    {
+        for index in 0..shard_count {
             let name = format!("mapped-{mode}-{index}");
             let arguments = format!(
-                "foundation {mode_flag}--mapped-only --row-jobs 4 --row-shard-index {index} --row-shard-count 4"
+                "foundation {mode_flag}--mapped-only --row-jobs 4 --row-shard-index {index} --row-shard-count {shard_count}"
             );
             if partition_count("windows-2022", &name, &arguments) != 1 {
                 violations.push(format!(
@@ -764,9 +765,9 @@ fn validate_corpus_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<Str
         .iter()
         .filter(|line| line.starts_with("- os:"))
         .count()
-        != 18
+        != 22
     {
-        violations.push("corpus job must contain exactly 18 reviewed partitions".to_owned());
+        violations.push("corpus job must contain exactly 22 reviewed partitions".to_owned());
     }
     if lines.iter().any(|line| {
         *line == "exclude:"
@@ -1028,11 +1029,13 @@ mod tests {
                 "removed Ubuntu partition was accepted: {name}"
             );
         }
-        for (mode, mode_flag) in [("standard", ""), ("determinism", "--determinism ")] {
-            for index in 0..4 {
+        for (mode, mode_flag, shard_count) in
+            [("standard", "", 4), ("determinism", "--determinism ", 8)]
+        {
+            for index in 0..shard_count {
                 let name = format!("mapped-{mode}-{index}");
                 let arguments = format!(
-                    "foundation {mode_flag}--mapped-only --row-jobs 4 --row-shard-index {index} --row-shard-count 4"
+                    "foundation {mode_flag}--mapped-only --row-jobs 4 --row-shard-index {index} --row-shard-count {shard_count}"
                 );
                 let partition = format!(
                     "          - os: windows-2022\n            name: {name}\n            arguments: {arguments}\n"
@@ -1058,17 +1061,19 @@ mod tests {
     fn code_ci_parallel_partitions_are_complete() -> Result<(), Box<dyn std::error::Error>> {
         let source = workflow()?;
         for changed in [
-            source.replacen("shard: [0, 1, 2, 3, 4]", "shard: [0, 1, 2, 3]", 1),
+            source.replacen("shard: [0, 1, 2, 3, 4, 5]", "shard: [0, 1, 2, 3, 4]", 1),
             source.replacen(WINDOWS_INTEGRATION_RUN, "& $testShard", 1),
             source.replacen(CORE_TARGET_TEST, ALL_TARGET_TEST, 1),
             source.replacen("--row-jobs 8", "--row-jobs 7", 1),
             source.replacen("--row-shard-count 4", "--row-shard-count 3", 1),
+            source.replacen("--row-shard-count 8", "--row-shard-count 7", 1),
         ] {
             assert!(
                 violations(&changed).iter().any(|violation| {
                     violation.contains("shard")
                         || violation.contains("reviewed test partition")
                         || violation.contains("mapped-standard")
+                        || violation.contains("mapped-determinism")
                         || violation.contains("reconstructed run command")
                 }),
                 "incomplete parallel CI partition was accepted"

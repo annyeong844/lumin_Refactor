@@ -152,10 +152,10 @@ fn all_applicable_selection_retains_unmapped_rows() {
 }
 
 #[test]
-fn four_row_shards_cover_every_mapped_row_exactly_once() {
-    for mode in [CorpusMode::Standard, CorpusMode::Determinism] {
+fn ci_row_shards_cover_every_mapped_row_exactly_once() {
+    for (mode, row_shard_count) in [(CorpusMode::Standard, 4), (CorpusMode::Determinism, 8)] {
         let mut observed = Vec::new();
-        for row_shard_index in 0..4 {
+        for row_shard_index in 0..row_shard_count {
             let args = CorpusArgs {
                 mode,
                 format: OutputFormat::Human,
@@ -163,7 +163,7 @@ fn four_row_shards_cover_every_mapped_row_exactly_once() {
                 selection: CorpusSelection::MappedOnly,
                 row_jobs: 4,
                 row_shard_index,
-                row_shard_count: 4,
+                row_shard_count,
             };
             observed.extend(selected_rows(&args).into_iter().map(|row| row.id));
         }

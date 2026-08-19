@@ -316,13 +316,13 @@ jobs:
         run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --locked -p lumin-sfc --tests'
 
   windows-integration:
-    name: Windows integration ${{ matrix.shard }}/5
+    name: Windows integration ${{ matrix.shard }}/6
     needs: policy
     if: ${{ needs.policy.outputs.run_full == 'true' }}
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4]
+        shard: [0, 1, 2, 3, 4, 5]
     runs-on: windows-2022
     steps:
       - name: Initialize isolated Cargo paths
@@ -358,7 +358,7 @@ jobs:
 
       - name: Test integration shard
         shell: pwsh
-        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- ci-test-shard --index ${{ matrix.shard }} --count 5'
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- ci-test-shard --index ${{ matrix.shard }} --count 6'
 
   corpus:
     name: ${{ matrix.os }} corpus ${{ matrix.name }}
@@ -388,16 +388,28 @@ jobs:
             arguments: foundation --mapped-only --row-jobs 4 --row-shard-index 3 --row-shard-count 4
           - os: windows-2022
             name: mapped-determinism-0
-            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 0 --row-shard-count 4
+            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 0 --row-shard-count 8
           - os: windows-2022
             name: mapped-determinism-1
-            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 1 --row-shard-count 4
+            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 1 --row-shard-count 8
           - os: windows-2022
             name: mapped-determinism-2
-            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 2 --row-shard-count 4
+            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 2 --row-shard-count 8
           - os: windows-2022
             name: mapped-determinism-3
-            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 3 --row-shard-count 4
+            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 3 --row-shard-count 8
+          - os: windows-2022
+            name: mapped-determinism-4
+            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 4 --row-shard-count 8
+          - os: windows-2022
+            name: mapped-determinism-5
+            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 5 --row-shard-count 8
+          - os: windows-2022
+            name: mapped-determinism-6
+            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 6 --row-shard-count 8
+          - os: windows-2022
+            name: mapped-determinism-7
+            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 7 --row-shard-count 8
           - os: ubuntu-24.04
             name: retention-crash-protocol
             arguments: foundation --store-crash --row retention-crash-protocol

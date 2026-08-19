@@ -219,12 +219,12 @@ mod tests {
     }
 
     #[test]
-    fn five_shards_cover_each_default_cli_target_once() -> Result<(), String> {
+    fn six_shards_cover_each_default_cli_target_once() -> Result<(), String> {
         let workspace = crate::metadata::find_workspace_root()?;
         let targets = default_cli_test_targets(&workspace)?;
         let mut observed = Vec::new();
-        for index in 0..5 {
-            observed.extend(shard_targets(&targets, index, 5)?);
+        for index in 0..6 {
+            observed.extend(shard_targets(&targets, index, 6)?);
         }
         observed.sort();
         assert_eq!(observed, targets);
