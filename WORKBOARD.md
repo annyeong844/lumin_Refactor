@@ -2,7 +2,7 @@
 
 Status: Phase 1 foundation implementation active
 
-Revision: 2026-08-12
+Revision: 2026-08-19
 
 ## One-Line Purpose
 
@@ -17,13 +17,13 @@ AI agents grounded, queryable evidence before and after they change code.
 | PRODUCT-000 | frozen | `specs/000-product-contract.md` | Defines what Lumin v2 must guarantee and what it is not. |
 | ARCH-000 | frozen | `architecture/000-system-blueprint.md` | Owns the final system shape, crate boundaries, and dependency direction. |
 | ARCH-001 | frozen | `architecture/001-execution-and-ownership.md` | Owns the Kahn/Rayon execution model, determinism, and memory ownership. |
-| ARCH-002 | frozen | `architecture/002-evidence-and-write-gate.md` | Owns the evidence store, bounded query protocol, and pre/post transaction. |
+| ARCH-002 | reopened; follow-up review pending | `architecture/002-evidence-and-write-gate.md` | Owns the evidence store, bounded query protocol, and pre/post transaction. |
 | SLICE-001 | active | `specs/001-foundation-slice.md` | Defines the JS/TS/SFC foundation, with Vue as the first production dialect. |
 | PLAN-001 | active | `PHASE1-CHECKLIST.md` | Owns Phase 1 execution order, dependencies, and verified progress without restating acceptance contracts. |
 | REVIEW-001 | superseded | `reviews/architecture-v1-adversarial-2026-07-15.md` | Records the first adversarial findings and first amendment decisions. |
 | REVIEW-002 | complete, monitoring | `reviews/architecture-v1-independent-verification-2026-07-15.md` | Preserves the exact independent verification and may reopen only on a concrete regression or counterexample. |
 | REVIEW-003 | frozen | `reviews/dependency-edge-identity-amendment-2026-08-10.md` | Owns the proportional workspace dependency policy, isolated Cargo admission, and loaded-source boundary. |
-| REVIEW-004 | owner merged; follow-up review pending | `reviews/cache-cleanup-protocol-amendment-2026-08-17.md` | The independently approved owner candidate `0db2bf15d2` merged in `e988a85`; post-merge counterexamples reopened only delivery-attempt ordering and the continuous active-cache mutation reservation, so their implementation follow-up remains blocked until this narrow amendment freezes. |
+| REVIEW-004 | follow-up review pending | `reviews/cache-cleanup-protocol-amendment-2026-08-17.md` | Owns the cache-cleanup delivery and active-cache reservation amendment; follow-up implementation remains blocked until independent `PASS`. |
 
 ## Active Work
 
