@@ -740,7 +740,7 @@ fn validate_corpus_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<Str
     for (mode, mode_flag, shard_count) in
         [("standard", "", 4), ("determinism", "--determinism ", 8)]
     {
-        let row_jobs = if mode == "determinism" { 2 } else { 4 };
+        let row_jobs = if mode == "determinism" { 4 } else { 6 };
         for index in 0..shard_count {
             let name = format!("mapped-{mode}-{index}");
             let arguments = format!(
@@ -1033,7 +1033,7 @@ mod tests {
         for (mode, mode_flag, shard_count) in
             [("standard", "", 4), ("determinism", "--determinism ", 8)]
         {
-            let row_jobs = if mode == "determinism" { 2 } else { 4 };
+            let row_jobs = if mode == "determinism" { 4 } else { 6 };
             for index in 0..shard_count {
                 let name = format!("mapped-{mode}-{index}");
                 let arguments = format!(
