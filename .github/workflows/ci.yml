@@ -361,27 +361,66 @@ jobs:
         run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- ci-test-shard --index ${{ matrix.shard }} --count 5'
 
   corpus:
-    name: ${{ matrix.os }} corpus ${{ matrix.case.name }}
+    name: ${{ matrix.os }} corpus ${{ matrix.name }}
     needs: policy
     if: ${{ needs.policy.outputs.run_full == 'true' }}
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-24.04
-          - windows-2022
-        case:
-          - name: mapped-standard
+        include:
+          - os: ubuntu-24.04
+            name: mapped-standard
             arguments: foundation --mapped-only --row-jobs 8
-          - name: mapped-determinism
+          - os: ubuntu-24.04
+            name: mapped-determinism
             arguments: foundation --determinism --mapped-only --row-jobs 8
-          - name: retention-crash-protocol
+          - os: windows-2022
+            name: mapped-standard-0
+            arguments: foundation --mapped-only --row-jobs 4 --row-shard-index 0 --row-shard-count 4
+          - os: windows-2022
+            name: mapped-standard-1
+            arguments: foundation --mapped-only --row-jobs 4 --row-shard-index 1 --row-shard-count 4
+          - os: windows-2022
+            name: mapped-standard-2
+            arguments: foundation --mapped-only --row-jobs 4 --row-shard-index 2 --row-shard-count 4
+          - os: windows-2022
+            name: mapped-standard-3
+            arguments: foundation --mapped-only --row-jobs 4 --row-shard-index 3 --row-shard-count 4
+          - os: windows-2022
+            name: mapped-determinism-0
+            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 0 --row-shard-count 4
+          - os: windows-2022
+            name: mapped-determinism-1
+            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 1 --row-shard-count 4
+          - os: windows-2022
+            name: mapped-determinism-2
+            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 2 --row-shard-count 4
+          - os: windows-2022
+            name: mapped-determinism-3
+            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 3 --row-shard-count 4
+          - os: ubuntu-24.04
+            name: retention-crash-protocol
             arguments: foundation --store-crash --row retention-crash-protocol
-          - name: crash-publication
+          - os: windows-2022
+            name: retention-crash-protocol
+            arguments: foundation --store-crash --row retention-crash-protocol
+          - os: ubuntu-24.04
+            name: crash-publication
             arguments: foundation --store-crash --row crash-publication
-          - name: concurrent-latest-publication
+          - os: windows-2022
+            name: crash-publication
+            arguments: foundation --store-crash --row crash-publication
+          - os: ubuntu-24.04
+            name: concurrent-latest-publication
             arguments: foundation --store-crash --row concurrent-latest-publication
-          - name: publication-retention-race
+          - os: windows-2022
+            name: concurrent-latest-publication
+            arguments: foundation --store-crash --row concurrent-latest-publication
+          - os: ubuntu-24.04
+            name: publication-retention-race
+            arguments: foundation --store-crash --row publication-retention-race
+          - os: windows-2022
+            name: publication-retention-race
             arguments: foundation --store-crash --row publication-retention-race
     runs-on: ${{ matrix.os }}
     steps:
@@ -418,7 +457,7 @@ jobs:
 
       - name: Run corpus partition
         shell: pwsh
-        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus ${{ matrix.case.arguments }}'
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus ${{ matrix.arguments }}'
 
   documentation:
     name: ${{ matrix.os }} Rust documentation

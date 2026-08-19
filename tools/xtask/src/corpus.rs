@@ -151,14 +151,26 @@ pub struct CorpusArgs {
     pub row: Option<String>,
     pub selection: CorpusSelection,
     pub row_jobs: usize,
+    pub row_shard_index: usize,
+    pub row_shard_count: usize,
 }
 
 pub fn parse_args(args: &[String]) -> Result<CorpusArgs, String> {
-    let (mut mode, mut format, mut row, mut selection, mut row_jobs) = (
+    let (
+        mut mode,
+        mut format,
+        mut row,
+        mut selection,
+        mut row_jobs,
+        mut row_shard_index,
+        mut row_shard_count,
+    ) = (
         CorpusMode::Standard,
         OutputFormat::Human,
         None,
         CorpusSelection::AllApplicable,
+        None,
+        None,
         None,
     );
     let mut i = 0;
@@ -218,6 +230,28 @@ pub fn parse_args(args: &[String]) -> Result<CorpusArgs, String> {
                     return Err("--row-jobs may be provided only once".to_owned());
                 }
             }
+            "--row-shard-index" => {
+                i += 1;
+                let value = args
+                    .get(i)
+                    .ok_or_else(|| "--row-shard-index requires a value".to_owned())?
+                    .parse::<usize>()
+                    .map_err(|_| "--row-shard-index requires an integer".to_owned())?;
+                if row_shard_index.replace(value).is_some() {
+                    return Err("--row-shard-index may be provided only once".to_owned());
+                }
+            }
+            "--row-shard-count" => {
+                i += 1;
+                let value = args
+                    .get(i)
+                    .ok_or_else(|| "--row-shard-count requires a value".to_owned())?
+                    .parse::<usize>()
+                    .map_err(|_| "--row-shard-count requires an integer".to_owned())?;
+                if row_shard_count.replace(value).is_some() {
+                    return Err("--row-shard-count may be provided only once".to_owned());
+                }
+            }
             o => return Err(format!("unknown argument: {o}")),
         }
         i += 1;
@@ -225,12 +259,32 @@ pub fn parse_args(args: &[String]) -> Result<CorpusArgs, String> {
     if selection == CorpusSelection::MappedOnly && row.is_some() {
         return Err("--mapped-only cannot be combined with --row".to_owned());
     }
+    let (row_shard_index, row_shard_count) = match (row_shard_index, row_shard_count) {
+        (None, None) => (0, 1),
+        (Some(index), Some(count)) if (1..=8).contains(&count) && index < count => (index, count),
+        (Some(_), Some(_)) => {
+            return Err(
+                "row shard count must be from 1 through 8 and index must be less than count"
+                    .to_owned(),
+            );
+        }
+        _ => {
+            return Err(
+                "--row-shard-index and --row-shard-count must be provided together".to_owned(),
+            );
+        }
+    };
+    if row.is_some() && row_shard_count != 1 {
+        return Err("--row cannot be combined with a multi-row shard".to_owned());
+    }
     Ok(CorpusArgs {
         mode,
         format,
         row,
         selection,
         row_jobs: row_jobs.unwrap_or(1),
+        row_shard_index,
+        row_shard_count,
     })
 }
 
@@ -498,6 +552,8 @@ fn print_human(
     selection: CorpusSelection,
     applicable_rows: usize,
     row_jobs: usize,
+    row_shard_index: usize,
+    row_shard_count: usize,
 ) {
     let (mapped, passed) = (
         res.iter().filter(|r| r.mapped).count(),
@@ -512,6 +568,7 @@ fn print_human(
         );
     }
     println!("row jobs: {row_jobs}");
+    println!("row shard: {row_shard_index}/{row_shard_count}");
     println!(
         "total: {}  mapped: {mapped}  passed: {passed}  unmapped: {unmapped}  failed: {failed}\n",
         res.len()
@@ -538,6 +595,8 @@ fn print_json(
     selection: CorpusSelection,
     applicable_rows: usize,
     row_jobs: usize,
+    row_shard_index: usize,
+    row_shard_count: usize,
 ) -> Result<(), String> {
     let rows: Vec<serde_json::Value> = res
         .iter()
@@ -562,6 +621,8 @@ fn print_json(
         "mode": mode.to_string(),
         "selection": selection.as_str(),
         "rowJobs": row_jobs,
+        "rowShardIndex": row_shard_index,
+        "rowShardCount": row_shard_count,
         "applicableRows": applicable_rows,
         "totalRows": res.len(),
         "mapped": mapped,
@@ -578,8 +639,10 @@ fn print_json(
 fn selected_rows(args: &CorpusArgs) -> Vec<&'static RegistryRow> {
     REGISTRY
         .iter()
-        .filter(|registry_row| {
-            registry_row.is_applicable(args.mode)
+        .enumerate()
+        .filter(|(index, registry_row)| {
+            index % args.row_shard_count == args.row_shard_index
+                && registry_row.is_applicable(args.mode)
                 && args
                     .row
                     .as_deref()
@@ -587,6 +650,7 @@ fn selected_rows(args: &CorpusArgs) -> Vec<&'static RegistryRow> {
                 && (args.selection == CorpusSelection::AllApplicable
                     || registry_row.is_mapped(args.mode))
         })
+        .map(|(_, registry_row)| registry_row)
         .collect()
 }
 
@@ -921,6 +985,8 @@ pub fn run(args: &[String]) -> ExitCode {
             parsed.selection,
             applicable_rows,
             parsed.row_jobs,
+            parsed.row_shard_index,
+            parsed.row_shard_count,
         ),
         OutputFormat::Json => {
             if let Err(e) = print_json(
@@ -929,6 +995,8 @@ pub fn run(args: &[String]) -> ExitCode {
                 parsed.selection,
                 applicable_rows,
                 parsed.row_jobs,
+                parsed.row_shard_index,
+                parsed.row_shard_count,
             ) {
                 eprintln!("[TOOL ERROR] {e}");
                 return ExitCode::from(2);

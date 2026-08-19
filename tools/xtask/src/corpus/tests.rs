@@ -8,6 +8,7 @@ fn parse_default() -> Result<(), String> {
     assert_eq!(a.row, None);
     assert_eq!(a.selection, CorpusSelection::AllApplicable);
     assert_eq!(a.row_jobs, 1);
+    assert_eq!((a.row_shard_index, a.row_shard_count), (0, 1));
     Ok(())
 }
 
@@ -88,6 +89,27 @@ fn row_jobs_are_explicit_and_bounded() -> Result<(), String> {
 }
 
 #[test]
+fn row_shards_are_paired_bounded_and_exact() -> Result<(), String> {
+    let args = parse_args(&[
+        "--mapped-only".into(),
+        "--row-shard-index".into(),
+        "3".into(),
+        "--row-shard-count".into(),
+        "4".into(),
+    ])?;
+    assert_eq!((args.row_shard_index, args.row_shard_count), (3, 4));
+    for invalid in [
+        vec!["--row-shard-index", "0"],
+        vec!["--row-shard-count", "4"],
+        vec!["--row-shard-index", "4", "--row-shard-count", "4"],
+        vec!["--row-shard-index", "0", "--row-shard-count", "9"],
+    ] {
+        assert!(parse_args(&invalid.into_iter().map(str::to_owned).collect::<Vec<_>>()).is_err());
+    }
+    Ok(())
+}
+
+#[test]
 fn mapped_only_selects_every_and_only_mapped_row() {
     for mode in [CorpusMode::Standard, CorpusMode::Determinism] {
         let args = CorpusArgs {
@@ -96,6 +118,8 @@ fn mapped_only_selects_every_and_only_mapped_row() {
             row: None,
             selection: CorpusSelection::MappedOnly,
             row_jobs: 1,
+            row_shard_index: 0,
+            row_shard_count: 1,
         };
         let selected = selected_rows(&args);
         let expected = REGISTRY.iter().filter(|row| row.is_mapped(mode)).count();
@@ -114,6 +138,8 @@ fn all_applicable_selection_retains_unmapped_rows() {
             row: None,
             selection: CorpusSelection::AllApplicable,
             row_jobs: 1,
+            row_shard_index: 0,
+            row_shard_count: 1,
         };
         let selected = selected_rows(&args);
         let expected = REGISTRY
@@ -122,6 +148,33 @@ fn all_applicable_selection_retains_unmapped_rows() {
             .count();
         assert_eq!(selected.len(), expected);
         assert!(selected.iter().any(|row| !row.is_mapped(mode)));
+    }
+}
+
+#[test]
+fn four_row_shards_cover_every_mapped_row_exactly_once() {
+    for mode in [CorpusMode::Standard, CorpusMode::Determinism] {
+        let mut observed = Vec::new();
+        for row_shard_index in 0..4 {
+            let args = CorpusArgs {
+                mode,
+                format: OutputFormat::Human,
+                row: None,
+                selection: CorpusSelection::MappedOnly,
+                row_jobs: 4,
+                row_shard_index,
+                row_shard_count: 4,
+            };
+            observed.extend(selected_rows(&args).into_iter().map(|row| row.id));
+        }
+        observed.sort_unstable();
+        let mut expected = REGISTRY
+            .iter()
+            .filter(|row| row.is_mapped(mode))
+            .map(|row| row.id)
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        assert_eq!(observed, expected);
     }
 }
 

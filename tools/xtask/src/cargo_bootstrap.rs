@@ -44,7 +44,7 @@ const STRUCTURAL_CHECK: &str = concat!(
 );
 const CORPUS_RUN: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
-    "-- cargo run --locked -p lumin-xtask -- corpus ${{ matrix.case.arguments }}"
+    "-- cargo run --locked -p lumin-xtask -- corpus ${{ matrix.arguments }}"
 );
 const WINDOWS_INTEGRATION_RUN: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
@@ -67,11 +67,29 @@ const SFC_INTEGRATION_TEST: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
     "-- cargo test --locked -p lumin-sfc --tests"
 );
-const MAPPED_CORPUS_CASES: &[(&str, &str)] = &[
+const UBUNTU_MAPPED_CORPUS_CASES: &[(&str, &str)] = &[
     ("mapped-standard", "foundation --mapped-only --row-jobs 8"),
     (
         "mapped-determinism",
         "foundation --determinism --mapped-only --row-jobs 8",
+    ),
+];
+const CRASH_CORPUS_CASES: &[(&str, &str)] = &[
+    (
+        "retention-crash-protocol",
+        "foundation --store-crash --row retention-crash-protocol",
+    ),
+    (
+        "crash-publication",
+        "foundation --store-crash --row crash-publication",
+    ),
+    (
+        "concurrent-latest-publication",
+        "foundation --store-crash --row concurrent-latest-publication",
+    ),
+    (
+        "publication-retention-race",
+        "foundation --store-crash --row publication-retention-race",
     ),
 ];
 
@@ -679,54 +697,89 @@ fn validate_corpus_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<Str
         return;
     };
     let lines = block.lines().map(str::trim).collect::<Vec<_>>();
-    let os_start = lines.iter().position(|line| *line == "os:");
-    let case_start = lines.iter().position(|line| *line == "case:");
-    let runs_on = lines
-        .iter()
-        .position(|line| *line == "runs-on: ${{ matrix.os }}");
-    let (os_lines, case_lines) = match (os_start, case_start, runs_on) {
-        (Some(os), Some(case), Some(runs_on)) if os < case && case < runs_on => {
-            (&lines[os + 1..case], &lines[case + 1..runs_on])
-        }
-        _ => {
-            violations.push(
-                "corpus job must use the reviewed os-by-case matrix before matrix.os routing"
-                    .to_owned(),
-            );
-            (&[][..], &[][..])
-        }
-    };
-    for (name, arguments) in MAPPED_CORPUS_CASES {
-        let name_line = format!("- name: {name}");
+    if lines.iter().filter(|line| **line == "include:").count() != 1
+        || lines
+            .iter()
+            .filter(|line| **line == "fail-fast: false")
+            .count()
+            != 1
+        || lines
+            .iter()
+            .filter(|line| **line == "runs-on: ${{ matrix.os }}")
+            .count()
+            != 1
+        || lines
+            .iter()
+            .filter(|line| **line == "name: ${{ matrix.os }} corpus ${{ matrix.name }}")
+            .count()
+            != 1
+    {
+        violations.push(
+            "corpus job must use the reviewed explicit fail-closed partition matrix".to_owned(),
+        );
+    }
+    let partition_count = |platform: &str, name: &str, arguments: &str| {
+        let os_line = format!("- os: {platform}");
+        let name_line = format!("name: {name}");
         let arguments_line = format!("arguments: {arguments}");
-        let count = case_lines
-            .windows(2)
-            .filter(|pair| pair[0] == name_line && pair[1] == arguments_line)
-            .count();
-        if count != 1 {
+        lines
+            .windows(3)
+            .filter(|partition| {
+                partition[0] == os_line
+                    && partition[1] == name_line
+                    && partition[2] == arguments_line
+            })
+            .count()
+    };
+    for (name, arguments) in UBUNTU_MAPPED_CORPUS_CASES {
+        if partition_count("ubuntu-24.04", name, arguments) != 1 {
             violations.push(format!(
-                "corpus job must contain exactly one {name} mapped aggregate case"
+                "corpus job must contain exactly one Ubuntu {name} aggregate"
             ));
         }
     }
-    for platform in ["- ubuntu-24.04", "- windows-2022"] {
-        if os_lines.iter().filter(|line| **line == platform).count() != 1 {
-            violations.push(format!(
-                "corpus job must execute mapped aggregates on {platform}"
-            ));
+    for (mode, mode_flag) in [("standard", ""), ("determinism", "--determinism ")] {
+        for index in 0..4 {
+            let name = format!("mapped-{mode}-{index}");
+            let arguments = format!(
+                "foundation {mode_flag}--mapped-only --row-jobs 4 --row-shard-index {index} --row-shard-count 4"
+            );
+            if partition_count("windows-2022", &name, &arguments) != 1 {
+                violations.push(format!(
+                    "corpus job must contain exactly one Windows {name} partition"
+                ));
+            }
         }
+    }
+    for platform in ["ubuntu-24.04", "windows-2022"] {
+        for (name, arguments) in CRASH_CORPUS_CASES {
+            if partition_count(platform, name, arguments) != 1 {
+                violations.push(format!(
+                    "corpus job must contain exactly one {platform} {name} partition"
+                ));
+            }
+        }
+    }
+    if lines
+        .iter()
+        .filter(|line| line.starts_with("- os:"))
+        .count()
+        != 18
+    {
+        violations.push("corpus job must contain exactly 18 reviewed partitions".to_owned());
     }
     if lines.iter().any(|line| {
-        matches!(*line, "include:" | "exclude:")
+        *line == "exclude:"
+            || *line == "os:"
+            || *line == "case:"
             || (line.starts_with("if:") && *line != FULL_SCOPE_CONDITION)
             || line.starts_with("continue-on-error:")
     }) {
         violations.push(
-            "corpus job may use only the reviewed full-scope gate and cannot exclude required matrix partitions"
-                .to_owned(),
+            "corpus job cannot add exclusions, implicit products, or failure bypasses".to_owned(),
         );
     }
-    if case_lines.contains(&"- name: lifecycle-operation-idempotency") {
+    if lines.contains(&"name: lifecycle-operation-idempotency") {
         violations.push(
             "lifecycle-operation-idempotency is already covered by both mapped aggregates"
                 .to_owned(),
@@ -959,19 +1012,44 @@ mod tests {
     }
 
     #[test]
-    fn mapped_standard_and_determinism_corpus_cases_are_required()
+    fn mapped_standard_and_determinism_corpus_partitions_are_required()
     -> Result<(), Box<dyn std::error::Error>> {
-        for (name, arguments) in MAPPED_CORPUS_CASES {
-            let case = format!("          - name: {name}\n            arguments: {arguments}\n");
+        for (name, arguments) in UBUNTU_MAPPED_CORPUS_CASES {
+            let case = format!(
+                "          - os: ubuntu-24.04\n            name: {name}\n            arguments: {arguments}\n"
+            );
             let source = workflow()?;
-            assert!(source.contains(&case), "missing fixture case {name}");
+            assert!(source.contains(&case), "missing Ubuntu partition {name}");
             let changed = source.replacen(&case, "", 1);
             assert!(
                 violations(&changed)
                     .iter()
                     .any(|violation| violation.contains(name)),
-                "removed case was accepted: {name}"
+                "removed Ubuntu partition was accepted: {name}"
             );
+        }
+        for (mode, mode_flag) in [("standard", ""), ("determinism", "--determinism ")] {
+            for index in 0..4 {
+                let name = format!("mapped-{mode}-{index}");
+                let arguments = format!(
+                    "foundation {mode_flag}--mapped-only --row-jobs 4 --row-shard-index {index} --row-shard-count 4"
+                );
+                let partition = format!(
+                    "          - os: windows-2022\n            name: {name}\n            arguments: {arguments}\n"
+                );
+                let source = workflow()?;
+                assert!(
+                    source.contains(&partition),
+                    "missing Windows partition {name}"
+                );
+                let changed = source.replacen(&partition, "", 1);
+                assert!(
+                    violations(&changed)
+                        .iter()
+                        .any(|violation| violation.contains(&name)),
+                    "removed Windows partition was accepted: {name}"
+                );
+            }
         }
         Ok(())
     }
@@ -984,6 +1062,7 @@ mod tests {
             source.replacen(WINDOWS_INTEGRATION_RUN, "& $testShard", 1),
             source.replacen(CORE_TARGET_TEST, ALL_TARGET_TEST, 1),
             source.replacen("--row-jobs 8", "--row-jobs 7", 1),
+            source.replacen("--row-shard-count 4", "--row-shard-count 3", 1),
         ] {
             assert!(
                 violations(&changed).iter().any(|violation| {
@@ -1025,11 +1104,16 @@ mod tests {
     fn mapped_aggregate_rows_are_not_repeated_as_standalone_cases()
     -> Result<(), Box<dyn std::error::Error>> {
         let source = workflow()?.replace(
-            "          - name: crash-publication\n",
             concat!(
-                "          - name: lifecycle-operation-idempotency\n",
+                "          - os: ubuntu-24.04\n",
+                "            name: crash-publication\n"
+            ),
+            concat!(
+                "          - os: ubuntu-24.04\n",
+                "            name: lifecycle-operation-idempotency\n",
                 "            arguments: foundation --row lifecycle-operation-idempotency\n",
-                "          - name: crash-publication\n"
+                "          - os: ubuntu-24.04\n",
+                "            name: crash-publication\n"
             ),
         );
         assert!(

@@ -69,7 +69,7 @@ fn main() -> ExitCode {
                  generated-tables --write\n  \
                  path-codec --write\n  \
                  ci-test-shard --index N --count N\n  \
-                 corpus foundation [--determinism|--store-crash] [--mapped-only|--row ID] [--row-jobs N] [--format human|json]"
+                 corpus foundation [--determinism|--store-crash] [--mapped-only|--row ID] [--row-jobs N] [--row-shard-index N --row-shard-count N] [--format human|json]"
             );
             ExitCode::from(2)
         }
