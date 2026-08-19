@@ -229,9 +229,9 @@ jobs:
           - name: Linux
             os: ubuntu-24.04
             test_scope: all
-          - name: Windows core
+          - name: Windows lint
             os: windows-2022
-            test_scope: core
+            test_scope: lint
     runs-on: ${{ matrix.os }}
     steps:
       - name: Initialize isolated Cargo paths
@@ -300,20 +300,81 @@ jobs:
         shell: pwsh
         run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --workspace --all-targets --locked'
 
-      - name: Test Windows unit and binary targets
-        if: ${{ matrix.test_scope == 'core' }}
+  windows-core:
+    name: ${{ matrix.name }}
+    needs: policy
+    if: ${{ needs.policy.outputs.run_full == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows core
+            suite: core
+            shard: 0
+          - name: Windows store cache
+            suite: store-lib
+            shard: 0
+          - name: Windows store gate
+            suite: store-lib
+            shard: 1
+          - name: Windows store namespace
+            suite: store-lib
+            shard: 2
+          - name: Windows store retention
+            suite: store-lib
+            shard: 3
+    runs-on: windows-2022
+    steps:
+      - name: Initialize isolated Cargo paths
         shell: pwsh
-        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --workspace --lib --bins --locked'
+        run: |
+          "CARGO_HOME=$env:RUNNER_TEMP/lumin-cargo-home" >> $env:GITHUB_ENV
+          "CARGO_TARGET_DIR=$env:RUNNER_TEMP/lumin-target" >> $env:GITHUB_ENV
+
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install exact Python
+        id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.14"
+
+      - name: Install exact Rust toolchain
+        shell: pwsh
+        run: rustup toolchain install 1.96.0 --profile minimal --no-self-update
+
+      - name: Record trusted tools
+        shell: pwsh
+        env:
+          SETUP_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: |
+          $python = & "$env:SETUP_PYTHON" -I -S -c "import pathlib,sys; print(pathlib.Path(sys.executable).resolve(strict=True))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $cargo = rustup which --toolchain 1.96.0 cargo
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "PINNED_PYTHON=$python" >> $env:GITHUB_ENV
+          "PINNED_CARGO=$cargo" >> $env:GITHUB_ENV
+
+      - name: Test Windows non-store core targets
+        if: ${{ matrix.suite == 'core' }}
+        shell: pwsh
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --workspace --lib --bins --exclude lumin-store --locked'
 
       - name: Test Windows engine integration targets
-        if: ${{ matrix.test_scope == 'core' }}
+        if: ${{ matrix.suite == 'core' }}
         shell: pwsh
-        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --locked -p lumin-engine --tests'
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --locked -p lumin-engine --test package_resolution --test vue_sfc'
 
       - name: Test Windows SFC integration targets
-        if: ${{ matrix.test_scope == 'core' }}
+        if: ${{ matrix.suite == 'core' }}
         shell: pwsh
-        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --locked -p lumin-sfc --tests'
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --locked -p lumin-sfc --test vue'
+
+      - name: Test Windows store unit shard
+        if: ${{ matrix.suite == 'store-lib' }}
+        shell: pwsh
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- ci-test-shard --suite store-lib --index ${{ matrix.shard }} --count 4'
 
   windows-integration:
     name: Windows integration ${{ matrix.shard }}/6
@@ -358,7 +419,7 @@ jobs:
 
       - name: Test integration shard
         shell: pwsh
-        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- ci-test-shard --index ${{ matrix.shard }} --count 6 --jobs 4'
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- ci-test-shard --suite cli-integration --index ${{ matrix.shard }} --count 6 --jobs 4'
 
   corpus:
     name: ${{ matrix.os }} corpus ${{ matrix.name }}
@@ -584,6 +645,7 @@ jobs:
       - bootstrap-tests
       - dependency-policy
       - platform
+      - windows-core
       - windows-integration
       - corpus
       - documentation
@@ -603,6 +665,7 @@ jobs:
           BOOTSTRAP_TESTS_RESULT: ${{ needs.bootstrap-tests.result }}
           DEPENDENCY_POLICY_RESULT: ${{ needs.dependency-policy.result }}
           PLATFORM_RESULT: ${{ needs.platform.result }}
+          WINDOWS_CORE_RESULT: ${{ needs.windows-core.result }}
           WINDOWS_INTEGRATION_RESULT: ${{ needs.windows-integration.result }}
           CORPUS_RESULT: ${{ needs.corpus.result }}
           DOCUMENTATION_RESULT: ${{ needs.documentation.result }}
@@ -616,6 +679,7 @@ jobs:
           test "$BOOTSTRAP_TESTS_RESULT" = "$EXPECTED_HEAVY_RESULT"
           test "$DEPENDENCY_POLICY_RESULT" = "$EXPECTED_HEAVY_RESULT"
           test "$PLATFORM_RESULT" = "$EXPECTED_HEAVY_RESULT"
+          test "$WINDOWS_CORE_RESULT" = "$EXPECTED_HEAVY_RESULT"
           test "$WINDOWS_INTEGRATION_RESULT" = "$EXPECTED_HEAVY_RESULT"
           test "$CORPUS_RESULT" = "$EXPECTED_HEAVY_RESULT"
           test "$DOCUMENTATION_RESULT" = "$EXPECTED_HEAVY_RESULT"

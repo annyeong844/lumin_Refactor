@@ -49,23 +49,28 @@ const CORPUS_RUN: &str = concat!(
 const WINDOWS_INTEGRATION_RUN: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
     "-- cargo run --locked -p lumin-xtask -- ci-test-shard ",
-    "--index ${{ matrix.shard }} --count 6 --jobs 4"
+    "--suite cli-integration --index ${{ matrix.shard }} --count 6 --jobs 4"
+);
+const WINDOWS_STORE_RUN: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
+    "-- cargo run --locked -p lumin-xtask -- ci-test-shard ",
+    "--suite store-lib --index ${{ matrix.shard }} --count 4"
 );
 const ALL_TARGET_TEST: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
     "-- cargo test --workspace --all-targets --locked"
 );
-const CORE_TARGET_TEST: &str = concat!(
+const NON_STORE_CORE_TARGET_TEST: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
-    "-- cargo test --workspace --lib --bins --locked"
+    "-- cargo test --workspace --lib --bins --exclude lumin-store --locked"
 );
 const ENGINE_INTEGRATION_TEST: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
-    "-- cargo test --locked -p lumin-engine --tests"
+    "-- cargo test --locked -p lumin-engine --test package_resolution --test vue_sfc"
 );
 const SFC_INTEGRATION_TEST: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
-    "-- cargo test --locked -p lumin-sfc --tests"
+    "-- cargo test --locked -p lumin-sfc --test vue"
 );
 const UBUNTU_MAPPED_CORPUS_CASES: &[(&str, &str)] =
     &[("mapped-standard", "foundation --mapped-only --row-jobs 8")];
@@ -165,6 +170,7 @@ fn validate_workflow(source: &str, violations: &mut Vec<String>) {
         "bootstrap-tests",
         "dependency-policy",
         "platform",
+        "windows-core",
         "windows-integration",
         "corpus",
         "documentation",
@@ -182,6 +188,7 @@ fn validate_workflow(source: &str, violations: &mut Vec<String>) {
     validate_policy_job(&jobs, violations);
     validate_dependency_job(&jobs, violations);
     validate_platform_job(&jobs, violations);
+    validate_windows_core_job(&jobs, violations);
     validate_windows_integration_job(&jobs, violations);
     validate_corpus_job(&jobs, violations);
     validate_bootstrap_test_job(&jobs, violations);
@@ -380,6 +387,7 @@ fn is_reviewed_run_command(line: &str) -> bool {
                 | "test \"$BOOTSTRAP_TESTS_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
                 | "test \"$DEPENDENCY_POLICY_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
                 | "test \"$PLATFORM_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
+                | "test \"$WINDOWS_CORE_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
                 | "test \"$WINDOWS_INTEGRATION_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
                 | "test \"$CORPUS_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
                 | "test \"$DOCUMENTATION_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
@@ -532,6 +540,7 @@ fn validate_policy_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<Str
         "bootstrap-tests",
         "dependency-policy",
         "platform",
+        "windows-core",
         "windows-integration",
         "corpus",
         "documentation",
@@ -619,9 +628,8 @@ fn validate_platform_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<S
     }
     for required_line in [
         "test_scope: all",
-        "test_scope: core",
+        "test_scope: lint",
         "if: ${{ matrix.test_scope == 'all' }}",
-        "if: ${{ matrix.test_scope == 'core' }}",
     ] {
         if block
             .lines()
@@ -635,11 +643,73 @@ fn validate_platform_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<S
             ));
         }
     }
+    if block
+        .lines()
+        .filter(|line| command_text(line) == ALL_TARGET_TEST)
+        .count()
+        != 1
+    {
+        violations.push(
+            "platform job must execute the reviewed Linux all-target partition exactly once"
+                .to_owned(),
+        );
+    }
+}
+
+fn validate_windows_core_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<String>) {
+    let Some(block) = jobs.get("windows-core") else {
+        return;
+    };
+    for required_line in [
+        "fail-fast: false",
+        "runs-on: windows-2022",
+        "if: ${{ matrix.suite == 'core' }}",
+        "if: ${{ matrix.suite == 'store-lib' }}",
+    ] {
+        if !block
+            .lines()
+            .map(str::trim)
+            .any(|line| line == required_line)
+        {
+            violations.push(format!(
+                "Windows core tests must retain the reviewed partition routing: {required_line}"
+            ));
+        }
+    }
+    for (name, suite, shard) in [
+        ("Windows core", "core", 0),
+        ("Windows store cache", "store-lib", 0),
+        ("Windows store gate", "store-lib", 1),
+        ("Windows store namespace", "store-lib", 2),
+        ("Windows store retention", "store-lib", 3),
+    ] {
+        let partition = format!(
+            "          - name: {name}\n            suite: {suite}\n            shard: {shard}\n"
+        );
+        if block.matches(&partition).count() != 1 {
+            violations.push(format!(
+                "Windows core tests must contain exactly one {name} partition"
+            ));
+        }
+    }
+    for (key, expected_count) in [("suite:", 5), ("shard:", 5)] {
+        if block
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with(key))
+            .count()
+            != expected_count
+        {
+            violations.push(format!(
+                "Windows core matrix must contain exactly {expected_count} {key} rows"
+            ));
+        }
+    }
     for command in [
-        ALL_TARGET_TEST,
-        CORE_TARGET_TEST,
+        NON_STORE_CORE_TARGET_TEST,
         ENGINE_INTEGRATION_TEST,
         SFC_INTEGRATION_TEST,
+        WINDOWS_STORE_RUN,
     ] {
         if block
             .lines()
@@ -648,7 +718,7 @@ fn validate_platform_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<S
             != 1
         {
             violations.push(format!(
-                "platform job must execute each reviewed test partition exactly once: {command}"
+                "Windows core job must execute each reviewed test partition exactly once: {command}"
             ));
         }
     }
@@ -831,6 +901,7 @@ fn validate_required_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<S
         ("bootstrap-tests", "BOOTSTRAP_TESTS_RESULT"),
         ("dependency-policy", "DEPENDENCY_POLICY_RESULT"),
         ("platform", "PLATFORM_RESULT"),
+        ("windows-core", "WINDOWS_CORE_RESULT"),
         ("windows-integration", "WINDOWS_INTEGRATION_RESULT"),
         ("corpus", "CORPUS_RESULT"),
         ("documentation", "DOCUMENTATION_RESULT"),
@@ -1061,7 +1132,17 @@ mod tests {
             source.replacen("shard: [0, 1, 2, 3, 4, 5]", "shard: [0, 1, 2, 3, 4]", 1),
             source.replacen(WINDOWS_INTEGRATION_RUN, "& $testShard", 1),
             source.replacen("--count 6 --jobs 4", "--count 6 --jobs 3", 1),
-            source.replacen(CORE_TARGET_TEST, ALL_TARGET_TEST, 1),
+            source.replacen(NON_STORE_CORE_TARGET_TEST, ALL_TARGET_TEST, 1),
+            source.replacen(WINDOWS_STORE_RUN, "& $storeShard", 1),
+            source.replacen(
+                concat!(
+                    "          - name: Windows store retention\n",
+                    "            suite: store-lib\n",
+                    "            shard: 3\n"
+                ),
+                "",
+                1,
+            ),
             source.replacen("--row-jobs 8", "--row-jobs 7", 1),
             source.replacen("--row-shard-count 4", "--row-shard-count 3", 1),
             source.replacen("--row-shard-count 12", "--row-shard-count 11", 1),
@@ -1070,6 +1151,7 @@ mod tests {
                 violations(&changed).iter().any(|violation| {
                     violation.contains("shard")
                         || violation.contains("reviewed test partition")
+                        || violation.contains("Windows core")
                         || violation.contains("mapped-standard")
                         || violation.contains("mapped-determinism")
                         || violation.contains("reconstructed run command")
