@@ -228,8 +228,10 @@ jobs:
         include:
           - name: Linux
             os: ubuntu-24.04
-          - name: Windows
+            test_scope: all
+          - name: Windows core
             os: windows-2022
+            test_scope: core
     runs-on: ${{ matrix.os }}
     steps:
       - name: Initialize isolated Cargo paths
@@ -294,8 +296,69 @@ jobs:
         run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy -p lumin-cli --test cache_cleanup_publication_race --features lifecycle-test-fault,publication-test-crash --locked -- -D warnings'
 
       - name: Test all targets
+        if: ${{ matrix.test_scope == 'all' }}
         shell: pwsh
         run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --workspace --all-targets --locked'
+
+      - name: Test Windows unit and binary targets
+        if: ${{ matrix.test_scope == 'core' }}
+        shell: pwsh
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --workspace --lib --bins --locked'
+
+      - name: Test Windows engine integration targets
+        if: ${{ matrix.test_scope == 'core' }}
+        shell: pwsh
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --locked -p lumin-engine --tests'
+
+      - name: Test Windows SFC integration targets
+        if: ${{ matrix.test_scope == 'core' }}
+        shell: pwsh
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --locked -p lumin-sfc --tests'
+
+  windows-integration:
+    name: Windows integration ${{ matrix.shard }}/5
+    needs: policy
+    if: ${{ needs.policy.outputs.run_full == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4]
+    runs-on: windows-2022
+    steps:
+      - name: Initialize isolated Cargo paths
+        shell: pwsh
+        run: |
+          "CARGO_HOME=$env:RUNNER_TEMP/lumin-cargo-home" >> $env:GITHUB_ENV
+          "CARGO_TARGET_DIR=$env:RUNNER_TEMP/lumin-target" >> $env:GITHUB_ENV
+
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install exact Python
+        id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.14"
+
+      - name: Install exact Rust toolchain
+        shell: pwsh
+        run: rustup toolchain install 1.96.0 --profile minimal --no-self-update
+
+      - name: Record trusted tools
+        shell: pwsh
+        env:
+          SETUP_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: |
+          $python = & "$env:SETUP_PYTHON" -I -S -c "import pathlib,sys; print(pathlib.Path(sys.executable).resolve(strict=True))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $cargo = rustup which --toolchain 1.96.0 cargo
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "PINNED_PYTHON=$python" >> $env:GITHUB_ENV
+          "PINNED_CARGO=$cargo" >> $env:GITHUB_ENV
+
+      - name: Test integration shard
+        shell: pwsh
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- ci-test-shard --index ${{ matrix.shard }} --count 5'
 
   corpus:
     name: ${{ matrix.os }} corpus ${{ matrix.case.name }}
@@ -309,9 +372,9 @@ jobs:
           - windows-2022
         case:
           - name: mapped-standard
-            arguments: foundation --mapped-only
+            arguments: foundation --mapped-only --row-jobs 8
           - name: mapped-determinism
-            arguments: foundation --determinism --mapped-only
+            arguments: foundation --determinism --mapped-only --row-jobs 8
           - name: retention-crash-protocol
             arguments: foundation --store-crash --row retention-crash-protocol
           - name: crash-publication
@@ -461,6 +524,7 @@ jobs:
       - bootstrap-tests
       - dependency-policy
       - platform
+      - windows-integration
       - corpus
       - documentation
       - release
@@ -479,6 +543,7 @@ jobs:
           BOOTSTRAP_TESTS_RESULT: ${{ needs.bootstrap-tests.result }}
           DEPENDENCY_POLICY_RESULT: ${{ needs.dependency-policy.result }}
           PLATFORM_RESULT: ${{ needs.platform.result }}
+          WINDOWS_INTEGRATION_RESULT: ${{ needs.windows-integration.result }}
           CORPUS_RESULT: ${{ needs.corpus.result }}
           DOCUMENTATION_RESULT: ${{ needs.documentation.result }}
           RELEASE_RESULT: ${{ needs.release.result }}
@@ -491,6 +556,7 @@ jobs:
           test "$BOOTSTRAP_TESTS_RESULT" = "$EXPECTED_HEAVY_RESULT"
           test "$DEPENDENCY_POLICY_RESULT" = "$EXPECTED_HEAVY_RESULT"
           test "$PLATFORM_RESULT" = "$EXPECTED_HEAVY_RESULT"
+          test "$WINDOWS_INTEGRATION_RESULT" = "$EXPECTED_HEAVY_RESULT"
           test "$CORPUS_RESULT" = "$EXPECTED_HEAVY_RESULT"
           test "$DOCUMENTATION_RESULT" = "$EXPECTED_HEAVY_RESULT"
           test "$RELEASE_RESULT" = "$EXPECTED_HEAVY_RESULT"

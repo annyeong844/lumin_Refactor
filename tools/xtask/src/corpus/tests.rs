@@ -7,6 +7,7 @@ fn parse_default() -> Result<(), String> {
     assert_eq!(a.format, OutputFormat::Human);
     assert_eq!(a.row, None);
     assert_eq!(a.selection, CorpusSelection::AllApplicable);
+    assert_eq!(a.row_jobs, 1);
     Ok(())
 }
 
@@ -68,6 +69,25 @@ fn mapped_only_is_aggregate_only() -> Result<(), String> {
 }
 
 #[test]
+fn row_jobs_are_explicit_and_bounded() -> Result<(), String> {
+    let args = parse_args(&["--mapped-only".into(), "--row-jobs".into(), "8".into()])?;
+    assert_eq!(args.row_jobs, 8);
+    for invalid in ["0", "9", "many"] {
+        assert!(parse_args(&["--row-jobs".into(), invalid.into()]).is_err());
+    }
+    assert!(
+        parse_args(&[
+            "--row-jobs".into(),
+            "2".into(),
+            "--row-jobs".into(),
+            "3".into(),
+        ])
+        .is_err()
+    );
+    Ok(())
+}
+
+#[test]
 fn mapped_only_selects_every_and_only_mapped_row() {
     for mode in [CorpusMode::Standard, CorpusMode::Determinism] {
         let args = CorpusArgs {
@@ -75,6 +95,7 @@ fn mapped_only_selects_every_and_only_mapped_row() {
             format: OutputFormat::Human,
             row: None,
             selection: CorpusSelection::MappedOnly,
+            row_jobs: 1,
         };
         let selected = selected_rows(&args);
         let expected = REGISTRY.iter().filter(|row| row.is_mapped(mode)).count();
@@ -92,6 +113,7 @@ fn all_applicable_selection_retains_unmapped_rows() {
             format: OutputFormat::Human,
             row: None,
             selection: CorpusSelection::AllApplicable,
+            row_jobs: 1,
         };
         let selected = selected_rows(&args);
         let expected = REGISTRY
@@ -101,6 +123,50 @@ fn all_applicable_selection_retains_unmapped_rows() {
         assert_eq!(selected.len(), expected);
         assert!(selected.iter().any(|row| !row.is_mapped(mode)));
     }
+}
+
+#[test]
+fn parallel_execution_preserves_registry_order_after_overtake() -> Result<(), String> {
+    let gate = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let (completed, observed) = mpsc::channel();
+    thread::scope(|scope| {
+        let work_gate = std::sync::Arc::clone(&gate);
+        let work_completed = completed.clone();
+        let execution = scope.spawn(move || {
+            run_parallel_ordered(3, 3, move |index| {
+                if index == 0 {
+                    let (lock, condition) = &*work_gate;
+                    let mut released = lock.lock().map_err(|error| error.to_string())?;
+                    while !*released {
+                        released = condition
+                            .wait(released)
+                            .map_err(|error| error.to_string())?;
+                    }
+                }
+                work_completed
+                    .send(index)
+                    .map_err(|error| error.to_string())?;
+                Ok(index)
+            })
+        });
+
+        let mut overtakers = vec![
+            observed.recv().map_err(|error| error.to_string())?,
+            observed.recv().map_err(|error| error.to_string())?,
+        ];
+        overtakers.sort_unstable();
+        assert_eq!(overtakers, [1, 2]);
+        let (lock, condition) = &*gate;
+        *lock.lock().map_err(|error| error.to_string())? = true;
+        condition.notify_all();
+
+        let ordered = execution
+            .join()
+            .map_err(|_| "ordered execution test worker panicked".to_owned())??;
+        assert_eq!(ordered, [0, 1, 2]);
+        Ok::<(), String>(())
+    })?;
+    Ok(())
 }
 
 #[test]

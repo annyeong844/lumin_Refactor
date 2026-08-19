@@ -11,6 +11,7 @@ mod metadata;
 mod path_codec;
 mod path_owner;
 mod source_policy;
+mod test_shard;
 
 use std::process::ExitCode;
 
@@ -19,6 +20,7 @@ fn main() -> ExitCode {
     match args.first().map(|s| s.as_str()) {
         Some("architecture-check") => architecture::run(),
         Some("corpus") => corpus::run(&args[1..]),
+        Some("ci-test-shard") => test_shard::run(&args[1..]),
         Some("generated-tables") if args.get(1).map(String::as_str) == Some("--write") => {
             let workspace_root = match metadata::find_workspace_root() {
                 Ok(root) => root,
@@ -66,7 +68,8 @@ fn main() -> ExitCode {
                  architecture-check\n  \
                  generated-tables --write\n  \
                  path-codec --write\n  \
-                 corpus foundation [--determinism|--store-crash] [--mapped-only|--row ID] [--format human|json]"
+                 ci-test-shard --index N --count N\n  \
+                 corpus foundation [--determinism|--store-crash] [--mapped-only|--row ID] [--row-jobs N] [--format human|json]"
             );
             ExitCode::from(2)
         }

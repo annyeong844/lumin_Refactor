@@ -46,11 +46,32 @@ const CORPUS_RUN: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
     "-- cargo run --locked -p lumin-xtask -- corpus ${{ matrix.case.arguments }}"
 );
+const WINDOWS_INTEGRATION_RUN: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
+    "-- cargo run --locked -p lumin-xtask -- ci-test-shard ",
+    "--index ${{ matrix.shard }} --count 5"
+);
+const ALL_TARGET_TEST: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
+    "-- cargo test --workspace --all-targets --locked"
+);
+const CORE_TARGET_TEST: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
+    "-- cargo test --workspace --lib --bins --locked"
+);
+const ENGINE_INTEGRATION_TEST: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
+    "-- cargo test --locked -p lumin-engine --tests"
+);
+const SFC_INTEGRATION_TEST: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
+    "-- cargo test --locked -p lumin-sfc --tests"
+);
 const MAPPED_CORPUS_CASES: &[(&str, &str)] = &[
-    ("mapped-standard", "foundation --mapped-only"),
+    ("mapped-standard", "foundation --mapped-only --row-jobs 8"),
     (
         "mapped-determinism",
-        "foundation --determinism --mapped-only",
+        "foundation --determinism --mapped-only --row-jobs 8",
     ),
 ];
 
@@ -131,6 +152,7 @@ fn validate_workflow(source: &str, violations: &mut Vec<String>) {
         "bootstrap-tests",
         "dependency-policy",
         "platform",
+        "windows-integration",
         "corpus",
         "documentation",
         "release",
@@ -147,6 +169,7 @@ fn validate_workflow(source: &str, violations: &mut Vec<String>) {
     validate_policy_job(&jobs, violations);
     validate_dependency_job(&jobs, violations);
     validate_platform_job(&jobs, violations);
+    validate_windows_integration_job(&jobs, violations);
     validate_corpus_job(&jobs, violations);
     validate_bootstrap_test_job(&jobs, violations);
     validate_required_job(&jobs, violations);
@@ -344,6 +367,7 @@ fn is_reviewed_run_command(line: &str) -> bool {
                 | "test \"$BOOTSTRAP_TESTS_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
                 | "test \"$DEPENDENCY_POLICY_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
                 | "test \"$PLATFORM_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
+                | "test \"$WINDOWS_INTEGRATION_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
                 | "test \"$CORPUS_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
                 | "test \"$DOCUMENTATION_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
                 | "test \"$RELEASE_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
@@ -495,6 +519,7 @@ fn validate_policy_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<Str
         "bootstrap-tests",
         "dependency-policy",
         "platform",
+        "windows-integration",
         "corpus",
         "documentation",
         "release",
@@ -578,6 +603,74 @@ fn validate_platform_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<S
     )) {
         violations
             .push("platform job lacks the guarded cross-platform Clippy execution".to_owned());
+    }
+    for required_line in [
+        "test_scope: all",
+        "test_scope: core",
+        "if: ${{ matrix.test_scope == 'all' }}",
+        "if: ${{ matrix.test_scope == 'core' }}",
+    ] {
+        if block
+            .lines()
+            .map(str::trim)
+            .filter(|line| *line == required_line)
+            .count()
+            == 0
+        {
+            violations.push(format!(
+                "platform job must retain the reviewed cross-platform test split: {required_line}"
+            ));
+        }
+    }
+    for command in [
+        ALL_TARGET_TEST,
+        CORE_TARGET_TEST,
+        ENGINE_INTEGRATION_TEST,
+        SFC_INTEGRATION_TEST,
+    ] {
+        if block
+            .lines()
+            .filter(|line| command_text(line) == command)
+            .count()
+            != 1
+        {
+            violations.push(format!(
+                "platform job must execute each reviewed test partition exactly once: {command}"
+            ));
+        }
+    }
+}
+
+fn validate_windows_integration_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<String>) {
+    let Some(block) = jobs.get("windows-integration") else {
+        return;
+    };
+    for required_line in [
+        "fail-fast: false",
+        "shard: [0, 1, 2, 3, 4]",
+        "runs-on: windows-2022",
+    ] {
+        if block
+            .lines()
+            .map(str::trim)
+            .filter(|line| *line == required_line)
+            .count()
+            != 1
+        {
+            violations.push(format!(
+                "Windows integration tests must use the complete reviewed shard matrix: {required_line}"
+            ));
+        }
+    }
+    if block
+        .lines()
+        .filter(|line| command_text(line) == WINDOWS_INTEGRATION_RUN)
+        .count()
+        != 1
+    {
+        violations.push(
+            "Windows integration tests must execute all five owner-derived shards".to_owned(),
+        );
     }
 }
 
@@ -688,6 +781,7 @@ fn validate_required_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<S
         ("bootstrap-tests", "BOOTSTRAP_TESTS_RESULT"),
         ("dependency-policy", "DEPENDENCY_POLICY_RESULT"),
         ("platform", "PLATFORM_RESULT"),
+        ("windows-integration", "WINDOWS_INTEGRATION_RESULT"),
         ("corpus", "CORPUS_RESULT"),
         ("documentation", "DOCUMENTATION_RESULT"),
         ("release", "RELEASE_RESULT"),
@@ -883,6 +977,28 @@ mod tests {
     }
 
     #[test]
+    fn code_ci_parallel_partitions_are_complete() -> Result<(), Box<dyn std::error::Error>> {
+        let source = workflow()?;
+        for changed in [
+            source.replacen("shard: [0, 1, 2, 3, 4]", "shard: [0, 1, 2, 3]", 1),
+            source.replacen(WINDOWS_INTEGRATION_RUN, "& $testShard", 1),
+            source.replacen(CORE_TARGET_TEST, ALL_TARGET_TEST, 1),
+            source.replacen("--row-jobs 8", "--row-jobs 7", 1),
+        ] {
+            assert!(
+                violations(&changed).iter().any(|violation| {
+                    violation.contains("shard")
+                        || violation.contains("reviewed test partition")
+                        || violation.contains("mapped-standard")
+                        || violation.contains("reconstructed run command")
+                }),
+                "incomplete parallel CI partition was accepted"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn documentation_scope_gate_is_exact_and_fail_closed() -> Result<(), Box<dyn std::error::Error>>
     {
         let source = workflow()?;
@@ -929,6 +1045,7 @@ mod tests {
         let source = workflow()?;
         for changed in [
             source.replacen("      - corpus\n", "", 1),
+            source.replacen("      - windows-integration\n", "", 1),
             source.replacen(
                 "          test \"$CORPUS_RESULT\" = \"$EXPECTED_HEAVY_RESULT\"\n",
                 "          test \"$CORPUS_RESULT\" = success\n",
