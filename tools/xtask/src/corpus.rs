@@ -641,12 +641,11 @@ fn print_json(
 }
 
 fn selected_rows(args: &CorpusArgs) -> Vec<&'static RegistryRow> {
-    REGISTRY
+    let eligible = REGISTRY
         .iter()
         .enumerate()
-        .filter(|(index, registry_row)| {
-            index % args.row_shard_count == args.row_shard_index
-                && registry_row.is_applicable(args.mode)
+        .filter(|(_, registry_row)| {
+            registry_row.is_applicable(args.mode)
                 && args
                     .row
                     .as_deref()
@@ -654,8 +653,57 @@ fn selected_rows(args: &CorpusArgs) -> Vec<&'static RegistryRow> {
                 && (args.selection == CorpusSelection::AllApplicable
                     || registry_row.is_mapped(args.mode))
         })
-        .map(|(_, registry_row)| registry_row)
-        .collect()
+        .collect::<Vec<_>>();
+    balanced_shard_rows(
+        eligible,
+        args.mode,
+        args.row_shard_index,
+        args.row_shard_count,
+    )
+}
+
+fn balanced_shard_rows(
+    eligible: Vec<(usize, &'static RegistryRow)>,
+    mode: CorpusMode,
+    shard_index: usize,
+    shard_count: usize,
+) -> Vec<&'static RegistryRow> {
+    if shard_count == 0 || shard_index >= shard_count {
+        return Vec::new();
+    }
+    if shard_count == 1 {
+        return eligible.into_iter().map(|(_, row)| row).collect();
+    }
+
+    let weight = |row: &RegistryRow| {
+        row.mode_invocations(mode)
+            .map(|invocations| invocations.len().max(1))
+            .unwrap_or(1)
+    };
+    let mut scheduling_order = eligible.clone();
+    scheduling_order.sort_by(|(left_index, left), (right_index, right)| {
+        weight(right)
+            .cmp(&weight(left))
+            .then_with(|| left_index.cmp(right_index))
+    });
+
+    let mut loads = vec![0usize; shard_count];
+    let mut buckets = (0..shard_count).map(|_| Vec::new()).collect::<Vec<_>>();
+    for (registry_index, row) in scheduling_order {
+        let shard = (1..shard_count).fold(0, |best, candidate| {
+            if (loads[candidate], candidate) < (loads[best], best) {
+                candidate
+            } else {
+                best
+            }
+        });
+        loads[shard] += weight(row);
+        buckets[shard].push((registry_index, row));
+    }
+
+    let mut selected = buckets.remove(shard_index);
+    selected.sort_by_key(|(registry_index, _)| *registry_index);
+    selected.into_iter().map(|(_, row)| row).collect()
 }
 
 struct RowExecution {

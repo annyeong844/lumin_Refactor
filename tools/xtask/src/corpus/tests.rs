@@ -179,6 +179,57 @@ fn ci_row_shards_cover_every_mapped_row_exactly_once() {
 }
 
 #[test]
+fn ci_row_shards_balance_invocation_weight_deterministically() {
+    for (mode, row_shard_count) in [(CorpusMode::Standard, 4), (CorpusMode::Determinism, 8)] {
+        let loads = (0..row_shard_count)
+            .map(|row_shard_index| {
+                let args = CorpusArgs {
+                    mode,
+                    format: OutputFormat::Human,
+                    row: None,
+                    selection: CorpusSelection::MappedOnly,
+                    row_jobs: 4,
+                    row_shard_index,
+                    row_shard_count,
+                };
+                let first = selected_rows(&args);
+                let second = selected_rows(&args);
+                assert_eq!(
+                    first.iter().map(|row| row.id).collect::<Vec<_>>(),
+                    second.iter().map(|row| row.id).collect::<Vec<_>>(),
+                );
+                first
+                    .iter()
+                    .map(|row| {
+                        row.mode_invocations(mode)
+                            .map(<[_]>::len)
+                            .unwrap_or_default()
+                            .max(1)
+                    })
+                    .sum::<usize>()
+            })
+            .collect::<Vec<_>>();
+        let least = loads.iter().copied().fold(usize::MAX, usize::min);
+        let most = loads.iter().copied().fold(0, usize::max);
+        let heaviest_row = REGISTRY
+            .iter()
+            .filter_map(|row| row.mode_invocations(mode))
+            .map(|invocations| invocations.len().max(1))
+            .fold(1, usize::max);
+        assert!(
+            most - least <= heaviest_row,
+            "unbalanced {mode} invocation loads: {loads:?}",
+        );
+        let expected = match mode {
+            CorpusMode::Standard => vec![35, 34, 34, 34],
+            CorpusMode::Determinism => vec![18, 17, 17, 17, 17, 17, 17, 17],
+            CorpusMode::StoreCrash => unreachable!("CI does not shard store-crash rows"),
+        };
+        assert_eq!(loads, expected, "{mode} shard assignment changed");
+    }
+}
+
+#[test]
 fn parallel_execution_preserves_registry_order_after_overtake() -> Result<(), String> {
     let gate = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
     let (completed, observed) = mpsc::channel();
