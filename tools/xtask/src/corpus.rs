@@ -19,6 +19,8 @@ mod required_checks;
 
 use required_checks::{CheckOutcome, RequiredCheck};
 
+const MAX_ROW_SHARDS: usize = 16;
+
 // ---------------------------------------------------------------------------
 // Core types
 // ---------------------------------------------------------------------------
@@ -263,12 +265,13 @@ pub fn parse_args(args: &[String]) -> Result<CorpusArgs, String> {
     }
     let (row_shard_index, row_shard_count) = match (row_shard_index, row_shard_count) {
         (None, None) => (0, 1),
-        (Some(index), Some(count)) if (1..=8).contains(&count) && index < count => (index, count),
+        (Some(index), Some(count)) if (1..=MAX_ROW_SHARDS).contains(&count) && index < count => {
+            (index, count)
+        }
         (Some(_), Some(_)) => {
-            return Err(
-                "row shard count must be from 1 through 8 and index must be less than count"
-                    .to_owned(),
-            );
+            return Err(format!(
+                "row shard count must be from 1 through {MAX_ROW_SHARDS} and index must be less than count"
+            ));
         }
         _ => {
             return Err(

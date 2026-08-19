@@ -93,16 +93,16 @@ fn row_shards_are_paired_bounded_and_exact() -> Result<(), String> {
     let args = parse_args(&[
         "--mapped-only".into(),
         "--row-shard-index".into(),
-        "3".into(),
+        "8".into(),
         "--row-shard-count".into(),
-        "4".into(),
+        "9".into(),
     ])?;
-    assert_eq!((args.row_shard_index, args.row_shard_count), (3, 4));
+    assert_eq!((args.row_shard_index, args.row_shard_count), (8, 9));
     for invalid in [
         vec!["--row-shard-index", "0"],
         vec!["--row-shard-count", "4"],
-        vec!["--row-shard-index", "4", "--row-shard-count", "4"],
-        vec!["--row-shard-index", "0", "--row-shard-count", "9"],
+        vec!["--row-shard-index", "9", "--row-shard-count", "9"],
+        vec!["--row-shard-index", "0", "--row-shard-count", "17"],
     ] {
         assert!(parse_args(&invalid.into_iter().map(str::to_owned).collect::<Vec<_>>()).is_err());
     }
