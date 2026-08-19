@@ -2,7 +2,7 @@
 
 Document role: focused Architecture v1 amendment and independent-review record
 
-Status: owner merged; post-merge counterexample closure awaits independent PASS
+Status: post-merge follow-up candidate awaits independent PASS
 
 Date: 2026-08-19
 
@@ -95,17 +95,36 @@ result section and the Workboard status are record-only follow-up; they do not c
 reviewed PRODUCT-000, ARCH-000, ARCH-002, SLICE-001, or PLAN-001 owner bytes. Owner merge
 is still required before Rust implementation begins.
 
+## Seventh Review Result
+
+Independent review bound exact candidate
+`1abd3d7e58e0e9ef127d7a3b3cd80ca18aaa7928` and returned `REOPEN`. It found that a
+delivery attempt could commit its private sequence, write some or all stdout, and die
+before recording completion while the public projection still claimed
+`lastDeliveryStatus: "not-attempted"`. The same review found four owner-consistency gaps:
+the Workboard still called ARCH-002 frozen and copied merge history into its registry,
+the old sixth-review `PASS` appeared to cover the expanded checklist, and the formal
+Slice corpus truth, AC 17/36, and traceability rows did not require either reverse-order
+delivery completion or continuous cache-writer rejection. The replacement decision adds
+the public `unknown` state for every allocated but unfinished greatest delivery attempt,
+makes the registry reflect the reopened owner without a chronicle, scopes the old `PASS`
+to its exact candidate, and maps both counterexamples plus the new uncertainty boundary
+into executable acceptance.
+
 ## Post-Merge Follow-up Review
 
 The approved owner bytes merged in `e988a85`. Delayed independent review then supplied
-two concrete counterexamples that were not covered by the sixth review. Concurrent
+concrete counterexamples that were not covered by the sixth review. Concurrent
 identical retries could complete delivery metadata in backend commit order because no
 pre-transport sequence chose the `lastDeliveryStatus` winner. A cleanup process could
 also die while `pending` before the later retry installed the documented recovery
 reservation, leaving a window in which a normal active-cache writer could invalidate
-the immutable plan. REVIEW-004 is therefore narrowly reopened. The replacement decision
-allocates a durable delivery sequence before each transport and lets only the greatest
-completed sequence update the projection. It also installs one continuous active-cache
+the immutable plan. The first follow-up candidate then left an allocated delivery whose
+completion was missing indistinguishable from a transport that had never started.
+REVIEW-004 is therefore narrowly reopened. The replacement decision allocates a durable
+delivery sequence before each transport, projects the greatest unfinished attempt as
+`unknown`, and lets only completion of the greatest allocated sequence select
+`succeeded` or `failed`. It also installs one continuous active-cache
 mutation reservation with operation creation and retains it through
 `pending -> interrupted -> pending` until result commit. No other command, namespace,
 quarantine, manifest, or response field changes. The exact follow-up candidate requires
@@ -133,10 +152,13 @@ whole-command mutation. That projection exposes only its operation identity/kind
 status and interruption count, authorized/validated counts, stored result, and last
 delivery status; it never embeds unbounded manifests. Show is strictly read-only and
 does not prove process liveness or change a record. Before every transport, a short
-transaction allocates one increasing delivery-attempt sequence and then releases every
-guard and transaction. Completion may update `lastDeliveryStatus` only when its sequence
-is greater than the greatest completed sequence; equal matching completion is idempotent,
-equal disagreement is integrity failure, and a lower late completion is ignored.
+transaction allocates one increasing delivery-attempt sequence, atomically projects
+`lastDeliveryStatus: "unknown"`, and then releases every guard and transaction.
+`not-attempted` is valid only before the first allocation. Completion may project
+`succeeded` or `failed` only when its sequence is still the greatest allocated sequence;
+while a greater attempt is unfinished, a lower completion leaves `unknown`. Equal
+matching completion is idempotent, equal disagreement is integrity failure, and a lower
+late completion is ignored.
 Immediately after child death the canonical state remains `pending`, and the active-cache
 mutation reservation installed with operation creation remains continuously held. Under
 the exclusive catalog guard, only an identical mutating retry proves the exact execution
@@ -228,8 +250,10 @@ finding for each item:
    acceptance criteria, and traceability expose no conflicting command or exception.
 2. The v2 field set/order, request digest, exits, stdout/stderr rules, lock release, retry,
    and strictly read-only `operation show` recovery are complete; pre-transport delivery
-   sequencing selects one deterministic last-status winner, and exact dead-attempt proof,
-   interruption counting, and pending/interrupted/pending transitions agree.
+   allocation atomically exposes `unknown`, missing completion never appears
+   `not-attempted`, lower completion cannot mask a greater unfinished attempt, and exact
+   dead-attempt proof, interruption counting, and pending/interrupted/pending transitions
+   agree.
 3. Namespace bootstrap durably binds the nested quarantine parent/anchor in marker/store
    while the lock remains global-bootstrap-only; replacement, mount, copied-state, or
    crash recovery cannot form a second binding, and a marker/store schema lacking it
@@ -250,28 +274,33 @@ finding for each item:
 8. Top-level and nested substitution barriers stop the exact turn, preserve the winning
    object and remaining order, and assert authorization states plus final snapshot.
 9. Public process-death fixtures cover after authorization, rename visibility, physical
-   durability, row validation, and final result commit without scheduler timing; an exact
-   guard race also proves cleanup cannot overlap publication, retention, or migration.
+   durability, row validation, final result commit, delivery allocation, partial and
+   complete stdout before completion, and reverse-order delivery completion without
+   scheduler timing; an exact guard race also proves cleanup cannot overlap publication,
+   retention, or migration.
 10. Standard, determinism, store-crash, Windows/Linux package, and skill-adapter commands
     are assigned only to behavior they can execute and include `operation show` recovery.
 11. PRODUCT-000, ARCH-000, ARCH-002, SLICE-001 truth, acceptance, and traceability agree
     without weakening any existing reserved-state or durability rule.
 12. No implementation code or mapped-progress claim is accepted as independent truth.
 
-The exact owner candidate above passed independent review. Rust implementation and corpus
-completion must be based on those reviewed owner bytes and may begin only after owner
-merge makes them authoritative on the base branch.
+The sixth-review `PASS` applies only to exact candidate
+`0db2bf15d2861157952a106123d995c18b358de7` and the checklist it contained. It does not
+cover this post-merge amendment or its expanded acceptance requirements. Rust
+implementation and corpus completion for the follow-up remain blocked until the exact
+amended owner candidate receives independent `PASS` and merges.
 
 ## Verification After Freeze
 
-The two post-merge follow-up behaviors may be implemented only after their exact amended
+The three post-merge follow-up behaviors may be implemented only after their exact amended
 candidate receives owner approval and an independent `PASS`. Focused checks must then
 cover nested-binding bootstrap/replacement,
 operation admission/idempotency, foreign self-hashed quarantine, authorization-plan
 durability, bottom-up flush order, every recovery boundary, exact CLI transport behavior,
-concurrent reverse-order delivery completion, continuous cache-writer rejection across a
-dead pending lease, both substitution barriers, and unchanged run/gate evidence. The public
-`reserved-state-namespace` row remains unmapped until standard and determinism lanes plus
+allocated-but-unfinished delivery projection before output and after partial or complete
+stdout, concurrent reverse-order delivery completion, continuous cache-writer rejection
+across a dead pending lease, both substitution barriers, and unchanged run/gate evidence. The
+public `reserved-state-namespace` row remains unmapped until standard and determinism lanes plus
 Windows/Linux package checks execute those behaviors through the packaged CLI and the
 skill package check proves operation-ID generation and recovery. Passing an internal
 store test alone is not acceptance evidence.
