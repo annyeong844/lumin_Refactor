@@ -153,7 +153,7 @@ fn all_applicable_selection_retains_unmapped_rows() {
 
 #[test]
 fn ci_row_shards_cover_every_mapped_row_exactly_once() {
-    for (mode, row_shard_count) in [(CorpusMode::Standard, 4), (CorpusMode::Determinism, 8)] {
+    for (mode, row_shard_count) in [(CorpusMode::Standard, 4), (CorpusMode::Determinism, 9)] {
         let mut observed = Vec::new();
         for row_shard_index in 0..row_shard_count {
             let args = CorpusArgs {
@@ -179,8 +179,8 @@ fn ci_row_shards_cover_every_mapped_row_exactly_once() {
 }
 
 #[test]
-fn ci_row_shards_balance_invocation_weight_deterministically() {
-    for (mode, row_shard_count) in [(CorpusMode::Standard, 4), (CorpusMode::Determinism, 8)] {
+fn ci_row_shards_balance_declared_work_deterministically() {
+    for (mode, row_shard_count) in [(CorpusMode::Standard, 4), (CorpusMode::Determinism, 9)] {
         let loads = (0..row_shard_count)
             .map(|row_shard_index| {
                 let args = CorpusArgs {
@@ -200,12 +200,7 @@ fn ci_row_shards_balance_invocation_weight_deterministically() {
                 );
                 first
                     .iter()
-                    .map(|row| {
-                        row.mode_invocations(mode)
-                            .map(<[_]>::len)
-                            .unwrap_or_default()
-                            .max(1)
-                    })
+                    .map(|row| shard_weight(row, mode))
                     .sum::<usize>()
             })
             .collect::<Vec<_>>();
@@ -213,8 +208,8 @@ fn ci_row_shards_balance_invocation_weight_deterministically() {
         let most = loads.iter().copied().fold(0, usize::max);
         let heaviest_row = REGISTRY
             .iter()
-            .filter_map(|row| row.mode_invocations(mode))
-            .map(|invocations| invocations.len().max(1))
+            .filter(|row| row.is_mapped(mode))
+            .map(|row| shard_weight(row, mode))
             .fold(1, usize::max);
         assert!(
             most - least <= heaviest_row,
@@ -222,11 +217,25 @@ fn ci_row_shards_balance_invocation_weight_deterministically() {
         );
         let expected = match mode {
             CorpusMode::Standard => vec![35, 34, 34, 34],
-            CorpusMode::Determinism => vec![18, 17, 17, 17, 17, 17, 17, 17],
+            CorpusMode::Determinism => vec![64, 17, 17, 17, 17, 17, 17, 17, 17],
             CorpusMode::StoreCrash => unreachable!("CI does not shard store-crash rows"),
         };
         assert_eq!(loads, expected, "{mode} shard assignment changed");
     }
+
+    let dedicated = selected_rows(&CorpusArgs {
+        mode: CorpusMode::Determinism,
+        format: OutputFormat::Human,
+        row: None,
+        selection: CorpusSelection::MappedOnly,
+        row_jobs: 4,
+        row_shard_index: 0,
+        row_shard_count: 9,
+    });
+    assert_eq!(
+        dedicated.iter().map(|row| row.id).collect::<Vec<_>>(),
+        ["retention-plan-pagination"],
+    );
 }
 
 #[test]

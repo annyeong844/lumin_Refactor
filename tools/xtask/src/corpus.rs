@@ -122,6 +122,8 @@ pub struct RegistryRow {
     pub determinism: Option<&'static [CorpusInvocation]>,
     pub store_crash: Option<&'static [CorpusInvocation]>,
     pub required_checks: &'static [RequiredCheck],
+    /// Relative scheduling cost for determinism CI. Zero uses invocation count.
+    pub determinism_shard_weight: usize,
 }
 impl RegistryRow {
     pub fn mode_invocations(&self, mode: CorpusMode) -> Option<&'static [CorpusInvocation]> {
@@ -675,15 +677,10 @@ fn balanced_shard_rows(
         return eligible.into_iter().map(|(_, row)| row).collect();
     }
 
-    let weight = |row: &RegistryRow| {
-        row.mode_invocations(mode)
-            .map(|invocations| invocations.len().max(1))
-            .unwrap_or(1)
-    };
     let mut scheduling_order = eligible.clone();
     scheduling_order.sort_by(|(left_index, left), (right_index, right)| {
-        weight(right)
-            .cmp(&weight(left))
+        shard_weight(right, mode)
+            .cmp(&shard_weight(left, mode))
             .then_with(|| left_index.cmp(right_index))
     });
 
@@ -697,13 +694,25 @@ fn balanced_shard_rows(
                 best
             }
         });
-        loads[shard] += weight(row);
+        loads[shard] += shard_weight(row, mode);
         buckets[shard].push((registry_index, row));
     }
 
     let mut selected = buckets.remove(shard_index);
     selected.sort_by_key(|(registry_index, _)| *registry_index);
     selected.into_iter().map(|(_, row)| row).collect()
+}
+
+fn shard_weight(row: &RegistryRow, mode: CorpusMode) -> usize {
+    let invocation_weight = row
+        .mode_invocations(mode)
+        .map(|invocations| invocations.len().max(1))
+        .unwrap_or(1);
+    if mode == CorpusMode::Determinism {
+        invocation_weight.max(row.determinism_shard_weight)
+    } else {
+        invocation_weight
+    }
 }
 
 struct RowExecution {

@@ -67,13 +67,8 @@ const SFC_INTEGRATION_TEST: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
     "-- cargo test --locked -p lumin-sfc --tests"
 );
-const UBUNTU_MAPPED_CORPUS_CASES: &[(&str, &str)] = &[
-    ("mapped-standard", "foundation --mapped-only --row-jobs 8"),
-    (
-        "mapped-determinism",
-        "foundation --determinism --mapped-only --row-jobs 2",
-    ),
-];
+const UBUNTU_MAPPED_CORPUS_CASES: &[(&str, &str)] =
+    &[("mapped-standard", "foundation --mapped-only --row-jobs 8")];
 const CRASH_CORPUS_CASES: &[(&str, &str)] = &[
     (
         "retention-crash-protocol",
@@ -738,7 +733,7 @@ fn validate_corpus_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<Str
         }
     }
     for (mode, mode_flag, shard_count) in
-        [("standard", "", 4), ("determinism", "--determinism ", 8)]
+        [("standard", "", 4), ("determinism", "--determinism ", 9)]
     {
         let row_jobs = if mode == "determinism" { 4 } else { 6 };
         for index in 0..shard_count {
@@ -1031,7 +1026,7 @@ mod tests {
             );
         }
         for (mode, mode_flag, shard_count) in
-            [("standard", "", 4), ("determinism", "--determinism ", 8)]
+            [("standard", "", 4), ("determinism", "--determinism ", 9)]
         {
             let row_jobs = if mode == "determinism" { 4 } else { 6 };
             for index in 0..shard_count {
@@ -1068,13 +1063,8 @@ mod tests {
             source.replacen("--count 6 --jobs 4", "--count 6 --jobs 3", 1),
             source.replacen(CORE_TARGET_TEST, ALL_TARGET_TEST, 1),
             source.replacen("--row-jobs 8", "--row-jobs 7", 1),
-            source.replacen(
-                "foundation --determinism --mapped-only --row-jobs 2",
-                "foundation --determinism --mapped-only --row-jobs 1",
-                1,
-            ),
             source.replacen("--row-shard-count 4", "--row-shard-count 3", 1),
-            source.replacen("--row-shard-count 8", "--row-shard-count 7", 1),
+            source.replacen("--row-shard-count 9", "--row-shard-count 8", 1),
         ] {
             assert!(
                 violations(&changed).iter().any(|violation| {

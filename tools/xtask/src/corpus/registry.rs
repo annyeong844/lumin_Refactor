@@ -148,6 +148,7 @@ macro_rules! row_sd {
             determinism: Some(&[]),
             store_crash: None,
             required_checks: &[],
+            determinism_shard_weight: 0,
         }
     };
     ($id:expr, $inv:expr) => {
@@ -157,6 +158,20 @@ macro_rules! row_sd {
             determinism: Some($inv),
             store_crash: None,
             required_checks: &[],
+            determinism_shard_weight: 0,
+        }
+    };
+}
+/// Standard + determinism row with a reviewed determinism scheduling cost.
+macro_rules! row_sd_determinism_weight {
+    ($id:expr, $inv:expr, $weight:expr) => {
+        RegistryRow {
+            id: $id,
+            standard: Some($inv),
+            determinism: Some($inv),
+            store_crash: None,
+            required_checks: &[],
+            determinism_shard_weight: $weight,
         }
     };
 }
@@ -169,6 +184,7 @@ macro_rules! row_sd_arch {
             determinism: Some(&[]),
             store_crash: None,
             required_checks: ARCHITECTURE_CHECK,
+            determinism_shard_weight: 0,
         }
     };
     ($id:expr, $inv:expr) => {
@@ -178,6 +194,7 @@ macro_rules! row_sd_arch {
             determinism: Some($inv),
             store_crash: None,
             required_checks: ARCHITECTURE_CHECK,
+            determinism_shard_weight: 0,
         }
     };
 }
@@ -190,6 +207,7 @@ macro_rules! row_c {
             determinism: None,
             store_crash: Some(&[]),
             required_checks: &[],
+            determinism_shard_weight: 0,
         }
     };
     ($id:expr, $inv:expr) => {
@@ -199,6 +217,7 @@ macro_rules! row_c {
             determinism: None,
             store_crash: Some($inv),
             required_checks: &[],
+            determinism_shard_weight: 0,
         }
     };
 }
@@ -211,6 +230,7 @@ macro_rules! row_sdc {
             determinism: Some(&[]),
             store_crash: Some(&[]),
             required_checks: &[],
+            determinism_shard_weight: 0,
         }
     };
     ($id:expr, $inv:expr) => {
@@ -220,6 +240,7 @@ macro_rules! row_sdc {
             determinism: Some($inv),
             store_crash: Some(&[]),
             required_checks: &[],
+            determinism_shard_weight: 0,
         }
     };
 }
@@ -399,7 +420,9 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_c!("publication-retention-race", INV_PUB_RET_RACE),
     row_c!("cache-cleanup-publication-race", INV_CACHE_CLEANUP_PUB_RACE),
     row_sdc!("retention-latest-protection", INV_RET_LATEST),
-    row_sd!("retention-plan-pagination", INV_RET_PAGINATION),
+    // This fixture emits 52 semantic captures per determinism variant. Keep its
+    // three child processes off the same two-core runner as unrelated rows.
+    row_sd_determinism_weight!("retention-plan-pagination", INV_RET_PAGINATION, 64),
     row_sdc!("retention-public-lookup", INV_RET_LOOKUP),
     row_sd!("retention-independent-pins", INV_RET_PINS),
     row_sd!("retention-active-transition-reference", &[inv!("write_gate", "transition_retention::disjoint_gates_reconcile_a_terminal_transition_on_retry")]),
