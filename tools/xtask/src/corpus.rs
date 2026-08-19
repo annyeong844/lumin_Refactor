@@ -596,100 +596,33 @@ struct RowExecution {
     stderr: Vec<u8>,
 }
 
-fn execute_row(
+struct InvocationTask {
+    row_id: &'static str,
+    invocation: &'static CorpusInvocation,
+    marker: PathBuf,
+}
+
+struct InvocationExecution {
+    result: InvResult,
+    marker_error: Option<String>,
+}
+
+fn execute_invocation(
     workspace: &Path,
-    row: &'static RegistryRow,
+    task: &InvocationTask,
     mode: CorpusMode,
-    check_outcomes: &BTreeMap<RequiredCheck, CheckOutcome>,
-) -> Result<RowExecution, String> {
-    if !row.is_mapped(mode) {
-        return Ok(RowExecution {
-            result: RowResult {
-                id: row.id,
-                mapped: false,
-                passed: false,
-                invocations: 0,
-                marker_ok: false,
-                semantic_captures: 0,
-                required_checks: row.required_checks,
-                required_checks_validated: false,
-            },
-            stdout: Vec::new(),
-            stderr: Vec::new(),
-        });
+) -> InvocationExecution {
+    let _ = fs::remove_file(&task.marker);
+    let result = run_inv(workspace, task.invocation, mode, task.row_id, &task.marker);
+    let marker_error = result
+        .success
+        .then(|| validate_marker(&task.marker, task.row_id, 1).err())
+        .flatten();
+    let _ = fs::remove_file(&task.marker);
+    InvocationExecution {
+        result,
+        marker_error,
     }
-    let invocations = row.mode_invocations(mode).ok_or_else(|| {
-        format!(
-            "mapped row {} lacks mode {} invocations after registry validation",
-            row.id, mode
-        )
-    })?;
-    let marker = marker_path(row.id);
-    let _ = fs::remove_file(&marker);
-    let (mut passed, mut succeeded, mut semantic_captures) = (true, 0usize, 0usize);
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    for invocation in invocations {
-        let result = run_inv(workspace, invocation, mode, row.id, &marker);
-        semantic_captures += result.semantic_captures;
-        if result.success {
-            succeeded += 1;
-        } else {
-            passed = false;
-            let _ = writeln!(
-                stderr,
-                "--- FAIL: {} / {} {} ---",
-                row.id, invocation.target, invocation.filter
-            );
-            stderr.extend_from_slice(&result.stderr);
-            stdout.extend_from_slice(&result.stdout);
-        }
-    }
-    let required_checks_validated = row.required_checks.iter().all(|check| {
-        check_outcomes
-            .get(check)
-            .is_some_and(|outcome| outcome.passed)
-    });
-    if !required_checks_validated {
-        passed = false;
-    }
-    if mode == CorpusMode::Determinism && passed && semantic_captures == 0 {
-        let _ = writeln!(
-            stderr,
-            "[DETERMINISM] {} produced no canonical semantic evidence",
-            row.id
-        );
-        passed = false;
-    }
-    let marker_ok = if passed && succeeded > 0 {
-        match validate_marker(&marker, row.id, succeeded) {
-            Ok(()) => {
-                let _ = fs::remove_file(&marker);
-                true
-            }
-            Err(error) => {
-                let _ = writeln!(stderr, "[MARKER] {}: {error}", row.id);
-                passed = false;
-                false
-            }
-        }
-    } else {
-        false
-    };
-    Ok(RowExecution {
-        result: RowResult {
-            id: row.id,
-            mapped: true,
-            passed,
-            invocations: invocations.len(),
-            marker_ok,
-            semantic_captures,
-            required_checks: row.required_checks,
-            required_checks_validated,
-        },
-        stdout,
-        stderr,
-    })
 }
 
 fn run_parallel_ordered<T, F>(item_count: usize, jobs: usize, work: F) -> Result<Vec<T>, String>
@@ -699,6 +632,9 @@ where
 {
     if item_count == 0 {
         return Ok(Vec::new());
+    }
+    if jobs == 0 {
+        return Err("parallel worker count must be positive".to_owned());
     }
     let worker_count = jobs.min(item_count);
     let next = AtomicUsize::new(0);
@@ -753,9 +689,130 @@ fn execute_rows(
     check_outcomes: &BTreeMap<RequiredCheck, CheckOutcome>,
     row_jobs: usize,
 ) -> Result<Vec<RowExecution>, String> {
-    run_parallel_ordered(selected.len(), row_jobs, |index| {
-        execute_row(workspace, selected[index], mode, check_outcomes)
-    })
+    let mut tasks = Vec::new();
+    let mut row_ranges = Vec::with_capacity(selected.len());
+    for row in selected {
+        let start = tasks.len();
+        if row.is_mapped(mode) {
+            let invocations = row.mode_invocations(mode).ok_or_else(|| {
+                format!(
+                    "mapped row {} lacks mode {} invocations after registry validation",
+                    row.id, mode
+                )
+            })?;
+            tasks.extend(invocations.iter().map(|invocation| InvocationTask {
+                row_id: row.id,
+                invocation,
+                marker: marker_path(row.id),
+            }));
+        }
+        row_ranges.push(start..tasks.len());
+    }
+
+    let invocation_executions = run_parallel_ordered(tasks.len(), row_jobs, |index| {
+        Ok(execute_invocation(workspace, &tasks[index], mode))
+    })?;
+
+    let mut rows = Vec::with_capacity(selected.len());
+    for (row, range) in selected.iter().zip(row_ranges) {
+        if !row.is_mapped(mode) {
+            rows.push(RowExecution {
+                result: RowResult {
+                    id: row.id,
+                    mapped: false,
+                    passed: false,
+                    invocations: 0,
+                    marker_ok: false,
+                    semantic_captures: 0,
+                    required_checks: row.required_checks,
+                    required_checks_validated: false,
+                },
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            });
+            continue;
+        }
+
+        let invocations = row.mode_invocations(mode).ok_or_else(|| {
+            format!(
+                "mapped row {} lacks mode {} invocations after registry validation",
+                row.id, mode
+            )
+        })?;
+        let executions = &invocation_executions[range];
+        if invocations.len() != executions.len() {
+            return Err(format!(
+                "mapped row {} lost an invocation during parallel execution",
+                row.id
+            ));
+        }
+
+        let (mut passed, mut succeeded, mut semantic_captures) = (true, 0usize, 0usize);
+        let mut marker_errors = Vec::new();
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        for (invocation, execution) in invocations.iter().zip(executions) {
+            semantic_captures += execution.result.semantic_captures;
+            if execution.result.success {
+                succeeded += 1;
+                if let Some(error) = &execution.marker_error {
+                    marker_errors.push(format!(
+                        "{} / {} {}: {error}",
+                        row.id, invocation.target, invocation.filter
+                    ));
+                }
+            } else {
+                passed = false;
+                let _ = writeln!(
+                    stderr,
+                    "--- FAIL: {} / {} {} ---",
+                    row.id, invocation.target, invocation.filter
+                );
+                stderr.extend_from_slice(&execution.result.stderr);
+                stdout.extend_from_slice(&execution.result.stdout);
+            }
+        }
+
+        let required_checks_validated = row.required_checks.iter().all(|check| {
+            check_outcomes
+                .get(check)
+                .is_some_and(|outcome| outcome.passed)
+        });
+        if !required_checks_validated {
+            passed = false;
+        }
+        if mode == CorpusMode::Determinism && passed && semantic_captures == 0 {
+            let _ = writeln!(
+                stderr,
+                "[DETERMINISM] {} produced no canonical semantic evidence",
+                row.id
+            );
+            passed = false;
+        }
+        let marker_ok = passed && succeeded > 0 && marker_errors.is_empty();
+        if passed && !marker_ok {
+            for error in marker_errors {
+                let _ = writeln!(stderr, "[MARKER] {error}");
+            }
+            passed = false;
+        }
+
+        rows.push(RowExecution {
+            result: RowResult {
+                id: row.id,
+                mapped: true,
+                passed,
+                invocations: invocations.len(),
+                marker_ok,
+                semantic_captures,
+                required_checks: row.required_checks,
+                required_checks_validated,
+            },
+            stdout,
+            stderr,
+        });
+    }
+    Ok(rows)
 }
 
 // ---------------------------------------------------------------------------
