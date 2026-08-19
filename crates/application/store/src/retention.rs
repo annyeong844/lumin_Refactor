@@ -146,12 +146,20 @@ impl crate::RepositoryStore {
         match self.load_operation(operation_id) {
             Ok(operation) => Ok(LifecycleOperationRecord::Gate(Box::new(operation))),
             Err(StoreError::OperationNotFound(_)) => {
-                let (operation, current_physical_reclamation_pending) =
-                    self.load_retention_operation_projection(operation_id)?;
-                Ok(LifecycleOperationRecord::Retention {
-                    operation: Box::new(operation),
-                    current_physical_reclamation_pending,
-                })
+                match self.load_cache_cleanup_operation(operation_id) {
+                    Ok(operation) => {
+                        Ok(LifecycleOperationRecord::CacheCleanup(Box::new(operation)))
+                    }
+                    Err(StoreError::OperationNotFound(_)) => {
+                        let (operation, current_physical_reclamation_pending) =
+                            self.load_retention_operation_projection(operation_id)?;
+                        Ok(LifecycleOperationRecord::Retention {
+                            operation: Box::new(operation),
+                            current_physical_reclamation_pending,
+                        })
+                    }
+                    Err(error) => Err(error),
+                }
             }
             Err(error) => Err(error),
         }

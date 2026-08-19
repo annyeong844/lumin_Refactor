@@ -89,6 +89,65 @@ fn closed_mutation_result_pipe_requires_operation_recovery()
     Ok(())
 }
 
+#[test]
+fn closed_cache_cleanup_result_pipe_recovers_the_committed_operation()
+-> Result<(), Box<dyn std::error::Error>> {
+    const OPERATION_ID: &str = "closed-pipe-cache-clean";
+
+    let root = tempfile::tempdir()?;
+    let initialized = run_with_captured_stdout(root.path(), &["audit", "--jobs", "1"])?;
+    assert_eq!(initialized.status.code(), Some(0));
+    fs::write(root.path().join(".lumin/cache/payload.bin"), b"payload")?;
+
+    let output = run_with_closed_stdout(
+        root.path(),
+        &["cache", "clean", "--operation-id", OPERATION_ID],
+    )?;
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+
+    let shown = run_with_captured_stdout(root.path(), &["operation", "show", OPERATION_ID])?;
+    assert_eq!(shown.status.code(), Some(0));
+    let shown: Value = serde_json::from_slice(&shown.stdout)?;
+    assert_eq!(
+        shown.get("kind").and_then(Value::as_str),
+        Some("cache-clean")
+    );
+    assert_eq!(
+        shown.get("status").and_then(Value::as_str),
+        Some("committed")
+    );
+    assert_eq!(
+        shown.get("lastDeliveryStatus").and_then(Value::as_str),
+        Some("failed")
+    );
+    assert_eq!(
+        fs::read_dir(root.path().join(".lumin/trash/cache-evictions"))?.count(),
+        2
+    );
+
+    let replay = run_with_captured_stdout(
+        root.path(),
+        &["cache", "clean", "--operation-id", OPERATION_ID],
+    )?;
+    assert_eq!(replay.status.code(), Some(0));
+    let replay: Value = serde_json::from_slice(&replay.stdout)?;
+    assert_eq!(
+        replay.get("operationId").and_then(Value::as_str),
+        Some(OPERATION_ID)
+    );
+    assert_eq!(
+        fs::read_dir(root.path().join(".lumin/trash/cache-evictions"))?.count(),
+        2
+    );
+    Ok(())
+}
+
 fn run_with_closed_stdout(root: &std::path::Path, arguments: &[&str]) -> std::io::Result<Output> {
     let (consumer, producer) = UnixStream::pair()?;
     drop(consumer);

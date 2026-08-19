@@ -22,8 +22,8 @@ pub(crate) use database::StoreDatabase;
 pub use migration::MigrationIntent;
 use platform::repository_root_physical_identity;
 pub(crate) use platform::{
-    EntryAccess, EntryKind, HeldEntry, publish_file_atomic, replace_file_atomic,
-    same_volume_and_mount,
+    EntryAccess, EntryKind, HeldEntry, move_entry_noreplace, publish_file_atomic,
+    replace_file_atomic, same_volume_and_mount,
 };
 use records::*;
 use store_header::*;
@@ -47,10 +47,17 @@ pub(super) struct NamespaceGuard {
     state_directory: HeldEntry,
     lock: HeldEntry,
     managed_parents: Vec<HeldManagedParent>,
+    cache_evictions: HeldCacheEvictionParent,
 }
 
 struct HeldManagedParent {
     binding: ManagedStateParentBinding,
+    directory: HeldEntry,
+    anchor: HeldEntry,
+}
+
+struct HeldCacheEvictionParent {
+    binding: CacheEvictionParentBinding,
     directory: HeldEntry,
     anchor: HeldEntry,
 }
@@ -336,11 +343,13 @@ impl NamespaceGuard {
         for binding in &state.binding.managed_parents {
             managed_parents.push(open_managed_parent(&state, binding)?);
         }
+        let cache_evictions = open_cache_eviction_parent(&state)?;
         let guard = Self {
             state,
             state_directory,
             lock,
             managed_parents,
+            cache_evictions,
         };
         guard.validate_bound_entries()?;
         Ok(guard)
@@ -480,6 +489,15 @@ impl NamespaceGuard {
             })
     }
 
+    pub(crate) fn cache_eviction_parent_path(&self) -> PathBuf {
+        self.managed_parent_path(ManagedStateParentKind::Trash)
+            .join("cache-evictions")
+    }
+
+    pub(crate) fn cache_eviction_parent_entry(&self) -> &HeldEntry {
+        &self.cache_evictions.directory
+    }
+
     pub(crate) fn open_managed_child_directory(
         &self,
         kind: ManagedStateParentKind,
@@ -581,6 +599,7 @@ impl NamespaceGuard {
         for held in &self.managed_parents {
             validate_managed_parent(&self.state, &self.state_directory, held)?;
         }
+        validate_cache_eviction_parent(&self.state, &self.managed_parents, &self.cache_evictions)?;
         Ok(())
     }
 
@@ -589,6 +608,39 @@ impl NamespaceGuard {
     ) -> Result<std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>, StoreError> {
         reserved_state::collect_identities(self)
     }
+}
+
+fn open_cache_eviction_parent(
+    state: &NamespaceState,
+) -> Result<HeldCacheEvictionParent, StoreError> {
+    let binding = state.binding.cache_evictions.as_ref().ok_or_else(|| {
+        StoreError::IncompatibleStateSchema(
+            "repository marker omitted the cache-eviction parent binding".to_owned(),
+        )
+    })?;
+    let path = state
+        .state_dir
+        .join(ManagedStateParentKind::Trash.directory_name())
+        .join("cache-evictions");
+    let directory = HeldEntry::open(
+        &path,
+        EntryKind::Directory,
+        EntryAccess::ReadOnly,
+        false,
+        "cache-eviction parent",
+    )?;
+    let anchor = HeldEntry::open(
+        &path.join("namespace.anchor"),
+        EntryKind::RegularFile,
+        EntryAccess::ReadOnly,
+        true,
+        "cache-eviction parent anchor",
+    )?;
+    Ok(HeldCacheEvictionParent {
+        binding: binding.clone(),
+        directory,
+        anchor,
+    })
 }
 
 fn open_managed_parent(
@@ -657,6 +709,57 @@ fn validate_managed_parent(
             binding: held.binding.clone(),
         },
         &format!("managed state anchor {name}"),
+    )
+}
+
+fn validate_cache_eviction_parent(
+    state: &NamespaceState,
+    managed_parents: &[HeldManagedParent],
+    held: &HeldCacheEvictionParent,
+) -> Result<(), StoreError> {
+    let trash = managed_parents
+        .iter()
+        .find(|parent| parent.binding.kind == ManagedStateParentKind::Trash)
+        .ok_or_else(|| StoreError::Integrity("trash parent handle is missing".to_owned()))?;
+    let path = state
+        .state_dir
+        .join(ManagedStateParentKind::Trash.directory_name())
+        .join("cache-evictions");
+    held.directory.validate_path(
+        &path,
+        EntryKind::Directory,
+        EntryAccess::ReadOnly,
+        false,
+        "cache-eviction parent",
+    )?;
+    if !same_volume_and_mount(&held.directory, &trash.directory)
+        || held.directory.identity() != &held.binding.directory_physical_identity
+    {
+        return Err(StoreError::Integrity(
+            "cache-eviction parent binding changed".to_owned(),
+        ));
+    }
+    held.anchor.validate_path(
+        &path.join("namespace.anchor"),
+        EntryKind::RegularFile,
+        EntryAccess::ReadOnly,
+        true,
+        "cache-eviction parent anchor",
+    )?;
+    if held.anchor.identity() != &held.binding.anchor_physical_identity {
+        return Err(StoreError::Integrity(
+            "cache-eviction parent anchor binding changed".to_owned(),
+        ));
+    }
+    verify_canonical_entry(
+        &held.anchor,
+        &CacheEvictionParentAnchorHeader {
+            schema_version: CACHE_EVICTION_ANCHOR_SCHEMA.to_owned(),
+            global: state.binding.global.clone(),
+            trash_binding: trash.binding.clone(),
+            binding: held.binding.clone(),
+        },
+        "cache-eviction parent anchor",
     )
 }
 

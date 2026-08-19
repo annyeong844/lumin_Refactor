@@ -8,13 +8,16 @@ use crate::{StoreError, io_error, nonce_hex};
 
 use super::platform::{EntryAccess, EntryKind, HeldEntry};
 use super::{
-    ANCHOR_SCHEMA, GlobalNamespaceBinding, HeldRepository, LOCK_SCHEMA, LifecycleLockHeader,
-    MANAGED_KINDS, ManagedParentAnchorHeader, ManagedStateParentBinding, ManagedStateParentKind,
-    NamespaceBinding, NamespaceGuard, NamespaceState, REPOSITORY_SCHEMA, RepositoryMarker,
-    create_or_verify_store, entry_exists, read_canonical_path, require_state_volume,
-    validate_global_binding, validate_marker, verify_repository_binding, write_canonical_entry,
-    write_new_canonical,
+    ANCHOR_SCHEMA, CACHE_EVICTION_ANCHOR_SCHEMA, CacheEvictionParentAnchorHeader,
+    CacheEvictionParentBinding, GlobalNamespaceBinding, HeldRepository, LOCK_SCHEMA,
+    LifecycleLockHeader, MANAGED_KINDS, ManagedParentAnchorHeader, ManagedStateParentBinding,
+    ManagedStateParentKind, NamespaceBinding, NamespaceGuard, NamespaceState, REPOSITORY_SCHEMA,
+    RepositoryMarker, create_or_verify_store, entry_exists, read_canonical_path,
+    require_state_volume, same_volume_and_mount, validate_global_binding, validate_marker,
+    verify_repository_binding, write_canonical_entry, write_new_canonical,
 };
+
+const CACHE_EVICTIONS_DIRECTORY: &str = "cache-evictions";
 
 pub(super) fn bootstrap_namespace(
     repository: HeldRepository,
@@ -115,9 +118,22 @@ fn finish_bootstrap(
     let managed_parents: [ManagedStateParentBinding; 4] = bindings.try_into().map_err(|_| {
         StoreError::Integrity("managed parent initialization was incomplete".to_owned())
     })?;
+    let trash_binding = managed_parents
+        .iter()
+        .find(|binding| binding.kind == ManagedStateParentKind::Trash)
+        .ok_or_else(|| StoreError::Integrity("trash parent binding is missing".to_owned()))?;
+    let cache_evictions_path = state_dir
+        .join(ManagedStateParentKind::Trash.directory_name())
+        .join(CACHE_EVICTIONS_DIRECTORY);
+    let cache_evictions = if entry_exists(&cache_evictions_path)? {
+        load_existing_cache_eviction_parent(&state_dir, &global, trash_binding)?
+    } else {
+        create_cache_eviction_parent(&state_dir, &global, trash_binding)?
+    };
     let binding = NamespaceBinding {
         global,
         managed_parents,
+        cache_evictions: Some(cache_evictions),
     };
     write_new_canonical(
         &state_dir.join("repository.json"),
@@ -181,7 +197,7 @@ fn load_existing_parent(
 ) -> Result<ManagedStateParentBinding, StoreError> {
     let name = kind.directory_name();
     let path = state_dir.join(name);
-    require_anchor_only(&path, name)?;
+    require_parent_bootstrap_entries(&path, kind)?;
     let directory = open_parent_directory(&path, name)?;
     require_state_volume(&directory, state_directory, name)?;
     let anchor_path = path.join("namespace.anchor");
@@ -204,6 +220,83 @@ fn load_existing_parent(
         return Err(StoreError::Integrity(format!(
             "managed state parent {name} is not a matching bootstrap remnant"
         )));
+    }
+    Ok(header.binding)
+}
+
+fn create_cache_eviction_parent(
+    state_dir: &Path,
+    global: &GlobalNamespaceBinding,
+    trash_binding: &ManagedStateParentBinding,
+) -> Result<CacheEvictionParentBinding, StoreError> {
+    let trash_path = state_dir.join(ManagedStateParentKind::Trash.directory_name());
+    let trash = open_parent_directory(&trash_path, "trash")?;
+    let directory_path = trash_path.join(CACHE_EVICTIONS_DIRECTORY);
+    fs::create_dir(&directory_path).map_err(io_error)?;
+    let directory = open_parent_directory(&directory_path, CACHE_EVICTIONS_DIRECTORY)?;
+    if !same_volume_and_mount(&directory, &trash) {
+        return Err(StoreError::Integrity(
+            "cache-eviction parent crossed the trash parent volume or mount".to_owned(),
+        ));
+    }
+    let anchor = HeldEntry::create_new(
+        &directory_path.join("namespace.anchor"),
+        "cache-eviction parent anchor",
+    )?;
+    let binding = CacheEvictionParentBinding {
+        directory_physical_identity: directory.identity().clone(),
+        anchor_physical_identity: anchor.identity().clone(),
+        parent_nonce: nonce_hex()?,
+    };
+    write_canonical_entry(
+        &anchor,
+        &CacheEvictionParentAnchorHeader {
+            schema_version: CACHE_EVICTION_ANCHOR_SCHEMA.to_owned(),
+            global: global.clone(),
+            trash_binding: trash_binding.clone(),
+            binding: binding.clone(),
+        },
+    )?;
+    directory.sync_directory()?;
+    trash.sync_directory()?;
+    Ok(binding)
+}
+
+fn load_existing_cache_eviction_parent(
+    state_dir: &Path,
+    global: &GlobalNamespaceBinding,
+    trash_binding: &ManagedStateParentBinding,
+) -> Result<CacheEvictionParentBinding, StoreError> {
+    let trash_path = state_dir.join(ManagedStateParentKind::Trash.directory_name());
+    let trash = open_parent_directory(&trash_path, "trash")?;
+    let path = trash_path.join(CACHE_EVICTIONS_DIRECTORY);
+    require_anchor_only(&path, CACHE_EVICTIONS_DIRECTORY)?;
+    let directory = open_parent_directory(&path, CACHE_EVICTIONS_DIRECTORY)?;
+    if !same_volume_and_mount(&directory, &trash) {
+        return Err(StoreError::Integrity(
+            "cache-eviction parent crossed the trash parent volume or mount".to_owned(),
+        ));
+    }
+    let anchor_path = path.join("namespace.anchor");
+    let anchor = HeldEntry::open(
+        &anchor_path,
+        EntryKind::RegularFile,
+        EntryAccess::ReadOnly,
+        true,
+        "cache-eviction parent anchor",
+    )?;
+    let header: CacheEvictionParentAnchorHeader =
+        read_canonical_path(&anchor_path, "cache-eviction parent anchor")?;
+    if header.schema_version != CACHE_EVICTION_ANCHOR_SCHEMA
+        || &header.global != global
+        || &header.trash_binding != trash_binding
+        || header.binding.directory_physical_identity != *directory.identity()
+        || header.binding.anchor_physical_identity != *anchor.identity()
+        || !valid_nonce(&header.binding.parent_nonce)
+    {
+        return Err(StoreError::Integrity(
+            "cache-eviction parent is not a matching bootstrap remnant".to_owned(),
+        ));
     }
     Ok(header.binding)
 }
@@ -274,6 +367,33 @@ fn require_anchor_only(path: &Path, name: &str) -> Result<(), StoreError> {
     if anchor.file_name() != OsStr::new("namespace.anchor") || entries.next().is_some() {
         return Err(StoreError::Integrity(format!(
             "managed state parent {name} contains foreign pre-marker state"
+        )));
+    }
+    Ok(())
+}
+
+fn require_parent_bootstrap_entries(
+    path: &Path,
+    kind: ManagedStateParentKind,
+) -> Result<(), StoreError> {
+    let mut names = fs::read_dir(path)
+        .map_err(io_error)?
+        .map(|entry| entry.map(|entry| entry.file_name()).map_err(io_error))
+        .collect::<Result<Vec<_>, _>>()?;
+    names.sort();
+    let mut expected = vec![OsStr::new("namespace.anchor").to_os_string()];
+    if kind == ManagedStateParentKind::Trash
+        && names
+            .iter()
+            .any(|name| name == OsStr::new(CACHE_EVICTIONS_DIRECTORY))
+    {
+        expected.push(OsStr::new(CACHE_EVICTIONS_DIRECTORY).to_os_string());
+        expected.sort();
+    }
+    if names != expected {
+        return Err(StoreError::Integrity(format!(
+            "managed state parent {} contains foreign pre-marker state",
+            kind.directory_name()
         )));
     }
     Ok(())

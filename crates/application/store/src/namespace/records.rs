@@ -18,9 +18,10 @@ pub(super) const MANAGED_KINDS: [ManagedStateParentKind; 4] = [
     ManagedStateParentKind::Trash,
     ManagedStateParentKind::Cache,
 ];
-pub(super) const REPOSITORY_SCHEMA: &str = "lumin-repository.v3";
+pub(super) const REPOSITORY_SCHEMA: &str = "lumin-repository.v4";
 pub(super) const LOCK_SCHEMA: &str = "lumin-lifecycle-lock.v2";
 pub(super) const ANCHOR_SCHEMA: &str = "lumin-managed-parent-anchor.v2";
+pub(super) const CACHE_EVICTION_ANCHOR_SCHEMA: &str = "lumin-cache-eviction-parent-anchor.v1";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -64,9 +65,19 @@ pub(crate) struct ManagedStateParentBinding {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CacheEvictionParentBinding {
+    pub(crate) directory_physical_identity: PhysicalFileIdentity,
+    pub(crate) anchor_physical_identity: PhysicalFileIdentity,
+    pub(crate) parent_nonce: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct NamespaceBinding {
     pub(super) global: GlobalNamespaceBinding,
     pub(super) managed_parents: [ManagedStateParentBinding; 4],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) cache_evictions: Option<CacheEvictionParentBinding>,
 }
 
 #[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -89,6 +100,15 @@ pub(super) struct ManagedParentAnchorHeader {
     pub(super) schema_version: String,
     pub(super) global: GlobalNamespaceBinding,
     pub(super) binding: ManagedStateParentBinding,
+}
+
+#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct CacheEvictionParentAnchorHeader {
+    pub(super) schema_version: String,
+    pub(super) global: GlobalNamespaceBinding,
+    pub(super) trash_binding: ManagedStateParentBinding,
+    pub(super) binding: CacheEvictionParentBinding,
 }
 
 pub(super) fn read_canonical_path<T: DeserializeOwned + Serialize>(
@@ -176,9 +196,10 @@ pub(super) fn verify_lock_header(
 
 pub(super) fn validate_marker(marker: &RepositoryMarker) -> Result<(), StoreError> {
     if marker.schema_version != REPOSITORY_SCHEMA {
-        return Err(StoreError::Integrity(
-            "repository marker schema is unsupported".to_owned(),
-        ));
+        return Err(StoreError::IncompatibleStateSchema(format!(
+            "repository marker schema {} is unsupported; expected {REPOSITORY_SCHEMA}",
+            marker.schema_version
+        )));
     }
     validate_global_binding(&marker.binding.global)?;
     for (expected, binding) in MANAGED_KINDS
@@ -190,6 +211,11 @@ pub(super) fn validate_marker(marker: &RepositoryMarker) -> Result<(), StoreErro
                 "repository marker managed-parent set is not exact kind order".to_owned(),
             ));
         }
+    }
+    if marker.binding.cache_evictions.is_none() {
+        return Err(StoreError::IncompatibleStateSchema(
+            "repository marker omitted the cache-eviction parent binding".to_owned(),
+        ));
     }
     Ok(())
 }

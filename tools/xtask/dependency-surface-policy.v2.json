@@ -7,7 +7,9 @@
       "class": "production",
       "path": "crates/application/cli",
       "features": {
-        "lifecycle-test-fault": [],
+        "lifecycle-test-fault": [
+          "lumin-engine/cache-cleanup-test-fault"
+        ],
         "publication-test-crash": [
           "lumin-engine/publication-test-crash"
         ],
@@ -199,6 +201,9 @@
       "class": "production",
       "path": "crates/application/engine",
       "features": {
+        "cache-cleanup-test-fault": [
+          "lumin-store/cache-cleanup-test-fault"
+        ],
         "publication-test-crash": [
           "lumin-store/publication-test-crash"
         ],
@@ -1054,6 +1059,7 @@
       "class": "production",
       "path": "crates/application/store",
       "features": {
+        "cache-cleanup-test-fault": [],
         "publication-test-crash": [],
         "retention-test-crash": []
       },
@@ -1573,4 +1579,3 @@
     }
   ]
 }
-

@@ -193,6 +193,12 @@ pub(super) fn reject_gate_operation_collision(
         operation_id.as_str(),
     )?
     .is_some()
+        || crate::gate::records::read_record::<lumin_evidence::CacheCleanupOperationRecord>(
+            write,
+            crate::cache::CACHE_CLEANUP_OPERATIONS,
+            operation_id.as_str(),
+        )?
+        .is_some()
     {
         return Err(StoreError::OperationConflict(
             operation_id.as_str().to_owned(),

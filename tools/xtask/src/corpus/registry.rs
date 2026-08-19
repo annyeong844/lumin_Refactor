@@ -122,6 +122,10 @@ static INV_PUB_RET_RACE: &[CorpusInvocation] = &[
     inv!("publication_retention_race", "pruning_crash_and_publisher_death_cannot_recover_a_pointer", PublicationAndRetentionCrash),
 ];
 #[rustfmt::skip]
+static INV_CACHE_CLEANUP_PUB_RACE: &[CorpusInvocation] = &[
+    inv!("cache_cleanup_publication_race", "cache_cleanup_and_publication_serialize_through_one_exclusive_guard", LifecycleAndPublicationCrash),
+];
+#[rustfmt::skip]
 static INV_RET_CRASH: &[CorpusInvocation] = &[
     inv!("retention_faults", "plan_commit_death_leaves_no_partial_plan_or_operation", RetentionCrash),
     inv!("retention_faults", "run_retention_recovers_every_physical_crash_boundary", RetentionCrash),
@@ -393,7 +397,7 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_c!("crash-publication", INV_CRASH_PUB),
     row_c!("concurrent-latest-publication", INV_CONC_PUB),
     row_c!("publication-retention-race", INV_PUB_RET_RACE),
-    row_c!("cache-cleanup-publication-race"),
+    row_c!("cache-cleanup-publication-race", INV_CACHE_CLEANUP_PUB_RACE),
     row_sdc!("retention-latest-protection", INV_RET_LATEST),
     row_sd!("retention-plan-pagination", INV_RET_PAGINATION),
     row_sdc!("retention-public-lookup", INV_RET_LOOKUP),

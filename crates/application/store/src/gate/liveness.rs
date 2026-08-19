@@ -112,11 +112,19 @@ impl RepositoryStore {
 }
 
 impl OperationSession<'_> {
-    pub(super) fn open_database<'guard>(
+    pub(crate) fn open_database<'guard>(
         &self,
         guard: &'guard namespace::NamespaceGuard,
     ) -> Result<namespace::StoreDatabase<'guard>, StoreError> {
         guard.open_database_for_generation(self.generation)
+    }
+
+    pub(crate) fn operation_id(&self) -> &OperationId {
+        &self.operation_id
+    }
+
+    pub(crate) fn liveness(&self) -> &OperationLivenessLease {
+        &self.liveness
     }
 
     pub(super) fn bind_pending_operation(
@@ -157,7 +165,7 @@ impl OperationSession<'_> {
         Ok(())
     }
 
-    fn validate_live_lock(&self) -> Result<(), StoreError> {
+    pub(crate) fn validate_live_lock(&self) -> Result<(), StoreError> {
         let path = operation_lock_path(self.store.state_dir.as_path(), &self.operation_id);
         validate_operation_lock_file(&self.lock_file, &path, &self.operation_id)?;
         if self.liveness.lock_physical_identity.as_ref() != Some(self.lock_file.identity()) {

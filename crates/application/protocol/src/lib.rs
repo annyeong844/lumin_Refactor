@@ -12,10 +12,11 @@ pub use source_query::*;
 use std::collections::BTreeMap;
 
 use lumin_evidence::{
-    ActualWriteSet, AnalysisMetrics, DeclaredPathUnsupportedReason, EntrySelectionRecord,
-    FindingRecord, GateDecision, GateLifecycle, GateOperationKind, GateOperationResult,
-    GateOperationStatus, GateRecord, GateSignal, OperationRecord, PhysicalAliasClosureRecord,
-    RunEvidence, SourceClassificationRecord, WriteLease, WriteLeaseKind,
+    ActualWriteSet, AnalysisMetrics, CacheCleanupResult, DeclaredPathUnsupportedReason,
+    EntrySelectionRecord, FindingRecord, GateDecision, GateLifecycle, GateOperationKind,
+    GateOperationResult, GateOperationStatus, GateRecord, GateSignal, OperationRecord,
+    PhysicalAliasClosureRecord, RunEvidence, SourceClassificationRecord, WriteLease,
+    WriteLeaseKind,
 };
 use lumin_model::{
     AnalysisInputId, AttemptId, AttemptStatus, CapabilityState, FindingDisposition, FindingId,
@@ -67,6 +68,8 @@ pub struct AttemptOverviewResponseDto {
 #[serde(rename_all = "camelCase")]
 pub struct CacheCleanupResponseDto {
     pub schema_version: &'static str,
+    pub operation_id: OperationId,
+    pub request_digest: String,
     pub status: &'static str,
 }
 
@@ -385,9 +388,11 @@ pub fn attempt_overview_response(latest_attempt: AttemptSummaryDto) -> AttemptOv
     }
 }
 
-pub const fn cache_cleanup_response() -> CacheCleanupResponseDto {
+pub fn cache_cleanup_response(result: &CacheCleanupResult) -> CacheCleanupResponseDto {
     CacheCleanupResponseDto {
-        schema_version: "lumin.cache-cleanup.v1",
+        schema_version: "lumin.cache-cleanup.v2",
+        operation_id: result.operation_id.clone(),
+        request_digest: result.request_digest.clone(),
         status: "clean",
     }
 }

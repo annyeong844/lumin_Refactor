@@ -10,6 +10,8 @@ use support::{ProcessResult, assert_status, field, run, run_with_env};
 
 const DELIVERY_FAILURE_ENV: &str = "LUMIN_TEST_FAIL_RESULT_DELIVERY";
 
+#[path = "lifecycle_operation_idempotency/cache_cleanup.rs"]
+mod cache_cleanup;
 #[path = "lifecycle_operation_idempotency/gate.rs"]
 mod gate;
 #[path = "lifecycle_operation_idempotency/gate_retention.rs"]

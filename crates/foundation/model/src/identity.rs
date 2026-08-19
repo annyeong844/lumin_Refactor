@@ -34,6 +34,7 @@ string_id!(OperationId);
 string_id!(RetentionPlanId);
 string_id!(RetentionContentIdentity);
 string_id!(RetentionTombstoneIdentity);
+string_id!(CacheEvictionAuthorizationSetId);
 string_id!(PinId);
 string_id!(AnalysisInputId);
 string_id!(RepositoryId);
@@ -72,6 +73,19 @@ impl RepositoryId {
         append_length_prefixed(&mut bytes, b"lumin-repository-id.v1");
         append_length_prefixed(&mut bytes, root.canonical_bytes());
         Self(format!("repository_{}", digest_hex(&bytes)))
+    }
+}
+
+impl CacheEvictionAuthorizationSetId {
+    /// Bind one canonically ordered set of validated cache-eviction authorization rows.
+    /// The store owns each row's framing; the model owns the stable set identity.
+    pub fn for_canonical_rows(rows: &[Vec<u8>]) -> Self {
+        let mut bytes = Vec::new();
+        append_length_prefixed(&mut bytes, b"cache-eviction-authorization-set.v1");
+        for row in rows {
+            append_length_prefixed(&mut bytes, row);
+        }
+        Self(format!("cache_evictions_{}", digest_hex(&bytes)))
     }
 }
 

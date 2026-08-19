@@ -29,15 +29,21 @@ fn run() -> i32 {
     let output = lumin_cli::execute(&root, arguments);
     #[cfg(feature = "lifecycle-test-fault")]
     if fail_result_delivery && !output.stdout.is_empty() {
+        let _ = record_mutation_delivery(
+            &root,
+            &output,
+            lumin_engine::CacheCleanupDeliveryStatus::Failed,
+        );
         write_diagnostic("lumin: injected result delivery failure after commit");
         return 1;
     }
     let stdout = io::stdout();
     let stderr = io::stderr();
-    emit_command_output(&output, &mut stdout.lock(), &mut stderr.lock())
+    emit_command_output(Some(&root), &output, &mut stdout.lock(), &mut stderr.lock())
 }
 
 fn emit_command_output(
+    root: Option<&std::path::Path>,
     output: &lumin_cli::CommandOutput,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
@@ -48,8 +54,19 @@ fn emit_command_output(
             .and_then(|()| stdout.write_all(b"\n"))
             .and_then(|()| stdout.flush())
     {
+        if let Some(root) = root {
+            let _ = record_mutation_delivery(
+                root,
+                output,
+                lumin_engine::CacheCleanupDeliveryStatus::Failed,
+            );
+        }
         if error.kind() != io::ErrorKind::BrokenPipe {
-            let _ = writeln!(stderr, "lumin: cannot write stdout: {error}");
+            if output.mutation_delivery.is_some() {
+                let _ = stderr.write_all(b"lumin: cannot write stdout\n");
+            } else {
+                let _ = writeln!(stderr, "lumin: cannot write stdout: {error}");
+            }
             let _ = stderr.flush();
             return 1;
         }
@@ -63,7 +80,34 @@ fn emit_command_output(
             return 1;
         }
     }
+    if let Some(root) = root
+        && let Err(error) = record_mutation_delivery(
+            root,
+            output,
+            lumin_engine::CacheCleanupDeliveryStatus::Succeeded,
+        )
+    {
+        let _ = writeln!(stderr, "lumin: {error}");
+        let _ = stderr.flush();
+        return 1;
+    }
     output.exit_code
+}
+
+fn record_mutation_delivery(
+    root: &std::path::Path,
+    output: &lumin_cli::CommandOutput,
+    status: lumin_engine::CacheCleanupDeliveryStatus,
+) -> Result<(), lumin_engine::EngineError> {
+    match &output.mutation_delivery {
+        Some(lumin_cli::MutationDeliveryRecord::CacheCleanup {
+            operation_id,
+            request_digest,
+        }) => {
+            lumin_engine::record_cache_cleanup_delivery(root, operation_id, request_digest, status)
+        }
+        None => Ok(()),
+    }
 }
 
 fn write_diagnostic(message: &str) {
@@ -107,11 +151,15 @@ mod tests {
             stdout: "{\"status\":\"ok\"}".to_owned(),
             stderr: String::new(),
             result_delivery: lumin_cli::CommandResultDelivery::ReadOnly,
+            mutation_delivery: None,
         };
         let mut stdout = FailingWriter(io::ErrorKind::BrokenPipe);
         let mut stderr = Vec::new();
 
-        assert_eq!(emit_command_output(&output, &mut stdout, &mut stderr), 0);
+        assert_eq!(
+            emit_command_output(None, &output, &mut stdout, &mut stderr),
+            0
+        );
         assert!(stderr.is_empty());
     }
 
@@ -122,11 +170,15 @@ mod tests {
             stdout: "{\"gateId\":\"gate_1\"}".to_owned(),
             stderr: String::new(),
             result_delivery: lumin_cli::CommandResultDelivery::RecoverableMutation,
+            mutation_delivery: None,
         };
         let mut stdout = FailingWriter(io::ErrorKind::BrokenPipe);
         let mut stderr = Vec::new();
 
-        assert_eq!(emit_command_output(&output, &mut stdout, &mut stderr), 1);
+        assert_eq!(
+            emit_command_output(None, &output, &mut stdout, &mut stderr),
+            1
+        );
         assert!(stderr.is_empty());
     }
 
@@ -137,11 +189,15 @@ mod tests {
             stdout: "{\"status\":\"ok\"}".to_owned(),
             stderr: String::new(),
             result_delivery: lumin_cli::CommandResultDelivery::ReadOnly,
+            mutation_delivery: None,
         };
         let mut stdout = FailingWriter(io::ErrorKind::WriteZero);
         let mut stderr = Vec::new();
 
-        assert_eq!(emit_command_output(&output, &mut stdout, &mut stderr), 1);
+        assert_eq!(
+            emit_command_output(None, &output, &mut stdout, &mut stderr),
+            1
+        );
         assert!(
             String::from_utf8(stderr)
                 .map_err(io::Error::other)?
@@ -151,17 +207,43 @@ mod tests {
     }
 
     #[test]
+    fn cache_cleanup_non_pipe_stdout_failure_has_the_exact_diagnostic() {
+        let output = lumin_cli::CommandOutput {
+            exit_code: 0,
+            stdout: "{\"status\":\"clean\"}".to_owned(),
+            stderr: String::new(),
+            result_delivery: lumin_cli::CommandResultDelivery::RecoverableMutation,
+            mutation_delivery: Some(lumin_cli::MutationDeliveryRecord::CacheCleanup {
+                operation_id: lumin_model::OperationId::from_string("cleanup-output".to_owned()),
+                request_digest: "digest".to_owned(),
+            }),
+        };
+        let mut stdout = FailingWriter(io::ErrorKind::WriteZero);
+        let mut stderr = Vec::new();
+
+        assert_eq!(
+            emit_command_output(None, &output, &mut stdout, &mut stderr),
+            1
+        );
+        assert_eq!(stderr, b"lumin: cannot write stdout\n");
+    }
+
+    #[test]
     fn successful_delivery_preserves_stdout_and_stderr_bytes() {
         let output = lumin_cli::CommandOutput {
             exit_code: 5,
             stdout: "{\"status\":\"stale\"}".to_owned(),
             stderr: "review required\n".to_owned(),
             result_delivery: lumin_cli::CommandResultDelivery::RecoverableMutation,
+            mutation_delivery: None,
         };
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
 
-        assert_eq!(emit_command_output(&output, &mut stdout, &mut stderr), 5);
+        assert_eq!(
+            emit_command_output(None, &output, &mut stdout, &mut stderr),
+            5
+        );
         assert_eq!(stdout, b"{\"status\":\"stale\"}\n");
         assert_eq!(stderr, b"review required\n");
     }

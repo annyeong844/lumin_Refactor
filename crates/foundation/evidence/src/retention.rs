@@ -247,6 +247,7 @@ impl RunPinRecord {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LifecycleOperationRecord {
     Gate(Box<OperationRecord>),
+    CacheCleanup(Box<crate::CacheCleanupOperationRecord>),
     Retention {
         operation: Box<RetentionOperationRecord>,
         current_physical_reclamation_pending: Option<bool>,

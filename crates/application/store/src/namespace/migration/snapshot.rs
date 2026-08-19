@@ -26,6 +26,8 @@ pub(super) struct LogicalStoreSnapshot {
     retention_operations: BTreeMap<String, Vec<u8>>,
     retention_tombstones: BTreeMap<String, Vec<u8>>,
     run_pins: BTreeMap<String, Vec<u8>>,
+    cache_cleanup_operations: BTreeMap<String, Vec<u8>>,
+    cache_eviction_authorizations: BTreeMap<String, Vec<u8>>,
 }
 
 pub(super) fn read_canonical(
