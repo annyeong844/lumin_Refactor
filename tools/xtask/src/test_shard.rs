@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 use std::process::{Command, ExitCode};
 
@@ -19,15 +20,17 @@ const FEATURE_GATED_TARGETS: &[&str] = &[
 struct TestShardArgs {
     index: usize,
     count: usize,
+    jobs: usize,
 }
 
 fn parse_args(arguments: &[String]) -> Result<TestShardArgs, String> {
-    let (mut index, mut count) = (None, None);
+    let (mut index, mut count, mut jobs) = (None, None, None);
     let mut cursor = 0;
     while cursor < arguments.len() {
         let target = match arguments[cursor].as_str() {
             "--index" => &mut index,
             "--count" => &mut count,
+            "--jobs" => &mut jobs,
             unknown => return Err(format!("unknown argument: {unknown}")),
         };
         cursor += 1;
@@ -53,7 +56,11 @@ fn parse_args(arguments: &[String]) -> Result<TestShardArgs, String> {
     if index >= count {
         return Err("--index must be less than --count".to_owned());
     }
-    Ok(TestShardArgs { index, count })
+    let jobs = jobs.unwrap_or(1);
+    if jobs == 0 || jobs > 4 {
+        return Err("--jobs must be an integer from 1 through 4".to_owned());
+    }
+    Ok(TestShardArgs { index, count, jobs })
 }
 
 fn default_cli_test_targets(workspace: &Path) -> Result<Vec<String>, String> {
@@ -119,6 +126,38 @@ fn shard_targets(targets: &[String], index: usize, count: usize) -> Result<Vec<S
     Ok(selected)
 }
 
+struct TargetExecution {
+    success: bool,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+fn run_targets_ordered(
+    workspace: &Path,
+    targets: &[String],
+    jobs: usize,
+) -> Result<Vec<TargetExecution>, String> {
+    let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+    crate::corpus::run_parallel_ordered(targets.len(), jobs, |index| {
+        let target = &targets[index];
+        let output = Command::new(&cargo)
+            .current_dir(workspace)
+            .arg("test")
+            .arg("--locked")
+            .arg("-p")
+            .arg("lumin-cli")
+            .arg("--test")
+            .arg(target)
+            .output()
+            .map_err(|error| format!("cannot run Cargo for {target}: {error}"))?;
+        Ok(TargetExecution {
+            success: output.status.success(),
+            stdout: output.stdout,
+            stderr: output.stderr,
+        })
+    })
+}
+
 pub fn run(arguments: &[String]) -> ExitCode {
     let arguments = match parse_args(arguments) {
         Ok(arguments) => arguments,
@@ -144,29 +183,33 @@ pub fn run(arguments: &[String]) -> ExitCode {
         }
     };
     eprintln!(
-        "[TEST SHARD] {}/{} targets: {}",
+        "[TEST SHARD] {}/{} targets (jobs={}): {}",
         arguments.index,
         arguments.count,
+        arguments.jobs,
         targets.join(", ")
     );
-    let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
-    let mut command = Command::new(cargo);
-    command
-        .current_dir(&workspace)
-        .arg("test")
-        .arg("--locked")
-        .arg("-p")
-        .arg("lumin-cli");
-    for target in &targets {
-        command.arg("--test").arg(target);
-    }
-    match command.status() {
-        Ok(status) if status.success() => ExitCode::SUCCESS,
-        Ok(_) => ExitCode::from(1),
+    let executions = match run_targets_ordered(&workspace, &targets, arguments.jobs) {
+        Ok(executions) => executions,
         Err(error) => {
-            eprintln!("[TEST SHARD ERROR] cannot run Cargo: {error}");
-            ExitCode::from(2)
+            eprintln!("[TEST SHARD ERROR] {error}");
+            return ExitCode::from(2);
         }
+    };
+    let mut failed = false;
+    for (target, execution) in targets.iter().zip(executions) {
+        if execution.success {
+            continue;
+        }
+        failed = true;
+        eprintln!("--- FAIL: CLI integration target {target} ---");
+        let _ = std::io::stdout().write_all(&execution.stdout);
+        let _ = std::io::stderr().write_all(&execution.stderr);
+    }
+    if failed {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
     }
 }
 
@@ -202,14 +245,29 @@ mod tests {
             "4".to_owned(),
             "--count".to_owned(),
             "5".to_owned(),
+            "--jobs".to_owned(),
+            "4".to_owned(),
         ])?;
         assert_eq!(arguments.index, 4);
         assert_eq!(arguments.count, 5);
+        assert_eq!(arguments.jobs, 4);
+        assert_eq!(
+            parse_args(&[
+                "--index".to_owned(),
+                "0".to_owned(),
+                "--count".to_owned(),
+                "1".to_owned(),
+            ])?
+            .jobs,
+            1,
+        );
         for invalid in [
             vec!["--index", "5", "--count", "5"],
             vec!["--index", "0", "--count", "0"],
             vec!["--index", "0"],
             vec!["--unknown", "0", "--count", "5"],
+            vec!["--index", "0", "--count", "5", "--jobs", "0"],
+            vec!["--index", "0", "--count", "5", "--jobs", "5"],
         ] {
             assert!(
                 parse_args(&invalid.into_iter().map(str::to_owned).collect::<Vec<_>>()).is_err()

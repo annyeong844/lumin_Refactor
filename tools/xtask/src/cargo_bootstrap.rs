@@ -49,7 +49,7 @@ const CORPUS_RUN: &str = concat!(
 const WINDOWS_INTEGRATION_RUN: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
     "-- cargo run --locked -p lumin-xtask -- ci-test-shard ",
-    "--index ${{ matrix.shard }} --count 6"
+    "--index ${{ matrix.shard }} --count 6 --jobs 4"
 );
 const ALL_TARGET_TEST: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
@@ -71,7 +71,7 @@ const UBUNTU_MAPPED_CORPUS_CASES: &[(&str, &str)] = &[
     ("mapped-standard", "foundation --mapped-only --row-jobs 8"),
     (
         "mapped-determinism",
-        "foundation --determinism --mapped-only --row-jobs 8",
+        "foundation --determinism --mapped-only --row-jobs 2",
     ),
 ];
 const CRASH_CORPUS_CASES: &[(&str, &str)] = &[
@@ -740,10 +740,11 @@ fn validate_corpus_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<Str
     for (mode, mode_flag, shard_count) in
         [("standard", "", 4), ("determinism", "--determinism ", 8)]
     {
+        let row_jobs = if mode == "determinism" { 2 } else { 4 };
         for index in 0..shard_count {
             let name = format!("mapped-{mode}-{index}");
             let arguments = format!(
-                "foundation {mode_flag}--mapped-only --row-jobs 4 --row-shard-index {index} --row-shard-count {shard_count}"
+                "foundation {mode_flag}--mapped-only --row-jobs {row_jobs} --row-shard-index {index} --row-shard-count {shard_count}"
             );
             if partition_count("windows-2022", &name, &arguments) != 1 {
                 violations.push(format!(
@@ -1032,10 +1033,11 @@ mod tests {
         for (mode, mode_flag, shard_count) in
             [("standard", "", 4), ("determinism", "--determinism ", 8)]
         {
+            let row_jobs = if mode == "determinism" { 2 } else { 4 };
             for index in 0..shard_count {
                 let name = format!("mapped-{mode}-{index}");
                 let arguments = format!(
-                    "foundation {mode_flag}--mapped-only --row-jobs 4 --row-shard-index {index} --row-shard-count {shard_count}"
+                    "foundation {mode_flag}--mapped-only --row-jobs {row_jobs} --row-shard-index {index} --row-shard-count {shard_count}"
                 );
                 let partition = format!(
                     "          - os: windows-2022\n            name: {name}\n            arguments: {arguments}\n"
@@ -1063,8 +1065,14 @@ mod tests {
         for changed in [
             source.replacen("shard: [0, 1, 2, 3, 4, 5]", "shard: [0, 1, 2, 3, 4]", 1),
             source.replacen(WINDOWS_INTEGRATION_RUN, "& $testShard", 1),
+            source.replacen("--count 6 --jobs 4", "--count 6 --jobs 3", 1),
             source.replacen(CORE_TARGET_TEST, ALL_TARGET_TEST, 1),
             source.replacen("--row-jobs 8", "--row-jobs 7", 1),
+            source.replacen(
+                "foundation --determinism --mapped-only --row-jobs 2",
+                "foundation --determinism --mapped-only --row-jobs 1",
+                1,
+            ),
             source.replacen("--row-shard-count 4", "--row-shard-count 3", 1),
             source.replacen("--row-shard-count 8", "--row-shard-count 7", 1),
         ] {

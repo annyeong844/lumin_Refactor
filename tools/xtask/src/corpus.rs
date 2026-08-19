@@ -471,6 +471,7 @@ struct InvResult {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
     semantic_captures: usize,
+    marker_validated_internally: bool,
 }
 
 fn run_inv(
@@ -481,12 +482,13 @@ fn run_inv(
     marker: &Path,
 ) -> InvResult {
     if mode == CorpusMode::Determinism {
-        let result = determinism::run(ws, inv, row_id, marker);
+        let result = determinism::run(ws, inv, row_id);
         return InvResult {
             success: result.success,
             stdout: result.stdout,
             stderr: result.stderr,
             semantic_captures: result.semantic_captures,
+            marker_validated_internally: result.marker_validated,
         };
     }
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
@@ -520,12 +522,14 @@ fn run_inv(
             stdout: o.stdout,
             stderr: o.stderr,
             semantic_captures: 0,
+            marker_validated_internally: false,
         },
         Err(e) => InvResult {
             success: false,
             stdout: Vec::new(),
             stderr: format!("spawn: {e}").into_bytes(),
             semantic_captures: 0,
+            marker_validated_internally: false,
         },
     }
 }
@@ -678,10 +682,11 @@ fn execute_invocation(
 ) -> InvocationExecution {
     let _ = fs::remove_file(&task.marker);
     let result = run_inv(workspace, task.invocation, mode, task.row_id, &task.marker);
-    let marker_error = result
-        .success
-        .then(|| validate_marker(&task.marker, task.row_id, 1).err())
-        .flatten();
+    let marker_error = if result.success && !result.marker_validated_internally {
+        validate_marker(&task.marker, task.row_id, 1).err()
+    } else {
+        None
+    };
     let _ = fs::remove_file(&task.marker);
     InvocationExecution {
         result,
@@ -689,7 +694,11 @@ fn execute_invocation(
     }
 }
 
-fn run_parallel_ordered<T, F>(item_count: usize, jobs: usize, work: F) -> Result<Vec<T>, String>
+pub(crate) fn run_parallel_ordered<T, F>(
+    item_count: usize,
+    jobs: usize,
+    work: F,
+) -> Result<Vec<T>, String>
 where
     T: Send,
     F: Fn(usize) -> Result<T, String> + Sync,
@@ -724,7 +733,7 @@ where
         for handle in handles {
             handle
                 .join()
-                .map_err(|_| "corpus row worker panicked".to_owned())?;
+                .map_err(|_| "parallel worker panicked".to_owned())?;
         }
         Ok::<(), String>(())
     });
