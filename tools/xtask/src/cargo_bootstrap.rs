@@ -21,6 +21,15 @@ const TEST_COMMAND: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S ",
     "tools/xtask/bootstrap/test_source_provenance.py"
 );
+const CI_POLICY_COMMAND: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S ",
+    "tools/xtask/bootstrap/ci_policy.py github"
+);
+const CI_POLICY_TEST_COMMAND: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S ",
+    "tools/xtask/bootstrap/test_ci_policy.py"
+);
+const FULL_SCOPE_CONDITION: &str = "if: ${{ needs.policy.outputs.run_full == 'true' }}";
 const PRIVATE_CARGO_HOME: &str =
     "\"CARGO_HOME=$env:RUNNER_TEMP/lumin-cargo-home\" >> $env:GITHUB_ENV";
 const PRIVATE_TARGET: &str =
@@ -116,6 +125,7 @@ fn validate_workflow(source: &str, violations: &mut Vec<String>) {
     validate_actions(source, violations);
     let jobs = job_blocks(source);
     for required in [
+        "policy",
         "formatting",
         "architecture-check",
         "bootstrap-tests",
@@ -134,6 +144,7 @@ fn validate_workflow(source: &str, violations: &mut Vec<String>) {
         validate_job(name, block, violations);
     }
     validate_architecture_job(&jobs, violations);
+    validate_policy_job(&jobs, violations);
     validate_dependency_job(&jobs, violations);
     validate_platform_job(&jobs, violations);
     validate_corpus_job(&jobs, violations);
@@ -213,6 +224,11 @@ fn validate_job(name: &str, block: &str, violations: &mut Vec<String>) {
         if line.contains("test_source_provenance.py") && line != TEST_COMMAND {
             violations.push(format!(
                 "bootstrap tests in {name} must use the pinned isolated Python command"
+            ));
+        }
+        if line.contains("test_ci_policy.py") && line != CI_POLICY_TEST_COMMAND {
+            violations.push(format!(
+                "CI policy tests in {name} must use the pinned isolated Python command"
             ));
         }
         if is_unwrapped_dependency_command(&line) {
@@ -313,19 +329,24 @@ fn is_reviewed_run_command(line: &str) -> bool {
         DIRECT_AUDIT,
         DIRECT_DENY,
         STRUCTURAL_CHECK,
+        CI_POLICY_COMMAND,
+        CI_POLICY_TEST_COMMAND,
     ];
     line.starts_with(GUARD_PREFIX)
         || EXACT.contains(&line)
         || matches!(
             line,
-            "test \"$FORMATTING_RESULT\" = success"
-                | "test \"$ARCHITECTURE_CHECK_RESULT\" = success"
-                | "test \"$BOOTSTRAP_TESTS_RESULT\" = success"
-                | "test \"$DEPENDENCY_POLICY_RESULT\" = success"
-                | "test \"$PLATFORM_RESULT\" = success"
-                | "test \"$CORPUS_RESULT\" = success"
-                | "test \"$DOCUMENTATION_RESULT\" = success"
-                | "test \"$RELEASE_RESULT\" = success"
+            "test \"$ARCHITECTURE_CHECK_RESULT\" = success"
+                | "test \"$POLICY_RESULT\" = success"
+                | "test \"$RUN_FULL\" = \"$EXPECTED_RUN_FULL\""
+                | "test \"$POLICY_SCOPE\" = \"$EXPECTED_SCOPE\""
+                | "test \"$FORMATTING_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
+                | "test \"$BOOTSTRAP_TESTS_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
+                | "test \"$DEPENDENCY_POLICY_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
+                | "test \"$PLATFORM_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
+                | "test \"$CORPUS_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
+                | "test \"$DOCUMENTATION_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
+                | "test \"$RELEASE_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
         )
 }
 
@@ -412,6 +433,95 @@ fn validate_architecture_job(jobs: &BTreeMap<String, String>, violations: &mut V
     }
     if block.matches("--check-only").count() != 1 {
         violations.push("architecture job must expose exactly one dependency verdict".to_owned());
+    }
+}
+
+fn validate_policy_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<String>) {
+    let Some(block) = jobs.get("policy") else {
+        return;
+    };
+    for required_line in [
+        "scope: ${{ steps.policy.outputs.scope }}",
+        "run_full: ${{ steps.policy.outputs.run_full }}",
+        "fetch-depth: 0",
+        "PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}",
+        "PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}",
+        "CURRENT_SHA: ${{ github.sha }}",
+    ] {
+        if block
+            .lines()
+            .map(str::trim)
+            .filter(|line| *line == required_line)
+            .count()
+            != 1
+        {
+            violations.push(format!(
+                "change-policy job must bind reviewed input exactly once: {required_line}"
+            ));
+        }
+    }
+    let commands = block.lines().map(command_text).collect::<Vec<_>>();
+    if commands
+        .iter()
+        .filter(|command| **command == CI_POLICY_COMMAND)
+        .count()
+        != 1
+    {
+        violations.push("change-policy job must run the reviewed policy command once".to_owned());
+    }
+    if commands
+        .iter()
+        .filter(|command| **command == CI_POLICY_TEST_COMMAND)
+        .count()
+        != 1
+    {
+        violations.push("change-policy job must run its focused tests once".to_owned());
+    }
+    let test_position = commands
+        .iter()
+        .position(|command| *command == CI_POLICY_TEST_COMMAND);
+    let policy_position = commands
+        .iter()
+        .position(|command| *command == CI_POLICY_COMMAND);
+    if !matches!(
+        (test_position, policy_position),
+        (Some(test), Some(policy)) if test < policy
+    ) {
+        violations.push("change-policy tests must pass before classification".to_owned());
+    }
+
+    for name in [
+        "formatting",
+        "bootstrap-tests",
+        "dependency-policy",
+        "platform",
+        "corpus",
+        "documentation",
+        "release",
+    ] {
+        let Some(job) = jobs.get(name) else {
+            continue;
+        };
+        for required_line in ["needs: policy", FULL_SCOPE_CONDITION] {
+            if job
+                .lines()
+                .map(str::trim)
+                .filter(|line| *line == required_line)
+                .count()
+                != 1
+            {
+                violations.push(format!(
+                    "full CI job {name} must use the exact fail-closed policy gate: {required_line}"
+                ));
+            }
+        }
+    }
+    if jobs.get("architecture-check").is_some_and(|job| {
+        job.lines()
+            .map(str::trim)
+            .any(|line| line.starts_with("if:"))
+    }) {
+        violations.push("architecture-check must run for documentation scope".to_owned());
     }
 }
 
@@ -515,11 +625,18 @@ fn validate_corpus_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<Str
     }
     if lines.iter().any(|line| {
         matches!(*line, "include:" | "exclude:")
-            || line.starts_with("if:")
+            || (line.starts_with("if:") && *line != FULL_SCOPE_CONDITION)
             || line.starts_with("continue-on-error:")
     }) {
         violations.push(
-            "corpus job cannot conditionally skip or exclude required matrix partitions".to_owned(),
+            "corpus job may use only the reviewed full-scope gate and cannot exclude required matrix partitions"
+                .to_owned(),
+        );
+    }
+    if case_lines.contains(&"- name: lifecycle-operation-idempotency") {
+        violations.push(
+            "lifecycle-operation-idempotency is already covered by both mapped aggregates"
+                .to_owned(),
         );
     }
     if block
@@ -540,9 +657,19 @@ fn validate_required_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<S
     };
     for required_line in [
         "if: ${{ always() }}",
-        "- corpus",
-        "CORPUS_RESULT: ${{ needs.corpus.result }}",
-        "test \"$CORPUS_RESULT\" = success",
+        "- policy",
+        "- architecture-check",
+        "POLICY_RESULT: ${{ needs.policy.result }}",
+        "POLICY_SCOPE: ${{ needs.policy.outputs.scope }}",
+        "RUN_FULL: ${{ needs.policy.outputs.run_full }}",
+        "EXPECTED_RUN_FULL: ${{ needs.policy.outputs.scope == 'full' && 'true' || 'false' }}",
+        "EXPECTED_SCOPE: ${{ needs.policy.outputs.run_full == 'true' && 'full' || 'documentation' }}",
+        "EXPECTED_HEAVY_RESULT: ${{ needs.policy.outputs.run_full == 'true' && 'success' || 'skipped' }}",
+        "ARCHITECTURE_CHECK_RESULT: ${{ needs.architecture-check.result }}",
+        "test \"$ARCHITECTURE_CHECK_RESULT\" = success",
+        "test \"$POLICY_RESULT\" = success",
+        "test \"$RUN_FULL\" = \"$EXPECTED_RUN_FULL\"",
+        "test \"$POLICY_SCOPE\" = \"$EXPECTED_SCOPE\"",
     ] {
         if block
             .lines()
@@ -552,8 +679,35 @@ fn validate_required_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<S
             != 1
         {
             violations.push(format!(
-                "Required job must bind the complete corpus result exactly once: {required_line}"
+                "Required job must bind the complete scoped result exactly once: {required_line}"
             ));
+        }
+    }
+    for (job, result) in [
+        ("formatting", "FORMATTING_RESULT"),
+        ("bootstrap-tests", "BOOTSTRAP_TESTS_RESULT"),
+        ("dependency-policy", "DEPENDENCY_POLICY_RESULT"),
+        ("platform", "PLATFORM_RESULT"),
+        ("corpus", "CORPUS_RESULT"),
+        ("documentation", "DOCUMENTATION_RESULT"),
+        ("release", "RELEASE_RESULT"),
+    ] {
+        for required_line in [
+            format!("- {job}"),
+            format!("{result}: ${{{{ needs.{job}.result }}}}"),
+            format!("test \"${result}\" = \"$EXPECTED_HEAVY_RESULT\""),
+        ] {
+            if block
+                .lines()
+                .map(str::trim)
+                .filter(|line| *line == required_line)
+                .count()
+                != 1
+            {
+                violations.push(format!(
+                    "Required job must bind the complete {job} result exactly once: {required_line}"
+                ));
+            }
         }
     }
     if block
@@ -729,10 +883,57 @@ mod tests {
     }
 
     #[test]
+    fn documentation_scope_gate_is_exact_and_fail_closed() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let source = workflow()?;
+        for changed in [
+            source.replacen(FULL_SCOPE_CONDITION, "if: ${{ false }}", 1),
+            source.replacen("    needs: policy\n", "", 1),
+            source.replacen(CI_POLICY_COMMAND, "& $policy github", 1),
+            source.replacen(CI_POLICY_TEST_COMMAND, "& $policyTest", 1),
+        ] {
+            assert!(
+                violations(&changed).iter().any(|violation| {
+                    violation.contains("fail-closed policy gate")
+                        || violation.contains("reviewed policy command")
+                        || violation.contains("focused tests")
+                        || violation.contains("reconstructed run command")
+                }),
+                "changed policy routing was accepted"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn mapped_aggregate_rows_are_not_repeated_as_standalone_cases()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = workflow()?.replace(
+            "          - name: crash-publication\n",
+            concat!(
+                "          - name: lifecycle-operation-idempotency\n",
+                "            arguments: foundation --row lifecycle-operation-idempotency\n",
+                "          - name: crash-publication\n"
+            ),
+        );
+        assert!(
+            violations(&source)
+                .iter()
+                .any(|violation| violation.contains("already covered"))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn required_job_cannot_drop_the_corpus_result() -> Result<(), Box<dyn std::error::Error>> {
         let source = workflow()?;
         for changed in [
             source.replacen("      - corpus\n", "", 1),
+            source.replacen(
+                "          test \"$CORPUS_RESULT\" = \"$EXPECTED_HEAVY_RESULT\"\n",
+                "          test \"$CORPUS_RESULT\" = success\n",
+                1,
+            ),
             source.replacen(
                 "    name: Required\n",
                 "    name: Required\n    continue-on-error: true\n",

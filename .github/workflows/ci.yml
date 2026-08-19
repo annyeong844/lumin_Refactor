@@ -2,9 +2,6 @@ name: CI
 
 on:
   pull_request:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
@@ -19,8 +16,50 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  policy:
+    name: Change policy
+    runs-on: ubuntu-24.04
+    outputs:
+      scope: ${{ steps.policy.outputs.scope }}
+      run_full: ${{ steps.policy.outputs.run_full }}
+    steps:
+      - name: Check out repository history
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Install exact Python
+        id: python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.14"
+
+      - name: Record trusted Python
+        shell: pwsh
+        env:
+          SETUP_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: |
+          $python = & "$env:SETUP_PYTHON" -I -S -c "import pathlib,sys; print(pathlib.Path(sys.executable).resolve(strict=True))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "PINNED_PYTHON=$python" >> $env:GITHUB_ENV
+
+      - name: Test CI policy
+        shell: pwsh
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/test_ci_policy.py'
+
+      - name: Classify change and validate documentation
+        id: policy
+        shell: pwsh
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/ci_policy.py github'
+
   formatting:
     name: Formatting
+    needs: policy
+    if: ${{ needs.policy.outputs.run_full == 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - name: Initialize isolated Cargo paths
@@ -96,6 +135,8 @@ jobs:
 
   bootstrap-tests:
     name: Bootstrap tests
+    needs: policy
+    if: ${{ needs.policy.outputs.run_full == 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
@@ -115,6 +156,8 @@ jobs:
 
   dependency-policy:
     name: Dependency policy
+    needs: policy
+    if: ${{ needs.policy.outputs.run_full == 'true' }}
     runs-on: ubuntu-24.04
     steps:
       - name: Initialize isolated Cargo paths
@@ -177,6 +220,8 @@ jobs:
 
   platform:
     name: ${{ matrix.name }}
+    needs: policy
+    if: ${{ needs.policy.outputs.run_full == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -254,6 +299,8 @@ jobs:
 
   corpus:
     name: ${{ matrix.os }} corpus ${{ matrix.case.name }}
+    needs: policy
+    if: ${{ needs.policy.outputs.run_full == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -267,8 +314,6 @@ jobs:
             arguments: foundation --determinism --mapped-only
           - name: retention-crash-protocol
             arguments: foundation --store-crash --row retention-crash-protocol
-          - name: lifecycle-operation-idempotency
-            arguments: foundation --row lifecycle-operation-idempotency
           - name: crash-publication
             arguments: foundation --store-crash --row crash-publication
           - name: concurrent-latest-publication
@@ -313,7 +358,9 @@ jobs:
         run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- corpus ${{ matrix.case.arguments }}'
 
   documentation:
-    name: ${{ matrix.os }} documentation
+    name: ${{ matrix.os }} Rust documentation
+    needs: policy
+    if: ${{ needs.policy.outputs.run_full == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -359,6 +406,8 @@ jobs:
 
   release:
     name: ${{ matrix.os }} release
+    needs: policy
+    if: ${{ needs.policy.outputs.run_full == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -406,6 +455,7 @@ jobs:
     name: Required
     if: ${{ always() }}
     needs:
+      - policy
       - formatting
       - architecture-check
       - bootstrap-tests
@@ -418,6 +468,12 @@ jobs:
     steps:
       - name: Enforce required jobs
         env:
+          POLICY_RESULT: ${{ needs.policy.result }}
+          POLICY_SCOPE: ${{ needs.policy.outputs.scope }}
+          RUN_FULL: ${{ needs.policy.outputs.run_full }}
+          EXPECTED_RUN_FULL: ${{ needs.policy.outputs.scope == 'full' && 'true' || 'false' }}
+          EXPECTED_SCOPE: ${{ needs.policy.outputs.run_full == 'true' && 'full' || 'documentation' }}
+          EXPECTED_HEAVY_RESULT: ${{ needs.policy.outputs.run_full == 'true' && 'success' || 'skipped' }}
           FORMATTING_RESULT: ${{ needs.formatting.result }}
           ARCHITECTURE_CHECK_RESULT: ${{ needs.architecture-check.result }}
           BOOTSTRAP_TESTS_RESULT: ${{ needs.bootstrap-tests.result }}
@@ -427,11 +483,14 @@ jobs:
           DOCUMENTATION_RESULT: ${{ needs.documentation.result }}
           RELEASE_RESULT: ${{ needs.release.result }}
         run: |
-          test "$FORMATTING_RESULT" = success
           test "$ARCHITECTURE_CHECK_RESULT" = success
-          test "$BOOTSTRAP_TESTS_RESULT" = success
-          test "$DEPENDENCY_POLICY_RESULT" = success
-          test "$PLATFORM_RESULT" = success
-          test "$CORPUS_RESULT" = success
-          test "$DOCUMENTATION_RESULT" = success
-          test "$RELEASE_RESULT" = success
+          test "$POLICY_RESULT" = success
+          test "$RUN_FULL" = "$EXPECTED_RUN_FULL"
+          test "$POLICY_SCOPE" = "$EXPECTED_SCOPE"
+          test "$FORMATTING_RESULT" = "$EXPECTED_HEAVY_RESULT"
+          test "$BOOTSTRAP_TESTS_RESULT" = "$EXPECTED_HEAVY_RESULT"
+          test "$DEPENDENCY_POLICY_RESULT" = "$EXPECTED_HEAVY_RESULT"
+          test "$PLATFORM_RESULT" = "$EXPECTED_HEAVY_RESULT"
+          test "$CORPUS_RESULT" = "$EXPECTED_HEAVY_RESULT"
+          test "$DOCUMENTATION_RESULT" = "$EXPECTED_HEAVY_RESULT"
+          test "$RELEASE_RESULT" = "$EXPECTED_HEAVY_RESULT"
