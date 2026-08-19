@@ -217,7 +217,7 @@ fn ci_row_shards_balance_declared_work_deterministically() {
         );
         let expected = match mode {
             CorpusMode::Standard => vec![35, 34, 34, 34],
-            CorpusMode::Determinism => vec![64, 17, 17, 17, 17, 17, 17, 17, 17],
+            CorpusMode::Determinism => vec![64, 32, 29, 28, 28, 28, 28, 28, 28],
             CorpusMode::StoreCrash => unreachable!("CI does not shard store-crash rows"),
         };
         assert_eq!(loads, expected, "{mode} shard assignment changed");
@@ -236,6 +236,41 @@ fn ci_row_shards_balance_declared_work_deterministically() {
         dedicated.iter().map(|row| row.id).collect::<Vec<_>>(),
         ["retention-plan-pagination"],
     );
+
+    let weighted_rows = [
+        "retention-plan-pagination",
+        "nearest-manifest",
+        "bounded-nested-query",
+        "exports-target-path-lowering",
+        "package-field-shape-families",
+        "legacy-node-exports-disabled",
+        "tsconfig-extends-specifier-selection",
+        "unplanned-edit",
+    ];
+    let mut weighted_shards = BTreeSet::new();
+    for row_shard_index in 0..9 {
+        let selected = selected_rows(&CorpusArgs {
+            mode: CorpusMode::Determinism,
+            format: OutputFormat::Human,
+            row: None,
+            selection: CorpusSelection::MappedOnly,
+            row_jobs: 4,
+            row_shard_index,
+            row_shard_count: 9,
+        });
+        let weighted_count = selected
+            .iter()
+            .filter(|row| weighted_rows.contains(&row.id))
+            .count();
+        assert!(
+            weighted_count <= 1,
+            "weighted rows shared shard {row_shard_index}"
+        );
+        if weighted_count == 1 {
+            weighted_shards.insert(row_shard_index);
+        }
+    }
+    assert_eq!(weighted_shards.len(), weighted_rows.len());
 }
 
 #[test]

@@ -258,13 +258,13 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("extension-probe-precedence", &[inv!("extension_probe", "relative_extension_and_directory_probes_follow_frozen_precedence")]),
     row_sd!("declaration-type-space", &[inv!("path_and_declaration", "declaration_facts_satisfy_type_space_only")]),
     row_sd!("tsconfig-aliases", &[inv!("tsconfig_aliases", "tsconfig_aliases_follow_exact_wildcard_base_url_and_extends_precedence")]),
-    row_sd!("tsconfig-extends-specifier-selection", &[
+    row_sd_determinism_weight!("tsconfig-extends-specifier-selection", &[
         inv!("tsconfig_extends_selection", "relative_extends_uses_exact_then_one_json_fallback"),
         inv!("tsconfig_extends_selection", "unsupported_extends_forms_create_no_hidden_probe"),
         inv!("tsconfig_extends_selection", "malformed_and_root_escaping_extends_hard_stop"),
         inv!("tsconfig_extends_selection", "workspace_identity_is_exact_and_duplicate_identity_keeps_inventory_ownership"),
         inv!("tsconfig_extends_selection", "missing_extends_reservation_conflicts_through_parent_alias_identity"),
-    ]),
+    ], 12),
     row_sd!("workspace-package-extends-tsconfig-field", &[
         inv!("workspace_package_tsconfig", "custom_field_fallback_and_child_override_apply_through_public_behavior"),
         inv!("workspace_package_tsconfig", "malformed_and_package_escaping_fields_create_no_hidden_probe"),
@@ -296,29 +296,29 @@ pub static REGISTRY: &[RegistryRow] = &[
         inv!("pnpm_workspace_public", "package_configs_pinned_forms_emit_typed_limitations"),
         inv!("pnpm_workspace_public", "malformed_pnpm_hard_stops_without_fallback"),
     ]),
-    row_sd!("package-field-shape-families", &[
+    row_sd_determinism_weight!("package-field-shape-families", &[
         inv!("package_field_shapes", "inventory_owned_shape_families_emit_exact_limitations_before_resolution"),
         inv!("package_field_shapes", "malformed_package_type_blocks_node_resolution_before_target_selection"),
         inv!("package_field_shapes", "malformed_public_entry_fields_stop_before_later_fallbacks"),
         inv!("package_unsupported_public", "unsupported_exports_shapes_never_select_fallbacks"),
         inv!("workspace_package_tsconfig", "malformed_and_package_escaping_fields_create_no_hidden_probe"),
         inv!("tsconfig_extends_selection", "workspace_identity_is_exact_and_duplicate_identity_keeps_inventory_ownership"),
-    ]),
+    ], 16),
     row_sd!("workspace-package-exports", &[
         inv!("workspace_package_exports", "exact_and_pattern_exports_follow_edge_specific_conditions"),
         inv!("workspace_package_exports", "closed_package_exports_do_not_withhold_unrelated_dead_findings"),
         inv!("workspace_package_exports", "exports_protect_only_selected_public_identities"),
     ]),
     row_sd!("bundler-condition-excludes-node", &[inv!("package_condition_public", "bundler_excludes_node_in_value_and_type_lanes")]),
-    row_sd!("legacy-node-exports-disabled", &[
+    row_sd_determinism_weight!("legacy-node-exports-disabled", &[
         inv!("legacy_node_package_fields", "legacy_node_ignores_valid_and_malformed_fields_and_uses_main_and_typings"),
         inv!("legacy_node_package_fields", "enabled_profile_retains_field_applicability_after_legacy_run"),
-    ]),
+    ], 16),
     row_sd!("exports-overlapping-patterns", &[
         inv!("workspace_package_exports", "overlapping_patterns_follow_comparator_independent_of_source_order"),
         inv!("package_unsupported_public", "invalid_exports_subpath_components_are_package_scoped_unsupported"),
     ]),
-    row_sd!("exports-target-path-lowering", &[
+    row_sd_determinism_weight!("exports-target-path-lowering", &[
         inv!("package_export_target_lowering", "one_star_target_lowers_to_the_expected_package_source"),
         inv!("package_export_target_lowering", "invalid_target_strings_are_package_scoped_and_never_publish_candidates"),
         inv!("package_export_target_lowering", "invalid_target_prewrite_excludes_the_candidate_and_retry_is_idempotent"),
@@ -334,7 +334,7 @@ pub static REGISTRY: &[RegistryRow] = &[
         inv!("package_export_target_lowering", "redirect_into_hard_excluded_namespace_is_rejected_after_lowering"),
         inv!("package_export_target_lowering", "same_target_redirect_replacement_invalidates_the_active_gate"),
         inv!("package_export_target_lowering", "redirect_target_identity_blocks_a_physical_directory_writer"),
-    ]),
+    ], 24),
     row_sd!("package-types-versions-unsupported", &[inv!("package_unsupported_public", "types_versions_blocks_unspecialized_type_fallback")]),
     row_sd!("package-exports-unsupported-shapes", &[inv!("package_unsupported_public", "unsupported_exports_shapes_never_select_fallbacks")]),
     row_sd!("module-format-conditions", &[
@@ -378,10 +378,10 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("cjs-computed"),
     row_sd!("parse-failure-propagation"),
     row_sd_arch!("limitation-scope-exhaustiveness"),
-    row_sd!("nearest-manifest", &[
+    row_sd_determinism_weight!("nearest-manifest", &[
         inv!("nearest_manifest", "dependency_intents_lease_each_nearest_manifest_and_lockfile"),
         inv!("nearest_manifest", "dependency_owner_uncertainty_never_infers_a_lockfile"),
-    ]),
+    ], 32),
     row_sd!("parallel-gates", &[inv!("write_gate", "overlapping_gate_is_rejected_and_operation_reuse_is_malformed")]),
     row_sd!("intervening-gate-transitions", &[inv!("write_gate", "transition_retention::disjoint_gates_reconcile_a_terminal_transition_on_retry")]),
     row_sd!("gate-path-identity", &[inv!("write_gate", "new_source_path_is_admitted_before_it_exists")]),
@@ -406,11 +406,11 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("gate-immutable-opening-delta"),
     row_sd!("lifecycle-operation-idempotency", INV_IDEMP),
     row_sd!("gate-reopen-after-process-exit", &[inv!("write_gate", "pre_and_post_survive_process_reopen")]),
-    row_sd!("unplanned-edit", INV_UNPLANNED),
+    row_sd_determinism_weight!("unplanned-edit", INV_UNPLANNED, 12),
     row_sd!("mixed-vue-gate"),
     row_sd!("required-capability-failure"),
     row_sd!("snapshot-and-latest", &[inv!("publication", "first_failed_attempt_remains_visible_without_a_completed_run")]),
-    row_sd!("bounded-nested-query", INV_BNQ),
+    row_sd_determinism_weight!("bounded-nested-query", INV_BNQ, 28),
     row_sd!("collection-ordering"),
     row_sd!("capabilities-pagination", INV_CAP),
     row_sd!("request-path-escape"),
