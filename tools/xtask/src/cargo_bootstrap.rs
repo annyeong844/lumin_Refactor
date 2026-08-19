@@ -802,18 +802,18 @@ fn validate_corpus_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<Str
             ));
         }
     }
-    for (mode, mode_flag, shard_count) in
-        [("standard", "", 4), ("determinism", "--determinism ", 12)]
-    {
-        let row_jobs = if mode == "determinism" { 4 } else { 6 };
+    for (platform, mode, mode_flag, row_jobs, shard_count) in [
+        ("windows-2022", "standard", "", 6, 4),
+        ("ubuntu-24.04", "determinism", "--determinism ", 4, 8),
+    ] {
         for index in 0..shard_count {
             let name = format!("mapped-{mode}-{index}");
             let arguments = format!(
                 "foundation {mode_flag}--mapped-only --row-jobs {row_jobs} --row-shard-index {index} --row-shard-count {shard_count}"
             );
-            if partition_count("windows-2022", &name, &arguments) != 1 {
+            if partition_count(platform, &name, &arguments) != 1 {
                 violations.push(format!(
-                    "corpus job must contain exactly one Windows {name} partition"
+                    "corpus job must contain exactly one {platform} {name} partition"
                 ));
             }
         }
@@ -831,9 +831,9 @@ fn validate_corpus_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<Str
         .iter()
         .filter(|line| line.starts_with("- os:"))
         .count()
-        != 25
+        != 21
     {
-        violations.push("corpus job must contain exactly 25 reviewed partitions".to_owned());
+        violations.push("corpus job must contain exactly 21 reviewed partitions".to_owned());
     }
     if lines.iter().any(|line| {
         *line == "exclude:"
@@ -1096,29 +1096,29 @@ mod tests {
                 "removed Ubuntu partition was accepted: {name}"
             );
         }
-        for (mode, mode_flag, shard_count) in
-            [("standard", "", 4), ("determinism", "--determinism ", 12)]
-        {
-            let row_jobs = if mode == "determinism" { 4 } else { 6 };
+        for (platform, mode, mode_flag, row_jobs, shard_count) in [
+            ("windows-2022", "standard", "", 6, 4),
+            ("ubuntu-24.04", "determinism", "--determinism ", 4, 8),
+        ] {
             for index in 0..shard_count {
                 let name = format!("mapped-{mode}-{index}");
                 let arguments = format!(
                     "foundation {mode_flag}--mapped-only --row-jobs {row_jobs} --row-shard-index {index} --row-shard-count {shard_count}"
                 );
                 let partition = format!(
-                    "          - os: windows-2022\n            name: {name}\n            arguments: {arguments}\n"
+                    "          - os: {platform}\n            name: {name}\n            arguments: {arguments}\n"
                 );
                 let source = workflow()?;
                 assert!(
                     source.contains(&partition),
-                    "missing Windows partition {name}"
+                    "missing {platform} partition {name}"
                 );
                 let changed = source.replacen(&partition, "", 1);
                 assert!(
                     violations(&changed)
                         .iter()
                         .any(|violation| violation.contains(&name)),
-                    "removed Windows partition was accepted: {name}"
+                    "removed {platform} partition was accepted: {name}"
                 );
             }
         }
@@ -1145,7 +1145,7 @@ mod tests {
             ),
             source.replacen("--row-jobs 8", "--row-jobs 7", 1),
             source.replacen("--row-shard-count 4", "--row-shard-count 3", 1),
-            source.replacen("--row-shard-count 12", "--row-shard-count 11", 1),
+            source.replacen("--row-shard-count 8", "--row-shard-count 7", 1),
         ] {
             assert!(
                 violations(&changed).iter().any(|violation| {

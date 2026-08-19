@@ -153,7 +153,7 @@ fn all_applicable_selection_retains_unmapped_rows() {
 
 #[test]
 fn ci_row_shards_cover_every_mapped_row_exactly_once() {
-    for (mode, row_shard_count) in [(CorpusMode::Standard, 4), (CorpusMode::Determinism, 12)] {
+    for (mode, row_shard_count) in [(CorpusMode::Standard, 4), (CorpusMode::Determinism, 8)] {
         let mut observed = Vec::new();
         for row_shard_index in 0..row_shard_count {
             let args = CorpusArgs {
@@ -180,7 +180,7 @@ fn ci_row_shards_cover_every_mapped_row_exactly_once() {
 
 #[test]
 fn ci_row_shards_balance_declared_work_deterministically() {
-    for (mode, row_shard_count) in [(CorpusMode::Standard, 4), (CorpusMode::Determinism, 12)] {
+    for (mode, row_shard_count) in [(CorpusMode::Standard, 4), (CorpusMode::Determinism, 8)] {
         let loads = (0..row_shard_count)
             .map(|row_shard_index| {
                 let args = CorpusArgs {
@@ -217,7 +217,7 @@ fn ci_row_shards_balance_declared_work_deterministically() {
         );
         let expected = match mode {
             CorpusMode::Standard => vec![35, 34, 34, 34],
-            CorpusMode::Determinism => vec![64, 15, 13, 12, 12, 12, 12, 12, 12, 12, 12, 12],
+            CorpusMode::Determinism => vec![64, 20, 20, 20, 19, 19, 19, 19],
             CorpusMode::StoreCrash => unreachable!("CI does not shard store-crash rows"),
         };
         assert_eq!(loads, expected, "{mode} shard assignment changed");
@@ -230,7 +230,7 @@ fn ci_row_shards_balance_declared_work_deterministically() {
         selection: CorpusSelection::MappedOnly,
         row_jobs: 4,
         row_shard_index: 0,
-        row_shard_count: 12,
+        row_shard_count: 8,
     });
     assert_eq!(
         dedicated.iter().map(|row| row.id).collect::<Vec<_>>(),
