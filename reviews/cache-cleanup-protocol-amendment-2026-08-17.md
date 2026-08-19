@@ -2,9 +2,9 @@
 
 Document role: focused Architecture v1 amendment and independent-review record
 
-Status: independent PASS; owner merge pending; implementation is blocked until merge
+Status: owner merged; post-merge counterexample closure awaits independent PASS
 
-Date: 2026-08-18
+Date: 2026-08-19
 
 Owners: PRODUCT-000 Section 2.9, ARCH-000 Section 8, ARCH-002 Sections 2 and 2.5, SLICE-001 Sections 6, 9, 11, 14, and 15
 
@@ -95,6 +95,22 @@ result section and the Workboard status are record-only follow-up; they do not c
 reviewed PRODUCT-000, ARCH-000, ARCH-002, SLICE-001, or PLAN-001 owner bytes. Owner merge
 is still required before Rust implementation begins.
 
+## Post-Merge Follow-up Review
+
+The approved owner bytes merged in `e988a85`. Delayed independent review then supplied
+two concrete counterexamples that were not covered by the sixth review. Concurrent
+identical retries could complete delivery metadata in backend commit order because no
+pre-transport sequence chose the `lastDeliveryStatus` winner. A cleanup process could
+also die while `pending` before the later retry installed the documented recovery
+reservation, leaving a window in which a normal active-cache writer could invalidate
+the immutable plan. REVIEW-004 is therefore narrowly reopened. The replacement decision
+allocates a durable delivery sequence before each transport and lets only the greatest
+completed sequence update the projection. It also installs one continuous active-cache
+mutation reservation with operation creation and retains it through
+`pending -> interrupted -> pending` until result commit. No other command, namespace,
+quarantine, manifest, or response field changes. The exact follow-up candidate requires
+an independent `PASS` before its Rust implementation may resume.
+
 ## Decision
 
 The owner amendments define one public command:
@@ -116,16 +132,21 @@ Delivery recovery uses the same operation ID or the bounded
 whole-command mutation. That projection exposes only its operation identity/kind/digest,
 status and interruption count, authorized/validated counts, stored result, and last
 delivery status; it never embeds unbounded manifests. Show is strictly read-only and
-does not prove process liveness or change a record. Immediately after child death the
-canonical state remains `pending`. Under the exclusive catalog guard, only an identical
-mutating retry proves the exact execution lease dead, atomically records that execution
-ID as `interrupted`, increments the count once, and persists a recovery reservation that
-blocks cache mutation. It then releases the guard at an exact public-show barrier. A
-second guarded transaction attaches a fresh lease, releases the reservation, and returns
-to `pending` before physical reconciliation. Repeated show or recovery of the same
-interrupted attempt does not increment again. A replayed `clean` is the immutable result
-of that operation's final observation. Cache payloads added later require a new operation
-ID and are never silently consumed by replay.
+does not prove process liveness or change a record. Before every transport, a short
+transaction allocates one increasing delivery-attempt sequence and then releases every
+guard and transaction. Completion may update `lastDeliveryStatus` only when its sequence
+is greater than the greatest completed sequence; equal matching completion is idempotent,
+equal disagreement is integrity failure, and a lower late completion is ignored.
+Immediately after child death the canonical state remains `pending`, and the active-cache
+mutation reservation installed with operation creation remains continuously held. Under
+the exclusive catalog guard, only an identical mutating retry proves the exact execution
+lease dead, atomically records that execution ID as `interrupted`, and increments the
+count once without replacing or releasing the reservation. It then releases the guard at
+an exact public-show barrier. A second guarded transaction attaches a fresh lease and
+returns to `pending` under the same reservation before physical reconciliation. Repeated
+show or recovery of the same interrupted attempt does not increment again. A replayed
+`clean` is the immutable result of that operation's final observation. Cache payloads
+added later require a new operation ID and are never silently consumed by replay.
 
 ARCH-000 owns the command. ARCH-002 owns its state transition and recovery. Namespace
 bootstrap creates and binds `trash/cache-evictions` and its immutable `namespace.anchor`
@@ -149,6 +170,11 @@ either side of the authorization/child bijection.
 Cleanup uses the ordinary operation-ID state machine. One durable
 `CacheCleanupOperationRecord` binds repository and request digest, a fresh invocation ID,
 the ordered initial authorization-set ID/count, and the complete deterministic move plan.
+Creation of that record atomically installs the operation-owned active-cache mutation
+reservation before active payload inspection. Every store-owned cache writer and every
+different cleanup checks for that reservation in its mutation-admission transaction; the
+reservation survives process death and both recovery states and is released only with
+the committed result.
 Each plan row binds the original active-cache component, destination name, complete
 physical/tree manifest and digest, and an `Authorized` or `Validated` state through the
 canonical authorization table. Historical rows are referenced rather than copied into
@@ -201,8 +227,9 @@ finding for each item:
 1. ARCH-000 authorizes the exact operation-ID command; Product, ARCH-002, Slice, adapters,
    acceptance criteria, and traceability expose no conflicting command or exception.
 2. The v2 field set/order, request digest, exits, stdout/stderr rules, lock release, retry,
-   and strictly read-only `operation show` recovery are complete; exact dead-attempt
-   proof, interruption counting, and pending/interrupted/pending transitions agree.
+   and strictly read-only `operation show` recovery are complete; pre-transport delivery
+   sequencing selects one deterministic last-status winner, and exact dead-attempt proof,
+   interruption counting, and pending/interrupted/pending transitions agree.
 3. Namespace bootstrap durably binds the nested quarantine parent/anchor in marker/store
    while the lock remains global-bootstrap-only; replacement, mount, copied-state, or
    crash recovery cannot form a second binding, and a marker/store schema lacking it
@@ -217,8 +244,9 @@ finding for each item:
    before validation and result commit, including recovered and empty-cache runs.
 7. Same-ID recovery distinguishes pending live execution, one idempotently recorded
    interrupted attempt, fresh pending lease, authorized source, moved destination,
-   validated row, and committed result; another ID or read-only show cannot adopt or
-   duplicate any transition.
+   validated row, and committed result; one operation-owned cache-mutation reservation
+   remains continuous until commit, and another ID, cache writer, or read-only show cannot
+   adopt, bypass, or duplicate any transition.
 8. Top-level and nested substitution barriers stop the exact turn, preserve the winning
    object and remaining order, and assert authorization states plus final snapshot.
 9. Public process-death fixtures cover after authorization, rename visibility, physical
@@ -236,11 +264,13 @@ merge makes them authoritative on the base branch.
 
 ## Verification After Freeze
 
-Implementation may begin only after the exact candidate receives owner approval and an
-independent `PASS`. Focused checks must then cover nested-binding bootstrap/replacement,
+The two post-merge follow-up behaviors may be implemented only after their exact amended
+candidate receives owner approval and an independent `PASS`. Focused checks must then
+cover nested-binding bootstrap/replacement,
 operation admission/idempotency, foreign self-hashed quarantine, authorization-plan
 durability, bottom-up flush order, every recovery boundary, exact CLI transport behavior,
-both substitution barriers, and unchanged run/gate evidence. The public
+concurrent reverse-order delivery completion, continuous cache-writer rejection across a
+dead pending lease, both substitution barriers, and unchanged run/gate evidence. The public
 `reserved-state-namespace` row remains unmapped until standard and determinism lanes plus
 Windows/Linux package checks execute those behaviors through the packaged CLI and the
 skill package check proves operation-ID generation and recovery. Passing an internal
