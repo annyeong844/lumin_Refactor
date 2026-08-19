@@ -385,31 +385,40 @@ jobs:
             arguments: foundation --mapped-only --row-jobs 6 --row-shard-index 3 --row-shard-count 4
           - os: windows-2022
             name: mapped-determinism-0
-            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 0 --row-shard-count 9
+            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 0 --row-shard-count 12
           - os: windows-2022
             name: mapped-determinism-1
-            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 1 --row-shard-count 9
+            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 1 --row-shard-count 12
           - os: windows-2022
             name: mapped-determinism-2
-            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 2 --row-shard-count 9
+            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 2 --row-shard-count 12
           - os: windows-2022
             name: mapped-determinism-3
-            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 3 --row-shard-count 9
+            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 3 --row-shard-count 12
           - os: windows-2022
             name: mapped-determinism-4
-            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 4 --row-shard-count 9
+            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 4 --row-shard-count 12
           - os: windows-2022
             name: mapped-determinism-5
-            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 5 --row-shard-count 9
+            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 5 --row-shard-count 12
           - os: windows-2022
             name: mapped-determinism-6
-            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 6 --row-shard-count 9
+            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 6 --row-shard-count 12
           - os: windows-2022
             name: mapped-determinism-7
-            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 7 --row-shard-count 9
+            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 7 --row-shard-count 12
           - os: windows-2022
             name: mapped-determinism-8
-            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 8 --row-shard-count 9
+            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 8 --row-shard-count 12
+          - os: windows-2022
+            name: mapped-determinism-9
+            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 9 --row-shard-count 12
+          - os: windows-2022
+            name: mapped-determinism-10
+            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 10 --row-shard-count 12
+          - os: windows-2022
+            name: mapped-determinism-11
+            arguments: foundation --determinism --mapped-only --row-jobs 4 --row-shard-index 11 --row-shard-count 12
           - os: ubuntu-24.04
             name: retention-crash-protocol
             arguments: foundation --store-crash --row retention-crash-protocol

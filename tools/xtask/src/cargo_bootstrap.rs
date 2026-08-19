@@ -733,7 +733,7 @@ fn validate_corpus_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<Str
         }
     }
     for (mode, mode_flag, shard_count) in
-        [("standard", "", 4), ("determinism", "--determinism ", 9)]
+        [("standard", "", 4), ("determinism", "--determinism ", 12)]
     {
         let row_jobs = if mode == "determinism" { 4 } else { 6 };
         for index in 0..shard_count {
@@ -761,9 +761,9 @@ fn validate_corpus_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<Str
         .iter()
         .filter(|line| line.starts_with("- os:"))
         .count()
-        != 22
+        != 25
     {
-        violations.push("corpus job must contain exactly 22 reviewed partitions".to_owned());
+        violations.push("corpus job must contain exactly 25 reviewed partitions".to_owned());
     }
     if lines.iter().any(|line| {
         *line == "exclude:"
@@ -1026,7 +1026,7 @@ mod tests {
             );
         }
         for (mode, mode_flag, shard_count) in
-            [("standard", "", 4), ("determinism", "--determinism ", 9)]
+            [("standard", "", 4), ("determinism", "--determinism ", 12)]
         {
             let row_jobs = if mode == "determinism" { 4 } else { 6 };
             for index in 0..shard_count {
@@ -1064,7 +1064,7 @@ mod tests {
             source.replacen(CORE_TARGET_TEST, ALL_TARGET_TEST, 1),
             source.replacen("--row-jobs 8", "--row-jobs 7", 1),
             source.replacen("--row-shard-count 4", "--row-shard-count 3", 1),
-            source.replacen("--row-shard-count 9", "--row-shard-count 8", 1),
+            source.replacen("--row-shard-count 12", "--row-shard-count 11", 1),
         ] {
             assert!(
                 violations(&changed).iter().any(|violation| {
