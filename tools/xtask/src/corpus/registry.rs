@@ -130,7 +130,7 @@ static INV_RET_CRASH: &[CorpusInvocation] = &[
 ];
 
 // ---------------------------------------------------------------------------
-// Registry — 90 Section 9 IDs, canonical order.
+// Registry — 91 Section 9 IDs, canonical order.
 // Per-mode fields: None = not applicable, Some(&[]) = required but unmapped,
 // Some(&[..]) = mapped.
 // ---------------------------------------------------------------------------
@@ -363,18 +363,7 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("repo-path-lossless", &[
         inv!("repo_path_lossless", "native_repository_paths_round_trip_through_public_queries_and_cursors"),
     ]),
-    row_sd!("reserved-state-namespace", &[
-        inv!("state_namespace", "caller_state_paths_are_malformed_before_lifecycle_mutation"),
-        inv!("state_namespace", "committed_pre_write_retry_precedes_current_path_revalidation"),
-        inv!("state_namespace", "public_process_rejects_state_directory_replacement"),
-        inv!("state_namespace", "public_process_rejects_state_mount_crossing"),
-        inv!("state_namespace", "configured_state_entry_cannot_complete_an_audit"),
-        inv!("state_namespace", "public_process_rejects_lifecycle_lock_replacement"),
-        inv!("state_namespace", "public_process_rejects_foreign_and_redirected_state_namespaces"),
-        inv!("state_namespace", "public_process_rejects_managed_parent_anchor_and_marker_replacement"),
-        inv!("state_namespace", "state_payload_aliases_never_enter_source_evidence_or_gate_writes"),
-        inv!("cache_cleanup", "public_cache_cleanup_removes_payloads_and_preserves_the_namespace_binding"),
-    ]),
+    row_sd!("reserved-state-namespace"),
     row_sdc!("state-namespace-initialization"),
     row_sdc!("state-lock-replacement-split-brain"),
     row_sdc!("state-managed-parent-replacement"),
@@ -404,6 +393,7 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_c!("crash-publication", INV_CRASH_PUB),
     row_c!("concurrent-latest-publication", INV_CONC_PUB),
     row_c!("publication-retention-race", INV_PUB_RET_RACE),
+    row_c!("cache-cleanup-publication-race"),
     row_sdc!("retention-latest-protection", INV_RET_LATEST),
     row_sd!("retention-plan-pagination", INV_RET_PAGINATION),
     row_sdc!("retention-public-lookup", INV_RET_LOOKUP),

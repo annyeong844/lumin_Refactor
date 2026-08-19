@@ -280,8 +280,8 @@ pub fn validate_registry() -> Result<(), String> {
             ));
         }
     }
-    if REGISTRY.len() != 90 {
-        return Err(format!("registry has {} rows, expected 90", REGISTRY.len()));
+    if REGISTRY.len() != 91 {
+        return Err(format!("registry has {} rows, expected 91", REGISTRY.len()));
     }
     Ok(())
 }
