@@ -4,7 +4,7 @@ use lumin_model::{
     DeltaFact, DeltaFactFamily, DeltaIdentity, DeltaIdentityKind, DeltaKey, DeltaOwnerPayloadValue,
     DeltaValue, DependencyIntentIdentity, DynamicImportTargetScope, FindingDisposition,
     ImportMetaGlobTargetScope, Limitation, LogicalSourceId, PackageScopeId, RepoPath,
-    ReviewOnlyReason, UnresolvedTargetScope, append_length_prefixed,
+    ResolutionOutcome, ReviewOnlyReason, UnresolvedTargetScope, append_length_prefixed,
 };
 
 use crate::{
@@ -117,6 +117,32 @@ fn limitation_intersects_required_evidence(
     dependency_intents: &[DependencyIntentRecord],
     leased_write_set: &[WriteLease],
 ) -> bool {
+    if let Limitation::JsRecoverableParseLocal { source_id, .. } = limitation {
+        let mut affected_sources = BTreeSet::from([source_id.clone()]);
+        affected_sources.extend(
+            evidence
+                .resolutions
+                .iter()
+                .filter(|resolution| {
+                    matches!(
+                        &resolution.outcome,
+                        ResolutionOutcome::Internal { target } if target == source_id
+                    )
+                })
+                .map(|resolution| resolution.source_use.importer.clone()),
+        );
+        return affected_sources.iter().any(|affected_source| {
+            let Some(path) = evidence
+                .source_contexts
+                .iter()
+                .find(|context| &context.source_id == affected_source)
+                .map(|context| &context.path)
+            else {
+                return true;
+            };
+            leased_write_set.iter().any(|lease| lease.covers(path))
+        });
+    }
     if let Limitation::ImportMetaGlobUnsupported {
         source_id,
         target_scope: ImportMetaGlobTargetScope::Package,
@@ -554,7 +580,8 @@ fn limitation_delta_at(limitation: &Limitation, construct_ordinal: u64) -> Limit
                 ]),
             })
         }
-        Limitation::JsModuleUseUnknown { .. }
+        Limitation::JsRecoverableParseLocal { .. }
+        | Limitation::JsModuleUseUnknown { .. }
         | Limitation::SourcePayloadUnavailable { .. }
         | Limitation::PackageImportsUnsupported { .. }
         | Limitation::AliasShapeUnsupported { .. }
@@ -632,8 +659,9 @@ fn severity_name(severity: Severity) -> &'static str {
 #[cfg(test)]
 mod tests {
     use lumin_model::{
-        DeltaDimensionChange, FindingId, GateDeltaClassification, SourceKind, SourceSpan,
-        SourceUnitId, SymbolNamespace, classify_lifecycle_deltas,
+        DeltaDimensionChange, FindingId, GateDeltaClassification, ImportKind, ModuleRequestKind,
+        ResolvedSourceUse, SourceKind, SourceSpan, SourceUnitId, SourceUseFact, SymbolNamespace,
+        classify_lifecycle_deltas,
     };
 
     use super::*;
@@ -935,6 +963,66 @@ mod tests {
                 .required_evidence_gap_count,
             1,
             "a broad directory lease discarded its own package-scoped gap",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn recoverable_parse_gap_intersects_its_source_and_direct_consumers()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let broken = RepoPath::from_portable("src/broken.ts")?;
+        let consumer = RepoPath::from_portable("src/consumer.ts")?;
+        let unrelated = RepoPath::from_portable("src/unrelated.ts")?;
+        let source_root = RepoPath::from_portable("src")?;
+        let source_id = LogicalSourceId::from_path(&broken);
+        let mut evidence = evidence_with_limitations(vec![Limitation::JsRecoverableParseLocal {
+            source_id: source_id.clone(),
+            detail: "local definitions are incomplete".to_owned(),
+        }]);
+        evidence.source_contexts = vec![
+            source_context(&broken, &RepoPath::empty()),
+            source_context(&consumer, &RepoPath::empty()),
+            source_context(&unrelated, &RepoPath::empty()),
+        ];
+        evidence.resolutions = vec![ResolvedSourceUse {
+            source_use: SourceUseFact {
+                importer: LogicalSourceId::from_path(&consumer),
+                specifier: "./broken.js".to_owned(),
+                imported_name: Some("visible".to_owned()),
+                local_name: Some("visible".to_owned()),
+                namespace: SymbolNamespace::Value,
+                kind: ImportKind::Named,
+                request_kind: ModuleRequestKind::StaticImport,
+                span: SourceSpan { start: 0, end: 43 },
+            },
+            outcome: ResolutionOutcome::Internal {
+                target: source_id.clone(),
+            },
+        }];
+
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&unrelated)])
+                .required_evidence_gap_count,
+            0,
+            "a file-local parse gap blocked an unrelated write",
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&broken)])
+                .required_evidence_gap_count,
+            1,
+            "the broken source write lost its required local-definition gap",
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&consumer)])
+                .required_evidence_gap_count,
+            1,
+            "a direct consumer write lost the source's missing local-definition gap",
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[directory_lease(&source_root)])
+                .required_evidence_gap_count,
+            1,
+            "a directory write covering the broken source lost its parse gap",
         );
         Ok(())
     }

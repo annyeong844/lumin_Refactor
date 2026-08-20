@@ -246,7 +246,8 @@ fn blocked_absence_scope(
                     workspace_blocked = true;
                 }
             }
-            Limitation::CommonJsComputedMember { .. }
+            Limitation::JsRecoverableParseLocal { .. }
+            | Limitation::CommonJsComputedMember { .. }
             | Limitation::DependencyOwnerAmbiguous { .. }
             | Limitation::PnpmDependencySemanticsUnsupported { .. } => {}
             Limitation::PackageMetadataUnobservable { path, .. } => {

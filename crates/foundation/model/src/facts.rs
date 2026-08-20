@@ -572,6 +572,10 @@ impl PackageScope {
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "kebab-case")]
 pub enum Limitation {
+    JsRecoverableParseLocal {
+        source_id: LogicalSourceId,
+        detail: String,
+    },
     JsModuleUseUnknown {
         source_id: LogicalSourceId,
         detail: String,
@@ -724,6 +728,7 @@ pub enum LimitationFactOwner {
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum LimitationScopePolicy {
+    File,
     Workspace,
     ResolvedModule,
     ExplicitTargetsOrWorkspace,
@@ -742,6 +747,7 @@ pub enum LimitationScopePolicy {
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum LimitationAbsenceEffect {
+    LocalDefinitions,
     WorkspaceConsumers,
     ModuleValueExports,
     CandidateConsumers,
@@ -819,6 +825,12 @@ macro_rules! define_limitation_registry {
 }
 
 define_limitation_registry! {
+    JsRecoverableParseLocal => {
+        owner: Js,
+        scope: File,
+        absence: LocalDefinitions,
+        gate: RequiredEvidence,
+    },
     JsModuleUseUnknown => {
         owner: Js,
         scope: Workspace,

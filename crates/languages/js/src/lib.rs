@@ -29,7 +29,7 @@ use dynamic_import::{
 use import_meta_glob::{ParsedImportMetaGlob, UnsupportedImportMetaGlobTemplate};
 use require_scope::RequireScopeTracker;
 
-pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v26";
+pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v27";
 
 const REQUIRE_ATTRIBUTION_OPAQUE: &str = "shadowed, mutated, dynamically resolved, or escaped require makes CommonJS module-use attribution opaque";
 const MODULE_REQUIRE_ATTRIBUTION_OPAQUE: &str =
@@ -77,6 +77,7 @@ pub struct JsPayloadFacts {
     uses: Vec<SourceUseTemplate>,
     nonliteral_dynamic_imports: Vec<NonLiteralDynamicImportTemplate>,
     unsupported_import_meta_globs: Vec<UnsupportedImportMetaGlobTemplate>,
+    recoverable_parse_details: Vec<String>,
     limitation_details: Vec<String>,
 }
 
@@ -178,25 +179,39 @@ pub fn parse_payload_with_module_formats(
 
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, source_type).parse();
-    if parsed.panicked || !parsed.errors.is_empty() {
-        let detail = parsed
-            .errors
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join("; ");
-        let detail = format!("OXC parse did not complete cleanly: {detail}");
+    let parse_errors = parsed
+        .errors
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("; ");
+    if parsed.panicked {
+        let detail = if parse_errors.is_empty() {
+            "OXC parse terminated before producing a complete AST".to_owned()
+        } else {
+            format!("OXC parse terminated before producing a complete AST: {parse_errors}")
+        };
         return Ok(module_formats
             .into_iter()
             .map(|format| (format, unknown_payload(detail.clone())))
             .collect());
     }
 
+    let recoverable_parse_details = (!parsed.errors.is_empty())
+        .then(|| {
+            format!(
+                "OXC recovered a complete AST with parse errors; local definitions are incomplete: {parse_errors}"
+            )
+        })
+        .into_iter()
+        .collect();
+
     let mut base_facts = JsPayloadFacts {
         exports: Vec::new(),
         uses: Vec::new(),
         nonliteral_dynamic_imports: Vec::new(),
         unsupported_import_meta_globs: Vec::new(),
+        recoverable_parse_details,
         limitation_details: Vec::new(),
     };
     if matches!(kind, SourceKind::CommonJs | SourceKind::Cts) {
@@ -211,10 +226,12 @@ pub fn parse_payload_with_module_formats(
     Ok(module_formats
         .into_iter()
         .map(|module_format| {
-            (
-                module_format,
-                contextualize_payload(kind, &parsed.program, base_facts.clone(), module_format),
-            )
+            let mut facts =
+                contextualize_payload(kind, &parsed.program, base_facts.clone(), module_format);
+            if !facts.recoverable_parse_details.is_empty() {
+                facts.exports.clear();
+            }
+            (module_format, facts)
         })
         .collect())
 }
@@ -319,12 +336,21 @@ pub fn bind_payload(
             })
             .collect(),
         limitations: payload
-            .limitation_details
+            .recoverable_parse_details
             .iter()
-            .map(|detail| Limitation::JsModuleUseUnknown {
+            .map(|detail| Limitation::JsRecoverableParseLocal {
                 source_id: source_id.clone(),
                 detail: detail.clone(),
             })
+            .chain(
+                payload
+                    .limitation_details
+                    .iter()
+                    .map(|detail| Limitation::JsModuleUseUnknown {
+                        source_id: source_id.clone(),
+                        detail: detail.clone(),
+                    }),
+            )
             .chain(payload.nonliteral_dynamic_imports.iter().map(|dynamic| {
                 Limitation::DynamicImportNonLiteral {
                     source_id: source_id.clone(),
@@ -969,6 +995,7 @@ fn unknown_payload(detail: String) -> JsPayloadFacts {
         uses: Vec::new(),
         nonliteral_dynamic_imports: Vec::new(),
         unsupported_import_meta_globs: Vec::new(),
+        recoverable_parse_details: Vec::new(),
         limitation_details: vec![detail],
     }
 }
@@ -997,6 +1024,8 @@ fn canonicalize(facts: &mut JsPayloadFacts) {
     }
     facts.unsupported_import_meta_globs.sort();
     facts.unsupported_import_meta_globs.dedup();
+    facts.recoverable_parse_details.sort();
+    facts.recoverable_parse_details.dedup();
 }
 
 #[cfg(test)]
