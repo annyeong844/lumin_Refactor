@@ -53,7 +53,38 @@ fn one_payload_product_binds_distinct_logical_sources() -> Result<(), Box<dyn st
 }
 
 #[test]
-fn parse_failure_is_visible_and_not_empty_success() -> Result<(), Box<dyn std::error::Error>> {
+fn recoverable_parse_failure_preserves_module_uses_but_withholds_local_definitions()
+-> Result<(), Box<dyn std::error::Error>> {
+    let snapshot = SourceSnapshot::new(
+        RepoPath::from_portable("recoverable.ts")?,
+        SourceKind::TypeScript,
+        SourceRoles::default(),
+        lumin_model::PhysicalFileIdentity::Unix {
+            device: 1,
+            inode: 1,
+        },
+        concat!(
+            "import { consumed } from './target.js';\n",
+            "console.log(consumed);\n",
+            "export const broken;\n",
+        )
+        .as_bytes()
+        .to_vec(),
+    );
+    let facts = extract(&snapshot)?;
+    assert!(facts.exports.is_empty());
+    assert_eq!(facts.uses.len(), 1);
+    assert_eq!(facts.uses[0].specifier, "./target.js");
+    assert!(matches!(
+        facts.limitations.as_slice(),
+        [Limitation::JsRecoverableParseLocal { .. }]
+    ));
+    Ok(())
+}
+
+#[test]
+fn unrecoverable_parse_failure_is_visible_and_not_empty_success()
+-> Result<(), Box<dyn std::error::Error>> {
     let snapshot = SourceSnapshot::new(
         RepoPath::from_portable("broken.ts")?,
         SourceKind::TypeScript,
@@ -66,7 +97,11 @@ fn parse_failure_is_visible_and_not_empty_success() -> Result<(), Box<dyn std::e
     );
     let facts = extract(&snapshot)?;
     assert!(facts.exports.is_empty());
-    assert_eq!(facts.limitations.len(), 1);
+    assert!(facts.uses.is_empty());
+    assert!(matches!(
+        facts.limitations.as_slice(),
+        [Limitation::JsModuleUseUnknown { .. }]
+    ));
     Ok(())
 }
 

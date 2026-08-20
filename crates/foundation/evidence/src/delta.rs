@@ -117,6 +117,17 @@ fn limitation_intersects_required_evidence(
     dependency_intents: &[DependencyIntentRecord],
     leased_write_set: &[WriteLease],
 ) -> bool {
+    if let Limitation::JsRecoverableParseLocal { source_id, .. } = limitation {
+        let Some(path) = evidence
+            .source_contexts
+            .iter()
+            .find(|context| &context.source_id == source_id)
+            .map(|context| &context.path)
+        else {
+            return true;
+        };
+        return leased_write_set.iter().any(|lease| lease.covers(path));
+    }
     if let Limitation::ImportMetaGlobUnsupported {
         source_id,
         target_scope: ImportMetaGlobTargetScope::Package,
@@ -554,7 +565,8 @@ fn limitation_delta_at(limitation: &Limitation, construct_ordinal: u64) -> Limit
                 ]),
             })
         }
-        Limitation::JsModuleUseUnknown { .. }
+        Limitation::JsRecoverableParseLocal { .. }
+        | Limitation::JsModuleUseUnknown { .. }
         | Limitation::SourcePayloadUnavailable { .. }
         | Limitation::PackageImportsUnsupported { .. }
         | Limitation::AliasShapeUnsupported { .. }
@@ -935,6 +947,40 @@ mod tests {
                 .required_evidence_gap_count,
             1,
             "a broad directory lease discarded its own package-scoped gap",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn recoverable_parse_gap_intersects_only_its_source_file()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let broken = RepoPath::from_portable("src/broken.ts")?;
+        let unrelated = RepoPath::from_portable("src/unrelated.ts")?;
+        let source_root = RepoPath::from_portable("src")?;
+        let source_id = LogicalSourceId::from_path(&broken);
+        let mut evidence = evidence_with_limitations(vec![Limitation::JsRecoverableParseLocal {
+            source_id,
+            detail: "local definitions are incomplete".to_owned(),
+        }]);
+        evidence.source_contexts = vec![source_context(&broken, &RepoPath::empty())];
+
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&unrelated)])
+                .required_evidence_gap_count,
+            0,
+            "a file-local parse gap blocked an unrelated write",
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&broken)])
+                .required_evidence_gap_count,
+            1,
+            "the broken source write lost its required local-definition gap",
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[directory_lease(&source_root)])
+                .required_evidence_gap_count,
+            1,
+            "a directory write covering the broken source lost its parse gap",
         );
         Ok(())
     }
