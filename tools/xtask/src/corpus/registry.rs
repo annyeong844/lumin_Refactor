@@ -375,7 +375,9 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("import-meta-glob", &[
         inv!("import_meta_glob", "relative_import_meta_globs_expand_and_unsupported_patterns_remain_scoped"),
     ]),
-    row_sd!("cjs-computed"),
+    row_sd!("cjs-computed", &[
+        inv!("cjs_computed", "computed_commonjs_access_is_module_scoped_broad_value_evidence"),
+    ]),
     row_sd!("parse-failure-propagation"),
     row_sd_arch!("limitation-scope-exhaustiveness"),
     row_sd!("nearest-manifest", &[

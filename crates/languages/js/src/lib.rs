@@ -16,10 +16,12 @@ use oxc_ast_visit::{Visit, walk};
 use oxc_parser::Parser;
 use oxc_span::{GetSpan, SourceType, Span};
 
+mod commonjs_computed;
 mod dynamic_import;
 mod import_meta_glob;
 mod require_scope;
 
+pub use commonjs_computed::scope_commonjs_computed_limitations;
 use dynamic_import::{
     NonLiteralDynamicImportTemplate, analyze_literal_dynamic_imports,
     literal_dynamic_import_specifier, nonliteral_template, transparent_runtime_expression,
@@ -27,7 +29,7 @@ use dynamic_import::{
 use import_meta_glob::{ParsedImportMetaGlob, UnsupportedImportMetaGlobTemplate};
 use require_scope::RequireScopeTracker;
 
-pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v24";
+pub const EXTRACTOR_SEMANTICS_VERSION: &str = "js-extractor-semantics.v25";
 
 const REQUIRE_ATTRIBUTION_OPAQUE: &str = "shadowed, mutated, dynamically resolved, or escaped require makes CommonJS module-use attribution opaque";
 const MODULE_REQUIRE_ATTRIBUTION_OPAQUE: &str =
@@ -224,6 +226,8 @@ fn contextualize_payload(
     module_format: JsModuleFormat,
 ) -> JsPayloadFacts {
     let dynamic_imports = analyze_literal_dynamic_imports(program);
+    let computed_commonjs_require_calls =
+        commonjs_computed::collect_computed_require_calls(program);
     let commonjs_wrapper_exports_possible = module_format != JsModuleFormat::EsModule;
     let require_scopes = RequireScopeTracker::analyze(
         program,
@@ -242,6 +246,7 @@ fn contextualize_payload(
         module_member_object_references: BTreeSet::new(),
         non_escaping_module_require_members: BTreeSet::new(),
         handled_dynamic_imports: dynamic_imports.handled_imports,
+        computed_commonjs_require_calls,
         nonliteral_dynamic_imports: Vec::new(),
         unsupported_import_meta_globs: Vec::new(),
     };
@@ -678,6 +683,7 @@ struct DynamicUseDetector {
     module_member_object_references: BTreeSet<(u32, u32)>,
     non_escaping_module_require_members: BTreeSet<(u32, u32)>,
     handled_dynamic_imports: BTreeSet<(u32, u32)>,
+    computed_commonjs_require_calls: BTreeSet<(u32, u32)>,
     nonliteral_dynamic_imports: Vec<NonLiteralDynamicImportTemplate>,
     unsupported_import_meta_globs: Vec<UnsupportedImportMetaGlobTemplate>,
 }
@@ -782,7 +788,14 @@ impl<'a> Visit<'a> for DynamicUseDetector {
                 imported_name: None,
                 local_name: None,
                 namespace: SymbolNamespace::Value,
-                kind: ImportKind::DynamicBroad,
+                kind: if self
+                    .computed_commonjs_require_calls
+                    .contains(&(expression.span.start, expression.span.end))
+                {
+                    ImportKind::CommonJsComputed
+                } else {
+                    ImportKind::DynamicBroad
+                },
                 request_kind: ModuleRequestKind::Require,
                 span: span(expression.span),
             });

@@ -246,7 +246,8 @@ fn blocked_absence_scope(
                     workspace_blocked = true;
                 }
             }
-            Limitation::DependencyOwnerAmbiguous { .. }
+            Limitation::CommonJsComputedMember { .. }
+            | Limitation::DependencyOwnerAmbiguous { .. }
             | Limitation::PnpmDependencySemanticsUnsupported { .. } => {}
             Limitation::PackageMetadataUnobservable { path, .. } => {
                 if !block_manifest_parent(path, sources, config, &mut blocked_paths) {

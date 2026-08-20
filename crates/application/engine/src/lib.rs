@@ -565,9 +565,10 @@ impl RepositoryAnalysisSession {
             resolved,
             package_surfaces,
             profiles,
-            limitations: resolver_limitations,
+            limitations: mut resolver_limitations,
             demands: _,
         } = resolver;
+        resolver_limitations.extend(lumin_js::scope_commonjs_computed_limitations(&resolved));
         let limitations = collect_limitations(
             &mut self.inventory.limitations,
             &extraction.facts,

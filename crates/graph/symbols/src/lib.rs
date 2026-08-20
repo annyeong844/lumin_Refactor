@@ -209,7 +209,7 @@ pub fn build(
                     namespace_re_exports.extend(matching_exports);
                 }
             }
-            ImportKind::DynamicBroad => {
+            ImportKind::DynamicBroad | ImportKind::CommonJsComputed => {
                 increment_broad_fan_in(
                     &mut graph,
                     target,

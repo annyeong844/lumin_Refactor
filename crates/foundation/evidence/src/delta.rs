@@ -43,6 +43,7 @@ pub(crate) fn lifecycle_delta_input_for(
     let mut required_evidence_gap_count = 0;
     let mut dynamic_import_occurrences = BTreeMap::<(LogicalSourceId, Option<String>), u64>::new();
     let mut import_meta_glob_occurrences = BTreeMap::<(LogicalSourceId, Vec<String>), u64>::new();
+    let mut commonjs_computed_occurrences = BTreeMap::<(LogicalSourceId, String), u64>::new();
     for limitation in &evidence.limitations {
         let construct_ordinal = match limitation {
             Limitation::DynamicImportNonLiteral {
@@ -66,6 +67,18 @@ pub(crate) fn lifecycle_delta_input_for(
             } => {
                 let next = import_meta_glob_occurrences
                     .entry((source_id.clone(), patterns.to_vec()))
+                    .or_default();
+                let ordinal = *next;
+                *next += 1;
+                ordinal
+            }
+            Limitation::CommonJsComputedMember {
+                source_id,
+                specifier,
+                ..
+            } => {
+                let next = commonjs_computed_occurrences
+                    .entry((source_id.clone(), specifier.clone()))
                     .or_default();
                 let ordinal = *next;
                 *next += 1;
@@ -505,6 +518,42 @@ fn limitation_delta_at(limitation: &Limitation, construct_ordinal: u64) -> Limit
                 ]),
             })
         }
+        Limitation::CommonJsComputedMember {
+            source_id,
+            specifier,
+            target: resolved_target,
+            ..
+        } => {
+            let ordinal = construct_ordinal.to_be_bytes();
+            let semantic_identity = frame([
+                source_id.as_str().as_bytes(),
+                b"commonjs-computed-opacity.v1",
+                specifier.as_bytes(),
+                ordinal.as_slice(),
+            ]);
+            LimitationDelta::Fact(DeltaFact {
+                key: DeltaKey {
+                    owner_capability: "js/module-use.v1".to_owned(),
+                    family: DeltaFactFamily::Opacity,
+                    semantic_identity: semantic_identity.clone(),
+                },
+                targets: BTreeSet::from([target(resolved_target.as_str().as_bytes())]),
+                affected_identities: BTreeSet::from([logical_source(source_id)]),
+                confidence: lumin_model::ConfidenceRank::High,
+                grounding: lumin_model::GroundingRank::Opaque,
+                evidence_identity: DeltaValue::bytes(semantic_identity),
+                owner_payload: BTreeMap::from([
+                    (
+                        "specifier".to_owned(),
+                        DeltaOwnerPayloadValue::unordered(DeltaValue::text(specifier)),
+                    ),
+                    (
+                        "targetScope".to_owned(),
+                        DeltaOwnerPayloadValue::unordered(DeltaValue::text("resolved-module")),
+                    ),
+                ]),
+            })
+        }
         Limitation::JsModuleUseUnknown { .. }
         | Limitation::SourcePayloadUnavailable { .. }
         | Limitation::PackageImportsUnsupported { .. }
@@ -938,6 +987,46 @@ mod tests {
                 .iter()
                 .any(|target| { target.canonical == candidate.as_str().as_bytes() })
         );
+        Ok(())
+    }
+
+    #[test]
+    fn computed_commonjs_member_is_stable_module_opacity() -> Result<(), &'static str> {
+        let importer = LogicalSourceId::from_string("source-importer".to_owned());
+        let candidate = LogicalSourceId::from_string("source-candidate".to_owned());
+        let limitation = |start| Limitation::CommonJsComputedMember {
+            source_id: importer.clone(),
+            specifier: "./candidate.js".to_owned(),
+            span: SourceSpan {
+                start,
+                end: start + 25,
+            },
+            target: candidate.clone(),
+        };
+
+        let first = match limitation_delta(&limitation(7)) {
+            LimitationDelta::Fact(fact) => fact,
+            LimitationDelta::RequiredEvidenceGap => {
+                return Err("resolved computed require should produce an opacity fact");
+            }
+        };
+        let shifted = match limitation_delta(&limitation(107)) {
+            LimitationDelta::Fact(fact) => fact,
+            LimitationDelta::RequiredEvidenceGap => {
+                return Err("shifted computed require should remain comparable");
+            }
+        };
+        assert_eq!(first.key, shifted.key);
+        assert_eq!(first.evidence_identity, shifted.evidence_identity);
+        assert_eq!(first.key.family, DeltaFactFamily::Opacity);
+        assert_eq!(first.grounding, lumin_model::GroundingRank::Opaque);
+        assert_eq!(
+            first.targets,
+            BTreeSet::from([target(candidate.as_str().as_bytes())])
+        );
+        let input = lifecycle_delta_input(&evidence_with_limitations(vec![limitation(7)]));
+        assert_eq!(input.advisory_limitation_count, 1);
+        assert_eq!(input.required_evidence_gap_count, 0);
         Ok(())
     }
 
