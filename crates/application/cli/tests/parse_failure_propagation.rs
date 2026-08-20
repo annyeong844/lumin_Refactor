@@ -74,6 +74,23 @@ fn recoverable_parse_failures_preserve_module_uses_and_remain_file_scoped()
         "a file-local parse gap blocked an unrelated write: {unrelated_gate:#?}",
     );
 
+    let consumer_gate = run(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-recoverable-consumer",
+            "--path",
+            "src/consumer.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&consumer_gate, 4);
+    let consumer_gate: Value = serde_json::from_str(&consumer_gate.stdout)?;
+    assert_eq!(required_str(&consumer_gate, "/decision")?, "incomplete");
+    assert!(has_signal(&consumer_gate, "required-evidence-incomplete"));
+
     let broken_gate = run(
         root.path(),
         &[
@@ -149,8 +166,14 @@ fn recoverable_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>
         concat!(
             "import { used } from './target.js';\n",
             "console.log(used);\n",
+            "export const visible = 1;\n",
             "export const hiddenLocal;\n",
         ),
+    )?;
+    write(
+        root.path(),
+        "src/consumer.ts",
+        "import { visible } from './broken.js'; console.log(visible);\n",
     )?;
     write(
         root.path(),
