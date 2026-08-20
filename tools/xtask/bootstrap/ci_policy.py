@@ -16,6 +16,14 @@ from urllib.parse import unquote, urlsplit
 EVIDENCE_COMPONENT = b"/evidence/"
 EVIDENCE_PREFIX = b"reviews/probes/"
 MARKDOWN_SUFFIX = b".md"
+FULL_SCOPE_MARKDOWN_PATHS = frozenset((b"specs/001-foundation-slice.md",))
+
+REFERENCE_DEFINITION = re.compile(
+    r"^[ \t]{0,3}\[(?:\\.|[^\]\\\r\n])+\]:"
+    r"[ \t]*(?:\r?\n[ \t]{0,3})?"
+    r"(?P<destination><(?:\\.|[^<>\r\n])*>|(?:\\.|[^\s])+)",
+    re.MULTILINE,
+)
 
 
 class PolicyError(RuntimeError):
@@ -58,6 +66,9 @@ def changed_paths(root: Path, base: str, head: str) -> tuple[bytes, ...]:
 def change_scope(paths: Iterable[bytes]) -> str:
     materialized = tuple(paths)
     if not materialized:
+        return "full"
+    portable_lower = tuple(path.replace(b"\\", b"/").lower() for path in materialized)
+    if any(path in FULL_SCOPE_MARKDOWN_PATHS for path in portable_lower):
         return "full"
     if all(path.lower().endswith(MARKDOWN_SUFFIX) for path in materialized):
         return "documentation"
@@ -108,6 +119,12 @@ def inline_link_destinations(text: str) -> tuple[str, ...]:
     return tuple(destinations)
 
 
+def reference_link_destinations(text: str) -> tuple[str, ...]:
+    return tuple(
+        match.group("destination") for match in REFERENCE_DEFINITION.finditer(text)
+    )
+
+
 def _destination_path(raw: str) -> str | None:
     value = raw.strip()
     if value.startswith("<"):
@@ -138,7 +155,11 @@ def document_errors(root: Path, documents: Iterable[Path]) -> tuple[str, ...]:
             continue
         if text.startswith("\ufeff"):
             errors.append(f"{relative.as_posix()}: UTF-8 BOM is not allowed")
-        for raw_destination in inline_link_destinations(text):
+        destinations = (
+            *inline_link_destinations(text),
+            *reference_link_destinations(text),
+        )
+        for raw_destination in destinations:
             destination = _destination_path(raw_destination)
             if destination is None:
                 continue

@@ -28,6 +28,11 @@ class ChangeScopeTests(unittest.TestCase):
             "documentation",
         )
 
+    def test_code_consumed_markdown_is_full_scope(self) -> None:
+        owner = b"specs/001-foundation-slice.md"
+        self.assertEqual(POLICY.change_scope((owner,)), "full")
+        self.assertEqual(POLICY.change_scope((b"README.md", owner)), "full")
+
     def test_empty_code_and_mixed_changes_are_full_scope(self) -> None:
         self.assertEqual(POLICY.change_scope(()), "full")
         self.assertEqual(POLICY.change_scope((b"src/lib.rs",)), "full")
@@ -123,6 +128,50 @@ class ChangeScopeTests(unittest.TestCase):
                 "scope=full\nrun_full=true\n",
             )
 
+    def test_github_policy_runs_full_for_code_consumed_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            subprocess.run(("git", "init", "-q", str(root)), check=True)
+            subprocess.run(
+                ("git", "-C", str(root), "config", "user.email", "ci@example.invalid"),
+                check=True,
+            )
+            subprocess.run(
+                ("git", "-C", str(root), "config", "user.name", "CI Policy"),
+                check=True,
+            )
+            specs = root / "specs"
+            specs.mkdir()
+            owner = specs / "001-foundation-slice.md"
+            owner.write_text("base\n", encoding="utf-8")
+            subprocess.run(("git", "-C", str(root), "add", "specs"), check=True)
+            subprocess.run(
+                ("git", "-C", str(root), "commit", "-q", "-m", "base"), check=True
+            )
+            base = subprocess.check_output(
+                ("git", "-C", str(root), "rev-parse", "HEAD"), text=True
+            ).strip()
+            owner.write_text("changed\n", encoding="utf-8")
+            subprocess.run(("git", "-C", str(root), "commit", "-qam", "spec"), check=True)
+            head = subprocess.check_output(
+                ("git", "-C", str(root), "rev-parse", "HEAD"), text=True
+            ).strip()
+            output = root / "github-output"
+            result = POLICY.run_github_policy(
+                root,
+                {
+                    "GITHUB_EVENT_NAME": "pull_request",
+                    "PR_BASE_SHA": base,
+                    "PR_HEAD_SHA": head,
+                    "GITHUB_OUTPUT": str(output),
+                },
+            )
+            self.assertEqual(result, 0)
+            self.assertEqual(
+                output.read_text(encoding="utf-8"),
+                "scope=full\nrun_full=true\n",
+            )
+
     def test_unknown_github_event_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary, self.assertRaises(POLICY.PolicyError):
             POLICY.run_github_policy(
@@ -151,6 +200,30 @@ class DocumentationTests(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assertEqual(POLICY.document_errors(root, (Path("README.md"),)), ())
+
+    def test_reference_definition_targets_are_validated(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            docs = root / "docs"
+            docs.mkdir()
+            (docs / "target.md").write_text("target\n", encoding="utf-8")
+            (root / "README.md").write_text(
+                "\n".join(
+                    (
+                        "[contract][owner] [continued][next] [web][external]",
+                        '[owner]: <docs/target.md#section> "Owner"',
+                        "[next]:",
+                        "  docs/target.md 'Continued'",
+                        "[external]: https://example.com/spec",
+                        "[missing]: missing.md \"Missing\"",
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            errors = POLICY.document_errors(root, (Path("README.md"),))
+            self.assertEqual(len(errors), 1)
+            self.assertIn("target is missing: missing.md", errors[0])
 
     def test_missing_and_escaping_links_fail(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
