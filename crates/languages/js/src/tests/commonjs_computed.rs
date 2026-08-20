@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use lumin_model::{
     ImportKind, Limitation, LogicalSourceId, ModuleRequestKind, ResolutionOutcome,
     ResolvedSourceUse, SourceKind, SourceSpan, SourceUseFact, SymbolNamespace,
@@ -40,6 +42,52 @@ fn direct_dynamic_commonjs_members_and_destructuring_are_marked_computed()
     assert!(payload.uses.iter().any(|source_use| {
         source_use.specifier == "./known-member.js" && source_use.kind == ImportKind::DynamicBroad
     }));
+    Ok(())
+}
+
+#[test]
+fn computed_access_through_require_result_bindings_respects_value_scopes()
+-> Result<(), Box<dyn std::error::Error>> {
+    let payload = parse_payload_with_module_format(
+        SourceKind::TypeScript,
+        concat!(
+            "const key = process.argv[2];\n",
+            "const member = require('./bound-member.js'); member[key];\n",
+            "const declared = require('./bound-declared.js'); const { [key]: value } = declared;\n",
+            "const assigned = require('./bound-assigned.js'); ({ [key]: target } = assigned);\n",
+            "const wrapped = require('./bound-wrapped.js'); (wrapped as Record<string, unknown>)[key];\n",
+            "const captured = require('./captured.js'); function read() { return captured[key]; }\n",
+            "const typed = require('./typed.js'); type typed = {}; typed[key];\n",
+            "const staticOnly = require('./static.js'); staticOnly.known;\n",
+            "const shadowed = require('./shadowed.js'); { const shadowed = other; shadowed[key]; }\n",
+            "const parameter = require('./parameter.js'); function inspect(parameter: object) { return parameter[key]; }\n",
+        )
+        .as_bytes(),
+        JsModuleFormat::CommonJs,
+    )?;
+
+    let computed = payload
+        .uses
+        .iter()
+        .filter(|source_use| source_use.kind == ImportKind::CommonJsComputed)
+        .map(|source_use| source_use.specifier.as_str())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        computed,
+        BTreeSet::from([
+            "./bound-assigned.js",
+            "./bound-declared.js",
+            "./bound-member.js",
+            "./bound-wrapped.js",
+            "./captured.js",
+            "./typed.js",
+        ])
+    );
+    for specifier in ["./parameter.js", "./shadowed.js", "./static.js"] {
+        assert!(payload.uses.iter().any(|source_use| {
+            source_use.specifier == specifier && source_use.kind == ImportKind::DynamicBroad
+        }));
+    }
     Ok(())
 }
 

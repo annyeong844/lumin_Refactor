@@ -15,6 +15,11 @@ const MAIN_SOURCE: &str = concat!(
     "console.log(require('./member.js')[key]);\n",
     "const { [key]: selected } = require('./destructure.js');\n",
     "console.log(selected);\n",
+    "const boundMember = require('./bound-member.js');\n",
+    "console.log(boundMember[key]);\n",
+    "const boundDestructure = require('./bound-destructure.js');\n",
+    "const { [key]: boundSelected } = boundDestructure;\n",
+    "console.log(boundSelected);\n",
 );
 
 const TEST_SOURCE: &str = concat!(
@@ -38,7 +43,7 @@ fn computed_commonjs_access_is_module_scoped_broad_value_evidence()
     );
     assert_eq!(
         audit_json.get("limitationCount").and_then(Value::as_u64),
-        Some(3)
+        Some(5)
     );
     let run_id = field(&audit.stdout, "runId")?;
 
@@ -46,13 +51,19 @@ fn computed_commonjs_access_is_module_scoped_broad_value_evidence()
     let test = file_response(root.path(), &run_id, "tests/consumer.test.ts")?;
     let member = file_response(root.path(), &run_id, "src/member.ts")?;
     let destructure = file_response(root.path(), &run_id, "src/destructure.ts")?;
+    let bound_member = file_response(root.path(), &run_id, "src/bound-member.ts")?;
+    let bound_destructure = file_response(root.path(), &run_id, "src/bound-destructure.ts")?;
     let test_target = file_response(root.path(), &run_id, "src/test-target.ts")?;
     let member_id = required_str(&member, "/sourceContext/sourceId")?;
     let destructure_id = required_str(&destructure, "/sourceContext/sourceId")?;
+    let bound_member_id = required_str(&bound_member, "/sourceContext/sourceId")?;
+    let bound_destructure_id = required_str(&bound_destructure, "/sourceContext/sourceId")?;
     let test_target_id = required_str(&test_target, "/sourceContext/sourceId")?;
 
     assert_computed_resolution(&main, "./member.js", member_id)?;
     assert_computed_resolution(&main, "./destructure.js", destructure_id)?;
+    assert_computed_resolution(&main, "./bound-member.js", bound_member_id)?;
+    assert_computed_resolution(&main, "./bound-destructure.js", bound_destructure_id)?;
     assert_computed_resolution(&test, "../src/test-target.js", test_target_id)?;
 
     let overview = overview(root.path(), &run_id)?;
@@ -62,7 +73,7 @@ fn computed_commonjs_access_is_module_scoped_broad_value_evidence()
             limitation.get("reason").and_then(Value::as_str) == Some("common-js-computed-member")
         })
         .collect::<Vec<_>>();
-    assert_eq!(limitations.len(), 3);
+    assert_eq!(limitations.len(), 5);
     assert_limitation(
         &limitations,
         "./member.js",
@@ -81,6 +92,24 @@ fn computed_commonjs_access_is_module_scoped_broad_value_evidence()
     )?;
     assert_limitation(
         &limitations,
+        "./bound-member.js",
+        bound_member_id,
+        MAIN_SOURCE
+            .find("require('./bound-member.js')")
+            .ok_or_else(|| std::io::Error::other("bound member require is missing"))?
+            as u64,
+    )?;
+    assert_limitation(
+        &limitations,
+        "./bound-destructure.js",
+        bound_destructure_id,
+        MAIN_SOURCE
+            .find("require('./bound-destructure.js')")
+            .ok_or_else(|| std::io::Error::other("bound destructure require is missing"))?
+            as u64,
+    )?;
+    assert_limitation(
+        &limitations,
         "../src/test-target.js",
         test_target_id,
         TEST_SOURCE
@@ -92,6 +121,8 @@ fn computed_commonjs_access_is_module_scoped_broad_value_evidence()
     assert_eq!(
         findings.keys().cloned().collect::<BTreeSet<_>>(),
         BTreeSet::from([
+            finding_key("src/bound-destructure.ts", "BoundDestructureType", "type"),
+            finding_key("src/bound-member.ts", "BoundMemberType", "type"),
             finding_key("src/destructure.ts", "DestructureType", "type"),
             finding_key("src/member.ts", "MemberType", "type"),
             finding_key("src/test-target.ts", "TestType", "type"),
@@ -160,6 +191,16 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         root.path(),
         "src/destructure.ts",
         "export const destructureA = 1; export const destructureB = 2; export type DestructureType = string;\n",
+    )?;
+    write(
+        root.path(),
+        "src/bound-member.ts",
+        "export const boundMemberA = 1; export const boundMemberB = 2; export type BoundMemberType = string;\n",
+    )?;
+    write(
+        root.path(),
+        "src/bound-destructure.ts",
+        "export const boundDestructureA = 1; export const boundDestructureB = 2; export type BoundDestructureType = string;\n",
     )?;
     write(
         root.path(),
