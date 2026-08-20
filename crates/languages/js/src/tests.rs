@@ -2,6 +2,7 @@ use lumin_model::{RepoPath, SourceRoles};
 
 use super::*;
 
+mod commonjs_computed;
 mod commonjs_wrapper_review;
 mod dynamic_import_member;
 mod dynamic_import_nonliteral;

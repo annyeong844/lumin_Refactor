@@ -352,6 +352,7 @@ pub enum ImportKind {
     ReExportNamed,
     ReExportAll,
     DynamicBroad,
+    CommonJsComputed,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -600,6 +601,12 @@ pub enum Limitation {
         target_scope: ImportMetaGlobTargetScope,
         detail: String,
     },
+    CommonJsComputedMember {
+        source_id: LogicalSourceId,
+        specifier: String,
+        span: SourceSpan,
+        target: LogicalSourceId,
+    },
     SourcePayloadUnavailable {
         path: String,
         detail: String,
@@ -718,6 +725,7 @@ pub enum LimitationFactOwner {
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum LimitationScopePolicy {
     Workspace,
+    ResolvedModule,
     ExplicitTargetsOrWorkspace,
     ExplicitTargetsOrSourceInventoryOrWorkspace,
     ExplicitTargetsOrKnownNoTargetOrWorkspace,
@@ -735,6 +743,7 @@ pub enum LimitationScopePolicy {
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum LimitationAbsenceEffect {
     WorkspaceConsumers,
+    ModuleValueExports,
     CandidateConsumers,
     PackageConsumers,
     PackageTargetsAndConsumers,
@@ -754,6 +763,7 @@ pub enum LimitationAbsenceEffect {
 pub enum LimitationGateRelevance {
     RequiredEvidence,
     RequiredOwner,
+    NormalizedOpacity,
     NormalizedUnresolvedOrRequiredEvidence,
     NormalizedOpacityOrRequiredEvidence,
 }
@@ -826,6 +836,12 @@ define_limitation_registry! {
         scope: ImportedTargetsOrPackage,
         absence: CandidateConsumers,
         gate: NormalizedOpacityOrRequiredEvidence,
+    },
+    CommonJsComputedMember => {
+        owner: Js,
+        scope: ResolvedModule,
+        absence: ModuleValueExports,
+        gate: NormalizedOpacity,
     },
     SourcePayloadUnavailable => {
         owner: Inventory,
