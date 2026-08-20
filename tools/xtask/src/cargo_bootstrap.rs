@@ -21,6 +21,15 @@ const TEST_COMMAND: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S ",
     "tools/xtask/bootstrap/test_source_provenance.py"
 );
+const CI_POLICY_COMMAND: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S ",
+    "tools/xtask/bootstrap/ci_policy.py github"
+);
+const CI_POLICY_TEST_COMMAND: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S ",
+    "tools/xtask/bootstrap/test_ci_policy.py"
+);
+const FULL_SCOPE_CONDITION: &str = "if: ${{ needs.policy.outputs.run_full == 'true' }}";
 const PRIVATE_CARGO_HOME: &str =
     "\"CARGO_HOME=$env:RUNNER_TEMP/lumin-cargo-home\" >> $env:GITHUB_ENV";
 const PRIVATE_TARGET: &str =
@@ -35,13 +44,52 @@ const STRUCTURAL_CHECK: &str = concat!(
 );
 const CORPUS_RUN: &str = concat!(
     "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
-    "-- cargo run --locked -p lumin-xtask -- corpus ${{ matrix.case.arguments }}"
+    "-- cargo run --locked -p lumin-xtask -- corpus ${{ matrix.arguments }}"
 );
-const MAPPED_CORPUS_CASES: &[(&str, &str)] = &[
-    ("mapped-standard", "foundation --mapped-only"),
+const WINDOWS_INTEGRATION_RUN: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
+    "-- cargo run --locked -p lumin-xtask -- ci-test-shard ",
+    "--suite cli-integration --index ${{ matrix.shard }} --count 6 --jobs 4"
+);
+const WINDOWS_STORE_RUN: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
+    "-- cargo run --locked -p lumin-xtask -- ci-test-shard ",
+    "--suite store-lib --index ${{ matrix.shard }} --count 4"
+);
+const ALL_TARGET_TEST: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
+    "-- cargo test --workspace --all-targets --locked"
+);
+const NON_STORE_CORE_TARGET_TEST: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
+    "-- cargo test --workspace --lib --bins --exclude lumin-store --locked"
+);
+const ENGINE_INTEGRATION_TEST: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
+    "-- cargo test --locked -p lumin-engine --test package_resolution --test vue_sfc"
+);
+const SFC_INTEGRATION_TEST: &str = concat!(
+    "& \"$env:PINNED_PYTHON\" -I -S tools/xtask/bootstrap/source_provenance.py ",
+    "-- cargo test --locked -p lumin-sfc --test vue"
+);
+const UBUNTU_MAPPED_CORPUS_CASES: &[(&str, &str)] =
+    &[("mapped-standard", "foundation --mapped-only --row-jobs 8")];
+const CRASH_CORPUS_CASES: &[(&str, &str)] = &[
     (
-        "mapped-determinism",
-        "foundation --determinism --mapped-only",
+        "retention-crash-protocol",
+        "foundation --store-crash --row retention-crash-protocol",
+    ),
+    (
+        "crash-publication",
+        "foundation --store-crash --row crash-publication",
+    ),
+    (
+        "concurrent-latest-publication",
+        "foundation --store-crash --row concurrent-latest-publication",
+    ),
+    (
+        "publication-retention-race",
+        "foundation --store-crash --row publication-retention-race",
     ),
 ];
 
@@ -116,11 +164,14 @@ fn validate_workflow(source: &str, violations: &mut Vec<String>) {
     validate_actions(source, violations);
     let jobs = job_blocks(source);
     for required in [
+        "policy",
         "formatting",
         "architecture-check",
         "bootstrap-tests",
         "dependency-policy",
         "platform",
+        "windows-core",
+        "windows-integration",
         "corpus",
         "documentation",
         "release",
@@ -134,8 +185,11 @@ fn validate_workflow(source: &str, violations: &mut Vec<String>) {
         validate_job(name, block, violations);
     }
     validate_architecture_job(&jobs, violations);
+    validate_policy_job(&jobs, violations);
     validate_dependency_job(&jobs, violations);
     validate_platform_job(&jobs, violations);
+    validate_windows_core_job(&jobs, violations);
+    validate_windows_integration_job(&jobs, violations);
     validate_corpus_job(&jobs, violations);
     validate_bootstrap_test_job(&jobs, violations);
     validate_required_job(&jobs, violations);
@@ -213,6 +267,11 @@ fn validate_job(name: &str, block: &str, violations: &mut Vec<String>) {
         if line.contains("test_source_provenance.py") && line != TEST_COMMAND {
             violations.push(format!(
                 "bootstrap tests in {name} must use the pinned isolated Python command"
+            ));
+        }
+        if line.contains("test_ci_policy.py") && line != CI_POLICY_TEST_COMMAND {
+            violations.push(format!(
+                "CI policy tests in {name} must use the pinned isolated Python command"
             ));
         }
         if is_unwrapped_dependency_command(&line) {
@@ -313,19 +372,26 @@ fn is_reviewed_run_command(line: &str) -> bool {
         DIRECT_AUDIT,
         DIRECT_DENY,
         STRUCTURAL_CHECK,
+        CI_POLICY_COMMAND,
+        CI_POLICY_TEST_COMMAND,
     ];
     line.starts_with(GUARD_PREFIX)
         || EXACT.contains(&line)
         || matches!(
             line,
-            "test \"$FORMATTING_RESULT\" = success"
-                | "test \"$ARCHITECTURE_CHECK_RESULT\" = success"
-                | "test \"$BOOTSTRAP_TESTS_RESULT\" = success"
-                | "test \"$DEPENDENCY_POLICY_RESULT\" = success"
-                | "test \"$PLATFORM_RESULT\" = success"
-                | "test \"$CORPUS_RESULT\" = success"
-                | "test \"$DOCUMENTATION_RESULT\" = success"
-                | "test \"$RELEASE_RESULT\" = success"
+            "test \"$ARCHITECTURE_CHECK_RESULT\" = success"
+                | "test \"$POLICY_RESULT\" = success"
+                | "test \"$RUN_FULL\" = \"$EXPECTED_RUN_FULL\""
+                | "test \"$POLICY_SCOPE\" = \"$EXPECTED_SCOPE\""
+                | "test \"$FORMATTING_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
+                | "test \"$BOOTSTRAP_TESTS_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
+                | "test \"$DEPENDENCY_POLICY_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
+                | "test \"$PLATFORM_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
+                | "test \"$WINDOWS_CORE_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
+                | "test \"$WINDOWS_INTEGRATION_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
+                | "test \"$CORPUS_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
+                | "test \"$DOCUMENTATION_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
+                | "test \"$RELEASE_RESULT\" = \"$EXPECTED_HEAVY_RESULT\""
         )
 }
 
@@ -415,6 +481,97 @@ fn validate_architecture_job(jobs: &BTreeMap<String, String>, violations: &mut V
     }
 }
 
+fn validate_policy_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<String>) {
+    let Some(block) = jobs.get("policy") else {
+        return;
+    };
+    for required_line in [
+        "scope: ${{ steps.policy.outputs.scope }}",
+        "run_full: ${{ steps.policy.outputs.run_full }}",
+        "fetch-depth: 0",
+        "PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}",
+        "PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}",
+        "CURRENT_SHA: ${{ github.sha }}",
+    ] {
+        if block
+            .lines()
+            .map(str::trim)
+            .filter(|line| *line == required_line)
+            .count()
+            != 1
+        {
+            violations.push(format!(
+                "change-policy job must bind reviewed input exactly once: {required_line}"
+            ));
+        }
+    }
+    let commands = block.lines().map(command_text).collect::<Vec<_>>();
+    if commands
+        .iter()
+        .filter(|command| **command == CI_POLICY_COMMAND)
+        .count()
+        != 1
+    {
+        violations.push("change-policy job must run the reviewed policy command once".to_owned());
+    }
+    if commands
+        .iter()
+        .filter(|command| **command == CI_POLICY_TEST_COMMAND)
+        .count()
+        != 1
+    {
+        violations.push("change-policy job must run its focused tests once".to_owned());
+    }
+    let test_position = commands
+        .iter()
+        .position(|command| *command == CI_POLICY_TEST_COMMAND);
+    let policy_position = commands
+        .iter()
+        .position(|command| *command == CI_POLICY_COMMAND);
+    if !matches!(
+        (test_position, policy_position),
+        (Some(test), Some(policy)) if test < policy
+    ) {
+        violations.push("change-policy tests must pass before classification".to_owned());
+    }
+
+    for name in [
+        "formatting",
+        "bootstrap-tests",
+        "dependency-policy",
+        "platform",
+        "windows-core",
+        "windows-integration",
+        "corpus",
+        "documentation",
+        "release",
+    ] {
+        let Some(job) = jobs.get(name) else {
+            continue;
+        };
+        for required_line in ["needs: policy", FULL_SCOPE_CONDITION] {
+            if job
+                .lines()
+                .map(str::trim)
+                .filter(|line| *line == required_line)
+                .count()
+                != 1
+            {
+                violations.push(format!(
+                    "full CI job {name} must use the exact fail-closed policy gate: {required_line}"
+                ));
+            }
+        }
+    }
+    if jobs.get("architecture-check").is_some_and(|job| {
+        job.lines()
+            .map(str::trim)
+            .any(|line| line.starts_with("if:"))
+    }) {
+        violations.push("architecture-check must run for documentation scope".to_owned());
+    }
+}
+
 fn validate_dependency_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<String>) {
     let Some(block) = jobs.get("dependency-policy") else {
         return;
@@ -469,6 +626,134 @@ fn validate_platform_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<S
         violations
             .push("platform job lacks the guarded cross-platform Clippy execution".to_owned());
     }
+    for required_line in [
+        "test_scope: all",
+        "test_scope: lint",
+        "if: ${{ matrix.test_scope == 'all' }}",
+    ] {
+        if block
+            .lines()
+            .map(str::trim)
+            .filter(|line| *line == required_line)
+            .count()
+            == 0
+        {
+            violations.push(format!(
+                "platform job must retain the reviewed cross-platform test split: {required_line}"
+            ));
+        }
+    }
+    if block
+        .lines()
+        .filter(|line| command_text(line) == ALL_TARGET_TEST)
+        .count()
+        != 1
+    {
+        violations.push(
+            "platform job must execute the reviewed Linux all-target partition exactly once"
+                .to_owned(),
+        );
+    }
+}
+
+fn validate_windows_core_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<String>) {
+    let Some(block) = jobs.get("windows-core") else {
+        return;
+    };
+    for required_line in [
+        "fail-fast: false",
+        "runs-on: windows-2022",
+        "if: ${{ matrix.suite == 'core' }}",
+        "if: ${{ matrix.suite == 'store-lib' }}",
+    ] {
+        if !block
+            .lines()
+            .map(str::trim)
+            .any(|line| line == required_line)
+        {
+            violations.push(format!(
+                "Windows core tests must retain the reviewed partition routing: {required_line}"
+            ));
+        }
+    }
+    for (name, suite, shard) in [
+        ("Windows core", "core", 0),
+        ("Windows store cache", "store-lib", 0),
+        ("Windows store gate", "store-lib", 1),
+        ("Windows store namespace", "store-lib", 2),
+        ("Windows store retention", "store-lib", 3),
+    ] {
+        let partition = format!(
+            "          - name: {name}\n            suite: {suite}\n            shard: {shard}\n"
+        );
+        if block.matches(&partition).count() != 1 {
+            violations.push(format!(
+                "Windows core tests must contain exactly one {name} partition"
+            ));
+        }
+    }
+    for (key, expected_count) in [("suite:", 5), ("shard:", 5)] {
+        if block
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with(key))
+            .count()
+            != expected_count
+        {
+            violations.push(format!(
+                "Windows core matrix must contain exactly {expected_count} {key} rows"
+            ));
+        }
+    }
+    for command in [
+        NON_STORE_CORE_TARGET_TEST,
+        ENGINE_INTEGRATION_TEST,
+        SFC_INTEGRATION_TEST,
+        WINDOWS_STORE_RUN,
+    ] {
+        if block
+            .lines()
+            .filter(|line| command_text(line) == command)
+            .count()
+            != 1
+        {
+            violations.push(format!(
+                "Windows core job must execute each reviewed test partition exactly once: {command}"
+            ));
+        }
+    }
+}
+
+fn validate_windows_integration_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<String>) {
+    let Some(block) = jobs.get("windows-integration") else {
+        return;
+    };
+    for required_line in [
+        "fail-fast: false",
+        "shard: [0, 1, 2, 3, 4, 5]",
+        "runs-on: windows-2022",
+    ] {
+        if block
+            .lines()
+            .map(str::trim)
+            .filter(|line| *line == required_line)
+            .count()
+            != 1
+        {
+            violations.push(format!(
+                "Windows integration tests must use the complete reviewed shard matrix: {required_line}"
+            ));
+        }
+    }
+    if block
+        .lines()
+        .filter(|line| command_text(line) == WINDOWS_INTEGRATION_RUN)
+        .count()
+        != 1
+    {
+        violations
+            .push("Windows integration tests must execute all six owner-derived shards".to_owned());
+    }
 }
 
 fn validate_corpus_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<String>) {
@@ -476,50 +761,95 @@ fn validate_corpus_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<Str
         return;
     };
     let lines = block.lines().map(str::trim).collect::<Vec<_>>();
-    let os_start = lines.iter().position(|line| *line == "os:");
-    let case_start = lines.iter().position(|line| *line == "case:");
-    let runs_on = lines
-        .iter()
-        .position(|line| *line == "runs-on: ${{ matrix.os }}");
-    let (os_lines, case_lines) = match (os_start, case_start, runs_on) {
-        (Some(os), Some(case), Some(runs_on)) if os < case && case < runs_on => {
-            (&lines[os + 1..case], &lines[case + 1..runs_on])
-        }
-        _ => {
-            violations.push(
-                "corpus job must use the reviewed os-by-case matrix before matrix.os routing"
-                    .to_owned(),
-            );
-            (&[][..], &[][..])
-        }
-    };
-    for (name, arguments) in MAPPED_CORPUS_CASES {
-        let name_line = format!("- name: {name}");
+    if lines.iter().filter(|line| **line == "include:").count() != 1
+        || lines
+            .iter()
+            .filter(|line| **line == "fail-fast: false")
+            .count()
+            != 1
+        || lines
+            .iter()
+            .filter(|line| **line == "runs-on: ${{ matrix.os }}")
+            .count()
+            != 1
+        || lines
+            .iter()
+            .filter(|line| **line == "name: ${{ matrix.os }} corpus ${{ matrix.name }}")
+            .count()
+            != 1
+    {
+        violations.push(
+            "corpus job must use the reviewed explicit fail-closed partition matrix".to_owned(),
+        );
+    }
+    let partition_count = |platform: &str, name: &str, arguments: &str| {
+        let os_line = format!("- os: {platform}");
+        let name_line = format!("name: {name}");
         let arguments_line = format!("arguments: {arguments}");
-        let count = case_lines
-            .windows(2)
-            .filter(|pair| pair[0] == name_line && pair[1] == arguments_line)
-            .count();
-        if count != 1 {
+        lines
+            .windows(3)
+            .filter(|partition| {
+                partition[0] == os_line
+                    && partition[1] == name_line
+                    && partition[2] == arguments_line
+            })
+            .count()
+    };
+    for (name, arguments) in UBUNTU_MAPPED_CORPUS_CASES {
+        if partition_count("ubuntu-24.04", name, arguments) != 1 {
             violations.push(format!(
-                "corpus job must contain exactly one {name} mapped aggregate case"
+                "corpus job must contain exactly one Ubuntu {name} aggregate"
             ));
         }
     }
-    for platform in ["- ubuntu-24.04", "- windows-2022"] {
-        if os_lines.iter().filter(|line| **line == platform).count() != 1 {
-            violations.push(format!(
-                "corpus job must execute mapped aggregates on {platform}"
-            ));
+    for (platform, mode, mode_flag, row_jobs, shard_count) in [
+        ("windows-2022", "standard", "", 6, 4),
+        ("ubuntu-24.04", "determinism", "--determinism ", 4, 8),
+    ] {
+        for index in 0..shard_count {
+            let name = format!("mapped-{mode}-{index}");
+            let arguments = format!(
+                "foundation {mode_flag}--mapped-only --row-jobs {row_jobs} --row-shard-index {index} --row-shard-count {shard_count}"
+            );
+            if partition_count(platform, &name, &arguments) != 1 {
+                violations.push(format!(
+                    "corpus job must contain exactly one {platform} {name} partition"
+                ));
+            }
         }
+    }
+    for platform in ["ubuntu-24.04", "windows-2022"] {
+        for (name, arguments) in CRASH_CORPUS_CASES {
+            if partition_count(platform, name, arguments) != 1 {
+                violations.push(format!(
+                    "corpus job must contain exactly one {platform} {name} partition"
+                ));
+            }
+        }
+    }
+    if lines
+        .iter()
+        .filter(|line| line.starts_with("- os:"))
+        .count()
+        != 21
+    {
+        violations.push("corpus job must contain exactly 21 reviewed partitions".to_owned());
     }
     if lines.iter().any(|line| {
-        matches!(*line, "include:" | "exclude:")
-            || line.starts_with("if:")
+        *line == "exclude:"
+            || *line == "os:"
+            || *line == "case:"
+            || (line.starts_with("if:") && *line != FULL_SCOPE_CONDITION)
             || line.starts_with("continue-on-error:")
     }) {
         violations.push(
-            "corpus job cannot conditionally skip or exclude required matrix partitions".to_owned(),
+            "corpus job cannot add exclusions, implicit products, or failure bypasses".to_owned(),
+        );
+    }
+    if lines.contains(&"name: lifecycle-operation-idempotency") {
+        violations.push(
+            "lifecycle-operation-idempotency is already covered by both mapped aggregates"
+                .to_owned(),
         );
     }
     if block
@@ -540,9 +870,19 @@ fn validate_required_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<S
     };
     for required_line in [
         "if: ${{ always() }}",
-        "- corpus",
-        "CORPUS_RESULT: ${{ needs.corpus.result }}",
-        "test \"$CORPUS_RESULT\" = success",
+        "- policy",
+        "- architecture-check",
+        "POLICY_RESULT: ${{ needs.policy.result }}",
+        "POLICY_SCOPE: ${{ needs.policy.outputs.scope }}",
+        "RUN_FULL: ${{ needs.policy.outputs.run_full }}",
+        "EXPECTED_RUN_FULL: ${{ needs.policy.outputs.scope == 'full' && 'true' || 'false' }}",
+        "EXPECTED_SCOPE: ${{ needs.policy.outputs.run_full == 'true' && 'full' || 'documentation' }}",
+        "EXPECTED_HEAVY_RESULT: ${{ needs.policy.outputs.run_full == 'true' && 'success' || 'skipped' }}",
+        "ARCHITECTURE_CHECK_RESULT: ${{ needs.architecture-check.result }}",
+        "test \"$ARCHITECTURE_CHECK_RESULT\" = success",
+        "test \"$POLICY_RESULT\" = success",
+        "test \"$RUN_FULL\" = \"$EXPECTED_RUN_FULL\"",
+        "test \"$POLICY_SCOPE\" = \"$EXPECTED_SCOPE\"",
     ] {
         if block
             .lines()
@@ -552,8 +892,37 @@ fn validate_required_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<S
             != 1
         {
             violations.push(format!(
-                "Required job must bind the complete corpus result exactly once: {required_line}"
+                "Required job must bind the complete scoped result exactly once: {required_line}"
             ));
+        }
+    }
+    for (job, result) in [
+        ("formatting", "FORMATTING_RESULT"),
+        ("bootstrap-tests", "BOOTSTRAP_TESTS_RESULT"),
+        ("dependency-policy", "DEPENDENCY_POLICY_RESULT"),
+        ("platform", "PLATFORM_RESULT"),
+        ("windows-core", "WINDOWS_CORE_RESULT"),
+        ("windows-integration", "WINDOWS_INTEGRATION_RESULT"),
+        ("corpus", "CORPUS_RESULT"),
+        ("documentation", "DOCUMENTATION_RESULT"),
+        ("release", "RELEASE_RESULT"),
+    ] {
+        for required_line in [
+            format!("- {job}"),
+            format!("{result}: ${{{{ needs.{job}.result }}}}"),
+            format!("test \"${result}\" = \"$EXPECTED_HEAVY_RESULT\""),
+        ] {
+            if block
+                .lines()
+                .map(str::trim)
+                .filter(|line| *line == required_line)
+                .count()
+                != 1
+            {
+                violations.push(format!(
+                    "Required job must bind the complete {job} result exactly once: {required_line}"
+                ));
+            }
         }
     }
     if block
@@ -711,20 +1080,132 @@ mod tests {
     }
 
     #[test]
-    fn mapped_standard_and_determinism_corpus_cases_are_required()
+    fn mapped_standard_and_determinism_corpus_partitions_are_required()
     -> Result<(), Box<dyn std::error::Error>> {
-        for (name, arguments) in MAPPED_CORPUS_CASES {
-            let case = format!("          - name: {name}\n            arguments: {arguments}\n");
+        for (name, arguments) in UBUNTU_MAPPED_CORPUS_CASES {
+            let case = format!(
+                "          - os: ubuntu-24.04\n            name: {name}\n            arguments: {arguments}\n"
+            );
             let source = workflow()?;
-            assert!(source.contains(&case), "missing fixture case {name}");
+            assert!(source.contains(&case), "missing Ubuntu partition {name}");
             let changed = source.replacen(&case, "", 1);
             assert!(
                 violations(&changed)
                     .iter()
                     .any(|violation| violation.contains(name)),
-                "removed case was accepted: {name}"
+                "removed Ubuntu partition was accepted: {name}"
             );
         }
+        for (platform, mode, mode_flag, row_jobs, shard_count) in [
+            ("windows-2022", "standard", "", 6, 4),
+            ("ubuntu-24.04", "determinism", "--determinism ", 4, 8),
+        ] {
+            for index in 0..shard_count {
+                let name = format!("mapped-{mode}-{index}");
+                let arguments = format!(
+                    "foundation {mode_flag}--mapped-only --row-jobs {row_jobs} --row-shard-index {index} --row-shard-count {shard_count}"
+                );
+                let partition = format!(
+                    "          - os: {platform}\n            name: {name}\n            arguments: {arguments}\n"
+                );
+                let source = workflow()?;
+                assert!(
+                    source.contains(&partition),
+                    "missing {platform} partition {name}"
+                );
+                let changed = source.replacen(&partition, "", 1);
+                assert!(
+                    violations(&changed)
+                        .iter()
+                        .any(|violation| violation.contains(&name)),
+                    "removed {platform} partition was accepted: {name}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn code_ci_parallel_partitions_are_complete() -> Result<(), Box<dyn std::error::Error>> {
+        let source = workflow()?;
+        for changed in [
+            source.replacen("shard: [0, 1, 2, 3, 4, 5]", "shard: [0, 1, 2, 3, 4]", 1),
+            source.replacen(WINDOWS_INTEGRATION_RUN, "& $testShard", 1),
+            source.replacen("--count 6 --jobs 4", "--count 6 --jobs 3", 1),
+            source.replacen(NON_STORE_CORE_TARGET_TEST, ALL_TARGET_TEST, 1),
+            source.replacen(WINDOWS_STORE_RUN, "& $storeShard", 1),
+            source.replacen(
+                concat!(
+                    "          - name: Windows store retention\n",
+                    "            suite: store-lib\n",
+                    "            shard: 3\n"
+                ),
+                "",
+                1,
+            ),
+            source.replacen("--row-jobs 8", "--row-jobs 7", 1),
+            source.replacen("--row-shard-count 4", "--row-shard-count 3", 1),
+            source.replacen("--row-shard-count 8", "--row-shard-count 7", 1),
+        ] {
+            assert!(
+                violations(&changed).iter().any(|violation| {
+                    violation.contains("shard")
+                        || violation.contains("reviewed test partition")
+                        || violation.contains("Windows core")
+                        || violation.contains("mapped-standard")
+                        || violation.contains("mapped-determinism")
+                        || violation.contains("reconstructed run command")
+                }),
+                "incomplete parallel CI partition was accepted"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn documentation_scope_gate_is_exact_and_fail_closed() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let source = workflow()?;
+        for changed in [
+            source.replacen(FULL_SCOPE_CONDITION, "if: ${{ false }}", 1),
+            source.replacen("    needs: policy\n", "", 1),
+            source.replacen(CI_POLICY_COMMAND, "& $policy github", 1),
+            source.replacen(CI_POLICY_TEST_COMMAND, "& $policyTest", 1),
+        ] {
+            assert!(
+                violations(&changed).iter().any(|violation| {
+                    violation.contains("fail-closed policy gate")
+                        || violation.contains("reviewed policy command")
+                        || violation.contains("focused tests")
+                        || violation.contains("reconstructed run command")
+                }),
+                "changed policy routing was accepted"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn mapped_aggregate_rows_are_not_repeated_as_standalone_cases()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = workflow()?.replace(
+            concat!(
+                "          - os: ubuntu-24.04\n",
+                "            name: crash-publication\n"
+            ),
+            concat!(
+                "          - os: ubuntu-24.04\n",
+                "            name: lifecycle-operation-idempotency\n",
+                "            arguments: foundation --row lifecycle-operation-idempotency\n",
+                "          - os: ubuntu-24.04\n",
+                "            name: crash-publication\n"
+            ),
+        );
+        assert!(
+            violations(&source)
+                .iter()
+                .any(|violation| violation.contains("already covered"))
+        );
         Ok(())
     }
 
@@ -733,6 +1214,12 @@ mod tests {
         let source = workflow()?;
         for changed in [
             source.replacen("      - corpus\n", "", 1),
+            source.replacen("      - windows-integration\n", "", 1),
+            source.replacen(
+                "          test \"$CORPUS_RESULT\" = \"$EXPECTED_HEAVY_RESULT\"\n",
+                "          test \"$CORPUS_RESULT\" = success\n",
+                1,
+            ),
             source.replacen(
                 "    name: Required\n",
                 "    name: Required\n    continue-on-error: true\n",

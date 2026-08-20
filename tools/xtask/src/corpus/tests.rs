@@ -7,6 +7,8 @@ fn parse_default() -> Result<(), String> {
     assert_eq!(a.format, OutputFormat::Human);
     assert_eq!(a.row, None);
     assert_eq!(a.selection, CorpusSelection::AllApplicable);
+    assert_eq!(a.row_jobs, 1);
+    assert_eq!((a.row_shard_index, a.row_shard_count), (0, 1));
     Ok(())
 }
 
@@ -68,6 +70,46 @@ fn mapped_only_is_aggregate_only() -> Result<(), String> {
 }
 
 #[test]
+fn row_jobs_are_explicit_and_bounded() -> Result<(), String> {
+    let args = parse_args(&["--mapped-only".into(), "--row-jobs".into(), "8".into()])?;
+    assert_eq!(args.row_jobs, 8);
+    for invalid in ["0", "9", "many"] {
+        assert!(parse_args(&["--row-jobs".into(), invalid.into()]).is_err());
+    }
+    assert!(
+        parse_args(&[
+            "--row-jobs".into(),
+            "2".into(),
+            "--row-jobs".into(),
+            "3".into(),
+        ])
+        .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn row_shards_are_paired_bounded_and_exact() -> Result<(), String> {
+    let args = parse_args(&[
+        "--mapped-only".into(),
+        "--row-shard-index".into(),
+        "8".into(),
+        "--row-shard-count".into(),
+        "9".into(),
+    ])?;
+    assert_eq!((args.row_shard_index, args.row_shard_count), (8, 9));
+    for invalid in [
+        vec!["--row-shard-index", "0"],
+        vec!["--row-shard-count", "4"],
+        vec!["--row-shard-index", "9", "--row-shard-count", "9"],
+        vec!["--row-shard-index", "0", "--row-shard-count", "17"],
+    ] {
+        assert!(parse_args(&invalid.into_iter().map(str::to_owned).collect::<Vec<_>>()).is_err());
+    }
+    Ok(())
+}
+
+#[test]
 fn mapped_only_selects_every_and_only_mapped_row() {
     for mode in [CorpusMode::Standard, CorpusMode::Determinism] {
         let args = CorpusArgs {
@@ -75,6 +117,9 @@ fn mapped_only_selects_every_and_only_mapped_row() {
             format: OutputFormat::Human,
             row: None,
             selection: CorpusSelection::MappedOnly,
+            row_jobs: 1,
+            row_shard_index: 0,
+            row_shard_count: 1,
         };
         let selected = selected_rows(&args);
         let expected = REGISTRY.iter().filter(|row| row.is_mapped(mode)).count();
@@ -92,6 +137,9 @@ fn all_applicable_selection_retains_unmapped_rows() {
             format: OutputFormat::Human,
             row: None,
             selection: CorpusSelection::AllApplicable,
+            row_jobs: 1,
+            row_shard_index: 0,
+            row_shard_count: 1,
         };
         let selected = selected_rows(&args);
         let expected = REGISTRY
@@ -101,6 +149,137 @@ fn all_applicable_selection_retains_unmapped_rows() {
         assert_eq!(selected.len(), expected);
         assert!(selected.iter().any(|row| !row.is_mapped(mode)));
     }
+}
+
+#[test]
+fn ci_row_shards_cover_every_mapped_row_exactly_once() {
+    for (mode, row_shard_count) in [(CorpusMode::Standard, 4), (CorpusMode::Determinism, 8)] {
+        let mut observed = Vec::new();
+        for row_shard_index in 0..row_shard_count {
+            let args = CorpusArgs {
+                mode,
+                format: OutputFormat::Human,
+                row: None,
+                selection: CorpusSelection::MappedOnly,
+                row_jobs: 4,
+                row_shard_index,
+                row_shard_count,
+            };
+            observed.extend(selected_rows(&args).into_iter().map(|row| row.id));
+        }
+        observed.sort_unstable();
+        let mut expected = REGISTRY
+            .iter()
+            .filter(|row| row.is_mapped(mode))
+            .map(|row| row.id)
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        assert_eq!(observed, expected);
+    }
+}
+
+#[test]
+fn ci_row_shards_balance_declared_work_deterministically() {
+    for (mode, row_shard_count) in [(CorpusMode::Standard, 4), (CorpusMode::Determinism, 8)] {
+        let loads = (0..row_shard_count)
+            .map(|row_shard_index| {
+                let args = CorpusArgs {
+                    mode,
+                    format: OutputFormat::Human,
+                    row: None,
+                    selection: CorpusSelection::MappedOnly,
+                    row_jobs: 4,
+                    row_shard_index,
+                    row_shard_count,
+                };
+                let first = selected_rows(&args);
+                let second = selected_rows(&args);
+                assert_eq!(
+                    first.iter().map(|row| row.id).collect::<Vec<_>>(),
+                    second.iter().map(|row| row.id).collect::<Vec<_>>(),
+                );
+                first
+                    .iter()
+                    .map(|row| shard_weight(row, mode))
+                    .sum::<usize>()
+            })
+            .collect::<Vec<_>>();
+        let least = loads.iter().copied().fold(usize::MAX, usize::min);
+        let most = loads.iter().copied().fold(0, usize::max);
+        let heaviest_row = REGISTRY
+            .iter()
+            .filter(|row| row.is_mapped(mode))
+            .map(|row| shard_weight(row, mode))
+            .fold(1, usize::max);
+        assert!(
+            most - least <= heaviest_row,
+            "unbalanced {mode} invocation loads: {loads:?}",
+        );
+        let expected = match mode {
+            CorpusMode::Standard => vec![35, 34, 34, 34],
+            CorpusMode::Determinism => vec![64, 20, 20, 20, 19, 19, 19, 19],
+            CorpusMode::StoreCrash => unreachable!("CI does not shard store-crash rows"),
+        };
+        assert_eq!(loads, expected, "{mode} shard assignment changed");
+    }
+
+    let dedicated = selected_rows(&CorpusArgs {
+        mode: CorpusMode::Determinism,
+        format: OutputFormat::Human,
+        row: None,
+        selection: CorpusSelection::MappedOnly,
+        row_jobs: 4,
+        row_shard_index: 0,
+        row_shard_count: 8,
+    });
+    assert_eq!(
+        dedicated.iter().map(|row| row.id).collect::<Vec<_>>(),
+        ["retention-plan-pagination"],
+    );
+}
+
+#[test]
+fn parallel_execution_preserves_registry_order_after_overtake() -> Result<(), String> {
+    let gate = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let (completed, observed) = mpsc::channel();
+    thread::scope(|scope| {
+        let work_gate = std::sync::Arc::clone(&gate);
+        let work_completed = completed.clone();
+        let execution = scope.spawn(move || {
+            run_parallel_ordered(3, 3, move |index| {
+                if index == 0 {
+                    let (lock, condition) = &*work_gate;
+                    let mut released = lock.lock().map_err(|error| error.to_string())?;
+                    while !*released {
+                        released = condition
+                            .wait(released)
+                            .map_err(|error| error.to_string())?;
+                    }
+                }
+                work_completed
+                    .send(index)
+                    .map_err(|error| error.to_string())?;
+                Ok(index)
+            })
+        });
+
+        let mut overtakers = vec![
+            observed.recv().map_err(|error| error.to_string())?,
+            observed.recv().map_err(|error| error.to_string())?,
+        ];
+        overtakers.sort_unstable();
+        assert_eq!(overtakers, [1, 2]);
+        let (lock, condition) = &*gate;
+        *lock.lock().map_err(|error| error.to_string())? = true;
+        condition.notify_all();
+
+        let ordered = execution
+            .join()
+            .map_err(|_| "ordered execution test worker panicked".to_owned())??;
+        assert_eq!(ordered, [0, 1, 2]);
+        Ok::<(), String>(())
+    })?;
+    Ok(())
 }
 
 #[test]

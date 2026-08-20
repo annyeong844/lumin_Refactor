@@ -2,20 +2,24 @@
 //!
 //! Exit codes: 0 = all selected rows pass, 1 = behavior failures/unmapped, 2 = tool error.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fmt;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::mpsc;
+use std::thread;
 
 mod determinism;
 mod registry;
 mod required_checks;
 
 use required_checks::{CheckOutcome, RequiredCheck};
+
+const MAX_ROW_SHARDS: usize = 16;
 
 // ---------------------------------------------------------------------------
 // Core types
@@ -120,6 +124,8 @@ pub struct RegistryRow {
     pub determinism: Option<&'static [CorpusInvocation]>,
     pub store_crash: Option<&'static [CorpusInvocation]>,
     pub required_checks: &'static [RequiredCheck],
+    /// Relative scheduling cost for determinism CI. Zero uses invocation count.
+    pub determinism_shard_weight: usize,
 }
 impl RegistryRow {
     pub fn mode_invocations(&self, mode: CorpusMode) -> Option<&'static [CorpusInvocation]> {
@@ -148,14 +154,28 @@ pub struct CorpusArgs {
     pub format: OutputFormat,
     pub row: Option<String>,
     pub selection: CorpusSelection,
+    pub row_jobs: usize,
+    pub row_shard_index: usize,
+    pub row_shard_count: usize,
 }
 
 pub fn parse_args(args: &[String]) -> Result<CorpusArgs, String> {
-    let (mut mode, mut format, mut row, mut selection) = (
+    let (
+        mut mode,
+        mut format,
+        mut row,
+        mut selection,
+        mut row_jobs,
+        mut row_shard_index,
+        mut row_shard_count,
+    ) = (
         CorpusMode::Standard,
         OutputFormat::Human,
         None,
         CorpusSelection::AllApplicable,
+        None,
+        None,
+        None,
     );
     let mut i = 0;
     while i < args.len() {
@@ -199,6 +219,43 @@ pub fn parse_args(args: &[String]) -> Result<CorpusArgs, String> {
                 }
                 selection = CorpusSelection::MappedOnly;
             }
+            "--row-jobs" => {
+                i += 1;
+                let value = args
+                    .get(i)
+                    .ok_or_else(|| "--row-jobs requires a value".to_owned())?;
+                let value = value
+                    .parse::<usize>()
+                    .map_err(|_| "--row-jobs must be an integer from 1 through 8".to_owned())?;
+                if !(1..=8).contains(&value) {
+                    return Err("--row-jobs must be an integer from 1 through 8".to_owned());
+                }
+                if row_jobs.replace(value).is_some() {
+                    return Err("--row-jobs may be provided only once".to_owned());
+                }
+            }
+            "--row-shard-index" => {
+                i += 1;
+                let value = args
+                    .get(i)
+                    .ok_or_else(|| "--row-shard-index requires a value".to_owned())?
+                    .parse::<usize>()
+                    .map_err(|_| "--row-shard-index requires an integer".to_owned())?;
+                if row_shard_index.replace(value).is_some() {
+                    return Err("--row-shard-index may be provided only once".to_owned());
+                }
+            }
+            "--row-shard-count" => {
+                i += 1;
+                let value = args
+                    .get(i)
+                    .ok_or_else(|| "--row-shard-count requires a value".to_owned())?
+                    .parse::<usize>()
+                    .map_err(|_| "--row-shard-count requires an integer".to_owned())?;
+                if row_shard_count.replace(value).is_some() {
+                    return Err("--row-shard-count may be provided only once".to_owned());
+                }
+            }
             o => return Err(format!("unknown argument: {o}")),
         }
         i += 1;
@@ -206,11 +263,33 @@ pub fn parse_args(args: &[String]) -> Result<CorpusArgs, String> {
     if selection == CorpusSelection::MappedOnly && row.is_some() {
         return Err("--mapped-only cannot be combined with --row".to_owned());
     }
+    let (row_shard_index, row_shard_count) = match (row_shard_index, row_shard_count) {
+        (None, None) => (0, 1),
+        (Some(index), Some(count)) if (1..=MAX_ROW_SHARDS).contains(&count) && index < count => {
+            (index, count)
+        }
+        (Some(_), Some(_)) => {
+            return Err(format!(
+                "row shard count must be from 1 through {MAX_ROW_SHARDS} and index must be less than count"
+            ));
+        }
+        _ => {
+            return Err(
+                "--row-shard-index and --row-shard-count must be provided together".to_owned(),
+            );
+        }
+    };
+    if row.is_some() && row_shard_count != 1 {
+        return Err("--row cannot be combined with a multi-row shard".to_owned());
+    }
     Ok(CorpusArgs {
         mode,
         format,
         row,
         selection,
+        row_jobs: row_jobs.unwrap_or(1),
+        row_shard_index,
+        row_shard_count,
     })
 }
 
@@ -397,6 +476,7 @@ struct InvResult {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
     semantic_captures: usize,
+    marker_validated_internally: bool,
 }
 
 fn run_inv(
@@ -407,12 +487,13 @@ fn run_inv(
     marker: &Path,
 ) -> InvResult {
     if mode == CorpusMode::Determinism {
-        let result = determinism::run(ws, inv, row_id, marker);
+        let result = determinism::run(ws, inv, row_id);
         return InvResult {
             success: result.success,
             stdout: result.stdout,
             stderr: result.stderr,
             semantic_captures: result.semantic_captures,
+            marker_validated_internally: result.marker_validated,
         };
     }
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
@@ -446,12 +527,14 @@ fn run_inv(
             stdout: o.stdout,
             stderr: o.stderr,
             semantic_captures: 0,
+            marker_validated_internally: false,
         },
         Err(e) => InvResult {
             success: false,
             stdout: Vec::new(),
             stderr: format!("spawn: {e}").into_bytes(),
             semantic_captures: 0,
+            marker_validated_internally: false,
         },
     }
 }
@@ -477,6 +560,9 @@ fn print_human(
     mode: CorpusMode,
     selection: CorpusSelection,
     applicable_rows: usize,
+    row_jobs: usize,
+    row_shard_index: usize,
+    row_shard_count: usize,
 ) {
     let (mapped, passed) = (
         res.iter().filter(|r| r.mapped).count(),
@@ -490,6 +576,8 @@ fn print_human(
             res.len()
         );
     }
+    println!("row jobs: {row_jobs}");
+    println!("row shard: {row_shard_index}/{row_shard_count}");
     println!(
         "total: {}  mapped: {mapped}  passed: {passed}  unmapped: {unmapped}  failed: {failed}\n",
         res.len()
@@ -515,6 +603,9 @@ fn print_json(
     mode: CorpusMode,
     selection: CorpusSelection,
     applicable_rows: usize,
+    row_jobs: usize,
+    row_shard_index: usize,
+    row_shard_count: usize,
 ) -> Result<(), String> {
     let rows: Vec<serde_json::Value> = res
         .iter()
@@ -538,6 +629,9 @@ fn print_json(
     let s = serde_json::json!({
         "mode": mode.to_string(),
         "selection": selection.as_str(),
+        "rowJobs": row_jobs,
+        "rowShardIndex": row_shard_index,
+        "rowShardCount": row_shard_count,
         "applicableRows": applicable_rows,
         "totalRows": res.len(),
         "mapped": mapped,
@@ -552,9 +646,10 @@ fn print_json(
 }
 
 fn selected_rows(args: &CorpusArgs) -> Vec<&'static RegistryRow> {
-    REGISTRY
+    let eligible = REGISTRY
         .iter()
-        .filter(|registry_row| {
+        .enumerate()
+        .filter(|(_, registry_row)| {
             registry_row.is_applicable(args.mode)
                 && args
                     .row
@@ -563,7 +658,294 @@ fn selected_rows(args: &CorpusArgs) -> Vec<&'static RegistryRow> {
                 && (args.selection == CorpusSelection::AllApplicable
                     || registry_row.is_mapped(args.mode))
         })
+        .collect::<Vec<_>>();
+    balanced_shard_rows(
+        eligible,
+        args.mode,
+        args.row_shard_index,
+        args.row_shard_count,
+    )
+}
+
+fn balanced_shard_rows(
+    eligible: Vec<(usize, &'static RegistryRow)>,
+    mode: CorpusMode,
+    shard_index: usize,
+    shard_count: usize,
+) -> Vec<&'static RegistryRow> {
+    if shard_count == 0 || shard_index >= shard_count {
+        return Vec::new();
+    }
+    if shard_count == 1 {
+        return eligible.into_iter().map(|(_, row)| row).collect();
+    }
+
+    let mut scheduling_order = eligible.clone();
+    scheduling_order.sort_by(|(left_index, left), (right_index, right)| {
+        shard_weight(right, mode)
+            .cmp(&shard_weight(left, mode))
+            .then_with(|| left_index.cmp(right_index))
+    });
+
+    let mut loads = vec![0usize; shard_count];
+    let mut buckets = (0..shard_count).map(|_| Vec::new()).collect::<Vec<_>>();
+    for (registry_index, row) in scheduling_order {
+        let shard = (1..shard_count).fold(0, |best, candidate| {
+            if (loads[candidate], candidate) < (loads[best], best) {
+                candidate
+            } else {
+                best
+            }
+        });
+        loads[shard] += shard_weight(row, mode);
+        buckets[shard].push((registry_index, row));
+    }
+
+    let mut selected = buckets.remove(shard_index);
+    selected.sort_by_key(|(registry_index, _)| *registry_index);
+    selected.into_iter().map(|(_, row)| row).collect()
+}
+
+fn shard_weight(row: &RegistryRow, mode: CorpusMode) -> usize {
+    let invocation_weight = row
+        .mode_invocations(mode)
+        .map(|invocations| invocations.len().max(1))
+        .unwrap_or(1);
+    if mode == CorpusMode::Determinism {
+        invocation_weight.max(row.determinism_shard_weight)
+    } else {
+        invocation_weight
+    }
+}
+
+struct RowExecution {
+    result: RowResult,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+struct InvocationTask {
+    row_id: &'static str,
+    invocation: &'static CorpusInvocation,
+    marker: PathBuf,
+}
+
+struct InvocationExecution {
+    result: InvResult,
+    marker_error: Option<String>,
+}
+
+fn execute_invocation(
+    workspace: &Path,
+    task: &InvocationTask,
+    mode: CorpusMode,
+) -> InvocationExecution {
+    let _ = fs::remove_file(&task.marker);
+    let result = run_inv(workspace, task.invocation, mode, task.row_id, &task.marker);
+    let marker_error = if result.success && !result.marker_validated_internally {
+        validate_marker(&task.marker, task.row_id, 1).err()
+    } else {
+        None
+    };
+    let _ = fs::remove_file(&task.marker);
+    InvocationExecution {
+        result,
+        marker_error,
+    }
+}
+
+pub(crate) fn run_parallel_ordered<T, F>(
+    item_count: usize,
+    jobs: usize,
+    work: F,
+) -> Result<Vec<T>, String>
+where
+    T: Send,
+    F: Fn(usize) -> Result<T, String> + Sync,
+{
+    if item_count == 0 {
+        return Ok(Vec::new());
+    }
+    if jobs == 0 {
+        return Err("parallel worker count must be positive".to_owned());
+    }
+    let worker_count = jobs.min(item_count);
+    let next = AtomicUsize::new(0);
+    let (sender, receiver) = mpsc::channel::<(usize, Result<T, String>)>();
+    let worker_result = thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(worker_count);
+        for _ in 0..worker_count {
+            let sender = sender.clone();
+            let next = &next;
+            let work = &work;
+            handles.push(scope.spawn(move || {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    if index >= item_count {
+                        break;
+                    }
+                    if sender.send((index, work(index))).is_err() {
+                        break;
+                    }
+                }
+            }));
+        }
+        for handle in handles {
+            handle
+                .join()
+                .map_err(|_| "parallel worker panicked".to_owned())?;
+        }
+        Ok::<(), String>(())
+    });
+    drop(sender);
+    worker_result?;
+
+    let mut ordered = (0..item_count).map(|_| None).collect::<Vec<_>>();
+    for (index, result) in receiver {
+        if ordered[index].replace(result).is_some() {
+            return Err(format!("corpus row {index} completed more than once"));
+        }
+    }
+    ordered
+        .into_iter()
+        .enumerate()
+        .map(|(index, result)| {
+            result.ok_or_else(|| format!("corpus row {index} did not complete"))?
+        })
         .collect()
+}
+
+fn execute_rows(
+    workspace: &Path,
+    selected: &[&'static RegistryRow],
+    mode: CorpusMode,
+    check_outcomes: &BTreeMap<RequiredCheck, CheckOutcome>,
+    row_jobs: usize,
+) -> Result<Vec<RowExecution>, String> {
+    let mut tasks = Vec::new();
+    let mut row_ranges = Vec::with_capacity(selected.len());
+    for row in selected {
+        let start = tasks.len();
+        if row.is_mapped(mode) {
+            let invocations = row.mode_invocations(mode).ok_or_else(|| {
+                format!(
+                    "mapped row {} lacks mode {} invocations after registry validation",
+                    row.id, mode
+                )
+            })?;
+            tasks.extend(invocations.iter().map(|invocation| InvocationTask {
+                row_id: row.id,
+                invocation,
+                marker: marker_path(row.id),
+            }));
+        }
+        row_ranges.push(start..tasks.len());
+    }
+
+    let invocation_executions = run_parallel_ordered(tasks.len(), row_jobs, |index| {
+        Ok(execute_invocation(workspace, &tasks[index], mode))
+    })?;
+
+    let mut rows = Vec::with_capacity(selected.len());
+    for (row, range) in selected.iter().zip(row_ranges) {
+        if !row.is_mapped(mode) {
+            rows.push(RowExecution {
+                result: RowResult {
+                    id: row.id,
+                    mapped: false,
+                    passed: false,
+                    invocations: 0,
+                    marker_ok: false,
+                    semantic_captures: 0,
+                    required_checks: row.required_checks,
+                    required_checks_validated: false,
+                },
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            });
+            continue;
+        }
+
+        let invocations = row.mode_invocations(mode).ok_or_else(|| {
+            format!(
+                "mapped row {} lacks mode {} invocations after registry validation",
+                row.id, mode
+            )
+        })?;
+        let executions = &invocation_executions[range];
+        if invocations.len() != executions.len() {
+            return Err(format!(
+                "mapped row {} lost an invocation during parallel execution",
+                row.id
+            ));
+        }
+
+        let (mut passed, mut succeeded, mut semantic_captures) = (true, 0usize, 0usize);
+        let mut marker_errors = Vec::new();
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        for (invocation, execution) in invocations.iter().zip(executions) {
+            semantic_captures += execution.result.semantic_captures;
+            if execution.result.success {
+                succeeded += 1;
+                if let Some(error) = &execution.marker_error {
+                    marker_errors.push(format!(
+                        "{} / {} {}: {error}",
+                        row.id, invocation.target, invocation.filter
+                    ));
+                }
+            } else {
+                passed = false;
+                let _ = writeln!(
+                    stderr,
+                    "--- FAIL: {} / {} {} ---",
+                    row.id, invocation.target, invocation.filter
+                );
+                stderr.extend_from_slice(&execution.result.stderr);
+                stdout.extend_from_slice(&execution.result.stdout);
+            }
+        }
+
+        let required_checks_validated = row.required_checks.iter().all(|check| {
+            check_outcomes
+                .get(check)
+                .is_some_and(|outcome| outcome.passed)
+        });
+        if !required_checks_validated {
+            passed = false;
+        }
+        if mode == CorpusMode::Determinism && passed && semantic_captures == 0 {
+            let _ = writeln!(
+                stderr,
+                "[DETERMINISM] {} produced no canonical semantic evidence",
+                row.id
+            );
+            passed = false;
+        }
+        let marker_ok = passed && succeeded > 0 && marker_errors.is_empty();
+        if passed && !marker_ok {
+            for error in marker_errors {
+                let _ = writeln!(stderr, "[MARKER] {error}");
+            }
+            passed = false;
+        }
+
+        rows.push(RowExecution {
+            result: RowResult {
+                id: row.id,
+                mapped: true,
+                passed,
+                invocations: invocations.len(),
+                marker_ok,
+                semantic_captures,
+                required_checks: row.required_checks,
+                required_checks_validated,
+            },
+            stdout,
+            stderr,
+        });
+    }
+    Ok(rows)
 }
 
 // ---------------------------------------------------------------------------
@@ -630,103 +1012,61 @@ pub fn run(args: &[String]) -> ExitCode {
         }
     }
 
-    let (mut results, mut has_fail, mut has_unmap) =
-        (Vec::with_capacity(selected.len()), false, false);
-    for row in &selected {
-        eprintln!("[CORPUS] {} row {}", parsed.mode, row.id);
-        if !row.is_mapped(parsed.mode) {
-            results.push(RowResult {
-                id: row.id,
-                mapped: false,
-                passed: false,
-                invocations: 0,
-                marker_ok: false,
-                semantic_captures: 0,
-                required_checks: row.required_checks,
-                required_checks_validated: false,
-            });
-            has_unmap = true;
-            continue;
-        }
-        let Some(invs) = row.mode_invocations(parsed.mode) else {
-            eprintln!(
-                "[REGISTRY ERROR] mapped row {} lacks mode {} invocations",
-                row.id, parsed.mode
-            );
+    let executions = match execute_rows(
+        &ws,
+        &selected,
+        parsed.mode,
+        &check_outcomes,
+        parsed.row_jobs,
+    ) {
+        Ok(executions) => executions,
+        Err(error) => {
+            eprintln!("[TOOL ERROR] {error}");
             return ExitCode::from(2);
-        };
-        let mp = marker_path(row.id);
-        let _ = fs::remove_file(&mp);
-        let (mut ok, mut succ, mut semantic_captures) = (true, 0usize, 0usize);
-        for inv in invs {
-            let r = run_inv(&ws, inv, parsed.mode, row.id, &mp);
-            semantic_captures += r.semantic_captures;
-            if r.success {
-                succ += 1;
-            } else {
-                ok = false;
-                eprintln!("--- FAIL: {} / {} {} ---", row.id, inv.target, inv.filter);
-                let _ = std::io::stderr().write_all(&r.stderr);
-                let _ = std::io::stdout().write_all(&r.stdout);
-            }
         }
-        let required_checks_validated = row.required_checks.iter().all(|check| {
-            check_outcomes
-                .get(check)
-                .is_some_and(|outcome| outcome.passed)
-        });
-        if !required_checks_validated {
-            ok = false;
-        }
-        if parsed.mode == CorpusMode::Determinism && ok && semantic_captures == 0 {
+    };
+    let mut results = Vec::with_capacity(executions.len());
+    for execution in executions {
+        eprintln!("[CORPUS] {} row {}", parsed.mode, execution.result.id);
+        let _ = std::io::stderr().write_all(&execution.stderr);
+        let _ = std::io::stdout().write_all(&execution.stdout);
+        if execution.result.mapped {
             eprintln!(
-                "[DETERMINISM] {} produced no canonical semantic evidence",
-                row.id
+                "[CORPUS] {} row {} {} (semantic captures: {})",
+                parsed.mode,
+                execution.result.id,
+                if execution.result.passed {
+                    "passed"
+                } else {
+                    "failed"
+                },
+                execution.result.semantic_captures
             );
-            ok = false;
         }
-        let m_ok = if ok && succ > 0 {
-            match validate_marker(&mp, row.id, succ) {
-                Ok(()) => {
-                    let _ = fs::remove_file(&mp);
-                    true
-                }
-                Err(e) => {
-                    eprintln!("[MARKER] {}: {e}", row.id);
-                    ok = false;
-                    false
-                }
-            }
-        } else {
-            false
-        };
-        if !ok {
-            has_fail = true;
-        }
-        results.push(RowResult {
-            id: row.id,
-            mapped: true,
-            passed: ok,
-            invocations: invs.len(),
-            marker_ok: m_ok,
-            semantic_captures,
-            required_checks: row.required_checks,
-            required_checks_validated,
-        });
-        eprintln!(
-            "[CORPUS] {} row {} {} (semantic captures: {})",
-            parsed.mode,
-            row.id,
-            if ok { "passed" } else { "failed" },
-            semantic_captures
-        );
+        results.push(execution.result);
     }
+    let has_fail = results.iter().any(|row| row.mapped && !row.passed);
+    let has_unmap = results.iter().any(|row| !row.mapped);
     match parsed.format {
-        OutputFormat::Human => {
-            print_human(&results, parsed.mode, parsed.selection, applicable_rows)
-        }
+        OutputFormat::Human => print_human(
+            &results,
+            parsed.mode,
+            parsed.selection,
+            applicable_rows,
+            parsed.row_jobs,
+            parsed.row_shard_index,
+            parsed.row_shard_count,
+        ),
         OutputFormat::Json => {
-            if let Err(e) = print_json(&results, parsed.mode, parsed.selection, applicable_rows) {
+            if let Err(e) = print_json(
+                &results,
+                parsed.mode,
+                parsed.selection,
+                applicable_rows,
+                parsed.row_jobs,
+                parsed.row_shard_index,
+                parsed.row_shard_count,
+            ) {
                 eprintln!("[TOOL ERROR] {e}");
                 return ExitCode::from(2);
             }

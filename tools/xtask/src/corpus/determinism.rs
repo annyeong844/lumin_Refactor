@@ -6,7 +6,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use sha2::{Digest, Sha256};
 
-use super::{CorpusInvocation, CorpusMode, target_dir};
+use super::{
+    CorpusInvocation, CorpusMode, marker_path, run_parallel_ordered, target_dir, validate_marker,
+};
 
 const CAPTURE_ENV: &str = "LUMIN_CORPUS_DETERMINISM_CAPTURE";
 const JOBS_POLICY_ENV: &str = "LUMIN_CORPUS_JOBS_POLICY";
@@ -18,6 +20,7 @@ pub(super) struct DeterminismOutcome {
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
     pub semantic_captures: usize,
+    pub marker_validated: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -26,6 +29,8 @@ enum Variant {
     DefaultSecond,
     One,
 }
+
+const VARIANTS: [Variant; 3] = [Variant::DefaultFirst, Variant::DefaultSecond, Variant::One];
 
 impl Variant {
     fn key(self) -> &'static str {
@@ -49,21 +54,29 @@ struct VariantOutcome {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
     captures: Vec<Vec<u8>>,
+    marker_validated: bool,
 }
 
 pub(super) fn run(
     workspace: &Path,
     invocation: &CorpusInvocation,
     row_id: &str,
-    marker: &Path,
 ) -> DeterminismOutcome {
-    let mut variants = Vec::new();
-    for variant in [Variant::DefaultFirst, Variant::DefaultSecond, Variant::One] {
-        variants.push((
-            variant,
-            run_variant(workspace, invocation, row_id, marker, variant),
-        ));
-    }
+    let variants = match run_parallel_ordered(VARIANTS.len(), VARIANTS.len(), |index| {
+        let variant = VARIANTS[index];
+        Ok((variant, run_variant(workspace, invocation, row_id, variant)))
+    }) {
+        Ok(variants) => variants,
+        Err(error) => {
+            return DeterminismOutcome {
+                success: false,
+                stdout: Vec::new(),
+                stderr: format!("[DETERMINISM WORKER FAILED] {error}\n").into_bytes(),
+                semantic_captures: 0,
+                marker_validated: false,
+            };
+        }
+    };
 
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
@@ -103,6 +116,7 @@ pub(super) fn run(
         stdout,
         stderr,
         semantic_captures: first.len(),
+        marker_validated: variants.iter().all(|(_, outcome)| outcome.marker_validated),
     }
 }
 
@@ -110,11 +124,12 @@ fn run_variant(
     workspace: &Path,
     invocation: &CorpusInvocation,
     row_id: &str,
-    marker: &Path,
     variant: Variant,
 ) -> VariantOutcome {
     let capture = capture_path(row_id, invocation, variant);
+    let marker = marker_path(row_id);
     let _ = fs::remove_file(&capture);
+    let _ = fs::remove_file(&marker);
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
     let mut command = Command::new(cargo);
     command
@@ -139,7 +154,7 @@ fn run_variant(
             target_dir(workspace, CorpusMode::Determinism, invocation.features),
         )
         .env("LUMIN_CORPUS_ROW", row_id)
-        .env("LUMIN_CORPUS_CHILD_MARKER", marker)
+        .env("LUMIN_CORPUS_CHILD_MARKER", &marker)
         .env(CAPTURE_ENV, &capture)
         .env(JOBS_POLICY_ENV, variant.jobs_policy())
         .stdout(Stdio::piped())
@@ -148,29 +163,43 @@ fn run_variant(
     let output = match command.output() {
         Ok(output) => output,
         Err(error) => {
+            let _ = fs::remove_file(&capture);
+            let _ = fs::remove_file(&marker);
             return VariantOutcome {
                 success: false,
                 stdout: Vec::new(),
                 stderr: format!("spawn: {error}").into_bytes(),
                 captures: Vec::new(),
+                marker_validated: false,
             };
         }
     };
     let captures = read_capture(&capture);
+    let marker_result = validate_marker(&marker, row_id, 1);
     let _ = fs::remove_file(&capture);
-    match captures {
-        Ok(captures) => VariantOutcome {
-            success: output.status.success(),
-            stdout: output.stdout,
-            stderr: output.stderr,
-            captures,
-        },
-        Err(error) => VariantOutcome {
-            success: false,
-            stdout: output.stdout,
-            stderr: format!("{error}\n{}", String::from_utf8_lossy(&output.stderr)).into_bytes(),
-            captures: Vec::new(),
-        },
+    let _ = fs::remove_file(&marker);
+
+    let mut success = output.status.success();
+    let mut stderr = output.stderr;
+    let captures = match captures {
+        Ok(captures) => captures,
+        Err(error) => {
+            success = false;
+            stderr.extend_from_slice(format!("\n[CAPTURE] {error}\n").as_bytes());
+            Vec::new()
+        }
+    };
+    let marker_validated = marker_result.is_ok();
+    if let Err(error) = marker_result {
+        success = false;
+        stderr.extend_from_slice(format!("\n[MARKER] {error}\n").as_bytes());
+    }
+    VariantOutcome {
+        success,
+        stdout: output.stdout,
+        stderr,
+        captures,
+        marker_validated,
     }
 }
 
