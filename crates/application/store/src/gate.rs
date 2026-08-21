@@ -1,9 +1,9 @@
 use lumin_evidence::{
-    ActualWriteSet, AnalysisSnapshot, GateAnalysisOptions, GateBaseline, GateLifecycle,
-    GateObservationBinding, GateOperationKind, GateOperationResult, GateOperationStatus,
-    GateRecord, GateRevision, GateSignal, OperationRecord, PhysicalAliasClosureRecord,
-    RepoPathProjection, SemanticInputRecord, SemanticReadReservationBinding, TransitionCapsule,
-    WorktreeTransition, WriteLease, gate_policy,
+    ActualWriteSet, AnalysisSnapshot, GATE_RECORD_SCHEMA_VERSION, GateAnalysisOptions,
+    GateBaseline, GateLifecycle, GateObservationBinding, GateOperationKind, GateOperationResult,
+    GateOperationStatus, GateRecord, GateRevision, GateSignal, OperationRecord,
+    PhysicalAliasClosureRecord, RepoPathProjection, SemanticInputRecord,
+    SemanticReadReservationBinding, TransitionCapsule, WorktreeTransition, WriteLease, gate_policy,
 };
 use lumin_model::{GateBaselineObservationId, GateDeltaRecord, GateId, OperationId};
 use redb::{ReadableTable, TableDefinition, WriteTransaction};
@@ -538,7 +538,7 @@ fn completed_pre_write_records(
         baseline.protected_semantic_inputs.clone()
     });
     let gate = GateRecord {
-        schema_version: "lumin-gate.v1".to_owned(),
+        schema_version: GATE_RECORD_SCHEMA_VERSION.to_owned(),
         gate_id: operation.gate_id.clone(),
         lifecycle,
         current_revision: 0,
@@ -667,24 +667,15 @@ fn validate_post_write_context(
 
 fn snapshot_can_protect_current_reads(
     snapshot: Option<&AnalysisSnapshot>,
-    signals: &[GateSignal],
+    observation_binding: &GateObservationBinding,
 ) -> bool {
     snapshot.is_some()
-        && !signals.iter().any(|signal| {
-            matches!(
-                signal,
-                GateSignal::AnalysisFailed { .. }
-                    | GateSignal::DeclaredPathUnsupported { .. }
-                    | GateSignal::WriteConflict { .. }
-                    | GateSignal::SemanticInputConflict { .. }
-                    | GateSignal::ProtectedInputChanged { .. }
-                    | GateSignal::UnplannedWrite { .. }
-                    | GateSignal::AnalysisContractChanged
-                    | GateSignal::ActiveTransitionPending { .. }
-                    | GateSignal::TransitionChainBroken { .. }
-                    | GateSignal::TransitionCatalogChanged
-            )
-        })
+        && matches!(
+            observation_binding,
+            lumin_model::ObservationBinding::Sealed {
+                observation: lumin_model::SealedGateObservation::Close { .. }
+            }
+        )
 }
 
 struct AuthorizedTransitionInput<'a> {
@@ -809,7 +800,7 @@ fn rejected_gate(
         baseline.protected_semantic_inputs.clone()
     });
     Ok(GateRecord {
-        schema_version: "lumin-gate.v1".to_owned(),
+        schema_version: GATE_RECORD_SCHEMA_VERSION.to_owned(),
         gate_id: operation.gate_id.clone(),
         lifecycle: GateLifecycle::Rejected,
         current_revision: 0,

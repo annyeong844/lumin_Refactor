@@ -10,7 +10,7 @@ use super::{NamespaceBinding, NamespaceGuard, entry_exists, require_state_volume
 
 const STORE_HEADER: TableDefinition<&str, &[u8]> = TableDefinition::new("store-header");
 const STORE_HEADER_KEY: &str = "namespace";
-pub(super) const STORE_HEADER_SCHEMA: &str = "lumin-lifecycle-store-header.v4";
+pub(super) const STORE_HEADER_SCHEMA: &str = "lumin-lifecycle-store-header.v5";
 pub(super) const STORE_HEADER_TABLE_NAME: &str = "store-header";
 
 #[derive(Deserialize, Serialize)]
@@ -155,4 +155,35 @@ fn store_header_bytes(
         generation,
     })
     .map_err(serialization_error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prior_store_schema_is_reported_as_explicitly_incompatible()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let admission = lumin_inventory::repository_admission(root.path())?;
+        drop(crate::RepositoryStore::open(
+            &admission.canonical_root,
+            &admission.binding,
+        )?);
+        let marker: super::super::RepositoryMarker = super::super::read_canonical_path(
+            &root.path().join(".lumin/repository.json"),
+            "repository marker",
+        )?;
+        let prior = serde_json::to_vec(&LifecycleStoreHeader {
+            schema_version: "lumin-lifecycle-store-header.v4".to_owned(),
+            binding: marker.binding.clone(),
+            generation: StoreGeneration::INITIAL,
+        })?;
+
+        assert!(matches!(
+            verify_store_header_bytes(&prior, &marker.binding, None),
+            Err(StoreError::IncompatibleStateSchema(_))
+        ));
+        Ok(())
+    }
 }

@@ -11,6 +11,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use crate::{RepoPathProjection, RunEvidence, delta::lifecycle_delta_input_for};
 
 pub type GateObservationBinding = ObservationBinding<RepoPathProjection>;
+pub const GATE_RECORD_SCHEMA_VERSION: &str = "lumin-gate.v2";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

@@ -162,19 +162,118 @@ fn gate_evidence(root: &Path, stdout: &str) -> Result<Vec<Value>, Box<dyn std::e
     };
     let gate = lumin_engine::load_gate(root, &GateId::from_string(gate_id.to_owned()))?;
     let mut evidence = Vec::new();
-    if let Some(baseline) = gate.baseline {
-        evidence.push(serde_json::to_value(
-            baseline.snapshot.evidence.semantic_projection(),
-        )?);
+    if let Some(baseline) = gate.baseline.as_ref() {
+        evidence.push(serde_json::json!({
+            "schemaVersion": "lumin.gate-baseline-semantic.v1",
+            "gateSchemaVersion": gate.schema_version,
+            "observationId": observation_id_projection(
+                baseline.observation_id.as_str(),
+                "baseline",
+                true,
+            ),
+            "leasedWriteSet": gate.leased_write_set.iter().map(|lease| serde_json::json!({
+                "path": lease.path,
+                "kind": lease.kind,
+                "physicalIdentityPresent": lease.physical_identity.is_some(),
+                "nearestExistingParent": lease.nearest_existing_parent,
+                "prefixPaths": lease.prefix_identities.iter().map(|prefix| &prefix.path).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+            "aliasClosures": gate.alias_closures.iter().map(|closure| serde_json::json!({
+                "members": closure.members,
+            })).collect::<Vec<_>>(),
+            "protectedSemanticInputs": baseline.protected_semantic_inputs.iter().map(|input| serde_json::json!({
+                "path": input.path,
+                "state": input.state,
+                "payloadSha256": input.payload_sha256,
+                "physicalIdentityPresent": input.physical_identity.is_some(),
+                "absenceParentPath": input.absence_parent.as_ref().map(|parent| &parent.path),
+                "physicalRedirectSha256": input.physical_redirect_sha256,
+            })).collect::<Vec<_>>(),
+            "snapshot": baseline.snapshot.evidence.semantic_projection(),
+        }));
     }
-    for snapshot in gate
-        .revisions
-        .into_iter()
-        .filter_map(|revision| revision.snapshot)
-    {
-        evidence.push(serde_json::to_value(
-            snapshot.evidence.semantic_projection(),
-        )?);
+    let baseline_observation_id = gate
+        .baseline
+        .as_ref()
+        .map(|baseline| baseline.observation_id.as_str().to_owned());
+    for revision in gate.revisions {
+        let snapshot = revision
+            .snapshot
+            .as_ref()
+            .map(|snapshot| serde_json::to_value(snapshot.evidence.semantic_projection()))
+            .transpose()?;
+        let observation_binding = revision
+            .observation_binding
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()?;
+        evidence.push(serde_json::json!({
+            "schemaVersion": "lumin.gate-revision-semantic.v1",
+            "revision": revision.revision,
+            "observationBinding": observation_binding_projection(
+                observation_binding,
+                baseline_observation_id.as_deref(),
+                revision.revision,
+            )?,
+            "snapshot": snapshot,
+        }));
     }
     Ok(evidence)
+}
+
+fn observation_binding_projection(
+    binding: Option<Value>,
+    baseline_id: Option<&str>,
+    revision: u64,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let Some(mut binding) = binding else {
+        return Ok(Value::Null);
+    };
+    if binding.get("state").and_then(Value::as_str) != Some("sealed") {
+        return Ok(binding);
+    }
+    let kind = binding
+        .pointer("/observation/kind")
+        .and_then(Value::as_str)
+        .ok_or_else(|| std::io::Error::other("sealed observation omitted its kind"))?;
+    let observation_id = binding
+        .pointer("/observation/observationId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| std::io::Error::other("sealed observation omitted its ID"))?
+        .to_owned();
+    let (equality_class, matches_owner) = match kind {
+        "baseline" => (
+            "baseline".to_owned(),
+            baseline_id == Some(observation_id.as_str()),
+        ),
+        "close" => (format!("close-revision-{revision}"), true),
+        other => {
+            return Err(std::io::Error::other(format!(
+                "sealed observation has unsupported kind {other:?}"
+            ))
+            .into());
+        }
+    };
+    *binding
+        .pointer_mut("/observation/observationId")
+        .ok_or_else(|| std::io::Error::other("sealed observation omitted its ID"))? =
+        observation_id_projection(&observation_id, &equality_class, matches_owner);
+    Ok(binding)
+}
+
+fn observation_id_projection(value: &str, equality_class: &str, matches_owner: bool) -> Value {
+    let expected_prefix = if equality_class == "baseline" {
+        "gate_baseline_observation_"
+    } else {
+        "gate_close_observation_"
+    };
+    // Observation IDs intentionally bind repository-instance physical identities and the
+    // active catalog revision. Determinism variants use fresh repositories, so compare the
+    // exact persisted equality relation and every semantic owner input rather than erasing
+    // the binding or comparing unrelated inode-derived digest bytes.
+    serde_json::json!({
+        "equalityClass": equality_class,
+        "matchesOwner": matches_owner,
+        "formatValid": value.starts_with(expected_prefix),
+    })
 }

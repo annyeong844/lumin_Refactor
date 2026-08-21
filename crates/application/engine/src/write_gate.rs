@@ -28,7 +28,7 @@ mod transitions;
 
 use domain::{
     DeclaredPathInspection, close_alias_topology, expand_write_domain, inspect_declared_paths,
-    protected_semantic_inputs,
+    protected_semantic_inputs, revalidate_write_domain,
 };
 use observation::{
     BaselineObservationSeed, CloseObservationSeed, close_observation_binding,
@@ -199,6 +199,7 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         alias_closures: finish.alias_closures.clone(),
         baseline: finish.baseline.clone(),
     };
+    wait_at_pre_write_final_barrier(&request.operation_id, &gate_id)?;
     operation
         .finish_pre_write(
             &request_digest,
@@ -206,11 +207,20 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
             finish,
             |reserved_identities, catalog_revision, store_signals| {
                 let final_signals = final_validation.map_or_else(Vec::new, |validation| {
-                    final_freshness_validation_signals(
+                    let mut signals = final_freshness_validation_signals(
                         &context.root,
                         &validation,
                         reserved_identities,
-                    )
+                    );
+                    if let Some(baseline) = &observation_seed.baseline {
+                        signals.extend(revalidate_write_domain(
+                            &context.root,
+                            &observation_seed.leased_write_set,
+                            &observation_seed.alias_closures,
+                            &baseline.snapshot.inputs,
+                        ));
+                    }
+                    signals
                 });
                 let mut all_signals = store_signals.to_vec();
                 all_signals.extend(final_signals.iter().cloned());
@@ -231,58 +241,84 @@ fn wait_at_pre_write_admission_barrier(
     operation_id: &OperationId,
     gate_id: &GateId,
 ) -> Result<(), EngineError> {
+    wait_at_pre_write_barrier(
+        "LUMIN_TEST_GATE_ADMISSION_BARRIER",
+        "reserved",
+        operation_id,
+        gate_id,
+    )
+}
+
+fn wait_at_pre_write_final_barrier(
+    operation_id: &OperationId,
+    gate_id: &GateId,
+) -> Result<(), EngineError> {
+    wait_at_pre_write_barrier(
+        "LUMIN_TEST_GATE_PREWRITE_FINAL_BARRIER",
+        "finalizing",
+        operation_id,
+        gate_id,
+    )
+}
+
+fn wait_at_pre_write_barrier(
+    environment: &str,
+    stage: &str,
+    operation_id: &OperationId,
+    gate_id: &GateId,
+) -> Result<(), EngineError> {
     use std::io::{BufRead, BufReader, Write};
     use std::net::{SocketAddr, TcpStream};
     use std::time::Duration;
 
-    let Some(address) = std::env::var_os("LUMIN_TEST_GATE_ADMISSION_BARRIER") else {
+    let Some(address) = std::env::var_os(environment) else {
         return Ok(());
     };
     let address = address.to_str().ok_or_else(|| {
-        lumin_store::StoreError::Integrity(
-            "gate admission test barrier address is not UTF-8".to_owned(),
-        )
+        lumin_store::StoreError::Integrity(format!(
+            "gate {stage} test barrier address is not UTF-8"
+        ))
     })?;
     let address = address.parse::<SocketAddr>().map_err(|error| {
         lumin_store::StoreError::Integrity(format!(
-            "gate admission test barrier address is malformed: {error}"
+            "gate {stage} test barrier address is malformed: {error}"
         ))
     })?;
     if !address.ip().is_loopback() {
-        return Err(lumin_store::StoreError::Integrity(
-            "gate admission test barrier must use a loopback address".to_owned(),
-        )
+        return Err(lumin_store::StoreError::Integrity(format!(
+            "gate {stage} test barrier must use a loopback address"
+        ))
         .into());
     }
     let mut stream = TcpStream::connect(address).map_err(|error| {
-        lumin_store::StoreError::Io(format!("gate admission test barrier failed: {error}"))
+        lumin_store::StoreError::Io(format!("gate {stage} test barrier failed: {error}"))
     })?;
     let timeout = Some(Duration::from_secs(30));
     stream.set_read_timeout(timeout).map_err(|error| {
-        lumin_store::StoreError::Io(format!("gate admission test barrier failed: {error}"))
+        lumin_store::StoreError::Io(format!("gate {stage} test barrier failed: {error}"))
     })?;
     stream.set_write_timeout(timeout).map_err(|error| {
-        lumin_store::StoreError::Io(format!("gate admission test barrier failed: {error}"))
+        lumin_store::StoreError::Io(format!("gate {stage} test barrier failed: {error}"))
     })?;
     writeln!(
         stream,
-        "reserved {} {}",
+        "{stage} {} {}",
         operation_id.as_str(),
         gate_id.as_str()
     )
     .map_err(|error| {
-        lumin_store::StoreError::Io(format!("gate admission test barrier failed: {error}"))
+        lumin_store::StoreError::Io(format!("gate {stage} test barrier failed: {error}"))
     })?;
     let mut release = String::new();
     BufReader::new(stream)
         .read_line(&mut release)
         .map_err(|error| {
-            lumin_store::StoreError::Io(format!("gate admission test barrier failed: {error}"))
+            lumin_store::StoreError::Io(format!("gate {stage} test barrier failed: {error}"))
         })?;
     if release.trim_end() != "release" {
-        return Err(lumin_store::StoreError::Integrity(
-            "gate admission test barrier returned an invalid release frame".to_owned(),
-        )
+        return Err(lumin_store::StoreError::Integrity(format!(
+            "gate {stage} test barrier returned an invalid release frame"
+        ))
         .into());
     }
     Ok(())
@@ -457,12 +493,27 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
             &operation,
             request,
             &request_digest,
+            &gate,
             vec![GateSignal::AnalysisContractChanged],
         );
     }
 
     // Reconstruct InventoryRequest from persisted tier (not default)
-    let inventory_request = inventory_request_from_tier(&gate.analysis_options.scan_invocation)?;
+    let inventory_request =
+        match inventory_request_from_tier(&gate.analysis_options.scan_invocation) {
+            Ok(request) => request,
+            Err(error) => {
+                return finish_failed_close(
+                    &operation,
+                    request,
+                    &request_digest,
+                    &gate,
+                    vec![GateSignal::AnalysisFailed {
+                        detail: error.to_string(),
+                    }],
+                );
+            }
+        };
     if let Err(error) = validate_analysis_paths(
         &context.root,
         &inventory_request.entries,
@@ -472,6 +523,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
             &operation,
             request,
             &request_digest,
+            &gate,
             vec![GateSignal::AnalysisFailed {
                 detail: error.to_string(),
             }],
@@ -482,11 +534,20 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
     if gate.analysis_options.scan_invocation.resolution_profile
         != gate.analysis_options.resolution_profile
     {
-        return Err(EngineError::TierProfileInconsistency(format!(
-            "tier profile {:?} != options profile {:?}",
-            gate.analysis_options.scan_invocation.resolution_profile,
-            gate.analysis_options.resolution_profile
-        )));
+        return finish_failed_close(
+            &operation,
+            request,
+            &request_digest,
+            &gate,
+            vec![GateSignal::AnalysisFailed {
+                detail: EngineError::TierProfileInconsistency(format!(
+                    "tier profile {:?} != options profile {:?}",
+                    gate.analysis_options.scan_invocation.resolution_profile,
+                    gate.analysis_options.resolution_profile
+                ))
+                .to_string(),
+            }],
+        );
     }
 
     let reserved_state_lookup = reserved_state_identity_lookup(&context.store);
@@ -507,7 +568,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
             reserved_semantic_bindings,
         }) => (capture, reserved_semantic_bindings),
         Ok(ReservedCapture::Blocked(signal)) => {
-            return finish_failed_close(&operation, request, &request_digest, vec![signal]);
+            return finish_failed_close(&operation, request, &request_digest, &gate, vec![signal]);
         }
         Ok(ReservedCapture::Committed(result)) => return Ok(*result),
         Err(EngineError::Store(error)) => return Err(EngineError::Store(error)),
@@ -516,6 +577,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                 &operation,
                 request,
                 &request_digest,
+                &gate,
                 vec![GateSignal::AnalysisFailed {
                     detail: error.to_string(),
                 }],
@@ -579,6 +641,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         prior_revision: gate.current_revision,
         leased_write_set: gate.leased_write_set.clone(),
         snapshot: Some(capture.snapshot.clone()),
+        prior_protected_semantic_inputs: gate.protected_semantic_inputs.clone(),
         protected_semantic_inputs: protected_semantic_inputs.clone(),
         changed_paths: changed_paths.clone(),
         actual_write_set: actual_write_set.clone(),
@@ -671,19 +734,22 @@ fn finish_failed_close(
     operation: &OperationSession<'_>,
     request: &PostWriteRequest,
     request_digest: &str,
+    gate: &GateRecord,
     signals: Vec<GateSignal>,
 ) -> Result<GateOperationResult, EngineError> {
+    let baseline = gate.baseline.as_ref();
     let observation_seed = CloseObservationSeed {
         gate_id: request.gate_id.clone(),
-        opening_observation_id: None,
-        opening_analysis_contract: None,
-        prior_revision: 0,
-        leased_write_set: Vec::new(),
+        opening_observation_id: baseline.map(|baseline| baseline.observation_id.clone()),
+        opening_analysis_contract: baseline.map(|baseline| baseline.analysis_contract.clone()),
+        prior_revision: gate.current_revision,
+        leased_write_set: gate.leased_write_set.clone(),
         snapshot: None,
-        protected_semantic_inputs: Vec::new(),
+        prior_protected_semantic_inputs: gate.protected_semantic_inputs.clone(),
+        protected_semantic_inputs: gate.protected_semantic_inputs.clone(),
         changed_paths: Vec::new(),
         actual_write_set: None,
-        alias_closures: Vec::new(),
+        alias_closures: gate.alias_closures.clone(),
         reconciled_transition_sequences: Vec::new(),
     };
     operation
@@ -692,11 +758,11 @@ fn finish_failed_close(
             &request.gate_id,
             PostWriteFinish {
                 snapshot: None,
-                protected_semantic_inputs: Vec::new(),
+                protected_semantic_inputs: gate.protected_semantic_inputs.clone(),
                 reconciled_baseline: None,
                 changed_paths: Vec::new(),
                 actual_write_set: None,
-                alias_closures: Vec::new(),
+                alias_closures: gate.alias_closures.clone(),
                 reconciled_transition_sequences: Vec::new(),
                 signals,
                 deltas: Vec::new(),

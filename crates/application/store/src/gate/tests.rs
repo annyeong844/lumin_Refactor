@@ -89,6 +89,8 @@ fn close_finalization(extra: Vec<GateSignal>, signals: &[GateSignal]) -> Observa
                 | GateSignal::ActiveTransitionPending { .. }
                 | GateSignal::TransitionChainBroken { .. }
                 | GateSignal::TransitionCatalogChanged
+                | GateSignal::LifecycleDeltaIncomparable { .. }
+                | GateSignal::LifecycleBaselineUnavailable { .. }
         )
     });
     ObservationFinalization {
@@ -102,7 +104,8 @@ fn close_finalization(extra: Vec<GateSignal>, signals: &[GateSignal]) -> Observa
 }
 
 #[test]
-fn persisted_v1_gate_additions_default_when_absent() -> Result<(), Box<dyn std::error::Error>> {
+fn persisted_v2_optional_gate_additions_default_when_absent()
+-> Result<(), Box<dyn std::error::Error>> {
     let operation_id = OperationId::from_string("operation-1".to_owned());
     let gate_id = GateId::from_string("gate-1".to_owned());
     let protected = SemanticInputRecord {
@@ -137,7 +140,7 @@ fn persisted_v1_gate_additions_default_when_absent() -> Result<(), Box<dyn std::
         deltas: Vec::new(),
     };
     let gate = GateRecord {
-        schema_version: "lumin-gate.v1".to_owned(),
+        schema_version: GATE_RECORD_SCHEMA_VERSION.to_owned(),
         gate_id: gate_id.clone(),
         lifecycle: GateLifecycle::Active,
         current_revision: 0,
@@ -690,6 +693,73 @@ fn final_validation_can_stop_post_write_promotion() -> Result<(), Box<dyn std::e
 }
 
 #[test]
+fn unsealed_close_retains_the_prior_complete_read_protection()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let prior = semantic_input("config/prior.json", "prior")?;
+    let gate_id = open_active_gate_with_protected_inputs(
+        &store,
+        "op-open-protected",
+        "open-protected-digest",
+        "src/main.ts",
+        vec![prior.clone()],
+    )?;
+    let operation =
+        store.begin_operation(&OperationId::from_string("op-close-unsealed".to_owned()))?;
+    let gate = match operation.begin_post_write("close-unsealed-digest", &gate_id)? {
+        PostWriteStart::Analyze { gate, .. } => gate,
+        PostWriteStart::Committed(_) => return Err("the closing operation committed early".into()),
+    };
+    let baseline = gate
+        .baseline
+        .as_ref()
+        .ok_or("active gate fixture omitted its baseline")?
+        .snapshot
+        .clone();
+    let current = semantic_input("config/current.json", "current")?;
+    let current_snapshot = seal_analysis_snapshot(
+        vec![current.clone()],
+        baseline.evidence.clone(),
+        baseline.scan_invocation.clone(),
+        baseline.entry_selections.clone(),
+    );
+
+    let result = operation.finish_post_write(
+        "close-unsealed-digest",
+        &gate_id,
+        PostWriteFinish {
+            snapshot: Some(current_snapshot),
+            protected_semantic_inputs: vec![current.clone()],
+            reconciled_baseline: Some(baseline),
+            changed_paths: Vec::new(),
+            actual_write_set: None,
+            alias_closures: Vec::new(),
+            reconciled_transition_sequences: Vec::new(),
+            signals: vec![GateSignal::LifecycleDeltaIncomparable { count: 1 }],
+            deltas: Vec::new(),
+        },
+        |_, _, signals| close_finalization(Vec::new(), signals),
+    )?;
+
+    assert!(matches!(
+        result.observation_binding,
+        Some(ObservationBinding::Unsealed { .. })
+    ));
+    let persisted = store.load_gate(&gate_id)?;
+    assert_eq!(persisted.protected_semantic_inputs, vec![prior]);
+    assert_eq!(
+        persisted
+            .revisions
+            .last()
+            .ok_or("unsealed close revision is missing")?
+            .protected_semantic_inputs,
+        vec![current]
+    );
+    Ok(())
+}
+
+#[test]
 fn semantic_read_reservation_blocks_later_write_admission() -> Result<(), Box<dyn std::error::Error>>
 {
     let root = tempfile::tempdir()?;
@@ -915,11 +985,35 @@ fn empty_snapshot() -> AnalysisSnapshot {
     )
 }
 
+fn semantic_input(
+    value: &str,
+    payload: &str,
+) -> Result<SemanticInputRecord, Box<dyn std::error::Error>> {
+    Ok(SemanticInputRecord {
+        path: path(value)?,
+        state: SemanticInputState::ConfigPresent,
+        payload_sha256: Some(payload.to_owned()),
+        physical_identity: None,
+        absence_parent: None,
+        physical_redirect_sha256: None,
+    })
+}
+
 fn open_active_gate(
     store: &RepositoryStore,
     operation_id: &str,
     request_digest: &str,
     source: &str,
+) -> Result<GateId, Box<dyn std::error::Error>> {
+    open_active_gate_with_protected_inputs(store, operation_id, request_digest, source, Vec::new())
+}
+
+fn open_active_gate_with_protected_inputs(
+    store: &RepositoryStore,
+    operation_id: &str,
+    request_digest: &str,
+    source: &str,
+    protected_semantic_inputs: Vec<SemanticInputRecord>,
 ) -> Result<GateId, Box<dyn std::error::Error>> {
     let operation_id = OperationId::from_string(operation_id.to_owned());
     let session = store.begin_operation(&operation_id)?;
@@ -945,7 +1039,7 @@ fn open_active_gate(
             baseline: Some(GateBaselineDraft {
                 analysis_contract: "test-contract".to_owned(),
                 snapshot: empty_snapshot(),
-                protected_semantic_inputs: Vec::new(),
+                protected_semantic_inputs,
                 transition_sequence,
             }),
             leased_write_set: vec![source_lease],

@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, TcpListener};
 use std::path::Path;
 use std::process::Stdio;
@@ -334,6 +334,128 @@ fn pre_write_observation_binds_promotion_and_interrupted_admission_leaves_no_act
             .pointer("/result/observationBinding/observation/observationId")
             .and_then(Value::as_str),
         Some(observation_id)
+    );
+    final_promotion_reobserves_the_complete_write_domain()?;
+    Ok(())
+}
+
+fn final_promotion_reobserves_the_complete_write_domain() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = fixture()?;
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+    listener.set_nonblocking(true)?;
+    let mut child = lumin_command(root.path())?
+        .args([
+            "pre-write",
+            "--operation-id",
+            "op-final-topology",
+            "--path",
+            "src/new.ts",
+            "--jobs",
+            "1",
+        ])
+        .env(
+            "LUMIN_TEST_GATE_PREWRITE_FINAL_BARRIER",
+            listener.local_addr()?.to_string(),
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let started = Instant::now();
+    let (mut stream, peer) = loop {
+        match listener.accept() {
+            Ok(accepted) => break accepted,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if let Some(status) = child.try_wait()? {
+                    return Err(std::io::Error::other(format!(
+                        "pre-write exited before final topology barrier: {status}"
+                    ))
+                    .into());
+                }
+                if started.elapsed() >= Duration::from_secs(30) {
+                    return Err(std::io::Error::other(
+                        "pre-write did not reach the final topology barrier",
+                    )
+                    .into());
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    };
+    assert!(peer.ip().is_loopback());
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(30)))?;
+    let mut frame = String::new();
+    BufReader::new(stream.try_clone()?).read_line(&mut frame)?;
+    let fields = frame.split_whitespace().collect::<Vec<_>>();
+    assert_eq!(fields.len(), 3, "unexpected final barrier frame: {frame:?}");
+    assert_eq!(fields[0], "finalizing");
+    assert_eq!(fields[1], "op-final-topology");
+
+    fs::hard_link(
+        root.path().join("src/main.ts"),
+        root.path().join("src/new.ts"),
+    )?;
+    stream.write_all(b"release\n")?;
+    stream.flush()?;
+    drop(stream);
+    let output = child.wait_with_output()?;
+    assert_eq!(
+        output.status.code(),
+        Some(5),
+        "unexpected final-topology pre-write result: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let response: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(
+        response.get("decision").and_then(Value::as_str),
+        Some("stale")
+    );
+    assert_eq!(
+        response.get("lifecycle").and_then(Value::as_str),
+        Some("rejected")
+    );
+    assert_eq!(
+        response
+            .pointer("/observationBinding/state")
+            .and_then(Value::as_str),
+        Some("unsealed")
+    );
+    assert_eq!(
+        response
+            .pointer("/observationBinding/reason")
+            .and_then(Value::as_str),
+        Some("protected-input-changed")
+    );
+    assert!(
+        response
+            .get("signals")
+            .and_then(Value::as_array)
+            .is_some_and(|signals| signals.iter().any(|signal| {
+                signal.get("kind").and_then(Value::as_str) == Some("protected-input-changed")
+            }))
+    );
+    let conflicting = response
+        .pointer("/observationBinding/conflictingOrUnboundedInputs")
+        .and_then(Value::as_array)
+        .ok_or("final topology result omitted its conflicting inputs")?;
+    for expected in ["src/main.ts", "src/new.ts"] {
+        assert!(
+            conflicting
+                .iter()
+                .any(|path| { path.get("display").and_then(Value::as_str) == Some(expected) })
+        );
+    }
+    let active = run(root.path(), &["gate", "list", "--active"])?;
+    assert_status(&active, 0);
+    assert_eq!(
+        serde_json::from_str::<Value>(&active.stdout)?
+            .get("total")
+            .and_then(Value::as_u64),
+        Some(0)
     );
     Ok(())
 }

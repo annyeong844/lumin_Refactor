@@ -5,8 +5,8 @@ mod retention;
 use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_evidence::{
-    GateLifecycle, GateOperationKind, GateOperationStatus, GateRecord, OperationRecord,
-    WorktreeTransition,
+    GATE_RECORD_SCHEMA_VERSION, GateLifecycle, GateOperationKind, GateOperationStatus, GateRecord,
+    OperationRecord, WorktreeTransition,
 };
 use lumin_model::{ObservationBinding, SealedGateObservation};
 use serde::de::DeserializeOwned;
@@ -100,6 +100,12 @@ fn validate_gate_history(
     operations: &BTreeMap<&str, OperationRecord>,
     transition_sequences: &BTreeSet<u64>,
 ) -> Result<(), StoreError> {
+    if gate.schema_version != GATE_RECORD_SCHEMA_VERSION {
+        return Err(StoreError::IncompatibleStateSchema(format!(
+            "gate {key} uses unsupported schema {}; expected {GATE_RECORD_SCHEMA_VERSION}",
+            gate.schema_version
+        )));
+    }
     if gate.revisions.last().map(|revision| revision.revision) != Some(gate.current_revision) {
         return Err(StoreError::Integrity(format!(
             "gate {key} current revision is not its durable tail"

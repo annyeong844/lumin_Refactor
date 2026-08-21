@@ -24,6 +24,7 @@ pub(super) struct CloseObservationSeed {
     pub(super) prior_revision: u64,
     pub(super) leased_write_set: Vec<WriteLease>,
     pub(super) snapshot: Option<lumin_evidence::AnalysisSnapshot>,
+    pub(super) prior_protected_semantic_inputs: Vec<SemanticInputRecord>,
     pub(super) protected_semantic_inputs: Vec<SemanticInputRecord>,
     pub(super) changed_paths: Vec<RepoPathProjection>,
     pub(super) actual_write_set: Option<ActualWriteSet>,
@@ -56,6 +57,7 @@ fn pre_write_observation_is_unsealed(signals: &[GateSignal]) -> bool {
                 | GateSignal::DeclaredPathUnsupported { .. }
                 | GateSignal::WriteConflict { .. }
                 | GateSignal::SemanticInputConflict { .. }
+                | GateSignal::ProtectedInputChanged { .. }
                 | GateSignal::UnplannedWrite { .. }
                 | GateSignal::ActiveTransitionPending { .. }
                 | GateSignal::TransitionChainBroken { .. }
@@ -209,13 +211,11 @@ pub(super) fn close_observation_binding(
     attempted_domain.extend(seed.leased_write_set.iter().map(|lease| lease.path.clone()));
     attempted_domain.sort();
     attempted_domain.dedup();
-    let mut last_complete_read_set = seed.snapshot.as_ref().map_or_else(Vec::new, |snapshot| {
-        snapshot
-            .inputs
-            .iter()
-            .map(|input| input.path.clone())
-            .collect()
-    });
+    let mut last_complete_read_set = seed
+        .prior_protected_semantic_inputs
+        .iter()
+        .map(|input| input.path.clone())
+        .collect::<Vec<_>>();
     last_complete_read_set.sort();
     last_complete_read_set.dedup();
     let mut conflicting_or_unbounded_inputs = observation_signal_paths(signals);
@@ -430,6 +430,71 @@ mod tests {
         assert_eq!(original_id, id(&repeated, 7)?);
         assert_ne!(original_id, id(&seed("payload-b")?, 7)?);
         assert_ne!(original_id, id(&original, 8)?);
+        Ok(())
+    }
+
+    #[test]
+    fn failed_close_binding_retains_the_known_gate_domain() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let leased_path = RepoPathProjection::from(&RepoPath::from_portable("src/lib.ts")?);
+        let protected_path =
+            RepoPathProjection::from(&RepoPath::from_portable("config/base.json")?);
+        let seed = CloseObservationSeed {
+            gate_id: GateId::from_string("gate-test".to_owned()),
+            opening_observation_id: Some(GateBaselineObservationId::from_string(
+                "gate_baseline_observation_test".to_owned(),
+            )),
+            opening_analysis_contract: Some("contract".to_owned()),
+            prior_revision: 3,
+            leased_write_set: vec![WriteLease {
+                path: leased_path.clone(),
+                kind: WriteLeaseKind::ExistingFile,
+                physical_identity: None,
+                nearest_existing_parent: None,
+                prefix_identities: Vec::new(),
+            }],
+            snapshot: None,
+            prior_protected_semantic_inputs: vec![SemanticInputRecord {
+                path: protected_path.clone(),
+                state: SemanticInputState::ConfigPresent,
+                payload_sha256: Some("captured".to_owned()),
+                physical_identity: None,
+                absence_parent: None,
+                physical_redirect_sha256: None,
+            }],
+            protected_semantic_inputs: vec![SemanticInputRecord {
+                path: protected_path.clone(),
+                state: SemanticInputState::ConfigPresent,
+                payload_sha256: Some("captured".to_owned()),
+                physical_identity: None,
+                absence_parent: None,
+                physical_redirect_sha256: None,
+            }],
+            changed_paths: Vec::new(),
+            actual_write_set: None,
+            alias_closures: Vec::new(),
+            reconciled_transition_sequences: Vec::new(),
+        };
+
+        let binding = close_observation_binding(
+            &seed,
+            5,
+            &[GateSignal::AnalysisFailed {
+                detail: "capture failed".to_owned(),
+            }],
+        );
+        let ObservationBinding::Unsealed {
+            attempted_domain,
+            last_complete_read_set,
+            conflicting_or_unbounded_inputs,
+            ..
+        } = binding
+        else {
+            return Err("failed close unexpectedly produced a sealed observation".into());
+        };
+        assert_eq!(attempted_domain, vec![leased_path.clone()]);
+        assert_eq!(last_complete_read_set, vec![protected_path]);
+        assert_eq!(conflicting_or_unbounded_inputs, vec![leased_path]);
         Ok(())
     }
 

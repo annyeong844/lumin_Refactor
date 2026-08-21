@@ -509,7 +509,7 @@ impl OperationSession<'_> {
                     },
                 )?;
             }
-            if snapshot_can_protect_current_reads(snapshot.as_ref(), &signals) {
+            if snapshot_can_protect_current_reads(snapshot.as_ref(), &observation_binding) {
                 gate.protected_semantic_inputs = protected_semantic_inputs.clone();
             }
             gate.current_revision = revision;

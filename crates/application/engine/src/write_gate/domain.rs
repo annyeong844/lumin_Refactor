@@ -219,6 +219,149 @@ pub(super) fn expand_write_domain(
     (leases, alias_closures, signals)
 }
 
+pub(super) fn revalidate_write_domain(
+    root: &Path,
+    expected_leases: &[WriteLease],
+    expected_alias_closures: &[PhysicalAliasClosureRecord],
+    captured_inputs: &[SemanticInputRecord],
+) -> Vec<GateSignal> {
+    let semantic_paths = match captured_input_physical_paths(captured_inputs) {
+        Ok(paths) => paths,
+        Err(signal) => return vec![signal],
+    };
+    let mut leases = Vec::new();
+    let mut seeds = BTreeSet::new();
+    let mut failures = Vec::new();
+
+    for expected in expected_leases {
+        let path = match RepoPath::from_canonical_bytes(&expected.path.canonical) {
+            Ok(path) if RepoPathProjection::from(&path) == expected.path => path,
+            Ok(_) => {
+                failures.push(format!(
+                    "stored write lease projection round-trip failed for {}",
+                    expected.path.display
+                ));
+                continue;
+            }
+            Err(error) => {
+                failures.push(format!(
+                    "stored write lease path is not canonical: {} ({error})",
+                    expected.path.display
+                ));
+                continue;
+            }
+        };
+        match lumin_inventory::inspect_write_target(root, &path) {
+            Ok(observation) => {
+                match observation.kind {
+                    WriteTargetKind::ExistingFile => {
+                        seeds.insert(observation.path.clone());
+                    }
+                    WriteTargetKind::ExistingDirectory => {
+                        seeds.extend(
+                            semantic_paths
+                                .iter()
+                                .filter(|candidate| candidate.is_within(&observation.path))
+                                .cloned(),
+                        );
+                    }
+                    WriteTargetKind::NewFile => {}
+                }
+                leases.push(write_lease(&observation));
+            }
+            Err(error) => failures.push(error.to_string()),
+        }
+    }
+
+    let mut groups = BTreeMap::<PhysicalFileIdentity, BTreeSet<RepoPath>>::new();
+    for seed in seeds {
+        match lumin_inventory::physical_alias_write_closure(root, &seed, &semantic_paths) {
+            Ok(closure) => {
+                groups
+                    .entry(closure.physical_identity)
+                    .or_default()
+                    .extend(closure.members);
+            }
+            Err(error) => failures.push(error.to_string()),
+        }
+    }
+    for member in groups.values().flatten() {
+        match lumin_inventory::inspect_write_target(root, member) {
+            Ok(observation) => leases.push(write_lease(&observation)),
+            Err(error) => failures.push(error.to_string()),
+        }
+    }
+
+    if !failures.is_empty() {
+        failures.sort();
+        failures.dedup();
+        return failures
+            .into_iter()
+            .map(|detail| GateSignal::AnalysisFailed { detail })
+            .collect();
+    }
+
+    leases.sort();
+    leases.dedup();
+    let mut expected_leases = expected_leases.to_vec();
+    expected_leases.sort();
+    expected_leases.dedup();
+    let alias_closures = normalized_alias_closures(alias_closure_records(groups));
+    let expected_alias_closures = normalized_alias_closures(expected_alias_closures.to_vec());
+    if leases == expected_leases && alias_closures == expected_alias_closures {
+        return Vec::new();
+    }
+
+    let mut changed = expected_leases
+        .iter()
+        .chain(&leases)
+        .map(|lease| lease.path.clone())
+        .chain(
+            expected_alias_closures
+                .iter()
+                .chain(&alias_closures)
+                .flat_map(|closure| closure.members.iter().cloned()),
+        )
+        .collect::<Vec<_>>();
+    changed.sort();
+    changed.dedup();
+    vec![GateSignal::ProtectedInputChanged { paths: changed }]
+}
+
+fn captured_input_physical_paths(
+    inputs: &[SemanticInputRecord],
+) -> Result<Vec<RepoPath>, GateSignal> {
+    let mut paths = inputs
+        .iter()
+        .filter(|input| input.physical_identity.is_some())
+        .map(|input| {
+            RepoPath::from_canonical_bytes(&input.path.canonical).map_err(|error| {
+                GateSignal::AnalysisFailed {
+                    detail: format!(
+                        "captured semantic path is not canonical: {} ({error})",
+                        input.path.display
+                    ),
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
+fn normalized_alias_closures(
+    mut closures: Vec<PhysicalAliasClosureRecord>,
+) -> Vec<PhysicalAliasClosureRecord> {
+    for closure in &mut closures {
+        closure.members.sort();
+        closure.members.dedup();
+    }
+    closures.sort();
+    closures.dedup();
+    closures
+}
+
 fn inferred_observation_matches_capture(
     inputs: &[SemanticInputRecord],
     observation: &WriteTargetObservation,
@@ -374,25 +517,7 @@ pub(super) fn close_alias_topology(
 }
 
 fn captured_physical_paths(capture: &RepositoryCapture) -> Result<Vec<RepoPath>, GateSignal> {
-    let mut paths = capture
-        .snapshot
-        .inputs
-        .iter()
-        .filter(|input| input.physical_identity.is_some())
-        .map(|input| {
-            RepoPath::from_canonical_bytes(&input.path.canonical).map_err(|error| {
-                GateSignal::AnalysisFailed {
-                    detail: format!(
-                        "captured semantic path is not canonical: {} ({error})",
-                        input.path.display
-                    ),
-                }
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    paths.sort();
-    paths.dedup();
-    Ok(paths)
+    captured_input_physical_paths(&capture.snapshot.inputs)
 }
 
 fn validate_stable_lease_parents(root: &Path, leases: &[WriteLease]) -> Vec<GateSignal> {
@@ -644,6 +769,45 @@ mod tests {
             &source_paths,
             &selected_keys
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn final_write_domain_revalidation_detects_a_new_physical_alias()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        std::fs::create_dir(root.path().join("src"))?;
+        let source = RepoPath::from_portable("src/main.ts")?;
+        let planned = RepoPath::from_portable("src/new.ts")?;
+        std::fs::write(root.path().join("src/main.ts"), "export const main = 1;\n")?;
+        let inspection = inspect_declared_paths(root.path(), std::slice::from_ref(&planned));
+        assert!(inspection.signals.is_empty());
+        assert_eq!(inspection.leases.len(), 1);
+        assert_eq!(inspection.leases[0].kind, WriteLeaseKind::NewFile);
+        let captured_inputs = vec![SemanticInputRecord {
+            path: RepoPathProjection::from(&source),
+            state: SemanticInputState::Source,
+            payload_sha256: Some("captured".to_owned()),
+            physical_identity: Some(lumin_inventory::physical_file_identity(
+                &root.path().join("src/main.ts"),
+            )?),
+            absence_parent: None,
+            physical_redirect_sha256: None,
+        }];
+
+        std::fs::hard_link(
+            root.path().join("src/main.ts"),
+            root.path().join("src/new.ts"),
+        )?;
+        let signals =
+            revalidate_write_domain(root.path(), &inspection.leases, &[], &captured_inputs);
+
+        assert_eq!(signals.len(), 1);
+        let GateSignal::ProtectedInputChanged { paths } = &signals[0] else {
+            return Err(format!("unexpected final validation signals: {signals:?}").into());
+        };
+        assert!(paths.contains(&RepoPathProjection::from(&source)));
+        assert!(paths.contains(&RepoPathProjection::from(&planned)));
         Ok(())
     }
 }
