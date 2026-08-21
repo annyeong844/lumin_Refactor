@@ -404,7 +404,7 @@ pub fn cache_cleanup_response(result: &CacheCleanupResult) -> CacheCleanupRespon
 
 pub fn gate_mutation_response(result: &GateOperationResult) -> GateMutationResponseDto {
     GateMutationResponseDto {
-        schema_version: "lumin.gate-mutation.v1",
+        schema_version: "lumin.gate-mutation.v2",
         operation_id: result.operation_id.clone(),
         request_digest: result.request_digest.clone(),
         gate_id: result.gate_id.clone(),
@@ -453,7 +453,7 @@ fn gate_show_response_with_selection(
     selected_revision: Option<u64>,
 ) -> GateShowResponseDto {
     GateShowResponseDto {
-        schema_version: "lumin.gate.v1",
+        schema_version: "lumin.gate.v2",
         gate_id: gate.gate_id.clone(),
         lifecycle: gate.lifecycle,
         current_revision: gate.current_revision,

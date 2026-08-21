@@ -171,6 +171,8 @@ fn gate_evidence(root: &Path, stdout: &str) -> Result<Vec<Value>, Box<dyn std::e
                 "baseline",
                 true,
             ),
+            "analysisContract": baseline.analysis_contract,
+            "transitionSequence": baseline.transition_sequence,
             "leasedWriteSet": gate.leased_write_set.iter().map(|lease| serde_json::json!({
                 "path": lease.path,
                 "kind": lease.kind,
@@ -187,9 +189,24 @@ fn gate_evidence(root: &Path, stdout: &str) -> Result<Vec<Value>, Box<dyn std::e
                 "payloadSha256": input.payload_sha256,
                 "physicalIdentityPresent": input.physical_identity.is_some(),
                 "absenceParentPath": input.absence_parent.as_ref().map(|parent| &parent.path),
-                "physicalRedirectSha256": input.physical_redirect_sha256,
+                // Redirect digests intentionally bind repository-instance physical identities.
+                // Fresh fixtures compare that the binding exists; the sealed observation ID
+                // still proves the persisted owner consumed the exact instance-specific digest.
+                "physicalRedirectPresent": input.physical_redirect_sha256.is_some(),
             })).collect::<Vec<_>>(),
-            "snapshot": baseline.snapshot.evidence.semantic_projection(),
+            "snapshot": {
+                "inputs": baseline.snapshot.inputs.iter().map(|input| serde_json::json!({
+                    "path": input.path,
+                    "state": input.state,
+                    "payloadSha256": input.payload_sha256,
+                    "physicalIdentityPresent": input.physical_identity.is_some(),
+                    "absenceParentPath": input.absence_parent.as_ref().map(|parent| &parent.path),
+                    "physicalRedirectPresent": input.physical_redirect_sha256.is_some(),
+                })).collect::<Vec<_>>(),
+                "scanInvocation": baseline.snapshot.scan_invocation,
+                "entrySelections": baseline.snapshot.entry_selections,
+                "evidence": baseline.snapshot.evidence.semantic_projection(),
+            },
         }));
     }
     let baseline_observation_id = gate
@@ -197,11 +214,21 @@ fn gate_evidence(root: &Path, stdout: &str) -> Result<Vec<Value>, Box<dyn std::e
         .as_ref()
         .map(|baseline| baseline.observation_id.as_str().to_owned());
     for revision in gate.revisions {
-        let snapshot = revision
-            .snapshot
-            .as_ref()
-            .map(|snapshot| serde_json::to_value(snapshot.evidence.semantic_projection()))
-            .transpose()?;
+        let snapshot = revision.snapshot.as_ref().map(|snapshot| {
+            serde_json::json!({
+                "inputs": snapshot.inputs.iter().map(|input| serde_json::json!({
+                    "path": input.path,
+                    "state": input.state,
+                    "payloadSha256": input.payload_sha256,
+                    "physicalIdentityPresent": input.physical_identity.is_some(),
+                    "absenceParentPath": input.absence_parent.as_ref().map(|parent| &parent.path),
+                    "physicalRedirectPresent": input.physical_redirect_sha256.is_some(),
+                })).collect::<Vec<_>>(),
+                "scanInvocation": snapshot.scan_invocation,
+                "entrySelections": snapshot.entry_selections,
+                "evidence": snapshot.evidence.semantic_projection(),
+            })
+        });
         let observation_binding = revision
             .observation_binding
             .as_ref()
@@ -209,12 +236,45 @@ fn gate_evidence(root: &Path, stdout: &str) -> Result<Vec<Value>, Box<dyn std::e
             .transpose()?;
         evidence.push(serde_json::json!({
             "schemaVersion": "lumin.gate-revision-semantic.v1",
+            "gateId": gate.gate_id,
             "revision": revision.revision,
+            "priorRevision": revision.revision.saturating_sub(1),
+            "openingAnalysisContract": gate.baseline.as_ref().map(|baseline| &baseline.analysis_contract),
+            "decision": revision.decision,
             "observationBinding": observation_binding_projection(
                 observation_binding,
                 baseline_observation_id.as_deref(),
                 revision.revision,
             )?,
+            "leasedWriteSet": gate.leased_write_set.iter().map(|lease| serde_json::json!({
+                "path": lease.path,
+                "kind": lease.kind,
+                "physicalIdentityPresent": lease.physical_identity.is_some(),
+                "nearestExistingParent": lease.nearest_existing_parent,
+                "prefixPaths": lease.prefix_identities.iter().map(|prefix| &prefix.path).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+            "protectedSemanticInputs": revision.protected_semantic_inputs.iter().map(|input| serde_json::json!({
+                "path": input.path,
+                "state": input.state,
+                "payloadSha256": input.payload_sha256,
+                "physicalIdentityPresent": input.physical_identity.is_some(),
+                "absenceParentPath": input.absence_parent.as_ref().map(|parent| &parent.path),
+                "physicalRedirectPresent": input.physical_redirect_sha256.is_some(),
+            })).collect::<Vec<_>>(),
+            "changedPaths": revision.changed_paths,
+            "actualWriteSet": revision.actual_write_set.as_ref().map(|actual| serde_json::json!({
+                "paths": actual.paths,
+                "baselineAliasClosures": actual.baseline_alias_closures.iter().map(|closure| serde_json::json!({
+                    "members": closure.members,
+                })).collect::<Vec<_>>(),
+                "currentAliasClosures": actual.current_alias_closures.iter().map(|closure| serde_json::json!({
+                    "members": closure.members,
+                })).collect::<Vec<_>>(),
+            })),
+            "aliasClosures": revision.alias_closures.iter().map(|closure| serde_json::json!({
+                "members": closure.members,
+            })).collect::<Vec<_>>(),
+            "reconciledTransitionSequences": revision.reconciled_transition_sequences,
             "snapshot": snapshot,
         }));
     }

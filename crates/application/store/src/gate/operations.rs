@@ -429,15 +429,15 @@ impl OperationSession<'_> {
         ) -> ObservationFinalization,
     ) -> Result<GateOperationResult, StoreError> {
         let PostWriteFinish {
-            snapshot,
-            protected_semantic_inputs,
+            mut snapshot,
+            mut protected_semantic_inputs,
             reconciled_baseline,
             changed_paths,
             mut actual_write_set,
-            alias_closures,
-            reconciled_transition_sequences,
+            mut alias_closures,
+            mut reconciled_transition_sequences,
             mut signals,
-            deltas,
+            mut deltas,
         } = finish;
         let operation_id = &self.operation_id;
         self.store.with_exclusive_lock(|guard| {
@@ -477,8 +477,30 @@ impl OperationSession<'_> {
                 final_validation(&reserved_state_identities, catalog_revision, &signals);
             signals.extend(finalization.signals);
             let observation_binding = finalization.binding;
-            if !gate_policy::actual_write_attribution_is_complete(&signals) {
+            let sealed_close = match &observation_binding {
+                lumin_model::ObservationBinding::Sealed {
+                    observation: lumin_model::SealedGateObservation::Close { .. },
+                } => true,
+                lumin_model::ObservationBinding::Unsealed { .. } => false,
+                lumin_model::ObservationBinding::Sealed { .. } => {
+                    return Err(StoreError::Integrity(
+                        "post-write returned a non-close sealed observation".to_owned(),
+                    ));
+                }
+            };
+            if sealed_close && (snapshot.is_none() || actual_write_set.is_none()) {
+                return Err(StoreError::Integrity(
+                    "sealed close observation omitted its complete snapshot or actual-write set"
+                        .to_owned(),
+                ));
+            }
+            if !sealed_close {
+                snapshot = None;
+                protected_semantic_inputs.clear();
                 actual_write_set = None;
+                alias_closures.clear();
+                reconciled_transition_sequences.clear();
+                deltas.clear();
             }
             let decision = gate_policy::decision(&signals);
             let revision = gate
@@ -509,7 +531,8 @@ impl OperationSession<'_> {
                     },
                 )?;
             }
-            if snapshot_can_protect_current_reads(snapshot.as_ref(), &observation_binding) {
+            if snapshot_can_protect_current_reads(snapshot.as_ref(), &observation_binding, decision)
+            {
                 gate.protected_semantic_inputs = protected_semantic_inputs.clone();
             }
             gate.current_revision = revision;

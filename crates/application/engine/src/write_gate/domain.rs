@@ -128,7 +128,7 @@ pub(super) fn expand_write_domain(
     Vec<PhysicalAliasClosureRecord>,
     Vec<GateSignal>,
 ) {
-    let semantic_paths = match captured_physical_paths(capture) {
+    let semantic_paths = match captured_input_physical_paths(&capture.snapshot.inputs) {
         Ok(paths) => paths,
         Err(signal) => return (leases, Vec::new(), vec![signal]),
     };
@@ -225,15 +225,50 @@ pub(super) fn revalidate_write_domain(
     expected_alias_closures: &[PhysicalAliasClosureRecord],
     captured_inputs: &[SemanticInputRecord],
 ) -> Vec<GateSignal> {
+    let (leases, alias_closures) =
+        match observe_write_domain(root, expected_leases, captured_inputs) {
+            Ok(domain) => domain,
+            Err(signals) => return signals,
+        };
+
+    let mut expected_leases = expected_leases.to_vec();
+    expected_leases.sort();
+    expected_leases.dedup();
+    let expected_alias_closures = normalized_alias_closures(expected_alias_closures.to_vec());
+    if leases == expected_leases && alias_closures == expected_alias_closures {
+        return Vec::new();
+    }
+
+    let mut changed = expected_leases
+        .iter()
+        .chain(&leases)
+        .map(|lease| lease.path.clone())
+        .chain(
+            expected_alias_closures
+                .iter()
+                .chain(&alias_closures)
+                .flat_map(|closure| closure.members.iter().cloned()),
+        )
+        .collect::<Vec<_>>();
+    changed.sort();
+    changed.dedup();
+    vec![GateSignal::ProtectedInputChanged { paths: changed }]
+}
+
+fn observe_write_domain(
+    root: &Path,
+    lease_paths: &[WriteLease],
+    captured_inputs: &[SemanticInputRecord],
+) -> Result<(Vec<WriteLease>, Vec<PhysicalAliasClosureRecord>), Vec<GateSignal>> {
     let semantic_paths = match captured_input_physical_paths(captured_inputs) {
         Ok(paths) => paths,
-        Err(signal) => return vec![signal],
+        Err(signal) => return Err(vec![signal]),
     };
     let mut leases = Vec::new();
     let mut seeds = BTreeSet::new();
     let mut failures = Vec::new();
 
-    for expected in expected_leases {
+    for expected in lease_paths {
         let path = match RepoPath::from_canonical_bytes(&expected.path.canonical) {
             Ok(path) if RepoPathProjection::from(&path) == expected.path => path,
             Ok(_) => {
@@ -295,37 +330,16 @@ pub(super) fn revalidate_write_domain(
     if !failures.is_empty() {
         failures.sort();
         failures.dedup();
-        return failures
+        return Err(failures
             .into_iter()
             .map(|detail| GateSignal::AnalysisFailed { detail })
-            .collect();
+            .collect());
     }
 
     leases.sort();
     leases.dedup();
-    let mut expected_leases = expected_leases.to_vec();
-    expected_leases.sort();
-    expected_leases.dedup();
     let alias_closures = normalized_alias_closures(alias_closure_records(groups));
-    let expected_alias_closures = normalized_alias_closures(expected_alias_closures.to_vec());
-    if leases == expected_leases && alias_closures == expected_alias_closures {
-        return Vec::new();
-    }
-
-    let mut changed = expected_leases
-        .iter()
-        .chain(&leases)
-        .map(|lease| lease.path.clone())
-        .chain(
-            expected_alias_closures
-                .iter()
-                .chain(&alias_closures)
-                .flat_map(|closure| closure.members.iter().cloned()),
-        )
-        .collect::<Vec<_>>();
-    changed.sort();
-    changed.dedup();
-    vec![GateSignal::ProtectedInputChanged { paths: changed }]
+    Ok((leases, alias_closures))
 }
 
 fn captured_input_physical_paths(
@@ -468,56 +482,32 @@ pub(super) fn close_alias_topology(
     root: &Path,
     gate: &GateRecord,
     capture: &RepositoryCapture,
-) -> (Vec<PhysicalAliasClosureRecord>, Vec<GateSignal>) {
+) -> (
+    Vec<WriteLease>,
+    Vec<PhysicalAliasClosureRecord>,
+    Vec<GateSignal>,
+) {
     let mut signals = validate_stable_lease_parents(root, &gate.leased_write_set);
-    let current_paths = match captured_physical_paths(capture) {
-        Ok(paths) => paths,
-        Err(signal) => {
-            signals.push(signal);
-            return (Vec::new(), signals);
-        }
-    };
-    let seeds = current_paths
-        .iter()
-        .filter(|path| {
-            let projection = RepoPathProjection::from(*path);
-            gate.leased_write_set
-                .iter()
-                .any(|lease| lease.covers(&projection))
-        })
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    let mut groups = BTreeMap::<PhysicalFileIdentity, BTreeSet<RepoPath>>::new();
-    for seed in seeds {
-        match lumin_inventory::physical_alias_write_closure(root, &seed, &current_paths) {
-            Ok(closure) => {
-                for member in &closure.members {
-                    let projection = RepoPathProjection::from(member);
-                    if !gate
-                        .leased_write_set
-                        .iter()
-                        .any(|lease| lease.covers(&projection))
-                    {
-                        signals.push(GateSignal::UnplannedWrite {
-                            paths: vec![projection],
-                        });
-                    }
-                }
-                groups
-                    .entry(closure.physical_identity)
-                    .or_default()
-                    .extend(closure.members);
+    let (leases, alias_closures) =
+        match observe_write_domain(root, &gate.leased_write_set, &capture.snapshot.inputs) {
+            Ok(domain) => domain,
+            Err(domain_signals) => {
+                signals.extend(domain_signals);
+                return (Vec::new(), Vec::new(), signals);
             }
-            Err(error) => signals.push(GateSignal::AnalysisFailed {
-                detail: error.to_string(),
-            }),
+        };
+    for member in alias_closures.iter().flat_map(|closure| &closure.members) {
+        if !gate
+            .leased_write_set
+            .iter()
+            .any(|lease| lease.covers(member))
+        {
+            signals.push(GateSignal::UnplannedWrite {
+                paths: vec![member.clone()],
+            });
         }
     }
-    (alias_closure_records(groups), signals)
-}
-
-fn captured_physical_paths(capture: &RepositoryCapture) -> Result<Vec<RepoPath>, GateSignal> {
-    captured_input_physical_paths(&capture.snapshot.inputs)
+    (leases, alias_closures, signals)
 }
 
 fn validate_stable_lease_parents(root: &Path, leases: &[WriteLease]) -> Vec<GateSignal> {

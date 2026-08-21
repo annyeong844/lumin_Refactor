@@ -630,12 +630,29 @@ fn final_validation_can_stop_pre_write_promotion() -> Result<(), Box<dyn std::er
 
     assert_eq!(result.lifecycle, GateLifecycle::Rejected);
     assert!(!result.decision.authorizes());
+    assert!(matches!(
+        result.observation_binding,
+        Some(ObservationBinding::Sealed {
+            observation: SealedGateObservation::Baseline { .. }
+        })
+    ));
     assert_eq!(
         result.signals,
         [GateSignal::ProtectedInputChanged {
             paths: vec![source]
         }]
     );
+    let persisted = store.load_gate(&gate_id)?;
+    assert!(persisted.baseline.is_some());
+    assert!(matches!(
+        persisted
+            .revisions
+            .last()
+            .and_then(|revision| revision.observation_binding.as_ref()),
+        Some(ObservationBinding::Sealed {
+            observation: SealedGateObservation::Baseline { .. }
+        })
+    ));
     Ok(())
 }
 
@@ -643,7 +660,14 @@ fn final_validation_can_stop_pre_write_promotion() -> Result<(), Box<dyn std::er
 fn final_validation_can_stop_post_write_promotion() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     let store = open_store(root.path())?;
-    let gate_id = open_active_gate(&store, "op-open", "open-digest", "src/main.ts")?;
+    let prior = semantic_input("config/prior.json", "prior")?;
+    let gate_id = open_active_gate_with_protected_inputs(
+        &store,
+        "op-open",
+        "open-digest",
+        "src/main.ts",
+        vec![prior.clone()],
+    )?;
     let operation = store.begin_operation(&OperationId::from_string("op-close".to_owned()))?;
     let gate = match operation.begin_post_write("close-digest", &gate_id)? {
         PostWriteStart::Analyze { gate, .. } => gate,
@@ -655,14 +679,21 @@ fn final_validation_can_stop_post_write_promotion() -> Result<(), Box<dyn std::e
         .ok_or("active gate fixture omitted its baseline")?
         .snapshot
         .clone();
+    let current = semantic_input("config/current.json", "current")?;
+    let current_snapshot = seal_analysis_snapshot(
+        vec![current.clone()],
+        baseline.evidence.clone(),
+        baseline.scan_invocation.clone(),
+        baseline.entry_selections.clone(),
+    );
     let source = path("src/main.ts")?;
 
     let result = operation.finish_post_write(
         "close-digest",
         &gate_id,
         PostWriteFinish {
-            snapshot: Some(baseline.clone()),
-            protected_semantic_inputs: Vec::new(),
+            snapshot: Some(current_snapshot),
+            protected_semantic_inputs: vec![current.clone()],
             reconciled_baseline: Some(baseline),
             changed_paths: Vec::new(),
             actual_write_set: Some(Default::default()),
@@ -682,13 +713,26 @@ fn final_validation_can_stop_post_write_promotion() -> Result<(), Box<dyn std::e
     )?;
 
     assert!(!result.decision.authorizes());
-    assert!(result.actual_write_set.is_none());
+    assert!(result.actual_write_set.is_some());
     assert_eq!(
         result.signals,
         [GateSignal::ProtectedInputChanged {
             paths: vec![source]
         }]
     );
+    assert!(matches!(
+        result.observation_binding,
+        Some(ObservationBinding::Sealed { .. })
+    ));
+    let persisted = store.load_gate(&gate_id)?;
+    assert_eq!(persisted.protected_semantic_inputs, vec![prior]);
+    let revision = persisted
+        .revisions
+        .last()
+        .ok_or("stale close revision is missing")?;
+    assert_eq!(revision.protected_semantic_inputs, vec![current]);
+    assert!(revision.snapshot.is_some());
+    assert!(revision.actual_write_set.is_some());
     Ok(())
 }
 
@@ -733,7 +777,7 @@ fn unsealed_close_retains_the_prior_complete_read_protection()
             protected_semantic_inputs: vec![current.clone()],
             reconciled_baseline: Some(baseline),
             changed_paths: Vec::new(),
-            actual_write_set: None,
+            actual_write_set: Some(Default::default()),
             alias_closures: Vec::new(),
             reconciled_transition_sequences: Vec::new(),
             signals: vec![GateSignal::LifecycleDeltaIncomparable { count: 1 }],
@@ -746,16 +790,18 @@ fn unsealed_close_retains_the_prior_complete_read_protection()
         result.observation_binding,
         Some(ObservationBinding::Unsealed { .. })
     ));
+    assert!(result.actual_write_set.is_none());
     let persisted = store.load_gate(&gate_id)?;
     assert_eq!(persisted.protected_semantic_inputs, vec![prior]);
-    assert_eq!(
-        persisted
-            .revisions
-            .last()
-            .ok_or("unsealed close revision is missing")?
-            .protected_semantic_inputs,
-        vec![current]
-    );
+    let revision = persisted
+        .revisions
+        .last()
+        .ok_or("unsealed close revision is missing")?;
+    assert!(revision.protected_semantic_inputs.is_empty());
+    assert!(revision.snapshot.is_none());
+    assert!(revision.actual_write_set.is_none());
+    assert!(revision.alias_closures.is_empty());
+    assert!(revision.reconciled_transition_sequences.is_empty());
     Ok(())
 }
 

@@ -32,7 +32,8 @@ use domain::{
 };
 use observation::{
     BaselineObservationSeed, CloseObservationSeed, close_observation_binding,
-    pre_write_observation_binding, unsealed_pre_write_observation_binding,
+    pre_write_observation_binding, pre_write_observation_can_seal,
+    unsealed_pre_write_observation_binding,
 };
 use transitions::{
     active_transition_signals, changed_paths, closure_expanded_actual_write_set,
@@ -206,22 +207,26 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
             &gate_id,
             finish,
             |reserved_identities, catalog_revision, store_signals| {
-                let final_signals = final_validation.map_or_else(Vec::new, |validation| {
-                    let mut signals = final_freshness_validation_signals(
-                        &context.root,
-                        &validation,
-                        reserved_identities,
-                    );
-                    if let Some(baseline) = &observation_seed.baseline {
-                        signals.extend(revalidate_write_domain(
+                let final_signals = if pre_write_observation_can_seal(store_signals) {
+                    final_validation.map_or_else(Vec::new, |validation| {
+                        let mut signals = final_freshness_validation_signals(
                             &context.root,
-                            &observation_seed.leased_write_set,
-                            &observation_seed.alias_closures,
-                            &baseline.snapshot.inputs,
-                        ));
-                    }
-                    signals
-                });
+                            &validation,
+                            reserved_identities,
+                        );
+                        if let Some(baseline) = &observation_seed.baseline {
+                            signals.extend(revalidate_write_domain(
+                                &context.root,
+                                &observation_seed.leased_write_set,
+                                &observation_seed.alias_closures,
+                                &baseline.snapshot.inputs,
+                            ));
+                        }
+                        signals
+                    })
+                } else {
+                    Vec::new()
+                };
                 let mut all_signals = store_signals.to_vec();
                 all_signals.extend(final_signals.iter().cloned());
                 ObservationFinalization {
@@ -241,7 +246,7 @@ fn wait_at_pre_write_admission_barrier(
     operation_id: &OperationId,
     gate_id: &GateId,
 ) -> Result<(), EngineError> {
-    wait_at_pre_write_barrier(
+    wait_at_gate_test_barrier(
         "LUMIN_TEST_GATE_ADMISSION_BARRIER",
         "reserved",
         operation_id,
@@ -253,7 +258,7 @@ fn wait_at_pre_write_final_barrier(
     operation_id: &OperationId,
     gate_id: &GateId,
 ) -> Result<(), EngineError> {
-    wait_at_pre_write_barrier(
+    wait_at_gate_test_barrier(
         "LUMIN_TEST_GATE_PREWRITE_FINAL_BARRIER",
         "finalizing",
         operation_id,
@@ -261,7 +266,19 @@ fn wait_at_pre_write_final_barrier(
     )
 }
 
-fn wait_at_pre_write_barrier(
+fn wait_at_post_write_final_barrier(
+    operation_id: &OperationId,
+    gate_id: &GateId,
+) -> Result<(), EngineError> {
+    wait_at_gate_test_barrier(
+        "LUMIN_TEST_GATE_POSTWRITE_FINAL_BARRIER",
+        "close-finalizing",
+        operation_id,
+        gate_id,
+    )
+}
+
+fn wait_at_gate_test_barrier(
     environment: &str,
     stage: &str,
     operation_id: &OperationId,
@@ -612,7 +629,8 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         signals.extend(closing_signals);
         deltas = closing_deltas;
     }
-    let (alias_closures, topology_signals) = close_alias_topology(&context.root, &gate, &capture);
+    let (close_write_leases, alias_closures, topology_signals) =
+        close_alias_topology(&context.root, &gate, &capture);
     let actual_write_set = if gate_policy::actual_write_attribution_is_complete(&signals)
         && gate_policy::actual_write_attribution_is_complete(&topology_signals)
     {
@@ -648,6 +666,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         alias_closures: alias_closures.clone(),
         reconciled_transition_sequences: reconciled_sequences.clone(),
     };
+    wait_at_post_write_final_barrier(&request.operation_id, &request.gate_id)?;
     operation
         .finish_post_write(
             &request_digest,
@@ -669,6 +688,13 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                     &final_validation,
                     reserved_identities,
                 );
+                let mut final_signals = final_signals;
+                final_signals.extend(revalidate_write_domain(
+                    &context.root,
+                    &close_write_leases,
+                    &observation_seed.alias_closures,
+                    &final_validation.captured_inputs,
+                ));
                 let mut all_signals = store_signals.to_vec();
                 all_signals.extend(final_signals.iter().cloned());
                 ObservationFinalization {

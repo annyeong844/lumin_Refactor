@@ -162,6 +162,18 @@ fn close_time_new_semantic_demand_outside_lease_stays_unplanned_on_retry()
     assert_status(&first, 3);
     assert_eq!(field(&first.stdout, "decision")?, "deny");
     assert_has_signal(&first.stdout, "unplanned-write")?;
+    assert_eq!(
+        serde_json::from_str::<Value>(&first.stdout)?
+            .pointer("/observationBinding/state")
+            .and_then(Value::as_str),
+        Some("sealed")
+    );
+    let after_first = run(root.path(), &["gate", "show", &gate_id])?;
+    assert_status(&after_first, 0);
+    let protected_after_first = serde_json::from_str::<Value>(&after_first.stdout)?
+        .get("protectedSemanticInputCount")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| std::io::Error::other("first close protected input count is missing"))?;
 
     fs::write(
         root.path().join("config/base.json"),
@@ -176,9 +188,16 @@ fn close_time_new_semantic_demand_outside_lease_stays_unplanned_on_retry()
             "op-demand-retry-close",
         ],
     )?;
-    assert_status(&retry, 3);
-    assert_eq!(field(&retry.stdout, "decision")?, "deny");
+    assert_status(&retry, 5);
+    assert_eq!(field(&retry.stdout, "decision")?, "stale");
     assert_has_signal(&retry.stdout, "unplanned-write")?;
+    assert_has_signal(&retry.stdout, "protected-input-changed")?;
+    assert_eq!(
+        serde_json::from_str::<Value>(&retry.stdout)?
+            .pointer("/observationBinding/state")
+            .and_then(Value::as_str),
+        Some("unsealed")
+    );
 
     let operation = run(root.path(), &["operation", "show", "op-demand-retry-close"])?;
     assert_status(&operation, 0);
@@ -206,7 +225,8 @@ fn close_time_new_semantic_demand_outside_lease_stays_unplanned_on_retry()
         .get("protectedSemanticInputCount")
         .and_then(Value::as_u64)
         .ok_or_else(|| std::io::Error::other("current protected input count is missing"))?;
-    assert_eq!(current_count, baseline_count);
+    assert!(protected_after_first > baseline_count);
+    assert_eq!(current_count, protected_after_first);
     assert_eq!(field(&shown.stdout, "lifecycle")?, "active");
     Ok(())
 }

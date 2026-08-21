@@ -35,6 +35,11 @@ fn pre_and_post_survive_process_reopen() -> Result<(), Box<dyn std::error::Error
         ],
     )?;
     assert_status(&pre, 0);
+    let pre_json: Value = serde_json::from_str(&pre.stdout)?;
+    assert_eq!(
+        pre_json.get("schemaVersion").and_then(Value::as_str),
+        Some("lumin.gate-mutation.v2")
+    );
     let gate_id = field(&pre.stdout, "gateId")?;
 
     let retry = run(
@@ -59,6 +64,10 @@ fn pre_and_post_survive_process_reopen() -> Result<(), Box<dyn std::error::Error
     )?;
     assert_status(&post, 0);
     let post_json: Value = serde_json::from_str(&post.stdout)?;
+    assert_eq!(
+        post_json.get("schemaVersion").and_then(Value::as_str),
+        Some("lumin.gate-mutation.v2")
+    );
     assert_eq!(
         post_json.get("decision").and_then(Value::as_str),
         Some("allow")
@@ -89,6 +98,10 @@ fn pre_and_post_survive_process_reopen() -> Result<(), Box<dyn std::error::Error
     assert_status(&shown, 0);
     let shown_json: Value = serde_json::from_str(&shown.stdout)?;
     assert_eq!(
+        shown_json.get("schemaVersion").and_then(Value::as_str),
+        Some("lumin.gate.v2")
+    );
+    assert_eq!(
         shown_json.get("lifecycle").and_then(Value::as_str),
         Some("closed")
     );
@@ -109,6 +122,12 @@ fn pre_and_post_survive_process_reopen() -> Result<(), Box<dyn std::error::Error
     assert_eq!(
         operation_json.get("status").and_then(Value::as_str),
         Some("committed")
+    );
+    assert_eq!(
+        operation_json
+            .pointer("/result/schemaVersion")
+            .and_then(Value::as_str),
+        Some("lumin.gate-mutation.v2")
     );
     assert_eq!(
         operation_json
@@ -336,6 +355,7 @@ fn pre_write_observation_binds_promotion_and_interrupted_admission_leaves_no_act
         Some(observation_id)
     );
     final_promotion_reobserves_the_complete_write_domain()?;
+    final_close_reobserves_the_complete_write_domain()?;
     Ok(())
 }
 
@@ -422,13 +442,19 @@ fn final_promotion_reobserves_the_complete_write_domain() -> Result<(), Box<dyn 
         response
             .pointer("/observationBinding/state")
             .and_then(Value::as_str),
-        Some("unsealed")
+        Some("sealed")
     );
     assert_eq!(
         response
-            .pointer("/observationBinding/reason")
+            .pointer("/observationBinding/observation/kind")
             .and_then(Value::as_str),
-        Some("protected-input-changed")
+        Some("baseline")
+    );
+    assert!(
+        response
+            .pointer("/observationBinding/observation/observationId")
+            .and_then(Value::as_str)
+            .is_some_and(|id| id.starts_with("gate_baseline_observation_"))
     );
     assert!(
         response
@@ -438,13 +464,20 @@ fn final_promotion_reobserves_the_complete_write_domain() -> Result<(), Box<dyn 
                 signal.get("kind").and_then(Value::as_str) == Some("protected-input-changed")
             }))
     );
-    let conflicting = response
-        .pointer("/observationBinding/conflictingOrUnboundedInputs")
+    let changed = response
+        .get("signals")
         .and_then(Value::as_array)
-        .ok_or("final topology result omitted its conflicting inputs")?;
+        .ok_or("final topology result omitted its signals")?
+        .iter()
+        .filter(|signal| {
+            signal.get("kind").and_then(Value::as_str) == Some("protected-input-changed")
+        })
+        .filter_map(|signal| signal.get("paths").and_then(Value::as_array))
+        .flatten()
+        .collect::<Vec<_>>();
     for expected in ["src/main.ts", "src/new.ts"] {
         assert!(
-            conflicting
+            changed
                 .iter()
                 .any(|path| { path.get("display").and_then(Value::as_str) == Some(expected) })
         );
@@ -457,6 +490,154 @@ fn final_promotion_reobserves_the_complete_write_domain() -> Result<(), Box<dyn 
             .and_then(Value::as_u64),
         Some(0)
     );
+    Ok(())
+}
+
+fn final_close_reobserves_the_complete_write_domain() -> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    let opened = run(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-close-topology-open",
+            "--path",
+            "src/new.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&opened, 0);
+    let gate_id = field(&opened.stdout, "gateId")?;
+    let before = run(root.path(), &["gate", "show", &gate_id])?;
+    assert_status(&before, 0);
+    let before_json: Value = serde_json::from_str(&before.stdout)?;
+    let protected_count = before_json
+        .get("protectedSemanticInputCount")
+        .and_then(Value::as_u64)
+        .ok_or("opening gate omitted its protected input count")?;
+
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+    listener.set_nonblocking(true)?;
+    let mut child = lumin_command(root.path())?
+        .args([
+            "post-write",
+            &gate_id,
+            "--operation-id",
+            "op-close-topology",
+        ])
+        .env(
+            "LUMIN_TEST_GATE_POSTWRITE_FINAL_BARRIER",
+            listener.local_addr()?.to_string(),
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let started = Instant::now();
+    let (mut stream, peer) = loop {
+        match listener.accept() {
+            Ok(accepted) => break accepted,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if let Some(status) = child.try_wait()? {
+                    return Err(std::io::Error::other(format!(
+                        "post-write exited before final topology barrier: {status}"
+                    ))
+                    .into());
+                }
+                if started.elapsed() >= Duration::from_secs(30) {
+                    return Err(std::io::Error::other(
+                        "post-write did not reach the final topology barrier",
+                    )
+                    .into());
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    };
+    assert!(peer.ip().is_loopback());
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(30)))?;
+    let mut frame = String::new();
+    BufReader::new(stream.try_clone()?).read_line(&mut frame)?;
+    let fields = frame.split_whitespace().collect::<Vec<_>>();
+    assert_eq!(fields.len(), 3, "unexpected close barrier frame: {frame:?}");
+    assert_eq!(fields[0], "close-finalizing");
+    assert_eq!(fields[1], "op-close-topology");
+    assert_eq!(fields[2], gate_id);
+
+    fs::hard_link(
+        root.path().join("src/main.ts"),
+        root.path().join("src/new.ts"),
+    )?;
+    stream.write_all(b"release\n")?;
+    stream.flush()?;
+    drop(stream);
+    let output = child.wait_with_output()?;
+    assert_eq!(
+        output.status.code(),
+        Some(5),
+        "unexpected final-topology post-write result: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let response: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(
+        response.get("decision").and_then(Value::as_str),
+        Some("stale")
+    );
+    assert_eq!(
+        response.get("lifecycle").and_then(Value::as_str),
+        Some("active")
+    );
+    assert_eq!(
+        response
+            .pointer("/observationBinding/state")
+            .and_then(Value::as_str),
+        Some("sealed")
+    );
+    assert_eq!(
+        response
+            .pointer("/observationBinding/observation/kind")
+            .and_then(Value::as_str),
+        Some("close")
+    );
+    assert!(
+        response
+            .pointer("/observationBinding/observation/observationId")
+            .and_then(Value::as_str)
+            .is_some_and(|id| id.starts_with("gate_close_observation_"))
+    );
+    assert!(response.get("actualWriteSet").is_some());
+    assert!(
+        response
+            .get("signals")
+            .and_then(Value::as_array)
+            .is_some_and(|signals| signals.iter().any(|signal| {
+                signal.get("kind").and_then(Value::as_str) == Some("protected-input-changed")
+            }))
+    );
+
+    let shown = run(root.path(), &["gate", "show", &gate_id])?;
+    assert_status(&shown, 0);
+    let shown_json: Value = serde_json::from_str(&shown.stdout)?;
+    assert_eq!(
+        shown_json.get("lifecycle").and_then(Value::as_str),
+        Some("active")
+    );
+    assert_eq!(
+        shown_json
+            .get("protectedSemanticInputCount")
+            .and_then(Value::as_u64),
+        Some(protected_count)
+    );
+    assert!(
+        shown_json
+            .pointer("/revisions/1/analysisInputId")
+            .is_some_and(|value| !value.is_null())
+    );
+    assert!(shown_json.pointer("/revisions/1/actualWriteSet").is_some());
     Ok(())
 }
 
@@ -783,6 +964,26 @@ fn unsupported_non_source_path_is_queryable_incomplete() -> Result<(), Box<dyn s
             .pointer("/signals/0/reason")
             .and_then(Value::as_str),
         Some("not-analyzed-source")
+    );
+    assert_eq!(
+        pre_json
+            .pointer("/observationBinding/state")
+            .and_then(Value::as_str),
+        Some("unsealed")
+    );
+    assert_eq!(
+        pre_json
+            .pointer("/observationBinding/reason")
+            .and_then(Value::as_str),
+        Some("declared-path-unsupported")
+    );
+    assert!(
+        !pre_json
+            .get("signals")
+            .and_then(Value::as_array)
+            .is_some_and(|signals| signals.iter().any(|signal| {
+                signal.get("kind").and_then(Value::as_str) == Some("protected-input-changed")
+            }))
     );
 
     let operation = run(root.path(), &["operation", "show", "op-notes"])?;

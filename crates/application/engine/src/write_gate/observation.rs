@@ -38,7 +38,7 @@ pub(super) fn pre_write_observation_binding(
     signals: &[GateSignal],
 ) -> GateObservationBinding {
     if let Some(baseline) = &seed.baseline
-        && !pre_write_observation_is_unsealed(signals)
+        && pre_write_observation_can_seal(signals)
     {
         return ObservationBinding::Sealed {
             observation: SealedGateObservation::Baseline {
@@ -49,15 +49,14 @@ pub(super) fn pre_write_observation_binding(
     unsealed_pre_write_observation_binding(seed, signals)
 }
 
-fn pre_write_observation_is_unsealed(signals: &[GateSignal]) -> bool {
-    signals.iter().any(|signal| {
+pub(super) fn pre_write_observation_can_seal(signals: &[GateSignal]) -> bool {
+    !signals.iter().any(|signal| {
         matches!(
             signal,
             GateSignal::AnalysisFailed { .. }
                 | GateSignal::DeclaredPathUnsupported { .. }
                 | GateSignal::WriteConflict { .. }
                 | GateSignal::SemanticInputConflict { .. }
-                | GateSignal::ProtectedInputChanged { .. }
                 | GateSignal::UnplannedWrite { .. }
                 | GateSignal::ActiveTransitionPending { .. }
                 | GateSignal::TransitionChainBroken { .. }

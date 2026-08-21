@@ -1,8 +1,8 @@
 use lumin_evidence::{
     ActualWriteSet, AnalysisSnapshot, GATE_RECORD_SCHEMA_VERSION, GateAnalysisOptions,
-    GateBaseline, GateLifecycle, GateObservationBinding, GateOperationKind, GateOperationResult,
-    GateOperationStatus, GateRecord, GateRevision, GateSignal, OperationRecord,
-    PhysicalAliasClosureRecord, RepoPathProjection, SemanticInputRecord,
+    GateBaseline, GateDecision, GateLifecycle, GateObservationBinding, GateOperationKind,
+    GateOperationResult, GateOperationStatus, GateRecord, GateRevision, GateSignal,
+    OperationRecord, PhysicalAliasClosureRecord, RepoPathProjection, SemanticInputRecord,
     SemanticReadReservationBinding, TransitionCapsule, WorktreeTransition, WriteLease, gate_policy,
 };
 use lumin_model::{GateBaselineObservationId, GateDeltaRecord, GateId, OperationId};
@@ -668,8 +668,10 @@ fn validate_post_write_context(
 fn snapshot_can_protect_current_reads(
     snapshot: Option<&AnalysisSnapshot>,
     observation_binding: &GateObservationBinding,
+    decision: GateDecision,
 ) -> bool {
     snapshot.is_some()
+        && decision != GateDecision::Stale
         && matches!(
             observation_binding,
             lumin_model::ObservationBinding::Sealed {
