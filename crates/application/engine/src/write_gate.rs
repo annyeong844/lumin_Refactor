@@ -40,6 +40,7 @@ use transitions::{
 };
 
 const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v27";
+const DEPENDENCY_CANDIDATE_TOPOLOGY_ONLY: &[u8] = b"dependency-candidate-topology-only.v1";
 
 fn analysis_contract_id() -> String {
     let inputs = [
@@ -949,12 +950,15 @@ fn stale_complete_semantic_input_paths(
     reserved_state_lookup: &lumin_inventory::ReservedStateIdentityLookup,
     reserved_identities: &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
 ) -> Result<Vec<RepoPathProjection>, EngineError> {
-    let topology_only_sha256 = digest_hex(b"dependency-candidate-topology-only.v1");
+    let topology_only_sha256 = digest_hex(DEPENDENCY_CANDIDATE_TOPOLOGY_ONLY);
     let mut stale = Vec::new();
     for input in inputs {
         let path = decode_semantic_input_path(&input.path)?;
-        let topology_only_dependency_candidate = input.state == SemanticInputState::Unreadable
-            && input.payload_sha256.as_deref() == Some(topology_only_sha256.as_str())
+        let topology_only_dependency_candidate = matches!(
+            input.state,
+            SemanticInputState::Missing | SemanticInputState::Unreadable
+        ) && input.payload_sha256.as_deref()
+            == Some(topology_only_sha256.as_str())
             && bindings
                 .iter()
                 .any(|(_, binding)| binding.path == input.path);
@@ -1053,13 +1057,11 @@ fn include_dependency_candidate_topology_inputs(
         if inputs.iter().any(|input| input.path == binding.path) {
             continue;
         }
+        let topology_only_sha256 = digest_hex(DEPENDENCY_CANDIDATE_TOPOLOGY_ONLY);
         let (state, payload_sha256) = if binding.absence_parent.is_some() {
-            (SemanticInputState::Missing, None)
+            (SemanticInputState::Missing, Some(topology_only_sha256))
         } else {
-            (
-                SemanticInputState::Unreadable,
-                Some(digest_hex(b"dependency-candidate-topology-only.v1")),
-            )
+            (SemanticInputState::Unreadable, Some(topology_only_sha256))
         };
         inputs.push(SemanticInputRecord {
             path: binding.path.clone(),
