@@ -448,7 +448,10 @@ mod tests {
         PathPrefixIdentity, ScanInvocationTier, SemanticInputState, TransitionCapsule,
         WriteLeaseKind,
     };
-    use lumin_model::{GateId, LogicalSourceId, PhysicalFileIdentity, RepoPath};
+    use lumin_model::{
+        GateBaselineObservationId, GateCloseObservationId, GateId, LogicalSourceId,
+        PhysicalFileIdentity, RepoPath,
+    };
 
     use super::*;
 
@@ -476,6 +479,8 @@ mod tests {
             capsule: TransitionCapsule {
                 gate_id: GateId::from_string("gate-b".to_owned()),
                 revision: 1,
+                baseline_observation_id: baseline_observation_id(),
+                close_observation_id: close_observation_id(),
                 before_snapshot: transition_before,
                 after_snapshot: transition_after,
                 changed_paths: vec![changed_path],
@@ -531,6 +536,8 @@ mod tests {
             capsule: TransitionCapsule {
                 gate_id: GateId::from_string("gate-b-topology".to_owned()),
                 revision: 1,
+                baseline_observation_id: baseline_observation_id(),
+                close_observation_id: close_observation_id(),
                 before_snapshot: snapshot(
                     vec![source_before, candidate_before],
                     owner("packages/b/generated/main.ts", "is-odd", "packages/b")?,
@@ -601,6 +608,8 @@ mod tests {
             capsule: TransitionCapsule {
                 gate_id: GateId::from_string("gate-b".to_owned()),
                 revision: 1,
+                baseline_observation_id: baseline_observation_id(),
+                close_observation_id: close_observation_id(),
                 before_snapshot: transition_before,
                 after_snapshot: transition_after,
                 changed_paths: vec![changed_path],
@@ -611,6 +620,14 @@ mod tests {
         assert!(!apply_transition(&mut adjusted, &transition));
         assert_eq!(adjusted.inputs[0].payload_sha256.as_deref(), Some("before"));
         Ok(())
+    }
+
+    fn baseline_observation_id() -> GateBaselineObservationId {
+        GateBaselineObservationId::from_string("gate_baseline_observation_test".to_owned())
+    }
+
+    fn close_observation_id() -> GateCloseObservationId {
+        GateCloseObservationId::from_string("gate_close_observation_test".to_owned())
     }
 
     fn snapshot(

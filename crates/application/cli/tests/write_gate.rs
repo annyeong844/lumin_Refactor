@@ -1,5 +1,10 @@
 use std::fs;
+use std::io::{BufRead, BufReader};
+use std::net::{Ipv4Addr, TcpListener};
 use std::path::Path;
+use std::process::Stdio;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -12,7 +17,7 @@ mod semantic_demands;
 #[path = "write_gate/transition_retention.rs"]
 mod transition_retention;
 
-use support::{assert_status, field, run};
+use support::{assert_status, field, lumin_command, run};
 
 #[test]
 fn pre_and_post_survive_process_reopen() -> Result<(), Box<dyn std::error::Error>> {
@@ -62,6 +67,17 @@ fn pre_and_post_survive_process_reopen() -> Result<(), Box<dyn std::error::Error
         post_json.get("lifecycle").and_then(Value::as_str),
         Some("closed")
     );
+    assert_eq!(
+        post_json
+            .pointer("/observationBinding/observation/kind")
+            .and_then(Value::as_str),
+        Some("close")
+    );
+    let close_observation_id = post_json
+        .pointer("/observationBinding/observation/observationId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| std::io::Error::other("post-write omitted its close observation ID"))?;
+    assert!(close_observation_id.starts_with("gate_close_observation_"));
     let post_retry = run(
         root.path(),
         &["post-write", &gate_id, "--operation-id", "op-close"],
@@ -80,6 +96,12 @@ fn pre_and_post_survive_process_reopen() -> Result<(), Box<dyn std::error::Error
         shown_json.get("currentRevision").and_then(Value::as_u64),
         Some(1)
     );
+    assert_eq!(
+        shown_json
+            .pointer("/revisions/1/observationBinding/observation/observationId")
+            .and_then(Value::as_str),
+        Some(close_observation_id)
+    );
 
     let operation = run(root.path(), &["operation", "show", "op-close"])?;
     assert_status(&operation, 0);
@@ -93,6 +115,225 @@ fn pre_and_post_survive_process_reopen() -> Result<(), Box<dyn std::error::Error
             .pointer("/result/decision")
             .and_then(Value::as_str),
         Some("allow")
+    );
+    assert_eq!(
+        operation_json
+            .pointer("/result/observationBinding/observation/observationId")
+            .and_then(Value::as_str),
+        Some(close_observation_id)
+    );
+    Ok(())
+}
+
+#[test]
+fn pre_write_observation_binds_promotion_and_interrupted_admission_leaves_no_active_lease()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+    listener.set_nonblocking(true)?;
+    let mut child = lumin_command(root.path())?
+        .args([
+            "pre-write",
+            "--operation-id",
+            "op-observation",
+            "--path",
+            "src/lib.ts",
+            "--jobs",
+            "1",
+        ])
+        .env(
+            "LUMIN_TEST_GATE_ADMISSION_BARRIER",
+            listener.local_addr()?.to_string(),
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let started = Instant::now();
+    let (stream, peer) = loop {
+        match listener.accept() {
+            Ok(accepted) => break accepted,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if let Some(status) = child.try_wait()? {
+                    return Err(std::io::Error::other(format!(
+                        "pre-write exited before admission barrier: {status}"
+                    ))
+                    .into());
+                }
+                if started.elapsed() >= Duration::from_secs(30) {
+                    return Err(std::io::Error::other(
+                        "pre-write did not reach the admission barrier",
+                    )
+                    .into());
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    };
+    assert!(peer.ip().is_loopback());
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+    let mut frame = String::new();
+    BufReader::new(stream.try_clone()?).read_line(&mut frame)?;
+    let fields = frame.split_whitespace().collect::<Vec<_>>();
+    assert_eq!(fields.len(), 3, "unexpected admission frame: {frame:?}");
+    assert_eq!(fields[0], "reserved");
+    assert_eq!(fields[1], "op-observation");
+    let gate_id = fields[2].to_owned();
+
+    let provisional = run(root.path(), &["gate", "list", "--active"])?;
+    assert_status(&provisional, 0);
+    let provisional_json: Value = serde_json::from_str(&provisional.stdout)?;
+    assert_eq!(
+        provisional_json.get("total").and_then(Value::as_u64),
+        Some(0)
+    );
+
+    let competing = run(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-observation-conflict",
+            "--path",
+            "src/lib.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&competing, 4);
+    let competing_json: Value = serde_json::from_str(&competing.stdout)?;
+    assert_eq!(
+        competing_json.get("lifecycle").and_then(Value::as_str),
+        Some("rejected")
+    );
+    assert_eq!(
+        competing_json
+            .pointer("/signals/0/kind")
+            .and_then(Value::as_str),
+        Some("write-conflict")
+    );
+    assert_eq!(
+        competing_json
+            .pointer("/observationBinding/state")
+            .and_then(Value::as_str),
+        Some("unsealed")
+    );
+    assert_eq!(
+        competing_json
+            .pointer("/observationBinding/reason")
+            .and_then(Value::as_str),
+        Some("admission-conflict")
+    );
+    assert_eq!(
+        competing_json
+            .pointer("/observationBinding/conflictingOrUnboundedInputs/0/display")
+            .and_then(Value::as_str),
+        Some("src/lib.ts")
+    );
+
+    child.kill()?;
+    let interrupted_output = child.wait_with_output()?;
+    assert!(!interrupted_output.status.success());
+    drop(stream);
+
+    let interrupted = run(root.path(), &["operation", "show", "op-observation"])?;
+    assert_status(&interrupted, 0);
+    let interrupted_json: Value = serde_json::from_str(&interrupted.stdout)?;
+    assert_eq!(
+        interrupted_json.get("status").and_then(Value::as_str),
+        Some("interrupted")
+    );
+    assert_eq!(
+        interrupted_json
+            .get("interruptionCount")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        interrupted_json
+            .get("leasedWriteSet")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(0)
+    );
+    let after_death = run(root.path(), &["gate", "list", "--active"])?;
+    assert_status(&after_death, 0);
+    assert_eq!(
+        serde_json::from_str::<Value>(&after_death.stdout)?
+            .get("total")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+
+    let retry = run(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-observation",
+            "--path",
+            "src/lib.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&retry, 0);
+    let retry_json: Value = serde_json::from_str(&retry.stdout)?;
+    assert_eq!(
+        retry_json.get("decision").and_then(Value::as_str),
+        Some("allow")
+    );
+    assert_eq!(
+        retry_json.get("lifecycle").and_then(Value::as_str),
+        Some("active")
+    );
+    assert_eq!(
+        retry_json.get("gateId").and_then(Value::as_str),
+        Some(gate_id.as_str())
+    );
+    assert_eq!(
+        retry_json
+            .pointer("/observationBinding/state")
+            .and_then(Value::as_str),
+        Some("sealed")
+    );
+    assert_eq!(
+        retry_json
+            .pointer("/observationBinding/observation/kind")
+            .and_then(Value::as_str),
+        Some("baseline")
+    );
+    let observation_id = retry_json
+        .pointer("/observationBinding/observation/observationId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| std::io::Error::other("pre-write omitted its baseline observation ID"))?;
+    assert!(observation_id.starts_with("gate_baseline_observation_"));
+
+    let shown = run(root.path(), &["gate", "show", &gate_id])?;
+    assert_status(&shown, 0);
+    let shown_json: Value = serde_json::from_str(&shown.stdout)?;
+    assert_eq!(
+        shown_json
+            .pointer("/baseline/observationId")
+            .and_then(Value::as_str),
+        Some(observation_id)
+    );
+    assert_eq!(
+        shown_json
+            .pointer("/revisions/0/observationBinding/observation/observationId")
+            .and_then(Value::as_str),
+        Some(observation_id)
+    );
+
+    let committed = run(root.path(), &["operation", "show", "op-observation"])?;
+    assert_status(&committed, 0);
+    let committed_json: Value = serde_json::from_str(&committed.stdout)?;
+    assert_eq!(
+        committed_json
+            .pointer("/result/observationBinding/observation/observationId")
+            .and_then(Value::as_str),
+        Some(observation_id)
     );
     Ok(())
 }

@@ -7,6 +7,7 @@ impl OperationSession<'_> {
         declared_write_set: &[RepoPathProjection],
         initial_leases: &[WriteLease],
         analysis_options: &GateAnalysisOptions,
+        rejected_observation: impl FnOnce(&[GateSignal]) -> GateObservationBinding,
     ) -> Result<PreWriteStart, StoreError> {
         let operation_id = &self.operation_id;
         self.store.with_exclusive_lock(|guard| {
@@ -70,8 +71,24 @@ impl OperationSession<'_> {
 
             if !paths.is_empty() {
                 let signals = vec![GateSignal::WriteConflict { paths, gate_ids }];
-                let result = rejected_open_result(&operation, &signals);
-                let gate = rejected_gate(&operation, analysis_options.clone(), &signals, None)?;
+                let observation_binding = rejected_observation(&signals);
+                if !matches!(
+                    &observation_binding,
+                    lumin_model::ObservationBinding::Unsealed { .. }
+                ) {
+                    return Err(StoreError::Integrity(
+                        "rejected pre-write admission returned a sealed observation".to_owned(),
+                    ));
+                }
+                let result =
+                    rejected_open_result(&operation, &signals, observation_binding.clone());
+                let gate = rejected_gate(
+                    &operation,
+                    analysis_options.clone(),
+                    &signals,
+                    None,
+                    observation_binding,
+                )?;
                 operation.status = GateOperationStatus::Committed;
                 operation.operation_liveness = None;
                 operation.result = Some(result.clone());
@@ -107,7 +124,9 @@ impl OperationSession<'_> {
         finish: PreWriteFinish,
         final_validation: impl FnOnce(
             &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
-        ) -> Vec<GateSignal>,
+            u64,
+            &[GateSignal],
+        ) -> ObservationFinalization,
     ) -> Result<GateOperationResult, StoreError> {
         let PreWriteFinish {
             baseline,
@@ -139,13 +158,39 @@ impl OperationSession<'_> {
                 &mut signals,
             )?;
             let reserved_state_identities = guard.reserved_state_identities()?;
-            signals.extend(final_validation(&reserved_state_identities));
+            let catalog_revision = current_active_gate_catalog(&write)?;
+            let finalization =
+                final_validation(&reserved_state_identities, catalog_revision, &signals);
+            signals.extend(finalization.signals);
+            let observation_binding = finalization.binding;
+            let baseline = match (baseline, &observation_binding) {
+                (
+                    Some(baseline),
+                    lumin_model::ObservationBinding::Sealed {
+                        observation:
+                            lumin_model::SealedGateObservation::Baseline { observation_id },
+                    },
+                ) => Some(baseline.seal(observation_id.clone())),
+                (Some(_), lumin_model::ObservationBinding::Unsealed { .. })
+                | (None, lumin_model::ObservationBinding::Unsealed { .. }) => None,
+                (None, lumin_model::ObservationBinding::Sealed { .. }) => {
+                    return Err(StoreError::Integrity(
+                        "sealed pre-write observation omitted its baseline".to_owned(),
+                    ));
+                }
+                (Some(_), lumin_model::ObservationBinding::Sealed { .. }) => {
+                    return Err(StoreError::Integrity(
+                        "pre-write returned a non-baseline sealed observation".to_owned(),
+                    ));
+                }
+            };
             let (gate, result) = completed_pre_write_records(
                 &operation,
                 baseline,
                 leased_write_set,
                 alias_closures,
                 signals,
+                observation_binding,
             )?;
             operation.leased_write_set = result.leased_write_set.clone();
             persist_operation_result(&write, &gate, &mut operation, &result)?;
@@ -177,7 +222,7 @@ impl OperationSession<'_> {
                     Some(gate_id),
                 )?;
                 if let Some(result) = operation.result {
-                    return Ok(PostWriteStart::Committed(result));
+                    return Ok(PostWriteStart::Committed(Box::new(result)));
                 }
                 if operation.status == GateOperationStatus::Pending {
                     self.validate_pending_operation(&operation)?;
@@ -379,7 +424,9 @@ impl OperationSession<'_> {
         finish: PostWriteFinish,
         final_validation: impl FnOnce(
             &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
-        ) -> Vec<GateSignal>,
+            u64,
+            &[GateSignal],
+        ) -> ObservationFinalization,
     ) -> Result<GateOperationResult, StoreError> {
         let PostWriteFinish {
             snapshot,
@@ -425,7 +472,11 @@ impl OperationSession<'_> {
                 &mut signals,
             )?;
             let reserved_state_identities = guard.reserved_state_identities()?;
-            signals.extend(final_validation(&reserved_state_identities));
+            let catalog_revision = current_active_gate_catalog(&write)?;
+            let finalization =
+                final_validation(&reserved_state_identities, catalog_revision, &signals);
+            signals.extend(finalization.signals);
+            let observation_binding = finalization.binding;
             if !gate_policy::actual_write_attribution_is_complete(&signals) {
                 actual_write_set = None;
             }
@@ -435,14 +486,27 @@ impl OperationSession<'_> {
                 .checked_add(1)
                 .ok_or_else(|| StoreError::Integrity("gate revision overflow".to_owned()))?;
             if decision.authorizes() {
+                if !matches!(
+                    &observation_binding,
+                    lumin_model::ObservationBinding::Sealed {
+                        observation: lumin_model::SealedGateObservation::Close { .. }
+                    }
+                ) {
+                    return Err(StoreError::Integrity(
+                        "authorizing post-write omitted its sealed close observation".to_owned(),
+                    ));
+                }
                 publish_authorized_transition(
                     &write,
                     &mut gate,
-                    revision,
-                    snapshot.as_ref(),
-                    reconciled_baseline.as_ref(),
-                    &changed_paths,
-                    &alias_closures,
+                    AuthorizedTransitionInput {
+                        revision,
+                        observation_binding: &observation_binding,
+                        snapshot: snapshot.as_ref(),
+                        reconciled_baseline: reconciled_baseline.as_ref(),
+                        changed_paths: &changed_paths,
+                        alias_closures: &alias_closures,
+                    },
                 )?;
             }
             if snapshot_can_protect_current_reads(snapshot.as_ref(), &signals) {
@@ -456,6 +520,7 @@ impl OperationSession<'_> {
                 revision,
                 lifecycle: gate.lifecycle,
                 decision,
+                observation_binding: Some(observation_binding.clone()),
                 reason: None,
                 signals: signals.clone(),
                 leased_write_set: gate.leased_write_set.clone(),
@@ -467,6 +532,7 @@ impl OperationSession<'_> {
                 operation_id: operation_id.clone(),
                 committed_unix_millis: Some(crate::unix_millis()?),
                 decision,
+                observation_binding: Some(observation_binding),
                 reason: None,
                 signals: signals.clone(),
                 changed_paths,

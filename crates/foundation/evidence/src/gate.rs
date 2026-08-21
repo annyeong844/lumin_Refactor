@@ -1,14 +1,16 @@
 use std::collections::BTreeMap;
 
 use lumin_model::{
-    AnalysisInputId, DeltaDimensionChange, DeltaFactFamily, GateDeltaClassification,
-    GateDeltaRecord, GateId, OperationId, PhysicalFileIdentity, ResolutionProfile,
-    ResolutionProfileSource, SelectedResolutionProfile, append_length_prefixed,
-    classify_lifecycle_deltas, digest_hex,
+    AnalysisInputId, DeltaDimensionChange, DeltaFactFamily, GateBaselineObservationId,
+    GateCloseObservationId, GateDeltaClassification, GateDeltaRecord, GateId, ObservationBinding,
+    OperationId, PhysicalFileIdentity, ResolutionProfile, ResolutionProfileSource,
+    SelectedResolutionProfile, append_length_prefixed, classify_lifecycle_deltas, digest_hex,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{RepoPathProjection, RunEvidence, delta::lifecycle_delta_input_for};
+
+pub type GateObservationBinding = ObservationBinding<RepoPathProjection>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -385,6 +387,7 @@ pub enum GateSignal {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GateBaseline {
+    pub observation_id: GateBaselineObservationId,
     pub analysis_contract: String,
     pub snapshot: AnalysisSnapshot,
     #[serde(default)]
@@ -401,6 +404,8 @@ pub struct GateRevision {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub committed_unix_millis: Option<u64>,
     pub decision: GateDecision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation_binding: Option<GateObservationBinding>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     pub signals: Vec<GateSignal>,
@@ -522,6 +527,8 @@ pub struct GateOperationResult {
     pub lifecycle: GateLifecycle,
     pub decision: GateDecision,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation_binding: Option<GateObservationBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     pub signals: Vec<GateSignal>,
     #[serde(default)]
@@ -566,6 +573,8 @@ pub struct OperationRecord {
 pub struct TransitionCapsule {
     pub gate_id: GateId,
     pub revision: u64,
+    pub baseline_observation_id: GateBaselineObservationId,
+    pub close_observation_id: GateCloseObservationId,
     pub before_snapshot: AnalysisSnapshot,
     pub after_snapshot: AnalysisSnapshot,
     pub changed_paths: Vec<RepoPathProjection>,

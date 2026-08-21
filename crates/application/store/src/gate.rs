@@ -1,11 +1,11 @@
 use lumin_evidence::{
     ActualWriteSet, AnalysisSnapshot, GateAnalysisOptions, GateBaseline, GateLifecycle,
-    GateOperationKind, GateOperationResult, GateOperationStatus, GateRecord, GateRevision,
-    GateSignal, OperationRecord, PhysicalAliasClosureRecord, RepoPathProjection,
-    SemanticInputRecord, SemanticReadReservationBinding, TransitionCapsule, WorktreeTransition,
-    WriteLease, gate_policy,
+    GateObservationBinding, GateOperationKind, GateOperationResult, GateOperationStatus,
+    GateRecord, GateRevision, GateSignal, OperationRecord, PhysicalAliasClosureRecord,
+    RepoPathProjection, SemanticInputRecord, SemanticReadReservationBinding, TransitionCapsule,
+    WorktreeTransition, WriteLease, gate_policy,
 };
-use lumin_model::{GateDeltaRecord, GateId, OperationId};
+use lumin_model::{GateBaselineObservationId, GateDeltaRecord, GateId, OperationId};
 use redb::{ReadableTable, TableDefinition, WriteTransaction};
 
 use super::{RepositoryStore, StoreError};
@@ -24,8 +24,8 @@ use coordination::{
 };
 pub use liveness::OperationSession;
 use records::{
-    current_transition_sequence, load_record, next_gate_id, next_transition_sequence, read_record,
-    read_records, write_record,
+    current_active_gate_catalog, current_transition_sequence, load_record, next_gate_id,
+    next_transition_sequence, read_record, read_records, write_record,
 };
 
 pub(crate) const GATES: TableDefinition<&str, &[u8]> = TableDefinition::new("gates");
@@ -69,10 +69,36 @@ pub struct ActiveGateCatalogSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreWriteFinish {
-    pub baseline: Option<GateBaseline>,
+    pub baseline: Option<GateBaselineDraft>,
     pub leased_write_set: Vec<WriteLease>,
     pub alias_closures: Vec<PhysicalAliasClosureRecord>,
     pub signals: Vec<GateSignal>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GateBaselineDraft {
+    pub analysis_contract: String,
+    pub snapshot: AnalysisSnapshot,
+    pub protected_semantic_inputs: Vec<SemanticInputRecord>,
+    pub transition_sequence: u64,
+}
+
+impl GateBaselineDraft {
+    fn seal(self, observation_id: GateBaselineObservationId) -> GateBaseline {
+        GateBaseline {
+            observation_id,
+            analysis_contract: self.analysis_contract,
+            snapshot: self.snapshot,
+            protected_semantic_inputs: self.protected_semantic_inputs,
+            transition_sequence: self.transition_sequence,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ObservationFinalization {
+    pub signals: Vec<GateSignal>,
+    pub binding: GateObservationBinding,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -109,7 +135,7 @@ pub enum PostWriteStart {
         transitions: Vec<WorktreeTransition>,
         active_gates: Vec<ActiveGateLease>,
     },
-    Committed(GateOperationResult),
+    Committed(Box<GateOperationResult>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -405,7 +431,7 @@ fn reject_retention_operation_collision(
 fn validate_pre_write_context(
     write: &WriteTransaction,
     operation: &OperationRecord,
-    baseline: Option<&GateBaseline>,
+    baseline: Option<&GateBaselineDraft>,
     leased_write_set: &[WriteLease],
     signals: &mut Vec<GateSignal>,
 ) -> Result<(), StoreError> {
@@ -478,6 +504,7 @@ fn completed_pre_write_records(
     leased_write_set: Vec<WriteLease>,
     alias_closures: Vec<PhysicalAliasClosureRecord>,
     signals: Vec<GateSignal>,
+    observation_binding: GateObservationBinding,
 ) -> Result<(GateRecord, GateOperationResult), StoreError> {
     let decision = gate_policy::decision(&signals);
     if decision.authorizes() && baseline.is_none() {
@@ -497,6 +524,7 @@ fn completed_pre_write_records(
         revision: 0,
         lifecycle,
         decision,
+        observation_binding: Some(observation_binding.clone()),
         reason: None,
         signals: signals.clone(),
         leased_write_set: leased_write_set.clone(),
@@ -526,6 +554,7 @@ fn completed_pre_write_records(
             operation_id: operation.operation_id.clone(),
             committed_unix_millis: Some(crate::unix_millis()?),
             decision,
+            observation_binding: Some(observation_binding),
             reason: None,
             signals,
             changed_paths: Vec::new(),
@@ -658,19 +687,51 @@ fn snapshot_can_protect_current_reads(
         })
 }
 
+struct AuthorizedTransitionInput<'a> {
+    revision: u64,
+    observation_binding: &'a GateObservationBinding,
+    snapshot: Option<&'a AnalysisSnapshot>,
+    reconciled_baseline: Option<&'a AnalysisSnapshot>,
+    changed_paths: &'a [RepoPathProjection],
+    alias_closures: &'a [PhysicalAliasClosureRecord],
+}
+
 fn publish_authorized_transition(
     write: &WriteTransaction,
     gate: &mut GateRecord,
-    revision: u64,
-    snapshot: Option<&AnalysisSnapshot>,
-    reconciled_baseline: Option<&AnalysisSnapshot>,
-    changed_paths: &[RepoPathProjection],
-    alias_closures: &[PhysicalAliasClosureRecord],
+    input: AuthorizedTransitionInput<'_>,
 ) -> Result<(), StoreError> {
+    let AuthorizedTransitionInput {
+        revision,
+        observation_binding,
+        snapshot,
+        reconciled_baseline,
+        changed_paths,
+        alias_closures,
+    } = input;
     let (Some(before_snapshot), Some(after_snapshot)) = (reconciled_baseline, snapshot) else {
         return Err(StoreError::Integrity(
             "authorizing post-write omitted its sealed transition snapshots".to_owned(),
         ));
+    };
+    let baseline_observation_id = gate
+        .baseline
+        .as_ref()
+        .map(|baseline| baseline.observation_id.clone())
+        .ok_or_else(|| {
+            StoreError::Integrity(
+                "authorizing post-write omitted its baseline observation".to_owned(),
+            )
+        })?;
+    let close_observation_id = match observation_binding {
+        lumin_model::ObservationBinding::Sealed {
+            observation: lumin_model::SealedGateObservation::Close { observation_id },
+        } => observation_id.clone(),
+        _ => {
+            return Err(StoreError::Integrity(
+                "authorizing transition omitted its close observation".to_owned(),
+            ));
+        }
     };
     let sequence = next_transition_sequence(write)?;
     let gate_id = gate.gate_id.clone();
@@ -679,6 +740,8 @@ fn publish_authorized_transition(
         capsule: TransitionCapsule {
             gate_id: gate_id.clone(),
             revision,
+            baseline_observation_id,
+            close_observation_id,
             before_snapshot: before_snapshot.clone(),
             after_snapshot: after_snapshot.clone(),
             changed_paths: changed_paths.to_vec(),
@@ -716,6 +779,7 @@ fn persist_operation_result(
 fn rejected_open_result(
     operation: &OperationRecord,
     signals: &[GateSignal],
+    observation_binding: GateObservationBinding,
 ) -> GateOperationResult {
     GateOperationResult {
         operation_id: operation.operation_id.clone(),
@@ -724,6 +788,7 @@ fn rejected_open_result(
         revision: 0,
         lifecycle: GateLifecycle::Rejected,
         decision: gate_policy::decision(signals),
+        observation_binding: Some(observation_binding),
         reason: None,
         signals: signals.to_vec(),
         leased_write_set: operation.leased_write_set.clone(),
@@ -737,6 +802,7 @@ fn rejected_gate(
     analysis_options: GateAnalysisOptions,
     signals: &[GateSignal],
     baseline: Option<GateBaseline>,
+    observation_binding: GateObservationBinding,
 ) -> Result<GateRecord, StoreError> {
     let decision = gate_policy::decision(signals);
     let protected_semantic_inputs = baseline.as_ref().map_or_else(Vec::new, |baseline| {
@@ -759,6 +825,7 @@ fn rejected_gate(
             operation_id: operation.operation_id.clone(),
             committed_unix_millis: Some(crate::unix_millis()?),
             decision,
+            observation_binding: Some(observation_binding),
             reason: None,
             signals: signals.to_vec(),
             changed_paths: Vec::new(),

@@ -3,12 +3,19 @@ mod integrity;
 use std::fs;
 
 use lumin_evidence::{
-    CapabilityRecord, DEAD_CODE_CAPABILITY_ID, GateAnalysisOptions, GateBaseline,
-    RepoPathProjection, RunEvidence, WriteLease, WriteLeaseKind, seal_analysis_snapshot,
+    CapabilityRecord, DEAD_CODE_CAPABILITY_ID, GateAnalysisOptions, GateObservationBinding,
+    GateSignal, RepoPathProjection, RunEvidence, WriteLease, WriteLeaseKind,
+    seal_analysis_snapshot,
 };
-use lumin_model::{CapabilityState, GateId, OperationId, RepoPath};
+use lumin_model::{
+    CapabilityState, GateBaselineObservationId, GateId, ObservationBinding, OperationId, RepoPath,
+    SealedGateObservation, UnsealedObservationReason,
+};
 
-use crate::{PreWriteFinish, PreWriteStart, RepositoryStore, StoreError, StoreGeneration};
+use crate::{
+    GateBaselineDraft, ObservationFinalization, PreWriteFinish, PreWriteStart, RepositoryStore,
+    StoreError, StoreGeneration,
+};
 
 use super::super::migration::{MigrationCrashPoint, migrate_with_hook};
 use super::open_store;
@@ -23,6 +30,15 @@ const CRASH_POINTS: [MigrationCrashPoint; 8] = [
     MigrationCrashPoint::ParentFlushed,
     MigrationCrashPoint::IntentRemoved,
 ];
+
+fn rejected_test_observation(_signals: &[GateSignal]) -> GateObservationBinding {
+    ObservationBinding::Unsealed {
+        reason: UnsealedObservationReason::AdmissionConflict,
+        attempted_domain: Vec::new(),
+        last_complete_read_set: Vec::new(),
+        conflicting_or_unbounded_inputs: Vec::new(),
+    }
+}
 
 #[test]
 fn migration_preserves_run_gate_and_pending_operation_records()
@@ -44,6 +60,7 @@ fn migration_preserves_run_gate_and_pending_operation_records()
             std::slice::from_ref(&source),
             &[lease(source.clone())],
             &options(),
+            rejected_test_observation,
         )?,
         PreWriteStart::Analyze { .. }
     ));
@@ -60,7 +77,13 @@ fn migration_preserves_run_gate_and_pending_operation_records()
     assert_eq!(store.load_gate(&gate_id)?, gate_before);
     assert_eq!(store.load_operation(&operation_id)?, before);
     assert!(matches!(
-        session.reserve_pre_write("migrate-pending-digest", &[], &[], &options()),
+        session.reserve_pre_write(
+            "migrate-pending-digest",
+            &[],
+            &[],
+            &options(),
+            rejected_test_observation,
+        ),
         Err(StoreError::StoreGenerationChanged { .. })
     ));
     assert_migration_paths_absent(root.path())?;
@@ -374,6 +397,7 @@ fn open_active_gate_for(
         std::slice::from_ref(&source),
         std::slice::from_ref(&source_lease),
         &options(),
+        rejected_test_observation,
     )? {
         PreWriteStart::Analyze {
             gate_id,
@@ -385,7 +409,7 @@ fn open_active_gate_for(
         "migrate-gate-digest",
         &gate_id,
         PreWriteFinish {
-            baseline: Some(GateBaseline {
+            baseline: Some(GateBaselineDraft {
                 analysis_contract: "migration-test-contract".to_owned(),
                 snapshot: seal_analysis_snapshot(
                     Vec::new(),
@@ -400,7 +424,16 @@ fn open_active_gate_for(
             alias_closures: Vec::new(),
             signals: Vec::new(),
         },
-        |_| Vec::new(),
+        |_, _, _| ObservationFinalization {
+            signals: Vec::new(),
+            binding: ObservationBinding::Sealed {
+                observation: SealedGateObservation::Baseline {
+                    observation_id: GateBaselineObservationId::from_string(
+                        "gate_baseline_observation_migration".to_owned(),
+                    ),
+                },
+            },
+        },
     )?;
     Ok(gate_id)
 }

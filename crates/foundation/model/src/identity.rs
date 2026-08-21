@@ -37,7 +37,55 @@ string_id!(RetentionTombstoneIdentity);
 string_id!(CacheEvictionAuthorizationSetId);
 string_id!(PinId);
 string_id!(AnalysisInputId);
+string_id!(GateBaselineObservationId);
+string_id!(GateCloseObservationId);
 string_id!(RepositoryId);
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+pub enum SealedGateObservation {
+    Baseline {
+        observation_id: GateBaselineObservationId,
+    },
+    Close {
+        observation_id: GateCloseObservationId,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum UnsealedObservationReason {
+    AdmissionConflict,
+    SemanticReadConflict,
+    AnalysisFailed,
+    DeclaredPathUnsupported,
+    ObservationDomainUnbounded,
+    ProtectedInputChanged,
+    TransitionCatalogChanged,
+    UnplannedWrite,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "state",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+pub enum ObservationBinding<Path> {
+    Sealed {
+        observation: SealedGateObservation,
+    },
+    Unsealed {
+        reason: UnsealedObservationReason,
+        attempted_domain: Vec<Path>,
+        last_complete_read_set: Vec<Path>,
+        conflicting_or_unbounded_inputs: Vec<Path>,
+    },
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]

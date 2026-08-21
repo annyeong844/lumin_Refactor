@@ -59,6 +59,7 @@ fn insert_terminal_gate(store: &crate::RepositoryStore) -> Result<GateId, crate:
                 operation_id: operation("terminal-gate-owner"),
                 committed_unix_millis: Some(1),
                 decision: GateDecision::Deny,
+                observation_binding: None,
                 reason: Some("test terminal gate".to_owned()),
                 signals: Vec::new(),
                 changed_paths: Vec::new(),

@@ -15,14 +15,14 @@ use lumin_evidence::{
     ActualWriteSet, AnalysisMetrics, CacheCleanupResult, DeclaredPathUnsupportedReason,
     EntrySelectionRecord, FindingRecord, GateDecision, GateLifecycle, GateOperationKind,
     GateOperationResult, GateOperationStatus, GateRecord, GateSignal, OperationRecord,
-    PhysicalAliasClosureRecord, RunEvidence, SourceClassificationRecord, WriteLease,
-    WriteLeaseKind,
+    PhysicalAliasClosureRecord, RepoPathProjection, RunEvidence, SourceClassificationRecord,
+    WriteLease, WriteLeaseKind,
 };
 use lumin_model::{
     AnalysisInputId, AttemptId, AttemptStatus, CapabilityState, FindingDisposition, FindingId,
-    GateDeltaRecord, GateId, Limitation, OperationId, PhysicalFileIdentity, RepositoryRootIdentity,
-    ResolvedSourceUse, RunId, SelectedResolutionProfile, SourceRoleClassification, SourceSpan,
-    SymbolNamespace,
+    GateBaselineObservationId, GateDeltaRecord, GateId, Limitation, ObservationBinding,
+    OperationId, PhysicalFileIdentity, RepositoryRootIdentity, ResolvedSourceUse, RunId,
+    SelectedResolutionProfile, SourceRoleClassification, SourceSpan, SymbolNamespace,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -179,6 +179,8 @@ pub struct GateMutationResponseDto {
     pub lifecycle: GateLifecycle,
     pub decision: GateDecision,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub observation_binding: Option<ObservationBinding<RepoPathDto>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     pub signals: Vec<GateSignalDto>,
     pub leased_write_set: Vec<WriteLeaseDto>,
@@ -229,6 +231,7 @@ pub struct GateShowResponseDto {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GateBaselineSummaryDto {
+    pub observation_id: GateBaselineObservationId,
     pub analysis_contract: String,
     pub analysis_input_id: AnalysisInputId,
     pub semantic_input_count: usize,
@@ -246,6 +249,8 @@ pub struct GateRevisionSummaryDto {
     pub revision: u64,
     pub operation_id: OperationId,
     pub decision: GateDecision,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observation_binding: Option<ObservationBinding<RepoPathDto>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     pub signals: Vec<GateSignalDto>,
@@ -406,6 +411,10 @@ pub fn gate_mutation_response(result: &GateOperationResult) -> GateMutationRespo
         revision: result.revision,
         lifecycle: result.lifecycle,
         decision: result.decision,
+        observation_binding: result
+            .observation_binding
+            .as_ref()
+            .map(observation_binding_dto),
         reason: result.reason.clone(),
         signals: result.signals.iter().map(GateSignalDto::from).collect(),
         leased_write_set: result
@@ -465,6 +474,7 @@ fn gate_show_response_with_selection(
             .baseline
             .as_ref()
             .map(|baseline| GateBaselineSummaryDto {
+                observation_id: baseline.observation_id.clone(),
                 analysis_contract: baseline.analysis_contract.clone(),
                 analysis_input_id: baseline.snapshot.analysis_input_id.clone(),
                 semantic_input_count: baseline.snapshot.inputs.len(),
@@ -486,6 +496,10 @@ fn gate_show_response_with_selection(
                 revision: revision.revision,
                 operation_id: revision.operation_id.clone(),
                 decision: revision.decision,
+                observation_binding: revision
+                    .observation_binding
+                    .as_ref()
+                    .map(observation_binding_dto),
                 reason: revision.reason.clone(),
                 signals: revision.signals.iter().map(GateSignalDto::from).collect(),
                 changed_paths: revision
@@ -608,6 +622,33 @@ impl From<&EntrySelectionRecord> for EntrySelectionDto {
             source: selection.source,
             unavailable_reason: selection.unavailable_reason,
         }
+    }
+}
+
+fn observation_binding_dto(
+    binding: &ObservationBinding<RepoPathProjection>,
+) -> ObservationBinding<RepoPathDto> {
+    match binding {
+        ObservationBinding::Sealed { observation } => ObservationBinding::Sealed {
+            observation: observation.clone(),
+        },
+        ObservationBinding::Unsealed {
+            reason,
+            attempted_domain,
+            last_complete_read_set,
+            conflicting_or_unbounded_inputs,
+        } => ObservationBinding::Unsealed {
+            reason: *reason,
+            attempted_domain: attempted_domain.iter().map(RepoPathDto::from).collect(),
+            last_complete_read_set: last_complete_read_set
+                .iter()
+                .map(RepoPathDto::from)
+                .collect(),
+            conflicting_or_unbounded_inputs: conflicting_or_unbounded_inputs
+                .iter()
+                .map(RepoPathDto::from)
+                .collect(),
+        },
     }
 }
 

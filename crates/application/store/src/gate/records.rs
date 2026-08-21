@@ -22,6 +22,14 @@ pub(crate) fn increment_active_gate_catalog(write: &WriteTransaction) -> Result<
     Ok(next)
 }
 
+pub(crate) fn current_active_gate_catalog(write: &WriteTransaction) -> Result<u64, StoreError> {
+    let table = write.open_table(SEQUENCES).map_err(backend_error)?;
+    table
+        .get(ACTIVE_GATE_CATALOG_SEQUENCE_KEY)
+        .map_err(backend_error)
+        .map(|value| value.map_or(0, |value| value.value()))
+}
+
 pub(crate) fn current_transition_sequence(write: &WriteTransaction) -> Result<u64, StoreError> {
     let table = write.open_table(SEQUENCES).map_err(backend_error)?;
     table

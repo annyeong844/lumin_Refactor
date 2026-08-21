@@ -37,7 +37,9 @@ fn post_write_catalog_race_discards_actual_write_attribution_idempotently()
         signals: Vec::new(),
         deltas: Vec::new(),
     };
-    let first = close_a.finish_post_write("close-a", &gate_a, finish(), |_| Vec::new())?;
+    let first = close_a.finish_post_write("close-a", &gate_a, finish(), |_, _, signals| {
+        close_finalization(Vec::new(), signals)
+    })?;
     assert!(!first.decision.authorizes());
     assert!(first.actual_write_set.is_none());
     assert!(
@@ -46,7 +48,9 @@ fn post_write_catalog_race_discards_actual_write_attribution_idempotently()
             .contains(&GateSignal::TransitionCatalogChanged)
     );
 
-    let retry = close_a.finish_post_write("close-a", &gate_a, finish(), |_| Vec::new())?;
+    let retry = close_a.finish_post_write("close-a", &gate_a, finish(), |_, _, signals| {
+        close_finalization(Vec::new(), signals)
+    })?;
     assert_eq!(retry, first);
     let persisted = store.load_gate(&gate_a)?;
     assert!(
@@ -86,6 +90,7 @@ fn active_gate_catalog_order_and_revision_increment() -> Result<(), Box<dyn std:
             std::slice::from_ref(&retry_source),
             &[lease(retry_source.clone())],
             &options(),
+            rejected_test_observation,
         )?,
         PreWriteStart::Committed(result) if result.gate_id == gate_a
     ));

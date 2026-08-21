@@ -5,8 +5,10 @@ mod retention;
 use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_evidence::{
-    GateOperationKind, GateOperationStatus, GateRecord, OperationRecord, WorktreeTransition,
+    GateLifecycle, GateOperationKind, GateOperationStatus, GateRecord, OperationRecord,
+    WorktreeTransition,
 };
+use lumin_model::{ObservationBinding, SealedGateObservation};
 use serde::de::DeserializeOwned;
 
 use crate::gate::transition_key;
@@ -103,6 +105,7 @@ fn validate_gate_history(
             "gate {key} current revision is not its durable tail"
         )));
     }
+    validate_gate_observations(key, gate, operations)?;
     for (index, revision) in gate.revisions.iter().enumerate() {
         let operation = operations.get(revision.operation_id.as_str());
         if revision.revision != index as u64
@@ -134,6 +137,102 @@ fn validate_gate_history(
     Ok(())
 }
 
+fn validate_gate_observations(
+    key: &str,
+    gate: &GateRecord,
+    operations: &BTreeMap<&str, OperationRecord>,
+) -> Result<(), StoreError> {
+    let opening = gate
+        .revisions
+        .first()
+        .ok_or_else(|| StoreError::Integrity(format!("gate {key} omitted its opening revision")))?;
+    match &gate.baseline {
+        Some(baseline) => match &opening.observation_binding {
+            Some(ObservationBinding::Sealed {
+                observation: SealedGateObservation::Baseline { observation_id },
+            }) if observation_id == &baseline.observation_id => {}
+            _ => {
+                return Err(StoreError::Integrity(format!(
+                    "gate {key} baseline observation disagrees with its opening revision"
+                )));
+            }
+        },
+        None if gate.lifecycle == GateLifecycle::Active
+            || opening.decision.authorizes()
+            || !matches!(
+                opening.observation_binding.as_ref(),
+                Some(ObservationBinding::Unsealed { .. })
+            ) =>
+        {
+            return Err(StoreError::Integrity(format!(
+                "gate {key} opening omitted its matching baseline observation"
+            )));
+        }
+        None => {}
+    }
+
+    for revision in &gate.revisions {
+        let is_abandon = operations
+            .get(revision.operation_id.as_str())
+            .is_some_and(|operation| operation.kind == GateOperationKind::GateAbandon);
+        if !is_abandon && revision.observation_binding.is_none() {
+            return Err(StoreError::Integrity(format!(
+                "gate {key} revision {} omitted its observation binding",
+                revision.revision
+            )));
+        }
+        if revision.decision.authorizes()
+            && !is_abandon
+            && !matches!(
+                revision.observation_binding.as_ref(),
+                Some(ObservationBinding::Sealed { .. })
+            )
+        {
+            return Err(StoreError::Integrity(format!(
+                "gate {key} authorizing revision {} is not observation-sealed",
+                revision.revision
+            )));
+        }
+        let wrong_observation_kind = if revision.revision == 0 {
+            matches!(
+                revision.observation_binding.as_ref(),
+                Some(ObservationBinding::Sealed {
+                    observation: SealedGateObservation::Close { .. }
+                })
+            )
+        } else {
+            matches!(
+                revision.observation_binding.as_ref(),
+                Some(ObservationBinding::Sealed {
+                    observation: SealedGateObservation::Baseline { .. }
+                })
+            )
+        };
+        if wrong_observation_kind {
+            return Err(StoreError::Integrity(format!(
+                "gate {key} revision {} carries the wrong observation kind",
+                revision.revision
+            )));
+        }
+    }
+
+    if gate.lifecycle == GateLifecycle::Closed
+        && !matches!(
+            gate.revisions
+                .last()
+                .and_then(|revision| revision.observation_binding.as_ref()),
+            Some(ObservationBinding::Sealed {
+                observation: SealedGateObservation::Close { .. }
+            })
+        )
+    {
+        return Err(StoreError::Integrity(format!(
+            "closed gate {key} omitted its sealed close observation"
+        )));
+    }
+    Ok(())
+}
+
 fn validate_operation_gate_refs(
     operations: &BTreeMap<&str, OperationRecord>,
     gates: &BTreeMap<&str, GateRecord>,
@@ -146,6 +245,35 @@ fn validate_operation_gate_refs(
                 "operation {} references a missing gate",
                 operation.operation_id.as_str()
             )));
+        }
+        if let Some(result) = &operation.result {
+            let gate = gates.get(operation.gate_id.as_str()).ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "operation {} result references a missing gate",
+                    operation.operation_id.as_str()
+                ))
+            })?;
+            let revision = gate
+                .revisions
+                .iter()
+                .find(|revision| {
+                    revision.revision == result.revision
+                        && revision.operation_id == operation.operation_id
+                })
+                .ok_or_else(|| {
+                    StoreError::Integrity(format!(
+                        "operation {} result references a missing gate revision",
+                        operation.operation_id.as_str()
+                    ))
+                })?;
+            if revision.decision != result.decision
+                || revision.observation_binding != result.observation_binding
+            {
+                return Err(StoreError::Integrity(format!(
+                    "operation {} result disagrees with its gate observation",
+                    operation.operation_id.as_str()
+                )));
+            }
         }
     }
     Ok(())
@@ -162,13 +290,28 @@ fn validate_transition_gate_refs(
                 transition.sequence
             )));
         };
-        if !gate
+        let revision = gate
             .revisions
             .iter()
-            .any(|revision| revision.revision == transition.capsule.revision)
-        {
+            .find(|revision| revision.revision == transition.capsule.revision)
+            .ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "transition {} references a missing gate revision",
+                    transition.sequence
+                ))
+            })?;
+        let baseline_matches = gate.baseline.as_ref().is_some_and(|baseline| {
+            baseline.observation_id == transition.capsule.baseline_observation_id
+        });
+        let close_matches = matches!(
+            revision.observation_binding.as_ref(),
+            Some(ObservationBinding::Sealed {
+                observation: SealedGateObservation::Close { observation_id }
+            }) if observation_id == &transition.capsule.close_observation_id
+        );
+        if !baseline_matches || !close_matches {
             return Err(StoreError::Integrity(format!(
-                "transition {} references a missing gate revision",
+                "transition {} observation binding disagrees with its gate revision",
                 transition.sequence
             )));
         }
@@ -195,7 +338,7 @@ fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreErr
                 && result.request_digest == operation.request_digest
                 && result.gate_id == operation.gate_id =>
         {
-            Ok(())
+            validate_operation_observation(operation, result)
         }
         (GateOperationStatus::Pending | GateOperationStatus::Interrupted, None) => Ok(()),
         _ => Err(StoreError::Integrity(format!(
@@ -203,6 +346,62 @@ fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreErr
             operation.operation_id.as_str()
         ))),
     }
+}
+
+fn validate_operation_observation(
+    operation: &OperationRecord,
+    result: &lumin_evidence::GateOperationResult,
+) -> Result<(), StoreError> {
+    if operation.kind != GateOperationKind::GateAbandon && result.observation_binding.is_none() {
+        return Err(StoreError::Integrity(format!(
+            "operation {} omitted its observation binding",
+            operation.operation_id.as_str()
+        )));
+    }
+    if result.decision.authorizes() {
+        let correct = match operation.kind {
+            GateOperationKind::PreWrite => matches!(
+                result.observation_binding.as_ref(),
+                Some(ObservationBinding::Sealed {
+                    observation: SealedGateObservation::Baseline { .. }
+                })
+            ),
+            GateOperationKind::PostWrite => matches!(
+                result.observation_binding.as_ref(),
+                Some(ObservationBinding::Sealed {
+                    observation: SealedGateObservation::Close { .. }
+                })
+            ),
+            GateOperationKind::GateAbandon => true,
+        };
+        if !correct {
+            return Err(StoreError::Integrity(format!(
+                "authorizing operation {} omitted its sealed observation",
+                operation.operation_id.as_str()
+            )));
+        }
+    }
+    let wrong_kind = matches!(
+        (&operation.kind, result.observation_binding.as_ref()),
+        (
+            GateOperationKind::PreWrite,
+            Some(ObservationBinding::Sealed {
+                observation: SealedGateObservation::Close { .. }
+            })
+        ) | (
+            GateOperationKind::PostWrite,
+            Some(ObservationBinding::Sealed {
+                observation: SealedGateObservation::Baseline { .. }
+            })
+        ) | (GateOperationKind::GateAbandon, Some(_))
+    );
+    if wrong_kind {
+        return Err(StoreError::Integrity(format!(
+            "operation {} carries the wrong observation kind",
+            operation.operation_id.as_str()
+        )));
+    }
+    Ok(())
 }
 
 fn validate_pointers(snapshot: &LogicalStoreSnapshot) -> Result<(), StoreError> {

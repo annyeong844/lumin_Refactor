@@ -60,7 +60,7 @@ pub struct RetentionPlanCollectionDto {
 #[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub enum GateLookupResponseDto {
-    Live(GateShowResponseDto),
+    Live(Box<GateShowResponseDto>),
     Tombstone(LookupTombstoneResponseDto),
 }
 
@@ -78,7 +78,7 @@ pub enum LookupTombstoneResponseDto {
 #[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub enum LifecycleOperationShowResponseDto {
-    Gate(OperationShowResponseDto),
+    Gate(Box<OperationShowResponseDto>),
     CacheCleanup(CacheCleanupOperationResponseDto),
     Retention(RetentionOperationResponseDto),
 }
@@ -225,7 +225,9 @@ pub fn retention_plan_response(
 
 pub fn gate_lookup_response(lookup: RecordLookup<GateRecord>) -> GateLookupResponseDto {
     match lookup {
-        RecordLookup::Live(gate) => GateLookupResponseDto::Live(gate_show_response(&gate)),
+        RecordLookup::Live(gate) => {
+            GateLookupResponseDto::Live(Box::new(gate_show_response(&gate)))
+        }
         RecordLookup::Pruning(tombstone) => {
             GateLookupResponseDto::Tombstone(LookupTombstoneResponseDto::Pruning { tombstone })
         }
@@ -240,7 +242,7 @@ pub fn lifecycle_operation_response(
 ) -> LifecycleOperationShowResponseDto {
     match operation {
         LifecycleOperationRecord::Gate(operation) => {
-            LifecycleOperationShowResponseDto::Gate(operation_show_response(operation))
+            LifecycleOperationShowResponseDto::Gate(Box::new(operation_show_response(operation)))
         }
         LifecycleOperationRecord::CacheCleanup(operation) => {
             LifecycleOperationShowResponseDto::CacheCleanup(cache_cleanup_operation_response(

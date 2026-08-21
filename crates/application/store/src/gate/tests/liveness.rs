@@ -23,6 +23,7 @@ fn process_death_releases_pre_write_reservations_and_allows_same_operation_retry
         std::slice::from_ref(&demanded),
         &[lease(demanded.clone())],
         &options(),
+        rejected_test_observation,
     )? {
         PreWriteStart::Analyze { gate_id, .. } => gate_id,
         PreWriteStart::Committed(_) => {
@@ -40,7 +41,7 @@ fn process_death_releases_pre_write_reservations_and_allows_same_operation_retry
                 detail: "test rejection".to_owned(),
             }],
         },
-        |_| Vec::new(),
+        |_, _, signals| baseline_finalization(Vec::new(), signals),
     )?;
     let committed_writer = store.load_operation(&writer_id)?;
     assert_eq!(committed_writer.status, GateOperationStatus::Committed);
@@ -53,6 +54,7 @@ fn process_death_releases_pre_write_reservations_and_allows_same_operation_retry
         std::slice::from_ref(&path("src/dead-reader.ts")?),
         &[lease(path("src/dead-reader.ts")?)],
         &options(),
+        rejected_test_observation,
     )? {
         PreWriteStart::Analyze { gate_id, .. } => gate_id,
         PreWriteStart::Committed(_) => return Err("interrupted operation did not retry".into()),
@@ -166,6 +168,7 @@ fn old_generation_operation_reopens_before_any_late_mutation()
             std::slice::from_ref(&source),
             &[lease(source.clone())],
             &options(),
+            rejected_test_observation,
         ),
         Err(StoreError::StoreGenerationChanged {
             expected,
@@ -185,6 +188,7 @@ fn old_generation_operation_reopens_before_any_late_mutation()
             std::slice::from_ref(&source),
             &[lease(source.clone())],
             &options(),
+            rejected_test_observation,
         )?,
         PreWriteStart::Analyze { .. }
     ));
@@ -206,6 +210,7 @@ fn process_death_pre_write_fixture() -> Result<(), Box<dyn std::error::Error>> {
         std::slice::from_ref(&source),
         &[lease(source.clone())],
         &options(),
+        rejected_test_observation,
     )? {
         PreWriteStart::Analyze { gate_id, .. } => gate_id,
         PreWriteStart::Committed(_) => return Err("fixture operation committed early".into()),

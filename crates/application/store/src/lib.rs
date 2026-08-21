@@ -7,8 +7,8 @@ mod retention;
 
 pub use gate::{
     ActiveGateCatalogCursor, ActiveGateCatalogItem, ActiveGateCatalogSnapshot, ActiveGateLease,
-    OperationSession, PostWriteFinish, PostWriteStart, PreWriteFinish, PreWriteStart,
-    SemanticReadReservation,
+    GateBaselineDraft, ObservationFinalization, OperationSession, PostWriteFinish, PostWriteStart,
+    PreWriteFinish, PreWriteStart, SemanticReadReservation,
 };
 pub use generation::StoreGeneration;
 pub use namespace::MigrationIntent;
