@@ -427,7 +427,7 @@ fn analyze_pre_write(
             capture,
             reserved_semantic_bindings,
         }) => (capture, reserved_semantic_bindings),
-        Ok(ReservedCapture::Blocked(signal)) => {
+        Ok(ReservedCapture::Blocked { signal, .. }) => {
             return Ok(PreWriteAnalysis::Finished(Box::new(
                 PreWritePromotion::without_validation(PreWriteFinish {
                     baseline: None,
@@ -512,6 +512,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
             &request_digest,
             &gate,
             vec![GateSignal::AnalysisContractChanged],
+            Vec::new(),
         );
     }
 
@@ -528,6 +529,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                     vec![GateSignal::AnalysisFailed {
                         detail: error.to_string(),
                     }],
+                    Vec::new(),
                 );
             }
         };
@@ -544,6 +546,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
             vec![GateSignal::AnalysisFailed {
                 detail: error.to_string(),
             }],
+            Vec::new(),
         );
     }
 
@@ -564,6 +567,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                 ))
                 .to_string(),
             }],
+            Vec::new(),
         );
     }
 
@@ -584,8 +588,18 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
             capture,
             reserved_semantic_bindings,
         }) => (capture, reserved_semantic_bindings),
-        Ok(ReservedCapture::Blocked(signal)) => {
-            return finish_failed_close(&operation, request, &request_digest, &gate, vec![signal]);
+        Ok(ReservedCapture::Blocked {
+            signal,
+            attempted_semantic_bindings,
+        }) => {
+            return finish_failed_close(
+                &operation,
+                request,
+                &request_digest,
+                &gate,
+                vec![signal],
+                attempted_semantic_bindings,
+            );
         }
         Ok(ReservedCapture::Committed(result)) => return Ok(*result),
         Err(EngineError::Store(error)) => return Err(EngineError::Store(error)),
@@ -598,6 +612,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                 vec![GateSignal::AnalysisFailed {
                     detail: error.to_string(),
                 }],
+                Vec::new(),
             );
         }
     };
@@ -665,6 +680,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         actual_write_set: actual_write_set.clone(),
         alias_closures: alias_closures.clone(),
         reconciled_transition_sequences: reconciled_sequences.clone(),
+        attempted_semantic_inputs: Vec::new(),
     };
     wait_at_post_write_final_barrier(&request.operation_id, &request.gate_id)?;
     operation
@@ -679,6 +695,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                 actual_write_set,
                 alias_closures,
                 reconciled_transition_sequences: reconciled_sequences,
+                attempted_semantic_inputs: Vec::new(),
                 signals,
                 deltas,
             },
@@ -762,6 +779,7 @@ fn finish_failed_close(
     request_digest: &str,
     gate: &GateRecord,
     signals: Vec<GateSignal>,
+    attempted_semantic_bindings: Vec<(RepoPath, SemanticReadReservationBinding)>,
 ) -> Result<GateOperationResult, EngineError> {
     let baseline = gate.baseline.as_ref();
     let observation_seed = CloseObservationSeed {
@@ -777,7 +795,12 @@ fn finish_failed_close(
         actual_write_set: None,
         alias_closures: gate.alias_closures.clone(),
         reconciled_transition_sequences: Vec::new(),
+        attempted_semantic_inputs: attempted_semantic_bindings
+            .iter()
+            .map(|(_, binding)| binding.clone())
+            .collect(),
     };
+    wait_at_post_write_final_barrier(&request.operation_id, &request.gate_id)?;
     operation
         .finish_post_write(
             request_digest,
@@ -790,16 +813,29 @@ fn finish_failed_close(
                 actual_write_set: None,
                 alias_closures: gate.alias_closures.clone(),
                 reconciled_transition_sequences: Vec::new(),
+                attempted_semantic_inputs: attempted_semantic_bindings
+                    .iter()
+                    .map(|(_, binding)| binding.clone())
+                    .collect(),
                 signals,
                 deltas: Vec::new(),
             },
-            |_, catalog_revision, store_signals| ObservationFinalization {
-                signals: Vec::new(),
-                binding: close_observation_binding(
-                    &observation_seed,
-                    catalog_revision,
-                    store_signals,
-                ),
+            |reserved_identities, catalog_revision, store_signals| {
+                let final_signals = revalidate_attempted_semantic_inputs(
+                    &request.root,
+                    &attempted_semantic_bindings,
+                    reserved_identities,
+                );
+                let mut all_signals = store_signals.to_vec();
+                all_signals.extend(final_signals.iter().cloned());
+                ObservationFinalization {
+                    signals: final_signals,
+                    binding: close_observation_binding(
+                        &observation_seed,
+                        catalog_revision,
+                        &all_signals,
+                    ),
+                }
             },
         )
         .map_err(Into::into)
@@ -810,7 +846,10 @@ enum ReservedCapture {
         capture: Box<RepositoryCapture>,
         reserved_semantic_bindings: Vec<(RepoPath, SemanticReadReservationBinding)>,
     },
-    Blocked(GateSignal),
+    Blocked {
+        signal: GateSignal,
+        attempted_semantic_bindings: Vec<(RepoPath, SemanticReadReservationBinding)>,
+    },
     Committed(Box<GateOperationResult>),
 }
 
@@ -888,9 +927,10 @@ fn capture_reserved_repository(
                     reserved_state_lookup,
                 )?;
                 if !stale.is_empty() {
-                    return Ok(ReservedCapture::Blocked(
-                        GateSignal::ProtectedInputChanged { paths: stale },
-                    ));
+                    return Ok(ReservedCapture::Blocked {
+                        signal: GateSignal::ProtectedInputChanged { paths: stale },
+                        attempted_semantic_bindings: Vec::new(),
+                    });
                 }
                 return Ok(ReservedCapture::Finished {
                     capture: Box::new(capture),
@@ -918,12 +958,20 @@ fn reserve_semantic_paths(
             reserved_bindings.extend(paths.iter().cloned().zip(reservations));
             return Ok(None);
         }
-        SemanticReadReservation::Conflict { paths, gate_ids } => {
-            ReservedCapture::Blocked(GateSignal::SemanticInputConflict { paths, gate_ids })
-        }
-        SemanticReadReservation::TransitionCatalogChanged => {
-            ReservedCapture::Blocked(GateSignal::TransitionCatalogChanged)
-        }
+        SemanticReadReservation::Conflict {
+            paths: conflict_paths,
+            gate_ids,
+        } => ReservedCapture::Blocked {
+            signal: GateSignal::SemanticInputConflict {
+                paths: conflict_paths,
+                gate_ids,
+            },
+            attempted_semantic_bindings: paths.iter().cloned().zip(reservations).collect(),
+        },
+        SemanticReadReservation::TransitionCatalogChanged => ReservedCapture::Blocked {
+            signal: GateSignal::TransitionCatalogChanged,
+            attempted_semantic_bindings: Vec::new(),
+        },
         SemanticReadReservation::Committed(result) => ReservedCapture::Committed(result),
     };
     Ok(Some(outcome))
@@ -1032,6 +1080,40 @@ fn final_freshness_validation_signals(
         Err(error) => vec![GateSignal::AnalysisFailed {
             detail: error.to_string(),
         }],
+    }
+}
+
+fn revalidate_attempted_semantic_inputs(
+    root: &Path,
+    bindings: &[(RepoPath, SemanticReadReservationBinding)],
+    reserved_identities: &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
+) -> Vec<GateSignal> {
+    let mut stale = Vec::new();
+    for (path, expected) in bindings {
+        match semantic_read_reservation(root, path) {
+            Ok(current)
+                if current == *expected
+                    && !current
+                        .physical_identity
+                        .as_ref()
+                        .is_some_and(|identity| reserved_identities.contains(identity))
+                    && !current.absence_parent.as_ref().is_some_and(|parent| {
+                        reserved_identities.contains(&parent.physical_identity)
+                    }) => {}
+            Ok(current) => stale.push(current.path),
+            Err(error) => {
+                return vec![GateSignal::AnalysisFailed {
+                    detail: error.to_string(),
+                }];
+            }
+        }
+    }
+    stale.sort();
+    stale.dedup();
+    if stale.is_empty() {
+        Vec::new()
+    } else {
+        vec![GateSignal::ProtectedInputChanged { paths: stale }]
     }
 }
 

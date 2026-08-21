@@ -84,11 +84,20 @@ pub struct GateBaselineDraft {
 }
 
 impl GateBaselineDraft {
-    fn seal(self, observation_id: GateBaselineObservationId) -> GateBaseline {
+    fn seal(
+        self,
+        observation_id: GateBaselineObservationId,
+        catalog_revision: u64,
+        leased_write_set: Vec<WriteLease>,
+        alias_closures: Vec<PhysicalAliasClosureRecord>,
+    ) -> GateBaseline {
         GateBaseline {
             observation_id,
+            catalog_revision,
             analysis_contract: self.analysis_contract,
             snapshot: self.snapshot,
+            leased_write_set,
+            alias_closures,
             protected_semantic_inputs: self.protected_semantic_inputs,
             transition_sequence: self.transition_sequence,
         }
@@ -110,6 +119,7 @@ pub struct PostWriteFinish {
     pub actual_write_set: Option<ActualWriteSet>,
     pub alias_closures: Vec<PhysicalAliasClosureRecord>,
     pub reconciled_transition_sequences: Vec<u64>,
+    pub attempted_semantic_inputs: Vec<SemanticReadReservationBinding>,
     pub signals: Vec<GateSignal>,
     pub deltas: Vec<GateDeltaRecord>,
 }
@@ -505,6 +515,7 @@ fn completed_pre_write_records(
     alias_closures: Vec<PhysicalAliasClosureRecord>,
     signals: Vec<GateSignal>,
     observation_binding: GateObservationBinding,
+    catalog_revision: u64,
 ) -> Result<(GateRecord, GateOperationResult), StoreError> {
     let decision = gate_policy::decision(&signals);
     if decision.authorizes() && baseline.is_none() {
@@ -554,6 +565,7 @@ fn completed_pre_write_records(
             operation_id: operation.operation_id.clone(),
             committed_unix_millis: Some(crate::unix_millis()?),
             decision,
+            catalog_revision: Some(catalog_revision),
             observation_binding: Some(observation_binding),
             reason: None,
             signals,
@@ -628,6 +640,7 @@ fn validate_post_write_context(
     operation: &OperationRecord,
     changed_paths: &[RepoPathProjection],
     reconciled_transition_sequences: &[u64],
+    attempted_semantic_inputs: &[SemanticReadReservationBinding],
     signals: &mut Vec<GateSignal>,
 ) -> Result<(), StoreError> {
     if current_transition_sequence(write)? != operation.transition_sequence
@@ -647,6 +660,25 @@ fn validate_post_write_context(
             paths: conflicts.paths,
             gate_ids: conflicts.gate_ids,
         });
+    }
+    if !attempted_semantic_inputs.is_empty() {
+        signals.retain(|signal| !matches!(signal, GateSignal::SemanticInputConflict { .. }));
+        let conflicts = semantic_read_conflicts(
+            write,
+            &operation.operation_id,
+            &gate.gate_id,
+            attempted_semantic_inputs,
+        )?;
+        if conflicts.paths.is_empty() {
+            if !signals.contains(&GateSignal::TransitionCatalogChanged) {
+                signals.push(GateSignal::TransitionCatalogChanged);
+            }
+        } else {
+            signals.push(GateSignal::SemanticInputConflict {
+                paths: conflicts.paths,
+                gate_ids: conflicts.gate_ids,
+            });
+        }
     }
     if !operation.semantic_read_reservation_bindings.is_empty() {
         let conflicts = semantic_read_conflicts(
@@ -796,6 +828,7 @@ fn rejected_gate(
     signals: &[GateSignal],
     baseline: Option<GateBaseline>,
     observation_binding: GateObservationBinding,
+    catalog_revision: u64,
 ) -> Result<GateRecord, StoreError> {
     let decision = gate_policy::decision(signals);
     let protected_semantic_inputs = baseline.as_ref().map_or_else(Vec::new, |baseline| {
@@ -818,6 +851,7 @@ fn rejected_gate(
             operation_id: operation.operation_id.clone(),
             committed_unix_millis: Some(crate::unix_millis()?),
             decision,
+            catalog_revision: Some(catalog_revision),
             observation_binding: Some(observation_binding),
             reason: None,
             signals: signals.to_vec(),

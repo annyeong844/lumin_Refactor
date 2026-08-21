@@ -67,6 +67,7 @@ impl OperationSession<'_> {
 
             let gate_id = operation.gate_id.clone();
             let transition_sequence = operation.transition_sequence;
+            let catalog_revision = current_active_gate_catalog(&write)?;
             let (paths, gate_ids) = conflicts(&write, operation_id, initial_leases, &[], None)?;
 
             if !paths.is_empty() {
@@ -88,6 +89,7 @@ impl OperationSession<'_> {
                     &signals,
                     None,
                     observation_binding,
+                    catalog_revision,
                 )?;
                 operation.status = GateOperationStatus::Committed;
                 operation.operation_liveness = None;
@@ -170,7 +172,12 @@ impl OperationSession<'_> {
                         observation:
                             lumin_model::SealedGateObservation::Baseline { observation_id },
                     },
-                ) => Some(baseline.seal(observation_id.clone())),
+                ) => Some(baseline.seal(
+                    observation_id.clone(),
+                    catalog_revision,
+                    leased_write_set.clone(),
+                    alias_closures.clone(),
+                )),
                 (Some(_), lumin_model::ObservationBinding::Unsealed { .. })
                 | (None, lumin_model::ObservationBinding::Unsealed { .. }) => None,
                 (None, lumin_model::ObservationBinding::Sealed { .. }) => {
@@ -191,6 +198,7 @@ impl OperationSession<'_> {
                 alias_closures,
                 signals,
                 observation_binding,
+                catalog_revision,
             )?;
             operation.leased_write_set = result.leased_write_set.clone();
             persist_operation_result(&write, &gate, &mut operation, &result)?;
@@ -436,6 +444,7 @@ impl OperationSession<'_> {
             mut actual_write_set,
             mut alias_closures,
             mut reconciled_transition_sequences,
+            attempted_semantic_inputs,
             mut signals,
             mut deltas,
         } = finish;
@@ -469,6 +478,7 @@ impl OperationSession<'_> {
                 &operation,
                 &changed_paths,
                 &reconciled_transition_sequences,
+                &attempted_semantic_inputs,
                 &mut signals,
             )?;
             let reserved_state_identities = guard.reserved_state_identities()?;
@@ -555,6 +565,7 @@ impl OperationSession<'_> {
                 operation_id: operation_id.clone(),
                 committed_unix_millis: Some(crate::unix_millis()?),
                 decision,
+                catalog_revision: Some(catalog_revision),
                 observation_binding: Some(observation_binding),
                 reason: None,
                 signals: signals.clone(),

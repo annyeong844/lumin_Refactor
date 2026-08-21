@@ -111,6 +111,24 @@ fn pre_and_post_survive_process_reopen() -> Result<(), Box<dyn std::error::Error
     );
     assert_eq!(
         shown_json
+            .pointer("/baseline/catalogRevision")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        shown_json
+            .pointer("/revisions/0/catalogRevision")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        shown_json
+            .pointer("/revisions/1/catalogRevision")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        shown_json
             .pointer("/revisions/1/observationBinding/observation/observationId")
             .and_then(Value::as_str),
         Some(close_observation_id)

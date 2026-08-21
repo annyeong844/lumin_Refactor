@@ -34,6 +34,7 @@ fn post_write_catalog_race_discards_actual_write_attribution_idempotently()
         actual_write_set: Some(Default::default()),
         alias_closures: Vec::new(),
         reconciled_transition_sequences: Vec::new(),
+        attempted_semantic_inputs: Vec::new(),
         signals: Vec::new(),
         deltas: Vec::new(),
     };

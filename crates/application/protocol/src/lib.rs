@@ -232,6 +232,7 @@ pub struct GateShowResponseDto {
 #[serde(rename_all = "camelCase")]
 pub struct GateBaselineSummaryDto {
     pub observation_id: GateBaselineObservationId,
+    pub catalog_revision: u64,
     pub analysis_contract: String,
     pub analysis_input_id: AnalysisInputId,
     pub semantic_input_count: usize,
@@ -249,6 +250,8 @@ pub struct GateRevisionSummaryDto {
     pub revision: u64,
     pub operation_id: OperationId,
     pub decision: GateDecision,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub catalog_revision: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub observation_binding: Option<ObservationBinding<RepoPathDto>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -475,6 +478,7 @@ fn gate_show_response_with_selection(
             .as_ref()
             .map(|baseline| GateBaselineSummaryDto {
                 observation_id: baseline.observation_id.clone(),
+                catalog_revision: baseline.catalog_revision,
                 analysis_contract: baseline.analysis_contract.clone(),
                 analysis_input_id: baseline.snapshot.analysis_input_id.clone(),
                 semantic_input_count: baseline.snapshot.inputs.len(),
@@ -496,6 +500,7 @@ fn gate_show_response_with_selection(
                 revision: revision.revision,
                 operation_id: revision.operation_id.clone(),
                 decision: revision.decision,
+                catalog_revision: revision.catalog_revision,
                 observation_binding: revision
                     .observation_binding
                     .as_ref()

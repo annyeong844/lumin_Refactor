@@ -306,6 +306,195 @@ pub struct ActualWriteSet {
     pub current_alias_closures: Vec<PhysicalAliasClosureRecord>,
 }
 
+pub struct GateBaselineObservationInput<'a> {
+    pub catalog_revision: u64,
+    pub transition_sequence: u64,
+    pub analysis_contract: &'a str,
+    pub analysis_input_id: &'a AnalysisInputId,
+    pub declared_write_set: &'a [RepoPathProjection],
+    pub leased_write_set: &'a [WriteLease],
+    pub alias_closures: &'a [PhysicalAliasClosureRecord],
+    pub protected_semantic_inputs: &'a [SemanticInputRecord],
+}
+
+pub fn derive_gate_baseline_observation_id(
+    input: GateBaselineObservationInput<'_>,
+) -> GateBaselineObservationId {
+    let mut framed = Vec::new();
+    append_length_prefixed(&mut framed, b"lumin-gate-baseline-observation.v1");
+    framed.extend_from_slice(&input.catalog_revision.to_be_bytes());
+    framed.extend_from_slice(&input.transition_sequence.to_be_bytes());
+    append_length_prefixed(&mut framed, input.analysis_contract.as_bytes());
+    append_length_prefixed(&mut framed, input.analysis_input_id.as_str().as_bytes());
+    append_observation_paths(&mut framed, input.declared_write_set);
+    append_observation_write_leases(&mut framed, input.leased_write_set);
+    append_observation_alias_closures(&mut framed, input.alias_closures);
+    append_observation_semantic_inputs(&mut framed, input.protected_semantic_inputs);
+    GateBaselineObservationId::from_string(format!(
+        "gate_baseline_observation_{}",
+        digest_hex(&framed)
+    ))
+}
+
+pub struct GateCloseObservationInput<'a> {
+    pub gate_id: &'a GateId,
+    pub opening_observation_id: &'a GateBaselineObservationId,
+    pub opening_analysis_contract: &'a str,
+    pub prior_revision: u64,
+    pub catalog_revision: u64,
+    pub analysis_input_id: &'a AnalysisInputId,
+    pub leased_write_set: &'a [WriteLease],
+    pub protected_semantic_inputs: &'a [SemanticInputRecord],
+    pub changed_paths: &'a [RepoPathProjection],
+    pub actual_write_set: &'a ActualWriteSet,
+    pub alias_closures: &'a [PhysicalAliasClosureRecord],
+    pub reconciled_transition_sequences: &'a [u64],
+}
+
+pub fn derive_gate_close_observation_id(
+    input: GateCloseObservationInput<'_>,
+) -> GateCloseObservationId {
+    let mut framed = Vec::new();
+    append_length_prefixed(&mut framed, b"lumin-gate-close-observation.v1");
+    append_length_prefixed(&mut framed, input.gate_id.as_str().as_bytes());
+    append_length_prefixed(
+        &mut framed,
+        input.opening_observation_id.as_str().as_bytes(),
+    );
+    append_length_prefixed(&mut framed, input.opening_analysis_contract.as_bytes());
+    framed.extend_from_slice(&input.prior_revision.to_be_bytes());
+    framed.extend_from_slice(&input.catalog_revision.to_be_bytes());
+    append_length_prefixed(&mut framed, input.analysis_input_id.as_str().as_bytes());
+    append_observation_write_leases(&mut framed, input.leased_write_set);
+    append_observation_semantic_inputs(&mut framed, input.protected_semantic_inputs);
+    append_observation_paths(&mut framed, input.changed_paths);
+    append_observation_actual_write_set(&mut framed, input.actual_write_set);
+    append_observation_alias_closures(&mut framed, input.alias_closures);
+    let mut sequences = input.reconciled_transition_sequences.to_vec();
+    sequences.sort_unstable();
+    sequences.dedup();
+    framed.extend_from_slice(&(sequences.len() as u64).to_be_bytes());
+    for sequence in sequences {
+        framed.extend_from_slice(&sequence.to_be_bytes());
+    }
+    GateCloseObservationId::from_string(format!("gate_close_observation_{}", digest_hex(&framed)))
+}
+
+fn append_observation_actual_write_set(output: &mut Vec<u8>, actual: &ActualWriteSet) {
+    append_observation_paths(output, &actual.paths);
+    append_observation_alias_closures(output, &actual.baseline_alias_closures);
+    append_observation_alias_closures(output, &actual.current_alias_closures);
+}
+
+fn append_observation_paths(output: &mut Vec<u8>, paths: &[RepoPathProjection]) {
+    let mut paths = paths
+        .iter()
+        .map(|path| path.canonical.as_slice())
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    output.extend_from_slice(&(paths.len() as u64).to_be_bytes());
+    for path in paths {
+        append_length_prefixed(output, path);
+    }
+}
+
+fn append_observation_write_leases(output: &mut Vec<u8>, leases: &[WriteLease]) {
+    let mut leases = leases.to_vec();
+    leases.sort();
+    leases.dedup();
+    output.extend_from_slice(&(leases.len() as u64).to_be_bytes());
+    for lease in leases {
+        append_length_prefixed(output, &lease.path.canonical);
+        output.push(match lease.kind {
+            WriteLeaseKind::ExistingFile => 1,
+            WriteLeaseKind::NewFile => 2,
+            WriteLeaseKind::Directory => 3,
+        });
+        append_observation_physical_identity(output, lease.physical_identity.as_ref());
+        match lease.nearest_existing_parent {
+            Some(parent) => {
+                output.push(1);
+                append_length_prefixed(output, &parent.canonical);
+            }
+            None => output.push(0),
+        }
+        let mut prefix_identities = lease.prefix_identities;
+        prefix_identities.sort();
+        prefix_identities.dedup();
+        output.extend_from_slice(&(prefix_identities.len() as u64).to_be_bytes());
+        for prefix in prefix_identities {
+            append_length_prefixed(output, &prefix.path.canonical);
+            append_length_prefixed(output, &prefix.physical_identity.canonical_bytes());
+        }
+    }
+}
+
+fn append_observation_alias_closures(
+    output: &mut Vec<u8>,
+    closures: &[PhysicalAliasClosureRecord],
+) {
+    let mut closures = closures.to_vec();
+    closures.sort();
+    closures.dedup();
+    output.extend_from_slice(&(closures.len() as u64).to_be_bytes());
+    for closure in closures {
+        append_length_prefixed(output, &closure.physical_identity.canonical_bytes());
+        append_observation_paths(output, &closure.members);
+    }
+}
+
+fn append_observation_semantic_inputs(output: &mut Vec<u8>, inputs: &[SemanticInputRecord]) {
+    let mut inputs = inputs.to_vec();
+    inputs.sort();
+    inputs.dedup();
+    output.extend_from_slice(&(inputs.len() as u64).to_be_bytes());
+    for input in inputs {
+        append_length_prefixed(output, &input.path.canonical);
+        output.push(input.state.tag());
+        append_observation_optional_bytes(
+            output,
+            input.payload_sha256.as_deref().map(str::as_bytes),
+        );
+        append_observation_physical_identity(output, input.physical_identity.as_ref());
+        match input.absence_parent {
+            Some(parent) => {
+                output.push(1);
+                append_length_prefixed(output, &parent.path.canonical);
+                append_length_prefixed(output, &parent.physical_identity.canonical_bytes());
+            }
+            None => output.push(0),
+        }
+        append_observation_optional_bytes(
+            output,
+            input.physical_redirect_sha256.as_deref().map(str::as_bytes),
+        );
+    }
+}
+
+fn append_observation_physical_identity(
+    output: &mut Vec<u8>,
+    identity: Option<&PhysicalFileIdentity>,
+) {
+    match identity {
+        Some(identity) => {
+            output.push(1);
+            append_length_prefixed(output, &identity.canonical_bytes());
+        }
+        None => output.push(0),
+    }
+}
+
+fn append_observation_optional_bytes(output: &mut Vec<u8>, value: Option<&[u8]>) {
+    match value {
+        Some(value) => {
+            output.push(1);
+            append_length_prefixed(output, value);
+        }
+        None => output.push(0),
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DeclaredPathUnsupportedReason {
@@ -389,8 +578,11 @@ pub enum GateSignal {
 #[serde(rename_all = "camelCase")]
 pub struct GateBaseline {
     pub observation_id: GateBaselineObservationId,
+    pub catalog_revision: u64,
     pub analysis_contract: String,
     pub snapshot: AnalysisSnapshot,
+    pub leased_write_set: Vec<WriteLease>,
+    pub alias_closures: Vec<PhysicalAliasClosureRecord>,
     #[serde(default)]
     pub protected_semantic_inputs: Vec<SemanticInputRecord>,
     #[serde(default)]
@@ -405,6 +597,8 @@ pub struct GateRevision {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub committed_unix_millis: Option<u64>,
     pub decision: GateDecision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_revision: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observation_binding: Option<GateObservationBinding>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

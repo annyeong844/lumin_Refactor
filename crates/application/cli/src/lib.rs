@@ -834,7 +834,15 @@ fn gate_abandon(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput,
         operation_id,
         reason,
     })?;
-    gate_command_output(&result)
+    let response = lumin_protocol::gate_mutation_response(&result);
+    let stdout = lumin_protocol::to_json(&response)?;
+    Ok(CommandSuccess {
+        exit_code: 0,
+        stdout,
+        result_delivery: CommandResultDelivery::RecoverableMutation,
+        mutation_delivery: None,
+    }
+    .into())
 }
 
 fn operation(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliError> {

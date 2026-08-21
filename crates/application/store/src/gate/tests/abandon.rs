@@ -21,7 +21,8 @@ fn abandon_is_atomic_idempotent_and_creates_one_terminal_revision()
         "planned edit cancelled",
     )?;
     assert_eq!(first.lifecycle, GateLifecycle::Abandoned);
-    assert_eq!(first.decision, lumin_evidence::GateDecision::Allow);
+    assert_eq!(first.decision, lumin_evidence::GateDecision::Deny);
+    assert!(first.observation_binding.is_none());
     assert_eq!(first.revision, 1);
     assert_eq!(first.reason.as_deref(), Some("planned edit cancelled"));
 
@@ -33,6 +34,12 @@ fn abandon_is_atomic_idempotent_and_creates_one_terminal_revision()
     assert!(gate.transition_refs.is_empty());
     assert!(gate.protected_semantic_inputs.is_empty());
     assert_eq!(gate.revisions.len(), 2);
+    assert_eq!(
+        gate.revisions[1].decision,
+        lumin_evidence::GateDecision::Deny
+    );
+    assert!(gate.revisions[1].catalog_revision.is_none());
+    assert!(gate.revisions[1].observation_binding.is_none());
     assert_eq!(
         gate.revisions[1].reason.as_deref(),
         Some("planned edit cancelled")

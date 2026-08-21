@@ -230,3 +230,136 @@ fn close_time_new_semantic_demand_outside_lease_stays_unplanned_on_retry()
     assert_eq!(field(&shown.stdout, "lifecycle")?, "active");
     Ok(())
 }
+
+#[test]
+fn failed_close_rechecks_a_semantic_conflict_at_the_final_barrier()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = semantic_read_closure_fixture()?;
+    fs::write(root.path().join("config/base.json"), "{}\n")?;
+    fs::hard_link(
+        root.path().join("config/base.json"),
+        root.path().join("src/config-writer.ts"),
+    )?;
+    let gate_id = open_gate(root.path(), "op-conflict-recheck-open", "src/a.ts")?;
+    let writer_gate = open_gate(
+        root.path(),
+        "op-conflict-recheck-writer-open",
+        "src/config-writer.ts",
+    )?;
+    fs::write(
+        root.path().join("src/tsconfig.json"),
+        "{\"extends\":\"../config/base.json\"}\n",
+    )?;
+
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+    listener.set_nonblocking(true)?;
+    let mut child = lumin_command(root.path())?
+        .args([
+            "post-write",
+            &gate_id,
+            "--operation-id",
+            "op-conflict-recheck-close",
+        ])
+        .env(
+            "LUMIN_TEST_GATE_POSTWRITE_FINAL_BARRIER",
+            listener.local_addr()?.to_string(),
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let started = Instant::now();
+    let (mut stream, peer) = loop {
+        match listener.accept() {
+            Ok(accepted) => break accepted,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if let Some(status) = child.try_wait()? {
+                    return Err(std::io::Error::other(format!(
+                        "post-write exited before conflict recheck barrier: {status}"
+                    ))
+                    .into());
+                }
+                if started.elapsed() >= Duration::from_secs(30) {
+                    return Err(std::io::Error::other(
+                        "post-write did not reach the conflict recheck barrier",
+                    )
+                    .into());
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    };
+    assert!(peer.ip().is_loopback());
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(30)))?;
+    let mut frame = String::new();
+    BufReader::new(stream.try_clone()?).read_line(&mut frame)?;
+    assert_eq!(
+        frame.trim_end(),
+        format!("close-finalizing op-conflict-recheck-close {gate_id}")
+    );
+
+    let abandoned = run(
+        root.path(),
+        &[
+            "gate",
+            "abandon",
+            &writer_gate,
+            "--operation-id",
+            "op-conflict-recheck-abandon",
+            "--reason",
+            "release the semantic input",
+        ],
+    )?;
+    assert_status(&abandoned, 0);
+    assert_eq!(field(&abandoned.stdout, "decision")?, "deny");
+
+    stream.write_all(b"release\n")?;
+    stream.flush()?;
+    drop(stream);
+    let output = child.wait_with_output()?;
+    assert_eq!(
+        output.status.code(),
+        Some(5),
+        "unexpected conflict-recheck result: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let response: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(
+        response.get("decision").and_then(Value::as_str),
+        Some("stale")
+    );
+    assert_eq!(
+        response
+            .pointer("/observationBinding/state")
+            .and_then(Value::as_str),
+        Some("unsealed")
+    );
+    assert!(
+        response
+            .get("signals")
+            .and_then(Value::as_array)
+            .is_some_and(|signals| signals.iter().any(|signal| {
+                signal.get("kind").and_then(Value::as_str) == Some("transition-catalog-changed")
+            }))
+    );
+    assert!(
+        !response
+            .get("signals")
+            .and_then(Value::as_array)
+            .is_some_and(|signals| signals.iter().any(|signal| {
+                signal.get("kind").and_then(Value::as_str) == Some("semantic-input-conflict")
+            }))
+    );
+    assert!(
+        response
+            .pointer("/observationBinding/attemptedDomain")
+            .and_then(Value::as_array)
+            .is_some_and(|paths| paths.iter().any(|path| {
+                path.get("display").and_then(Value::as_str) == Some("config/base.json")
+            }))
+    );
+    Ok(())
+}

@@ -12,7 +12,7 @@ use crate::retention::RETENTION_OPERATIONS;
 use crate::{RUN_CATALOG, RunCatalogRecord, StoreError};
 
 use super::super::open_store;
-use super::{current_generation, evidence, open_active_gate_for};
+use super::{close_active_gate_for_migration, current_generation, evidence, open_active_gate_for};
 
 #[test]
 fn unpublished_intent_bytes_are_discarded_before_reopen() -> Result<(), Box<dyn std::error::Error>>
@@ -144,6 +144,89 @@ fn migration_rejects_revision_owned_by_another_gate_operation()
     assert!(matches!(
         store.migrate_lifecycle_store(),
         Err(StoreError::Integrity(message)) if message.contains("not owned by that gate")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_reconstructs_gate_observations_with_their_catalog_revision()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(&store, "op-catalog-binding", "src/catalog.ts")?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("catalog-bound gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        let baseline = gate
+            .baseline
+            .as_mut()
+            .ok_or("catalog-bound gate omitted its baseline")?;
+        baseline.catalog_revision = baseline.catalog_revision.saturating_add(1);
+        gate.revisions
+            .first_mut()
+            .ok_or("catalog-bound gate omitted its opening revision")?
+            .catalog_revision = Some(baseline.catalog_revision);
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("baseline observation cannot be reconstructed")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_reconstructs_close_observations_with_their_catalog_revision()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(&store, "op-close-catalog", "src/close-catalog.ts")?;
+    close_active_gate_for_migration(&store, &gate_id)?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("close catalog gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        let revision = gate
+            .revisions
+            .get_mut(1)
+            .ok_or("close catalog gate omitted its close revision")?;
+        revision.catalog_revision = revision
+            .catalog_revision
+            .map(|value| value.saturating_add(1));
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("close observation revision 1 cannot be reconstructed")
     ));
     Ok(())
 }

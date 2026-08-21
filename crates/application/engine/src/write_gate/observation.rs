@@ -1,10 +1,12 @@
 use lumin_evidence::{
-    ActualWriteSet, GateObservationBinding, GateSignal, PhysicalAliasClosureRecord,
-    RepoPathProjection, SemanticInputRecord, SemanticInputState, WriteLease, WriteLeaseKind,
+    ActualWriteSet, GateBaselineObservationInput, GateCloseObservationInput,
+    GateObservationBinding, GateSignal, PhysicalAliasClosureRecord, RepoPathProjection,
+    SemanticInputRecord, SemanticReadReservationBinding, WriteLease,
+    derive_gate_baseline_observation_id, derive_gate_close_observation_id,
 };
 use lumin_model::{
     GateBaselineObservationId, GateCloseObservationId, GateId, ObservationBinding,
-    SealedGateObservation, UnsealedObservationReason, append_length_prefixed, digest_hex,
+    SealedGateObservation, UnsealedObservationReason,
 };
 use lumin_store::GateBaselineDraft;
 
@@ -30,6 +32,7 @@ pub(super) struct CloseObservationSeed {
     pub(super) actual_write_set: Option<ActualWriteSet>,
     pub(super) alias_closures: Vec<PhysicalAliasClosureRecord>,
     pub(super) reconciled_transition_sequences: Vec<u64>,
+    pub(super) attempted_semantic_inputs: Vec<SemanticReadReservationBinding>,
 }
 
 pub(super) fn pre_write_observation_binding(
@@ -79,8 +82,7 @@ pub(super) fn unsealed_pre_write_observation_binding(
     attempted_domain.dedup();
     let mut last_complete_read_set = seed.baseline.as_ref().map_or_else(Vec::new, |baseline| {
         baseline
-            .snapshot
-            .inputs
+            .protected_semantic_inputs
             .iter()
             .map(|input| input.path.clone())
             .collect()
@@ -171,23 +173,16 @@ fn baseline_observation_id(
     baseline: &GateBaselineDraft,
     catalog_revision: u64,
 ) -> GateBaselineObservationId {
-    let mut framed = Vec::new();
-    append_length_prefixed(&mut framed, b"lumin-gate-baseline-observation.v1");
-    framed.extend_from_slice(&catalog_revision.to_be_bytes());
-    framed.extend_from_slice(&baseline.transition_sequence.to_be_bytes());
-    append_length_prefixed(&mut framed, baseline.analysis_contract.as_bytes());
-    append_length_prefixed(
-        &mut framed,
-        baseline.snapshot.analysis_input_id.as_str().as_bytes(),
-    );
-    append_paths(&mut framed, &seed.declared_write_set);
-    append_write_leases(&mut framed, &seed.leased_write_set);
-    append_alias_closures(&mut framed, &seed.alias_closures);
-    append_semantic_inputs(&mut framed, &baseline.protected_semantic_inputs);
-    GateBaselineObservationId::from_string(format!(
-        "gate_baseline_observation_{}",
-        digest_hex(&framed)
-    ))
+    derive_gate_baseline_observation_id(GateBaselineObservationInput {
+        catalog_revision,
+        transition_sequence: baseline.transition_sequence,
+        analysis_contract: &baseline.analysis_contract,
+        analysis_input_id: &baseline.snapshot.analysis_input_id,
+        declared_write_set: &seed.declared_write_set,
+        leased_write_set: &seed.leased_write_set,
+        alias_closures: &seed.alias_closures,
+        protected_semantic_inputs: &baseline.protected_semantic_inputs,
+    })
 }
 
 pub(super) fn close_observation_binding(
@@ -208,6 +203,11 @@ pub(super) fn close_observation_binding(
         .unwrap_or(UnsealedObservationReason::ObservationDomainUnbounded);
     let mut attempted_domain = seed.changed_paths.clone();
     attempted_domain.extend(seed.leased_write_set.iter().map(|lease| lease.path.clone()));
+    attempted_domain.extend(
+        seed.attempted_semantic_inputs
+            .iter()
+            .map(|input| input.path.clone()),
+    );
     attempted_domain.sort();
     attempted_domain.dedup();
     let mut last_complete_read_set = seed
@@ -240,8 +240,6 @@ fn close_observation_is_unsealed(signals: &[GateSignal]) -> bool {
                 | GateSignal::ActiveTransitionPending { .. }
                 | GateSignal::TransitionChainBroken { .. }
                 | GateSignal::TransitionCatalogChanged
-                | GateSignal::LifecycleDeltaIncomparable { .. }
-                | GateSignal::LifecycleBaselineUnavailable { .. }
         )
     })
 }
@@ -254,151 +252,29 @@ fn close_observation_id(
     let opening_observation_id = seed.opening_observation_id.as_ref()?;
     let opening_analysis_contract = seed.opening_analysis_contract.as_ref()?;
     let actual_write_set = seed.actual_write_set.as_ref()?;
-    let mut framed = Vec::new();
-    append_length_prefixed(&mut framed, b"lumin-gate-close-observation.v1");
-    append_length_prefixed(&mut framed, seed.gate_id.as_str().as_bytes());
-    append_length_prefixed(&mut framed, opening_observation_id.as_str().as_bytes());
-    append_length_prefixed(&mut framed, opening_analysis_contract.as_bytes());
-    framed.extend_from_slice(&seed.prior_revision.to_be_bytes());
-    framed.extend_from_slice(&catalog_revision.to_be_bytes());
-    append_length_prefixed(&mut framed, snapshot.analysis_input_id.as_str().as_bytes());
-    append_write_leases(&mut framed, &seed.leased_write_set);
-    append_semantic_inputs(&mut framed, &seed.protected_semantic_inputs);
-    append_paths(&mut framed, &seed.changed_paths);
-    append_actual_write_set(&mut framed, actual_write_set);
-    append_alias_closures(&mut framed, &seed.alias_closures);
-    let mut sequences = seed.reconciled_transition_sequences.clone();
-    sequences.sort_unstable();
-    sequences.dedup();
-    framed.extend_from_slice(&(sequences.len() as u64).to_be_bytes());
-    for sequence in sequences {
-        framed.extend_from_slice(&sequence.to_be_bytes());
-    }
-    Some(GateCloseObservationId::from_string(format!(
-        "gate_close_observation_{}",
-        digest_hex(&framed)
-    )))
-}
-
-fn append_actual_write_set(output: &mut Vec<u8>, actual: &ActualWriteSet) {
-    append_paths(output, &actual.paths);
-    append_alias_closures(output, &actual.baseline_alias_closures);
-    append_alias_closures(output, &actual.current_alias_closures);
-}
-
-fn append_paths(output: &mut Vec<u8>, paths: &[RepoPathProjection]) {
-    let mut paths = paths
-        .iter()
-        .map(|path| path.canonical.as_slice())
-        .collect::<Vec<_>>();
-    paths.sort();
-    paths.dedup();
-    output.extend_from_slice(&(paths.len() as u64).to_be_bytes());
-    for path in paths {
-        append_length_prefixed(output, path);
-    }
-}
-
-fn append_write_leases(output: &mut Vec<u8>, leases: &[WriteLease]) {
-    let mut leases = leases.to_vec();
-    leases.sort();
-    leases.dedup();
-    output.extend_from_slice(&(leases.len() as u64).to_be_bytes());
-    for lease in leases {
-        append_length_prefixed(output, &lease.path.canonical);
-        output.push(match lease.kind {
-            WriteLeaseKind::ExistingFile => 1,
-            WriteLeaseKind::NewFile => 2,
-            WriteLeaseKind::Directory => 3,
-        });
-        append_physical_identity(output, lease.physical_identity.as_ref());
-        match lease.nearest_existing_parent {
-            Some(parent) => {
-                output.push(1);
-                append_length_prefixed(output, &parent.canonical);
-            }
-            None => output.push(0),
-        }
-        let mut prefix_identities = lease.prefix_identities;
-        prefix_identities.sort();
-        prefix_identities.dedup();
-        output.extend_from_slice(&(prefix_identities.len() as u64).to_be_bytes());
-        for prefix in prefix_identities {
-            append_length_prefixed(output, &prefix.path.canonical);
-            append_length_prefixed(output, &prefix.physical_identity.canonical_bytes());
-        }
-    }
-}
-
-fn append_alias_closures(output: &mut Vec<u8>, closures: &[PhysicalAliasClosureRecord]) {
-    let mut closures = closures.to_vec();
-    closures.sort();
-    closures.dedup();
-    output.extend_from_slice(&(closures.len() as u64).to_be_bytes());
-    for closure in closures {
-        append_length_prefixed(output, &closure.physical_identity.canonical_bytes());
-        append_paths(output, &closure.members);
-    }
-}
-
-fn append_semantic_inputs(output: &mut Vec<u8>, inputs: &[SemanticInputRecord]) {
-    let mut inputs = inputs.to_vec();
-    inputs.sort();
-    inputs.dedup();
-    output.extend_from_slice(&(inputs.len() as u64).to_be_bytes());
-    for input in inputs {
-        append_length_prefixed(output, &input.path.canonical);
-        output.push(match input.state {
-            SemanticInputState::Source => 1,
-            SemanticInputState::ConfigPresent => 2,
-            SemanticInputState::Missing => 3,
-            SemanticInputState::NonRegular => 4,
-            SemanticInputState::Unreadable => 5,
-            SemanticInputState::PathRedirect => 6,
-        });
-        append_optional_bytes(output, input.payload_sha256.as_deref().map(str::as_bytes));
-        append_physical_identity(output, input.physical_identity.as_ref());
-        match input.absence_parent {
-            Some(parent) => {
-                output.push(1);
-                append_length_prefixed(output, &parent.path.canonical);
-                append_length_prefixed(output, &parent.physical_identity.canonical_bytes());
-            }
-            None => output.push(0),
-        }
-        append_optional_bytes(
-            output,
-            input.physical_redirect_sha256.as_deref().map(str::as_bytes),
-        );
-    }
-}
-
-fn append_physical_identity(
-    output: &mut Vec<u8>,
-    identity: Option<&lumin_model::PhysicalFileIdentity>,
-) {
-    match identity {
-        Some(identity) => {
-            output.push(1);
-            append_length_prefixed(output, &identity.canonical_bytes());
-        }
-        None => output.push(0),
-    }
-}
-
-fn append_optional_bytes(output: &mut Vec<u8>, value: Option<&[u8]>) {
-    match value {
-        Some(value) => {
-            output.push(1);
-            append_length_prefixed(output, value);
-        }
-        None => output.push(0),
-    }
+    Some(derive_gate_close_observation_id(
+        GateCloseObservationInput {
+            gate_id: &seed.gate_id,
+            opening_observation_id,
+            opening_analysis_contract,
+            prior_revision: seed.prior_revision,
+            catalog_revision,
+            analysis_input_id: &snapshot.analysis_input_id,
+            leased_write_set: &seed.leased_write_set,
+            protected_semantic_inputs: &seed.protected_semantic_inputs,
+            changed_paths: &seed.changed_paths,
+            actual_write_set,
+            alias_closures: &seed.alias_closures,
+            reconciled_transition_sequences: &seed.reconciled_transition_sequences,
+        },
+    ))
 }
 
 #[cfg(test)]
 mod tests {
-    use lumin_evidence::{AnalysisMetrics, AnalysisSnapshot, RunEvidence};
+    use lumin_evidence::{
+        AnalysisMetrics, AnalysisSnapshot, RunEvidence, SemanticInputState, WriteLeaseKind,
+    };
     use lumin_model::{AnalysisInputId, RepoPath};
 
     use super::*;
@@ -429,6 +305,38 @@ mod tests {
         assert_eq!(original_id, id(&repeated, 7)?);
         assert_ne!(original_id, id(&seed("payload-b")?, 7)?);
         assert_ne!(original_id, id(&original, 8)?);
+        Ok(())
+    }
+
+    #[test]
+    fn unsealed_pre_write_reports_only_the_sealed_read_set_as_complete()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut seed = seed("payload")?;
+        let unrelated_path =
+            RepoPathProjection::from(&RepoPath::from_portable("src/unrelated.ts")?);
+        seed.baseline
+            .as_mut()
+            .ok_or("test seed omitted its baseline")?
+            .snapshot
+            .inputs
+            .push(SemanticInputRecord {
+                path: unrelated_path.clone(),
+                state: SemanticInputState::Source,
+                payload_sha256: Some("unrelated".to_owned()),
+                physical_identity: None,
+                absence_parent: None,
+                physical_redirect_sha256: None,
+            });
+
+        let ObservationBinding::Unsealed {
+            last_complete_read_set,
+            ..
+        } = unsealed_pre_write_observation_binding(&seed, &[GateSignal::TransitionCatalogChanged])
+        else {
+            return Err("transition drift unexpectedly produced a sealed observation".into());
+        };
+        assert_eq!(last_complete_read_set, seed.declared_write_set);
+        assert!(!last_complete_read_set.contains(&unrelated_path));
         Ok(())
     }
 
@@ -473,6 +381,7 @@ mod tests {
             actual_write_set: None,
             alias_closures: Vec::new(),
             reconciled_transition_sequences: Vec::new(),
+            attempted_semantic_inputs: Vec::new(),
         };
 
         let binding = close_observation_binding(

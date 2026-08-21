@@ -42,6 +42,11 @@ fn abandon_survives_process_reopen_and_refuses_a_second_terminal_revision()
         Some("abandoned")
     );
     assert_eq!(
+        first_json.get("decision").and_then(Value::as_str),
+        Some("deny")
+    );
+    assert!(first_json.get("observationBinding").is_none());
+    assert_eq!(
         first_json.get("reason").and_then(Value::as_str),
         Some("planned edit cancelled")
     );
@@ -76,6 +81,17 @@ fn assert_abandon_views(root: &Path, gate_id: &str) -> Result<(), Box<dyn std::e
     );
     assert_eq!(
         shown_json
+            .pointer("/revisions/1/decision")
+            .and_then(Value::as_str),
+        Some("deny")
+    );
+    assert!(
+        shown_json
+            .pointer("/revisions/1/observationBinding")
+            .is_none()
+    );
+    assert_eq!(
+        shown_json
             .get("leasedWriteSet")
             .and_then(Value::as_array)
             .map(Vec::len),
@@ -106,6 +122,17 @@ fn assert_abandon_views(root: &Path, gate_id: &str) -> Result<(), Box<dyn std::e
             .pointer("/result/reason")
             .and_then(Value::as_str),
         Some("planned edit cancelled")
+    );
+    assert_eq!(
+        operation_json
+            .pointer("/result/decision")
+            .and_then(Value::as_str),
+        Some("deny")
+    );
+    assert!(
+        operation_json
+            .pointer("/result/observationBinding")
+            .is_none()
     );
     Ok(())
 }

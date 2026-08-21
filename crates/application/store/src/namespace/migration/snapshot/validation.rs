@@ -5,8 +5,9 @@ mod retention;
 use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_evidence::{
-    GATE_RECORD_SCHEMA_VERSION, GateLifecycle, GateOperationKind, GateOperationStatus, GateRecord,
-    OperationRecord, WorktreeTransition,
+    GATE_RECORD_SCHEMA_VERSION, GateBaselineObservationInput, GateCloseObservationInput,
+    GateLifecycle, GateOperationKind, GateOperationStatus, GateRecord, OperationRecord,
+    WorktreeTransition, derive_gate_baseline_observation_id, derive_gate_close_observation_id,
 };
 use lumin_model::{ObservationBinding, SealedGateObservation};
 use serde::de::DeserializeOwned;
@@ -156,7 +157,25 @@ fn validate_gate_observations(
         Some(baseline) => match &opening.observation_binding {
             Some(ObservationBinding::Sealed {
                 observation: SealedGateObservation::Baseline { observation_id },
-            }) if observation_id == &baseline.observation_id => {}
+            }) if observation_id == &baseline.observation_id
+                && opening.catalog_revision == Some(baseline.catalog_revision) =>
+            {
+                let derived = derive_gate_baseline_observation_id(GateBaselineObservationInput {
+                    catalog_revision: baseline.catalog_revision,
+                    transition_sequence: baseline.transition_sequence,
+                    analysis_contract: &baseline.analysis_contract,
+                    analysis_input_id: &baseline.snapshot.analysis_input_id,
+                    declared_write_set: &gate.declared_write_set,
+                    leased_write_set: &baseline.leased_write_set,
+                    alias_closures: &baseline.alias_closures,
+                    protected_semantic_inputs: &baseline.protected_semantic_inputs,
+                });
+                if derived != baseline.observation_id {
+                    return Err(StoreError::Integrity(format!(
+                        "gate {key} baseline observation cannot be reconstructed"
+                    )));
+                }
+            }
             _ => {
                 return Err(StoreError::Integrity(format!(
                     "gate {key} baseline observation disagrees with its opening revision"
@@ -184,6 +203,19 @@ fn validate_gate_observations(
         if !is_abandon && revision.observation_binding.is_none() {
             return Err(StoreError::Integrity(format!(
                 "gate {key} revision {} omitted its observation binding",
+                revision.revision
+            )));
+        }
+        if is_abandon {
+            if revision.catalog_revision.is_some() || revision.observation_binding.is_some() {
+                return Err(StoreError::Integrity(format!(
+                    "gate {key} administrative abandon revision {} retained an observation binding",
+                    revision.revision
+                )));
+            }
+        } else if revision.catalog_revision.is_none() {
+            return Err(StoreError::Integrity(format!(
+                "gate {key} revision {} omitted its observation catalog revision",
                 revision.revision
             )));
         }
@@ -219,6 +251,53 @@ fn validate_gate_observations(
                 "gate {key} revision {} carries the wrong observation kind",
                 revision.revision
             )));
+        }
+        if let Some(ObservationBinding::Sealed {
+            observation: SealedGateObservation::Close { observation_id },
+        }) = revision.observation_binding.as_ref()
+        {
+            let baseline = gate.baseline.as_ref().ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "gate {key} sealed close omitted its opening baseline"
+                ))
+            })?;
+            let snapshot = revision.snapshot.as_ref().ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "gate {key} sealed close revision {} omitted its snapshot",
+                    revision.revision
+                ))
+            })?;
+            let actual_write_set = revision.actual_write_set.as_ref().ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "gate {key} sealed close revision {} omitted its actual-write set",
+                    revision.revision
+                ))
+            })?;
+            let derived = derive_gate_close_observation_id(GateCloseObservationInput {
+                gate_id: &gate.gate_id,
+                opening_observation_id: &baseline.observation_id,
+                opening_analysis_contract: &baseline.analysis_contract,
+                prior_revision: revision.revision.saturating_sub(1),
+                catalog_revision: revision.catalog_revision.ok_or_else(|| {
+                    StoreError::Integrity(format!(
+                        "gate {key} sealed close revision {} omitted its catalog revision",
+                        revision.revision
+                    ))
+                })?,
+                analysis_input_id: &snapshot.analysis_input_id,
+                leased_write_set: &baseline.leased_write_set,
+                protected_semantic_inputs: &revision.protected_semantic_inputs,
+                changed_paths: &revision.changed_paths,
+                actual_write_set,
+                alias_closures: &revision.alias_closures,
+                reconciled_transition_sequences: &revision.reconciled_transition_sequences,
+            });
+            if &derived != observation_id {
+                return Err(StoreError::Integrity(format!(
+                    "gate {key} close observation revision {} cannot be reconstructed",
+                    revision.revision
+                )));
+            }
         }
     }
 

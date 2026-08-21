@@ -163,6 +163,12 @@ fn gate_evidence(root: &Path, stdout: &str) -> Result<Vec<Value>, Box<dyn std::e
     let gate = lumin_engine::load_gate(root, &GateId::from_string(gate_id.to_owned()))?;
     let mut evidence = Vec::new();
     if let Some(baseline) = gate.baseline.as_ref() {
+        let mut baseline_alias_closures = baseline.alias_closures.iter().collect::<Vec<_>>();
+        baseline_alias_closures.sort_by(|left, right| left.members.cmp(&right.members));
+        let baseline_alias_closures = baseline_alias_closures
+            .into_iter()
+            .map(|closure| serde_json::json!({ "members": closure.members }))
+            .collect::<Vec<_>>();
         evidence.push(serde_json::json!({
             "schemaVersion": "lumin.gate-baseline-semantic.v1",
             "gateSchemaVersion": gate.schema_version,
@@ -172,17 +178,16 @@ fn gate_evidence(root: &Path, stdout: &str) -> Result<Vec<Value>, Box<dyn std::e
                 true,
             ),
             "analysisContract": baseline.analysis_contract,
+            "catalogRevision": baseline.catalog_revision,
             "transitionSequence": baseline.transition_sequence,
-            "leasedWriteSet": gate.leased_write_set.iter().map(|lease| serde_json::json!({
+            "leasedWriteSet": baseline.leased_write_set.iter().map(|lease| serde_json::json!({
                 "path": lease.path,
                 "kind": lease.kind,
                 "physicalIdentityPresent": lease.physical_identity.is_some(),
                 "nearestExistingParent": lease.nearest_existing_parent,
                 "prefixPaths": lease.prefix_identities.iter().map(|prefix| &prefix.path).collect::<Vec<_>>(),
             })).collect::<Vec<_>>(),
-            "aliasClosures": gate.alias_closures.iter().map(|closure| serde_json::json!({
-                "members": closure.members,
-            })).collect::<Vec<_>>(),
+            "aliasClosures": baseline_alias_closures,
             "protectedSemanticInputs": baseline.protected_semantic_inputs.iter().map(|input| serde_json::json!({
                 "path": input.path,
                 "state": input.state,
@@ -234,6 +239,33 @@ fn gate_evidence(root: &Path, stdout: &str) -> Result<Vec<Value>, Box<dyn std::e
             .as_ref()
             .map(serde_json::to_value)
             .transpose()?;
+        let mut revision_alias_closures = revision.alias_closures.iter().collect::<Vec<_>>();
+        revision_alias_closures.sort_by(|left, right| left.members.cmp(&right.members));
+        let revision_alias_closures = revision_alias_closures
+            .into_iter()
+            .map(|closure| serde_json::json!({ "members": closure.members }))
+            .collect::<Vec<_>>();
+        let actual_write_set = revision.actual_write_set.as_ref().map(|actual| {
+            let mut baseline_alias_closures =
+                actual.baseline_alias_closures.iter().collect::<Vec<_>>();
+            baseline_alias_closures.sort_by(|left, right| left.members.cmp(&right.members));
+            let baseline_alias_closures = baseline_alias_closures
+                .into_iter()
+                .map(|closure| serde_json::json!({ "members": closure.members }))
+                .collect::<Vec<_>>();
+            let mut current_alias_closures =
+                actual.current_alias_closures.iter().collect::<Vec<_>>();
+            current_alias_closures.sort_by(|left, right| left.members.cmp(&right.members));
+            let current_alias_closures = current_alias_closures
+                .into_iter()
+                .map(|closure| serde_json::json!({ "members": closure.members }))
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "paths": actual.paths,
+                "baselineAliasClosures": baseline_alias_closures,
+                "currentAliasClosures": current_alias_closures,
+            })
+        });
         evidence.push(serde_json::json!({
             "schemaVersion": "lumin.gate-revision-semantic.v1",
             "gateId": gate.gate_id,
@@ -241,6 +273,7 @@ fn gate_evidence(root: &Path, stdout: &str) -> Result<Vec<Value>, Box<dyn std::e
             "priorRevision": revision.revision.saturating_sub(1),
             "openingAnalysisContract": gate.baseline.as_ref().map(|baseline| &baseline.analysis_contract),
             "decision": revision.decision,
+            "catalogRevision": revision.catalog_revision,
             "observationBinding": observation_binding_projection(
                 observation_binding,
                 baseline_observation_id.as_deref(),
@@ -262,18 +295,8 @@ fn gate_evidence(root: &Path, stdout: &str) -> Result<Vec<Value>, Box<dyn std::e
                 "physicalRedirectPresent": input.physical_redirect_sha256.is_some(),
             })).collect::<Vec<_>>(),
             "changedPaths": revision.changed_paths,
-            "actualWriteSet": revision.actual_write_set.as_ref().map(|actual| serde_json::json!({
-                "paths": actual.paths,
-                "baselineAliasClosures": actual.baseline_alias_closures.iter().map(|closure| serde_json::json!({
-                    "members": closure.members,
-                })).collect::<Vec<_>>(),
-                "currentAliasClosures": actual.current_alias_closures.iter().map(|closure| serde_json::json!({
-                    "members": closure.members,
-                })).collect::<Vec<_>>(),
-            })),
-            "aliasClosures": revision.alias_closures.iter().map(|closure| serde_json::json!({
-                "members": closure.members,
-            })).collect::<Vec<_>>(),
+            "actualWriteSet": actual_write_set,
+            "aliasClosures": revision_alias_closures,
             "reconciledTransitionSequences": revision.reconciled_transition_sequences,
             "snapshot": snapshot,
         }));

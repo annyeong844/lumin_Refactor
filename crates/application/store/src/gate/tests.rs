@@ -89,8 +89,6 @@ fn close_finalization(extra: Vec<GateSignal>, signals: &[GateSignal]) -> Observa
                 | GateSignal::ActiveTransitionPending { .. }
                 | GateSignal::TransitionChainBroken { .. }
                 | GateSignal::TransitionCatalogChanged
-                | GateSignal::LifecycleDeltaIncomparable { .. }
-                | GateSignal::LifecycleBaselineUnavailable { .. }
         )
     });
     ObservationFinalization {
@@ -118,8 +116,11 @@ fn persisted_v2_optional_gate_additions_default_when_absent()
     };
     let baseline = GateBaseline {
         observation_id: baseline_observation_id(),
+        catalog_revision: 0,
         analysis_contract: "contract".to_owned(),
         snapshot: empty_snapshot(),
+        leased_write_set: Vec::new(),
+        alias_closures: Vec::new(),
         protected_semantic_inputs: vec![protected.clone()],
         transition_sequence: 0,
     };
@@ -128,6 +129,7 @@ fn persisted_v2_optional_gate_additions_default_when_absent()
         operation_id: operation_id.clone(),
         committed_unix_millis: None,
         decision: lumin_evidence::GateDecision::Allow,
+        catalog_revision: Some(0),
         observation_binding: Some(sealed_baseline_binding()),
         reason: None,
         signals: Vec::new(),
@@ -699,6 +701,7 @@ fn final_validation_can_stop_post_write_promotion() -> Result<(), Box<dyn std::e
             actual_write_set: Some(Default::default()),
             alias_closures: Vec::new(),
             reconciled_transition_sequences: Vec::new(),
+            attempted_semantic_inputs: Vec::new(),
             signals: Vec::new(),
             deltas: Vec::new(),
         },
@@ -737,7 +740,7 @@ fn final_validation_can_stop_post_write_promotion() -> Result<(), Box<dyn std::e
 }
 
 #[test]
-fn unsealed_close_retains_the_prior_complete_read_protection()
+fn sealed_incomparable_close_advances_complete_read_protection()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     let store = open_store(root.path())?;
@@ -780,6 +783,7 @@ fn unsealed_close_retains_the_prior_complete_read_protection()
             actual_write_set: Some(Default::default()),
             alias_closures: Vec::new(),
             reconciled_transition_sequences: Vec::new(),
+            attempted_semantic_inputs: Vec::new(),
             signals: vec![GateSignal::LifecycleDeltaIncomparable { count: 1 }],
             deltas: Vec::new(),
         },
@@ -788,18 +792,20 @@ fn unsealed_close_retains_the_prior_complete_read_protection()
 
     assert!(matches!(
         result.observation_binding,
-        Some(ObservationBinding::Unsealed { .. })
+        Some(ObservationBinding::Sealed {
+            observation: SealedGateObservation::Close { .. }
+        })
     ));
-    assert!(result.actual_write_set.is_none());
+    assert!(result.actual_write_set.is_some());
     let persisted = store.load_gate(&gate_id)?;
-    assert_eq!(persisted.protected_semantic_inputs, vec![prior]);
+    assert_eq!(persisted.protected_semantic_inputs, vec![current.clone()]);
     let revision = persisted
         .revisions
         .last()
         .ok_or("unsealed close revision is missing")?;
-    assert!(revision.protected_semantic_inputs.is_empty());
-    assert!(revision.snapshot.is_none());
-    assert!(revision.actual_write_set.is_none());
+    assert_eq!(revision.protected_semantic_inputs, vec![current]);
+    assert!(revision.snapshot.is_some());
+    assert!(revision.actual_write_set.is_some());
     assert!(revision.alias_closures.is_empty());
     assert!(revision.reconciled_transition_sequences.is_empty());
     Ok(())
@@ -1126,6 +1132,7 @@ fn close_active_gate(
                 actual_write_set: Some(Default::default()),
                 alias_closures: Vec::new(),
                 reconciled_transition_sequences: Vec::new(),
+                attempted_semantic_inputs: Vec::new(),
                 signals: Vec::new(),
                 deltas: Vec::new(),
             },
