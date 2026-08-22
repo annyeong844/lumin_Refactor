@@ -3,7 +3,8 @@ use lumin_evidence::{
     GateBaseline, GateDecision, GateLifecycle, GateObservationBinding, GateOperationKind,
     GateOperationResult, GateOperationStatus, GateRecord, GateRevision, GateSignal,
     OperationRecord, PhysicalAliasClosureRecord, RepoPathProjection, SemanticInputRecord,
-    SemanticReadReservationBinding, TransitionCapsule, WorktreeTransition, WriteLease, gate_policy,
+    SemanticReadReservationBinding, TransitionCapsule, UnsealedGateObservationInputs,
+    WorktreeTransition, WriteLease, gate_policy,
 };
 use lumin_model::{GateBaselineObservationId, GateDeltaRecord, GateId, OperationId};
 use redb::{ReadableTable, TableDefinition, WriteTransaction};
@@ -128,6 +129,16 @@ pub struct PostWriteFinish {
 struct ConflictSet {
     paths: Vec<RepoPathProjection>,
     gate_ids: Vec<GateId>,
+}
+
+struct CompletedPreWriteInput {
+    baseline: Option<GateBaseline>,
+    leased_write_set: Vec<WriteLease>,
+    alias_closures: Vec<PhysicalAliasClosureRecord>,
+    unsealed_observation_inputs: Option<UnsealedGateObservationInputs>,
+    signals: Vec<GateSignal>,
+    observation_binding: GateObservationBinding,
+    catalog_revision: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -536,13 +547,17 @@ fn validate_pre_write_context(
 
 fn completed_pre_write_records(
     operation: &OperationRecord,
-    baseline: Option<GateBaseline>,
-    leased_write_set: Vec<WriteLease>,
-    alias_closures: Vec<PhysicalAliasClosureRecord>,
-    signals: Vec<GateSignal>,
-    observation_binding: GateObservationBinding,
-    catalog_revision: u64,
+    input: CompletedPreWriteInput,
 ) -> Result<(GateRecord, GateOperationResult), StoreError> {
+    let CompletedPreWriteInput {
+        baseline,
+        leased_write_set,
+        alias_closures,
+        unsealed_observation_inputs,
+        signals,
+        observation_binding,
+        catalog_revision,
+    } = input;
     let decision = gate_policy::decision(&signals);
     if decision.authorizes() && baseline.is_none() {
         return Err(StoreError::Integrity(
@@ -593,6 +608,7 @@ fn completed_pre_write_records(
             decision,
             catalog_revision: Some(catalog_revision),
             observation_binding: Some(observation_binding),
+            unsealed_observation_inputs,
             reason: None,
             signals,
             changed_paths: Vec::new(),
@@ -862,7 +878,7 @@ fn rejected_open_result(
         observation_binding: Some(observation_binding),
         reason: None,
         signals: signals.to_vec(),
-        leased_write_set: operation.leased_write_set.clone(),
+        leased_write_set: Vec::new(),
         actual_write_set: None,
         deltas: Vec::new(),
     }
@@ -874,6 +890,7 @@ fn rejected_gate(
     signals: &[GateSignal],
     baseline: Option<GateBaseline>,
     observation_binding: GateObservationBinding,
+    unsealed_observation_inputs: UnsealedGateObservationInputs,
     catalog_revision: u64,
 ) -> Result<GateRecord, StoreError> {
     let decision = gate_policy::decision(signals);
@@ -886,7 +903,7 @@ fn rejected_gate(
         lifecycle: GateLifecycle::Rejected,
         current_revision: 0,
         declared_write_set: operation.declared_write_set.clone(),
-        leased_write_set: operation.leased_write_set.clone(),
+        leased_write_set: Vec::new(),
         alias_closures: Vec::new(),
         transition_refs: Vec::new(),
         analysis_options,
@@ -899,6 +916,7 @@ fn rejected_gate(
             decision,
             catalog_revision: Some(catalog_revision),
             observation_binding: Some(observation_binding),
+            unsealed_observation_inputs: Some(unsealed_observation_inputs),
             reason: None,
             signals: signals.to_vec(),
             changed_paths: Vec::new(),

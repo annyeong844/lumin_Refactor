@@ -1,5 +1,6 @@
 use lumin_evidence::{
     CapabilityRecord, DEAD_CODE_CAPABILITY_ID, PathPrefixIdentity, RunEvidence, SemanticInputState,
+    UnsealedGateObservationInputs, derive_unsealed_gate_observation_binding,
     seal_analysis_snapshot,
 };
 use lumin_model::{
@@ -133,6 +134,7 @@ fn persisted_v2_optional_gate_additions_default_when_absent()
         decision: lumin_evidence::GateDecision::Allow,
         catalog_revision: Some(0),
         observation_binding: Some(sealed_baseline_binding()),
+        unsealed_observation_inputs: None,
         reason: None,
         signals: Vec::new(),
         changed_paths: Vec::new(),
@@ -659,6 +661,96 @@ fn final_validation_can_stop_pre_write_promotion() -> Result<(), Box<dyn std::er
             observation: SealedGateObservation::Baseline { .. }
         })
     ));
+    Ok(())
+}
+
+#[test]
+fn unsealed_pre_write_releases_leases_but_retains_its_attempted_domain()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("op-unsealed-open".to_owned());
+    let operation = store.begin_operation(&operation_id)?;
+    let source = path("src/unsealed.ts")?;
+    let source_lease = lease(source.clone());
+    let (gate_id, transition_sequence) = match operation.reserve_pre_write(
+        "unsealed-open-digest",
+        std::slice::from_ref(&source),
+        std::slice::from_ref(&source_lease),
+        &options(),
+        rejected_test_observation,
+    )? {
+        PreWriteStart::Analyze {
+            gate_id,
+            transition_sequence,
+        } => (gate_id, transition_sequence),
+        PreWriteStart::Committed(_) => return Err("the opening operation committed early".into()),
+    };
+    let alias_closure = PhysicalAliasClosureRecord {
+        physical_identity: lumin_model::PhysicalFileIdentity::Unix {
+            device: 7,
+            inode: 17,
+        },
+        members: vec![source.clone()],
+    };
+    let inputs =
+        UnsealedGateObservationInputs::new(vec![source_lease.clone()], Vec::new(), Vec::new());
+    let result = operation.finish_pre_write(
+        "unsealed-open-digest",
+        &gate_id,
+        PreWriteFinish {
+            baseline: Some(GateBaselineDraft {
+                analysis_contract: "test-contract".to_owned(),
+                snapshot: empty_snapshot(),
+                protected_semantic_inputs: Vec::new(),
+                transition_sequence,
+            }),
+            leased_write_set: vec![source_lease.clone()],
+            alias_closures: vec![alias_closure],
+            attempted_semantic_inputs: Vec::new(),
+            signals: vec![GateSignal::AnalysisFailed {
+                detail: "injected finalization failure".to_owned(),
+            }],
+        },
+        |_, _, signals| ObservationFinalization {
+            signals: Vec::new(),
+            binding: derive_unsealed_gate_observation_binding(
+                std::slice::from_ref(&source),
+                &inputs,
+                signals,
+            ),
+        },
+    )?;
+
+    assert_eq!(result.lifecycle, GateLifecycle::Rejected);
+    assert!(result.leased_write_set.is_empty());
+    assert!(matches!(
+        result.observation_binding.as_ref(),
+        Some(ObservationBinding::Unsealed { attempted_domain, .. })
+            if attempted_domain == std::slice::from_ref(&source)
+    ));
+    let gate = store.load_gate(&gate_id)?;
+    assert!(gate.baseline.is_none());
+    assert!(gate.leased_write_set.is_empty());
+    assert!(gate.alias_closures.is_empty());
+    let revision = gate
+        .revisions
+        .first()
+        .ok_or("unsealed opening revision is missing")?;
+    assert_eq!(
+        revision.unsealed_observation_inputs,
+        Some(UnsealedGateObservationInputs::new(
+            vec![source_lease],
+            Vec::new(),
+            Vec::new(),
+        ))
+    );
+    assert!(
+        store
+            .load_operation(&operation_id)?
+            .leased_write_set
+            .is_empty()
+    );
     Ok(())
 }
 

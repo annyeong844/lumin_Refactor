@@ -112,6 +112,7 @@ fn apply_abandon(
         decision: GateDecision::Deny,
         catalog_revision: None,
         observation_binding: None,
+        unsealed_observation_inputs: None,
         reason: Some(reason.clone()),
         signals: Vec::new(),
         changed_paths: Vec::new(),

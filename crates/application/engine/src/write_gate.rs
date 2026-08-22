@@ -235,13 +235,16 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
                                 reserved_identities,
                             );
                             if observation_seed.baseline.is_some() {
-                                signals.extend(revalidate_current_write_domain(
-                                    &context.root,
-                                    validation,
-                                    reserved_identities,
-                                    &observation_seed.leased_write_set,
-                                    &observation_seed.alias_closures,
-                                ));
+                                extend_unique_gate_signals(
+                                    &mut signals,
+                                    revalidate_current_write_domain(
+                                        &context.root,
+                                        validation,
+                                        reserved_identities,
+                                        &observation_seed.leased_write_set,
+                                        &observation_seed.alias_closures,
+                                    ),
+                                );
                             }
                             signals
                         },
@@ -717,7 +720,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         .map_or(preliminary_changed_paths, |actual| actual.paths.clone());
 
     let final_validation = FinalFreshnessValidation {
-        bindings: reserved_semantic_bindings,
+        bindings: reserved_semantic_bindings.clone(),
         captured_inputs: capture.snapshot.inputs.clone(),
         inventory_request,
         reserved_state_lookup,
@@ -735,7 +738,10 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         actual_write_set: actual_write_set.clone(),
         alias_closures: alias_closures.clone(),
         reconciled_transition_sequences: reconciled_sequences.clone(),
-        attempted_semantic_inputs: Vec::new(),
+        attempted_semantic_inputs: reserved_semantic_bindings
+            .iter()
+            .map(|(_, binding)| binding.clone())
+            .collect(),
     };
     wait_at_post_write_final_barrier(&request.operation_id, &request.gate_id)?;
     operation
@@ -750,7 +756,10 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                 actual_write_set,
                 alias_closures,
                 reconciled_transition_sequences: reconciled_sequences,
-                attempted_semantic_inputs: Vec::new(),
+                attempted_semantic_inputs: reserved_semantic_bindings
+                    .iter()
+                    .map(|(_, binding)| binding.clone())
+                    .collect(),
                 signals,
                 deltas,
             },
@@ -761,13 +770,16 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                     reserved_identities,
                 );
                 let mut final_signals = final_signals;
-                final_signals.extend(revalidate_current_write_domain(
-                    &context.root,
-                    &final_validation,
-                    reserved_identities,
-                    &close_write_leases,
-                    &observation_seed.alias_closures,
-                ));
+                extend_unique_gate_signals(
+                    &mut final_signals,
+                    revalidate_current_write_domain(
+                        &context.root,
+                        &final_validation,
+                        reserved_identities,
+                        &close_write_leases,
+                        &observation_seed.alias_closures,
+                    ),
+                );
                 let mut all_signals = store_signals.to_vec();
                 all_signals.extend(final_signals.iter().cloned());
                 ObservationFinalization {
@@ -856,17 +868,10 @@ fn finish_failed_close(
             .map(|(_, binding)| binding.clone())
             .collect(),
     };
-    let attempted_conflict_inputs = if signals
+    let attempted_inputs = attempted_semantic_bindings
         .iter()
-        .any(|signal| matches!(signal, GateSignal::SemanticInputConflict { .. }))
-    {
-        attempted_semantic_bindings
-            .iter()
-            .map(|(_, binding)| binding.clone())
-            .collect()
-    } else {
-        Vec::new()
-    };
+        .map(|(_, binding)| binding.clone())
+        .collect();
     wait_at_post_write_final_barrier(&request.operation_id, &request.gate_id)?;
     operation
         .finish_post_write(
@@ -880,7 +885,7 @@ fn finish_failed_close(
                 actual_write_set: None,
                 alias_closures: gate.alias_closures.clone(),
                 reconciled_transition_sequences: Vec::new(),
-                attempted_semantic_inputs: attempted_conflict_inputs,
+                attempted_semantic_inputs: attempted_inputs,
                 signals,
                 deltas: Vec::new(),
             },
@@ -1182,6 +1187,26 @@ fn revalidate_current_write_domain(
     .and_then(|pending| pending.finish(root));
     match current_inventory {
         Ok(inventory) => {
+            let current_source_inputs = crate::semantic_input_records(&inventory)
+                .into_iter()
+                .filter(|input| input.state == SemanticInputState::Source)
+                .collect::<std::collections::BTreeSet<_>>();
+            let captured_source_inputs = validation
+                .captured_inputs
+                .iter()
+                .filter(|input| input.state == SemanticInputState::Source)
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>();
+            let mut signals = Vec::new();
+            if current_source_inputs != captured_source_inputs {
+                let mut paths = current_source_inputs
+                    .symmetric_difference(&captured_source_inputs)
+                    .map(|input| input.path.clone())
+                    .collect::<Vec<_>>();
+                paths.sort();
+                paths.dedup();
+                signals.push(GateSignal::ProtectedInputChanged { paths });
+            }
             let mut source_paths = inventory
                 .sources
                 .into_iter()
@@ -1194,16 +1219,31 @@ fn revalidate_current_write_domain(
             source_paths.extend(captured_paths);
             source_paths.sort();
             source_paths.dedup();
-            revalidate_write_domain(
-                root,
-                expected_leases,
-                expected_alias_closures,
-                &source_paths,
-            )
+            extend_unique_gate_signals(
+                &mut signals,
+                revalidate_write_domain(
+                    root,
+                    expected_leases,
+                    expected_alias_closures,
+                    &source_paths,
+                ),
+            );
+            signals
         }
         Err(error) => vec![GateSignal::AnalysisFailed {
             detail: error.to_string(),
         }],
+    }
+}
+
+fn extend_unique_gate_signals(
+    signals: &mut Vec<GateSignal>,
+    additions: impl IntoIterator<Item = GateSignal>,
+) {
+    for signal in additions {
+        if !signals.contains(&signal) {
+            signals.push(signal);
+        }
     }
 }
 

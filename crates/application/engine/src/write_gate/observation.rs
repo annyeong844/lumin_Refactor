@@ -1,12 +1,13 @@
 use lumin_evidence::{
     ActualWriteSet, GateBaselineObservationInput, GateCloseObservationInput,
     GateObservationBinding, GateSignal, PhysicalAliasClosureRecord, RepoPathProjection,
-    SemanticInputRecord, SemanticReadReservationBinding, WriteLease,
+    SemanticInputRecord, SemanticReadReservationBinding, UnsealedGateObservationInputs, WriteLease,
     derive_gate_baseline_observation_id, derive_gate_close_observation_id,
+    derive_unsealed_gate_observation_binding,
 };
 use lumin_model::{
     GateBaselineObservationId, GateCloseObservationId, GateId, ObservationBinding,
-    SealedGateObservation, UnsealedObservationReason,
+    SealedGateObservation,
 };
 use lumin_store::GateBaselineDraft;
 
@@ -74,111 +75,37 @@ pub(super) fn unsealed_pre_write_observation_binding(
     seed: &BaselineObservationSeed,
     signals: &[GateSignal],
 ) -> GateObservationBinding {
-    let reason = signals
-        .iter()
-        .find_map(unsealed_observation_reason)
-        .unwrap_or(UnsealedObservationReason::ObservationDomainUnbounded);
-    let mut attempted_domain = seed.declared_write_set.clone();
-    attempted_domain.extend(seed.leased_write_set.iter().map(|lease| lease.path.clone()));
-    attempted_domain.extend(
-        seed.attempted_semantic_inputs
-            .iter()
-            .map(|input| input.path.clone()),
-    );
-    attempted_domain.sort();
-    attempted_domain.dedup();
-    let mut last_complete_read_set = seed.baseline.as_ref().map_or_else(Vec::new, |baseline| {
-        baseline
-            .protected_semantic_inputs
+    let inputs = unsealed_pre_write_observation_inputs(seed);
+    derive_unsealed_gate_observation_binding(&seed.declared_write_set, &inputs, signals)
+}
+
+pub(super) fn unsealed_pre_write_observation_inputs(
+    seed: &BaselineObservationSeed,
+) -> UnsealedGateObservationInputs {
+    UnsealedGateObservationInputs::new(
+        seed.leased_write_set.clone(),
+        seed.attempted_semantic_inputs.clone(),
+        seed.baseline.as_ref().map_or_else(Vec::new, |baseline| {
+            baseline
+                .protected_semantic_inputs
+                .iter()
+                .map(|input| input.path.clone())
+                .collect()
+        }),
+    )
+}
+
+pub(super) fn unsealed_close_observation_inputs(
+    seed: &CloseObservationSeed,
+) -> UnsealedGateObservationInputs {
+    UnsealedGateObservationInputs::new(
+        seed.leased_write_set.clone(),
+        seed.attempted_semantic_inputs.clone(),
+        seed.prior_protected_semantic_inputs
             .iter()
             .map(|input| input.path.clone())
-            .collect()
-    });
-    last_complete_read_set.sort();
-    last_complete_read_set.dedup();
-    let mut conflicting_or_unbounded_inputs = observation_signal_paths(signals);
-    if conflicting_or_unbounded_inputs.is_empty() {
-        conflicting_or_unbounded_inputs = attempted_domain.clone();
-    }
-    ObservationBinding::Unsealed {
-        reason,
-        attempted_domain,
-        last_complete_read_set,
-        conflicting_or_unbounded_inputs,
-    }
-}
-
-fn unsealed_observation_reason(signal: &GateSignal) -> Option<UnsealedObservationReason> {
-    match signal {
-        GateSignal::WriteConflict { .. } => Some(UnsealedObservationReason::AdmissionConflict),
-        GateSignal::SemanticInputConflict { .. } => {
-            Some(UnsealedObservationReason::SemanticReadConflict)
-        }
-        GateSignal::SemanticReadClosureIncomplete { .. } => {
-            Some(UnsealedObservationReason::SemanticReadClosureIncomplete)
-        }
-        GateSignal::AnalysisFailed { .. } | GateSignal::AnalysisContractChanged => {
-            Some(UnsealedObservationReason::AnalysisFailed)
-        }
-        GateSignal::DeclaredPathUnsupported { .. } => {
-            Some(UnsealedObservationReason::DeclaredPathUnsupported)
-        }
-        GateSignal::ProtectedInputChanged { .. } => {
-            Some(UnsealedObservationReason::ProtectedInputChanged)
-        }
-        GateSignal::TransitionCatalogChanged => {
-            Some(UnsealedObservationReason::TransitionCatalogChanged)
-        }
-        GateSignal::UnplannedWrite { .. } => Some(UnsealedObservationReason::UnplannedWrite),
-        GateSignal::RequiredEvidenceIncomplete { .. }
-        | GateSignal::ActiveTransitionPending { .. }
-        | GateSignal::TransitionChainBroken { .. }
-        | GateSignal::LifecycleDeltaIncomparable { .. }
-        | GateSignal::LifecycleBaselineUnavailable { .. } => {
-            Some(UnsealedObservationReason::ObservationDomainUnbounded)
-        }
-        GateSignal::FindingWarnings { .. }
-        | GateSignal::PreExistingAdverseFacts { .. }
-        | GateSignal::AdverseFactIntroduced { .. }
-        | GateSignal::AdverseFactRegressed { .. }
-        | GateSignal::OpacityIntroduced { .. }
-        | GateSignal::OpacityRegressed { .. }
-        | GateSignal::LifecycleEvidenceRegressed { .. } => None,
-    }
-}
-
-fn observation_signal_paths(signals: &[GateSignal]) -> Vec<RepoPathProjection> {
-    let mut paths = Vec::new();
-    for signal in signals {
-        match signal {
-            GateSignal::DeclaredPathUnsupported { path, .. } => paths.push(path.clone()),
-            GateSignal::WriteConflict {
-                paths: signal_paths,
-                ..
-            }
-            | GateSignal::SemanticInputConflict {
-                paths: signal_paths,
-                ..
-            }
-            | GateSignal::SemanticReadClosureIncomplete {
-                paths: signal_paths,
-            }
-            | GateSignal::ProtectedInputChanged {
-                paths: signal_paths,
-            }
-            | GateSignal::UnplannedWrite {
-                paths: signal_paths,
-            }
-            | GateSignal::ActiveTransitionPending {
-                paths: signal_paths,
-                ..
-            } => paths.extend(signal_paths.iter().cloned()),
-            _ => {}
-        }
-    }
-    paths.sort();
-    paths.dedup();
-    paths
+            .collect(),
+    )
 }
 
 fn baseline_observation_id(
@@ -210,36 +137,8 @@ pub(super) fn close_observation_binding(
             observation: SealedGateObservation::Close { observation_id },
         };
     }
-    let reason = signals
-        .iter()
-        .find_map(unsealed_observation_reason)
-        .unwrap_or(UnsealedObservationReason::ObservationDomainUnbounded);
-    let mut attempted_domain = seed.changed_paths.clone();
-    attempted_domain.extend(seed.leased_write_set.iter().map(|lease| lease.path.clone()));
-    attempted_domain.extend(
-        seed.attempted_semantic_inputs
-            .iter()
-            .map(|input| input.path.clone()),
-    );
-    attempted_domain.sort();
-    attempted_domain.dedup();
-    let mut last_complete_read_set = seed
-        .prior_protected_semantic_inputs
-        .iter()
-        .map(|input| input.path.clone())
-        .collect::<Vec<_>>();
-    last_complete_read_set.sort();
-    last_complete_read_set.dedup();
-    let mut conflicting_or_unbounded_inputs = observation_signal_paths(signals);
-    if conflicting_or_unbounded_inputs.is_empty() {
-        conflicting_or_unbounded_inputs = attempted_domain.clone();
-    }
-    ObservationBinding::Unsealed {
-        reason,
-        attempted_domain,
-        last_complete_read_set,
-        conflicting_or_unbounded_inputs,
-    }
+    let inputs = unsealed_close_observation_inputs(seed);
+    derive_unsealed_gate_observation_binding(&seed.changed_paths, &inputs, signals)
 }
 
 fn close_observation_is_unsealed(signals: &[GateSignal]) -> bool {

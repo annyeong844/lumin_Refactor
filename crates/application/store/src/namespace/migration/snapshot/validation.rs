@@ -9,6 +9,7 @@ use lumin_evidence::{
     GateCloseObservationInput, GateLifecycle, GateOperationKind, GateOperationStatus, GateRecord,
     GateRevision, OperationRecord, WorktreeTransition, apply_worktree_transition,
     derive_gate_baseline_observation_id, derive_gate_close_observation_id,
+    derive_unsealed_gate_observation_binding, seal_analysis_snapshot,
 };
 use lumin_model::{ObservationBinding, SealedGateObservation};
 use serde::de::DeserializeOwned;
@@ -117,10 +118,26 @@ fn validate_gate_history(
     for (index, revision) in gate.revisions.iter().enumerate() {
         let operation = operations.get(revision.operation_id.as_str());
         if revision.revision != index as u64
-            || operation.is_none_or(|operation| operation.gate_id != gate.gate_id)
+            || operation.is_none_or(|operation| {
+                operation.gate_id != gate.gate_id
+                    || operation.status != GateOperationStatus::Committed
+                    || operation.result.as_ref().is_none_or(|result| {
+                        result.revision != revision.revision
+                            || result.operation_id != revision.operation_id
+                    })
+                    || if revision.revision == 0 {
+                        operation.kind != GateOperationKind::PreWrite
+                            || operation.target_revision != 0
+                    } else {
+                        !matches!(
+                            operation.kind,
+                            GateOperationKind::PostWrite | GateOperationKind::GateAbandon
+                        ) || operation.target_revision != revision.revision.saturating_sub(1)
+                    }
+            })
         {
             return Err(StoreError::Integrity(format!(
-                "gate {key} revision history is not owned by that gate"
+                "gate {key} revision history is not owned by committed gate operations"
             )));
         }
         if revision
@@ -161,6 +178,7 @@ fn validate_gate_observations(
             }) if observation_id == &baseline.observation_id
                 && opening.catalog_revision == Some(baseline.catalog_revision) =>
             {
+                validate_analysis_snapshot(key, "baseline", &baseline.snapshot)?;
                 if gate.lifecycle == GateLifecycle::Active
                     && (gate.leased_write_set.iter().collect::<BTreeSet<_>>()
                         != baseline.leased_write_set.iter().collect::<BTreeSet<_>>()
@@ -208,8 +226,8 @@ fn validate_gate_observations(
     }
 
     let mut expected_protected_semantic_inputs =
-        gate.baseline.as_ref().map_or(&[][..], |baseline| {
-            baseline.protected_semantic_inputs.as_slice()
+        gate.baseline.as_ref().map_or_else(Vec::new, |baseline| {
+            baseline.protected_semantic_inputs.clone()
         });
     for revision in &gate.revisions {
         let is_abandon = operations
@@ -267,20 +285,83 @@ fn validate_gate_observations(
                 revision.revision
             )));
         }
-        if revision.revision > 0
-            && matches!(
-                revision.observation_binding.as_ref(),
-                Some(ObservationBinding::Unsealed { .. })
-            )
-            && (revision.snapshot.is_some()
+        if matches!(
+            revision.observation_binding.as_ref(),
+            Some(ObservationBinding::Unsealed { .. })
+        ) {
+            if revision.snapshot.is_some()
                 || revision.actual_write_set.is_some()
                 || !revision.protected_semantic_inputs.is_empty()
                 || !revision.alias_closures.is_empty()
                 || !revision.reconciled_transition_sequences.is_empty()
-                || !revision.deltas.is_empty())
-        {
+                || !revision.deltas.is_empty()
+            {
+                return Err(StoreError::Integrity(format!(
+                    "gate {key} unsealed revision {} retained complete-observation payloads",
+                    revision.revision
+                )));
+            }
+            let inputs = revision
+                .unsealed_observation_inputs
+                .as_ref()
+                .ok_or_else(|| {
+                    StoreError::Integrity(format!(
+                        "gate {key} unsealed revision {} omitted its typed derivation inputs",
+                        revision.revision
+                    ))
+                })?;
+            if !inputs.is_canonical() {
+                return Err(StoreError::Integrity(format!(
+                    "gate {key} unsealed revision {} has noncanonical derivation inputs",
+                    revision.revision
+                )));
+            }
+            if revision.revision > 0 {
+                let baseline = gate.baseline.as_ref().ok_or_else(|| {
+                    StoreError::Integrity(format!(
+                        "gate {key} unsealed close omitted its opening baseline"
+                    ))
+                })?;
+                if inputs
+                    .attempted_write_leases
+                    .iter()
+                    .collect::<BTreeSet<_>>()
+                    != baseline.leased_write_set.iter().collect::<BTreeSet<_>>()
+                {
+                    return Err(StoreError::Integrity(format!(
+                        "gate {key} unsealed close revision {} changed its attempted write domain",
+                        revision.revision
+                    )));
+                }
+                let mut expected_last_complete = expected_protected_semantic_inputs
+                    .iter()
+                    .map(|input| input.path.clone())
+                    .collect::<Vec<_>>();
+                expected_last_complete.sort();
+                expected_last_complete.dedup();
+                if inputs.last_complete_read_set != expected_last_complete {
+                    return Err(StoreError::Integrity(format!(
+                        "gate {key} unsealed close revision {} changed its last complete read set",
+                        revision.revision
+                    )));
+                }
+            }
+            let primary_paths = if revision.revision == 0 {
+                gate.declared_write_set.as_slice()
+            } else {
+                revision.changed_paths.as_slice()
+            };
+            let derived =
+                derive_unsealed_gate_observation_binding(primary_paths, inputs, &revision.signals);
+            if revision.observation_binding.as_ref() != Some(&derived) {
+                return Err(StoreError::Integrity(format!(
+                    "gate {key} unsealed revision {} cannot be reconstructed",
+                    revision.revision
+                )));
+            }
+        } else if revision.unsealed_observation_inputs.is_some() {
             return Err(StoreError::Integrity(format!(
-                "gate {key} unsealed close revision {} retained complete-observation payloads",
+                "gate {key} sealed or administrative revision {} retained unsealed derivation inputs",
                 revision.revision
             )));
         }
@@ -299,6 +380,11 @@ fn validate_gate_observations(
                     revision.revision
                 ))
             })?;
+            validate_analysis_snapshot(
+                key,
+                &format!("close revision {}", revision.revision),
+                snapshot,
+            )?;
             let actual_write_set = revision.actual_write_set.as_ref().ok_or_else(|| {
                 StoreError::Integrity(format!(
                     "gate {key} sealed close revision {} omitted its actual-write set",
@@ -331,7 +417,7 @@ fn validate_gate_observations(
                 )));
             }
             if revision.decision != lumin_evidence::GateDecision::Stale {
-                expected_protected_semantic_inputs = &revision.protected_semantic_inputs;
+                expected_protected_semantic_inputs = revision.protected_semantic_inputs.clone();
             }
         }
     }
@@ -350,6 +436,25 @@ fn validate_gate_observations(
         )));
     }
     validate_gate_lifecycle(key, gate, opening, operations)
+}
+
+fn validate_analysis_snapshot(
+    gate_key: &str,
+    role: &str,
+    snapshot: &AnalysisSnapshot,
+) -> Result<(), StoreError> {
+    let resealed = seal_analysis_snapshot(
+        snapshot.inputs.clone(),
+        snapshot.evidence.clone(),
+        snapshot.scan_invocation.clone(),
+        snapshot.entry_selections.clone(),
+    );
+    if resealed != *snapshot {
+        return Err(StoreError::Integrity(format!(
+            "gate {gate_key} {role} analysis input identity cannot be reconstructed"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_gate_lifecycle(
@@ -435,11 +540,42 @@ fn validate_operation_gate_refs(
                         operation.operation_id.as_str()
                     ))
                 })?;
+            let expected_lifecycle = match operation.kind {
+                GateOperationKind::PreWrite => {
+                    if revision.decision.authorizes() {
+                        GateLifecycle::Active
+                    } else {
+                        GateLifecycle::Rejected
+                    }
+                }
+                GateOperationKind::PostWrite => {
+                    if revision.decision.authorizes() {
+                        GateLifecycle::Closed
+                    } else {
+                        GateLifecycle::Active
+                    }
+                }
+                GateOperationKind::GateAbandon => GateLifecycle::Abandoned,
+            };
+            let expected_leased_write_set = match operation.kind {
+                GateOperationKind::PreWrite if gate.baseline.is_none() => Vec::new(),
+                GateOperationKind::PreWrite | GateOperationKind::PostWrite => gate
+                    .baseline
+                    .as_ref()
+                    .map_or_else(Vec::new, |baseline| baseline.leased_write_set.clone()),
+                GateOperationKind::GateAbandon => Vec::new(),
+            };
             if revision.decision != result.decision
                 || revision.observation_binding != result.observation_binding
+                || revision.reason != result.reason
+                || revision.signals != result.signals
+                || revision.actual_write_set != result.actual_write_set
+                || revision.deltas != result.deltas
+                || result.lifecycle != expected_lifecycle
+                || result.leased_write_set != expected_leased_write_set
             {
                 return Err(StoreError::Integrity(format!(
-                    "operation {} result disagrees with its gate observation",
+                    "operation {} result disagrees with its complete gate revision",
                     operation.operation_id.as_str()
                 )));
             }

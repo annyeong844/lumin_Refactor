@@ -83,15 +83,22 @@ impl OperationSession<'_> {
                 }
                 let result =
                     rejected_open_result(&operation, &signals, observation_binding.clone());
+                let unsealed_observation_inputs = UnsealedGateObservationInputs::new(
+                    operation.leased_write_set.clone(),
+                    Vec::new(),
+                    Vec::new(),
+                );
                 let gate = rejected_gate(
                     &operation,
                     analysis_options.clone(),
                     &signals,
                     None,
                     observation_binding,
+                    unsealed_observation_inputs,
                     catalog_revision,
                 )?;
                 operation.status = GateOperationStatus::Committed;
+                operation.leased_write_set.clear();
                 operation.operation_liveness = None;
                 operation.result = Some(result.clone());
                 write_record(&write, GATES, gate.gate_id.as_str(), &gate)?;
@@ -132,8 +139,8 @@ impl OperationSession<'_> {
     ) -> Result<GateOperationResult, StoreError> {
         let PreWriteFinish {
             baseline,
-            leased_write_set,
-            alias_closures,
+            mut leased_write_set,
+            mut alias_closures,
             attempted_semantic_inputs,
             mut signals,
         } = finish;
@@ -167,6 +174,23 @@ impl OperationSession<'_> {
                 final_validation(&reserved_state_identities, catalog_revision, &signals);
             signals.extend(finalization.signals);
             let observation_binding = finalization.binding;
+            let unsealed_observation_inputs = matches!(
+                &observation_binding,
+                lumin_model::ObservationBinding::Unsealed { .. }
+            )
+            .then(|| {
+                UnsealedGateObservationInputs::new(
+                    leased_write_set.clone(),
+                    attempted_semantic_inputs.clone(),
+                    baseline.as_ref().map_or_else(Vec::new, |baseline| {
+                        baseline
+                            .protected_semantic_inputs
+                            .iter()
+                            .map(|input| input.path.clone())
+                            .collect()
+                    }),
+                )
+            });
             let baseline = match (baseline, &observation_binding) {
                 (
                     Some(baseline),
@@ -193,14 +217,21 @@ impl OperationSession<'_> {
                     ));
                 }
             };
+            if unsealed_observation_inputs.is_some() {
+                leased_write_set.clear();
+                alias_closures.clear();
+            }
             let (gate, result) = completed_pre_write_records(
                 &operation,
-                baseline,
-                leased_write_set,
-                alias_closures,
-                signals,
-                observation_binding,
-                catalog_revision,
+                CompletedPreWriteInput {
+                    baseline,
+                    leased_write_set,
+                    alias_closures,
+                    unsealed_observation_inputs,
+                    signals,
+                    observation_binding,
+                    catalog_revision,
+                },
             )?;
             operation.leased_write_set = result.leased_write_set.clone();
             persist_operation_result(&write, &gate, &mut operation, &result)?;
@@ -500,6 +531,16 @@ impl OperationSession<'_> {
                     ));
                 }
             };
+            let unsealed_observation_inputs = (!sealed_close).then(|| {
+                UnsealedGateObservationInputs::new(
+                    gate.leased_write_set.clone(),
+                    attempted_semantic_inputs.clone(),
+                    gate.protected_semantic_inputs
+                        .iter()
+                        .map(|input| input.path.clone())
+                        .collect(),
+                )
+            });
             if sealed_close && (snapshot.is_none() || actual_write_set.is_none()) {
                 return Err(StoreError::Integrity(
                     "sealed close observation omitted its complete snapshot or actual-write set"
@@ -569,6 +610,7 @@ impl OperationSession<'_> {
                 decision,
                 catalog_revision: Some(catalog_revision),
                 observation_binding: Some(observation_binding),
+                unsealed_observation_inputs,
                 reason: None,
                 signals: signals.clone(),
                 changed_paths,

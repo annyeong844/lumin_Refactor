@@ -5,9 +5,11 @@ use std::fs;
 use lumin_evidence::{
     ActualWriteSet, CapabilityRecord, DEAD_CODE_CAPABILITY_ID, GateAnalysisOptions,
     GateBaselineObservationInput, GateCloseObservationInput, GateObservationBinding, GateSignal,
-    RepoPathProjection, RunEvidence, SemanticInputRecord, SemanticInputState, WriteLease,
-    WriteLeaseKind, apply_worktree_transition, derive_gate_baseline_observation_id,
-    derive_gate_close_observation_id, seal_analysis_snapshot,
+    RepoPathProjection, RunEvidence, SemanticInputRecord, SemanticInputState,
+    SemanticReadReservationBinding, UnsealedGateObservationInputs, WriteLease, WriteLeaseKind,
+    apply_worktree_transition, derive_gate_baseline_observation_id,
+    derive_gate_close_observation_id, derive_unsealed_gate_observation_binding,
+    seal_analysis_snapshot,
 };
 use lumin_model::{
     CapabilityState, GateId, ObservationBinding, OperationId, RepoPath, SealedGateObservation,
@@ -16,7 +18,7 @@ use lumin_model::{
 
 use crate::{
     GateBaselineDraft, ObservationFinalization, PostWriteFinish, PostWriteStart, PreWriteFinish,
-    PreWriteStart, RepositoryStore, StoreError, StoreGeneration,
+    PreWriteStart, RepositoryStore, SemanticReadReservation, StoreError, StoreGeneration,
 };
 
 use super::super::migration::{MigrationCrashPoint, migrate_with_hook};
@@ -651,6 +653,65 @@ fn close_active_gate_for_migration(
         },
     )?;
     Ok(())
+}
+
+fn append_unsealed_close_for_migration(
+    store: &RepositoryStore,
+    gate_id: &GateId,
+) -> Result<OperationId, Box<dyn std::error::Error>> {
+    let operation_id =
+        OperationId::from_string(format!("op-migrate-unsealed-close-{}", gate_id.as_str()));
+    let request_digest = format!("migrate-unsealed-close-digest-{}", gate_id.as_str());
+    let session = store.begin_operation(&operation_id)?;
+    let gate = match session.begin_post_write(&request_digest, gate_id)? {
+        PostWriteStart::Analyze { gate, .. } => gate,
+        PostWriteStart::Committed(_) => return Err("migration close committed early".into()),
+    };
+    let attempted = SemanticReadReservationBinding {
+        path: path("config/unsealed-attempt.json")?,
+        physical_identity: None,
+        absence_parent: None,
+    };
+    if session.reserve_post_write_semantic_inputs(
+        &request_digest,
+        gate_id,
+        std::slice::from_ref(&attempted),
+    )? != SemanticReadReservation::Reserved
+    {
+        return Err("migration close could not reserve its attempted semantic input".into());
+    }
+    let signals = vec![GateSignal::AnalysisFailed {
+        detail: "injected migration fixture failure".to_owned(),
+    }];
+    let inputs = UnsealedGateObservationInputs::new(
+        gate.leased_write_set.clone(),
+        vec![attempted.clone()],
+        gate.protected_semantic_inputs
+            .iter()
+            .map(|input| input.path.clone())
+            .collect(),
+    );
+    session.finish_post_write(
+        &request_digest,
+        gate_id,
+        PostWriteFinish {
+            snapshot: None,
+            protected_semantic_inputs: Vec::new(),
+            reconciled_baseline: None,
+            changed_paths: Vec::new(),
+            actual_write_set: None,
+            alias_closures: gate.alias_closures.clone(),
+            reconciled_transition_sequences: Vec::new(),
+            attempted_semantic_inputs: vec![attempted],
+            signals,
+            deltas: Vec::new(),
+        },
+        |_, _, signals| ObservationFinalization {
+            signals: Vec::new(),
+            binding: derive_unsealed_gate_observation_binding(&[], &inputs, signals),
+        },
+    )?;
+    Ok(operation_id)
 }
 
 fn assert_migration_paths_absent(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {

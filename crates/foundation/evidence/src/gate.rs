@@ -4,7 +4,8 @@ use lumin_model::{
     AnalysisInputId, DeltaDimensionChange, DeltaFactFamily, GateBaselineObservationId,
     GateCloseObservationId, GateDeltaClassification, GateDeltaRecord, GateId, ObservationBinding,
     OperationId, PhysicalFileIdentity, ResolutionProfile, ResolutionProfileSource,
-    SelectedResolutionProfile, append_length_prefixed, classify_lifecycle_deltas, digest_hex,
+    SelectedResolutionProfile, UnsealedObservationReason, append_length_prefixed,
+    classify_lifecycle_deltas, digest_hex,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -579,6 +580,154 @@ pub enum GateSignal {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct UnsealedGateObservationInputs {
+    #[serde(default)]
+    pub attempted_write_leases: Vec<WriteLease>,
+    #[serde(default)]
+    pub attempted_semantic_inputs: Vec<SemanticReadReservationBinding>,
+    #[serde(default)]
+    pub last_complete_read_set: Vec<RepoPathProjection>,
+}
+
+impl UnsealedGateObservationInputs {
+    pub fn new(
+        mut attempted_write_leases: Vec<WriteLease>,
+        mut attempted_semantic_inputs: Vec<SemanticReadReservationBinding>,
+        mut last_complete_read_set: Vec<RepoPathProjection>,
+    ) -> Self {
+        attempted_write_leases.sort();
+        attempted_write_leases.dedup();
+        attempted_semantic_inputs.sort();
+        attempted_semantic_inputs.dedup();
+        last_complete_read_set.sort();
+        last_complete_read_set.dedup();
+        Self {
+            attempted_write_leases,
+            attempted_semantic_inputs,
+            last_complete_read_set,
+        }
+    }
+
+    pub fn is_canonical(&self) -> bool {
+        Self::new(
+            self.attempted_write_leases.clone(),
+            self.attempted_semantic_inputs.clone(),
+            self.last_complete_read_set.clone(),
+        ) == *self
+    }
+}
+
+pub fn derive_unsealed_gate_observation_binding(
+    primary_paths: &[RepoPathProjection],
+    inputs: &UnsealedGateObservationInputs,
+    signals: &[GateSignal],
+) -> GateObservationBinding {
+    let reason = signals
+        .iter()
+        .find_map(unsealed_observation_reason)
+        .unwrap_or(UnsealedObservationReason::ObservationDomainUnbounded);
+    let mut attempted_domain = primary_paths.to_vec();
+    attempted_domain.extend(
+        inputs
+            .attempted_write_leases
+            .iter()
+            .map(|lease| lease.path.clone()),
+    );
+    attempted_domain.extend(
+        inputs
+            .attempted_semantic_inputs
+            .iter()
+            .map(|input| input.path.clone()),
+    );
+    attempted_domain.sort();
+    attempted_domain.dedup();
+    let mut conflicting_or_unbounded_inputs = observation_signal_paths(signals);
+    if conflicting_or_unbounded_inputs.is_empty() {
+        conflicting_or_unbounded_inputs = attempted_domain.clone();
+    }
+    ObservationBinding::Unsealed {
+        reason,
+        attempted_domain,
+        last_complete_read_set: inputs.last_complete_read_set.clone(),
+        conflicting_or_unbounded_inputs,
+    }
+}
+
+fn unsealed_observation_reason(signal: &GateSignal) -> Option<UnsealedObservationReason> {
+    match signal {
+        GateSignal::WriteConflict { .. } => Some(UnsealedObservationReason::AdmissionConflict),
+        GateSignal::SemanticInputConflict { .. } => {
+            Some(UnsealedObservationReason::SemanticReadConflict)
+        }
+        GateSignal::SemanticReadClosureIncomplete { .. } => {
+            Some(UnsealedObservationReason::SemanticReadClosureIncomplete)
+        }
+        GateSignal::AnalysisFailed { .. } | GateSignal::AnalysisContractChanged => {
+            Some(UnsealedObservationReason::AnalysisFailed)
+        }
+        GateSignal::DeclaredPathUnsupported { .. } => {
+            Some(UnsealedObservationReason::DeclaredPathUnsupported)
+        }
+        GateSignal::ProtectedInputChanged { .. } => {
+            Some(UnsealedObservationReason::ProtectedInputChanged)
+        }
+        GateSignal::TransitionCatalogChanged => {
+            Some(UnsealedObservationReason::TransitionCatalogChanged)
+        }
+        GateSignal::UnplannedWrite { .. } => Some(UnsealedObservationReason::UnplannedWrite),
+        GateSignal::RequiredEvidenceIncomplete { .. }
+        | GateSignal::ActiveTransitionPending { .. }
+        | GateSignal::TransitionChainBroken { .. }
+        | GateSignal::LifecycleDeltaIncomparable { .. }
+        | GateSignal::LifecycleBaselineUnavailable { .. } => {
+            Some(UnsealedObservationReason::ObservationDomainUnbounded)
+        }
+        GateSignal::FindingWarnings { .. }
+        | GateSignal::PreExistingAdverseFacts { .. }
+        | GateSignal::AdverseFactIntroduced { .. }
+        | GateSignal::AdverseFactRegressed { .. }
+        | GateSignal::OpacityIntroduced { .. }
+        | GateSignal::OpacityRegressed { .. }
+        | GateSignal::LifecycleEvidenceRegressed { .. } => None,
+    }
+}
+
+fn observation_signal_paths(signals: &[GateSignal]) -> Vec<RepoPathProjection> {
+    let mut paths = Vec::new();
+    for signal in signals {
+        match signal {
+            GateSignal::DeclaredPathUnsupported { path, .. } => paths.push(path.clone()),
+            GateSignal::WriteConflict {
+                paths: signal_paths,
+                ..
+            }
+            | GateSignal::SemanticInputConflict {
+                paths: signal_paths,
+                ..
+            }
+            | GateSignal::SemanticReadClosureIncomplete {
+                paths: signal_paths,
+            }
+            | GateSignal::ProtectedInputChanged {
+                paths: signal_paths,
+            }
+            | GateSignal::UnplannedWrite {
+                paths: signal_paths,
+            }
+            | GateSignal::ActiveTransitionPending {
+                paths: signal_paths,
+                ..
+            } => paths.extend(signal_paths.iter().cloned()),
+            _ => {}
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GateBaseline {
     pub observation_id: GateBaselineObservationId,
     pub catalog_revision: u64,
@@ -604,6 +753,8 @@ pub struct GateRevision {
     pub catalog_revision: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observation_binding: Option<GateObservationBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unsealed_observation_inputs: Option<UnsealedGateObservationInputs>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     pub signals: Vec<GateSignal>,
