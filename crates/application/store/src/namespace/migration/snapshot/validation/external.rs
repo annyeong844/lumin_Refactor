@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use lumin_evidence::{GateLifecycle, GateRecord, WriteLeaseKind};
-use lumin_model::RepoPath;
+use lumin_model::decode_native_path_component;
 use serde::de::DeserializeOwned;
 
 use crate::retention::records::StoredRetentionPlan;
@@ -51,13 +51,15 @@ fn validate_active_gate_write_prefixes(
         {
             let mut held_prefixes = Vec::with_capacity(lease.prefix_identities.len());
             for prefix in &lease.prefix_identities {
-                let relative = RepoPath::from_canonical_bytes(&prefix.path.canonical)
-                    .and_then(|path| path.to_native_relative())
-                    .map_err(|error| {
+                let mut relative = PathBuf::new();
+                for component in &prefix.path.components {
+                    let native = decode_native_path_component(component).map_err(|error| {
                         StoreError::Integrity(format!(
                             "gate {key} new-file prefix is not canonical: {error}"
                         ))
                     })?;
+                    relative.push(native);
+                }
                 let native = guard.state.repository.path.join(relative);
                 let held = HeldEntry::open(
                     &native,
