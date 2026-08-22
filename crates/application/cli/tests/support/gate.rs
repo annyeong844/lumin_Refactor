@@ -151,7 +151,8 @@ pub fn assert_probe_candidates_excluded(
         rejected_gate
             .get("protectedSemanticInputCount")
             .and_then(Value::as_u64),
-        Some(protected_input_count),
+        Some(0),
+        "a rejected gate must not promote candidate reads into durable protection",
     );
     assert_eq!(
         rejected_gate
