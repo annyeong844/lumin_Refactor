@@ -7,9 +7,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use lumin_evidence::{
     AnalysisSnapshot, GATE_RECORD_SCHEMA_VERSION, GateBaseline, GateBaselineObservationInput,
     GateCloseObservationInput, GateDecision, GateLifecycle, GateOperationKind, GateOperationStatus,
-    GateRecord, GateRevision, OperationRecord, WorktreeTransition, apply_worktree_transition,
-    derive_gate_baseline_observation_id, derive_gate_close_observation_id,
-    derive_unsealed_gate_observation_binding, gate_policy, seal_analysis_snapshot,
+    GateRecord, GateRevision, GateSignal, OperationRecord, WorktreeTransition,
+    apply_worktree_transition, derive_gate_baseline_observation_id,
+    derive_gate_close_observation_id, derive_unsealed_gate_observation_binding, gate_policy,
+    seal_analysis_snapshot,
 };
 use lumin_model::{ObservationBinding, SealedGateObservation};
 use serde::de::DeserializeOwned;
@@ -33,7 +34,7 @@ pub(super) fn validate_referential_closure(
 ) -> Result<(), StoreError> {
     let (transitions, transition_sequences) = read_transitions(snapshot)?;
     let operations = read_operations(snapshot)?;
-    let gates = read_gates(snapshot, &operations, &transition_sequences)?;
+    let gates = read_gates(snapshot, &operations, &transitions, &transition_sequences)?;
     validate_transition_catalog_sequence(snapshot, &transition_sequences, &gates, &operations)?;
     validate_active_gate_catalog(snapshot, &gates, &operations)?;
     validate_operation_gate_refs(&operations, &gates)?;
@@ -83,6 +84,7 @@ fn read_operations(
 fn read_gates<'a>(
     snapshot: &'a LogicalStoreSnapshot,
     operations: &BTreeMap<&str, OperationRecord>,
+    transitions: &BTreeMap<u64, WorktreeTransition>,
     transition_sequences: &BTreeSet<u64>,
 ) -> Result<BTreeMap<&'a str, GateRecord>, StoreError> {
     let mut gates = BTreeMap::new();
@@ -93,7 +95,7 @@ fn read_gates<'a>(
                 "gate key {key} disagrees with its record"
             )));
         }
-        validate_gate_history(key, &gate, operations, transition_sequences)?;
+        validate_gate_history(key, &gate, operations, transitions, transition_sequences)?;
         gates.insert(key.as_str(), gate);
     }
     Ok(gates)
@@ -216,6 +218,7 @@ fn validate_gate_history(
     key: &str,
     gate: &GateRecord,
     operations: &BTreeMap<&str, OperationRecord>,
+    transitions: &BTreeMap<u64, WorktreeTransition>,
     transition_sequences: &BTreeSet<u64>,
 ) -> Result<(), StoreError> {
     if gate.schema_version != GATE_RECORD_SCHEMA_VERSION {
@@ -229,27 +232,28 @@ fn validate_gate_history(
             "gate {key} current revision is not its durable tail"
         )));
     }
-    validate_gate_observations(key, gate, operations)?;
     for (index, revision) in gate.revisions.iter().enumerate() {
-        let operation = operations.get(revision.operation_id.as_str());
+        let operation = operations
+            .get(revision.operation_id.as_str())
+            .ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "gate {key} revision history references a missing operation"
+                ))
+            })?;
         if revision.revision != index as u64
-            || operation.is_none_or(|operation| {
-                operation.gate_id != gate.gate_id
-                    || operation.status != GateOperationStatus::Committed
-                    || operation.result.as_ref().is_none_or(|result| {
-                        result.revision != revision.revision
-                            || result.operation_id != revision.operation_id
-                    })
-                    || if revision.revision == 0 {
-                        operation.kind != GateOperationKind::PreWrite
-                            || operation.target_revision != 0
-                    } else {
-                        !matches!(
-                            operation.kind,
-                            GateOperationKind::PostWrite | GateOperationKind::GateAbandon
-                        ) || operation.target_revision != revision.revision.saturating_sub(1)
-                    }
+            || operation.gate_id != gate.gate_id
+            || operation.status != GateOperationStatus::Committed
+            || operation.result.as_ref().is_none_or(|result| {
+                result.revision != revision.revision || result.operation_id != revision.operation_id
             })
+            || if revision.revision == 0 {
+                operation.kind != GateOperationKind::PreWrite || operation.target_revision != 0
+            } else {
+                !matches!(
+                    operation.kind,
+                    GateOperationKind::PostWrite | GateOperationKind::GateAbandon
+                ) || operation.target_revision != revision.revision.saturating_sub(1)
+            }
         {
             return Err(StoreError::Integrity(format!(
                 "gate {key} revision history is not owned by committed gate operations"
@@ -263,6 +267,41 @@ fn validate_gate_history(
             return Err(StoreError::Integrity(format!(
                 "gate {key} reconciles a missing transition"
             )));
+        }
+        if operation.kind == GateOperationKind::PostWrite
+            && revision.decision.authorizes()
+            && revision.revision != gate.current_revision
+        {
+            return Err(StoreError::Integrity(format!(
+                "gate {key} authorizing close revision {} is not the durable tail",
+                revision.revision
+            )));
+        }
+        if matches!(
+            revision.observation_binding.as_ref(),
+            Some(ObservationBinding::Sealed {
+                observation: SealedGateObservation::Close { .. }
+            })
+        ) {
+            let baseline = gate.baseline.as_ref().ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "gate {key} sealed close omitted its opening baseline"
+                ))
+            })?;
+            let expected = transition_sequences
+                .iter()
+                .copied()
+                .filter(|sequence| {
+                    *sequence > baseline.transition_sequence
+                        && *sequence <= operation.transition_sequence
+                })
+                .collect::<Vec<_>>();
+            if revision.reconciled_transition_sequences != expected {
+                return Err(StoreError::Integrity(format!(
+                    "gate {key} sealed close revision {} omitted or reordered its transition chain",
+                    revision.revision
+                )));
+            }
         }
     }
     if gate
@@ -289,6 +328,7 @@ fn validate_gate_history(
             )));
         }
     }
+    validate_gate_observations(key, gate, operations, transitions)?;
     Ok(())
 }
 
@@ -296,6 +336,7 @@ fn validate_gate_observations(
     key: &str,
     gate: &GateRecord,
     operations: &BTreeMap<&str, OperationRecord>,
+    transitions: &BTreeMap<u64, WorktreeTransition>,
 ) -> Result<(), StoreError> {
     let opening = gate
         .revisions
@@ -376,6 +417,7 @@ fn validate_gate_observations(
                         "gate {key} baseline observation cannot be reconstructed"
                     )));
                 }
+                validate_opening_snapshot_policy(key, opening, baseline)?;
             }
             _ => {
                 return Err(StoreError::Integrity(format!(
@@ -424,9 +466,20 @@ fn validate_gate_observations(
                     revision.revision
                 )));
             }
-            if revision.catalog_revision.is_some() || revision.observation_binding.is_some() {
+            if revision.catalog_revision.is_some()
+                || revision.observation_binding.is_some()
+                || revision.unsealed_observation_inputs.is_some()
+                || !revision.signals.is_empty()
+                || !revision.changed_paths.is_empty()
+                || revision.actual_write_set.is_some()
+                || revision.snapshot.is_some()
+                || !revision.protected_semantic_inputs.is_empty()
+                || !revision.alias_closures.is_empty()
+                || !revision.reconciled_transition_sequences.is_empty()
+                || !revision.deltas.is_empty()
+            {
                 return Err(StoreError::Integrity(format!(
-                    "gate {key} administrative abandon revision {} retained an observation binding",
+                    "gate {key} administrative abandon revision {} retained evidence payloads",
                     revision.revision
                 )));
             }
@@ -569,12 +622,34 @@ fn validate_gate_observations(
                 &format!("close revision {}", revision.revision),
                 snapshot,
             )?;
+            if snapshot.scan_invocation != gate.analysis_options.scan_invocation {
+                return Err(StoreError::Integrity(format!(
+                    "gate {key} sealed close revision {} changed its opening analysis invocation",
+                    revision.revision
+                )));
+            }
             let actual_write_set = revision.actual_write_set.as_ref().ok_or_else(|| {
                 StoreError::Integrity(format!(
                     "gate {key} sealed close revision {} omitted its actual-write set",
                     revision.revision
                 ))
             })?;
+            if revision.changed_paths != actual_write_set.paths {
+                return Err(StoreError::Integrity(format!(
+                    "gate {key} sealed close revision {} changed paths disagree with its actual-write set",
+                    revision.revision
+                )));
+            }
+            let reconciled_baseline =
+                reconstruct_close_baseline(key, baseline, revision, transitions)?;
+            validate_close_snapshot_policy(
+                key,
+                revision,
+                &reconciled_baseline,
+                snapshot,
+                &expected_protected_semantic_inputs,
+                &baseline.leased_write_set,
+            )?;
             let derived = derive_gate_close_observation_id(GateCloseObservationInput {
                 gate_id: &gate.gate_id,
                 opening_observation_id: &baseline.observation_id,
@@ -620,6 +695,134 @@ fn validate_gate_observations(
         )));
     }
     validate_gate_lifecycle(key, gate, opening, operations)
+}
+
+fn validate_opening_snapshot_policy(
+    key: &str,
+    opening: &GateRevision,
+    baseline: &GateBaseline,
+) -> Result<(), StoreError> {
+    let expected = gate_policy::opening_signals(&baseline.snapshot, &baseline.leased_write_set);
+    let observed = opening
+        .signals
+        .iter()
+        .filter(|signal| is_opening_snapshot_signal(signal))
+        .cloned()
+        .collect::<Vec<_>>();
+    let impossible = opening.signals.iter().any(|signal| {
+        !is_opening_snapshot_signal(signal)
+            && !matches!(signal, GateSignal::ProtectedInputChanged { .. })
+    });
+    if observed != expected || impossible {
+        return Err(StoreError::Integrity(format!(
+            "gate {key} opening signals disagree with its sealed analysis snapshot"
+        )));
+    }
+    Ok(())
+}
+
+fn is_opening_snapshot_signal(signal: &GateSignal) -> bool {
+    matches!(
+        signal,
+        GateSignal::FindingWarnings { .. }
+            | GateSignal::PreExistingAdverseFacts { .. }
+            | GateSignal::RequiredEvidenceIncomplete { .. }
+    )
+}
+
+fn reconstruct_close_baseline(
+    key: &str,
+    baseline: &GateBaseline,
+    revision: &GateRevision,
+    transitions: &BTreeMap<u64, WorktreeTransition>,
+) -> Result<AnalysisSnapshot, StoreError> {
+    let mut reconciled = baseline.snapshot.clone();
+    for sequence in &revision.reconciled_transition_sequences {
+        let transition = transitions.get(sequence).ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "gate {key} sealed close revision {} references a missing transition",
+                revision.revision
+            ))
+        })?;
+        if !apply_worktree_transition(&mut reconciled, transition) {
+            return Err(StoreError::Integrity(format!(
+                "gate {key} sealed close revision {} cannot replay transition {sequence}",
+                revision.revision
+            )));
+        }
+    }
+    Ok(reconciled)
+}
+
+fn validate_close_snapshot_policy(
+    key: &str,
+    revision: &GateRevision,
+    reconciled_baseline: &AnalysisSnapshot,
+    snapshot: &AnalysisSnapshot,
+    prior_protected_semantic_inputs: &[lumin_evidence::SemanticInputRecord],
+    leased_write_set: &[lumin_evidence::WriteLease],
+) -> Result<(), StoreError> {
+    let (expected_signals, _, expected_deltas) = gate_policy::closing_signals(
+        reconciled_baseline,
+        snapshot,
+        prior_protected_semantic_inputs,
+        leased_write_set,
+    );
+    if revision.deltas != expected_deltas {
+        return Err(StoreError::Integrity(format!(
+            "gate {key} close revision {} deltas disagree with its sealed analysis snapshots",
+            revision.revision
+        )));
+    }
+
+    let expected_owned = expected_signals
+        .iter()
+        .filter(|signal| is_strict_close_snapshot_signal(signal))
+        .cloned()
+        .collect::<Vec<_>>();
+    let observed_owned = revision
+        .signals
+        .iter()
+        .filter(|signal| is_strict_close_snapshot_signal(signal))
+        .cloned()
+        .collect::<Vec<_>>();
+    let contextual_signals_present = expected_signals
+        .iter()
+        .filter(|signal| {
+            matches!(
+                signal,
+                GateSignal::ProtectedInputChanged { .. } | GateSignal::UnplannedWrite { .. }
+            )
+        })
+        .all(|signal| revision.signals.contains(signal));
+    let impossible = revision.signals.iter().any(|signal| {
+        !is_strict_close_snapshot_signal(signal)
+            && !matches!(
+                signal,
+                GateSignal::ProtectedInputChanged { .. } | GateSignal::UnplannedWrite { .. }
+            )
+    });
+    if observed_owned != expected_owned || !contextual_signals_present || impossible {
+        return Err(StoreError::Integrity(format!(
+            "gate {key} close revision {} signals disagree with its sealed analysis snapshots",
+            revision.revision
+        )));
+    }
+    Ok(())
+}
+
+fn is_strict_close_snapshot_signal(signal: &GateSignal) -> bool {
+    matches!(
+        signal,
+        GateSignal::RequiredEvidenceIncomplete { .. }
+            | GateSignal::AdverseFactIntroduced { .. }
+            | GateSignal::AdverseFactRegressed { .. }
+            | GateSignal::OpacityIntroduced { .. }
+            | GateSignal::OpacityRegressed { .. }
+            | GateSignal::LifecycleEvidenceRegressed { .. }
+            | GateSignal::LifecycleDeltaIncomparable { .. }
+            | GateSignal::LifecycleBaselineUnavailable { .. }
+    )
 }
 
 fn validate_analysis_snapshot(
@@ -816,6 +1019,24 @@ fn validate_transition_gate_refs(
             return Err(StoreError::Integrity(format!(
                 "transition {} payload or observation binding disagrees with its gate revision",
                 transition.sequence
+            )));
+        }
+    }
+    for (key, gate) in gates {
+        if gate.lifecycle != GateLifecycle::Closed {
+            continue;
+        }
+        let terminal_revision = gate.current_revision;
+        let matching = transitions
+            .values()
+            .filter(|transition| {
+                transition.capsule.gate_id == gate.gate_id
+                    && transition.capsule.revision == terminal_revision
+            })
+            .count();
+        if matching != 1 {
+            return Err(StoreError::Integrity(format!(
+                "closed gate {key} requires exactly one terminal worktree transition"
             )));
         }
     }

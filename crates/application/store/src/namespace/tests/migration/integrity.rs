@@ -1,14 +1,16 @@
 use std::fs;
 
 use lumin_evidence::{
-    ActualWriteSet, GateDecision, GateLifecycle, GateObservationBinding, GateOperationStatus,
-    GateRecord, GateSignal, OperationRecord, RetentionMutationResult, RetentionOperationRecord,
-    RetentionOperationResult, RetentionPlanScope, WorktreeTransition,
+    ActualWriteSet, GateBaselineObservationInput, GateCloseObservationInput, GateDecision,
+    GateLifecycle, GateObservationBinding, GateOperationStatus, GateRecord, GateSignal,
+    OperationRecord, RetentionMutationResult, RetentionOperationRecord, RetentionOperationResult,
+    RetentionPlanScope, WorktreeTransition, derive_gate_baseline_observation_id,
+    derive_gate_close_observation_id, seal_analysis_snapshot,
 };
 use lumin_model::{
-    AnalysisInputId, AttemptId, DeltaFactFamily, DeltaKey, GateDeltaClassification,
-    GateDeltaRecord, ObservationBinding, OperationId, ResolutionProfile, RunId,
-    UnsealedObservationReason,
+    AnalysisInputId, AttemptId, CapabilityState, DeltaFactFamily, DeltaKey,
+    GateDeltaClassification, GateDeltaRecord, ObservationBinding, OperationId, ResolutionProfile,
+    RunId, SealedGateObservation, UnsealedObservationReason,
 };
 use redb::{Database, ReadableTable};
 
@@ -24,6 +26,65 @@ use super::{
     close_active_gate_for_migration, current_generation, evidence, open_active_gate_for,
     open_active_gate_for_with_protected_inputs, path, semantic_input,
 };
+
+fn reconstructed_baseline_binding(
+    gate: &GateRecord,
+) -> Result<GateObservationBinding, Box<dyn std::error::Error>> {
+    let baseline = gate.baseline.as_ref().ok_or("gate baseline is missing")?;
+    Ok(ObservationBinding::Sealed {
+        observation: SealedGateObservation::Baseline {
+            observation_id: derive_gate_baseline_observation_id(GateBaselineObservationInput {
+                catalog_revision: baseline.catalog_revision,
+                transition_sequence: baseline.transition_sequence,
+                analysis_contract: &baseline.analysis_contract,
+                analysis_input_id: &baseline.snapshot.analysis_input_id,
+                declared_write_set: &gate.declared_write_set,
+                leased_write_set: &baseline.leased_write_set,
+                alias_closures: &baseline.alias_closures,
+                protected_semantic_inputs: &baseline.protected_semantic_inputs,
+            }),
+        },
+    })
+}
+
+fn reconstructed_close_binding(
+    gate: &GateRecord,
+    revision_index: usize,
+) -> Result<GateObservationBinding, Box<dyn std::error::Error>> {
+    let baseline = gate.baseline.as_ref().ok_or("gate baseline is missing")?;
+    let revision = gate
+        .revisions
+        .get(revision_index)
+        .ok_or("gate close revision is missing")?;
+    let snapshot = revision
+        .snapshot
+        .as_ref()
+        .ok_or("close snapshot is missing")?;
+    let actual_write_set = revision
+        .actual_write_set
+        .as_ref()
+        .ok_or("close actual-write set is missing")?;
+    Ok(ObservationBinding::Sealed {
+        observation: SealedGateObservation::Close {
+            observation_id: derive_gate_close_observation_id(GateCloseObservationInput {
+                gate_id: &gate.gate_id,
+                opening_observation_id: &baseline.observation_id,
+                opening_analysis_contract: &baseline.analysis_contract,
+                prior_revision: revision.revision.saturating_sub(1),
+                catalog_revision: revision
+                    .catalog_revision
+                    .ok_or("close catalog revision is missing")?,
+                analysis_input_id: &snapshot.analysis_input_id,
+                leased_write_set: &baseline.leased_write_set,
+                protected_semantic_inputs: &revision.protected_semantic_inputs,
+                changed_paths: &revision.changed_paths,
+                actual_write_set,
+                alias_closures: &revision.alias_closures,
+                reconciled_transition_sequences: &revision.reconciled_transition_sequences,
+            }),
+        },
+    })
+}
 
 #[test]
 fn unpublished_intent_bytes_are_discarded_before_reopen() -> Result<(), Box<dyn std::error::Error>>
@@ -1165,6 +1226,463 @@ fn migration_reconstructs_every_unsealed_observation_field_from_typed_inputs()
                     || message.contains("changed its last complete read set")
         ));
     }
+    Ok(())
+}
+
+#[test]
+fn migration_requires_a_terminal_transition_for_every_closed_gate()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(&store, "op-terminal-transition", "src/terminal.ts")?;
+    close_active_gate_for_migration(&store, &gate_id)?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(TRANSITIONS)?;
+        let removed = table.remove(transition_key(1).as_str())?;
+        assert!(removed.is_some());
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("requires exactly one terminal worktree transition")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_evidence_payloads_on_an_administrative_abandon()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(&store, "op-abandon-payload-open", "src/abandon.ts")?;
+    let abandon_id = OperationId::from_string("op-abandon-payload-close".to_owned());
+    store.begin_operation(&abandon_id)?.abandon_gate(
+        "abandon-payload-digest",
+        &gate_id,
+        0,
+        "administrative fixture",
+    )?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("abandon-payload gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        let injected = gate
+            .baseline
+            .as_ref()
+            .ok_or("abandon-payload gate omitted its baseline")?
+            .snapshot
+            .clone();
+        gate.revisions
+            .last_mut()
+            .ok_or("abandon-payload gate omitted its tail")?
+            .snapshot = Some(injected);
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("administrative abandon revision")
+                && message.contains("retained evidence payloads")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_requires_the_complete_transition_chain_on_every_sealed_close()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let active_gate = open_active_gate_for(
+        &store,
+        "op-incomplete-close-chain-open",
+        "src/incomplete-chain.ts",
+    )?;
+    append_non_authorizing_close_for_migration(&store, &active_gate, Vec::new())?;
+    let closing_gate = open_active_gate_for(
+        &store,
+        "op-incomplete-close-chain-peer",
+        "src/incomplete-chain-peer.ts",
+    )?;
+    close_active_gate_for_migration(&store, &closing_gate)?;
+    drop(store);
+
+    let operation_id = OperationId::from_string("op-migrate-incomplete-close".to_owned());
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get(operation_id.as_str())?
+            .ok_or("non-authorizing close operation is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        operation.transition_sequence = 1;
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert(operation_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("omitted or reordered its transition chain")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_binds_a_sealed_close_to_the_opening_invocation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(&store, "op-close-invocation", "src/invocation.ts")?;
+    append_non_authorizing_close_for_migration(&store, &gate_id, Vec::new())?;
+    drop(store);
+
+    let operation_id = OperationId::from_string("op-migrate-incomplete-close".to_owned());
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    let binding = {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("close-invocation gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        let revision = gate
+            .revisions
+            .get_mut(1)
+            .ok_or("close-invocation revision is missing")?;
+        let snapshot = revision
+            .snapshot
+            .as_ref()
+            .ok_or("close-invocation snapshot is missing")?;
+        let mut invocation = snapshot.scan_invocation.clone();
+        invocation.resolution_profile = Some(ResolutionProfile::Node16);
+        revision.snapshot = Some(seal_analysis_snapshot(
+            snapshot.inputs.clone(),
+            snapshot.evidence.clone(),
+            invocation,
+            snapshot.entry_selections.clone(),
+        ));
+        let binding = reconstructed_close_binding(&gate, 1)?;
+        gate.revisions[1].observation_binding = Some(binding.clone());
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+        binding
+    };
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get(operation_id.as_str())?
+            .ok_or("close-invocation operation is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        operation
+            .result
+            .as_mut()
+            .ok_or("close-invocation result is missing")?
+            .observation_binding = Some(binding);
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert(operation_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("changed its opening analysis invocation")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_matches_changed_paths_to_the_sealed_actual_write_set()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(&store, "op-close-paths", "src/paths.ts")?;
+    append_non_authorizing_close_for_migration(&store, &gate_id, Vec::new())?;
+    drop(store);
+
+    let operation_id = OperationId::from_string("op-migrate-incomplete-close".to_owned());
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    let binding = {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("close-path gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        gate.revisions
+            .get_mut(1)
+            .ok_or("close-path revision is missing")?
+            .changed_paths
+            .push(path("src/forged-write.ts")?);
+        let binding = reconstructed_close_binding(&gate, 1)?;
+        gate.revisions[1].observation_binding = Some(binding.clone());
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+        binding
+    };
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get(operation_id.as_str())?
+            .ok_or("close-path operation is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        operation
+            .result
+            .as_mut()
+            .ok_or("close-path result is missing")?
+            .observation_binding = Some(binding);
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert(operation_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("changed paths disagree with its actual-write set")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_recomputes_opening_signals_from_the_sealed_snapshot()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("op-opening-policy".to_owned());
+    let gate_id = open_active_gate_for(&store, operation_id.as_str(), "src/opening-policy.ts")?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    let binding = {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("opening-policy gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        let baseline = gate
+            .baseline
+            .as_mut()
+            .ok_or("opening-policy gate omitted its baseline")?;
+        let mut evidence = baseline.snapshot.evidence.clone();
+        evidence
+            .capabilities
+            .first_mut()
+            .ok_or("opening-policy evidence omitted its capability")?
+            .state = CapabilityState::Failed;
+        baseline.snapshot = seal_analysis_snapshot(
+            baseline.snapshot.inputs.clone(),
+            evidence,
+            baseline.snapshot.scan_invocation.clone(),
+            baseline.snapshot.entry_selections.clone(),
+        );
+        let binding = reconstructed_baseline_binding(&gate)?;
+        let ObservationBinding::Sealed {
+            observation: SealedGateObservation::Baseline { observation_id },
+        } = &binding
+        else {
+            return Err("opening-policy fixture produced the wrong binding".into());
+        };
+        gate.baseline
+            .as_mut()
+            .ok_or("opening-policy baseline disappeared")?
+            .observation_id = observation_id.clone();
+        gate.revisions[0].observation_binding = Some(binding.clone());
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+        binding
+    };
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get(operation_id.as_str())?
+            .ok_or("opening-policy operation is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        operation
+            .result
+            .as_mut()
+            .ok_or("opening-policy result is missing")?
+            .observation_binding = Some(binding);
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert(operation_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("opening signals disagree with its sealed analysis snapshot")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_signals_that_a_sealed_close_cannot_emit()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(&store, "op-close-signal-kind", "src/signal-kind.ts")?;
+    append_non_authorizing_close_for_migration(&store, &gate_id, Vec::new())?;
+    drop(store);
+
+    let operation_id = OperationId::from_string("op-migrate-incomplete-close".to_owned());
+    let injected = GateSignal::FindingWarnings { count: 1 };
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("close-signal-kind gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        gate.revisions
+            .get_mut(1)
+            .ok_or("close-signal-kind revision is missing")?
+            .signals
+            .push(injected.clone());
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+    }
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get(operation_id.as_str())?
+            .ok_or("close-signal-kind operation is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        operation
+            .result
+            .as_mut()
+            .ok_or("close-signal-kind result is missing")?
+            .signals
+            .push(injected);
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert(operation_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("close revision 1 signals disagree")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_an_authorizing_close_before_the_durable_tail()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(&store, "op-early-authorize-open", "src/early.ts")?;
+    append_non_authorizing_close_for_migration(&store, &gate_id, Vec::new())?;
+    let abandon_id = OperationId::from_string("op-early-authorize-abandon".to_owned());
+    store.begin_operation(&abandon_id)?.abandon_gate(
+        "early-authorize-abandon-digest",
+        &gate_id,
+        1,
+        "administrative fixture",
+    )?;
+    drop(store);
+
+    let close_id = OperationId::from_string("op-migrate-incomplete-close".to_owned());
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("early-authorize gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        let revision = gate
+            .revisions
+            .get_mut(1)
+            .ok_or("early-authorize close revision is missing")?;
+        revision.decision = GateDecision::Allow;
+        revision.signals.clear();
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+    }
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get(close_id.as_str())?
+            .ok_or("early-authorize close operation is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        let result = operation
+            .result
+            .as_mut()
+            .ok_or("early-authorize close result is missing")?;
+        result.decision = GateDecision::Allow;
+        result.signals.clear();
+        result.lifecycle = GateLifecycle::Closed;
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert(close_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("authorizing close revision 1 is not the durable tail")
+    ));
     Ok(())
 }
 

@@ -8,7 +8,7 @@ use lumin_evidence::{
     RepoPathProjection, RunEvidence, SemanticInputRecord, SemanticInputState,
     SemanticReadReservationBinding, UnsealedGateObservationInputs, WriteLease, WriteLeaseKind,
     apply_worktree_transition, derive_gate_baseline_observation_id,
-    derive_gate_close_observation_id, derive_unsealed_gate_observation_binding,
+    derive_gate_close_observation_id, derive_unsealed_gate_observation_binding, gate_policy,
     seal_analysis_snapshot,
 };
 use lumin_model::{
@@ -491,12 +491,27 @@ fn append_non_authorizing_close_for_migration(
         .baseline
         .as_ref()
         .ok_or("migration close omitted its baseline")?;
+    let mut current_evidence = evidence();
+    current_evidence
+        .capabilities
+        .first_mut()
+        .ok_or("migration close evidence omitted its required capability")?
+        .state = CapabilityState::Failed;
     let snapshot = seal_analysis_snapshot(
         protected_semantic_inputs.clone(),
-        evidence(),
+        current_evidence,
         Default::default(),
         Vec::new(),
     );
+    let (signals, _, deltas) = gate_policy::closing_signals(
+        &baseline.snapshot,
+        &snapshot,
+        &gate.protected_semantic_inputs,
+        &gate.leased_write_set,
+    );
+    if gate_policy::decision(&signals).authorizes() {
+        return Err("migration non-authorizing close fixture unexpectedly authorized".into());
+    }
     let actual_write_set = ActualWriteSet::default();
     let opening_observation_id = baseline.observation_id.clone();
     let opening_analysis_contract = baseline.analysis_contract.clone();
@@ -519,10 +534,8 @@ fn append_non_authorizing_close_for_migration(
             alias_closures,
             reconciled_transition_sequences: Vec::new(),
             attempted_semantic_inputs: Vec::new(),
-            signals: vec![GateSignal::RequiredEvidenceIncomplete {
-                limitation_count: 1,
-            }],
-            deltas: Vec::new(),
+            signals,
+            deltas,
         },
         |_, catalog_revision, _| ObservationFinalization {
             signals: Vec::new(),
