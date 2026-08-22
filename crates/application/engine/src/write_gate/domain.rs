@@ -457,73 +457,7 @@ pub(super) fn protected_semantic_inputs(
     capture: &RepositoryCapture,
     leases: &[WriteLease],
 ) -> Vec<SemanticInputRecord> {
-    let source_paths = capture
-        .snapshot
-        .inputs
-        .iter()
-        .filter(|input| input.state == SemanticInputState::Source)
-        .map(|input| input.path.canonical.as_slice())
-        .collect::<BTreeSet<_>>();
-    let protect_all_sources = leases
-        .iter()
-        .any(|lease| lease.kind == WriteLeaseKind::NewFile)
-        || leases
-            .iter()
-            .any(|lease| lease.kind == WriteLeaseKind::Directory);
-    let mut selected = if protect_all_sources {
-        capture
-            .source_paths
-            .iter()
-            .cloned()
-            .collect::<BTreeSet<_>>()
-    } else {
-        leases
-            .iter()
-            .filter(|lease| lease.kind == WriteLeaseKind::ExistingFile)
-            .filter_map(|lease| {
-                capture
-                    .source_paths
-                    .iter()
-                    .find(|path| path.canonical_bytes() == lease.path.canonical)
-                    .cloned()
-            })
-            .collect::<BTreeSet<_>>()
-    };
-    let mut frontier = selected.iter().cloned().collect::<Vec<_>>();
-    while let Some(path) = frontier.pop() {
-        let Some(neighbors) = capture.source_adjacency.get(&path) else {
-            continue;
-        };
-        for neighbor in neighbors {
-            if selected.insert(neighbor.clone()) {
-                frontier.push(neighbor.clone());
-            }
-        }
-    }
-    let selected_keys = selected
-        .iter()
-        .map(|path| path.canonical_bytes())
-        .collect::<BTreeSet<_>>();
-    let mut protected = capture
-        .snapshot
-        .inputs
-        .iter()
-        .filter(|input| semantic_input_requires_protection(input, &source_paths, &selected_keys))
-        .cloned()
-        .collect::<Vec<_>>();
-    protected.sort();
-    protected.dedup();
-    protected
-}
-
-fn semantic_input_requires_protection(
-    input: &SemanticInputRecord,
-    source_paths: &BTreeSet<&[u8]>,
-    selected_keys: &BTreeSet<&[u8]>,
-) -> bool {
-    input.physical_redirect_sha256.is_some()
-        || !source_paths.contains(input.path.canonical.as_slice())
-        || selected_keys.contains(input.path.canonical.as_slice())
+    lumin_evidence::derive_protected_semantic_inputs(&capture.snapshot, leases)
 }
 
 pub(super) fn close_alias_topology(
@@ -792,29 +726,6 @@ mod tests {
             None,
         )?;
         Ok((root, capture, RepoPath::from_portable("package.json")?))
-    }
-
-    #[test]
-    fn source_backed_redirect_is_protected_without_adjacency_selection()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let path = RepoPath::from_portable("packages/lib/dist/index.js")?;
-        let input = SemanticInputRecord {
-            path: RepoPathProjection::from(&path),
-            state: SemanticInputState::Source,
-            payload_sha256: Some("payload".to_owned()),
-            physical_identity: None,
-            absence_parent: None,
-            physical_redirect_sha256: Some("redirect".to_owned()),
-        };
-        let source_paths = BTreeSet::from([input.path.canonical.as_slice()]);
-        let selected_keys = BTreeSet::new();
-
-        assert!(semantic_input_requires_protection(
-            &input,
-            &source_paths,
-            &selected_keys
-        ));
-        Ok(())
     }
 
     #[test]

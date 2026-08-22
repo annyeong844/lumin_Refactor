@@ -3,14 +3,16 @@ use std::fs;
 use lumin_evidence::{
     ActualWriteSet, GateBaselineObservationInput, GateCloseObservationInput, GateDecision,
     GateLifecycle, GateObservationBinding, GateOperationStatus, GateRecord, GateSignal,
-    OperationRecord, RetentionMutationResult, RetentionOperationRecord, RetentionOperationResult,
-    RetentionPlanScope, WorktreeTransition, derive_gate_baseline_observation_id,
+    OperationRecord, PathPrefixIdentity, RepoPathProjection, RetentionMutationResult,
+    RetentionOperationRecord, RetentionOperationResult, RetentionPlanScope, WorktreeTransition,
+    WriteLease, WriteLeaseKind, derive_gate_baseline_observation_id,
     derive_gate_close_observation_id, seal_analysis_snapshot,
 };
 use lumin_model::{
     AnalysisInputId, AttemptId, CapabilityState, DeltaFactFamily, DeltaKey,
-    GateDeltaClassification, GateDeltaRecord, ObservationBinding, OperationId, ResolutionProfile,
-    RunId, SealedGateObservation, UnsealedObservationReason,
+    GateDeltaClassification, GateDeltaRecord, ObservationBinding, OperationId,
+    PhysicalFileIdentity, RepoPath, ResolutionProfile, RunId, SealedGateObservation,
+    UnsealedObservationReason,
 };
 use redb::{Database, ReadableTable};
 
@@ -84,6 +86,22 @@ fn reconstructed_close_binding(
             }),
         },
     })
+}
+
+fn different_physical_identity(identity: PhysicalFileIdentity) -> PhysicalFileIdentity {
+    match identity {
+        PhysicalFileIdentity::Unix { device, inode } => PhysicalFileIdentity::Unix {
+            device,
+            inode: inode.wrapping_add(1),
+        },
+        PhysicalFileIdentity::Windows {
+            volume_serial,
+            file_index,
+        } => PhysicalFileIdentity::Windows {
+            volume_serial,
+            file_index: file_index.wrapping_add(1),
+        },
+    }
 }
 
 #[test]
@@ -530,6 +548,191 @@ fn migration_reconstructs_the_sealed_lease_domain_from_declared_paths()
         Err(StoreError::Integrity(message))
             if message.contains("does not have exactly one sealed direct lease")
     ));
+    Ok(())
+}
+
+#[test]
+fn migration_derives_baseline_protected_reads_from_the_sealed_snapshot()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("op-weakened-baseline-reads".to_owned());
+    let gate_id = open_active_gate_for_with_protected_inputs(
+        &store,
+        operation_id.as_str(),
+        "src/weakened-baseline-reads.ts",
+        vec![semantic_input("tsconfig.json")?],
+    )?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    let binding = {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("weakened-read gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        gate.protected_semantic_inputs.clear();
+        gate.baseline
+            .as_mut()
+            .ok_or("weakened-read gate omitted its baseline")?
+            .protected_semantic_inputs
+            .clear();
+        gate.revisions[0].protected_semantic_inputs.clear();
+        let binding = reconstructed_baseline_binding(&gate)?;
+        let ObservationBinding::Sealed {
+            observation: SealedGateObservation::Baseline { observation_id },
+        } = &binding
+        else {
+            return Err("weakened-read fixture produced the wrong binding".into());
+        };
+        gate.baseline
+            .as_mut()
+            .ok_or("weakened-read baseline disappeared")?
+            .observation_id = observation_id.clone();
+        gate.revisions[0].observation_binding = Some(binding.clone());
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+        binding
+    };
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get(operation_id.as_str())?
+            .ok_or("weakened-read operation is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        operation
+            .result
+            .as_mut()
+            .ok_or("weakened-read result is missing")?
+            .observation_binding = Some(binding);
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert(operation_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("baseline protected reads cannot be derived from its sealed snapshot")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_reconstructs_new_file_parent_and_prefix_bindings()
+-> Result<(), Box<dyn std::error::Error>> {
+    for corruption in ["missing-prefix-chain", "changed-prefix-identity"] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        let operation_id = OperationId::from_string(format!("op-new-file-prefix-{corruption}"));
+        let gate_id = open_active_gate_for(
+            &store,
+            operation_id.as_str(),
+            &format!("generated/{corruption}/main.ts"),
+        )?;
+        drop(store);
+
+        let root_path = RepoPath::empty();
+        let root_projection = RepoPathProjection::from(&root_path);
+        let wrong_root_identity = different_physical_identity(
+            lumin_inventory::directory_physical_identity(root.path(), &root_path)?,
+        );
+
+        let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+        let write = database.begin_write()?;
+        let (binding, lease) = {
+            let mut table = write.open_table(GATES)?;
+            let bytes = table
+                .get(gate_id.as_str())?
+                .ok_or("new-file-prefix gate is missing")?
+                .value()
+                .to_vec();
+            let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+            let declared = gate
+                .declared_write_set
+                .first()
+                .ok_or("new-file-prefix gate omitted its declared path")?
+                .clone();
+            let (nearest_existing_parent, prefix_identities) = match corruption {
+                "missing-prefix-chain" => (None, Vec::new()),
+                "changed-prefix-identity" => (
+                    Some(root_projection.clone()),
+                    vec![PathPrefixIdentity {
+                        path: root_projection.clone(),
+                        physical_identity: wrong_root_identity.clone(),
+                    }],
+                ),
+                _ => unreachable!(),
+            };
+            let lease = WriteLease {
+                path: declared,
+                kind: WriteLeaseKind::NewFile,
+                physical_identity: None,
+                nearest_existing_parent,
+                prefix_identities,
+            };
+            gate.leased_write_set = vec![lease.clone()];
+            gate.baseline
+                .as_mut()
+                .ok_or("new-file-prefix gate omitted its baseline")?
+                .leased_write_set = vec![lease];
+            let binding = reconstructed_baseline_binding(&gate)?;
+            let ObservationBinding::Sealed {
+                observation: SealedGateObservation::Baseline { observation_id },
+            } = &binding
+            else {
+                return Err("new-file-prefix fixture produced the wrong binding".into());
+            };
+            gate.baseline
+                .as_mut()
+                .ok_or("new-file-prefix baseline disappeared")?
+                .observation_id = observation_id.clone();
+            gate.revisions[0].observation_binding = Some(binding.clone());
+            let lease = gate.leased_write_set[0].clone();
+            let changed = serde_json::to_vec(&gate)?;
+            table.insert(gate_id.as_str(), changed.as_slice())?;
+            (binding, lease)
+        };
+        {
+            let mut table = write.open_table(OPERATIONS)?;
+            let bytes = table
+                .get(operation_id.as_str())?
+                .ok_or("new-file-prefix operation is missing")?
+                .value()
+                .to_vec();
+            let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+            operation.leased_write_set = vec![lease.clone()];
+            let result = operation
+                .result
+                .as_mut()
+                .ok_or("new-file-prefix result is missing")?;
+            result.leased_write_set = vec![lease];
+            result.observation_binding = Some(binding);
+            let changed = serde_json::to_vec(&operation)?;
+            table.insert(operation_id.as_str(), changed.as_slice())?;
+        }
+        write.commit()?;
+        drop(database);
+
+        let expected = match corruption {
+            "missing-prefix-chain" => "omitted its nearest existing parent",
+            "changed-prefix-identity" => "prefix identity changed",
+            _ => unreachable!(),
+        };
+        let store = open_store(root.path())?;
+        assert!(matches!(
+            store.migrate_lifecycle_store(),
+            Err(StoreError::Integrity(message)) if message.contains(expected)
+        ));
+    }
     Ok(())
 }
 
@@ -1137,6 +1340,36 @@ fn migration_rejects_a_regressed_active_gate_catalog_sequence()
         store.migrate_lifecycle_store(),
         Err(StoreError::Integrity(message))
             if message.contains("active-gate catalog sequence regressed")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_a_gate_sequence_below_retained_allocations()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    open_active_gate_for(
+        &store,
+        "op-gate-sequence-regression",
+        "src/gate-sequence.ts",
+    )?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(SEQUENCES)?;
+        table.insert("gate", 0)?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("gate sequence regressed below retained gate allocation")
     ));
     Ok(())
 }

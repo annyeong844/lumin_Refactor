@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use lumin_evidence::{GateLifecycle, GateRecord, WriteLeaseKind};
+use lumin_model::RepoPath;
 use serde::de::DeserializeOwned;
 
 use crate::retention::records::StoredRetentionPlan;
@@ -21,12 +23,69 @@ pub(super) fn validate_external_references(
         &snapshot.cache_cleanup_operations,
         &snapshot.cache_eviction_authorizations,
     )?;
+    validate_active_gate_write_prefixes(snapshot, guard)?;
     validate_latest_attempt(snapshot, guard)?;
     let moved_runs = validate_retention_payloads(snapshot, guard)?;
     for (key, bytes) in &snapshot.run_catalog {
         validate_run(key, bytes, guard, moved_runs.get(key))?;
     }
     guard.validate_bound_entries()
+}
+
+fn validate_active_gate_write_prefixes(
+    snapshot: &LogicalStoreSnapshot,
+    guard: &NamespaceGuard,
+) -> Result<(), StoreError> {
+    for (key, bytes) in &snapshot.gates {
+        let gate = parse_record::<GateRecord>("gates", key, bytes)?;
+        if gate.lifecycle != GateLifecycle::Active {
+            continue;
+        }
+        let baseline = gate.baseline.as_ref().ok_or_else(|| {
+            StoreError::Integrity(format!("active gate {key} omitted its sealed baseline"))
+        })?;
+        for lease in baseline
+            .leased_write_set
+            .iter()
+            .filter(|lease| lease.kind == WriteLeaseKind::NewFile)
+        {
+            let mut held_prefixes = Vec::with_capacity(lease.prefix_identities.len());
+            for prefix in &lease.prefix_identities {
+                let relative = RepoPath::from_canonical_bytes(&prefix.path.canonical)
+                    .and_then(|path| path.to_native_relative())
+                    .map_err(|error| {
+                        StoreError::Integrity(format!(
+                            "gate {key} new-file prefix is not canonical: {error}"
+                        ))
+                    })?;
+                let native = guard.state.repository.path.join(relative);
+                let held = HeldEntry::open(
+                    &native,
+                    EntryKind::Directory,
+                    EntryAccess::ReadOnly,
+                    false,
+                    "active gate new-file prefix",
+                )?;
+                if held.identity() != &prefix.physical_identity {
+                    return Err(StoreError::Integrity(format!(
+                        "gate {key} new-file lease {} prefix identity changed",
+                        lease.path.display
+                    )));
+                }
+                held_prefixes.push((native, held));
+            }
+            for (native, held) in &held_prefixes {
+                held.validate_path(
+                    native,
+                    EntryKind::Directory,
+                    EntryAccess::ReadOnly,
+                    false,
+                    "active gate new-file prefix",
+                )?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_latest_attempt(

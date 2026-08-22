@@ -8,8 +8,8 @@ use lumin_evidence::{
     RepoPathProjection, RunEvidence, SemanticInputRecord, SemanticInputState,
     SemanticReadReservationBinding, UnsealedGateObservationInputs, WriteLease, WriteLeaseKind,
     apply_worktree_transition, derive_gate_baseline_observation_id,
-    derive_gate_close_observation_id, derive_unsealed_gate_observation_binding, gate_policy,
-    seal_analysis_snapshot,
+    derive_gate_close_observation_id, derive_protected_semantic_inputs,
+    derive_unsealed_gate_observation_binding, gate_policy, seal_analysis_snapshot,
 };
 use lumin_model::{
     CapabilityState, GateId, ObservationBinding, OperationId, RepoPath, SealedGateObservation,
@@ -611,7 +611,8 @@ fn close_active_gate_for_migration(
         reconciled_baseline.scan_invocation.clone(),
         reconciled_baseline.entry_selections.clone(),
     );
-    let protected_semantic_inputs = baseline.protected_semantic_inputs.clone();
+    let protected_semantic_inputs =
+        derive_protected_semantic_inputs(&snapshot, &gate.leased_write_set);
     let changed_paths = vec![source];
     let actual_write_set = ActualWriteSet {
         paths: changed_paths.clone(),

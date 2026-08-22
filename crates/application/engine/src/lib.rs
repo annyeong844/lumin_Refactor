@@ -48,8 +48,8 @@ use lumin_inventory::{
 };
 use lumin_model::{
     AttemptId, AttemptStatus, CapabilityState, ConfigObservation, FileFacts, Limitation,
-    OperationId, RepositoryRootIdentity, ResolutionOutcome, ResolutionProfile, ResolvedSourceUse,
-    RoleOverride, RunId, SfcDialect, SourceSnapshot, append_length_prefixed, digest_hex,
+    OperationId, RepositoryRootIdentity, ResolutionProfile, RoleOverride, RunId, SfcDialect,
+    append_length_prefixed, digest_hex,
 };
 use lumin_resolve::{ConfigDemand, ResolverError, ResolverOutput};
 use lumin_store::{PublishedRun, RepositoryStore, RunCatalogRecord, StoreError};
@@ -323,8 +323,6 @@ fn reserved_state_identity_lookup(
 
 struct RepositoryCapture {
     snapshot: AnalysisSnapshot,
-    source_paths: Vec<lumin_model::RepoPath>,
-    source_adjacency: BTreeMap<lumin_model::RepoPath, BTreeSet<lumin_model::RepoPath>>,
     inferred_write_paths: Vec<lumin_model::RepoPath>,
 }
 
@@ -575,7 +573,6 @@ impl RepositoryAnalysisSession {
             resolver_limitations,
         );
 
-        let source_adjacency = source_adjacency(&self.inventory.sources, &resolved, &limitations);
         let graph = lumin_graph::build(
             &self.inventory.sources,
             &extraction.facts,
@@ -681,12 +678,6 @@ impl RepositoryAnalysisSession {
             findings,
             limitations,
         };
-        let source_paths = self
-            .inventory
-            .sources
-            .iter()
-            .map(|source| source.path.clone())
-            .collect();
         let mut inferred_write_paths = self
             .inventory
             .config
@@ -718,8 +709,6 @@ impl RepositoryAnalysisSession {
                 self.scan_invocation,
                 entry_selections,
             ),
-            source_paths,
-            source_adjacency,
             inferred_write_paths,
         })
     }
@@ -853,74 +842,6 @@ fn semantic_input_records(inventory: &InventorySnapshot) -> Vec<SemanticInputRec
         }
     }
     inputs
-}
-
-fn source_adjacency(
-    sources: &[SourceSnapshot],
-    resolved: &[ResolvedSourceUse],
-    limitations: &[Limitation],
-) -> BTreeMap<lumin_model::RepoPath, BTreeSet<lumin_model::RepoPath>> {
-    let paths_by_id = sources
-        .iter()
-        .map(|source| (source.id.clone(), source.path.clone()))
-        .collect::<BTreeMap<_, _>>();
-    let mut adjacency = sources
-        .iter()
-        .map(|source| (source.path.clone(), BTreeSet::new()))
-        .collect::<BTreeMap<_, _>>();
-    for resolution in resolved {
-        let ResolutionOutcome::Internal { target } = &resolution.outcome else {
-            continue;
-        };
-        let Some(importer) = paths_by_id.get(&resolution.source_use.importer) else {
-            continue;
-        };
-        let Some(target) = paths_by_id.get(target) else {
-            continue;
-        };
-        adjacency
-            .entry(importer.clone())
-            .or_default()
-            .insert(target.clone());
-        adjacency
-            .entry(target.clone())
-            .or_default()
-            .insert(importer.clone());
-    }
-    for limitation in limitations {
-        let (source_id, candidates) = match limitation {
-            Limitation::DynamicImportNonLiteral {
-                source_id,
-                candidates,
-                target_scope: lumin_model::DynamicImportTargetScope::ExplicitTargets,
-                ..
-            }
-            | Limitation::ImportMetaGlobUnsupported {
-                source_id,
-                candidates,
-                target_scope: lumin_model::ImportMetaGlobTargetScope::ExplicitTargets,
-                ..
-            } => (source_id, candidates),
-            _ => continue,
-        };
-        let Some(importer) = paths_by_id.get(source_id) else {
-            continue;
-        };
-        for candidate in candidates {
-            let Some(target) = paths_by_id.get(candidate) else {
-                continue;
-            };
-            adjacency
-                .entry(importer.clone())
-                .or_default()
-                .insert(target.clone());
-            adjacency
-                .entry(target.clone())
-                .or_default()
-                .insert(importer.clone());
-        }
-    }
-    adjacency
 }
 
 fn sfc_capability_records(states: &BTreeMap<SfcDialect, CapabilityState>) -> Vec<CapabilityRecord> {

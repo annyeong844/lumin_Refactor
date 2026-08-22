@@ -10,9 +10,10 @@ use lumin_evidence::{
     GateRecord, GateRevision, GateSignal, OperationRecord, PhysicalAliasClosureRecord,
     WorktreeTransition, WriteLeaseKind, apply_worktree_transition,
     derive_gate_baseline_observation_id, derive_gate_close_observation_id,
-    derive_unsealed_gate_observation_binding, gate_policy, seal_analysis_snapshot,
+    derive_protected_semantic_inputs, derive_unsealed_gate_observation_binding, gate_policy,
+    seal_analysis_snapshot,
 };
-use lumin_model::{ObservationBinding, SealedGateObservation};
+use lumin_model::{ObservationBinding, RepoPath, SealedGateObservation};
 use serde::de::DeserializeOwned;
 
 use crate::gate::{records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY, transition_key};
@@ -35,6 +36,7 @@ pub(super) fn validate_referential_closure(
     let (transitions, transition_sequences) = read_transitions(snapshot)?;
     let operations = read_operations(snapshot)?;
     let gates = read_gates(snapshot, &operations, &transitions, &transition_sequences)?;
+    validate_gate_id_sequence(snapshot, &gates, &operations)?;
     validate_transition_catalog_sequence(snapshot, &transition_sequences, &gates, &operations)?;
     validate_active_gate_catalog(snapshot, &gates, &operations)?;
     validate_operation_gate_refs(&operations, &gates)?;
@@ -44,6 +46,55 @@ pub(super) fn validate_referential_closure(
     cache::validate_cache(snapshot, &operations)?;
     retention::validate_retention(snapshot, &operations)?;
     validate_pointers(snapshot)
+}
+
+fn validate_gate_id_sequence(
+    snapshot: &LogicalStoreSnapshot,
+    gates: &BTreeMap<&str, GateRecord>,
+    operations: &BTreeMap<&str, OperationRecord>,
+) -> Result<(), StoreError> {
+    let observed = snapshot.sequences.get("gate").copied().unwrap_or(0);
+    let minimum = gates
+        .values()
+        .map(|gate| canonical_gate_sequence(gate.gate_id.as_str()))
+        .chain(
+            operations
+                .values()
+                .map(|operation| canonical_gate_sequence(operation.gate_id.as_str())),
+        )
+        .try_fold(0_u64, |maximum, sequence| {
+            sequence.map(|sequence| maximum.max(sequence))
+        })?;
+    if observed < minimum {
+        return Err(StoreError::Integrity(format!(
+            "gate sequence regressed below retained gate allocation: observed {observed}, minimum {minimum}"
+        )));
+    }
+    Ok(())
+}
+
+fn canonical_gate_sequence(value: &str) -> Result<u64, StoreError> {
+    let suffix = value.strip_prefix("gate_").ok_or_else(|| {
+        StoreError::Integrity("gate ID is outside its canonical grammar".to_owned())
+    })?;
+    if suffix.len() != 16
+        || !suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(StoreError::Integrity(
+            "gate ID is outside its canonical grammar".to_owned(),
+        ));
+    }
+    let sequence = u64::from_str_radix(suffix, 16).map_err(|error| {
+        StoreError::Integrity(format!("gate ID sequence is malformed: {error}"))
+    })?;
+    if sequence == 0 {
+        return Err(StoreError::Integrity(
+            "gate ID sequence must be nonzero".to_owned(),
+        ));
+    }
+    Ok(sequence)
 }
 
 fn read_transitions(
@@ -393,6 +444,16 @@ fn validate_gate_observations(
                 }
                 validate_analysis_snapshot(key, "baseline", &baseline.snapshot)?;
                 validate_baseline_write_domain(key, gate, baseline)?;
+                if baseline.protected_semantic_inputs
+                    != derive_protected_semantic_inputs(
+                        &baseline.snapshot,
+                        &baseline.leased_write_set,
+                    )
+                {
+                    return Err(StoreError::Integrity(format!(
+                        "gate {key} baseline protected reads cannot be derived from its sealed snapshot"
+                    )));
+                }
                 if gate.lifecycle == GateLifecycle::Active
                     && (gate.leased_write_set.iter().collect::<BTreeSet<_>>()
                         != baseline.leased_write_set.iter().collect::<BTreeSet<_>>()
@@ -629,6 +690,14 @@ fn validate_gate_observations(
                     revision.revision
                 )));
             }
+            if revision.protected_semantic_inputs
+                != derive_protected_semantic_inputs(snapshot, &baseline.leased_write_set)
+            {
+                return Err(StoreError::Integrity(format!(
+                    "gate {key} sealed close revision {} protected reads cannot be derived from its snapshot",
+                    revision.revision
+                )));
+            }
             let actual_write_set = revision.actual_write_set.as_ref().ok_or_else(|| {
                 StoreError::Integrity(format!(
                     "gate {key} sealed close revision {} omitted its actual-write set",
@@ -710,6 +779,11 @@ fn validate_baseline_write_domain(
         return Err(StoreError::Integrity(format!(
             "gate {key} sealed lease domain is not canonical"
         )));
+    }
+    for lease in &baseline.leased_write_set {
+        if lease.kind == WriteLeaseKind::NewFile {
+            validate_new_file_lease_prefixes(key, lease)?;
+        }
     }
 
     let mut captured_by_identity = BTreeMap::<
@@ -839,6 +913,53 @@ fn validate_baseline_write_domain(
     {
         return Err(StoreError::Integrity(format!(
             "gate {key} sealed physical-alias closure cannot be reconstructed"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_new_file_lease_prefixes(
+    key: &str,
+    lease: &lumin_evidence::WriteLease,
+) -> Result<(), StoreError> {
+    let nearest = lease.nearest_existing_parent.as_ref().ok_or_else(|| {
+        StoreError::Integrity(format!(
+            "gate {key} new-file lease {} omitted its nearest existing parent",
+            lease.path.display
+        ))
+    })?;
+    if lease.physical_identity.is_some()
+        || nearest.components.len() >= lease.path.components.len()
+        || !lease.path.components.starts_with(&nearest.components)
+    {
+        return Err(StoreError::Integrity(format!(
+            "gate {key} new-file lease {} has an invalid parent binding",
+            lease.path.display
+        )));
+    }
+    let mut cursor = Some(
+        RepoPath::from_canonical_bytes(&nearest.canonical).map_err(|error| {
+            StoreError::Integrity(format!(
+                "gate {key} new-file lease {} has a noncanonical parent: {error}",
+                lease.path.display
+            ))
+        })?,
+    );
+    let mut expected_prefixes = Vec::new();
+    while let Some(prefix) = cursor {
+        cursor = prefix.parent();
+        expected_prefixes.push(lumin_evidence::RepoPathProjection::from(&prefix));
+    }
+    expected_prefixes.reverse();
+    let observed_prefixes = lease
+        .prefix_identities
+        .iter()
+        .map(|prefix| &prefix.path)
+        .collect::<Vec<_>>();
+    if observed_prefixes != expected_prefixes.iter().collect::<Vec<_>>() {
+        return Err(StoreError::Integrity(format!(
+            "gate {key} new-file lease {} has an incomplete physical-prefix chain",
+            lease.path.display
         )));
     }
     Ok(())

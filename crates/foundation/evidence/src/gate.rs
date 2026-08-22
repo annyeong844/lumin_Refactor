@@ -1,9 +1,10 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_model::{
-    AnalysisInputId, DeltaDimensionChange, DeltaFactFamily, GateBaselineObservationId,
-    GateCloseObservationId, GateDeltaClassification, GateDeltaRecord, GateId, ObservationBinding,
-    OperationId, PhysicalFileIdentity, ResolutionProfile, ResolutionProfileSource,
+    AnalysisInputId, DeltaDimensionChange, DeltaFactFamily, DynamicImportTargetScope,
+    GateBaselineObservationId, GateCloseObservationId, GateDeltaClassification, GateDeltaRecord,
+    GateId, ImportMetaGlobTargetScope, Limitation, ObservationBinding, OperationId,
+    PhysicalFileIdentity, ResolutionOutcome, ResolutionProfile, ResolutionProfileSource,
     SelectedResolutionProfile, UnsealedObservationReason, append_length_prefixed,
     classify_lifecycle_deltas, digest_hex,
 };
@@ -305,6 +306,131 @@ pub struct ActualWriteSet {
     pub baseline_alias_closures: Vec<PhysicalAliasClosureRecord>,
     #[serde(default)]
     pub current_alias_closures: Vec<PhysicalAliasClosureRecord>,
+}
+
+pub fn derive_protected_semantic_inputs(
+    snapshot: &AnalysisSnapshot,
+    leases: &[WriteLease],
+) -> Vec<SemanticInputRecord> {
+    let source_paths = snapshot
+        .inputs
+        .iter()
+        .filter(|input| input.state == SemanticInputState::Source)
+        .map(|input| input.path.clone())
+        .collect::<BTreeSet<_>>();
+    let paths_by_id = snapshot
+        .evidence
+        .source_contexts
+        .iter()
+        .map(|source| (source.source_id.clone(), source.path.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let mut adjacency = snapshot
+        .evidence
+        .source_contexts
+        .iter()
+        .map(|source| (source.path.clone(), BTreeSet::new()))
+        .collect::<BTreeMap<_, _>>();
+    for resolution in &snapshot.evidence.resolutions {
+        let ResolutionOutcome::Internal { target } = &resolution.outcome else {
+            continue;
+        };
+        let Some(importer) = paths_by_id.get(&resolution.source_use.importer) else {
+            continue;
+        };
+        let Some(target) = paths_by_id.get(target) else {
+            continue;
+        };
+        adjacency
+            .entry(importer.clone())
+            .or_default()
+            .insert(target.clone());
+        adjacency
+            .entry(target.clone())
+            .or_default()
+            .insert(importer.clone());
+    }
+    for limitation in &snapshot.evidence.limitations {
+        let (source_id, candidates) = match limitation {
+            Limitation::DynamicImportNonLiteral {
+                source_id,
+                candidates,
+                target_scope: DynamicImportTargetScope::ExplicitTargets,
+                ..
+            }
+            | Limitation::ImportMetaGlobUnsupported {
+                source_id,
+                candidates,
+                target_scope: ImportMetaGlobTargetScope::ExplicitTargets,
+                ..
+            } => (source_id, candidates),
+            _ => continue,
+        };
+        let Some(importer) = paths_by_id.get(source_id) else {
+            continue;
+        };
+        for candidate in candidates {
+            let Some(target) = paths_by_id.get(candidate) else {
+                continue;
+            };
+            adjacency
+                .entry(importer.clone())
+                .or_default()
+                .insert(target.clone());
+            adjacency
+                .entry(target.clone())
+                .or_default()
+                .insert(importer.clone());
+        }
+    }
+
+    let protect_all_sources = leases.iter().any(|lease| {
+        matches!(
+            lease.kind,
+            WriteLeaseKind::NewFile | WriteLeaseKind::Directory
+        )
+    });
+    let mut selected = if protect_all_sources {
+        source_paths.clone()
+    } else {
+        leases
+            .iter()
+            .filter(|lease| lease.kind == WriteLeaseKind::ExistingFile)
+            .filter_map(|lease| {
+                source_paths
+                    .iter()
+                    .find(|path| path.canonical == lease.path.canonical)
+                    .cloned()
+            })
+            .collect::<BTreeSet<_>>()
+    };
+    let mut frontier = selected.iter().cloned().collect::<Vec<_>>();
+    while let Some(path) = frontier.pop() {
+        let Some(neighbors) = adjacency.get(&path) else {
+            continue;
+        };
+        for neighbor in neighbors {
+            if selected.insert(neighbor.clone()) {
+                frontier.push(neighbor.clone());
+            }
+        }
+    }
+    let selected_paths = selected
+        .iter()
+        .map(|path| path.canonical.as_slice())
+        .collect::<BTreeSet<_>>();
+    let mut protected = snapshot
+        .inputs
+        .iter()
+        .filter(|input| {
+            input.physical_redirect_sha256.is_some()
+                || !source_paths.contains(&input.path)
+                || selected_paths.contains(input.path.canonical.as_slice())
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    protected.sort();
+    protected.dedup();
+    protected
 }
 
 pub struct GateBaselineObservationInput<'a> {
@@ -1782,6 +1908,32 @@ mod tests {
 
         assert!(signals.is_empty());
         assert_eq!(changed, vec![current_source.path]);
+        Ok(())
+    }
+
+    #[test]
+    fn protected_semantic_inputs_include_non_source_configuration()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let config = input("tsconfig.json", "config")?;
+
+        assert_eq!(
+            derive_protected_semantic_inputs(&snapshot(vec![config.clone()]), &[]),
+            vec![config]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn protected_semantic_inputs_include_source_backed_redirects_without_a_selected_lease()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut redirect = input("packages/lib/dist/index.js", "source")?;
+        redirect.state = SemanticInputState::Source;
+        redirect.physical_redirect_sha256 = Some("redirect".to_owned());
+
+        assert_eq!(
+            derive_protected_semantic_inputs(&snapshot(vec![redirect.clone()]), &[]),
+            vec![redirect]
+        );
         Ok(())
     }
 
