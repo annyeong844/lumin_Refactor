@@ -438,6 +438,7 @@ pub struct GateBaselineObservationInput<'a> {
     pub transition_sequence: u64,
     pub analysis_contract: &'a str,
     pub analysis_input_id: &'a AnalysisInputId,
+    pub evidence_payload_sha256: &'a str,
     pub declared_write_set: &'a [RepoPathProjection],
     pub leased_write_set: &'a [WriteLease],
     pub alias_closures: &'a [PhysicalAliasClosureRecord],
@@ -448,11 +449,12 @@ pub fn derive_gate_baseline_observation_id(
     input: GateBaselineObservationInput<'_>,
 ) -> GateBaselineObservationId {
     let mut framed = Vec::new();
-    append_length_prefixed(&mut framed, b"lumin-gate-baseline-observation.v1");
+    append_length_prefixed(&mut framed, b"lumin-gate-baseline-observation.v2");
     framed.extend_from_slice(&input.catalog_revision.to_be_bytes());
     framed.extend_from_slice(&input.transition_sequence.to_be_bytes());
     append_length_prefixed(&mut framed, input.analysis_contract.as_bytes());
     append_length_prefixed(&mut framed, input.analysis_input_id.as_str().as_bytes());
+    append_length_prefixed(&mut framed, input.evidence_payload_sha256.as_bytes());
     append_observation_paths(&mut framed, input.declared_write_set);
     append_observation_write_leases(&mut framed, input.leased_write_set);
     append_observation_alias_closures(&mut framed, input.alias_closures);
@@ -470,6 +472,7 @@ pub struct GateCloseObservationInput<'a> {
     pub prior_revision: u64,
     pub catalog_revision: u64,
     pub analysis_input_id: &'a AnalysisInputId,
+    pub evidence_payload_sha256: &'a str,
     pub leased_write_set: &'a [WriteLease],
     pub protected_semantic_inputs: &'a [SemanticInputRecord],
     pub changed_paths: &'a [RepoPathProjection],
@@ -482,7 +485,7 @@ pub fn derive_gate_close_observation_id(
     input: GateCloseObservationInput<'_>,
 ) -> GateCloseObservationId {
     let mut framed = Vec::new();
-    append_length_prefixed(&mut framed, b"lumin-gate-close-observation.v1");
+    append_length_prefixed(&mut framed, b"lumin-gate-close-observation.v2");
     append_length_prefixed(&mut framed, input.gate_id.as_str().as_bytes());
     append_length_prefixed(
         &mut framed,
@@ -492,6 +495,7 @@ pub fn derive_gate_close_observation_id(
     framed.extend_from_slice(&input.prior_revision.to_be_bytes());
     framed.extend_from_slice(&input.catalog_revision.to_be_bytes());
     append_length_prefixed(&mut framed, input.analysis_input_id.as_str().as_bytes());
+    append_length_prefixed(&mut framed, input.evidence_payload_sha256.as_bytes());
     append_observation_write_leases(&mut framed, input.leased_write_set);
     append_observation_semantic_inputs(&mut framed, input.protected_semantic_inputs);
     append_observation_paths(&mut framed, input.changed_paths);
@@ -1182,6 +1186,40 @@ fn entry_unavailable_reason_tag(reason: lumin_model::EntryUnavailableReason) -> 
 
 pub mod gate_policy {
     use super::*;
+
+    pub fn closure_expanded_actual_write_set(
+        preliminary_paths: &[RepoPathProjection],
+        baseline_alias_closures: &[PhysicalAliasClosureRecord],
+        current_alias_closures: &[PhysicalAliasClosureRecord],
+    ) -> ActualWriteSet {
+        let mut paths = preliminary_paths.iter().cloned().collect::<BTreeSet<_>>();
+        loop {
+            let before = paths.len();
+            for closure in baseline_alias_closures.iter().chain(current_alias_closures) {
+                if closure.members.iter().any(|member| paths.contains(member)) {
+                    paths.extend(closure.members.iter().cloned());
+                }
+            }
+            if paths.len() == before {
+                break;
+            }
+        }
+        let baseline_alias_closures = baseline_alias_closures
+            .iter()
+            .filter(|closure| closure.members.iter().any(|member| paths.contains(member)))
+            .cloned()
+            .collect();
+        let current_alias_closures = current_alias_closures
+            .iter()
+            .filter(|closure| closure.members.iter().any(|member| paths.contains(member)))
+            .cloned()
+            .collect();
+        ActualWriteSet {
+            paths: paths.into_iter().collect(),
+            baseline_alias_closures,
+            current_alias_closures,
+        }
+    }
 
     pub fn opening_signals(
         snapshot: &AnalysisSnapshot,

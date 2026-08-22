@@ -18,6 +18,7 @@ pub(super) struct BaselineObservationSeed {
     pub(super) alias_closures: Vec<PhysicalAliasClosureRecord>,
     pub(super) attempted_semantic_inputs: Vec<SemanticReadReservationBinding>,
     pub(super) baseline: Option<GateBaselineDraft>,
+    pub(super) evidence_payload_sha256: Option<String>,
 }
 
 #[derive(Clone)]
@@ -28,6 +29,7 @@ pub(super) struct CloseObservationSeed {
     pub(super) prior_revision: u64,
     pub(super) leased_write_set: Vec<WriteLease>,
     pub(super) snapshot: Option<lumin_evidence::AnalysisSnapshot>,
+    pub(super) evidence_payload_sha256: Option<String>,
     pub(super) prior_protected_semantic_inputs: Vec<SemanticInputRecord>,
     pub(super) protected_semantic_inputs: Vec<SemanticInputRecord>,
     pub(super) changed_paths: Vec<RepoPathProjection>,
@@ -43,11 +45,17 @@ pub(super) fn pre_write_observation_binding(
     signals: &[GateSignal],
 ) -> GateObservationBinding {
     if let Some(baseline) = &seed.baseline
+        && let Some(evidence_payload_sha256) = &seed.evidence_payload_sha256
         && pre_write_observation_can_seal(signals)
     {
         return ObservationBinding::Sealed {
             observation: SealedGateObservation::Baseline {
-                observation_id: baseline_observation_id(seed, baseline, catalog_revision),
+                observation_id: baseline_observation_id(
+                    seed,
+                    baseline,
+                    evidence_payload_sha256,
+                    catalog_revision,
+                ),
             },
         };
     }
@@ -111,6 +119,7 @@ pub(super) fn unsealed_close_observation_inputs(
 fn baseline_observation_id(
     seed: &BaselineObservationSeed,
     baseline: &GateBaselineDraft,
+    evidence_payload_sha256: &str,
     catalog_revision: u64,
 ) -> GateBaselineObservationId {
     derive_gate_baseline_observation_id(GateBaselineObservationInput {
@@ -118,6 +127,7 @@ fn baseline_observation_id(
         transition_sequence: baseline.transition_sequence,
         analysis_contract: &baseline.analysis_contract,
         analysis_input_id: &baseline.snapshot.analysis_input_id,
+        evidence_payload_sha256,
         declared_write_set: &seed.declared_write_set,
         leased_write_set: &seed.leased_write_set,
         alias_closures: &seed.alias_closures,
@@ -165,6 +175,7 @@ fn close_observation_id(
     let opening_observation_id = seed.opening_observation_id.as_ref()?;
     let opening_analysis_contract = seed.opening_analysis_contract.as_ref()?;
     let actual_write_set = seed.actual_write_set.as_ref()?;
+    let evidence_payload_sha256 = seed.evidence_payload_sha256.as_deref()?;
     Some(derive_gate_close_observation_id(
         GateCloseObservationInput {
             gate_id: &seed.gate_id,
@@ -173,6 +184,7 @@ fn close_observation_id(
             prior_revision: seed.prior_revision,
             catalog_revision,
             analysis_input_id: &snapshot.analysis_input_id,
+            evidence_payload_sha256,
             leased_write_set: &seed.leased_write_set,
             protected_semantic_inputs: &seed.protected_semantic_inputs,
             changed_paths: &seed.changed_paths,
@@ -274,6 +286,7 @@ mod tests {
                 prefix_identities: Vec::new(),
             }],
             snapshot: None,
+            evidence_payload_sha256: None,
             prior_protected_semantic_inputs: vec![SemanticInputRecord {
                 path: protected_path.clone(),
                 state: SemanticInputState::ConfigPresent,
@@ -327,7 +340,16 @@ mod tests {
             .baseline
             .as_ref()
             .ok_or("test seed omitted its baseline")?;
-        Ok(baseline_observation_id(seed, baseline, catalog_revision))
+        let evidence_payload_sha256 = seed
+            .evidence_payload_sha256
+            .as_deref()
+            .ok_or("test seed omitted its evidence payload identity")?;
+        Ok(baseline_observation_id(
+            seed,
+            baseline,
+            evidence_payload_sha256,
+            catalog_revision,
+        ))
     }
 
     fn seed(payload: &str) -> Result<BaselineObservationSeed, Box<dyn std::error::Error>> {
@@ -340,6 +362,20 @@ mod tests {
             absence_parent: None,
             physical_redirect_sha256: None,
         };
+        let evidence = RunEvidence {
+            schema_version: "lumin-evidence.v1".to_owned(),
+            capabilities: Vec::new(),
+            resolution_profiles: Vec::new(),
+            source_classifications: Vec::new(),
+            source_contexts: Vec::new(),
+            source_observations: Vec::new(),
+            dependency_owners: Vec::new(),
+            resolutions: Vec::new(),
+            metrics: AnalysisMetrics::default(),
+            findings: Vec::new(),
+            limitations: Vec::new(),
+        };
+        let evidence_payload_sha256 = lumin_store::evidence_payload_sha256(&evidence)?;
         Ok(BaselineObservationSeed {
             declared_write_set: vec![path],
             leased_write_set: Vec::new(),
@@ -352,23 +388,12 @@ mod tests {
                     inputs: vec![input.clone()],
                     scan_invocation: Default::default(),
                     entry_selections: Vec::new(),
-                    evidence: RunEvidence {
-                        schema_version: "lumin-evidence.v1".to_owned(),
-                        capabilities: Vec::new(),
-                        resolution_profiles: Vec::new(),
-                        source_classifications: Vec::new(),
-                        source_contexts: Vec::new(),
-                        source_observations: Vec::new(),
-                        dependency_owners: Vec::new(),
-                        resolutions: Vec::new(),
-                        metrics: AnalysisMetrics::default(),
-                        findings: Vec::new(),
-                        limitations: Vec::new(),
-                    },
+                    evidence,
                 },
                 protected_semantic_inputs: vec![input],
                 transition_sequence: 3,
             }),
+            evidence_payload_sha256: Some(evidence_payload_sha256),
         })
     }
 }

@@ -21,7 +21,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use lumin_evidence::RunEvidence;
 use lumin_model::{
-    AttemptId, PhysicalFileIdentity, RepositoryBinding, RepositoryId, RunId, digest_hex,
+    AttemptId, PhysicalFileIdentity, RepositoryBinding, RepositoryId, RunId,
+    append_length_prefixed, digest_hex,
 };
 use redb::{
     Database, ReadOnlyDatabase, ReadableDatabase, ReadableTable, TableDefinition, TableError,
@@ -36,6 +37,14 @@ pub(crate) const RUN_CATALOG: TableDefinition<&str, &[u8]> = TableDefinition::ne
 pub(crate) const POINTERS: TableDefinition<&str, &[u8]> = TableDefinition::new("pointers");
 const EVIDENCE: TableDefinition<&str, &[u8]> = TableDefinition::new("evidence");
 const MAX_RUN_CATALOG_PAGE_SIZE: usize = 100;
+
+pub fn evidence_payload_sha256(evidence: &RunEvidence) -> Result<String, StoreError> {
+    let encoded = serde_json::to_vec(evidence).map_err(serialization_error)?;
+    let mut framed = Vec::new();
+    append_length_prefixed(&mut framed, b"lumin-run-evidence-payload.v1");
+    append_length_prefixed(&mut framed, &encoded);
+    Ok(digest_hex(&framed))
+}
 
 #[derive(Clone, Debug)]
 pub struct RepositoryStore {

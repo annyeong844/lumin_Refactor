@@ -36,10 +36,7 @@ use observation::{
     pre_write_observation_binding, pre_write_observation_can_seal,
     unsealed_pre_write_observation_binding,
 };
-use transitions::{
-    active_transition_signals, changed_paths, closure_expanded_actual_write_set,
-    reconcile_transitions,
-};
+use transitions::{active_transition_signals, changed_paths, reconcile_transitions};
 
 const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v27";
 const DEPENDENCY_CANDIDATE_TOPOLOGY_ONLY: &[u8] = b"dependency-candidate-topology-only.v1";
@@ -154,6 +151,7 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         alias_closures: Vec::new(),
         attempted_semantic_inputs: Vec::new(),
         baseline: None,
+        evidence_payload_sha256: None,
     };
     let operation = context.store.begin_operation(&request.operation_id)?;
     let (gate_id, transition_sequence) = match operation.reserve_pre_write(
@@ -202,6 +200,11 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         .iter()
         .map(|(_, binding)| binding.clone())
         .collect();
+    let evidence_payload_sha256 = finish
+        .baseline
+        .as_ref()
+        .map(|baseline| lumin_store::evidence_payload_sha256(&baseline.snapshot.evidence))
+        .transpose()?;
     let observation_seed = BaselineObservationSeed {
         declared_write_set: declared_write_set.clone(),
         leased_write_set: finish.leased_write_set.clone(),
@@ -211,6 +214,7 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
             .map(|(_, binding)| binding.clone())
             .collect(),
         baseline: finish.baseline.clone(),
+        evidence_payload_sha256,
     };
     wait_at_pre_write_final_barrier(&request.operation_id, &gate_id)?;
     operation
@@ -724,7 +728,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
     let actual_write_set = if gate_policy::actual_write_attribution_is_complete(&signals)
         && gate_policy::actual_write_attribution_is_complete(&topology_signals)
     {
-        Some(closure_expanded_actual_write_set(
+        Some(gate_policy::closure_expanded_actual_write_set(
             &preliminary_changed_paths,
             &gate.alias_closures,
             &alias_closures,
@@ -743,6 +747,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         inventory_request,
         reserved_state_lookup,
     };
+    let evidence_payload_sha256 = lumin_store::evidence_payload_sha256(&capture.snapshot.evidence)?;
     let observation_seed = CloseObservationSeed {
         gate_id: request.gate_id.clone(),
         opening_observation_id: Some(baseline.observation_id.clone()),
@@ -750,6 +755,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         prior_revision: gate.current_revision,
         leased_write_set: gate.leased_write_set.clone(),
         snapshot: Some(capture.snapshot.clone()),
+        evidence_payload_sha256: Some(evidence_payload_sha256),
         prior_protected_semantic_inputs: gate.protected_semantic_inputs.clone(),
         protected_semantic_inputs: protected_semantic_inputs.clone(),
         changed_paths: changed_paths.clone(),
@@ -875,6 +881,7 @@ fn finish_failed_close(
         prior_revision: gate.current_revision,
         leased_write_set: gate.leased_write_set.clone(),
         snapshot: None,
+        evidence_payload_sha256: None,
         prior_protected_semantic_inputs: gate.protected_semantic_inputs.clone(),
         protected_semantic_inputs: gate.protected_semantic_inputs.clone(),
         changed_paths: Vec::new(),

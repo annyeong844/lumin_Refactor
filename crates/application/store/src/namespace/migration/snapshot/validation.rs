@@ -502,7 +502,8 @@ fn validate_gate_observations(
                         "gate {key} analysis invocation disagrees with its sealed baseline"
                     )));
                 }
-                validate_analysis_snapshot(key, "baseline", &baseline.snapshot)?;
+                let evidence_payload_sha256 =
+                    validate_analysis_snapshot(key, "baseline", &baseline.snapshot)?;
                 validate_baseline_write_domain(key, gate, baseline)?;
                 if baseline.protected_semantic_inputs
                     != derive_protected_semantic_inputs(
@@ -531,6 +532,7 @@ fn validate_gate_observations(
                     transition_sequence: baseline.transition_sequence,
                     analysis_contract: &baseline.analysis_contract,
                     analysis_input_id: &baseline.snapshot.analysis_input_id,
+                    evidence_payload_sha256: &evidence_payload_sha256,
                     declared_write_set: &gate.declared_write_set,
                     leased_write_set: &baseline.leased_write_set,
                     alias_closures: &baseline.alias_closures,
@@ -741,7 +743,7 @@ fn validate_gate_observations(
                     revision.revision
                 ))
             })?;
-            validate_analysis_snapshot(
+            let evidence_payload_sha256 = validate_analysis_snapshot(
                 key,
                 &format!("close revision {}", revision.revision),
                 snapshot,
@@ -781,6 +783,7 @@ fn validate_gate_observations(
                 snapshot,
                 &expected_protected_semantic_inputs,
                 &baseline.leased_write_set,
+                &baseline.alias_closures,
             )?;
             let derived = derive_gate_close_observation_id(GateCloseObservationInput {
                 gate_id: &gate.gate_id,
@@ -794,6 +797,7 @@ fn validate_gate_observations(
                     ))
                 })?,
                 analysis_input_id: &snapshot.analysis_input_id,
+                evidence_payload_sha256: &evidence_payload_sha256,
                 leased_write_set: &baseline.leased_write_set,
                 protected_semantic_inputs: &revision.protected_semantic_inputs,
                 changed_paths: &revision.changed_paths,
@@ -1098,13 +1102,25 @@ fn validate_close_snapshot_policy(
     snapshot: &AnalysisSnapshot,
     prior_protected_semantic_inputs: &[lumin_evidence::SemanticInputRecord],
     leased_write_set: &[lumin_evidence::WriteLease],
+    baseline_alias_closures: &[lumin_evidence::PhysicalAliasClosureRecord],
 ) -> Result<(), StoreError> {
-    let (expected_signals, _, expected_deltas) = gate_policy::closing_signals(
+    let (expected_signals, expected_changed_paths, expected_deltas) = gate_policy::closing_signals(
         reconciled_baseline,
         snapshot,
         prior_protected_semantic_inputs,
         leased_write_set,
     );
+    let expected_actual_write_set = gate_policy::closure_expanded_actual_write_set(
+        &expected_changed_paths,
+        baseline_alias_closures,
+        &revision.alias_closures,
+    );
+    if revision.actual_write_set.as_ref() != Some(&expected_actual_write_set) {
+        return Err(StoreError::Integrity(format!(
+            "gate {key} close revision {} actual-write set cannot be derived from its sealed snapshots",
+            revision.revision
+        )));
+    }
     if revision.deltas != expected_deltas {
         return Err(StoreError::Integrity(format!(
             "gate {key} close revision {} deltas disagree with its sealed analysis snapshots",
@@ -1166,7 +1182,8 @@ fn validate_analysis_snapshot(
     gate_key: &str,
     role: &str,
     snapshot: &AnalysisSnapshot,
-) -> Result<(), StoreError> {
+) -> Result<String, StoreError> {
+    let evidence_payload_sha256 = crate::evidence_payload_sha256(&snapshot.evidence)?;
     let resealed = seal_analysis_snapshot(
         snapshot.inputs.clone(),
         snapshot.evidence.clone(),
@@ -1178,7 +1195,7 @@ fn validate_analysis_snapshot(
             "gate {gate_key} {role} analysis input identity cannot be reconstructed"
         )));
     }
-    Ok(())
+    Ok(evidence_payload_sha256)
 }
 
 fn validate_gate_lifecycle(
@@ -1240,7 +1257,17 @@ fn validate_operation_gate_refs(
     operations: &BTreeMap<&str, OperationRecord>,
     gates: &BTreeMap<&str, GateRecord>,
 ) -> Result<(), StoreError> {
+    let mut allocated_gate_ids = gates.keys().copied().collect::<BTreeSet<_>>();
     for operation in operations.values() {
+        if operation.kind == GateOperationKind::PreWrite
+            && operation.status != GateOperationStatus::Committed
+            && !allocated_gate_ids.insert(operation.gate_id.as_str())
+        {
+            return Err(StoreError::Integrity(format!(
+                "unfinished pre-write operation {} reuses an allocated gate ID",
+                operation.operation_id.as_str()
+            )));
+        }
         let gate_required = operation.kind != GateOperationKind::PreWrite
             || operation.status == GateOperationStatus::Committed;
         if gate_required && !gates.contains_key(operation.gate_id.as_str()) {

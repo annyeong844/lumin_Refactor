@@ -430,6 +430,8 @@ fn open_active_gate_for_with_protected_inputs(
         transition_sequence,
     };
     let baseline_for_id = baseline.clone();
+    let evidence_payload_sha256 =
+        crate::evidence_payload_sha256(&baseline_for_id.snapshot.evidence)?;
     let source_for_id = source.clone();
     let lease_for_id = source_lease.clone();
     session.finish_pre_write(
@@ -452,6 +454,7 @@ fn open_active_gate_for_with_protected_inputs(
                             transition_sequence: baseline_for_id.transition_sequence,
                             analysis_contract: &baseline_for_id.analysis_contract,
                             analysis_input_id: &baseline_for_id.snapshot.analysis_input_id,
+                            evidence_payload_sha256: &evidence_payload_sha256,
                             declared_write_set: std::slice::from_ref(&source_for_id),
                             leased_write_set: std::slice::from_ref(&lease_for_id),
                             alias_closures: &[],
@@ -519,6 +522,7 @@ fn append_non_authorizing_close_for_migration(
     let leased_write_set = gate.leased_write_set.clone();
     let alias_closures = gate.alias_closures.clone();
     let analysis_input_id = snapshot.analysis_input_id.clone();
+    let evidence_payload_sha256 = crate::evidence_payload_sha256(&snapshot.evidence)?;
     let actual_write_set_for_id = actual_write_set.clone();
     let protected_for_id = protected_semantic_inputs.clone();
     let aliases_for_id = alias_closures.clone();
@@ -548,6 +552,7 @@ fn append_non_authorizing_close_for_migration(
                         prior_revision,
                         catalog_revision,
                         analysis_input_id: &analysis_input_id,
+                        evidence_payload_sha256: &evidence_payload_sha256,
                         leased_write_set: &leased_write_set,
                         protected_semantic_inputs: &protected_for_id,
                         changed_paths: &[],
@@ -624,6 +629,7 @@ fn close_active_gate_for_migration(
     let leased_write_set = gate.leased_write_set.clone();
     let alias_closures = gate.alias_closures.clone();
     let analysis_input_id = snapshot.analysis_input_id.clone();
+    let evidence_payload_sha256 = crate::evidence_payload_sha256(&snapshot.evidence)?;
     let actual_write_set_for_id = actual_write_set.clone();
     let protected_for_id = protected_semantic_inputs.clone();
     let aliases_for_id = alias_closures.clone();
@@ -655,6 +661,7 @@ fn close_active_gate_for_migration(
                         prior_revision,
                         catalog_revision,
                         analysis_input_id: &analysis_input_id,
+                        evidence_payload_sha256: &evidence_payload_sha256,
                         leased_write_set: &leased_write_set,
                         protected_semantic_inputs: &protected_for_id,
                         changed_paths: &changed_paths_for_id,
