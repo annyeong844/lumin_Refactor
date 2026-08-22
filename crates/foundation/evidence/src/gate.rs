@@ -14,6 +14,7 @@ use crate::{RepoPathProjection, RunEvidence, delta::lifecycle_delta_input_for};
 
 pub type GateObservationBinding = ObservationBinding<RepoPathProjection>;
 pub const GATE_RECORD_SCHEMA_VERSION: &str = "lumin-gate.v2";
+pub const GATE_OPERATION_SCHEMA_VERSION: &str = "lumin-operation.v1";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -205,6 +206,26 @@ pub struct GateAnalysisOptions {
     pub resolution_profile: Option<ResolutionProfile>,
     #[serde(default)]
     pub scan_invocation: ScanInvocationTier,
+}
+
+pub fn pre_write_request_digest(
+    declared_write_set: &[RepoPathProjection],
+    scan_invocation: &ScanInvocationTier,
+) -> String {
+    let mut framed = Vec::new();
+    append_length_prefixed(&mut framed, b"lumin-pre-write.v4");
+    scan_invocation.append_semantic_framing(&mut framed);
+    let mut paths = declared_write_set
+        .iter()
+        .map(|path| path.canonical.as_slice())
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    framed.extend_from_slice(&(paths.len() as u64).to_be_bytes());
+    for path in paths {
+        append_length_prefixed(&mut framed, path);
+    }
+    digest_hex(&framed)
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -475,6 +496,7 @@ pub struct GateCloseObservationInput<'a> {
     pub catalog_revision: u64,
     pub analysis_input_id: &'a AnalysisInputId,
     pub evidence_payload_sha256: &'a str,
+    pub signals: &'a [GateSignal],
     pub leased_write_set: &'a [WriteLease],
     pub protected_semantic_inputs: &'a [SemanticInputRecord],
     pub changed_paths: &'a [RepoPathProjection],
@@ -487,7 +509,7 @@ pub fn derive_gate_close_observation_id(
     input: GateCloseObservationInput<'_>,
 ) -> GateCloseObservationId {
     let mut framed = Vec::new();
-    append_length_prefixed(&mut framed, b"lumin-gate-close-observation.v2");
+    append_length_prefixed(&mut framed, b"lumin-gate-close-observation.v3");
     append_length_prefixed(&mut framed, input.gate_id.as_str().as_bytes());
     append_length_prefixed(
         &mut framed,
@@ -498,6 +520,7 @@ pub fn derive_gate_close_observation_id(
     framed.extend_from_slice(&input.catalog_revision.to_be_bytes());
     append_length_prefixed(&mut framed, input.analysis_input_id.as_str().as_bytes());
     append_length_prefixed(&mut framed, input.evidence_payload_sha256.as_bytes());
+    append_observation_signals(&mut framed, input.signals);
     append_observation_write_leases(&mut framed, input.leased_write_set);
     append_observation_semantic_inputs(&mut framed, input.protected_semantic_inputs);
     append_observation_paths(&mut framed, input.changed_paths);

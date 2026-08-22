@@ -5,19 +5,21 @@ mod retention;
 use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_evidence::{
-    AnalysisSnapshot, GATE_RECORD_SCHEMA_VERSION, GateBaseline, GateBaselineObservationInput,
-    GateCloseObservationInput, GateDecision, GateLifecycle, GateOperationKind, GateOperationStatus,
-    GateRecord, GateRevision, GateSignal, OperationRecord, PhysicalAliasClosureRecord,
-    RUN_EVIDENCE_SCHEMA_VERSION, WorktreeTransition, WriteLeaseKind,
+    AnalysisSnapshot, GATE_OPERATION_SCHEMA_VERSION, GATE_RECORD_SCHEMA_VERSION, GateBaseline,
+    GateBaselineObservationInput, GateCloseObservationInput, GateDecision, GateLifecycle,
+    GateOperationKind, GateOperationStatus, GateRecord, GateRevision, GateSignal, OperationRecord,
+    PhysicalAliasClosureRecord, RUN_EVIDENCE_SCHEMA_VERSION, WorktreeTransition, WriteLeaseKind,
     apply_worktree_transition_for_domain, derive_gate_baseline_observation_id,
     derive_gate_close_observation_id, derive_protected_semantic_inputs,
     derive_unsealed_gate_observation_binding, gate_abandon_request_digest, gate_policy,
-    seal_analysis_snapshot,
+    pre_write_request_digest, seal_analysis_snapshot,
 };
 use lumin_model::{ObservationBinding, RepoPath, SealedGateObservation};
 use serde::de::DeserializeOwned;
 
-use crate::gate::{records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY, transition_key};
+use crate::gate::{
+    records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY, transition_key, validate_reservation_binding_set,
+};
 use crate::{RunCatalogRecord, StoreError};
 
 use super::super::super::NamespaceGuard;
@@ -123,6 +125,12 @@ fn read_operations(
     let mut operations = BTreeMap::new();
     for (key, bytes) in &snapshot.operations {
         let operation = parse_record::<OperationRecord>("operations", key, bytes)?;
+        if operation.schema_version != GATE_OPERATION_SCHEMA_VERSION {
+            return Err(StoreError::IncompatibleStateSchema(format!(
+                "operation {key} uses unsupported schema {}; expected {GATE_OPERATION_SCHEMA_VERSION}",
+                operation.schema_version
+            )));
+        }
         if operation.operation_id.as_str() != key {
             return Err(StoreError::Integrity(format!(
                 "operation key {key} disagrees with its record"
@@ -580,6 +588,12 @@ fn validate_gate_observations(
         let is_abandon = operations
             .get(revision.operation_id.as_str())
             .is_some_and(|operation| operation.kind == GateOperationKind::GateAbandon);
+        if !is_abandon && revision.reason.is_some() {
+            return Err(StoreError::Integrity(format!(
+                "gate {key} non-administrative revision {} retained a reason",
+                revision.revision
+            )));
+        }
         if !is_abandon && revision.decision != gate_policy::decision(&revision.signals) {
             return Err(StoreError::Integrity(format!(
                 "gate {key} revision {} decision disagrees with canonical signal policy",
@@ -805,6 +819,7 @@ fn validate_gate_observations(
                 })?,
                 analysis_input_id: &snapshot.analysis_input_id,
                 evidence_payload_sha256: &evidence_payload_sha256,
+                signals: &revision.signals,
                 leased_write_set: &baseline.leased_write_set,
                 protected_semantic_inputs: &revision.protected_semantic_inputs,
                 changed_paths: &revision.changed_paths,
@@ -1471,6 +1486,28 @@ fn validate_run_catalog(snapshot: &LogicalStoreSnapshot) -> Result<(), StoreErro
 }
 
 fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreError> {
+    if operation.kind != GateOperationKind::GateAbandon && operation.reason.is_some() {
+        return Err(StoreError::Integrity(format!(
+            "non-administrative operation {} retained a reason",
+            operation.operation_id.as_str()
+        )));
+    }
+    if operation.kind == GateOperationKind::PreWrite {
+        let options = operation.analysis_options.as_ref().ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "pre-write operation {} omitted its analysis options",
+                operation.operation_id.as_str()
+            ))
+        })?;
+        let expected =
+            pre_write_request_digest(&operation.declared_write_set, &options.scan_invocation);
+        if operation.request_digest != expected {
+            return Err(StoreError::Integrity(format!(
+                "pre-write operation {} disagrees with its authenticated request",
+                operation.operation_id.as_str()
+            )));
+        }
+    }
     match (&operation.status, &operation.result) {
         (GateOperationStatus::Committed, Some(result))
             if result.operation_id == operation.operation_id
@@ -1495,6 +1532,7 @@ fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreErr
 }
 
 fn validate_pending_operation_state(operation: &OperationRecord) -> Result<(), StoreError> {
+    validate_reservation_binding_set(operation)?;
     let liveness = operation.operation_liveness.as_ref().ok_or_else(|| {
         StoreError::Integrity(format!(
             "pending operation omitted its liveness binding: {}",
@@ -1536,6 +1574,12 @@ fn validate_operation_observation(
     operation: &OperationRecord,
     result: &lumin_evidence::GateOperationResult,
 ) -> Result<(), StoreError> {
+    if operation.kind != GateOperationKind::GateAbandon && result.reason.is_some() {
+        return Err(StoreError::Integrity(format!(
+            "non-administrative operation {} retained a reason",
+            operation.operation_id.as_str()
+        )));
+    }
     if operation.kind == GateOperationKind::GateAbandon {
         let reason = operation.reason.as_deref().ok_or_else(|| {
             StoreError::Integrity(format!(

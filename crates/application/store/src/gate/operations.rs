@@ -43,7 +43,7 @@ impl OperationSession<'_> {
                 operation
             } else {
                 let mut operation = OperationRecord {
-                    schema_version: "lumin-operation.v1".to_owned(),
+                    schema_version: GATE_OPERATION_SCHEMA_VERSION.to_owned(),
                     operation_id: operation_id.clone(),
                     kind: GateOperationKind::PreWrite,
                     request_digest: request_digest.to_owned(),
@@ -304,7 +304,7 @@ impl OperationSession<'_> {
             let gate = load_active_gate_for_retry(&write, gate_id)?;
             ensure_post_write_revision_available(&write, operation_id, &gate)?;
             let mut operation = OperationRecord {
-                schema_version: "lumin-operation.v1".to_owned(),
+                schema_version: GATE_OPERATION_SCHEMA_VERSION.to_owned(),
                 operation_id: operation_id.clone(),
                 kind: GateOperationKind::PostWrite,
                 request_digest: request_digest.to_owned(),

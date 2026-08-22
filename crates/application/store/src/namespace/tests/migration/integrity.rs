@@ -31,8 +31,8 @@ use super::super::open_store;
 use super::{
     append_non_authorizing_close_for_migration, append_unsealed_close_for_migration,
     close_active_gate_for_migration, current_generation, evidence, lease, open_active_gate_for,
-    open_active_gate_for_with_protected_inputs, options, path, rejected_test_observation,
-    semantic_input,
+    open_active_gate_for_with_protected_inputs, options, path, pre_write_digest,
+    rejected_test_observation, semantic_input,
 };
 
 fn reconstructed_baseline_binding(
@@ -88,6 +88,7 @@ fn reconstructed_close_binding(
                     .ok_or("close catalog revision is missing")?,
                 analysis_input_id: &snapshot.analysis_input_id,
                 evidence_payload_sha256: &evidence_payload_sha256,
+                signals: &revision.signals,
                 leased_write_set: &baseline.leased_write_set,
                 protected_semantic_inputs: &revision.protected_semantic_inputs,
                 changed_paths: &revision.changed_paths,
@@ -147,11 +148,13 @@ fn open_rejected_gate_for(
         nearest_existing_parent: None,
         prefix_identities: Vec::new(),
     };
+    let analysis_options = options();
+    let request_digest = pre_write_digest(std::slice::from_ref(&source), &analysis_options);
     let (gate_id, transition_sequence) = match session.reserve_pre_write(
-        "migrate-rejected-digest",
+        &request_digest,
         std::slice::from_ref(&source),
         std::slice::from_ref(&lease),
-        &options(),
+        &analysis_options,
         rejected_test_observation,
     )? {
         PreWriteStart::Analyze {
@@ -169,7 +172,7 @@ fn open_rejected_gate_for(
     let unsealed_inputs =
         UnsealedGateObservationInputs::new(vec![lease.clone()], Vec::new(), Vec::new());
     let result = session.finish_pre_write(
-        "migrate-rejected-digest",
+        &request_digest,
         &gate_id,
         PreWriteFinish {
             baseline: Some(baseline),
@@ -493,9 +496,11 @@ fn migration_binds_analysis_options_to_the_opening_operation_and_sealed_baseline
             operation_id.as_str(),
             &format!("src/analysis-options-{corruption}.ts"),
         )?;
-        let mut forged_options = store.load_gate(&gate_id)?.analysis_options;
+        let gate = store.load_gate(&gate_id)?;
+        let mut forged_options = gate.analysis_options.clone();
         forged_options.resolution_profile = Some(ResolutionProfile::Node16);
         forged_options.scan_invocation.resolution_profile = Some(ResolutionProfile::Node16);
+        let forged_digest = pre_write_digest(&gate.declared_write_set, &forged_options);
         drop(store);
 
         let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
@@ -521,6 +526,12 @@ fn migration_binds_analysis_options_to_the_opening_operation_and_sealed_baseline
                 .to_vec();
             let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
             operation.analysis_options = Some(forged_options);
+            operation.request_digest = forged_digest.clone();
+            operation
+                .result
+                .as_mut()
+                .ok_or("analysis-options opening result is missing")?
+                .request_digest = forged_digest;
             let changed = serde_json::to_vec(&operation)?;
             table.insert(operation_id.as_str(), changed.as_slice())?;
         }
@@ -1494,6 +1505,8 @@ fn migration_matches_the_complete_operation_result_to_its_revision()
             store.migrate_lifecycle_store(),
             Err(StoreError::Integrity(message))
                 if message.contains("result disagrees with its complete gate revision")
+                    || (corruption == "reason"
+                        && message.contains("non-administrative operation"))
         ));
     }
     Ok(())
@@ -1659,11 +1672,13 @@ fn migration_rejects_unfinished_pre_write_gate_id_collisions()
                 nearest_existing_parent: None,
                 prefix_identities: Vec::new(),
             };
+            let analysis_options = options();
+            let request_digest = pre_write_digest(std::slice::from_ref(&source), &analysis_options);
             let PreWriteStart::Analyze { gate_id, .. } = session.reserve_pre_write(
-                &format!("unfinished-gate-id-{collision}-{ordinal}"),
+                &request_digest,
                 std::slice::from_ref(&source),
                 std::slice::from_ref(&source_lease),
-                &options(),
+                &analysis_options,
                 rejected_test_observation,
             )?
             else {
@@ -2525,18 +2540,21 @@ fn migration_rejects_invalid_unfinished_operation_liveness()
             "interrupted",
             "interrupted operation retained provisional state",
         ),
+        ("reservations", "reservation bindings disagree with paths"),
     ] {
         let root = tempfile::tempdir()?;
         let store = open_store(root.path())?;
         let operation_id = OperationId::from_string(format!("op-liveness-{corruption}"));
         let session = store.begin_operation(&operation_id)?;
         let source = path(&format!("src/liveness-{corruption}.ts"))?;
+        let analysis_options = options();
+        let request_digest = pre_write_digest(std::slice::from_ref(&source), &analysis_options);
         assert!(matches!(
             session.reserve_pre_write(
-                &format!("liveness-{corruption}-digest"),
+                &request_digest,
                 std::slice::from_ref(&source),
                 &[lease(source.clone())],
-                &options(),
+                &analysis_options,
                 rejected_test_observation,
             )?,
             PreWriteStart::Analyze { .. }
@@ -2570,6 +2588,7 @@ fn migration_rejects_invalid_unfinished_operation_liveness()
                 }
                 "contents" => {}
                 "interrupted" => operation.status = GateOperationStatus::Interrupted,
+                "reservations" => operation.semantic_read_reservations.push(source.clone()),
                 _ => return Err("unknown liveness corruption".into()),
             }
             let changed = serde_json::to_vec(&operation)?;
@@ -2783,6 +2802,257 @@ fn migration_rejects_zero_worker_gate_options() -> Result<(), Box<dyn std::error
         store.migrate_lifecycle_store(),
         Err(StoreError::Integrity(message)) if message.contains("invalid zero worker count")
     ));
+    Ok(())
+}
+
+#[test]
+fn migration_authenticates_final_freshness_signals_in_close_observations()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id =
+        open_active_gate_for(&store, "op-close-freshness-open", "src/close-freshness.ts")?;
+    close_active_gate_for_migration(&store, &gate_id)?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    let (operation_id, binding) = {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("close-freshness gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        let operation_id = gate
+            .revisions
+            .get(1)
+            .ok_or("close-freshness revision is missing")?
+            .operation_id
+            .clone();
+        gate.revisions[1].signals = vec![GateSignal::ProtectedInputChanged {
+            paths: gate.declared_write_set.clone(),
+        }];
+        let binding = reconstructed_close_binding(&gate, 1)?;
+
+        // Delete the contextual signal while retaining the identity that sealed it.
+        gate.revisions[1].signals.clear();
+        gate.revisions[1].observation_binding = Some(binding.clone());
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+        (operation_id, binding)
+    };
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get(operation_id.as_str())?
+            .ok_or("close-freshness operation is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        let result = operation
+            .result
+            .as_mut()
+            .ok_or("close-freshness result is missing")?;
+        result.signals.clear();
+        result.observation_binding = Some(binding.clone());
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert(operation_id.as_str(), changed.as_slice())?;
+    }
+    {
+        let mut table = write.open_table(TRANSITIONS)?;
+        let key = transition_key(1);
+        let bytes = table
+            .get(key.as_str())?
+            .ok_or("close-freshness transition is missing")?
+            .value()
+            .to_vec();
+        let mut transition = serde_json::from_slice::<WorktreeTransition>(&bytes)?;
+        let ObservationBinding::Sealed {
+            observation: SealedGateObservation::Close { observation_id },
+        } = binding
+        else {
+            return Err("close-freshness fixture produced the wrong binding".into());
+        };
+        transition.capsule.close_observation_id = observation_id;
+        let changed = serde_json::to_vec(&transition)?;
+        table.insert(key.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("close observation revision 1 cannot be reconstructed")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_recomputes_pre_write_request_digests() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("op-forged-pre-write-digest".to_owned());
+    open_active_gate_for(
+        &store,
+        operation_id.as_str(),
+        "src/forged-pre-write-digest.ts",
+    )?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get(operation_id.as_str())?
+            .ok_or("pre-write digest operation is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        operation.request_digest = "forged-pre-write-request".to_owned();
+        operation
+            .result
+            .as_mut()
+            .ok_or("pre-write digest result is missing")?
+            .request_digest = "forged-pre-write-request".to_owned();
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert(operation_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("disagrees with its authenticated request")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_unsupported_operation_record_schemas() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("op-unsupported-operation-schema".to_owned());
+    open_active_gate_for(
+        &store,
+        operation_id.as_str(),
+        "src/unsupported-operation-schema.ts",
+    )?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get(operation_id.as_str())?
+            .ok_or("operation-schema fixture is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        operation.schema_version = "lumin-operation.v999".to_owned();
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert(operation_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::IncompatibleStateSchema(message))
+            if message.contains("uses unsupported schema lumin-operation.v999")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_reasons_on_non_administrative_gate_operations()
+-> Result<(), Box<dyn std::error::Error>> {
+    for kind in ["pre-write", "post-write"] {
+        for location in ["operation", "result", "revision"] {
+            let root = tempfile::tempdir()?;
+            let store = open_store(root.path())?;
+            let opening_id = OperationId::from_string(format!("op-{kind}-reason-{location}-open"));
+            let gate_id = open_active_gate_for(
+                &store,
+                opening_id.as_str(),
+                &format!("src/{kind}-reason-{location}.ts"),
+            )?;
+            if kind == "post-write" {
+                close_active_gate_for_migration(&store, &gate_id)?;
+            }
+            let gate = store.load_gate(&gate_id)?;
+            let operation_id = if kind == "pre-write" {
+                opening_id
+            } else {
+                gate.revisions
+                    .last()
+                    .ok_or("post-write reason fixture omitted its tail")?
+                    .operation_id
+                    .clone()
+            };
+            drop(store);
+
+            let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+            let write = database.begin_write()?;
+            if location == "revision" {
+                let mut table = write.open_table(GATES)?;
+                let bytes = table
+                    .get(gate_id.as_str())?
+                    .ok_or("non-administrative reason gate is missing")?
+                    .value()
+                    .to_vec();
+                let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+                gate.revisions
+                    .iter_mut()
+                    .find(|revision| revision.operation_id == operation_id)
+                    .ok_or("non-administrative reason revision is missing")?
+                    .reason = Some("forged non-administrative reason".to_owned());
+                let changed = serde_json::to_vec(&gate)?;
+                table.insert(gate_id.as_str(), changed.as_slice())?;
+            } else {
+                let mut table = write.open_table(OPERATIONS)?;
+                let bytes = table
+                    .get(operation_id.as_str())?
+                    .ok_or("non-administrative reason operation is missing")?
+                    .value()
+                    .to_vec();
+                let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+                if location == "operation" {
+                    operation.reason = Some("forged non-administrative reason".to_owned());
+                } else {
+                    operation
+                        .result
+                        .as_mut()
+                        .ok_or("non-administrative reason result is missing")?
+                        .reason = Some("forged non-administrative reason".to_owned());
+                }
+                let changed = serde_json::to_vec(&operation)?;
+                table.insert(operation_id.as_str(), changed.as_slice())?;
+            }
+            write.commit()?;
+            drop(database);
+
+            let store = open_store(root.path())?;
+            let expected = if location == "revision" {
+                "non-administrative revision"
+            } else {
+                "non-administrative operation"
+            };
+            assert!(matches!(
+                store.migrate_lifecycle_store(),
+                Err(StoreError::Integrity(message)) if message.contains(expected)
+            ));
+        }
+    }
     Ok(())
 }
 

@@ -9,7 +9,8 @@ use lumin_evidence::{
     SemanticReadReservationBinding, UnsealedGateObservationInputs, WriteLease, WriteLeaseKind,
     apply_worktree_transition, derive_gate_baseline_observation_id,
     derive_gate_close_observation_id, derive_protected_semantic_inputs,
-    derive_unsealed_gate_observation_binding, gate_policy, seal_analysis_snapshot,
+    derive_unsealed_gate_observation_binding, gate_policy, pre_write_request_digest,
+    seal_analysis_snapshot,
 };
 use lumin_model::{
     CapabilityState, GateId, ObservationBinding, OperationId, RepoPath, SealedGateObservation,
@@ -58,12 +59,14 @@ fn migration_preserves_run_gate_and_pending_operation_records()
     let operation_id = OperationId::from_string("op-migrate-pending".to_owned());
     let session = store.begin_operation(&operation_id)?;
     let source = path("src/pending.ts")?;
+    let analysis_options = options();
+    let request_digest = pre_write_digest(std::slice::from_ref(&source), &analysis_options);
     assert!(matches!(
         session.reserve_pre_write(
-            "migrate-pending-digest",
+            &request_digest,
             std::slice::from_ref(&source),
             &[lease(source.clone())],
-            &options(),
+            &analysis_options,
             rejected_test_observation,
         )?,
         PreWriteStart::Analyze { .. }
@@ -82,10 +85,10 @@ fn migration_preserves_run_gate_and_pending_operation_records()
     assert_eq!(store.load_operation(&operation_id)?, before);
     assert!(matches!(
         session.reserve_pre_write(
-            "migrate-pending-digest",
+            &request_digest,
             &[],
             &[],
-            &options(),
+            &analysis_options,
             rejected_test_observation,
         ),
         Err(StoreError::StoreGenerationChanged { .. })
@@ -369,6 +372,10 @@ fn options() -> GateAnalysisOptions {
     }
 }
 
+fn pre_write_digest(paths: &[RepoPathProjection], options: &GateAnalysisOptions) -> String {
+    pre_write_request_digest(paths, &options.scan_invocation)
+}
+
 fn path(value: &str) -> Result<RepoPathProjection, Box<dyn std::error::Error>> {
     Ok(RepoPathProjection::from(&RepoPath::from_portable(value)?))
 }
@@ -405,11 +412,13 @@ fn open_active_gate_for_with_protected_inputs(
     let session = store.begin_operation(&operation_id)?;
     let source = path(source)?;
     let source_lease = lease(source.clone());
+    let analysis_options = options();
+    let request_digest = pre_write_digest(std::slice::from_ref(&source), &analysis_options);
     let (gate_id, transition_sequence) = match session.reserve_pre_write(
-        "migrate-gate-digest",
+        &request_digest,
         std::slice::from_ref(&source),
         std::slice::from_ref(&source_lease),
-        &options(),
+        &analysis_options,
         rejected_test_observation,
     )? {
         PreWriteStart::Analyze {
@@ -435,7 +444,7 @@ fn open_active_gate_for_with_protected_inputs(
     let source_for_id = source.clone();
     let lease_for_id = source_lease.clone();
     session.finish_pre_write(
-        "migrate-gate-digest",
+        &request_digest,
         &gate_id,
         PreWriteFinish {
             baseline: Some(baseline),
@@ -527,6 +536,7 @@ fn append_non_authorizing_close_for_migration(
     let actual_write_set_for_id = actual_write_set.clone();
     let protected_for_id = protected_semantic_inputs.clone();
     let aliases_for_id = alias_closures.clone();
+    let signals_for_id = signals.clone();
     session.finish_post_write(
         "migrate-incomplete-close-digest",
         gate_id,
@@ -554,6 +564,7 @@ fn append_non_authorizing_close_for_migration(
                         catalog_revision,
                         analysis_input_id: &analysis_input_id,
                         evidence_payload_sha256: &evidence_payload_sha256,
+                        signals: &signals_for_id,
                         leased_write_set: &leased_write_set,
                         protected_semantic_inputs: &protected_for_id,
                         changed_paths: &[],
@@ -663,6 +674,7 @@ fn close_active_gate_for_migration(
                         catalog_revision,
                         analysis_input_id: &analysis_input_id,
                         evidence_payload_sha256: &evidence_payload_sha256,
+                        signals: &[],
                         leased_write_set: &leased_write_set,
                         protected_semantic_inputs: &protected_for_id,
                         changed_paths: &changed_paths_for_id,

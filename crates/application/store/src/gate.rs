@@ -1,10 +1,10 @@
 use lumin_evidence::{
-    ActualWriteSet, AnalysisSnapshot, GATE_RECORD_SCHEMA_VERSION, GateAnalysisOptions,
-    GateBaseline, GateDecision, GateLifecycle, GateObservationBinding, GateOperationKind,
-    GateOperationResult, GateOperationStatus, GateRecord, GateRevision, GateSignal,
-    OperationRecord, PhysicalAliasClosureRecord, RepoPathProjection, SemanticInputRecord,
-    SemanticReadReservationBinding, TransitionCapsule, UnsealedGateObservationInputs,
-    WorktreeTransition, WriteLease, gate_policy,
+    ActualWriteSet, AnalysisSnapshot, GATE_OPERATION_SCHEMA_VERSION, GATE_RECORD_SCHEMA_VERSION,
+    GateAnalysisOptions, GateBaseline, GateDecision, GateLifecycle, GateObservationBinding,
+    GateOperationKind, GateOperationResult, GateOperationStatus, GateRecord, GateRevision,
+    GateSignal, OperationRecord, PhysicalAliasClosureRecord, RepoPathProjection,
+    SemanticInputRecord, SemanticReadReservationBinding, TransitionCapsule,
+    UnsealedGateObservationInputs, WorktreeTransition, WriteLease, gate_policy,
 };
 use lumin_model::{GateBaselineObservationId, GateDeltaRecord, GateId, OperationId};
 use redb::{ReadableTable, TableDefinition, WriteTransaction};
@@ -998,7 +998,9 @@ fn validate_operation(
     Ok(())
 }
 
-fn validate_reservation_binding_set(operation: &OperationRecord) -> Result<(), StoreError> {
+pub(crate) fn validate_reservation_binding_set(
+    operation: &OperationRecord,
+) -> Result<(), StoreError> {
     if operation.status != GateOperationStatus::Pending
         && operation.semantic_read_reservation_bindings.is_empty()
     {

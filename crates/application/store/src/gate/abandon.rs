@@ -55,7 +55,7 @@ fn load_or_create_abandon_operation(
     let Some(operation) = read_record::<OperationRecord>(write, OPERATIONS, operation_id.as_str())?
     else {
         return Ok(OperationRecord {
-            schema_version: "lumin-operation.v1".to_owned(),
+            schema_version: GATE_OPERATION_SCHEMA_VERSION.to_owned(),
             operation_id: operation_id.clone(),
             kind: GateOperationKind::GateAbandon,
             request_digest: request_digest.to_owned(),

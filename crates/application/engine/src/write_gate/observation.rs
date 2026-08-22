@@ -1,9 +1,9 @@
 use lumin_evidence::{
     ActualWriteSet, GateBaselineObservationInput, GateCloseObservationInput,
-    GateObservationBinding, GateSignal, PhysicalAliasClosureRecord, RepoPathProjection,
-    SemanticInputRecord, SemanticReadReservationBinding, UnsealedGateObservationInputs, WriteLease,
-    derive_gate_baseline_observation_id, derive_gate_close_observation_id,
-    derive_unsealed_gate_observation_binding,
+    GateObservationBinding, GateRecord, GateRevision, GateSignal, PhysicalAliasClosureRecord,
+    RepoPathProjection, SemanticInputRecord, SemanticReadReservationBinding,
+    UnsealedGateObservationInputs, WriteLease, derive_gate_baseline_observation_id,
+    derive_gate_close_observation_id, derive_unsealed_gate_observation_binding,
 };
 use lumin_model::{
     GateBaselineObservationId, GateCloseObservationId, GateId, ObservationBinding,
@@ -144,7 +144,7 @@ pub(super) fn close_observation_binding(
     signals: &[GateSignal],
 ) -> GateObservationBinding {
     if !close_observation_is_unsealed(signals)
-        && let Some(observation_id) = close_observation_id(seed, catalog_revision)
+        && let Some(observation_id) = close_observation_id(seed, catalog_revision, signals)
     {
         return ObservationBinding::Sealed {
             observation: SealedGateObservation::Close { observation_id },
@@ -152,6 +152,71 @@ pub(super) fn close_observation_binding(
     }
     let inputs = unsealed_close_observation_inputs(seed);
     derive_unsealed_gate_observation_binding(&seed.changed_paths, &inputs, signals)
+}
+
+pub(super) fn observation_binding_matches_owner(
+    gate: &GateRecord,
+    revision: &GateRevision,
+) -> Result<bool, lumin_store::StoreError> {
+    let Some(binding) = revision.observation_binding.as_ref() else {
+        return Ok(false);
+    };
+    let Some(baseline) = gate.baseline.as_ref() else {
+        return Ok(false);
+    };
+    match binding {
+        ObservationBinding::Sealed {
+            observation: SealedGateObservation::Baseline { observation_id },
+        } => {
+            let evidence_payload_sha256 =
+                lumin_store::evidence_payload_sha256(&baseline.snapshot.evidence)?;
+            let derived = derive_gate_baseline_observation_id(GateBaselineObservationInput {
+                catalog_revision: baseline.catalog_revision,
+                transition_sequence: baseline.transition_sequence,
+                analysis_contract: &baseline.analysis_contract,
+                analysis_input_id: &baseline.snapshot.analysis_input_id,
+                evidence_payload_sha256: &evidence_payload_sha256,
+                signals: &revision.signals,
+                declared_write_set: &gate.declared_write_set,
+                leased_write_set: &baseline.leased_write_set,
+                alias_closures: &baseline.alias_closures,
+                protected_semantic_inputs: &baseline.protected_semantic_inputs,
+            });
+            Ok(revision.revision == 0 && &derived == observation_id)
+        }
+        ObservationBinding::Sealed {
+            observation: SealedGateObservation::Close { observation_id },
+        } => {
+            let Some(snapshot) = revision.snapshot.as_ref() else {
+                return Ok(false);
+            };
+            let Some(actual_write_set) = revision.actual_write_set.as_ref() else {
+                return Ok(false);
+            };
+            let Some(catalog_revision) = revision.catalog_revision else {
+                return Ok(false);
+            };
+            let evidence_payload_sha256 = lumin_store::evidence_payload_sha256(&snapshot.evidence)?;
+            let derived = derive_gate_close_observation_id(GateCloseObservationInput {
+                gate_id: &gate.gate_id,
+                opening_observation_id: &baseline.observation_id,
+                opening_analysis_contract: &baseline.analysis_contract,
+                prior_revision: revision.revision.saturating_sub(1),
+                catalog_revision,
+                analysis_input_id: &snapshot.analysis_input_id,
+                evidence_payload_sha256: &evidence_payload_sha256,
+                signals: &revision.signals,
+                leased_write_set: &baseline.leased_write_set,
+                protected_semantic_inputs: &revision.protected_semantic_inputs,
+                changed_paths: &revision.changed_paths,
+                actual_write_set,
+                alias_closures: &revision.alias_closures,
+                reconciled_transition_sequences: &revision.reconciled_transition_sequences,
+            });
+            Ok(revision.revision > 0 && &derived == observation_id)
+        }
+        ObservationBinding::Unsealed { .. } => Ok(false),
+    }
 }
 
 fn close_observation_is_unsealed(signals: &[GateSignal]) -> bool {
@@ -173,6 +238,7 @@ fn close_observation_is_unsealed(signals: &[GateSignal]) -> bool {
 fn close_observation_id(
     seed: &CloseObservationSeed,
     catalog_revision: u64,
+    signals: &[GateSignal],
 ) -> Option<GateCloseObservationId> {
     let snapshot = seed.snapshot.as_ref()?;
     let opening_observation_id = seed.opening_observation_id.as_ref()?;
@@ -188,6 +254,7 @@ fn close_observation_id(
             catalog_revision,
             analysis_input_id: &snapshot.analysis_input_id,
             evidence_payload_sha256,
+            signals,
             leased_write_set: &seed.leased_write_set,
             protected_semantic_inputs: &seed.protected_semantic_inputs,
             changed_paths: &seed.changed_paths,

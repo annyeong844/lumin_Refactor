@@ -28,7 +28,8 @@ pub use retention::{
     load_retention_plan, lookup_gate, lookup_run, pin_run, prepare_retention_plan, unpin_run,
 };
 pub use write_gate::{
-    PostWriteRequest, PreWriteRequest, close_write_gate, load_gate, load_operation, open_write_gate,
+    PostWriteRequest, PreWriteRequest, close_write_gate, gate_observation_binding_matches_owner,
+    load_gate, load_operation, open_write_gate,
 };
 
 use std::collections::{BTreeMap, BTreeSet};

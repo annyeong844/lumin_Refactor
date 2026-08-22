@@ -4,7 +4,7 @@ use lumin_evidence::{
     DependencyIntentRecord, GateAnalysisOptions, GateOperationResult, GateRecord, GateSignal,
     OperationRecord, PathPrefixIdentity, RepoPathProjection, ScanInvocationTier,
     SemanticInputRecord, SemanticInputState, SemanticReadReservationBinding, gate_policy,
-    seal_analysis_snapshot,
+    pre_write_request_digest, seal_analysis_snapshot,
 };
 use lumin_inventory::{InventoryRequest, SemanticInputExpectation, SemanticInputValidationState};
 use lumin_model::{
@@ -33,8 +33,8 @@ use domain::{
 };
 use observation::{
     BaselineObservationSeed, CloseObservationSeed, close_observation_binding,
-    pre_write_observation_binding, pre_write_observation_can_seal,
-    unsealed_pre_write_observation_binding,
+    observation_binding_matches_owner, pre_write_observation_binding,
+    pre_write_observation_can_seal, unsealed_pre_write_observation_binding,
 };
 use transitions::{active_transition_signals, changed_paths, reconcile_transitions};
 
@@ -106,7 +106,7 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         resolution_profile: request.resolution_profile,
         scan_invocation: scan_invocation.clone(),
     };
-    let request_digest = pre_write_digest(&paths, &analysis_options);
+    let request_digest = pre_write_request_digest(&declared_write_set, &scan_invocation);
     let admission = lumin_inventory::repository_admission(&request.root)?;
     let store = match lumin_store::RepositoryStore::open_if_bound(
         &admission.canonical_root,
@@ -1564,18 +1564,11 @@ pub fn load_operation(
         .map_err(Into::into)
 }
 
-fn pre_write_digest(paths: &[RepoPath], options: &GateAnalysisOptions) -> String {
-    let mut bytes = Vec::new();
-    append_length_prefixed(&mut bytes, b"lumin-pre-write.v4");
-    // Use canonical tier framing for all invocation parameters
-    options.scan_invocation.append_semantic_framing(&mut bytes);
-    // Declared write paths
-    bytes.extend_from_slice(&(paths.len() as u64).to_be_bytes());
-    for path in paths {
-        append_length_prefixed(&mut bytes, path.canonical_bytes());
-    }
-    // NOTE: jobs is deliberately excluded
-    digest_hex(&bytes)
+pub fn gate_observation_binding_matches_owner(
+    gate: &GateRecord,
+    revision: &lumin_evidence::GateRevision,
+) -> Result<bool, EngineError> {
+    observation_binding_matches_owner(gate, revision).map_err(Into::into)
 }
 
 fn post_write_digest(gate_id: &GateId) -> String {

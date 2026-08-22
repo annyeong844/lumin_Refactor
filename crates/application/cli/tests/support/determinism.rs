@@ -163,6 +163,18 @@ fn gate_evidence(root: &Path, stdout: &str) -> Result<Vec<Value>, Box<dyn std::e
     let gate = lumin_engine::load_gate(root, &GateId::from_string(gate_id.to_owned()))?;
     let mut evidence = Vec::new();
     if let Some(baseline) = gate.baseline.as_ref() {
+        let baseline_matches_owner = gate
+            .revisions
+            .first()
+            .map(|revision| lumin_engine::gate_observation_binding_matches_owner(&gate, revision))
+            .transpose()?
+            .unwrap_or(false);
+        if !baseline_matches_owner {
+            return Err(std::io::Error::other(
+                "sealed baseline observation ID disagrees with its owner inputs",
+            )
+            .into());
+        }
         let mut baseline_alias_closures = baseline.alias_closures.iter().collect::<Vec<_>>();
         baseline_alias_closures.sort_by(|left, right| left.members.cmp(&right.members));
         let baseline_alias_closures = baseline_alias_closures
@@ -175,7 +187,7 @@ fn gate_evidence(root: &Path, stdout: &str) -> Result<Vec<Value>, Box<dyn std::e
             "observationId": observation_id_projection(
                 baseline.observation_id.as_str(),
                 "baseline",
-                true,
+                baseline_matches_owner,
             ),
             "analysisContract": baseline.analysis_contract,
             "catalogRevision": baseline.catalog_revision,
@@ -214,11 +226,7 @@ fn gate_evidence(root: &Path, stdout: &str) -> Result<Vec<Value>, Box<dyn std::e
             },
         }));
     }
-    let baseline_observation_id = gate
-        .baseline
-        .as_ref()
-        .map(|baseline| baseline.observation_id.as_str().to_owned());
-    for revision in gate.revisions {
+    for revision in &gate.revisions {
         let snapshot = revision.snapshot.as_ref().map(|snapshot| {
             serde_json::json!({
                 "inputs": snapshot.inputs.iter().map(|input| serde_json::json!({
@@ -239,6 +247,14 @@ fn gate_evidence(root: &Path, stdout: &str) -> Result<Vec<Value>, Box<dyn std::e
             .as_ref()
             .map(serde_json::to_value)
             .transpose()?;
+        let sealed_matches_owner = if matches!(
+            revision.observation_binding.as_ref(),
+            Some(lumin_model::ObservationBinding::Sealed { .. })
+        ) {
+            lumin_engine::gate_observation_binding_matches_owner(&gate, revision)?
+        } else {
+            false
+        };
         let mut revision_alias_closures = revision.alias_closures.iter().collect::<Vec<_>>();
         revision_alias_closures.sort_by(|left, right| left.members.cmp(&right.members));
         let revision_alias_closures = revision_alias_closures
@@ -273,11 +289,12 @@ fn gate_evidence(root: &Path, stdout: &str) -> Result<Vec<Value>, Box<dyn std::e
             "priorRevision": revision.revision.saturating_sub(1),
             "openingAnalysisContract": gate.baseline.as_ref().map(|baseline| &baseline.analysis_contract),
             "decision": revision.decision,
+            "signals": revision.signals,
             "catalogRevision": revision.catalog_revision,
             "observationBinding": observation_binding_projection(
                 observation_binding,
-                baseline_observation_id.as_deref(),
                 revision.revision,
+                sealed_matches_owner,
             )?,
             "leasedWriteSet": gate.leased_write_set.iter().map(|lease| serde_json::json!({
                 "path": lease.path,
@@ -306,8 +323,8 @@ fn gate_evidence(root: &Path, stdout: &str) -> Result<Vec<Value>, Box<dyn std::e
 
 fn observation_binding_projection(
     binding: Option<Value>,
-    baseline_id: Option<&str>,
     revision: u64,
+    matches_owner: bool,
 ) -> Result<Value, Box<dyn std::error::Error>> {
     let Some(mut binding) = binding else {
         return Ok(Value::Null);
@@ -324,12 +341,15 @@ fn observation_binding_projection(
         .and_then(Value::as_str)
         .ok_or_else(|| std::io::Error::other("sealed observation omitted its ID"))?
         .to_owned();
-    let (equality_class, matches_owner) = match kind {
-        "baseline" => (
-            "baseline".to_owned(),
-            baseline_id == Some(observation_id.as_str()),
-        ),
-        "close" => (format!("close-revision-{revision}"), true),
+    if !matches_owner {
+        return Err(std::io::Error::other(format!(
+            "sealed {kind} observation ID disagrees with revision {revision} owner inputs"
+        ))
+        .into());
+    }
+    let equality_class = match kind {
+        "baseline" => "baseline".to_owned(),
+        "close" => format!("close-revision-{revision}"),
         other => {
             return Err(std::io::Error::other(format!(
                 "sealed observation has unsupported kind {other:?}"
