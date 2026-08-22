@@ -700,7 +700,9 @@ impl From<&GateSignal> for GateSignalDto {
                 dto.paths = paths.iter().map(RepoPathDto::from).collect();
                 dto.gate_ids = gate_ids.clone();
             }
-            GateSignal::ProtectedInputChanged { paths } | GateSignal::UnplannedWrite { paths } => {
+            GateSignal::SemanticReadClosureIncomplete { paths }
+            | GateSignal::ProtectedInputChanged { paths }
+            | GateSignal::UnplannedWrite { paths } => {
                 dto.paths = paths.iter().map(RepoPathDto::from).collect();
             }
             GateSignal::ActiveTransitionPending { paths, gate_ids } => {
@@ -723,6 +725,7 @@ fn signal_kind(signal: &GateSignal) -> &'static str {
         GateSignal::DeclaredPathUnsupported { .. } => "declared-path-unsupported",
         GateSignal::WriteConflict { .. } => "write-conflict",
         GateSignal::SemanticInputConflict { .. } => "semantic-input-conflict",
+        GateSignal::SemanticReadClosureIncomplete { .. } => "semantic-read-closure-incomplete",
         GateSignal::ProtectedInputChanged { .. } => "protected-input-changed",
         GateSignal::AnalysisContractChanged => "analysis-contract-changed",
         GateSignal::UnplannedWrite { .. } => "unplanned-write",

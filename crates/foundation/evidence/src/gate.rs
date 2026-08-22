@@ -536,6 +536,9 @@ pub enum GateSignal {
         paths: Vec<RepoPathProjection>,
         gate_ids: Vec<GateId>,
     },
+    SemanticReadClosureIncomplete {
+        paths: Vec<RepoPathProjection>,
+    },
     ProtectedInputChanged {
         paths: Vec<RepoPathProjection>,
     },
@@ -1123,6 +1126,7 @@ pub mod gate_policy {
                 GateSignal::AnalysisFailed { .. }
                     | GateSignal::RequiredEvidenceIncomplete { .. }
                     | GateSignal::SemanticInputConflict { .. }
+                    | GateSignal::SemanticReadClosureIncomplete { .. }
                     | GateSignal::ProtectedInputChanged { .. }
                     | GateSignal::ActiveTransitionPending { .. }
                     | GateSignal::TransitionChainBroken { .. }
@@ -1167,6 +1171,7 @@ pub mod gate_policy {
             | GateSignal::DeclaredPathUnsupported { .. }
             | GateSignal::WriteConflict { .. }
             | GateSignal::SemanticInputConflict { .. }
+            | GateSignal::SemanticReadClosureIncomplete { .. }
             | GateSignal::ActiveTransitionPending { .. }
             | GateSignal::OpacityIntroduced { .. }
             | GateSignal::OpacityRegressed { .. }

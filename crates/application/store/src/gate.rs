@@ -475,6 +475,7 @@ fn validate_pre_write_context(
             .iter()
             .any(|signal| matches!(signal, GateSignal::SemanticInputConflict { .. }))
     {
+        let interrupted_paths = semantic_conflict_paths(signals);
         signals.retain(|signal| !matches!(signal, GateSignal::SemanticInputConflict { .. }));
         let conflicts = semantic_read_conflicts(
             write,
@@ -483,9 +484,9 @@ fn validate_pre_write_context(
             attempted_semantic_inputs,
         )?;
         if conflicts.paths.is_empty() {
-            if !signals.contains(&GateSignal::TransitionCatalogChanged) {
-                signals.push(GateSignal::TransitionCatalogChanged);
-            }
+            signals.push(GateSignal::SemanticReadClosureIncomplete {
+                paths: interrupted_paths,
+            });
         } else {
             signals.push(GateSignal::SemanticInputConflict {
                 paths: conflicts.paths,
@@ -686,7 +687,12 @@ fn validate_post_write_context(
             gate_ids: conflicts.gate_ids,
         });
     }
-    if !attempted_semantic_inputs.is_empty() {
+    if !attempted_semantic_inputs.is_empty()
+        && signals
+            .iter()
+            .any(|signal| matches!(signal, GateSignal::SemanticInputConflict { .. }))
+    {
+        let interrupted_paths = semantic_conflict_paths(signals);
         signals.retain(|signal| !matches!(signal, GateSignal::SemanticInputConflict { .. }));
         let conflicts = semantic_read_conflicts(
             write,
@@ -695,9 +701,9 @@ fn validate_post_write_context(
             attempted_semantic_inputs,
         )?;
         if conflicts.paths.is_empty() {
-            if !signals.contains(&GateSignal::TransitionCatalogChanged) {
-                signals.push(GateSignal::TransitionCatalogChanged);
-            }
+            signals.push(GateSignal::SemanticReadClosureIncomplete {
+                paths: interrupted_paths,
+            });
         } else {
             signals.push(GateSignal::SemanticInputConflict {
                 paths: conflicts.paths,
@@ -720,6 +726,21 @@ fn validate_post_write_context(
         }
     }
     Ok(())
+}
+
+fn semantic_conflict_paths(signals: &[GateSignal]) -> Vec<RepoPathProjection> {
+    let mut paths = signals
+        .iter()
+        .filter_map(|signal| match signal {
+            GateSignal::SemanticInputConflict { paths, .. } => Some(paths.as_slice()),
+            _ => None,
+        })
+        .flatten()
+        .cloned()
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    paths
 }
 
 fn snapshot_can_protect_current_reads(

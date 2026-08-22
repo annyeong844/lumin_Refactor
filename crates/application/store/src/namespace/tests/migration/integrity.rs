@@ -1,18 +1,24 @@
 use std::fs;
 
 use lumin_evidence::{
-    GateDecision, GateRecord, RetentionMutationResult, RetentionOperationRecord,
-    RetentionOperationResult, RetentionPlanScope,
+    GateDecision, GateLifecycle, GateRecord, RetentionMutationResult, RetentionOperationRecord,
+    RetentionOperationResult, RetentionPlanScope, WorktreeTransition,
 };
-use lumin_model::{AttemptId, ObservationBinding, OperationId, RunId, UnsealedObservationReason};
+use lumin_model::{
+    AnalysisInputId, AttemptId, ObservationBinding, OperationId, RunId, UnsealedObservationReason,
+};
 use redb::{Database, ReadableTable};
 
-use crate::gate::GATES;
+use crate::gate::{GATES, TRANSITIONS, transition_key};
 use crate::retention::RETENTION_OPERATIONS;
 use crate::{RUN_CATALOG, RunCatalogRecord, StoreError};
 
 use super::super::open_store;
-use super::{close_active_gate_for_migration, current_generation, evidence, open_active_gate_for};
+use super::{
+    append_non_authorizing_close_for_migration, close_active_gate_for_migration,
+    current_generation, evidence, open_active_gate_for, open_active_gate_for_with_protected_inputs,
+    path, semantic_input,
+};
 
 #[test]
 fn unpublished_intent_bytes_are_discarded_before_reopen() -> Result<(), Box<dyn std::error::Error>>
@@ -221,6 +227,138 @@ fn migration_rejects_an_active_lease_domain_weaker_than_its_sealed_baseline()
         Err(StoreError::Integrity(message))
             if message.contains("lease/alias domain disagrees with its sealed baseline")
     ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_an_active_protected_read_set_weaker_than_its_latest_sealed_observation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for_with_protected_inputs(
+        &store,
+        "op-active-protected",
+        "src/active-protected.ts",
+        vec![semantic_input("config/opening.json")?],
+    )?;
+    append_non_authorizing_close_for_migration(
+        &store,
+        &gate_id,
+        vec![semantic_input("config/latest.json")?],
+    )?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("active-protected gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        gate.protected_semantic_inputs.clear();
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("protected read set disagrees with its latest sealed observation")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_closed_lifecycle_without_an_authorizing_tail()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(&store, "op-false-closed", "src/false-closed.ts")?;
+    append_non_authorizing_close_for_migration(&store, &gate_id, Vec::new())?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("false-closed gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        gate.lifecycle = GateLifecycle::Closed;
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("lifecycle disagrees with its authorizing revision tail")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_binds_transition_payloads_to_the_sealed_gate_revision()
+-> Result<(), Box<dyn std::error::Error>> {
+    for corruption in ["changed-paths", "leased-write-set", "after-snapshot"] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        let gate_id = open_active_gate_for(
+            &store,
+            &format!("op-transition-{corruption}"),
+            &format!("src/transition-{corruption}.ts"),
+        )?;
+        close_active_gate_for_migration(&store, &gate_id)?;
+        drop(store);
+
+        let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+        let write = database.begin_write()?;
+        {
+            let mut table = write.open_table(TRANSITIONS)?;
+            let key = transition_key(1);
+            let bytes = table
+                .get(key.as_str())?
+                .ok_or("worktree transition is missing")?
+                .value()
+                .to_vec();
+            let mut transition = serde_json::from_slice::<WorktreeTransition>(&bytes)?;
+            match corruption {
+                "changed-paths" => transition
+                    .capsule
+                    .changed_paths
+                    .push(path("src/injected.ts")?),
+                "leased-write-set" => transition.capsule.leased_write_set.clear(),
+                "after-snapshot" => {
+                    transition.capsule.after_snapshot.analysis_input_id =
+                        AnalysisInputId::from_string("analysis_input_injected".to_owned());
+                }
+                _ => unreachable!(),
+            }
+            let changed = serde_json::to_vec(&transition)?;
+            table.insert(key.as_str(), changed.as_slice())?;
+        }
+        write.commit()?;
+        drop(database);
+
+        let store = open_store(root.path())?;
+        assert!(matches!(
+            store.migrate_lifecycle_store(),
+            Err(StoreError::Integrity(message))
+                if message.contains("payload or observation binding disagrees")
+        ));
+    }
     Ok(())
 }
 

@@ -61,6 +61,7 @@ pub enum SealedGateObservation {
 pub enum UnsealedObservationReason {
     AdmissionConflict,
     SemanticReadConflict,
+    SemanticReadClosureIncomplete,
     AnalysisFailed,
     DeclaredPathUnsupported,
     ObservationDomainUnbounded,

@@ -74,6 +74,8 @@ static INV_ALIAS: &[CorpusInvocation] = &[
 static INV_SEM_READ: &[CorpusInvocation] = &[
     inv!("write_gate", "semantic_demands::pre_write_reserves_semantic_demands_before_capture_and_retries_after_writer_terminal"),
     inv!("write_gate", "semantic_demands::close_time_new_semantic_demand_outside_lease_stays_unplanned_on_retry"),
+    inv!("write_gate", "semantic_demands::failed_pre_write_rechecks_a_semantic_conflict_and_retains_prior_reservations"),
+    inv!("write_gate", "semantic_demands::failed_close_rechecks_a_semantic_conflict_at_the_final_barrier"),
 ];
 #[rustfmt::skip]
 static INV_IDEMP: &[CorpusInvocation] = &[

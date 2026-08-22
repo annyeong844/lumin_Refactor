@@ -63,6 +63,7 @@ fn baseline_finalization(
             signal,
             GateSignal::WriteConflict { .. }
                 | GateSignal::SemanticInputConflict { .. }
+                | GateSignal::SemanticReadClosureIncomplete { .. }
                 | GateSignal::AnalysisFailed { .. }
                 | GateSignal::DeclaredPathUnsupported { .. }
                 | GateSignal::TransitionCatalogChanged
@@ -84,6 +85,7 @@ fn close_finalization(extra: Vec<GateSignal>, signals: &[GateSignal]) -> Observa
             signal,
             GateSignal::WriteConflict { .. }
                 | GateSignal::SemanticInputConflict { .. }
+                | GateSignal::SemanticReadClosureIncomplete { .. }
                 | GateSignal::AnalysisFailed { .. }
                 | GateSignal::DeclaredPathUnsupported { .. }
                 | GateSignal::ActiveTransitionPending { .. }

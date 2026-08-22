@@ -61,6 +61,7 @@ pub(super) fn pre_write_observation_can_seal(signals: &[GateSignal]) -> bool {
                 | GateSignal::DeclaredPathUnsupported { .. }
                 | GateSignal::WriteConflict { .. }
                 | GateSignal::SemanticInputConflict { .. }
+                | GateSignal::SemanticReadClosureIncomplete { .. }
                 | GateSignal::UnplannedWrite { .. }
                 | GateSignal::ActiveTransitionPending { .. }
                 | GateSignal::TransitionChainBroken { .. }
@@ -113,6 +114,9 @@ fn unsealed_observation_reason(signal: &GateSignal) -> Option<UnsealedObservatio
         GateSignal::SemanticInputConflict { .. } => {
             Some(UnsealedObservationReason::SemanticReadConflict)
         }
+        GateSignal::SemanticReadClosureIncomplete { .. } => {
+            Some(UnsealedObservationReason::SemanticReadClosureIncomplete)
+        }
         GateSignal::AnalysisFailed { .. } | GateSignal::AnalysisContractChanged => {
             Some(UnsealedObservationReason::AnalysisFailed)
         }
@@ -155,6 +159,9 @@ fn observation_signal_paths(signals: &[GateSignal]) -> Vec<RepoPathProjection> {
             | GateSignal::SemanticInputConflict {
                 paths: signal_paths,
                 ..
+            }
+            | GateSignal::SemanticReadClosureIncomplete {
+                paths: signal_paths,
             }
             | GateSignal::ProtectedInputChanged {
                 paths: signal_paths,
@@ -243,6 +250,7 @@ fn close_observation_is_unsealed(signals: &[GateSignal]) -> bool {
                 | GateSignal::DeclaredPathUnsupported { .. }
                 | GateSignal::WriteConflict { .. }
                 | GateSignal::SemanticInputConflict { .. }
+                | GateSignal::SemanticReadClosureIncomplete { .. }
                 | GateSignal::ActiveTransitionPending { .. }
                 | GateSignal::TransitionChainBroken { .. }
                 | GateSignal::TransitionCatalogChanged

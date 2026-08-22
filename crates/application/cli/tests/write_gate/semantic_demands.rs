@@ -321,7 +321,7 @@ fn failed_close_rechecks_a_semantic_conflict_at_the_final_barrier()
     let output = child.wait_with_output()?;
     assert_eq!(
         output.status.code(),
-        Some(5),
+        Some(4),
         "unexpected conflict-recheck result: stdout={} stderr={}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
@@ -329,7 +329,7 @@ fn failed_close_rechecks_a_semantic_conflict_at_the_final_barrier()
     let response: Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(
         response.get("decision").and_then(Value::as_str),
-        Some("stale")
+        Some("incomplete")
     );
     assert_eq!(
         response
@@ -342,7 +342,8 @@ fn failed_close_rechecks_a_semantic_conflict_at_the_final_barrier()
             .get("signals")
             .and_then(Value::as_array)
             .is_some_and(|signals| signals.iter().any(|signal| {
-                signal.get("kind").and_then(Value::as_str) == Some("transition-catalog-changed")
+                signal.get("kind").and_then(Value::as_str)
+                    == Some("semantic-read-closure-incomplete")
             }))
     );
     assert!(
@@ -352,6 +353,12 @@ fn failed_close_rechecks_a_semantic_conflict_at_the_final_barrier()
             .is_some_and(|signals| signals.iter().any(|signal| {
                 signal.get("kind").and_then(Value::as_str) == Some("semantic-input-conflict")
             }))
+    );
+    assert!(
+        response
+            .pointer("/observationBinding/reason")
+            .and_then(Value::as_str)
+            == Some("semantic-read-closure-incomplete")
     );
     assert!(
         response
@@ -421,7 +428,7 @@ fn failed_pre_write_rechecks_a_semantic_conflict_and_retains_prior_reservations(
     let output = child.wait_with_output()?;
     assert_eq!(
         output.status.code(),
-        Some(5),
+        Some(4),
         "unexpected pre-write conflict-recheck result: stdout={} stderr={}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
@@ -429,18 +436,24 @@ fn failed_pre_write_rechecks_a_semantic_conflict_and_retains_prior_reservations(
     let response: Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(
         response.get("decision").and_then(Value::as_str),
-        Some("stale")
+        Some("incomplete")
     );
     let signals = response
         .get("signals")
         .and_then(Value::as_array)
         .ok_or_else(|| std::io::Error::other("pre-write conflict signals are missing"))?;
     assert!(signals.iter().any(|signal| {
-        signal.get("kind").and_then(Value::as_str) == Some("transition-catalog-changed")
+        signal.get("kind").and_then(Value::as_str) == Some("semantic-read-closure-incomplete")
     }));
     assert!(!signals.iter().any(|signal| {
         signal.get("kind").and_then(Value::as_str) == Some("semantic-input-conflict")
     }));
+    assert_eq!(
+        response
+            .pointer("/observationBinding/reason")
+            .and_then(Value::as_str),
+        Some("semantic-read-closure-incomplete")
+    );
     let attempted = response
         .pointer("/observationBinding/attemptedDomain")
         .and_then(Value::as_array)

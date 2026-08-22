@@ -375,6 +375,7 @@ fn pre_write_observation_binds_promotion_and_interrupted_admission_leaves_no_act
     );
     final_promotion_reobserves_the_complete_write_domain()?;
     final_promotion_reenumerates_new_directory_source_aliases()?;
+    final_promotion_preserves_a_sealed_stale_observation_when_an_alias_seed_disappears()?;
     final_close_reobserves_the_complete_write_domain()?;
     Ok(())
 }
@@ -640,6 +641,118 @@ fn final_promotion_reenumerates_new_directory_source_aliases()
             .get("total")
             .and_then(Value::as_u64),
         Some(0)
+    );
+    Ok(())
+}
+
+fn final_promotion_preserves_a_sealed_stale_observation_when_an_alias_seed_disappears()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    fs::create_dir(root.path().join("src/feature"))?;
+    fs::write(
+        root.path().join("src/feature/aaa-retained.ts"),
+        "export const retained = 1;\n",
+    )?;
+    let captured = root.path().join("src/feature/captured.ts");
+    fs::write(&captured, "export const captured = 1;\n")?;
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+    listener.set_nonblocking(true)?;
+    let mut child = lumin_command(root.path())?
+        .args([
+            "pre-write",
+            "--operation-id",
+            "op-final-directory-disappearance",
+            "--path",
+            "src/feature",
+            "--jobs",
+            "1",
+        ])
+        .env(
+            "LUMIN_TEST_GATE_PREWRITE_FINAL_BARRIER",
+            listener.local_addr()?.to_string(),
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let started = Instant::now();
+    let (mut stream, peer) = loop {
+        match listener.accept() {
+            Ok(accepted) => break accepted,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if let Some(status) = child.try_wait()? {
+                    return Err(std::io::Error::other(format!(
+                        "pre-write exited before directory-disappearance barrier: {status}"
+                    ))
+                    .into());
+                }
+                if started.elapsed() >= Duration::from_secs(30) {
+                    return Err(std::io::Error::other(
+                        "pre-write did not reach the directory-disappearance barrier",
+                    )
+                    .into());
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    };
+    assert!(peer.ip().is_loopback());
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(30)))?;
+    let mut frame = String::new();
+    BufReader::new(stream.try_clone()?).read_line(&mut frame)?;
+    let fields = frame.split_whitespace().collect::<Vec<_>>();
+    assert_eq!(fields.first().copied(), Some("finalizing"));
+    assert_eq!(
+        fields.get(1).copied(),
+        Some("op-final-directory-disappearance")
+    );
+
+    fs::remove_file(&captured)?;
+    stream.write_all(b"release\n")?;
+    stream.flush()?;
+    drop(stream);
+
+    let output = child.wait_with_output()?;
+    assert_eq!(
+        output.status.code(),
+        Some(5),
+        "unexpected directory-disappearance result: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let response: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(
+        response.get("decision").and_then(Value::as_str),
+        Some("stale")
+    );
+    assert_eq!(
+        response
+            .pointer("/observationBinding/state")
+            .and_then(Value::as_str),
+        Some("sealed")
+    );
+    let signals = response
+        .get("signals")
+        .and_then(Value::as_array)
+        .ok_or("directory-disappearance result omitted its signals")?;
+    assert!(signals.iter().any(|signal| {
+        signal.get("kind").and_then(Value::as_str) == Some("protected-input-changed")
+            && signal
+                .get("paths")
+                .and_then(Value::as_array)
+                .is_some_and(|paths| {
+                    paths.iter().any(|path| {
+                        path.get("display").and_then(Value::as_str)
+                            == Some("src/feature/captured.ts")
+                    })
+                })
+    }));
+    assert!(
+        !signals.iter().any(|signal| {
+            signal.get("kind").and_then(Value::as_str) == Some("analysis-failed")
+        })
     );
     Ok(())
 }

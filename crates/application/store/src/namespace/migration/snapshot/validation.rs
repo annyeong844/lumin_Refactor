@@ -206,6 +206,10 @@ fn validate_gate_observations(
         None => {}
     }
 
+    let mut expected_protected_semantic_inputs =
+        gate.baseline.as_ref().map_or(&[][..], |baseline| {
+            baseline.protected_semantic_inputs.as_slice()
+        });
     for revision in &gate.revisions {
         let is_abandon = operations
             .get(revision.operation_id.as_str())
@@ -325,21 +329,73 @@ fn validate_gate_observations(
                     revision.revision
                 )));
             }
+            if revision.decision != lumin_evidence::GateDecision::Stale {
+                expected_protected_semantic_inputs = &revision.protected_semantic_inputs;
+            }
         }
     }
 
-    if gate.lifecycle == GateLifecycle::Closed
-        && !matches!(
-            gate.revisions
-                .last()
-                .and_then(|revision| revision.observation_binding.as_ref()),
+    if gate.lifecycle == GateLifecycle::Active
+        && gate
+            .protected_semantic_inputs
+            .iter()
+            .collect::<BTreeSet<_>>()
+            != expected_protected_semantic_inputs
+                .iter()
+                .collect::<BTreeSet<_>>()
+    {
+        return Err(StoreError::Integrity(format!(
+            "active gate {key} protected read set disagrees with its latest sealed observation"
+        )));
+    }
+    validate_gate_lifecycle(key, gate, opening, operations)
+}
+
+fn validate_gate_lifecycle(
+    key: &str,
+    gate: &GateRecord,
+    opening: &lumin_evidence::GateRevision,
+    operations: &BTreeMap<&str, OperationRecord>,
+) -> Result<(), StoreError> {
+    let tail = gate
+        .revisions
+        .last()
+        .ok_or_else(|| StoreError::Integrity(format!("gate {key} omitted its durable tail")))?;
+    let tail_kind = operations
+        .get(tail.operation_id.as_str())
+        .map(|operation| operation.kind);
+    let sealed_authorizing_close = tail.decision.authorizes()
+        && matches!(
+            tail.observation_binding.as_ref(),
             Some(ObservationBinding::Sealed {
                 observation: SealedGateObservation::Close { .. }
             })
-        )
-    {
+        );
+    let coherent = match gate.lifecycle {
+        GateLifecycle::Active => {
+            opening.decision.authorizes()
+                && (tail.revision == 0 || !tail.decision.authorizes())
+                && tail_kind != Some(GateOperationKind::GateAbandon)
+        }
+        GateLifecycle::Rejected => {
+            !opening.decision.authorizes()
+                && gate.revisions.len() == 1
+                && tail_kind == Some(GateOperationKind::PreWrite)
+        }
+        GateLifecycle::Closed => {
+            sealed_authorizing_close && tail_kind == Some(GateOperationKind::PostWrite)
+        }
+        GateLifecycle::Abandoned => {
+            tail_kind == Some(GateOperationKind::GateAbandon)
+                && gate.leased_write_set.is_empty()
+                && gate.alias_closures.is_empty()
+                && gate.protected_semantic_inputs.is_empty()
+                && gate.transition_refs.is_empty()
+        }
+    };
+    if !coherent {
         return Err(StoreError::Integrity(format!(
-            "closed gate {key} omitted its sealed close observation"
+            "gate {key} lifecycle disagrees with its authorizing revision tail"
         )));
     }
     Ok(())
@@ -412,7 +468,8 @@ fn validate_transition_gate_refs(
                     transition.sequence
                 ))
             })?;
-        let baseline_matches = gate.baseline.as_ref().is_some_and(|baseline| {
+        let baseline = gate.baseline.as_ref();
+        let baseline_matches = baseline.is_some_and(|baseline| {
             baseline.observation_id == transition.capsule.baseline_observation_id
         });
         let close_matches = matches!(
@@ -420,10 +477,18 @@ fn validate_transition_gate_refs(
             Some(ObservationBinding::Sealed {
                 observation: SealedGateObservation::Close { observation_id }
             }) if observation_id == &transition.capsule.close_observation_id
+                && revision.decision.authorizes()
+                && gate.lifecycle == GateLifecycle::Closed
+                && gate.current_revision == revision.revision
         );
-        if !baseline_matches || !close_matches {
+        let payload_matches = baseline.is_some_and(|baseline| {
+            revision.snapshot.as_ref() == Some(&transition.capsule.after_snapshot)
+                && revision.changed_paths == transition.capsule.changed_paths
+                && baseline.leased_write_set == transition.capsule.leased_write_set
+        });
+        if !baseline_matches || !close_matches || !payload_matches {
             return Err(StoreError::Integrity(format!(
-                "transition {} observation binding disagrees with its gate revision",
+                "transition {} payload or observation binding disagrees with its gate revision",
                 transition.sequence
             )));
         }

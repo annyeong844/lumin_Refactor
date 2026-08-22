@@ -5,8 +5,9 @@ use std::fs;
 use lumin_evidence::{
     ActualWriteSet, CapabilityRecord, DEAD_CODE_CAPABILITY_ID, GateAnalysisOptions,
     GateBaselineObservationInput, GateCloseObservationInput, GateObservationBinding, GateSignal,
-    RepoPathProjection, RunEvidence, WriteLease, WriteLeaseKind,
-    derive_gate_baseline_observation_id, derive_gate_close_observation_id, seal_analysis_snapshot,
+    RepoPathProjection, RunEvidence, SemanticInputRecord, SemanticInputState, WriteLease,
+    WriteLeaseKind, derive_gate_baseline_observation_id, derive_gate_close_observation_id,
+    seal_analysis_snapshot,
 };
 use lumin_model::{
     CapabilityState, GateId, ObservationBinding, OperationId, RepoPath, SealedGateObservation,
@@ -389,6 +390,15 @@ fn open_active_gate_for(
     operation: &str,
     source: &str,
 ) -> Result<GateId, Box<dyn std::error::Error>> {
+    open_active_gate_for_with_protected_inputs(store, operation, source, Vec::new())
+}
+
+fn open_active_gate_for_with_protected_inputs(
+    store: &RepositoryStore,
+    operation: &str,
+    source: &str,
+    protected_semantic_inputs: Vec<SemanticInputRecord>,
+) -> Result<GateId, Box<dyn std::error::Error>> {
     let operation_id = OperationId::from_string(operation.to_owned());
     let session = store.begin_operation(&operation_id)?;
     let source = path(source)?;
@@ -408,8 +418,13 @@ fn open_active_gate_for(
     };
     let baseline = GateBaselineDraft {
         analysis_contract: "migration-test-contract".to_owned(),
-        snapshot: seal_analysis_snapshot(Vec::new(), evidence(), Default::default(), Vec::new()),
-        protected_semantic_inputs: Vec::new(),
+        snapshot: seal_analysis_snapshot(
+            protected_semantic_inputs.clone(),
+            evidence(),
+            Default::default(),
+            Vec::new(),
+        ),
+        protected_semantic_inputs,
         transition_sequence,
     };
     let baseline_for_id = baseline.clone();
@@ -446,6 +461,90 @@ fn open_active_gate_for(
         },
     )?;
     Ok(gate_id)
+}
+
+fn semantic_input(value: &str) -> Result<SemanticInputRecord, Box<dyn std::error::Error>> {
+    Ok(SemanticInputRecord {
+        path: path(value)?,
+        state: SemanticInputState::ConfigPresent,
+        payload_sha256: Some(format!("payload-{value}")),
+        physical_identity: None,
+        absence_parent: None,
+        physical_redirect_sha256: None,
+    })
+}
+
+fn append_non_authorizing_close_for_migration(
+    store: &RepositoryStore,
+    gate_id: &GateId,
+    protected_semantic_inputs: Vec<SemanticInputRecord>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let operation_id = OperationId::from_string("op-migrate-incomplete-close".to_owned());
+    let session = store.begin_operation(&operation_id)?;
+    let gate = match session.begin_post_write("migrate-incomplete-close-digest", gate_id)? {
+        PostWriteStart::Analyze { gate, .. } => gate,
+        PostWriteStart::Committed(_) => return Err("migration close committed early".into()),
+    };
+    let baseline = gate
+        .baseline
+        .as_ref()
+        .ok_or("migration close omitted its baseline")?;
+    let snapshot = seal_analysis_snapshot(
+        protected_semantic_inputs.clone(),
+        evidence(),
+        Default::default(),
+        Vec::new(),
+    );
+    let actual_write_set = ActualWriteSet::default();
+    let opening_observation_id = baseline.observation_id.clone();
+    let opening_analysis_contract = baseline.analysis_contract.clone();
+    let prior_revision = gate.current_revision;
+    let leased_write_set = gate.leased_write_set.clone();
+    let alias_closures = gate.alias_closures.clone();
+    let analysis_input_id = snapshot.analysis_input_id.clone();
+    let actual_write_set_for_id = actual_write_set.clone();
+    let protected_for_id = protected_semantic_inputs.clone();
+    let aliases_for_id = alias_closures.clone();
+    session.finish_post_write(
+        "migrate-incomplete-close-digest",
+        gate_id,
+        PostWriteFinish {
+            snapshot: Some(snapshot),
+            protected_semantic_inputs,
+            reconciled_baseline: Some(baseline.snapshot.clone()),
+            changed_paths: Vec::new(),
+            actual_write_set: Some(actual_write_set),
+            alias_closures,
+            reconciled_transition_sequences: Vec::new(),
+            attempted_semantic_inputs: Vec::new(),
+            signals: vec![GateSignal::RequiredEvidenceIncomplete {
+                limitation_count: 1,
+            }],
+            deltas: Vec::new(),
+        },
+        |_, catalog_revision, _| ObservationFinalization {
+            signals: Vec::new(),
+            binding: ObservationBinding::Sealed {
+                observation: SealedGateObservation::Close {
+                    observation_id: derive_gate_close_observation_id(GateCloseObservationInput {
+                        gate_id,
+                        opening_observation_id: &opening_observation_id,
+                        opening_analysis_contract: &opening_analysis_contract,
+                        prior_revision,
+                        catalog_revision,
+                        analysis_input_id: &analysis_input_id,
+                        leased_write_set: &leased_write_set,
+                        protected_semantic_inputs: &protected_for_id,
+                        changed_paths: &[],
+                        actual_write_set: &actual_write_set_for_id,
+                        alias_closures: &aliases_for_id,
+                        reconciled_transition_sequences: &[],
+                    }),
+                },
+            },
+        },
+    )?;
+    Ok(())
 }
 
 fn close_active_gate_for_migration(

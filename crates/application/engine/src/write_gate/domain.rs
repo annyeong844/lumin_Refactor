@@ -266,6 +266,20 @@ fn observe_write_domain(
     let mut leases = Vec::new();
     let mut seeds = BTreeSet::new();
     let mut failures = Vec::new();
+    let mut drift_paths = Vec::new();
+    semantic_paths.retain(
+        |path| match lumin_inventory::inspect_write_target(root, path) {
+            Ok(observation) if observation.kind == WriteTargetKind::ExistingFile => true,
+            Ok(_) => {
+                drift_paths.push(RepoPathProjection::from(path));
+                false
+            }
+            Err(error) => {
+                failures.push(error.to_string());
+                false
+            }
+        },
+    );
 
     for expected in lease_paths {
         let path = match RepoPath::from_canonical_bytes(&expected.path.canonical) {
@@ -316,29 +330,64 @@ fn observe_write_domain(
                     .or_default()
                     .extend(closure.members);
             }
-            Err(error) => failures.push(error.to_string()),
+            Err(error) => classify_disappeared_domain_path(
+                root,
+                &seed,
+                error.to_string(),
+                &mut drift_paths,
+                &mut failures,
+            ),
         }
     }
     for member in groups.values().flatten() {
         match lumin_inventory::inspect_write_target(root, member) {
             Ok(observation) => leases.push(write_lease(&observation)),
-            Err(error) => failures.push(error.to_string()),
+            Err(error) => classify_disappeared_domain_path(
+                root,
+                member,
+                error.to_string(),
+                &mut drift_paths,
+                &mut failures,
+            ),
         }
     }
 
-    if !failures.is_empty() {
+    if !failures.is_empty() || !drift_paths.is_empty() {
+        let mut signals = Vec::new();
         failures.sort();
         failures.dedup();
-        return Err(failures
-            .into_iter()
-            .map(|detail| GateSignal::AnalysisFailed { detail })
-            .collect());
+        signals.extend(
+            failures
+                .into_iter()
+                .map(|detail| GateSignal::AnalysisFailed { detail }),
+        );
+        drift_paths.sort();
+        drift_paths.dedup();
+        if !drift_paths.is_empty() {
+            signals.push(GateSignal::ProtectedInputChanged { paths: drift_paths });
+        }
+        return Err(signals);
     }
 
     leases.sort();
     leases.dedup();
     let alias_closures = normalized_alias_closures(alias_closure_records(groups));
     Ok((leases, alias_closures))
+}
+
+fn classify_disappeared_domain_path(
+    root: &Path,
+    path: &RepoPath,
+    failure: String,
+    drift_paths: &mut Vec<RepoPathProjection>,
+    failures: &mut Vec<String>,
+) {
+    match lumin_inventory::inspect_write_target(root, path) {
+        Ok(observation) if observation.kind == WriteTargetKind::NewFile => {
+            drift_paths.push(RepoPathProjection::from(path));
+        }
+        _ => failures.push(failure),
+    }
 }
 
 pub(super) fn captured_input_physical_paths(
