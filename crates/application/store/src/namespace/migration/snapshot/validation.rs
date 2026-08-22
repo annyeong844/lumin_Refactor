@@ -8,13 +8,13 @@ use lumin_evidence::{
     AnalysisSnapshot, GATE_OPERATION_SCHEMA_VERSION, GATE_RECORD_SCHEMA_VERSION, GateBaseline,
     GateBaselineObservationInput, GateCloseObservationInput, GateDecision, GateLifecycle,
     GateOperationKind, GateOperationStatus, GateRecord, GateRevision, GateSignal, OperationRecord,
-    PhysicalAliasClosureRecord, RUN_EVIDENCE_SCHEMA_VERSION,
-    SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, WorktreeTransition, WriteLeaseKind,
-    apply_worktree_transition_for_domain, derive_gate_baseline_observation_id,
-    derive_gate_close_observation_id, derive_pre_write_final_validation_signals,
-    derive_protected_semantic_inputs, derive_unsealed_gate_observation_binding,
-    gate_abandon_request_digest, gate_policy, post_write_request_digest, pre_write_request_digest,
-    seal_analysis_snapshot,
+    PhysicalAliasClosureRecord, PreWriteAdmissionConflictOwner, PreWriteAdmissionEvidence,
+    RUN_EVIDENCE_SCHEMA_VERSION, SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, WorktreeTransition,
+    WriteLeaseKind, apply_worktree_transition_for_domain, derive_gate_baseline_observation_id,
+    derive_gate_close_observation_id, derive_pre_write_admission_signals,
+    derive_pre_write_final_validation_signals, derive_protected_semantic_inputs,
+    derive_unsealed_gate_observation_binding, gate_abandon_request_digest, gate_policy,
+    post_write_request_digest, pre_write_request_digest, seal_analysis_snapshot,
 };
 use lumin_model::{ObservationBinding, RepoPath, SealedGateObservation};
 use serde::de::DeserializeOwned;
@@ -41,6 +41,8 @@ pub(super) fn validate_referential_closure(
     let (transitions, transition_sequences) = read_transitions(snapshot)?;
     let operations = read_operations(snapshot)?;
     let gates = read_gates(snapshot, &operations, &transitions, &transition_sequences)?;
+    validate_pre_write_admissions(snapshot, &operations, &gates)?;
+    validate_active_gate_conflicts(&gates)?;
     validate_baseline_transition_boundaries(&transitions, &gates)?;
     validate_gate_id_sequence(snapshot, &gates, &operations)?;
     validate_transition_catalog_sequence(snapshot, &transition_sequences, &gates, &operations)?;
@@ -215,6 +217,380 @@ fn read_gates<'a>(
         gates.insert(key.as_str(), gate);
     }
     Ok(gates)
+}
+
+fn validate_pre_write_admissions(
+    snapshot: &LogicalStoreSnapshot,
+    operations: &BTreeMap<&str, OperationRecord>,
+    gates: &BTreeMap<&str, GateRecord>,
+) -> Result<(), StoreError> {
+    let observed_catalog_revision = snapshot
+        .sequences
+        .get(ACTIVE_GATE_CATALOG_SEQUENCE_KEY)
+        .copied()
+        .unwrap_or(0);
+    for operation in operations
+        .values()
+        .filter(|operation| operation.kind == GateOperationKind::PreWrite)
+    {
+        let Some(evidence) = operation.pre_write_admission_evidence.as_ref() else {
+            continue;
+        };
+        if evidence.catalog_revision > observed_catalog_revision
+            || !canonical_set(&evidence.attempted_leased_write_set)
+            || !canonical_set(&evidence.conflict_owners)
+            || evidence.conflict_owners.is_empty()
+        {
+            return Err(StoreError::Integrity(format!(
+                "pre-write operation {} has noncanonical admission evidence",
+                operation.operation_id.as_str()
+            )));
+        }
+        let derived_signals = derive_pre_write_admission_signals(evidence);
+        let result = operation.result.as_ref().ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "pre-write operation {} retained admission evidence without a committed result",
+                operation.operation_id.as_str()
+            ))
+        })?;
+        if operation.status != GateOperationStatus::Committed
+            || operation.pre_write_final_validation.is_some()
+            || result.signals != derived_signals
+        {
+            return Err(StoreError::Integrity(format!(
+                "pre-write operation {} admission evidence disagrees with its result",
+                operation.operation_id.as_str()
+            )));
+        }
+        let gate = gates.get(operation.gate_id.as_str()).ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "pre-write operation {} admission evidence lost its rejected gate",
+                operation.operation_id.as_str()
+            ))
+        })?;
+        let opening = gate.revisions.first().ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "pre-write operation {} admission evidence lost its opening revision",
+                operation.operation_id.as_str()
+            ))
+        })?;
+        if opening.catalog_revision != Some(evidence.catalog_revision)
+            || opening.signals != derived_signals
+        {
+            return Err(StoreError::Integrity(format!(
+                "pre-write operation {} admission evidence disagrees with its rejected opening",
+                operation.operation_id.as_str()
+            )));
+        }
+        let attempted_inputs = opening
+            .unsealed_observation_inputs
+            .as_ref()
+            .ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "pre-write operation {} admission rejection omitted its attempted domain",
+                    operation.operation_id.as_str()
+                ))
+            })?;
+        let attempted_paths = evidence
+            .attempted_leased_write_set
+            .iter()
+            .map(|lease| lease.path.clone())
+            .collect::<Vec<_>>();
+        let mut unique_attempted_paths = attempted_paths.clone();
+        unique_attempted_paths.sort();
+        unique_attempted_paths.dedup();
+        if evidence.attempted_leased_write_set != attempted_inputs.attempted_write_leases
+            || unique_attempted_paths.len() != attempted_paths.len()
+            || attempted_paths
+                .iter()
+                .any(|path| !operation.declared_write_set.contains(path))
+        {
+            return Err(StoreError::Integrity(format!(
+                "pre-write operation {} admission evidence changed its attempted write domain",
+                operation.operation_id.as_str()
+            )));
+        }
+        for owner in &evidence.conflict_owners {
+            validate_pre_write_admission_owner(
+                operation,
+                evidence.catalog_revision,
+                owner,
+                operations,
+                gates,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_pre_write_admission_owner(
+    operation: &OperationRecord,
+    admission_catalog_revision: u64,
+    owner: &PreWriteAdmissionConflictOwner,
+    operations: &BTreeMap<&str, OperationRecord>,
+    gates: &BTreeMap<&str, GateRecord>,
+) -> Result<(), StoreError> {
+    if owner.gate_id() == &operation.gate_id {
+        return Err(StoreError::Integrity(format!(
+            "pre-write operation {} cites itself as an admission conflict owner",
+            operation.operation_id.as_str()
+        )));
+    }
+    match owner {
+        PreWriteAdmissionConflictOwner::ActiveGate {
+            gate_id,
+            revision,
+            leased_write_set,
+            protected_semantic_inputs,
+        } => {
+            if !canonical_set(leased_write_set) || !canonical_set(protected_semantic_inputs) {
+                return Err(StoreError::Integrity(format!(
+                    "pre-write operation {} has a noncanonical active-gate conflict witness",
+                    operation.operation_id.as_str()
+                )));
+            }
+            let gate = gates.get(gate_id.as_str()).ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "pre-write operation {} cites a missing active-gate conflict owner",
+                    operation.operation_id.as_str()
+                ))
+            })?;
+            if !gate_was_active_at_revision(gate, *revision, operations)? {
+                return Err(StoreError::Integrity(format!(
+                    "pre-write operation {} cites a gate that was not active at the witnessed revision",
+                    operation.operation_id.as_str()
+                )));
+            }
+            let owner_revision = gate
+                .revisions
+                .iter()
+                .find(|observed| observed.revision == *revision)
+                .ok_or_else(|| {
+                    StoreError::Integrity(format!(
+                        "pre-write operation {} active-gate conflict witness lost its revision",
+                        operation.operation_id.as_str()
+                    ))
+                })?;
+            if owner_revision
+                .catalog_revision
+                .is_none_or(|observed| observed > admission_catalog_revision)
+            {
+                return Err(StoreError::Integrity(format!(
+                    "pre-write operation {} cites an active-gate state newer than its admission catalog",
+                    operation.operation_id.as_str()
+                )));
+            }
+            let baseline = gate.baseline.as_ref().ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "pre-write operation {} active-gate conflict owner omitted its baseline",
+                    operation.operation_id.as_str()
+                ))
+            })?;
+            let expected_protected =
+                protected_semantic_inputs_at_revision(gate, *revision, operations)?;
+            if leased_write_set != &baseline.leased_write_set
+                || protected_semantic_inputs != &expected_protected
+            {
+                return Err(StoreError::Integrity(format!(
+                    "pre-write operation {} active-gate conflict witness disagrees with durable history",
+                    operation.operation_id.as_str()
+                )));
+            }
+        }
+        PreWriteAdmissionConflictOwner::PendingOperation {
+            operation_id,
+            gate_id,
+            leased_write_set,
+            semantic_read_reservation_bindings,
+        } => {
+            if operation_id == &operation.operation_id
+                || !canonical_set(leased_write_set)
+                || !canonical_set(semantic_read_reservation_bindings)
+            {
+                return Err(StoreError::Integrity(format!(
+                    "pre-write operation {} has a noncanonical pending-operation conflict witness",
+                    operation.operation_id.as_str()
+                )));
+            }
+            let owner_operation = operations.get(operation_id.as_str()).ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "pre-write operation {} cites a missing pending-operation conflict owner",
+                    operation.operation_id.as_str()
+                ))
+            })?;
+            if &owner_operation.gate_id != gate_id {
+                return Err(StoreError::Integrity(format!(
+                    "pre-write operation {} pending-operation conflict witness changed gate ownership",
+                    operation.operation_id.as_str()
+                )));
+            }
+            match owner_operation.kind {
+                GateOperationKind::PreWrite => validate_admission_witness_write_domain(
+                    operation,
+                    owner_operation,
+                    leased_write_set,
+                )?,
+                GateOperationKind::PostWrite if leased_write_set.is_empty() => {}
+                GateOperationKind::PostWrite => {
+                    return Err(StoreError::Integrity(format!(
+                        "pre-write operation {} cites write leases for a post-write conflict owner",
+                        operation.operation_id.as_str()
+                    )));
+                }
+                GateOperationKind::GateAbandon => {
+                    return Err(StoreError::Integrity(format!(
+                        "pre-write operation {} cites an administrative operation as an admission conflict owner",
+                        operation.operation_id.as_str()
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_admission_witness_write_domain(
+    operation: &OperationRecord,
+    owner_operation: &OperationRecord,
+    leased_write_set: &[lumin_evidence::WriteLease],
+) -> Result<(), StoreError> {
+    let mut witnessed_paths = leased_write_set
+        .iter()
+        .map(|lease| lease.path.clone())
+        .collect::<Vec<_>>();
+    witnessed_paths.sort();
+    witnessed_paths.dedup();
+    if witnessed_paths.len() != leased_write_set.len()
+        || witnessed_paths
+            .iter()
+            .any(|path| !owner_operation.declared_write_set.contains(path))
+    {
+        return Err(StoreError::Integrity(format!(
+            "pre-write operation {} cites an interrupted owner's incoherent write domain",
+            operation.operation_id.as_str()
+        )));
+    }
+    Ok(())
+}
+
+fn gate_was_active_at_revision(
+    gate: &GateRecord,
+    revision: u64,
+    operations: &BTreeMap<&str, OperationRecord>,
+) -> Result<bool, StoreError> {
+    if revision > gate.current_revision
+        || !gate
+            .revisions
+            .iter()
+            .any(|observed| observed.revision == revision)
+        || !gate
+            .revisions
+            .first()
+            .is_some_and(|opening| opening.decision.authorizes())
+    {
+        return Ok(false);
+    }
+    for observed in gate
+        .revisions
+        .iter()
+        .filter(|observed| observed.revision <= revision)
+    {
+        let kind = operations
+            .get(observed.operation_id.as_str())
+            .map(|operation| operation.kind)
+            .ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "gate {} admission history references a missing operation",
+                    gate.gate_id.as_str()
+                ))
+            })?;
+        if kind == GateOperationKind::GateAbandon
+            || (kind == GateOperationKind::PostWrite && observed.decision.authorizes())
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn protected_semantic_inputs_at_revision(
+    gate: &GateRecord,
+    revision: u64,
+    operations: &BTreeMap<&str, OperationRecord>,
+) -> Result<Vec<lumin_evidence::SemanticInputRecord>, StoreError> {
+    let mut protected = gate.baseline.as_ref().map_or_else(Vec::new, |baseline| {
+        baseline.protected_semantic_inputs.clone()
+    });
+    for observed in gate
+        .revisions
+        .iter()
+        .filter(|observed| observed.revision > 0 && observed.revision <= revision)
+    {
+        let kind = operations
+            .get(observed.operation_id.as_str())
+            .map(|operation| operation.kind)
+            .ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "gate {} protected-read history references a missing operation",
+                    gate.gate_id.as_str()
+                ))
+            })?;
+        if kind == GateOperationKind::PostWrite
+            && observed.decision != GateDecision::Stale
+            && matches!(
+                observed.observation_binding.as_ref(),
+                Some(ObservationBinding::Sealed {
+                    observation: SealedGateObservation::Close { .. }
+                })
+            )
+        {
+            protected = observed.protected_semantic_inputs.clone();
+        }
+    }
+    Ok(protected)
+}
+
+fn validate_active_gate_conflicts(gates: &BTreeMap<&str, GateRecord>) -> Result<(), StoreError> {
+    let active = gates
+        .values()
+        .filter(|gate| gate.lifecycle == GateLifecycle::Active)
+        .collect::<Vec<_>>();
+    for (index, left) in active.iter().enumerate() {
+        for right in active.iter().skip(index + 1) {
+            let write_conflict = left.leased_write_set.iter().any(|left_lease| {
+                right
+                    .leased_write_set
+                    .iter()
+                    .any(|right_lease| left_lease.conflicts_with(right_lease))
+            });
+            let left_writes_right_reads = left.leased_write_set.iter().any(|lease| {
+                right.protected_semantic_inputs.iter().any(|input| {
+                    lease.conflicts_with_semantic_read(
+                        &input.path,
+                        input.physical_identity.as_ref(),
+                        input.absence_parent.as_ref(),
+                    )
+                })
+            });
+            let right_writes_left_reads = right.leased_write_set.iter().any(|lease| {
+                left.protected_semantic_inputs.iter().any(|input| {
+                    lease.conflicts_with_semantic_read(
+                        &input.path,
+                        input.physical_identity.as_ref(),
+                        input.absence_parent.as_ref(),
+                    )
+                })
+            });
+            if write_conflict || left_writes_right_reads || right_writes_left_reads {
+                return Err(StoreError::Integrity(format!(
+                    "active gates {} and {} retain conflicting write/read domains",
+                    left.gate_id.as_str(),
+                    right.gate_id.as_str()
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_transition_catalog_sequence(
@@ -520,7 +896,11 @@ fn validate_gate_observations(
                 "gate {key} opening revision disagrees with its operation-owned final validation"
             )));
         }
-        None if gate.baseline.is_none() && is_admission_conflict_rejection(opening) => {}
+        None if gate.baseline.is_none()
+            && opening_operation
+                .pre_write_admission_evidence
+                .as_ref()
+                .is_some_and(|evidence| is_admission_conflict_rejection(opening, evidence)) => {}
         None => {
             return Err(StoreError::Integrity(format!(
                 "gate {key} opening operation omitted its final validation record"
@@ -1159,12 +1539,13 @@ fn validate_lease_prefixes(
     Ok(())
 }
 
-fn is_admission_conflict_rejection(opening: &GateRevision) -> bool {
-    opening.signals.len() == 1
-        && matches!(
-            opening.signals.first(),
-            Some(GateSignal::WriteConflict { .. })
-        )
+fn is_admission_conflict_rejection(
+    opening: &GateRevision,
+    evidence: &PreWriteAdmissionEvidence,
+) -> bool {
+    !evidence.conflict_owners.is_empty()
+        && opening.catalog_revision == Some(evidence.catalog_revision)
+        && opening.signals == derive_pre_write_admission_signals(evidence)
         && matches!(
             opening.observation_binding.as_ref(),
             Some(ObservationBinding::Unsealed { .. })
@@ -1773,10 +2154,11 @@ fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreErr
         )));
     }
     if operation.kind != GateOperationKind::PreWrite
-        && operation.pre_write_final_validation.is_some()
+        && (operation.pre_write_admission_evidence.is_some()
+            || operation.pre_write_final_validation.is_some())
     {
         return Err(StoreError::Integrity(format!(
-            "non-pre-write operation {} retained a pre-write final validation record",
+            "non-pre-write operation {} retained pre-write evidence",
             operation.operation_id.as_str()
         )));
     }
@@ -1817,14 +2199,20 @@ fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreErr
             }
             if operation.kind == GateOperationKind::PreWrite {
                 match operation.pre_write_final_validation.as_ref() {
-                    Some(final_validation) if final_validation.signals == result.signals => {}
+                    Some(final_validation)
+                        if operation.pre_write_admission_evidence.is_none()
+                            && final_validation.signals == result.signals => {}
                     Some(_) => {
                         return Err(StoreError::Integrity(format!(
                             "pre-write operation {} result disagrees with its final validation record",
                             operation.operation_id.as_str()
                         )));
                     }
-                    None if is_admission_conflict_result(result) => {}
+                    None if operation
+                        .pre_write_admission_evidence
+                        .as_ref()
+                        .is_some_and(|evidence| is_admission_conflict_result(result, evidence)) => {
+                    }
                     None => {
                         return Err(StoreError::Integrity(format!(
                             "committed pre-write operation {} omitted its final validation record",
@@ -1850,14 +2238,14 @@ fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreErr
     }
 }
 
-fn is_admission_conflict_result(result: &lumin_evidence::GateOperationResult) -> bool {
+fn is_admission_conflict_result(
+    result: &lumin_evidence::GateOperationResult,
+    evidence: &PreWriteAdmissionEvidence,
+) -> bool {
     result.lifecycle == GateLifecycle::Rejected
         && !result.decision.authorizes()
-        && result.signals.len() == 1
-        && matches!(
-            result.signals.first(),
-            Some(GateSignal::WriteConflict { .. })
-        )
+        && !evidence.conflict_owners.is_empty()
+        && result.signals == derive_pre_write_admission_signals(evidence)
         && matches!(
             result.observation_binding.as_ref(),
             Some(ObservationBinding::Unsealed { .. })
@@ -1867,9 +2255,11 @@ fn is_admission_conflict_result(result: &lumin_evidence::GateOperationResult) ->
 fn reject_unfinished_pre_write_final_validation(
     operation: &OperationRecord,
 ) -> Result<(), StoreError> {
-    if operation.pre_write_final_validation.is_some() {
+    if operation.pre_write_admission_evidence.is_some()
+        || operation.pre_write_final_validation.is_some()
+    {
         return Err(StoreError::Integrity(format!(
-            "unfinished operation {} retained a final validation record",
+            "unfinished operation {} retained completed pre-write evidence",
             operation.operation_id.as_str()
         )));
     }
@@ -1931,11 +2321,20 @@ fn validate_scan_invocation_patterns(
     owner: &str,
     invocation: &lumin_evidence::ScanInvocationTier,
 ) -> Result<(), StoreError> {
-    invocation.validate_patterns().map_err(|error| {
-        StoreError::Integrity(format!(
-            "{owner} has an invalid persisted scan invocation: {error}"
-        ))
-    })
+    invocation
+        .validate_patterns()
+        .map_err(|error| {
+            StoreError::Integrity(format!(
+                "{owner} has an invalid persisted scan invocation: {error}"
+            ))
+        })
+        .and_then(|()| {
+            invocation.validate_canonical_shape().map_err(|error| {
+                StoreError::Integrity(format!(
+                    "{owner} has a noncanonical persisted scan invocation: {error}"
+                ))
+            })
+        })
 }
 
 fn validate_pending_pre_write_write_domain(operation: &OperationRecord) -> Result<(), StoreError> {
@@ -2122,4 +2521,99 @@ fn parse_record<T: DeserializeOwned>(
     serde_json::from_slice(bytes).map_err(|error| {
         StoreError::Integrity(format!("{table} record {key} is malformed: {error}"))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lumin_evidence::{
+        GateAnalysisOptions, SemanticInputRecord, SemanticInputState, WriteLease,
+    };
+    use lumin_model::{GateId, PhysicalFileIdentity};
+
+    fn active_gate(
+        id: &str,
+        lease_path: &str,
+        lease_identity: PhysicalFileIdentity,
+        protected_semantic_inputs: Vec<SemanticInputRecord>,
+    ) -> Result<GateRecord, Box<dyn std::error::Error>> {
+        let path = RepoPath::from_portable(lease_path)?;
+        let projection = lumin_evidence::RepoPathProjection::from(&path);
+        Ok(GateRecord {
+            schema_version: GATE_RECORD_SCHEMA_VERSION.to_owned(),
+            gate_id: GateId::from_string(id.to_owned()),
+            lifecycle: GateLifecycle::Active,
+            current_revision: 0,
+            declared_write_set: vec![projection.clone()],
+            leased_write_set: vec![WriteLease {
+                path: projection,
+                kind: WriteLeaseKind::ExistingFile,
+                physical_identity: Some(lease_identity),
+                nearest_existing_parent: None,
+                prefix_identities: Vec::new(),
+            }],
+            alias_closures: Vec::new(),
+            transition_refs: Vec::new(),
+            analysis_options: GateAnalysisOptions {
+                jobs: 1,
+                resolution_profile: None,
+                scan_invocation: Default::default(),
+            },
+            baseline: None,
+            protected_semantic_inputs,
+            revisions: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn active_gate_catalog_rejects_pairwise_write_and_read_conflicts()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let shared_identity = PhysicalFileIdentity::Unix {
+            device: 17,
+            inode: 29,
+        };
+        let first = active_gate(
+            "gate-first",
+            "src/first.ts",
+            shared_identity.clone(),
+            Vec::new(),
+        )?;
+        let second = active_gate(
+            "gate-second",
+            "src/second.ts",
+            shared_identity.clone(),
+            Vec::new(),
+        )?;
+        let write_conflict = BTreeMap::from([("gate-first", first), ("gate-second", second)]);
+        assert!(matches!(
+            validate_active_gate_conflicts(&write_conflict),
+            Err(StoreError::Integrity(message)) if message.contains("conflicting write/read domains")
+        ));
+
+        let protected_path = RepoPath::from_portable("config/tsconfig.json")?;
+        let protected = SemanticInputRecord {
+            path: lumin_evidence::RepoPathProjection::from(&protected_path),
+            state: SemanticInputState::ConfigPresent,
+            payload_sha256: Some("payload".to_owned()),
+            physical_identity: Some(shared_identity.clone()),
+            absence_parent: None,
+            physical_redirect_sha256: None,
+        };
+        let writer = active_gate("gate-writer", "src/writer.ts", shared_identity, Vec::new())?;
+        let reader = active_gate(
+            "gate-reader",
+            "src/reader.ts",
+            PhysicalFileIdentity::Unix {
+                device: 17,
+                inode: 31,
+            },
+            vec![protected],
+        )?;
+        let read_conflict = BTreeMap::from([("gate-reader", reader), ("gate-writer", writer)]);
+        assert!(matches!(
+            validate_active_gate_conflicts(&read_conflict),
+            Err(StoreError::Integrity(message)) if message.contains("conflicting write/read domains")
+        ));
+        Ok(())
+    }
 }

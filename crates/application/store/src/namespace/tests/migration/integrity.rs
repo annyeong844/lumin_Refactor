@@ -3439,7 +3439,12 @@ fn migration_rejects_multiple_semantic_inputs_for_one_canonical_path()
 #[test]
 fn migration_reconstructs_pending_pre_write_request_state() -> Result<(), Box<dyn std::error::Error>>
 {
-    for corruption in ["leases", "analysis-options", "scan-pattern"] {
+    for corruption in [
+        "leases",
+        "analysis-options",
+        "scan-pattern",
+        "scan-tier-order",
+    ] {
         let root = tempfile::tempdir()?;
         let store = open_store(root.path())?;
         let operation_id = OperationId::from_string(format!("op-pending-{corruption}"));
@@ -3504,6 +3509,21 @@ fn migration_reconstructs_pending_pre_write_request_state() -> Result<(), Box<dy
                             .ok_or("pending pre-write operation omitted its options")?,
                     );
                 }
+                "scan-tier-order" => {
+                    operation
+                        .analysis_options
+                        .as_mut()
+                        .ok_or("pending pre-write operation omitted its options")?
+                        .scan_invocation
+                        .entries = vec![path("src/z-entry.ts")?, path("src/a-entry.ts")?];
+                    operation.request_digest = pre_write_digest(
+                        &operation.declared_write_set,
+                        operation
+                            .analysis_options
+                            .as_ref()
+                            .ok_or("pending pre-write operation omitted its options")?,
+                    );
+                }
                 _ => unreachable!(),
             }
             let changed = serde_json::to_vec(&operation)?;
@@ -3517,6 +3537,7 @@ fn migration_reconstructs_pending_pre_write_request_state() -> Result<(), Box<dy
             "leases" => "provisional write domain",
             "analysis-options" => "inconsistent resolution profiles",
             "scan-pattern" => "invalid persisted scan invocation",
+            "scan-tier-order" => "noncanonical persisted scan invocation",
             _ => unreachable!(),
         };
         assert!(matches!(
@@ -3609,6 +3630,79 @@ fn migration_validates_active_gate_scan_invocations() -> Result<(), Box<dyn std:
         ),
         "unexpected migration result: {migration:?}"
     );
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_an_admission_rejection_without_its_operation_owned_evidence()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    open_active_gate_for(
+        &store,
+        "op-admission-owner-evidence",
+        "src/admission-owner-evidence.ts",
+    )?;
+    let operation_id = OperationId::from_string("op-admission-missing-evidence".to_owned());
+    let source = path("src/admission-owner-evidence.ts")?;
+    let source_lease = WriteLease {
+        path: source.clone(),
+        kind: WriteLeaseKind::ExistingFile,
+        physical_identity: None,
+        nearest_existing_parent: None,
+        prefix_identities: Vec::new(),
+    };
+    let analysis_options = options();
+    let request_digest = pre_write_digest(std::slice::from_ref(&source), &analysis_options);
+    let attempted =
+        UnsealedGateObservationInputs::new(vec![source_lease.clone()], Vec::new(), Vec::new());
+    let source_for_binding = source.clone();
+    let session = store.begin_operation(&operation_id)?;
+    assert!(matches!(
+        session.reserve_pre_write(
+            &request_digest,
+            std::slice::from_ref(&source),
+            std::slice::from_ref(&source_lease),
+            &analysis_options,
+            |signals| derive_unsealed_gate_observation_binding(
+                std::slice::from_ref(&source_for_binding),
+                &attempted,
+                signals,
+            ),
+        )?,
+        PreWriteStart::Committed(_)
+    ));
+    assert!(
+        store
+            .load_operation(&operation_id)?
+            .pre_write_admission_evidence
+            .is_some()
+    );
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get(operation_id.as_str())?
+            .ok_or("admission operation is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        operation.pre_write_admission_evidence = None;
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert(operation_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("omitted its final validation record")
+    ));
     Ok(())
 }
 

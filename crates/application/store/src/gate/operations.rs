@@ -38,6 +38,7 @@ impl OperationSession<'_> {
                 operation.leased_write_set = initial_leases.to_vec();
                 operation.semantic_read_reservations.clear();
                 operation.semantic_read_reservation_bindings.clear();
+                operation.pre_write_admission_evidence = None;
                 operation.analysis_options = Some(analysis_options.clone());
                 self.bind_pending_operation(&mut operation)?;
                 operation
@@ -58,6 +59,7 @@ impl OperationSession<'_> {
                     semantic_read_reservation_bindings: Vec::new(),
                     interruption_count: 0,
                     operation_liveness: None,
+                    pre_write_admission_evidence: None,
                     pre_write_final_validation: None,
                     analysis_options: Some(analysis_options.clone()),
                     result: None,
@@ -69,10 +71,16 @@ impl OperationSession<'_> {
             let gate_id = operation.gate_id.clone();
             let transition_sequence = operation.transition_sequence;
             let catalog_revision = current_active_gate_catalog(&write)?;
-            let (paths, gate_ids) = conflicts(&write, operation_id, initial_leases, &[], None)?;
+            let admission_evidence = pre_write_admission_evidence(
+                &write,
+                operation_id,
+                &operation.leased_write_set,
+                catalog_revision,
+            )?;
+            let signals = derive_pre_write_admission_signals(&admission_evidence);
 
-            if !paths.is_empty() {
-                let signals = vec![GateSignal::WriteConflict { paths, gate_ids }];
+            if !signals.is_empty() {
+                operation.pre_write_admission_evidence = Some(admission_evidence);
                 let observation_binding = rejected_observation(&signals);
                 if !matches!(
                     &observation_binding,
@@ -327,6 +335,7 @@ impl OperationSession<'_> {
                 semantic_read_reservation_bindings: Vec::new(),
                 interruption_count: 0,
                 operation_liveness: None,
+                pre_write_admission_evidence: None,
                 pre_write_final_validation: None,
                 analysis_options: None,
                 result: None,

@@ -207,6 +207,7 @@ fn persisted_v2_optional_gate_additions_default_when_absent()
         semantic_read_reservation_bindings: Vec::new(),
         interruption_count: 0,
         operation_liveness: None,
+        pre_write_admission_evidence: None,
         pre_write_final_validation: None,
         analysis_options: None,
         result: None,
@@ -228,6 +229,7 @@ fn persisted_v2_optional_gate_additions_default_when_absent()
     );
     assert_eq!(loaded_operation.interruption_count, 0);
     assert!(loaded_operation.operation_liveness.is_none());
+    assert!(loaded_operation.pre_write_admission_evidence.is_none());
     assert!(loaded_operation.reason.is_none());
     Ok(())
 }
@@ -314,6 +316,7 @@ fn persisted_reservation_rejects_conflicting_physical_identities()
         ],
         interruption_count: 0,
         operation_liveness: None,
+        pre_write_admission_evidence: None,
         pre_write_final_validation: None,
         analysis_options: None,
         result: None,
@@ -361,6 +364,7 @@ fn persisted_reservation_rejects_direct_and_absence_identities_together()
         semantic_read_reservation_bindings: vec![binding],
         interruption_count: 0,
         operation_liveness: None,
+        pre_write_admission_evidence: None,
         pre_write_final_validation: None,
         analysis_options: None,
         result: None,

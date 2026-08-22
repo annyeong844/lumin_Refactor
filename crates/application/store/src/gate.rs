@@ -4,7 +4,8 @@ use lumin_evidence::{
     GateOperationKind, GateOperationResult, GateOperationStatus, GateRecord, GateRevision,
     GateSignal, OperationRecord, PhysicalAliasClosureRecord, PreWriteFinalValidationEvidence,
     RepoPathProjection, SemanticInputRecord, SemanticReadReservationBinding, TransitionCapsule,
-    UnsealedGateObservationInputs, WorktreeTransition, WriteLease, gate_policy,
+    UnsealedGateObservationInputs, WorktreeTransition, WriteLease,
+    derive_pre_write_admission_signals, gate_policy,
 };
 use lumin_model::{GateBaselineObservationId, GateDeltaRecord, GateId, OperationId};
 use redb::{ReadableTable, TableDefinition, WriteTransaction};
@@ -21,7 +22,7 @@ mod tests;
 
 use coordination::{
     active_write_conflicts, attach_transition_references, conflicts, post_write_analysis_context,
-    semantic_read_conflicts, transition_sequences_for_gate,
+    pre_write_admission_evidence, semantic_read_conflicts, transition_sequences_for_gate,
 };
 pub use liveness::OperationSession;
 pub(crate) use liveness::validate_migration_operation_liveness;

@@ -70,6 +70,7 @@ fn load_or_create_abandon_operation(
             semantic_read_reservation_bindings: Vec::new(),
             interruption_count: 0,
             operation_liveness: None,
+            pre_write_admission_evidence: None,
             pre_write_final_validation: None,
             analysis_options: None,
             result: None,

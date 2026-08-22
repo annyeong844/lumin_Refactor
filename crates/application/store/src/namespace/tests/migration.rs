@@ -99,6 +99,13 @@ fn migration_preserves_an_admission_conflict_without_final_validation()
         rejected.signals.as_slice(),
         [GateSignal::WriteConflict { .. }]
     ));
+    let persisted = store.load_operation(&operation_id)?;
+    let admission = persisted
+        .pre_write_admission_evidence
+        .as_ref()
+        .ok_or("admission rejection omitted its operation-owned evidence")?;
+    assert!(!admission.conflict_owners.is_empty());
+    assert!(persisted.pre_write_final_validation.is_none());
     drop(store);
 
     let store = open_store(root.path())?;

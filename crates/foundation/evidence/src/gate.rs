@@ -4,7 +4,7 @@ use lumin_model::{
     AnalysisInputId, DeltaDimensionChange, DeltaFactFamily, DynamicImportTargetScope,
     GateBaselineObservationId, GateCloseObservationId, GateDeltaClassification, GateDeltaRecord,
     GateId, ImportMetaGlobTargetScope, Limitation, ObservationBinding, OperationId,
-    PhysicalFileIdentity, ResolutionOutcome, ResolutionProfile, ResolutionProfileSource,
+    PhysicalFileIdentity, RepoPath, ResolutionOutcome, ResolutionProfile, ResolutionProfileSource,
     SelectedResolutionProfile, UnsealedObservationReason, append_length_prefixed,
     classify_lifecycle_deltas, digest_hex,
 };
@@ -150,6 +150,36 @@ impl ScanInvocationTier {
             .chain(self.role_overrides.iter().map(|rule| &rule.pattern))
         {
             lumin_model::validate_scan_pattern(pattern)?;
+        }
+        Ok(())
+    }
+
+    pub fn validate_canonical_shape(&self) -> Result<(), String> {
+        for projection in self
+            .entries
+            .iter()
+            .chain(self.dependency_intents.iter().map(|intent| &intent.path))
+        {
+            let path = RepoPath::from_canonical_bytes(&projection.canonical)
+                .map_err(|error| error.to_string())?;
+            if RepoPathProjection::from(&path) != *projection {
+                return Err(format!(
+                    "path projection is not canonical: {}",
+                    projection.display
+                ));
+            }
+        }
+        let mut entries = self.entries.clone();
+        entries.sort();
+        entries.dedup();
+        if entries != self.entries {
+            return Err("entry projections are not sorted and unique".to_owned());
+        }
+        let mut dependency_intents = self.dependency_intents.clone();
+        dependency_intents.sort();
+        dependency_intents.dedup();
+        if dependency_intents != self.dependency_intents {
+            return Err("dependency intents are not sorted and unique".to_owned());
         }
         Ok(())
     }
@@ -1195,6 +1225,123 @@ pub struct GateOperationResult {
     pub deltas: Vec<GateDeltaRecord>,
 }
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum PreWriteAdmissionConflictOwner {
+    PendingOperation {
+        operation_id: OperationId,
+        gate_id: GateId,
+        leased_write_set: Vec<WriteLease>,
+        semantic_read_reservation_bindings: Vec<SemanticReadReservationBinding>,
+    },
+    ActiveGate {
+        gate_id: GateId,
+        revision: u64,
+        leased_write_set: Vec<WriteLease>,
+        protected_semantic_inputs: Vec<SemanticInputRecord>,
+    },
+}
+
+impl PreWriteAdmissionConflictOwner {
+    pub fn gate_id(&self) -> &GateId {
+        match self {
+            Self::PendingOperation { gate_id, .. } | Self::ActiveGate { gate_id, .. } => gate_id,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreWriteAdmissionEvidence {
+    pub catalog_revision: u64,
+    pub attempted_leased_write_set: Vec<WriteLease>,
+    pub conflict_owners: Vec<PreWriteAdmissionConflictOwner>,
+}
+
+pub fn derive_pre_write_admission_signals(evidence: &PreWriteAdmissionEvidence) -> Vec<GateSignal> {
+    let mut paths = Vec::new();
+    let mut gate_ids = Vec::new();
+    for owner in &evidence.conflict_owners {
+        match owner {
+            PreWriteAdmissionConflictOwner::PendingOperation {
+                gate_id,
+                leased_write_set,
+                semantic_read_reservation_bindings,
+                ..
+            } => {
+                collect_admission_write_conflicts(
+                    &evidence.attempted_leased_write_set,
+                    leased_write_set,
+                    &[],
+                    gate_id,
+                    &mut paths,
+                    &mut gate_ids,
+                );
+                for reservation in semantic_read_reservation_bindings {
+                    if evidence.attempted_leased_write_set.iter().any(|lease| {
+                        lease.conflicts_with_semantic_read(
+                            &reservation.path,
+                            reservation.physical_identity.as_ref(),
+                            reservation.absence_parent.as_ref(),
+                        )
+                    }) {
+                        paths.push(reservation.path.clone());
+                        gate_ids.push(gate_id.clone());
+                    }
+                }
+            }
+            PreWriteAdmissionConflictOwner::ActiveGate {
+                gate_id,
+                leased_write_set,
+                protected_semantic_inputs,
+                ..
+            } => collect_admission_write_conflicts(
+                &evidence.attempted_leased_write_set,
+                leased_write_set,
+                protected_semantic_inputs,
+                gate_id,
+                &mut paths,
+                &mut gate_ids,
+            ),
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    gate_ids.sort();
+    gate_ids.dedup();
+    if paths.is_empty() {
+        Vec::new()
+    } else {
+        vec![GateSignal::WriteConflict { paths, gate_ids }]
+    }
+}
+
+fn collect_admission_write_conflicts(
+    candidate_leases: &[WriteLease],
+    existing_leases: &[WriteLease],
+    existing_inputs: &[SemanticInputRecord],
+    existing_gate_id: &GateId,
+    paths: &mut Vec<RepoPathProjection>,
+    gate_ids: &mut Vec<GateId>,
+) {
+    for lease in candidate_leases {
+        if existing_leases
+            .iter()
+            .any(|existing| lease.conflicts_with(existing))
+            || existing_inputs.iter().any(|input| {
+                lease.conflicts_with_semantic_read(
+                    &input.path,
+                    input.physical_identity.as_ref(),
+                    input.absence_parent.as_ref(),
+                )
+            })
+        {
+            paths.push(lease.path.clone());
+            gate_ids.push(existing_gate_id.clone());
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreWriteFinalValidationEvidence {
@@ -1343,6 +1490,8 @@ pub struct OperationRecord {
     pub interruption_count: u64,
     #[serde(default)]
     pub operation_liveness: Option<OperationLivenessLease>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pre_write_admission_evidence: Option<PreWriteAdmissionEvidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pre_write_final_validation: Option<PreWriteFinalValidation>,
     pub analysis_options: Option<GateAnalysisOptions>,
@@ -1987,6 +2136,72 @@ mod tests {
             signals.reverse();
             assert_eq!(gate_policy::decision(&signals), expected);
         }
+    }
+
+    #[test]
+    fn scan_invocation_requires_canonical_sorted_path_tiers()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let first = path("src/a.ts")?;
+        let second = path("src/b.ts")?;
+        let mut invocation = ScanInvocationTier {
+            entries: vec![second.clone(), first.clone()],
+            ..Default::default()
+        };
+        assert!(invocation.validate_canonical_shape().is_err());
+
+        invocation.entries = vec![first.clone(), first];
+        assert!(invocation.validate_canonical_shape().is_err());
+
+        invocation.entries = vec![second];
+        invocation.entries[0].display = "forged.ts".to_owned();
+        assert!(invocation.validate_canonical_shape().is_err());
+
+        invocation.entries.clear();
+        invocation.dependency_intents = vec![
+            DependencyIntentRecord {
+                path: path("package/z.json")?,
+                dependency: "z".to_owned(),
+            },
+            DependencyIntentRecord {
+                path: path("package/a.json")?,
+                dependency: "a".to_owned(),
+            },
+        ];
+        assert!(invocation.validate_canonical_shape().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn admission_conflict_is_derived_from_owner_domains() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let conflict_path = path("src/conflict.ts")?;
+        let lease = WriteLease {
+            path: conflict_path.clone(),
+            kind: WriteLeaseKind::ExistingFile,
+            physical_identity: None,
+            nearest_existing_parent: None,
+            prefix_identities: Vec::new(),
+        };
+        let owner_gate = GateId::from_string("gate_owner".to_owned());
+        let evidence = PreWriteAdmissionEvidence {
+            catalog_revision: 7,
+            attempted_leased_write_set: vec![lease.clone()],
+            conflict_owners: vec![PreWriteAdmissionConflictOwner::ActiveGate {
+                gate_id: owner_gate.clone(),
+                revision: 2,
+                leased_write_set: vec![lease],
+                protected_semantic_inputs: Vec::new(),
+            }],
+        };
+
+        assert_eq!(
+            derive_pre_write_admission_signals(&evidence),
+            vec![GateSignal::WriteConflict {
+                paths: vec![conflict_path],
+                gate_ids: vec![owner_gate],
+            }],
+        );
+        Ok(())
     }
 
     #[test]

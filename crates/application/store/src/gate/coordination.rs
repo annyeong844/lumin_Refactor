@@ -1,7 +1,8 @@
 use lumin_evidence::{
     GateLifecycle, GateOperationKind, GateOperationStatus, GateRecord, OperationRecord,
-    RepoPathProjection, SemanticInputRecord, SemanticReadReservationBinding, WorktreeTransition,
-    WriteLease,
+    PreWriteAdmissionConflictOwner, PreWriteAdmissionEvidence, RepoPathProjection,
+    SemanticInputRecord, SemanticReadReservationBinding, WorktreeTransition, WriteLease,
+    derive_pre_write_admission_signals,
 };
 use lumin_model::{GateId, OperationId};
 use redb::WriteTransaction;
@@ -12,6 +13,72 @@ use super::records::{read_record, read_records, transition_key, write_record};
 use super::{
     ActiveGateLease, ConflictSet, GATES, OPERATIONS, TRANSITIONS, validate_reservation_binding_set,
 };
+
+pub(super) fn pre_write_admission_evidence(
+    write: &WriteTransaction,
+    own_operation_id: &OperationId,
+    attempted_leased_write_set: &[WriteLease],
+    catalog_revision: u64,
+) -> Result<PreWriteAdmissionEvidence, StoreError> {
+    let mut conflict_owners = Vec::new();
+    for operation in read_records::<OperationRecord>(write, OPERATIONS)? {
+        if operation.operation_id == *own_operation_id
+            || operation.status != GateOperationStatus::Pending
+        {
+            continue;
+        }
+        validate_reservation_binding_set(&operation)?;
+        let owner = PreWriteAdmissionConflictOwner::PendingOperation {
+            operation_id: operation.operation_id,
+            gate_id: operation.gate_id,
+            leased_write_set: if operation.kind == GateOperationKind::PreWrite {
+                operation.leased_write_set
+            } else {
+                Vec::new()
+            },
+            semantic_read_reservation_bindings: operation.semantic_read_reservation_bindings,
+        };
+        if admission_owner_conflicts(attempted_leased_write_set, &owner) {
+            conflict_owners.push(owner);
+        }
+    }
+    for gate in read_records::<GateRecord>(write, GATES)? {
+        if gate.lifecycle != GateLifecycle::Active {
+            continue;
+        }
+        let owner = PreWriteAdmissionConflictOwner::ActiveGate {
+            gate_id: gate.gate_id,
+            revision: gate.current_revision,
+            leased_write_set: gate.leased_write_set,
+            protected_semantic_inputs: gate.protected_semantic_inputs,
+        };
+        if admission_owner_conflicts(attempted_leased_write_set, &owner) {
+            conflict_owners.push(owner);
+        }
+    }
+    conflict_owners.sort();
+    conflict_owners.dedup();
+    let mut attempted_leased_write_set = attempted_leased_write_set.to_vec();
+    attempted_leased_write_set.sort();
+    attempted_leased_write_set.dedup();
+    Ok(PreWriteAdmissionEvidence {
+        catalog_revision,
+        attempted_leased_write_set,
+        conflict_owners,
+    })
+}
+
+fn admission_owner_conflicts(
+    attempted_leased_write_set: &[WriteLease],
+    owner: &PreWriteAdmissionConflictOwner,
+) -> bool {
+    !derive_pre_write_admission_signals(&PreWriteAdmissionEvidence {
+        catalog_revision: 0,
+        attempted_leased_write_set: attempted_leased_write_set.to_vec(),
+        conflict_owners: vec![owner.clone()],
+    })
+    .is_empty()
+}
 
 pub(super) fn conflicts(
     write: &WriteTransaction,
