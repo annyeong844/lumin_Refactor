@@ -491,6 +491,7 @@ fn stale_pre_write_capture_retains_and_rechecks_its_semantic_bindings()
         "op-stale-capture-open",
         "LUMIN_TEST_GATE_PREWRITE_FINAL_BARRIER",
         "finalizing",
+        CaptureBarrierAction::MakeStale,
     )?;
     assert_stale_capture_binding(&response)?;
     assert_operation_retains_binding(root.path(), "op-stale-capture-open", &response)?;
@@ -517,10 +518,75 @@ fn stale_post_write_capture_retains_and_rechecks_its_semantic_bindings()
         "op-stale-capture-close",
         "LUMIN_TEST_GATE_POSTWRITE_FINAL_BARRIER",
         "close-finalizing",
+        CaptureBarrierAction::MakeStale,
     )?;
     assert_stale_capture_binding(&response)?;
     assert_operation_retains_binding(root.path(), "op-stale-capture-close", &response)?;
     Ok(())
+}
+
+#[test]
+fn failed_pre_write_capture_retains_and_rechecks_its_semantic_bindings()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = semantic_read_closure_fixture()?;
+    fs::write(
+        root.path().join("src/tsconfig.json"),
+        "{\"extends\":\"../config/base.json\"}\n",
+    )?;
+    let response = run_stale_capture_binding_case(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-failed-capture-open",
+            "--path",
+            "src/new.ts",
+            "--jobs",
+            "1",
+        ],
+        "op-failed-capture-open",
+        "LUMIN_TEST_GATE_PREWRITE_FINAL_BARRIER",
+        "finalizing",
+        CaptureBarrierAction::FailAnalysis,
+    )?;
+    assert_stale_capture_binding(&response)?;
+    assert_capture_failed(&response)?;
+    assert_operation_retains_binding(root.path(), "op-failed-capture-open", &response)?;
+    Ok(())
+}
+
+#[test]
+fn failed_post_write_capture_retains_and_rechecks_its_semantic_bindings()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = semantic_read_closure_fixture()?;
+    fs::write(
+        root.path().join("src/tsconfig.json"),
+        "{\"extends\":\"../config/base.json\"}\n",
+    )?;
+    let gate_id = open_gate(root.path(), "op-failed-capture-baseline", "src/a.ts")?;
+    let response = run_stale_capture_binding_case(
+        root.path(),
+        &[
+            "post-write",
+            &gate_id,
+            "--operation-id",
+            "op-failed-capture-close",
+        ],
+        "op-failed-capture-close",
+        "LUMIN_TEST_GATE_POSTWRITE_FINAL_BARRIER",
+        "close-finalizing",
+        CaptureBarrierAction::FailAnalysis,
+    )?;
+    assert_stale_capture_binding(&response)?;
+    assert_capture_failed(&response)?;
+    assert_operation_retains_binding(root.path(), "op-failed-capture-close", &response)?;
+    Ok(())
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum CaptureBarrierAction {
+    MakeStale,
+    FailAnalysis,
 }
 
 fn run_stale_capture_binding_case(
@@ -529,6 +595,7 @@ fn run_stale_capture_binding_case(
     operation_id: &str,
     final_barrier_environment: &str,
     final_stage: &str,
+    capture_action: CaptureBarrierAction,
 ) -> Result<Value, Box<dyn std::error::Error>> {
     let capture_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
     capture_listener.set_nonblocking(true)?;
@@ -557,11 +624,20 @@ fn run_stale_capture_binding_case(
         .get(2)
         .ok_or_else(|| std::io::Error::other("capture barrier omitted the gate ID"))?
         .to_string();
-    fs::write(
-        root.join("config/base.json"),
-        "{\"extends\":\"../shared/root\",\"compilerOptions\":{\"strict\":true}}\n",
-    )?;
-    release_gate_barrier(&mut capture_stream)?;
+    match capture_action {
+        CaptureBarrierAction::MakeStale => {
+            fs::write(
+                root.join("config/base.json"),
+                "{\"extends\":\"../shared/root\",\"compilerOptions\":{\"strict\":true}}\n",
+            )?;
+            release_gate_barrier(&mut capture_stream)?;
+        }
+        CaptureBarrierAction::FailAnalysis => {
+            capture_stream.write_all(b"fail-analysis\n")?;
+            capture_stream.flush()?;
+        }
+    }
+    drop(capture_stream);
 
     let (mut final_stream, final_frame) =
         wait_for_gate_barrier(&final_listener, &mut child, "final validation")?;
@@ -569,6 +645,15 @@ fn run_stale_capture_binding_case(
         final_frame.trim_end(),
         format!("{final_stage} {operation_id} {gate_id}")
     );
+    if capture_action == CaptureBarrierAction::FailAnalysis {
+        let replacement = root.join("config/base.replacement.json");
+        fs::write(
+            &replacement,
+            "{\"extends\":\"../shared/root\",\"compilerOptions\":{\"strict\":true}}\n",
+        )?;
+        fs::remove_file(root.join("config/base.json"))?;
+        fs::rename(replacement, root.join("config/base.json"))?;
+    }
     let replacement = root.join("shared/root.replacement.json");
     fs::write(&replacement, "{\"compilerOptions\":{\"strict\":true}}\n")?;
     fs::remove_file(root.join("shared/root.json"))?;
@@ -670,6 +755,19 @@ fn assert_stale_capture_binding(response: &Value) -> Result<(), Box<dyn std::err
     assert!(!signals.iter().any(|signal| {
         signal.get("kind").and_then(Value::as_str) == Some("transition-catalog-changed")
     }));
+    Ok(())
+}
+
+fn assert_capture_failed(response: &Value) -> Result<(), Box<dyn std::error::Error>> {
+    let signals = response
+        .get("signals")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("failed capture omitted its signals"))?;
+    assert!(
+        signals.iter().any(|signal| {
+            signal.get("kind").and_then(Value::as_str) == Some("analysis-failed")
+        })
+    );
     Ok(())
 }
 

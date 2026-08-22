@@ -374,7 +374,11 @@ fn wait_at_gate_test_barrier(
         .map_err(|error| {
             lumin_store::StoreError::Io(format!("gate {stage} test barrier failed: {error}"))
         })?;
-    if release.trim_end() != "release" {
+    let release = release.trim_end();
+    if release == "fail-analysis" {
+        return Err(EngineError::ExtractionUnavailable);
+    }
+    if release != "release" {
         return Err(lumin_store::StoreError::Integrity(format!(
             "gate {stage} test barrier returned an invalid release frame"
         ))
@@ -492,10 +496,16 @@ fn analyze_pre_write(
         Ok(ReservedCapture::Committed(result)) => {
             return Ok(PreWriteAnalysis::Committed(result));
         }
-        Err(EngineError::Store(error)) => return Err(EngineError::Store(error)),
-        Err(error) => {
-            return Ok(PreWriteAnalysis::Finished(Box::new(
-                PreWritePromotion::without_validation(PreWriteFinish {
+        Err(ReservedCaptureFailure {
+            error: EngineError::Store(error),
+            ..
+        }) => return Err(EngineError::Store(error)),
+        Err(ReservedCaptureFailure {
+            error,
+            attempted_semantic_bindings,
+        }) => {
+            return Ok(PreWriteAnalysis::Finished(Box::new(PreWritePromotion {
+                finish: PreWriteFinish {
                     baseline: None,
                     leased_write_set: inspection.leases,
                     alias_closures: Vec::new(),
@@ -503,8 +513,10 @@ fn analyze_pre_write(
                     signals: vec![GateSignal::AnalysisFailed {
                         detail: error.to_string(),
                     }],
-                }),
-            )));
+                },
+                final_validation: None,
+                attempted_semantic_bindings,
+            })));
         }
     };
     let (capture, reserved_semantic_bindings) = capture;
@@ -659,8 +671,14 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
             );
         }
         Ok(ReservedCapture::Committed(result)) => return Ok(*result),
-        Err(EngineError::Store(error)) => return Err(EngineError::Store(error)),
-        Err(error) => {
+        Err(ReservedCaptureFailure {
+            error: EngineError::Store(error),
+            ..
+        }) => return Err(EngineError::Store(error)),
+        Err(ReservedCaptureFailure {
+            error,
+            attempted_semantic_bindings,
+        }) => {
             return finish_failed_close(
                 &operation,
                 request,
@@ -669,7 +687,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                 vec![GateSignal::AnalysisFailed {
                     detail: error.to_string(),
                 }],
-                Vec::new(),
+                attempted_semantic_bindings,
             );
         }
     };
@@ -923,6 +941,11 @@ enum ReservedCapture {
     Committed(Box<GateOperationResult>),
 }
 
+struct ReservedCaptureFailure {
+    error: EngineError,
+    attempted_semantic_bindings: Vec<(RepoPath, SemanticReadReservationBinding)>,
+}
+
 fn capture_reserved_repository(
     root: &Path,
     repository_root: &RepositoryRootIdentity,
@@ -933,84 +956,93 @@ fn capture_reserved_repository(
         &[SemanticReadReservationBinding],
     ) -> Result<SemanticReadReservation, EngineError>,
     mut before_freshness: impl FnMut() -> Result<(), EngineError>,
-) -> Result<ReservedCapture, EngineError> {
+) -> Result<ReservedCapture, ReservedCaptureFailure> {
     let mut reserved_semantic_bindings = Vec::new();
-    let dependency_candidates =
-        lumin_inventory::dependency_owner_candidate_paths(&inventory_request.dependency_intents)?;
-    if let Some(outcome) = reserve_semantic_paths(
-        root,
-        &dependency_candidates,
-        &mut reserved_semantic_bindings,
-        &mut reserve,
-    )? {
-        return Ok(outcome);
-    }
-    let dependency_candidate_binding_count = reserved_semantic_bindings.len();
+    let result = (|| -> Result<ReservedCapture, EngineError> {
+        let dependency_candidates = lumin_inventory::dependency_owner_candidate_paths(
+            &inventory_request.dependency_intents,
+        )?;
+        if let Some(outcome) = reserve_semantic_paths(
+            root,
+            &dependency_candidates,
+            &mut reserved_semantic_bindings,
+            &mut reserve,
+        )? {
+            return Ok(outcome);
+        }
+        let dependency_candidate_binding_count = reserved_semantic_bindings.len();
 
-    let pending_inventory = lumin_inventory::begin_scan_with_reserved_state_lookup(
-        root,
-        inventory_request,
-        reserved_state_lookup,
-    )?;
-    if let Some(outcome) = reserve_semantic_paths(
-        root,
-        pending_inventory.dependency_input_paths(),
-        &mut reserved_semantic_bindings,
-        &mut reserve,
-    )? {
-        return Ok(outcome);
-    }
-    let inventory = pending_inventory.finish(root)?;
-    let mut session = RepositoryAnalysisSession::start_with_inventory(
-        repository_root.clone(),
-        inventory,
-        options.jobs,
-        options.scan_invocation.clone(),
-        reserved_state_lookup.clone(),
-    )?;
-    loop {
-        match session.next_step(options.resolution_profile)? {
-            RepositoryAnalysisStep::NeedsInputs(demands) => {
-                let paths = demands
-                    .iter()
-                    .map(|demand| demand.path.clone())
-                    .collect::<Vec<_>>();
-                if let Some(outcome) = reserve_semantic_paths(
-                    root,
-                    &paths,
-                    &mut reserved_semantic_bindings,
-                    &mut reserve,
-                )? {
-                    return Ok(outcome);
+        let pending_inventory = lumin_inventory::begin_scan_with_reserved_state_lookup(
+            root,
+            inventory_request,
+            reserved_state_lookup,
+        )?;
+        if let Some(outcome) = reserve_semantic_paths(
+            root,
+            pending_inventory.dependency_input_paths(),
+            &mut reserved_semantic_bindings,
+            &mut reserve,
+        )? {
+            return Ok(outcome);
+        }
+        let inventory = pending_inventory.finish(root)?;
+        let mut session = RepositoryAnalysisSession::start_with_inventory(
+            repository_root.clone(),
+            inventory,
+            options.jobs,
+            options.scan_invocation.clone(),
+            reserved_state_lookup.clone(),
+        )?;
+        loop {
+            match session.next_step(options.resolution_profile)? {
+                RepositoryAnalysisStep::NeedsInputs(demands) => {
+                    let paths = demands
+                        .iter()
+                        .map(|demand| demand.path.clone())
+                        .collect::<Vec<_>>();
+                    if let Some(outcome) = reserve_semantic_paths(
+                        root,
+                        &paths,
+                        &mut reserved_semantic_bindings,
+                        &mut reserve,
+                    )? {
+                        return Ok(outcome);
+                    }
+                    session.capture_demands(root, demands)?;
                 }
-                session.capture_demands(root, demands)?;
-            }
-            RepositoryAnalysisStep::Finished(resolver) => {
-                let mut capture = session.finish(resolver)?;
-                include_dependency_candidate_topology_inputs(
-                    &mut capture,
-                    &reserved_semantic_bindings[..dependency_candidate_binding_count],
-                );
-                before_freshness()?;
-                let stale = stale_reserved_semantic_paths(
-                    root,
-                    &reserved_semantic_bindings,
-                    &capture.snapshot.inputs,
-                    reserved_state_lookup,
-                )?;
-                if !stale.is_empty() {
-                    return Ok(ReservedCapture::Blocked {
-                        signal: GateSignal::ProtectedInputChanged { paths: stale },
-                        attempted_semantic_bindings: reserved_semantic_bindings,
+                RepositoryAnalysisStep::Finished(resolver) => {
+                    let mut capture = session.finish(resolver)?;
+                    include_dependency_candidate_topology_inputs(
+                        &mut capture,
+                        &reserved_semantic_bindings[..dependency_candidate_binding_count],
+                    );
+                    before_freshness()?;
+                    let stale = stale_reserved_semantic_paths(
+                        root,
+                        &reserved_semantic_bindings,
+                        &capture.snapshot.inputs,
+                        reserved_state_lookup,
+                    )?;
+                    if !stale.is_empty() {
+                        return Ok(ReservedCapture::Blocked {
+                            signal: GateSignal::ProtectedInputChanged { paths: stale },
+                            attempted_semantic_bindings: std::mem::take(
+                                &mut reserved_semantic_bindings,
+                            ),
+                        });
+                    }
+                    return Ok(ReservedCapture::Finished {
+                        capture: Box::new(capture),
+                        reserved_semantic_bindings: std::mem::take(&mut reserved_semantic_bindings),
                     });
                 }
-                return Ok(ReservedCapture::Finished {
-                    capture: Box::new(capture),
-                    reserved_semantic_bindings,
-                });
             }
         }
-    }
+    })();
+    result.map_err(|error| ReservedCaptureFailure {
+        error,
+        attempted_semantic_bindings: reserved_semantic_bindings,
+    })
 }
 
 fn reserve_semantic_paths(
