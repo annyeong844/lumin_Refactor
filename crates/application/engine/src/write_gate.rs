@@ -2,9 +2,10 @@ use std::path::{Path, PathBuf};
 
 use lumin_evidence::{
     DependencyIntentRecord, GateAnalysisOptions, GateOperationResult, GateRecord, GateSignal,
-    OperationRecord, PathPrefixIdentity, RepoPathProjection, ScanInvocationTier,
-    SemanticInputRecord, SemanticInputState, SemanticReadReservationBinding, gate_policy,
-    post_write_request_digest, pre_write_request_digest, seal_analysis_snapshot,
+    OperationRecord, PathPrefixIdentity, PreWriteFinalValidationEvidence, RepoPathProjection,
+    ScanInvocationTier, SemanticInputRecord, SemanticInputState, SemanticReadReservationBinding,
+    derive_pre_write_final_validation_signals, gate_policy, post_write_request_digest,
+    pre_write_request_digest, seal_analysis_snapshot,
 };
 use lumin_inventory::{InventoryRequest, SemanticInputExpectation, SemanticInputValidationState};
 use lumin_model::{
@@ -28,7 +29,7 @@ mod transitions;
 
 use domain::{
     DeclaredPathInspection, captured_input_physical_paths, close_alias_topology,
-    expand_write_domain, inspect_declared_paths, protected_semantic_inputs,
+    expand_write_domain, inspect_declared_paths, observe_write_domain, protected_semantic_inputs,
     revalidate_write_domain,
 };
 use observation::{
@@ -223,6 +224,7 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
             &gate_id,
             finish,
             |reserved_identities, catalog_revision, store_signals| {
+                let mut final_validation_evidence = None;
                 let mut final_signals = if pre_write_observation_can_seal(store_signals) {
                     final_validation.as_ref().map_or_else(
                         || {
@@ -233,23 +235,14 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
                             )
                         },
                         |validation| {
-                            let mut signals = final_freshness_validation_signals(
+                            let (signals, evidence) = pre_write_final_validation(
                                 &context.root,
                                 validation,
                                 reserved_identities,
+                                &observation_seed.leased_write_set,
+                                &observation_seed.alias_closures,
                             );
-                            if observation_seed.baseline.is_some() {
-                                extend_unique_gate_signals(
-                                    &mut signals,
-                                    revalidate_current_write_domain(
-                                        &context.root,
-                                        validation,
-                                        reserved_identities,
-                                        &observation_seed.leased_write_set,
-                                        &observation_seed.alias_closures,
-                                    ),
-                                );
-                            }
+                            final_validation_evidence = evidence;
                             signals
                         },
                     )
@@ -270,6 +263,7 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
                         catalog_revision,
                         &all_signals,
                     ),
+                    pre_write_evidence: final_validation_evidence,
                 }
             },
         )
@@ -813,6 +807,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                         catalog_revision,
                         &all_signals,
                     ),
+                    pre_write_evidence: None,
                 }
             },
         )
@@ -930,6 +925,7 @@ fn finish_failed_close(
                         catalog_revision,
                         &all_signals,
                     ),
+                    pre_write_evidence: None,
                 }
             },
         )
@@ -1208,6 +1204,151 @@ fn final_freshness_validation_signals(
         Err(error) => vec![GateSignal::AnalysisFailed {
             detail: error.to_string(),
         }],
+    }
+}
+
+fn pre_write_final_validation(
+    root: &Path,
+    validation: &FinalFreshnessValidation,
+    reserved_identities: &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
+    expected_leases: &[lumin_evidence::WriteLease],
+    expected_alias_closures: &[lumin_evidence::PhysicalAliasClosureRecord],
+) -> (Vec<GateSignal>, Option<PreWriteFinalValidationEvidence>) {
+    let final_lookup = validation
+        .reserved_state_lookup
+        .for_final_validation(reserved_identities);
+    let semantic_validation_drift = stale_reserved_semantic_paths(
+        root,
+        &validation.bindings,
+        &validation.captured_inputs,
+        &final_lookup,
+    )
+    .and_then(|mut paths| {
+        paths.extend(stale_complete_semantic_input_paths(
+            root,
+            &validation.bindings,
+            &validation.captured_inputs,
+            &final_lookup,
+            reserved_identities,
+        )?);
+        paths.sort();
+        paths.dedup();
+        Ok(paths)
+    });
+    let semantic_validation_drift = match semantic_validation_drift {
+        Ok(paths) => paths,
+        Err(error) => {
+            return (
+                vec![GateSignal::AnalysisFailed {
+                    detail: error.to_string(),
+                }],
+                None,
+            );
+        }
+    };
+
+    let current_inventory = lumin_inventory::begin_scan_with_reserved_state_identities(
+        root,
+        &validation.inventory_request,
+        reserved_identities,
+    )
+    .and_then(|pending| pending.finish(root));
+    match current_inventory {
+        Ok(inventory) => {
+            let mut observed_semantic_inputs = crate::semantic_input_records(&inventory);
+            let mut expected_semantic_read_bindings = validation
+                .bindings
+                .iter()
+                .map(|(_, binding)| binding.clone())
+                .collect::<Vec<_>>();
+            expected_semantic_read_bindings.sort();
+            expected_semantic_read_bindings.dedup();
+            let mut observed_semantic_read_bindings = Vec::new();
+            for (path, _) in &validation.bindings {
+                match semantic_read_reservation(root, path) {
+                    Ok(binding) => observed_semantic_read_bindings.push(binding),
+                    Err(error) => {
+                        return (
+                            vec![GateSignal::AnalysisFailed {
+                                detail: error.to_string(),
+                            }],
+                            None,
+                        );
+                    }
+                }
+            }
+            observed_semantic_read_bindings.sort();
+            observed_semantic_read_bindings.dedup();
+
+            let topology_only_sha256 = digest_hex(DEPENDENCY_CANDIDATE_TOPOLOGY_ONLY);
+            for input in &validation.captured_inputs {
+                let topology_only = matches!(
+                    input.state,
+                    SemanticInputState::Missing | SemanticInputState::Unreadable
+                ) && input.payload_sha256.as_deref()
+                    == Some(topology_only_sha256.as_str());
+                if topology_only
+                    && !observed_semantic_inputs
+                        .iter()
+                        .any(|observed| observed.path == input.path)
+                    && expected_semantic_read_bindings
+                        .iter()
+                        .find(|binding| binding.path == input.path)
+                        == observed_semantic_read_bindings
+                            .iter()
+                            .find(|binding| binding.path == input.path)
+                {
+                    observed_semantic_inputs.push(input.clone());
+                }
+            }
+            observed_semantic_inputs.sort();
+            observed_semantic_inputs.dedup();
+
+            let mut source_paths = inventory
+                .sources
+                .into_iter()
+                .map(|source| source.path)
+                .collect::<Vec<_>>();
+            let captured_paths = match captured_input_physical_paths(&validation.captured_inputs) {
+                Ok(paths) => paths,
+                Err(signal) => return (vec![signal], None),
+            };
+            source_paths.extend(captured_paths);
+            source_paths.sort();
+            source_paths.dedup();
+            let write_domain = observe_write_domain(root, expected_leases, &source_paths);
+            if !write_domain.failures.is_empty() {
+                let signals = write_domain
+                    .failures
+                    .into_iter()
+                    .map(|detail| GateSignal::AnalysisFailed { detail })
+                    .collect();
+                return (signals, None);
+            }
+
+            let evidence = PreWriteFinalValidationEvidence {
+                expected_semantic_read_bindings,
+                observed_semantic_read_bindings,
+                observed_semantic_inputs,
+                observed_leased_write_set: write_domain.leases,
+                observed_alias_closures: write_domain.alias_closures,
+                write_domain_drift_paths: write_domain.drift_paths,
+                semantic_input_validation_drift_paths: semantic_validation_drift,
+            };
+            let signals = derive_pre_write_final_validation_signals(
+                &validation.captured_inputs,
+                expected_leases,
+                expected_alias_closures,
+                &evidence,
+            );
+            (signals, Some(evidence))
+        }
+        Err(error) => (
+            vec![GateSignal::AnalysisFailed {
+                detail: error.to_string(),
+            }],
+            None,
+        ),
     }
 }
 

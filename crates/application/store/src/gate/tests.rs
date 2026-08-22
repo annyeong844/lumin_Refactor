@@ -77,6 +77,7 @@ fn baseline_finalization(
         } else {
             sealed_baseline_binding()
         },
+        pre_write_evidence: None,
     }
 }
 
@@ -101,6 +102,7 @@ fn close_finalization(extra: Vec<GateSignal>, signals: &[GateSignal]) -> Observa
         } else {
             sealed_close_binding()
         },
+        pre_write_evidence: None,
     }
 }
 
@@ -743,6 +745,7 @@ fn unsealed_pre_write_releases_leases_but_retains_its_attempted_domain()
                 &inputs,
                 signals,
             ),
+            pre_write_evidence: None,
         },
     )?;
 

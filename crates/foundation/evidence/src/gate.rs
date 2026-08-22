@@ -1197,9 +1197,110 @@ pub struct GateOperationResult {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PreWriteFinalValidationEvidence {
+    pub expected_semantic_read_bindings: Vec<SemanticReadReservationBinding>,
+    pub observed_semantic_read_bindings: Vec<SemanticReadReservationBinding>,
+    pub observed_semantic_inputs: Vec<SemanticInputRecord>,
+    pub observed_leased_write_set: Vec<WriteLease>,
+    pub observed_alias_closures: Vec<PhysicalAliasClosureRecord>,
+    #[serde(default)]
+    pub write_domain_drift_paths: Vec<RepoPathProjection>,
+    #[serde(default)]
+    pub semantic_input_validation_drift_paths: Vec<RepoPathProjection>,
+}
+
+pub fn derive_pre_write_final_validation_signals(
+    expected_semantic_inputs: &[SemanticInputRecord],
+    expected_leased_write_set: &[WriteLease],
+    expected_alias_closures: &[PhysicalAliasClosureRecord],
+    evidence: &PreWriteFinalValidationEvidence,
+) -> Vec<GateSignal> {
+    let expected_inputs = expected_semantic_inputs
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let observed_inputs = evidence
+        .observed_semantic_inputs
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut changed_paths = expected_inputs
+        .symmetric_difference(&observed_inputs)
+        .map(|input| input.path.clone())
+        .collect::<BTreeSet<_>>();
+
+    let expected_bindings = evidence
+        .expected_semantic_read_bindings
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let observed_bindings = evidence
+        .observed_semantic_read_bindings
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    changed_paths.extend(
+        expected_bindings
+            .symmetric_difference(&observed_bindings)
+            .map(|binding| binding.path.clone()),
+    );
+
+    let expected_leases = expected_leased_write_set
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let observed_leases = evidence
+        .observed_leased_write_set
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let expected_aliases = expected_alias_closures
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let observed_aliases = evidence
+        .observed_alias_closures
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if expected_leases != observed_leases || expected_aliases != observed_aliases {
+        changed_paths.extend(
+            expected_leases
+                .iter()
+                .chain(&observed_leases)
+                .map(|lease| lease.path.clone()),
+        );
+        changed_paths.extend(
+            expected_aliases
+                .iter()
+                .chain(&observed_aliases)
+                .flat_map(|closure| closure.members.iter().cloned()),
+        );
+    }
+    changed_paths.extend(evidence.write_domain_drift_paths.iter().cloned());
+    changed_paths.extend(
+        evidence
+            .semantic_input_validation_drift_paths
+            .iter()
+            .cloned(),
+    );
+
+    if changed_paths.is_empty() {
+        Vec::new()
+    } else {
+        vec![GateSignal::ProtectedInputChanged {
+            paths: changed_paths.into_iter().collect(),
+        }]
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PreWriteFinalValidation {
     pub catalog_revision: u64,
     pub signals: Vec<GateSignal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<PreWriteFinalValidationEvidence>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

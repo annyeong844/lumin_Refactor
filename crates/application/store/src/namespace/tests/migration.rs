@@ -5,7 +5,7 @@ use std::fs;
 use lumin_evidence::{
     ActualWriteSet, CapabilityRecord, DEAD_CODE_CAPABILITY_ID, GateAnalysisOptions,
     GateBaselineObservationInput, GateCloseObservationInput, GateObservationBinding, GateSignal,
-    PathPrefixIdentity, RepoPathProjection, RunEvidence,
+    PathPrefixIdentity, PreWriteFinalValidationEvidence, RepoPathProjection, RunEvidence,
     SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, SemanticInputRecord, SemanticInputState,
     SemanticReadReservationBinding, UnsealedGateObservationInputs, WriteLease, WriteLeaseKind,
     apply_worktree_transition, derive_gate_baseline_observation_id,
@@ -44,6 +44,70 @@ fn rejected_test_observation(_signals: &[GateSignal]) -> GateObservationBinding 
         last_complete_read_set: Vec::new(),
         conflicting_or_unbounded_inputs: Vec::new(),
     }
+}
+
+fn clean_pre_write_final_validation_evidence(
+    semantic_inputs: Vec<SemanticInputRecord>,
+    leased_write_set: Vec<WriteLease>,
+) -> PreWriteFinalValidationEvidence {
+    PreWriteFinalValidationEvidence {
+        expected_semantic_read_bindings: Vec::new(),
+        observed_semantic_read_bindings: Vec::new(),
+        observed_semantic_inputs: semantic_inputs,
+        observed_leased_write_set: leased_write_set,
+        observed_alias_closures: Vec::new(),
+        write_domain_drift_paths: Vec::new(),
+        semantic_input_validation_drift_paths: Vec::new(),
+    }
+}
+
+#[test]
+fn migration_preserves_an_admission_conflict_without_final_validation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    open_active_gate_for(&store, "op-admission-conflict-owner", "src/conflict.ts")?;
+
+    let operation_id = OperationId::from_string("op-admission-conflict-rejected".to_owned());
+    let session = store.begin_operation(&operation_id)?;
+    let source = path("src/conflict.ts")?;
+    let source_lease = lease(source.clone());
+    let analysis_options = options();
+    let request_digest = pre_write_digest(std::slice::from_ref(&source), &analysis_options);
+    let unsealed_inputs =
+        UnsealedGateObservationInputs::new(vec![source_lease.clone()], Vec::new(), Vec::new());
+    let source_for_binding = source.clone();
+    let rejected = match session.reserve_pre_write(
+        &request_digest,
+        std::slice::from_ref(&source),
+        std::slice::from_ref(&source_lease),
+        &analysis_options,
+        |signals| {
+            derive_unsealed_gate_observation_binding(
+                std::slice::from_ref(&source_for_binding),
+                &unsealed_inputs,
+                signals,
+            )
+        },
+    )? {
+        PreWriteStart::Committed(result) => *result,
+        PreWriteStart::Analyze { .. } => {
+            return Err("conflicting pre-write unexpectedly reached analysis".into());
+        }
+    };
+    assert!(matches!(
+        rejected.signals.as_slice(),
+        [GateSignal::WriteConflict { .. }]
+    ));
+    drop(store);
+
+    let store = open_store(root.path())?;
+    store.migrate_lifecycle_store()?;
+    assert_eq!(
+        store.replay_pre_write_result(&operation_id, &request_digest)?,
+        Some(rejected)
+    );
+    Ok(())
 }
 
 #[test]
@@ -480,6 +544,10 @@ fn open_active_gate_for_with_protected_inputs(
         crate::evidence_payload_sha256(&baseline_for_id.snapshot.evidence)?;
     let source_for_id = source.clone();
     let lease_for_id = source_lease.clone();
+    let final_validation_evidence = clean_pre_write_final_validation_evidence(
+        baseline_for_id.snapshot.inputs.clone(),
+        vec![source_lease.clone()],
+    );
     session.finish_pre_write(
         &request_digest,
         &gate_id,
@@ -510,6 +578,7 @@ fn open_active_gate_for_with_protected_inputs(
                     ),
                 },
             },
+            pre_write_evidence: Some(final_validation_evidence),
         },
     )?;
     Ok(gate_id)
@@ -612,6 +681,7 @@ fn append_non_authorizing_close_for_migration(
                     }),
                 },
             },
+            pre_write_evidence: None,
         },
     )?;
     Ok(())
@@ -722,6 +792,7 @@ fn close_active_gate_for_migration(
                     }),
                 },
             },
+            pre_write_evidence: None,
         },
     )?;
     Ok(())
@@ -781,6 +852,7 @@ fn append_unsealed_close_for_migration(
         |_, _, signals| ObservationFinalization {
             signals: Vec::new(),
             binding: derive_unsealed_gate_observation_binding(&[], &inputs, signals),
+            pre_write_evidence: None,
         },
     )?;
     Ok(operation_id)

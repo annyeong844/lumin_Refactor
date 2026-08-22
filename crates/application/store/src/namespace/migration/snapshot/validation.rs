@@ -11,9 +11,10 @@ use lumin_evidence::{
     PhysicalAliasClosureRecord, RUN_EVIDENCE_SCHEMA_VERSION,
     SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, WorktreeTransition, WriteLeaseKind,
     apply_worktree_transition_for_domain, derive_gate_baseline_observation_id,
-    derive_gate_close_observation_id, derive_protected_semantic_inputs,
-    derive_unsealed_gate_observation_binding, gate_abandon_request_digest, gate_policy,
-    post_write_request_digest, pre_write_request_digest, seal_analysis_snapshot,
+    derive_gate_close_observation_id, derive_pre_write_final_validation_signals,
+    derive_protected_semantic_inputs, derive_unsealed_gate_observation_binding,
+    gate_abandon_request_digest, gate_policy, post_write_request_digest, pre_write_request_digest,
+    seal_analysis_snapshot,
 };
 use lumin_model::{ObservationBinding, RepoPath, SealedGateObservation};
 use serde::de::DeserializeOwned;
@@ -266,6 +267,7 @@ fn validate_active_gate_catalog(
     let mut retained_mutation_count = 0_u64;
     for (key, gate) in gates {
         let mut gate_minimum = 0_u64;
+        let mut preceding_catalog_revision = None;
         let mut protected_semantic_inputs =
             gate.baseline.as_ref().map_or_else(Vec::new, |baseline| {
                 baseline.protected_semantic_inputs.clone()
@@ -277,6 +279,13 @@ fn validate_active_gate_catalog(
                         "gate {key} observation catalog revision exceeds the active-gate catalog"
                     )));
                 }
+                if preceding_catalog_revision.is_some_and(|preceding| catalog_revision < preceding)
+                {
+                    return Err(StoreError::Integrity(format!(
+                        "gate {key} observation catalog revision regressed within its durable history"
+                    )));
+                }
+                preceding_catalog_revision = Some(catalog_revision);
                 gate_minimum = gate_minimum.max(catalog_revision);
             }
             let kind = operations
@@ -466,21 +475,6 @@ fn validate_gate_observations(
                 "gate {key} opening operation omitted its analysis options"
             ))
         })?;
-    let opening_final_validation = opening_operation
-        .pre_write_final_validation
-        .as_ref()
-        .ok_or_else(|| {
-            StoreError::Integrity(format!(
-                "gate {key} opening operation omitted its final validation record"
-            ))
-        })?;
-    if opening.catalog_revision != Some(opening_final_validation.catalog_revision)
-        || opening_final_validation.signals != opening.signals
-    {
-        return Err(StoreError::Integrity(format!(
-            "gate {key} opening revision disagrees with its operation-owned final validation"
-        )));
-    }
     if opening_analysis_options != &gate.analysis_options {
         return Err(StoreError::Integrity(format!(
             "gate {key} analysis options disagree with its opening operation"
@@ -516,6 +510,22 @@ fn validate_gate_observations(
         return Err(StoreError::Integrity(format!(
             "gate {key} opening revision retained close-only payloads"
         )));
+    }
+    match opening_operation.pre_write_final_validation.as_ref() {
+        Some(final_validation)
+            if opening.catalog_revision == Some(final_validation.catalog_revision)
+                && final_validation.signals == opening.signals => {}
+        Some(_) => {
+            return Err(StoreError::Integrity(format!(
+                "gate {key} opening revision disagrees with its operation-owned final validation"
+            )));
+        }
+        None if gate.baseline.is_none() && is_admission_conflict_rejection(opening) => {}
+        None => {
+            return Err(StoreError::Integrity(format!(
+                "gate {key} opening operation omitted its final validation record"
+            )));
+        }
     }
     match &gate.baseline {
         Some(baseline) => match &opening.observation_binding {
@@ -562,14 +572,40 @@ fn validate_gate_observations(
                         "gate {key} baseline protected reads cannot be derived from its sealed snapshot"
                     )));
                 }
-                if gate.lifecycle == GateLifecycle::Active
-                    && (gate.leased_write_set.iter().collect::<BTreeSet<_>>()
-                        != baseline.leased_write_set.iter().collect::<BTreeSet<_>>()
-                        || gate.alias_closures.iter().collect::<BTreeSet<_>>()
-                            != baseline.alias_closures.iter().collect::<BTreeSet<_>>())
+                let final_validation = opening_operation
+                    .pre_write_final_validation
+                    .as_ref()
+                    .ok_or_else(|| {
+                        StoreError::Integrity(format!(
+                            "gate {key} sealed opening omitted its final validation record"
+                        ))
+                    })?;
+                let final_evidence = final_validation.evidence.as_ref().ok_or_else(|| {
+                    StoreError::Integrity(format!(
+                        "gate {key} sealed opening omitted independently reconstructable final-freshness evidence"
+                    ))
+                })?;
+                validate_pre_write_final_validation_evidence(key, baseline, final_evidence)?;
+                let final_freshness_signals = derive_pre_write_final_validation_signals(
+                    &baseline.snapshot.inputs,
+                    &baseline.leased_write_set,
+                    &baseline.alias_closures,
+                    final_evidence,
+                );
+                if matches!(
+                    gate.lifecycle,
+                    GateLifecycle::Active | GateLifecycle::Closed
+                ) && gate.leased_write_set != baseline.leased_write_set
                 {
                     return Err(StoreError::Integrity(format!(
-                        "gate {key} retained lease/alias domain disagrees with its sealed baseline"
+                        "gate {key} retained lease domain disagrees with its sealed baseline"
+                    )));
+                }
+                if gate.lifecycle == GateLifecycle::Active
+                    && gate.alias_closures != baseline.alias_closures
+                {
+                    return Err(StoreError::Integrity(format!(
+                        "gate {key} retained alias domain disagrees with its sealed baseline"
                     )));
                 }
                 let derived = derive_gate_baseline_observation_id(GateBaselineObservationInput {
@@ -589,7 +625,7 @@ fn validate_gate_observations(
                         "gate {key} baseline observation cannot be reconstructed"
                     )));
                 }
-                validate_opening_snapshot_policy(key, opening, baseline)?;
+                validate_opening_snapshot_policy(key, opening, baseline, &final_freshness_signals)?;
             }
             _ => {
                 return Err(StoreError::Integrity(format!(
@@ -879,14 +915,21 @@ fn validate_gate_observations(
     if matches!(
         gate.lifecycle,
         GateLifecycle::Active | GateLifecycle::Rejected | GateLifecycle::Closed
-    ) && gate
-        .protected_semantic_inputs
-        .iter()
-        .collect::<BTreeSet<_>>()
-        != expected_top_level_protected.iter().collect::<BTreeSet<_>>()
+    ) && gate.protected_semantic_inputs != expected_top_level_protected
     {
         return Err(StoreError::Integrity(format!(
             "gate {key} protected read set disagrees with its latest sealed observation"
+        )));
+    }
+    if gate.lifecycle == GateLifecycle::Closed
+        && gate.alias_closures
+            != gate
+                .revisions
+                .last()
+                .map_or(&[][..], |revision| revision.alias_closures.as_slice())
+    {
+        return Err(StoreError::Integrity(format!(
+            "gate {key} closed alias domain disagrees with its terminal sealed observation"
         )));
     }
     validate_gate_lifecycle(key, gate, opening, operations)
@@ -1116,37 +1159,89 @@ fn validate_lease_prefixes(
     Ok(())
 }
 
-fn validate_opening_snapshot_policy(
+fn is_admission_conflict_rejection(opening: &GateRevision) -> bool {
+    opening.signals.len() == 1
+        && matches!(
+            opening.signals.first(),
+            Some(GateSignal::WriteConflict { .. })
+        )
+        && matches!(
+            opening.observation_binding.as_ref(),
+            Some(ObservationBinding::Unsealed { .. })
+        )
+}
+
+fn validate_pre_write_final_validation_evidence(
     key: &str,
-    opening: &GateRevision,
     baseline: &GateBaseline,
+    evidence: &lumin_evidence::PreWriteFinalValidationEvidence,
 ) -> Result<(), StoreError> {
-    let expected = gate_policy::opening_signals(&baseline.snapshot, &baseline.leased_write_set);
-    let observed = opening
-        .signals
-        .iter()
-        .filter(|signal| is_opening_snapshot_signal(signal))
-        .cloned()
-        .collect::<Vec<_>>();
-    let impossible = opening.signals.iter().any(|signal| {
-        !is_opening_snapshot_signal(signal)
-            && !matches!(signal, GateSignal::ProtectedInputChanged { .. })
-    });
-    if observed != expected || impossible {
+    if !canonical_set(&evidence.expected_semantic_read_bindings)
+        || !canonical_set(&evidence.observed_semantic_read_bindings)
+        || !canonical_set(&evidence.observed_semantic_inputs)
+        || !canonical_set(&evidence.observed_leased_write_set)
+        || !canonical_alias_set(&evidence.observed_alias_closures)
+        || !canonical_set(&evidence.write_domain_drift_paths)
+        || !canonical_set(&evidence.semantic_input_validation_drift_paths)
+    {
         return Err(StoreError::Integrity(format!(
-            "gate {key} opening signals disagree with its sealed analysis snapshot"
+            "gate {key} final-freshness evidence is not a canonical deterministic set"
+        )));
+    }
+    for binding in &evidence.expected_semantic_read_bindings {
+        let matches_snapshot = baseline.snapshot.inputs.iter().any(|input| {
+            input.path == binding.path
+                && input.physical_identity == binding.physical_identity
+                && input.absence_parent == binding.absence_parent
+        });
+        if !matches_snapshot {
+            return Err(StoreError::Integrity(format!(
+                "gate {key} final-freshness reservation is not owned by its sealed baseline: {}",
+                binding.path.display
+            )));
+        }
+    }
+    let mut observed_paths = BTreeSet::new();
+    if evidence
+        .observed_semantic_inputs
+        .iter()
+        .any(|input| !observed_paths.insert(input.path.canonical.clone()))
+    {
+        return Err(StoreError::Integrity(format!(
+            "gate {key} final-freshness evidence contains conflicting observations for one semantic path"
         )));
     }
     Ok(())
 }
 
-fn is_opening_snapshot_signal(signal: &GateSignal) -> bool {
-    matches!(
-        signal,
-        GateSignal::FindingWarnings { .. }
-            | GateSignal::PreExistingAdverseFacts { .. }
-            | GateSignal::RequiredEvidenceIncomplete { .. }
-    )
+fn canonical_set<T>(items: &[T]) -> bool
+where
+    T: Clone + Ord,
+{
+    let mut canonical = items.to_vec();
+    canonical.sort();
+    canonical.dedup();
+    canonical == items
+}
+
+fn canonical_alias_set(items: &[PhysicalAliasClosureRecord]) -> bool {
+    items.iter().all(|closure| canonical_set(&closure.members)) && canonical_set(items)
+}
+
+fn validate_opening_snapshot_policy(
+    key: &str,
+    opening: &GateRevision,
+    baseline: &GateBaseline,
+    final_freshness_signals: &[GateSignal],
+) -> Result<(), StoreError> {
+    let mut expected = gate_policy::opening_signals(&baseline.snapshot, &baseline.leased_write_set);
+    expected.extend_from_slice(final_freshness_signals);
+    if opening.signals != expected {
+        return Err(StoreError::Integrity(format!(
+            "gate {key} opening signals disagree with its sealed analysis and final-freshness observations"
+        )));
+    }
+    Ok(())
 }
 
 fn reconstruct_close_baseline(
@@ -1714,20 +1809,28 @@ fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreErr
                     operation.operation_id.as_str()
                 )));
             }
+            if operation.leased_write_set != result.leased_write_set {
+                return Err(StoreError::Integrity(format!(
+                    "committed operation lease projection disagrees with its result: {}",
+                    operation.operation_id.as_str()
+                )));
+            }
             if operation.kind == GateOperationKind::PreWrite {
-                let final_validation = operation.pre_write_final_validation.as_ref().ok_or_else(
-                    || {
-                        StoreError::Integrity(format!(
+                match operation.pre_write_final_validation.as_ref() {
+                    Some(final_validation) if final_validation.signals == result.signals => {}
+                    Some(_) => {
+                        return Err(StoreError::Integrity(format!(
+                            "pre-write operation {} result disagrees with its final validation record",
+                            operation.operation_id.as_str()
+                        )));
+                    }
+                    None if is_admission_conflict_result(result) => {}
+                    None => {
+                        return Err(StoreError::Integrity(format!(
                             "committed pre-write operation {} omitted its final validation record",
                             operation.operation_id.as_str()
-                        ))
-                    },
-                )?;
-                if final_validation.signals != result.signals {
-                    return Err(StoreError::Integrity(format!(
-                        "pre-write operation {} result disagrees with its final validation record",
-                        operation.operation_id.as_str()
-                    )));
+                        )));
+                    }
                 }
             }
             validate_operation_observation(operation, result)
@@ -1745,6 +1848,20 @@ fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreErr
             operation.operation_id.as_str()
         ))),
     }
+}
+
+fn is_admission_conflict_result(result: &lumin_evidence::GateOperationResult) -> bool {
+    result.lifecycle == GateLifecycle::Rejected
+        && !result.decision.authorizes()
+        && result.signals.len() == 1
+        && matches!(
+            result.signals.first(),
+            Some(GateSignal::WriteConflict { .. })
+        )
+        && matches!(
+            result.observation_binding.as_ref(),
+            Some(ObservationBinding::Unsealed { .. })
+        )
 }
 
 fn reject_unfinished_pre_write_final_validation(

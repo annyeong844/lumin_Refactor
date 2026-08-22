@@ -225,41 +225,59 @@ pub(super) fn revalidate_write_domain(
     expected_alias_closures: &[PhysicalAliasClosureRecord],
     current_source_paths: &[RepoPath],
 ) -> Vec<GateSignal> {
-    let (leases, alias_closures) =
-        match observe_write_domain(root, expected_leases, current_source_paths) {
-            Ok(domain) => domain,
-            Err(signals) => return signals,
-        };
+    let observation = observe_write_domain(root, expected_leases, current_source_paths);
+    let mut signals = observation
+        .failures
+        .iter()
+        .cloned()
+        .map(|detail| GateSignal::AnalysisFailed { detail })
+        .collect::<Vec<_>>();
+    if !observation.drift_paths.is_empty() {
+        signals.push(GateSignal::ProtectedInputChanged {
+            paths: observation.drift_paths.clone(),
+        });
+        return signals;
+    }
 
     let mut expected_leases = expected_leases.to_vec();
     expected_leases.sort();
     expected_leases.dedup();
     let expected_alias_closures = normalized_alias_closures(expected_alias_closures.to_vec());
-    if leases == expected_leases && alias_closures == expected_alias_closures {
-        return Vec::new();
+    if observation.leases == expected_leases
+        && observation.alias_closures == expected_alias_closures
+    {
+        return signals;
     }
 
     let mut changed = expected_leases
         .iter()
-        .chain(&leases)
+        .chain(&observation.leases)
         .map(|lease| lease.path.clone())
         .chain(
             expected_alias_closures
                 .iter()
-                .chain(&alias_closures)
+                .chain(&observation.alias_closures)
                 .flat_map(|closure| closure.members.iter().cloned()),
         )
         .collect::<Vec<_>>();
     changed.sort();
     changed.dedup();
-    vec![GateSignal::ProtectedInputChanged { paths: changed }]
+    signals.push(GateSignal::ProtectedInputChanged { paths: changed });
+    signals
 }
 
-fn observe_write_domain(
+pub(super) struct WriteDomainObservation {
+    pub(super) leases: Vec<WriteLease>,
+    pub(super) alias_closures: Vec<PhysicalAliasClosureRecord>,
+    pub(super) drift_paths: Vec<RepoPathProjection>,
+    pub(super) failures: Vec<String>,
+}
+
+pub(super) fn observe_write_domain(
     root: &Path,
     lease_paths: &[WriteLease],
     current_source_paths: &[RepoPath],
-) -> Result<(Vec<WriteLease>, Vec<PhysicalAliasClosureRecord>), Vec<GateSignal>> {
+) -> WriteDomainObservation {
     let mut semantic_paths = current_source_paths.to_vec();
     semantic_paths.sort();
     semantic_paths.dedup();
@@ -352,27 +370,19 @@ fn observe_write_domain(
         }
     }
 
-    if !failures.is_empty() || !drift_paths.is_empty() {
-        let mut signals = Vec::new();
-        failures.sort();
-        failures.dedup();
-        signals.extend(
-            failures
-                .into_iter()
-                .map(|detail| GateSignal::AnalysisFailed { detail }),
-        );
-        drift_paths.sort();
-        drift_paths.dedup();
-        if !drift_paths.is_empty() {
-            signals.push(GateSignal::ProtectedInputChanged { paths: drift_paths });
-        }
-        return Err(signals);
-    }
-
+    failures.sort();
+    failures.dedup();
+    drift_paths.sort();
+    drift_paths.dedup();
     leases.sort();
     leases.dedup();
     let alias_closures = normalized_alias_closures(alias_closure_records(groups));
-    Ok((leases, alias_closures))
+    WriteDomainObservation {
+        leases,
+        alias_closures,
+        drift_paths,
+        failures,
+    }
 }
 
 fn classify_disappeared_domain_path(
@@ -477,14 +487,23 @@ pub(super) fn close_alias_topology(
             return (Vec::new(), Vec::new(), signals);
         }
     };
-    let (leases, alias_closures) =
-        match observe_write_domain(root, &gate.leased_write_set, &semantic_paths) {
-            Ok(domain) => domain,
-            Err(domain_signals) => {
-                signals.extend(domain_signals);
-                return (Vec::new(), Vec::new(), signals);
-            }
-        };
+    let observation = observe_write_domain(root, &gate.leased_write_set, &semantic_paths);
+    if !observation.failures.is_empty() || !observation.drift_paths.is_empty() {
+        signals.extend(
+            observation
+                .failures
+                .into_iter()
+                .map(|detail| GateSignal::AnalysisFailed { detail }),
+        );
+        if !observation.drift_paths.is_empty() {
+            signals.push(GateSignal::ProtectedInputChanged {
+                paths: observation.drift_paths,
+            });
+        }
+        return (Vec::new(), Vec::new(), signals);
+    }
+    let leases = observation.leases;
+    let alias_closures = observation.alias_closures;
     for member in alias_closures.iter().flat_map(|closure| &closure.members) {
         if !gate
             .leased_write_set
@@ -781,12 +800,16 @@ mod tests {
             root.path(),
             std::slice::from_ref(&expected_lease),
             &[source.clone(), config, redirect],
-        )
-        .map_err(|signals| format!("unchanged semantic paths were rejected: {signals:?}"))?;
+        );
 
-        assert_eq!(observed.0, [expected_lease]);
-        assert_eq!(observed.1.len(), 1);
-        assert_eq!(observed.1[0].members, [RepoPathProjection::from(&source)]);
+        assert!(observed.failures.is_empty());
+        assert!(observed.drift_paths.is_empty());
+        assert_eq!(observed.leases, [expected_lease]);
+        assert_eq!(observed.alias_closures.len(), 1);
+        assert_eq!(
+            observed.alias_closures[0].members,
+            [RepoPathProjection::from(&source)]
+        );
         Ok(())
     }
 }

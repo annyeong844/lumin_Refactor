@@ -178,6 +178,7 @@ impl OperationSession<'_> {
                 lumin_evidence::PreWriteFinalValidation {
                     catalog_revision,
                     signals: signals.clone(),
+                    evidence: finalization.pre_write_evidence,
                 },
             );
             let observation_binding = finalization.binding;

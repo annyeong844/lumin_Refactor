@@ -3,12 +3,13 @@ use std::fs;
 use lumin_evidence::{
     ActualWriteSet, GateBaselineObservationInput, GateCloseObservationInput, GateDecision,
     GateLifecycle, GateObservationBinding, GateOperationStatus, GateRecord, GateSignal,
-    OperationLivenessLease, OperationRecord, PathPrefixIdentity, RepoPathProjection,
-    RetentionMutationResult, RetentionOperationRecord, RetentionOperationResult,
-    RetentionPlanScope, UnsealedGateObservationInputs, WorktreeTransition, WriteLease,
-    WriteLeaseKind, derive_gate_baseline_observation_id, derive_gate_close_observation_id,
-    derive_protected_semantic_inputs, derive_unsealed_gate_observation_binding,
-    gate_abandon_request_digest, post_write_request_digest, seal_analysis_snapshot,
+    OperationLivenessLease, OperationRecord, PathPrefixIdentity, PreWriteFinalValidationEvidence,
+    RepoPathProjection, RetentionMutationResult, RetentionOperationRecord,
+    RetentionOperationResult, RetentionPlanScope, UnsealedGateObservationInputs,
+    WorktreeTransition, WriteLease, WriteLeaseKind, derive_gate_baseline_observation_id,
+    derive_gate_close_observation_id, derive_protected_semantic_inputs,
+    derive_unsealed_gate_observation_binding, gate_abandon_request_digest,
+    post_write_request_digest, seal_analysis_snapshot,
 };
 use lumin_model::{
     AnalysisInputId, AttemptId, CapabilityState, DeltaFactFamily, DeltaKey,
@@ -190,6 +191,7 @@ fn open_rejected_gate_for(
                 &unsealed_inputs,
                 signals,
             ),
+            pre_write_evidence: None,
         },
     )?;
     assert_eq!(result.lifecycle, GateLifecycle::Rejected);
@@ -503,6 +505,79 @@ fn migration_reconstructs_gate_observations_with_their_catalog_revision()
 }
 
 #[test]
+fn migration_rejects_a_catalog_revision_regression_within_one_gate()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    open_active_gate_for(&store, "op-catalog-epoch-owner", "src/catalog-owner.ts")?;
+    let gate_id = open_active_gate_for(&store, "op-catalog-epoch-target", "src/catalog-target.ts")?;
+    append_non_authorizing_close_for_migration(&store, &gate_id, Vec::new())?;
+    let gate = store.load_gate(&gate_id)?;
+    let opening_catalog_revision = gate
+        .revisions
+        .first()
+        .and_then(|revision| revision.catalog_revision)
+        .ok_or("catalog-regression gate omitted its opening catalog revision")?;
+    if opening_catalog_revision == 0 {
+        return Err("catalog-regression fixture did not establish a prior epoch".into());
+    }
+    let close_operation_id = gate
+        .revisions
+        .get(1)
+        .ok_or("catalog-regression gate omitted its close revision")?
+        .operation_id
+        .clone();
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    let forged_binding = {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("catalog-regression gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        gate.revisions
+            .get_mut(1)
+            .ok_or("catalog-regression close revision is missing")?
+            .catalog_revision = Some(opening_catalog_revision - 1);
+        let binding = reconstructed_close_binding(&gate, 1)?;
+        gate.revisions[1].observation_binding = Some(binding.clone());
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+        binding
+    };
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get(close_operation_id.as_str())?
+            .ok_or("catalog-regression close operation is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        operation
+            .result
+            .as_mut()
+            .ok_or("catalog-regression close result is missing")?
+            .observation_binding = Some(forged_binding);
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert(close_operation_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("catalog revision regressed within its durable history")
+    ));
+    Ok(())
+}
+
+#[test]
 fn migration_binds_analysis_options_to_the_opening_operation_and_sealed_baseline()
 -> Result<(), Box<dyn std::error::Error>> {
     for corruption in ["gate-and-operation", "operation-only"] {
@@ -698,7 +773,50 @@ fn migration_rejects_an_active_lease_domain_weaker_than_its_sealed_baseline()
     assert!(matches!(
         store.migrate_lifecycle_store(),
         Err(StoreError::Integrity(message))
-            if message.contains("lease/alias domain disagrees with its sealed baseline")
+            if message.contains("lease domain disagrees with its sealed baseline")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_a_duplicate_active_lease_projection() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(
+        &store,
+        "op-duplicate-active-lease",
+        "src/duplicate-active-lease.ts",
+    )?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("duplicate-lease gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        let duplicate = gate
+            .leased_write_set
+            .first()
+            .ok_or("duplicate-lease gate omitted its lease")?
+            .clone();
+        gate.leased_write_set.push(duplicate);
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("lease domain disagrees with its sealed baseline")
     ));
     Ok(())
 }
@@ -939,6 +1057,12 @@ fn migration_reconstructs_new_file_parent_and_prefix_bindings()
                 .to_vec();
             let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
             operation.leased_write_set = vec![lease.clone()];
+            operation
+                .pre_write_final_validation
+                .as_mut()
+                .and_then(|validation| validation.evidence.as_mut())
+                .ok_or("new-file-prefix operation omitted final-freshness evidence")?
+                .observed_leased_write_set = vec![lease.clone()];
             let result = operation
                 .result
                 .as_mut()
@@ -1525,10 +1649,60 @@ fn migration_matches_the_complete_operation_result_to_its_revision()
                 if message.contains("result disagrees with its complete gate revision")
                     || (corruption == "signals"
                         && message.contains("result disagrees with its final validation record"))
+                    || (corruption == "leased-write-set"
+                        && message.contains(
+                            "committed operation lease projection disagrees with its result"
+                        ))
                     || (corruption == "reason"
                         && message.contains("non-administrative operation"))
         ));
     }
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_a_committed_operation_lease_projection_drift()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id =
+        open_active_gate_for(&store, "op-committed-lease-open", "src/committed-lease.ts")?;
+    close_active_gate_for_migration(&store, &gate_id)?;
+    let operation_id = store
+        .load_gate(&gate_id)?
+        .revisions
+        .last()
+        .ok_or("committed-lease gate omitted its close revision")?
+        .operation_id
+        .clone();
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get(operation_id.as_str())?
+            .ok_or("committed-lease operation is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        if operation.leased_write_set.is_empty() {
+            return Err("committed-lease fixture omitted its operation lease".into());
+        }
+        operation.leased_write_set.clear();
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert(operation_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("committed operation lease projection disagrees with its result")
+    ));
     Ok(())
 }
 
@@ -2360,7 +2534,7 @@ fn migration_recomputes_opening_signals_from_the_sealed_snapshot()
     assert!(matches!(
         store.migrate_lifecycle_store(),
         Err(StoreError::Integrity(message))
-            if message.contains("opening signals disagree with its sealed analysis snapshot")
+            if message.contains("opening signals disagree with its sealed analysis and final-freshness observations")
     ));
     Ok(())
 }
@@ -2531,6 +2705,15 @@ fn migration_authenticates_final_freshness_signals_in_the_opening_observation()
     let source_for_id = source.clone();
     let lease_for_id = source_lease.clone();
     let signals_for_id = stale_signals.clone();
+    let final_validation_evidence = PreWriteFinalValidationEvidence {
+        expected_semantic_read_bindings: Vec::new(),
+        observed_semantic_read_bindings: Vec::new(),
+        observed_semantic_inputs: Vec::new(),
+        observed_leased_write_set: Vec::new(),
+        observed_alias_closures: Vec::new(),
+        write_domain_drift_paths: vec![source.clone()],
+        semantic_input_validation_drift_paths: Vec::new(),
+    };
     let result = session.finish_pre_write(
         &request_digest,
         &gate_id,
@@ -2561,6 +2744,7 @@ fn migration_authenticates_final_freshness_signals_in_the_opening_observation()
                     ),
                 },
             },
+            pre_write_evidence: Some(final_validation_evidence),
         },
     )?;
     assert_eq!(result.lifecycle, GateLifecycle::Rejected);
@@ -2620,6 +2804,12 @@ fn migration_authenticates_final_freshness_signals_in_the_opening_observation()
                 .signals,
             signals_for_id
         );
+        operation
+            .pre_write_final_validation
+            .as_mut()
+            .ok_or("final-freshness operation omitted its final validation")?
+            .signals
+            .clear();
         operation.leased_write_set = candidate_leases.clone();
         let result = operation
             .result
@@ -2633,6 +2823,10 @@ fn migration_authenticates_final_freshness_signals_in_the_opening_observation()
         let changed = serde_json::to_vec(&operation)?;
         table.insert(operation_id.as_str(), changed.as_slice())?;
     }
+    {
+        let mut table = write.open_table(SEQUENCES)?;
+        table.insert(ACTIVE_GATE_CATALOG_SEQUENCE_KEY, 1)?;
+    }
     write.commit()?;
     drop(database);
 
@@ -2640,7 +2834,7 @@ fn migration_authenticates_final_freshness_signals_in_the_opening_observation()
     assert!(matches!(
         store.migrate_lifecycle_store(),
         Err(StoreError::Integrity(message))
-            if message.contains("result disagrees with its final validation record")
+            if message.contains("final-freshness observations")
     ));
     Ok(())
 }
@@ -3595,6 +3789,47 @@ fn migration_validates_closed_gate_protected_read_projections()
         store.migrate_lifecycle_store(),
         Err(StoreError::Integrity(message))
             if message.contains("protected read set disagrees with its latest sealed observation")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_validates_closed_gate_lease_projections() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(
+        &store,
+        "op-closed-lease-projection",
+        "src/closed-lease-projection.ts",
+    )?;
+    close_active_gate_for_migration(&store, &gate_id)?;
+    let closed = store.load_gate(&gate_id)?;
+    assert_eq!(closed.lifecycle, GateLifecycle::Closed);
+    assert!(!closed.leased_write_set.is_empty());
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("closed lease-projection gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        gate.leased_write_set.clear();
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("lease domain disagrees with its sealed baseline")
     ));
     Ok(())
 }
