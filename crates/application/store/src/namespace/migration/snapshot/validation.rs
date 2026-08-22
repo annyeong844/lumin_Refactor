@@ -34,6 +34,7 @@ pub(super) fn validate_referential_closure(
     let (transitions, transition_sequences) = read_transitions(snapshot)?;
     let operations = read_operations(snapshot)?;
     let gates = read_gates(snapshot, &operations, &transition_sequences)?;
+    validate_transition_catalog_sequence(snapshot, &transition_sequences, &gates, &operations)?;
     validate_active_gate_catalog(snapshot, &gates, &operations)?;
     validate_operation_gate_refs(&operations, &gates)?;
     validate_transition_gate_refs(&transitions, &gates)?;
@@ -96,6 +97,42 @@ fn read_gates<'a>(
         gates.insert(key.as_str(), gate);
     }
     Ok(gates)
+}
+
+fn validate_transition_catalog_sequence(
+    snapshot: &LogicalStoreSnapshot,
+    transition_sequences: &BTreeSet<u64>,
+    gates: &BTreeMap<&str, GateRecord>,
+    operations: &BTreeMap<&str, OperationRecord>,
+) -> Result<(), StoreError> {
+    let observed = snapshot.sequences.get("transition").copied().unwrap_or(0);
+    let mut minimum = transition_sequences
+        .iter()
+        .next_back()
+        .copied()
+        .unwrap_or(0);
+    for gate in gates.values() {
+        if let Some(baseline) = &gate.baseline {
+            minimum = minimum.max(baseline.transition_sequence);
+        }
+        if let Some(sequence) = gate.transition_refs.iter().max() {
+            minimum = minimum.max(*sequence);
+        }
+        for revision in &gate.revisions {
+            if let Some(sequence) = revision.reconciled_transition_sequences.iter().max() {
+                minimum = minimum.max(*sequence);
+            }
+        }
+    }
+    for operation in operations.values() {
+        minimum = minimum.max(operation.transition_sequence);
+    }
+    if observed < minimum {
+        return Err(StoreError::Integrity(format!(
+            "transition sequence regressed below durable transition history: observed {observed}, minimum {minimum}"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_active_gate_catalog(
@@ -301,6 +338,13 @@ fn validate_gate_observations(
             }) if observation_id == &baseline.observation_id
                 && opening.catalog_revision == Some(baseline.catalog_revision) =>
             {
+                if opening.protected_semantic_inputs != baseline.protected_semantic_inputs
+                    || opening.alias_closures != baseline.alias_closures
+                {
+                    return Err(StoreError::Integrity(format!(
+                        "gate {key} opening revision payload disagrees with its sealed baseline"
+                    )));
+                }
                 if gate.analysis_options.scan_invocation != baseline.snapshot.scan_invocation {
                     return Err(StoreError::Integrity(format!(
                         "gate {key} analysis invocation disagrees with its sealed baseline"
@@ -374,6 +418,12 @@ fn validate_gate_observations(
             )));
         }
         if is_abandon {
+            if revision.decision != GateDecision::Deny {
+                return Err(StoreError::Integrity(format!(
+                    "gate {key} administrative abandon revision {} must deny",
+                    revision.revision
+                )));
+            }
             if revision.catalog_revision.is_some() || revision.observation_binding.is_some() {
                 return Err(StoreError::Integrity(format!(
                     "gate {key} administrative abandon revision {} retained an observation binding",
@@ -832,6 +882,12 @@ fn validate_operation_observation(
     operation: &OperationRecord,
     result: &lumin_evidence::GateOperationResult,
 ) -> Result<(), StoreError> {
+    if operation.kind == GateOperationKind::GateAbandon && result.decision != GateDecision::Deny {
+        return Err(StoreError::Integrity(format!(
+            "administrative abandon operation {} must deny",
+            operation.operation_id.as_str()
+        )));
+    }
     if operation.kind != GateOperationKind::GateAbandon
         && result.decision != gate_policy::decision(&result.signals)
     {
@@ -860,7 +916,7 @@ fn validate_operation_observation(
                     observation: SealedGateObservation::Close { .. }
                 })
             ),
-            GateOperationKind::GateAbandon => true,
+            GateOperationKind::GateAbandon => false,
         };
         if !correct {
             return Err(StoreError::Integrity(format!(

@@ -303,6 +303,65 @@ fn migration_rejects_close_only_payloads_on_the_opening_revision()
 }
 
 #[test]
+fn migration_binds_the_opening_revision_payload_to_its_sealed_baseline()
+-> Result<(), Box<dyn std::error::Error>> {
+    for corruption in ["protected-inputs", "alias-closures"] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        let gate_id = open_active_gate_for_with_protected_inputs(
+            &store,
+            &format!("op-opening-payload-{corruption}"),
+            &format!("src/opening-payload-{corruption}.ts"),
+            vec![semantic_input("config/opening-protected.json")?],
+        )?;
+        drop(store);
+
+        let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+        let write = database.begin_write()?;
+        {
+            let mut table = write.open_table(GATES)?;
+            let bytes = table
+                .get(gate_id.as_str())?
+                .ok_or("opening-payload gate is missing")?
+                .value()
+                .to_vec();
+            let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+            let opening = gate
+                .revisions
+                .first_mut()
+                .ok_or("opening-payload gate omitted its opening revision")?;
+            match corruption {
+                "protected-inputs" => opening.protected_semantic_inputs.clear(),
+                "alias-closures" => {
+                    opening
+                        .alias_closures
+                        .push(lumin_evidence::PhysicalAliasClosureRecord {
+                            physical_identity: lumin_model::PhysicalFileIdentity::Unix {
+                                device: 701,
+                                inode: 709,
+                            },
+                            members: vec![path("src/opening-payload-alias.ts")?],
+                        })
+                }
+                _ => unreachable!(),
+            }
+            let changed = serde_json::to_vec(&gate)?;
+            table.insert(gate_id.as_str(), changed.as_slice())?;
+        }
+        write.commit()?;
+        drop(database);
+
+        let store = open_store(root.path())?;
+        assert!(matches!(
+            store.migrate_lifecycle_store(),
+            Err(StoreError::Integrity(message))
+                if message.contains("opening revision payload disagrees with its sealed baseline")
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn migration_rejects_an_active_lease_domain_weaker_than_its_sealed_baseline()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
@@ -411,6 +470,67 @@ fn migration_rejects_closed_lifecycle_without_an_authorizing_tail()
         store.migrate_lifecycle_store(),
         Err(StoreError::Integrity(message))
             if message.contains("lifecycle disagrees with its authorizing revision tail")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_an_authorizing_administrative_abandon()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(&store, "op-abandon-target", "src/abandon-target.ts")?;
+    let operation_id = OperationId::from_string("op-abandon-forged-allow".to_owned());
+    store.begin_operation(&operation_id)?.abandon_gate(
+        "abandon-forged-allow-digest",
+        &gate_id,
+        0,
+        "administrative fixture",
+    )?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("abandoned gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        gate.revisions
+            .last_mut()
+            .ok_or("abandoned gate omitted its terminal revision")?
+            .decision = GateDecision::Allow;
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+    }
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get(operation_id.as_str())?
+            .ok_or("abandon operation is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        operation
+            .result
+            .as_mut()
+            .ok_or("abandon operation omitted its result")?
+            .decision = GateDecision::Allow;
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert(operation_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("administrative abandon operation")
+                && message.contains("must deny")
     ));
     Ok(())
 }
@@ -879,6 +999,37 @@ fn migration_rejects_a_regressed_active_gate_catalog_sequence()
         store.migrate_lifecycle_store(),
         Err(StoreError::Integrity(message))
             if message.contains("active-gate catalog sequence regressed")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_a_transition_sequence_below_retained_history()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(
+        &store,
+        "op-transition-sequence-regression",
+        "src/transition-sequence-regression.ts",
+    )?;
+    close_active_gate_for_migration(&store, &gate_id)?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(SEQUENCES)?;
+        table.insert("transition", 0)?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("transition sequence regressed below durable transition history")
     ));
     Ok(())
 }
