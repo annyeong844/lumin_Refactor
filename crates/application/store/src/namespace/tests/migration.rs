@@ -9,8 +9,8 @@ use lumin_evidence::{
     SemanticReadReservationBinding, UnsealedGateObservationInputs, WriteLease, WriteLeaseKind,
     apply_worktree_transition, derive_gate_baseline_observation_id,
     derive_gate_close_observation_id, derive_protected_semantic_inputs,
-    derive_unsealed_gate_observation_binding, gate_policy, pre_write_request_digest,
-    seal_analysis_snapshot,
+    derive_unsealed_gate_observation_binding, gate_policy, post_write_request_digest,
+    pre_write_request_digest, seal_analysis_snapshot,
 };
 use lumin_model::{
     CapabilityState, GateId, ObservationBinding, OperationId, RepoPath, SealedGateObservation,
@@ -59,13 +59,23 @@ fn migration_preserves_run_gate_and_pending_operation_records()
     let operation_id = OperationId::from_string("op-migrate-pending".to_owned());
     let session = store.begin_operation(&operation_id)?;
     let source = path("src/pending.ts")?;
+    let source_lease = WriteLease {
+        path: source.clone(),
+        kind: WriteLeaseKind::ExistingFile,
+        physical_identity: Some(lumin_model::PhysicalFileIdentity::Unix {
+            device: 17,
+            inode: 29,
+        }),
+        nearest_existing_parent: None,
+        prefix_identities: Vec::new(),
+    };
     let analysis_options = options();
     let request_digest = pre_write_digest(std::slice::from_ref(&source), &analysis_options);
     assert!(matches!(
         session.reserve_pre_write(
             &request_digest,
             std::slice::from_ref(&source),
-            &[lease(source.clone())],
+            std::slice::from_ref(&source_lease),
             &analysis_options,
             rejected_test_observation,
         )?,
@@ -495,8 +505,9 @@ fn append_non_authorizing_close_for_migration(
     protected_semantic_inputs: Vec<SemanticInputRecord>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let operation_id = OperationId::from_string("op-migrate-incomplete-close".to_owned());
+    let request_digest = post_write_request_digest(gate_id);
     let session = store.begin_operation(&operation_id)?;
-    let gate = match session.begin_post_write("migrate-incomplete-close-digest", gate_id)? {
+    let gate = match session.begin_post_write(&request_digest, gate_id)? {
         PostWriteStart::Analyze { gate, .. } => gate,
         PostWriteStart::Committed(_) => return Err("migration close committed early".into()),
     };
@@ -538,7 +549,7 @@ fn append_non_authorizing_close_for_migration(
     let aliases_for_id = alias_closures.clone();
     let signals_for_id = signals.clone();
     session.finish_post_write(
-        "migrate-incomplete-close-digest",
+        &request_digest,
         gate_id,
         PostWriteFinish {
             snapshot: Some(snapshot),
@@ -584,7 +595,7 @@ fn close_active_gate_for_migration(
     gate_id: &GateId,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let operation_id = OperationId::from_string(format!("op-migrate-close-{}", gate_id.as_str()));
-    let request_digest = format!("migrate-close-digest-{}", gate_id.as_str());
+    let request_digest = post_write_request_digest(gate_id);
     let session = store.begin_operation(&operation_id)?;
     let (gate, transitions) = match session.begin_post_write(&request_digest, gate_id)? {
         PostWriteStart::Analyze {
@@ -695,7 +706,7 @@ fn append_unsealed_close_for_migration(
 ) -> Result<OperationId, Box<dyn std::error::Error>> {
     let operation_id =
         OperationId::from_string(format!("op-migrate-unsealed-close-{}", gate_id.as_str()));
-    let request_digest = format!("migrate-unsealed-close-digest-{}", gate_id.as_str());
+    let request_digest = post_write_request_digest(gate_id);
     let session = store.begin_operation(&operation_id)?;
     let gate = match session.begin_post_write(&request_digest, gate_id)? {
         PostWriteStart::Analyze { gate, .. } => gate,

@@ -228,6 +228,13 @@ pub fn pre_write_request_digest(
     digest_hex(&framed)
 }
 
+pub fn post_write_request_digest(gate_id: &GateId) -> String {
+    let mut framed = Vec::new();
+    append_length_prefixed(&mut framed, b"lumin-post-write.v2");
+    append_length_prefixed(&mut framed, gate_id.as_str().as_bytes());
+    digest_hex(&framed)
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum WriteLeaseKind {

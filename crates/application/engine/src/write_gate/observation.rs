@@ -151,7 +151,7 @@ pub(super) fn close_observation_binding(
         };
     }
     let inputs = unsealed_close_observation_inputs(seed);
-    derive_unsealed_gate_observation_binding(&seed.changed_paths, &inputs, signals)
+    derive_unsealed_gate_observation_binding(&[], &inputs, signals)
 }
 
 pub(super) fn observation_binding_matches_owner(

@@ -30,7 +30,7 @@ use crate::{
 use super::super::open_store;
 use super::{
     append_non_authorizing_close_for_migration, append_unsealed_close_for_migration,
-    close_active_gate_for_migration, current_generation, evidence, lease, open_active_gate_for,
+    close_active_gate_for_migration, current_generation, evidence, open_active_gate_for,
     open_active_gate_for_with_protected_inputs, options, path, pre_write_digest,
     rejected_test_observation, semantic_input,
 };
@@ -1668,7 +1668,10 @@ fn migration_rejects_unfinished_pre_write_gate_id_collisions()
             let source_lease = WriteLease {
                 path: source.clone(),
                 kind: WriteLeaseKind::ExistingFile,
-                physical_identity: None,
+                physical_identity: Some(PhysicalFileIdentity::Unix {
+                    device: 23,
+                    inode: 100 + ordinal as u64,
+                }),
                 nearest_existing_parent: None,
                 prefix_identities: Vec::new(),
             };
@@ -1782,6 +1785,12 @@ fn migration_requires_every_durable_revision_to_have_a_committed_result()
             operation.result = None;
             match status {
                 GateOperationStatus::Pending => {
+                    for lease in &mut operation.leased_write_set {
+                        lease.physical_identity = Some(PhysicalFileIdentity::Unix {
+                            device: 1,
+                            inode: 2,
+                        });
+                    }
                     operation.operation_liveness = Some(OperationLivenessLease {
                         lease_nonce: "0".repeat(32),
                         owner_process_id: 1,
@@ -2549,11 +2558,21 @@ fn migration_rejects_invalid_unfinished_operation_liveness()
         let source = path(&format!("src/liveness-{corruption}.ts"))?;
         let analysis_options = options();
         let request_digest = pre_write_digest(std::slice::from_ref(&source), &analysis_options);
+        let source_lease = WriteLease {
+            path: source.clone(),
+            kind: WriteLeaseKind::ExistingFile,
+            physical_identity: Some(PhysicalFileIdentity::Unix {
+                device: 31,
+                inode: 101,
+            }),
+            nearest_existing_parent: None,
+            prefix_identities: Vec::new(),
+        };
         assert!(matches!(
             session.reserve_pre_write(
                 &request_digest,
                 std::slice::from_ref(&source),
-                &[lease(source.clone())],
+                std::slice::from_ref(&source_lease),
                 &analysis_options,
                 rejected_test_observation,
             )?,
@@ -2930,6 +2949,292 @@ fn migration_recomputes_pre_write_request_digests() -> Result<(), Box<dyn std::e
         store.migrate_lifecycle_store(),
         Err(StoreError::Integrity(message))
             if message.contains("disagrees with its authenticated request")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_recomputes_post_write_request_digests() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(
+        &store,
+        "op-forged-post-write-digest-open",
+        "src/forged-post-write-digest.ts",
+    )?;
+    close_active_gate_for_migration(&store, &gate_id)?;
+    let operation_id = store
+        .load_gate(&gate_id)?
+        .revisions
+        .last()
+        .ok_or("post-write digest fixture omitted its close")?
+        .operation_id
+        .clone();
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get(operation_id.as_str())?
+            .ok_or("post-write digest operation is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        operation.request_digest = "forged-post-write-request".to_owned();
+        operation
+            .result
+            .as_mut()
+            .ok_or("post-write digest result is missing")?
+            .request_digest = "forged-post-write-request".to_owned();
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert(operation_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("post-write operation")
+                && message.contains("authenticated request")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_reconstructs_pending_pre_write_request_state() -> Result<(), Box<dyn std::error::Error>>
+{
+    for corruption in ["leases", "analysis-options"] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        let operation_id = OperationId::from_string(format!("op-pending-{corruption}"));
+        let source = path(&format!("src/pending-{corruption}.ts"))?;
+        let analysis_options = options();
+        let request_digest = pre_write_digest(std::slice::from_ref(&source), &analysis_options);
+        let pending_lease = WriteLease {
+            path: source.clone(),
+            kind: WriteLeaseKind::ExistingFile,
+            physical_identity: Some(PhysicalFileIdentity::Unix {
+                device: 41,
+                inode: 73,
+            }),
+            nearest_existing_parent: None,
+            prefix_identities: Vec::new(),
+        };
+        let session = store.begin_operation(&operation_id)?;
+        assert!(matches!(
+            session.reserve_pre_write(
+                &request_digest,
+                std::slice::from_ref(&source),
+                std::slice::from_ref(&pending_lease),
+                &analysis_options,
+                rejected_test_observation,
+            )?,
+            PreWriteStart::Analyze { .. }
+        ));
+        drop(session);
+        drop(store);
+
+        let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+        let write = database.begin_write()?;
+        {
+            let mut table = write.open_table(OPERATIONS)?;
+            let bytes = table
+                .get(operation_id.as_str())?
+                .ok_or("pending pre-write operation is missing")?
+                .value()
+                .to_vec();
+            let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+            match corruption {
+                "leases" => operation.leased_write_set.clear(),
+                "analysis-options" => {
+                    operation
+                        .analysis_options
+                        .as_mut()
+                        .ok_or("pending pre-write operation omitted its options")?
+                        .resolution_profile = Some(ResolutionProfile::Node16);
+                }
+                _ => unreachable!(),
+            }
+            let changed = serde_json::to_vec(&operation)?;
+            table.insert(operation_id.as_str(), changed.as_slice())?;
+        }
+        write.commit()?;
+        drop(database);
+
+        let store = open_store(root.path())?;
+        let expected = if corruption == "leases" {
+            "provisional write domain"
+        } else {
+            "inconsistent resolution profiles"
+        };
+        assert!(matches!(
+            store.migrate_lifecycle_store(),
+            Err(StoreError::Integrity(message)) if message.contains(expected)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn migration_binds_gate_declarations_to_the_opening_operation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(
+        &store,
+        "op-opening-declaration",
+        "src/opening-declaration.ts",
+    )?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("opening declaration gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        gate.declared_write_set = vec![path("src/forged-opening-declaration.ts")?];
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("declared write set disagrees with its opening operation")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_changed_paths_on_unsealed_closes() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(
+        &store,
+        "op-unsealed-changed-path-open",
+        "src/unsealed-changed-path.ts",
+    )?;
+    append_unsealed_close_for_migration(&store, &gate_id)?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("unsealed changed-path gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        gate.revisions
+            .last_mut()
+            .ok_or("unsealed changed-path revision is missing")?
+            .changed_paths = vec![path("src/forged-unsealed-change.ts")?];
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("unsealed revision")
+                && message.contains("complete-observation payloads")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_provisional_reservations_on_committed_operations()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("op-committed-reservations".to_owned());
+    open_active_gate_for(
+        &store,
+        operation_id.as_str(),
+        "src/committed-reservations.ts",
+    )?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get(operation_id.as_str())?
+            .ok_or("committed reservation operation is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        operation
+            .semantic_read_reservations
+            .push(path("config/forged-reservation.json")?);
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert(operation_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("committed operation retained semantic-read reservations")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_transition_references_on_closed_gates()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(
+        &store,
+        "op-closed-transition-ref-open",
+        "src/closed-transition-ref.ts",
+    )?;
+    close_active_gate_for_migration(&store, &gate_id)?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("closed transition-reference gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        gate.transition_refs = vec![1];
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("lifecycle disagrees with its authorizing revision tail")
     ));
     Ok(())
 }

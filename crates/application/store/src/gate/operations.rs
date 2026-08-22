@@ -473,7 +473,7 @@ impl OperationSession<'_> {
             mut snapshot,
             mut protected_semantic_inputs,
             reconciled_baseline,
-            changed_paths,
+            mut changed_paths,
             mut actual_write_set,
             mut alias_closures,
             mut reconciled_transition_sequences,
@@ -550,6 +550,7 @@ impl OperationSession<'_> {
             if !sealed_close {
                 snapshot = None;
                 protected_semantic_inputs.clear();
+                changed_paths.clear();
                 actual_write_set = None;
                 alias_closures.clear();
                 reconciled_transition_sequences.clear();

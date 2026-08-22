@@ -12,7 +12,7 @@ use lumin_evidence::{
     apply_worktree_transition_for_domain, derive_gate_baseline_observation_id,
     derive_gate_close_observation_id, derive_protected_semantic_inputs,
     derive_unsealed_gate_observation_binding, gate_abandon_request_digest, gate_policy,
-    pre_write_request_digest, seal_analysis_snapshot,
+    post_write_request_digest, pre_write_request_digest, seal_analysis_snapshot,
 };
 use lumin_model::{ObservationBinding, RepoPath, SealedGateObservation};
 use serde::de::DeserializeOwned;
@@ -470,6 +470,11 @@ fn validate_gate_observations(
             "gate {key} analysis options disagree with its opening operation"
         )));
     }
+    if opening_operation.declared_write_set != gate.declared_write_set {
+        return Err(StoreError::Integrity(format!(
+            "gate {key} declared write set disagrees with its opening operation"
+        )));
+    }
     if gate.analysis_options.jobs == 0 {
         return Err(StoreError::Integrity(format!(
             "gate {key} analysis options have an invalid zero worker count"
@@ -675,6 +680,7 @@ fn validate_gate_observations(
         ) {
             if revision.snapshot.is_some()
                 || revision.actual_write_set.is_some()
+                || !revision.changed_paths.is_empty()
                 || !revision.protected_semantic_inputs.is_empty()
                 || !revision.alias_closures.is_empty()
                 || !revision.reconciled_transition_sequences.is_empty()
@@ -733,7 +739,7 @@ fn validate_gate_observations(
             let primary_paths = if revision.revision == 0 {
                 gate.declared_write_set.as_slice()
             } else {
-                revision.changed_paths.as_slice()
+                &[]
             };
             let derived =
                 derive_unsealed_gate_observation_binding(primary_paths, inputs, &revision.signals);
@@ -1263,7 +1269,9 @@ fn validate_gate_lifecycle(
                         && gate.protected_semantic_inputs.is_empty()))
         }
         GateLifecycle::Closed => {
-            sealed_authorizing_close && tail_kind == Some(GateOperationKind::PostWrite)
+            sealed_authorizing_close
+                && tail_kind == Some(GateOperationKind::PostWrite)
+                && gate.transition_refs.is_empty()
         }
         GateLifecycle::Abandoned => {
             tail_kind == Some(GateOperationKind::GateAbandon)
@@ -1499,11 +1507,26 @@ fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreErr
                 operation.operation_id.as_str()
             ))
         })?;
+        validate_pre_write_analysis_options(operation, options)?;
         let expected =
             pre_write_request_digest(&operation.declared_write_set, &options.scan_invocation);
         if operation.request_digest != expected {
             return Err(StoreError::Integrity(format!(
                 "pre-write operation {} disagrees with its authenticated request",
+                operation.operation_id.as_str()
+            )));
+        }
+    } else if operation.analysis_options.is_some() || !operation.declared_write_set.is_empty() {
+        return Err(StoreError::Integrity(format!(
+            "non-pre-write operation {} retained pre-write request fields",
+            operation.operation_id.as_str()
+        )));
+    }
+    if operation.kind == GateOperationKind::PostWrite {
+        let expected = post_write_request_digest(&operation.gate_id);
+        if operation.request_digest != expected {
+            return Err(StoreError::Integrity(format!(
+                "post-write operation {} disagrees with its authenticated request",
                 operation.operation_id.as_str()
             )));
         }
@@ -1520,6 +1543,14 @@ fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreErr
                     operation.operation_id.as_str()
                 )));
             }
+            if !operation.semantic_read_reservations.is_empty()
+                || !operation.semantic_read_reservation_bindings.is_empty()
+            {
+                return Err(StoreError::Integrity(format!(
+                    "committed operation retained semantic-read reservations: {}",
+                    operation.operation_id.as_str()
+                )));
+            }
             validate_operation_observation(operation, result)
         }
         (GateOperationStatus::Pending, None) => validate_pending_operation_state(operation),
@@ -1533,6 +1564,9 @@ fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreErr
 
 fn validate_pending_operation_state(operation: &OperationRecord) -> Result<(), StoreError> {
     validate_reservation_binding_set(operation)?;
+    if operation.kind == GateOperationKind::PreWrite {
+        validate_pending_pre_write_write_domain(operation)?;
+    }
     let liveness = operation.operation_liveness.as_ref().ok_or_else(|| {
         StoreError::Integrity(format!(
             "pending operation omitted its liveness binding: {}",
@@ -1552,6 +1586,73 @@ fn validate_pending_operation_state(operation: &OperationRecord) -> Result<(), S
             "pending operation has an invalid liveness binding: {}",
             operation.operation_id.as_str()
         )));
+    }
+    Ok(())
+}
+
+fn validate_pre_write_analysis_options(
+    operation: &OperationRecord,
+    options: &lumin_evidence::GateAnalysisOptions,
+) -> Result<(), StoreError> {
+    if options.jobs == 0 {
+        return Err(StoreError::Integrity(format!(
+            "pre-write operation {} has an invalid zero worker count",
+            operation.operation_id.as_str()
+        )));
+    }
+    if options.resolution_profile != options.scan_invocation.resolution_profile {
+        return Err(StoreError::Integrity(format!(
+            "pre-write operation {} has inconsistent resolution profiles",
+            operation.operation_id.as_str()
+        )));
+    }
+    Ok(())
+}
+
+fn validate_pending_pre_write_write_domain(operation: &OperationRecord) -> Result<(), StoreError> {
+    let mut declared = operation.declared_write_set.clone();
+    declared.sort();
+    declared.dedup();
+    let mut leases = operation.leased_write_set.clone();
+    leases.sort();
+    leases.dedup();
+    if declared != operation.declared_write_set
+        || leases != operation.leased_write_set
+        || declared.len() != leases.len()
+    {
+        return Err(StoreError::Integrity(format!(
+            "pending pre-write operation {} has an incoherent provisional write domain",
+            operation.operation_id.as_str()
+        )));
+    }
+    for path in &declared {
+        let matching = leases
+            .iter()
+            .filter(|lease| lease.path == *path)
+            .collect::<Vec<_>>();
+        if matching.len() != 1 {
+            return Err(StoreError::Integrity(format!(
+                "pending pre-write operation {} does not bind each declared path exactly once",
+                operation.operation_id.as_str()
+            )));
+        }
+        let lease = matching[0];
+        match lease.kind {
+            WriteLeaseKind::ExistingFile | WriteLeaseKind::Directory
+                if lease.physical_identity.is_some()
+                    && lease.nearest_existing_parent.is_none()
+                    && lease.prefix_identities.is_empty() => {}
+            WriteLeaseKind::NewFile => {
+                validate_new_file_lease_prefixes(operation.operation_id.as_str(), lease)?;
+            }
+            _ => {
+                return Err(StoreError::Integrity(format!(
+                    "pending pre-write operation {} has an invalid direct lease for {}",
+                    operation.operation_id.as_str(),
+                    path.display
+                )));
+            }
+        }
     }
     Ok(())
 }

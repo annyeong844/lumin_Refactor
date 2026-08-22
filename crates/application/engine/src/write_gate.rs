@@ -4,7 +4,7 @@ use lumin_evidence::{
     DependencyIntentRecord, GateAnalysisOptions, GateOperationResult, GateRecord, GateSignal,
     OperationRecord, PathPrefixIdentity, RepoPathProjection, ScanInvocationTier,
     SemanticInputRecord, SemanticInputState, SemanticReadReservationBinding, gate_policy,
-    pre_write_request_digest, seal_analysis_snapshot,
+    post_write_request_digest, pre_write_request_digest, seal_analysis_snapshot,
 };
 use lumin_inventory::{InventoryRequest, SemanticInputExpectation, SemanticInputValidationState};
 use lumin_model::{
@@ -561,7 +561,7 @@ fn analyze_pre_write(
 }
 
 pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResult, EngineError> {
-    let request_digest = post_write_digest(&request.gate_id);
+    let request_digest = post_write_request_digest(&request.gate_id);
     let context = open_repository_context(&request.root)?;
     let operation = context.store.begin_operation(&request.operation_id)?;
     let (gate, transitions, active_gates) =
@@ -1569,13 +1569,6 @@ pub fn gate_observation_binding_matches_owner(
     revision: &lumin_evidence::GateRevision,
 ) -> Result<bool, EngineError> {
     observation_binding_matches_owner(gate, revision).map_err(Into::into)
-}
-
-fn post_write_digest(gate_id: &GateId) -> String {
-    let mut bytes = Vec::new();
-    append_length_prefixed(&mut bytes, b"lumin-post-write.v2");
-    append_length_prefixed(&mut bytes, gate_id.as_str().as_bytes());
-    digest_hex(&bytes)
 }
 
 #[cfg(test)]
