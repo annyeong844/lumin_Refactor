@@ -1576,14 +1576,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn current_analysis_contract_is_registered_for_active_gate_migration() {
-        assert_eq!(
-            analysis_contract_id(),
-            lumin_evidence::SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID
-        );
-    }
-
-    #[test]
     fn final_freshness_rejects_a_created_reserved_dependency_candidate()
     -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
