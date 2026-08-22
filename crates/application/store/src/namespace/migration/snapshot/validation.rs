@@ -487,6 +487,10 @@ fn validate_gate_observations(
             "gate {key} analysis options have inconsistent resolution profiles"
         )));
     }
+    validate_scan_invocation_patterns(
+        &format!("gate {key}"),
+        &gate.analysis_options.scan_invocation,
+    )?;
     if opening.snapshot.is_some()
         || opening.actual_write_set.is_some()
         || !opening.changed_paths.is_empty()
@@ -847,7 +851,7 @@ fn validate_gate_observations(
 
     if matches!(
         gate.lifecycle,
-        GateLifecycle::Active | GateLifecycle::Rejected
+        GateLifecycle::Active | GateLifecycle::Rejected | GateLifecycle::Closed
     ) && gate
         .protected_semantic_inputs
         .iter()
@@ -1132,6 +1136,7 @@ fn validate_close_snapshot_policy(
     leased_write_set: &[lumin_evidence::WriteLease],
     baseline_alias_closures: &[lumin_evidence::PhysicalAliasClosureRecord],
 ) -> Result<(), StoreError> {
+    validate_close_alias_closures(key, revision, snapshot, leased_write_set)?;
     let (expected_signals, expected_changed_paths, expected_deltas) = gate_policy::closing_signals(
         reconciled_baseline,
         snapshot,
@@ -1186,6 +1191,62 @@ fn validate_close_snapshot_policy(
     if observed_owned != expected_owned || !contextual_signals_present || impossible {
         return Err(StoreError::Integrity(format!(
             "gate {key} close revision {} signals disagree with its sealed analysis snapshots",
+            revision.revision
+        )));
+    }
+    Ok(())
+}
+
+fn validate_close_alias_closures(
+    key: &str,
+    revision: &GateRevision,
+    snapshot: &AnalysisSnapshot,
+    leased_write_set: &[lumin_evidence::WriteLease],
+) -> Result<(), StoreError> {
+    let mut paths_by_identity = BTreeMap::<
+        lumin_model::PhysicalFileIdentity,
+        BTreeSet<lumin_evidence::RepoPathProjection>,
+    >::new();
+    for input in &snapshot.inputs {
+        if let Some(identity) = &input.physical_identity {
+            paths_by_identity
+                .entry(identity.clone())
+                .or_default()
+                .insert(input.path.clone());
+        }
+    }
+
+    let mut seeded_identities = BTreeSet::new();
+    for lease in leased_write_set {
+        seeded_identities.extend(snapshot.inputs.iter().filter_map(|input| {
+            (input.path.components.starts_with(&lease.path.components))
+                .then(|| input.physical_identity.clone())
+                .flatten()
+        }));
+    }
+    let expected = seeded_identities
+        .into_iter()
+        .map(|physical_identity| PhysicalAliasClosureRecord {
+            members: paths_by_identity
+                .get(&physical_identity)
+                .into_iter()
+                .flatten()
+                .cloned()
+                .collect(),
+            physical_identity,
+        })
+        .collect::<Vec<_>>();
+
+    let mut observed = revision.alias_closures.clone();
+    for closure in &mut observed {
+        closure.members.sort();
+        closure.members.dedup();
+    }
+    observed.sort();
+    observed.dedup();
+    if observed != revision.alias_closures || observed != expected {
+        return Err(StoreError::Integrity(format!(
+            "gate {key} close revision {} physical-alias closure cannot be reconstructed from its sealed snapshot",
             revision.revision
         )));
     }
@@ -1606,7 +1667,22 @@ fn validate_pre_write_analysis_options(
             operation.operation_id.as_str()
         )));
     }
+    validate_scan_invocation_patterns(
+        &format!("pre-write operation {}", operation.operation_id.as_str()),
+        &options.scan_invocation,
+    )?;
     Ok(())
+}
+
+fn validate_scan_invocation_patterns(
+    owner: &str,
+    invocation: &lumin_evidence::ScanInvocationTier,
+) -> Result<(), StoreError> {
+    invocation.validate_patterns().map_err(|error| {
+        StoreError::Integrity(format!(
+            "{owner} has an invalid persisted scan invocation: {error}"
+        ))
+    })
 }
 
 fn validate_pending_pre_write_write_domain(operation: &OperationRecord) -> Result<(), StoreError> {

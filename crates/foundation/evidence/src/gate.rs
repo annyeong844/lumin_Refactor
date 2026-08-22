@@ -136,6 +136,18 @@ pub struct ScanInvocationTier {
 }
 
 impl ScanInvocationTier {
+    pub fn validate_patterns(&self) -> Result<(), lumin_model::ScanPatternError> {
+        for pattern in self
+            .includes
+            .iter()
+            .chain(&self.excludes)
+            .chain(self.role_overrides.iter().map(|rule| &rule.pattern))
+        {
+            lumin_model::validate_scan_pattern(pattern)?;
+        }
+        Ok(())
+    }
+
     /// Append canonical length-prefixed framing of all tier fields for deterministic hashing.
     /// Uses exhaustive stable tags for each ScanRole variant.
     pub fn append_semantic_framing(&self, output: &mut Vec<u8>) {

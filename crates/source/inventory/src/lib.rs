@@ -24,6 +24,7 @@ use lumin_model::{
     RepoPathError, RoleOverride, SOURCE_CLASSIFICATION_RULE_VERSION, ScanRole,
     SemanticConfigSnapshot, SourceClassificationRole, SourceKind, SourceRoleClassification,
     SourceRoleConfigurationSource, SourceRoleReason, SourceRoles, SourceSnapshot, digest_hex,
+    validate_scan_pattern,
 };
 use serde::Deserialize;
 use thiserror::Error;
@@ -1402,9 +1403,8 @@ fn compile_patterns(root: &Path, patterns: &[String]) -> Result<Vec<Gitignore>, 
 }
 
 fn compile_pattern(root: &Path, pattern: &str) -> Result<Gitignore, InventoryError> {
-    if pattern.is_empty() || pattern.starts_with('!') || pattern.contains("..") {
-        return Err(InventoryError::InvalidPattern(pattern.to_owned()));
-    }
+    validate_scan_pattern(pattern)
+        .map_err(|error| InventoryError::InvalidPattern(error.to_string()))?;
     let mut builder = GitignoreBuilder::new(root);
     builder
         .add_line(None, pattern)
