@@ -24,6 +24,7 @@ use coordination::{
     semantic_read_conflicts, transition_sequences_for_gate,
 };
 pub use liveness::OperationSession;
+pub(crate) use liveness::validate_migration_operation_liveness;
 use records::{
     current_active_gate_catalog, current_transition_sequence, load_record, next_gate_id,
     next_transition_sequence, read_record, read_records, write_record,

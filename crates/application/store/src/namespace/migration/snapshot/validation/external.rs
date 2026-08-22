@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use lumin_evidence::{GateLifecycle, GateRecord, WriteLeaseKind};
+use lumin_evidence::{
+    GateLifecycle, GateOperationStatus, GateRecord, OperationRecord, WriteLeaseKind,
+};
 use lumin_model::decode_native_path_component;
 use serde::de::DeserializeOwned;
 
@@ -23,6 +25,7 @@ pub(super) fn validate_external_references(
         &snapshot.cache_cleanup_operations,
         &snapshot.cache_eviction_authorizations,
     )?;
+    validate_pending_operation_liveness(snapshot, guard)?;
     validate_active_gate_write_prefixes(snapshot, guard)?;
     validate_latest_attempt(snapshot, guard)?;
     let moved_runs = validate_retention_payloads(snapshot, guard)?;
@@ -30,6 +33,19 @@ pub(super) fn validate_external_references(
         validate_run(key, bytes, guard, moved_runs.get(key))?;
     }
     guard.validate_bound_entries()
+}
+
+fn validate_pending_operation_liveness(
+    snapshot: &LogicalStoreSnapshot,
+    guard: &NamespaceGuard,
+) -> Result<(), StoreError> {
+    for (key, bytes) in &snapshot.operations {
+        let operation = parse_record::<OperationRecord>("operations", key, bytes)?;
+        if operation.status == GateOperationStatus::Pending {
+            crate::gate::validate_migration_operation_liveness(guard, &operation)?;
+        }
+    }
+    Ok(())
 }
 
 fn validate_active_gate_write_prefixes(

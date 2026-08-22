@@ -233,6 +233,63 @@ fn operation_lock_is_interrupted(
     }
 }
 
+pub(crate) fn validate_migration_operation_liveness(
+    guard: &namespace::NamespaceGuard,
+    operation: &OperationRecord,
+) -> Result<(), StoreError> {
+    if operation.status != GateOperationStatus::Pending {
+        return Ok(());
+    }
+    let expected_identity = operation
+        .operation_liveness
+        .as_ref()
+        .and_then(|liveness| liveness.lock_physical_identity.as_ref())
+        .ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "pending operation omitted its lock identity binding: {}",
+                operation.operation_id.as_str()
+            ))
+        })?;
+    let lock_name = operation_lock_name(&operation.operation_id);
+    let file = guard.open_state_file(&lock_name, "operation liveness lock")?;
+    validate_operation_lock_identity(
+        guard,
+        &file,
+        &lock_name,
+        &operation.operation_id,
+        expected_identity,
+    )?;
+    validate_migration_operation_lock_contents(&file, &operation.operation_id)
+}
+
+#[cfg(not(windows))]
+fn validate_migration_operation_lock_contents(
+    file: &namespace::HeldEntry,
+    operation_id: &OperationId,
+) -> Result<(), StoreError> {
+    verify_operation_lock_file(file, operation_id)
+}
+
+#[cfg(windows)]
+fn validate_migration_operation_lock_contents(
+    file: &namespace::HeldEntry,
+    operation_id: &OperationId,
+) -> Result<(), StoreError> {
+    match FileExt::try_lock_shared(file.file()) {
+        Ok(()) => {
+            let verified = verify_operation_lock_file(file, operation_id);
+            let unlocked = FileExt::unlock(file.file()).map_err(io_error);
+            verified?;
+            unlocked
+        }
+        // A live Windows OperationSession holds a byte-range lock after validating the
+        // self-binding. Windows denies reads through a second handle while that lock is
+        // live, so the held path and physical identity are the available migration proof.
+        Err(error) if namespace::lock_contended(&error) => Ok(()),
+        Err(error) => Err(io_error(error)),
+    }
+}
+
 fn operation_lock_name(operation_id: &OperationId) -> String {
     format!(
         "operation-liveness-{}.lock",

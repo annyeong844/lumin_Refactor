@@ -439,6 +439,7 @@ pub struct GateBaselineObservationInput<'a> {
     pub analysis_contract: &'a str,
     pub analysis_input_id: &'a AnalysisInputId,
     pub evidence_payload_sha256: &'a str,
+    pub signals: &'a [GateSignal],
     pub declared_write_set: &'a [RepoPathProjection],
     pub leased_write_set: &'a [WriteLease],
     pub alias_closures: &'a [PhysicalAliasClosureRecord],
@@ -449,12 +450,13 @@ pub fn derive_gate_baseline_observation_id(
     input: GateBaselineObservationInput<'_>,
 ) -> GateBaselineObservationId {
     let mut framed = Vec::new();
-    append_length_prefixed(&mut framed, b"lumin-gate-baseline-observation.v2");
+    append_length_prefixed(&mut framed, b"lumin-gate-baseline-observation.v3");
     framed.extend_from_slice(&input.catalog_revision.to_be_bytes());
     framed.extend_from_slice(&input.transition_sequence.to_be_bytes());
     append_length_prefixed(&mut framed, input.analysis_contract.as_bytes());
     append_length_prefixed(&mut framed, input.analysis_input_id.as_str().as_bytes());
     append_length_prefixed(&mut framed, input.evidence_payload_sha256.as_bytes());
+    append_observation_signals(&mut framed, input.signals);
     append_observation_paths(&mut framed, input.declared_write_set);
     append_observation_write_leases(&mut framed, input.leased_write_set);
     append_observation_alias_closures(&mut framed, input.alias_closures);
@@ -600,6 +602,124 @@ fn append_observation_semantic_inputs(output: &mut Vec<u8>, inputs: &[SemanticIn
             output,
             input.physical_redirect_sha256.as_deref().map(str::as_bytes),
         );
+    }
+}
+
+fn append_observation_signals(output: &mut Vec<u8>, signals: &[GateSignal]) {
+    output.extend_from_slice(&(signals.len() as u64).to_be_bytes());
+    for signal in signals {
+        match signal {
+            GateSignal::FindingWarnings { count } => {
+                output.push(1);
+                output.extend_from_slice(&(*count as u64).to_be_bytes());
+            }
+            GateSignal::PreExistingAdverseFacts { count } => {
+                output.push(2);
+                output.extend_from_slice(&(*count as u64).to_be_bytes());
+            }
+            GateSignal::RequiredEvidenceIncomplete { limitation_count } => {
+                output.push(3);
+                output.extend_from_slice(&(*limitation_count as u64).to_be_bytes());
+            }
+            GateSignal::AnalysisFailed { detail } => {
+                output.push(4);
+                append_length_prefixed(output, detail.as_bytes());
+            }
+            GateSignal::DeclaredPathUnsupported { path, reason } => {
+                output.push(5);
+                append_length_prefixed(output, &path.canonical);
+                output.push(declared_path_unsupported_reason_tag(*reason));
+            }
+            GateSignal::WriteConflict { paths, gate_ids } => {
+                output.push(6);
+                append_observation_signal_paths(output, paths);
+                append_observation_gate_ids(output, gate_ids);
+            }
+            GateSignal::SemanticInputConflict { paths, gate_ids } => {
+                output.push(7);
+                append_observation_signal_paths(output, paths);
+                append_observation_gate_ids(output, gate_ids);
+            }
+            GateSignal::SemanticReadClosureIncomplete { paths } => {
+                output.push(8);
+                append_observation_signal_paths(output, paths);
+            }
+            GateSignal::ProtectedInputChanged { paths } => {
+                output.push(9);
+                append_observation_signal_paths(output, paths);
+            }
+            GateSignal::AnalysisContractChanged => output.push(10),
+            GateSignal::UnplannedWrite { paths } => {
+                output.push(11);
+                append_observation_signal_paths(output, paths);
+            }
+            GateSignal::ActiveTransitionPending { paths, gate_ids } => {
+                output.push(12);
+                append_observation_signal_paths(output, paths);
+                append_observation_gate_ids(output, gate_ids);
+            }
+            GateSignal::TransitionChainBroken { sequence } => {
+                output.push(13);
+                output.extend_from_slice(&sequence.to_be_bytes());
+            }
+            GateSignal::TransitionCatalogChanged => output.push(14),
+            GateSignal::AdverseFactIntroduced { count } => {
+                output.push(15);
+                output.extend_from_slice(&(*count as u64).to_be_bytes());
+            }
+            GateSignal::AdverseFactRegressed { count } => {
+                output.push(16);
+                output.extend_from_slice(&(*count as u64).to_be_bytes());
+            }
+            GateSignal::OpacityIntroduced { count } => {
+                output.push(17);
+                output.extend_from_slice(&(*count as u64).to_be_bytes());
+            }
+            GateSignal::OpacityRegressed { count } => {
+                output.push(18);
+                output.extend_from_slice(&(*count as u64).to_be_bytes());
+            }
+            GateSignal::LifecycleEvidenceRegressed { count } => {
+                output.push(19);
+                output.extend_from_slice(&(*count as u64).to_be_bytes());
+            }
+            GateSignal::LifecycleDeltaIncomparable { count } => {
+                output.push(20);
+                output.extend_from_slice(&(*count as u64).to_be_bytes());
+            }
+            GateSignal::LifecycleBaselineUnavailable { count } => {
+                output.push(21);
+                output.extend_from_slice(&(*count as u64).to_be_bytes());
+            }
+        }
+    }
+}
+
+fn append_observation_signal_paths(output: &mut Vec<u8>, paths: &[RepoPathProjection]) {
+    output.extend_from_slice(&(paths.len() as u64).to_be_bytes());
+    for path in paths {
+        append_length_prefixed(output, &path.canonical);
+    }
+}
+
+fn append_observation_gate_ids(output: &mut Vec<u8>, gate_ids: &[GateId]) {
+    output.extend_from_slice(&(gate_ids.len() as u64).to_be_bytes());
+    for gate_id in gate_ids {
+        append_length_prefixed(output, gate_id.as_str().as_bytes());
+    }
+}
+
+fn declared_path_unsupported_reason_tag(reason: DeclaredPathUnsupportedReason) -> u8 {
+    match reason {
+        DeclaredPathUnsupportedReason::ReservedState => 1,
+        DeclaredPathUnsupportedReason::Missing => 2,
+        DeclaredPathUnsupportedReason::NonRegular => 3,
+        DeclaredPathUnsupportedReason::SymlinkOrAliasedPrefix => 4,
+        DeclaredPathUnsupportedReason::MultiplyLinked => 5,
+        DeclaredPathUnsupportedReason::NotAnalyzedSource => 6,
+        DeclaredPathUnsupportedReason::MissingParent => 7,
+        DeclaredPathUnsupportedReason::OutsideRoot => 8,
+        DeclaredPathUnsupportedReason::UnboundedDirectory => 9,
     }
 }
 
@@ -977,6 +1097,15 @@ pub enum GateOperationKind {
     PreWrite,
     PostWrite,
     GateAbandon,
+}
+
+pub fn gate_abandon_request_digest(gate_id: &GateId, target_revision: u64, reason: &str) -> String {
+    let mut framed = Vec::new();
+    append_length_prefixed(&mut framed, b"lumin-gate-abandon.v1");
+    append_length_prefixed(&mut framed, gate_id.as_str().as_bytes());
+    framed.extend_from_slice(&target_revision.to_be_bytes());
+    append_length_prefixed(&mut framed, reason.as_bytes());
+    digest_hex(&framed)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

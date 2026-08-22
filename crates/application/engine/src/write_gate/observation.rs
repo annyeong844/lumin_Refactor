@@ -55,6 +55,7 @@ pub(super) fn pre_write_observation_binding(
                     baseline,
                     evidence_payload_sha256,
                     catalog_revision,
+                    signals,
                 ),
             },
         };
@@ -121,6 +122,7 @@ fn baseline_observation_id(
     baseline: &GateBaselineDraft,
     evidence_payload_sha256: &str,
     catalog_revision: u64,
+    signals: &[GateSignal],
 ) -> GateBaselineObservationId {
     derive_gate_baseline_observation_id(GateBaselineObservationInput {
         catalog_revision,
@@ -128,6 +130,7 @@ fn baseline_observation_id(
         analysis_contract: &baseline.analysis_contract,
         analysis_input_id: &baseline.snapshot.analysis_input_id,
         evidence_payload_sha256,
+        signals,
         declared_write_set: &seed.declared_write_set,
         leased_write_set: &seed.leased_write_set,
         alias_closures: &seed.alias_closures,
@@ -349,6 +352,7 @@ mod tests {
             baseline,
             evidence_payload_sha256,
             catalog_revision,
+            &[],
         ))
     }
 

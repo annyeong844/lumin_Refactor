@@ -455,6 +455,7 @@ fn open_active_gate_for_with_protected_inputs(
                             analysis_contract: &baseline_for_id.analysis_contract,
                             analysis_input_id: &baseline_for_id.snapshot.analysis_input_id,
                             evidence_payload_sha256: &evidence_payload_sha256,
+                            signals: &[],
                             declared_write_set: std::slice::from_ref(&source_for_id),
                             leased_write_set: std::slice::from_ref(&lease_for_id),
                             alias_closures: &[],

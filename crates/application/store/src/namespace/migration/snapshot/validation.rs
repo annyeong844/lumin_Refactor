@@ -8,9 +8,10 @@ use lumin_evidence::{
     AnalysisSnapshot, GATE_RECORD_SCHEMA_VERSION, GateBaseline, GateBaselineObservationInput,
     GateCloseObservationInput, GateDecision, GateLifecycle, GateOperationKind, GateOperationStatus,
     GateRecord, GateRevision, GateSignal, OperationRecord, PhysicalAliasClosureRecord,
-    WorktreeTransition, WriteLeaseKind, apply_worktree_transition_for_domain,
-    derive_gate_baseline_observation_id, derive_gate_close_observation_id,
-    derive_protected_semantic_inputs, derive_unsealed_gate_observation_binding, gate_policy,
+    RUN_EVIDENCE_SCHEMA_VERSION, WorktreeTransition, WriteLeaseKind,
+    apply_worktree_transition_for_domain, derive_gate_baseline_observation_id,
+    derive_gate_close_observation_id, derive_protected_semantic_inputs,
+    derive_unsealed_gate_observation_binding, gate_abandon_request_digest, gate_policy,
     seal_analysis_snapshot,
 };
 use lumin_model::{ObservationBinding, RepoPath, SealedGateObservation};
@@ -461,6 +462,11 @@ fn validate_gate_observations(
             "gate {key} analysis options disagree with its opening operation"
         )));
     }
+    if gate.analysis_options.jobs == 0 {
+        return Err(StoreError::Integrity(format!(
+            "gate {key} analysis options have an invalid zero worker count"
+        )));
+    }
     if gate.analysis_options.resolution_profile
         != gate.analysis_options.scan_invocation.resolution_profile
     {
@@ -533,6 +539,7 @@ fn validate_gate_observations(
                     analysis_contract: &baseline.analysis_contract,
                     analysis_input_id: &baseline.snapshot.analysis_input_id,
                     evidence_payload_sha256: &evidence_payload_sha256,
+                    signals: &opening.signals,
                     declared_write_set: &gate.declared_write_set,
                     leased_write_set: &baseline.leased_write_set,
                     alias_closures: &baseline.alias_closures,
@@ -1183,6 +1190,12 @@ fn validate_analysis_snapshot(
     role: &str,
     snapshot: &AnalysisSnapshot,
 ) -> Result<String, StoreError> {
+    if snapshot.evidence.schema_version != RUN_EVIDENCE_SCHEMA_VERSION {
+        return Err(StoreError::IncompatibleStateSchema(format!(
+            "gate {gate_key} {role} uses unsupported evidence schema {}; expected {RUN_EVIDENCE_SCHEMA_VERSION}",
+            snapshot.evidence.schema_version
+        )));
+    }
     let evidence_payload_sha256 = crate::evidence_payload_sha256(&snapshot.evidence)?;
     let resealed = seal_analysis_snapshot(
         snapshot.inputs.clone(),
@@ -1464,9 +1477,16 @@ fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreErr
                 && result.request_digest == operation.request_digest
                 && result.gate_id == operation.gate_id =>
         {
+            if operation.operation_liveness.is_some() {
+                return Err(StoreError::Integrity(format!(
+                    "committed operation retained a liveness binding: {}",
+                    operation.operation_id.as_str()
+                )));
+            }
             validate_operation_observation(operation, result)
         }
-        (GateOperationStatus::Pending | GateOperationStatus::Interrupted, None) => Ok(()),
+        (GateOperationStatus::Pending, None) => validate_pending_operation_state(operation),
+        (GateOperationStatus::Interrupted, None) => validate_interrupted_operation_state(operation),
         _ => Err(StoreError::Integrity(format!(
             "operation {} has an incoherent terminal result",
             operation.operation_id.as_str()
@@ -1474,15 +1494,69 @@ fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreErr
     }
 }
 
+fn validate_pending_operation_state(operation: &OperationRecord) -> Result<(), StoreError> {
+    let liveness = operation.operation_liveness.as_ref().ok_or_else(|| {
+        StoreError::Integrity(format!(
+            "pending operation omitted its liveness binding: {}",
+            operation.operation_id.as_str()
+        ))
+    })?;
+    let nonce_is_canonical = liveness.lease_nonce.len() == 32
+        && liveness
+            .lease_nonce
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+    if !nonce_is_canonical
+        || liveness.owner_process_id == 0
+        || liveness.lock_physical_identity.is_none()
+    {
+        return Err(StoreError::Integrity(format!(
+            "pending operation has an invalid liveness binding: {}",
+            operation.operation_id.as_str()
+        )));
+    }
+    Ok(())
+}
+
+fn validate_interrupted_operation_state(operation: &OperationRecord) -> Result<(), StoreError> {
+    if operation.operation_liveness.is_some()
+        || !operation.leased_write_set.is_empty()
+        || !operation.semantic_read_reservations.is_empty()
+        || !operation.semantic_read_reservation_bindings.is_empty()
+    {
+        return Err(StoreError::Integrity(format!(
+            "interrupted operation retained provisional state: {}",
+            operation.operation_id.as_str()
+        )));
+    }
+    Ok(())
+}
+
 fn validate_operation_observation(
     operation: &OperationRecord,
     result: &lumin_evidence::GateOperationResult,
 ) -> Result<(), StoreError> {
-    if operation.kind == GateOperationKind::GateAbandon && result.decision != GateDecision::Deny {
-        return Err(StoreError::Integrity(format!(
-            "administrative abandon operation {} must deny",
-            operation.operation_id.as_str()
-        )));
+    if operation.kind == GateOperationKind::GateAbandon {
+        let reason = operation.reason.as_deref().ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "administrative abandon operation {} omitted its reason",
+                operation.operation_id.as_str()
+            ))
+        })?;
+        if result.decision != GateDecision::Deny
+            || result.reason.as_deref() != Some(reason)
+            || operation.request_digest
+                != gate_abandon_request_digest(
+                    &operation.gate_id,
+                    operation.target_revision,
+                    reason,
+                )
+        {
+            return Err(StoreError::Integrity(format!(
+                "administrative abandon operation {} disagrees with its authenticated request",
+                operation.operation_id.as_str()
+            )));
+        }
     }
     if operation.kind != GateOperationKind::GateAbandon
         && result.decision != gate_policy::decision(&result.signals)

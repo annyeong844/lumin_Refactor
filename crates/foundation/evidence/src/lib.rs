@@ -353,6 +353,8 @@ pub struct RunEvidence {
     pub limitations: Vec<Limitation>,
 }
 
+pub const RUN_EVIDENCE_SCHEMA_VERSION: &str = "lumin-evidence.v1";
+
 impl RunEvidence {
     pub fn dead_code_state(&self) -> CapabilityState {
         self.capabilities
