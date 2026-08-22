@@ -189,14 +189,19 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
             baseline: None,
             leased_write_set: inspection.leases,
             alias_closures: Vec::new(),
+            attempted_semantic_inputs: Vec::new(),
             signals: inspection.signals,
         })
     };
     let PreWritePromotion {
-        finish,
+        mut finish,
         final_validation,
         attempted_semantic_bindings,
     } = promotion;
+    finish.attempted_semantic_inputs = attempted_semantic_bindings
+        .iter()
+        .map(|(_, binding)| binding.clone())
+        .collect();
     let observation_seed = BaselineObservationSeed {
         declared_write_set: declared_write_set.clone(),
         leased_write_set: finish.leased_write_set.clone(),
@@ -474,6 +479,7 @@ fn analyze_pre_write(
                     baseline: None,
                     leased_write_set: inspection.leases,
                     alias_closures: Vec::new(),
+                    attempted_semantic_inputs: Vec::new(),
                     signals: vec![signal],
                 },
                 final_validation: None,
@@ -490,6 +496,7 @@ fn analyze_pre_write(
                     baseline: None,
                     leased_write_set: inspection.leases,
                     alias_closures: Vec::new(),
+                    attempted_semantic_inputs: Vec::new(),
                     signals: vec![GateSignal::AnalysisFailed {
                         detail: error.to_string(),
                     }],
@@ -526,6 +533,7 @@ fn analyze_pre_write(
             baseline: Some(baseline),
             leased_write_set,
             alias_closures,
+            attempted_semantic_inputs: Vec::new(),
             signals,
         },
         final_validation: Some(final_validation),
@@ -1012,24 +1020,41 @@ fn reserve_semantic_paths(
         return Ok(None);
     }
     let reservations = semantic_read_reservations(root, paths)?;
+    let current_bindings = paths
+        .iter()
+        .cloned()
+        .zip(reservations.iter().cloned())
+        .collect::<Vec<_>>();
     let outcome = match reserve(&reservations)? {
         SemanticReadReservation::Reserved => {
-            reserved_bindings.extend(paths.iter().cloned().zip(reservations));
+            reserved_bindings.extend(current_bindings);
             return Ok(None);
         }
         SemanticReadReservation::Conflict {
             paths: conflict_paths,
             gate_ids,
-        } => ReservedCapture::Blocked {
-            signal: GateSignal::SemanticInputConflict {
-                paths: conflict_paths,
-                gate_ids,
-            },
-            attempted_semantic_bindings: paths.iter().cloned().zip(reservations).collect(),
-        },
+        } => {
+            let mut attempted_semantic_bindings = reserved_bindings.clone();
+            attempted_semantic_bindings.extend(current_bindings);
+            attempted_semantic_bindings.sort();
+            attempted_semantic_bindings.dedup();
+            ReservedCapture::Blocked {
+                signal: GateSignal::SemanticInputConflict {
+                    paths: conflict_paths,
+                    gate_ids,
+                },
+                attempted_semantic_bindings,
+            }
+        }
         SemanticReadReservation::TransitionCatalogChanged => ReservedCapture::Blocked {
             signal: GateSignal::TransitionCatalogChanged,
-            attempted_semantic_bindings: Vec::new(),
+            attempted_semantic_bindings: {
+                let mut attempted_semantic_bindings = reserved_bindings.clone();
+                attempted_semantic_bindings.extend(current_bindings);
+                attempted_semantic_bindings.sort();
+                attempted_semantic_bindings.dedup();
+                attempted_semantic_bindings
+            },
         },
         SemanticReadReservation::Committed(result) => ReservedCapture::Committed(result),
     };

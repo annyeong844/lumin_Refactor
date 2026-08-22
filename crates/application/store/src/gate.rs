@@ -72,6 +72,7 @@ pub struct PreWriteFinish {
     pub baseline: Option<GateBaselineDraft>,
     pub leased_write_set: Vec<WriteLease>,
     pub alias_closures: Vec<PhysicalAliasClosureRecord>,
+    pub attempted_semantic_inputs: Vec<SemanticReadReservationBinding>,
     pub signals: Vec<GateSignal>,
 }
 
@@ -443,6 +444,7 @@ fn validate_pre_write_context(
     operation: &OperationRecord,
     baseline: Option<&GateBaselineDraft>,
     leased_write_set: &[WriteLease],
+    attempted_semantic_inputs: &[SemanticReadReservationBinding],
     signals: &mut Vec<GateSignal>,
 ) -> Result<(), StoreError> {
     let missing_initial_paths = operation
@@ -467,6 +469,29 @@ fn validate_pre_write_context(
         && !signals.contains(&GateSignal::TransitionCatalogChanged)
     {
         signals.push(GateSignal::TransitionCatalogChanged);
+    }
+    if !attempted_semantic_inputs.is_empty()
+        && signals
+            .iter()
+            .any(|signal| matches!(signal, GateSignal::SemanticInputConflict { .. }))
+    {
+        signals.retain(|signal| !matches!(signal, GateSignal::SemanticInputConflict { .. }));
+        let conflicts = semantic_read_conflicts(
+            write,
+            &operation.operation_id,
+            &operation.gate_id,
+            attempted_semantic_inputs,
+        )?;
+        if conflicts.paths.is_empty() {
+            if !signals.contains(&GateSignal::TransitionCatalogChanged) {
+                signals.push(GateSignal::TransitionCatalogChanged);
+            }
+        } else {
+            signals.push(GateSignal::SemanticInputConflict {
+                paths: conflicts.paths,
+                gate_ids: conflicts.gate_ids,
+            });
+        }
     }
     if let Some(baseline) = baseline {
         let omitted_reservations = operation

@@ -365,6 +365,98 @@ fn failed_close_rechecks_a_semantic_conflict_at_the_final_barrier()
 }
 
 #[test]
+fn failed_pre_write_rechecks_a_semantic_conflict_and_retains_prior_reservations()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = semantic_read_closure_fixture()?;
+    fs::write(
+        root.path().join("src/tsconfig.json"),
+        "{\"extends\":\"../config/base.json\"}\n",
+    )?;
+    let writer_gate = open_gate(root.path(), "op-pre-conflict-recheck-writer-open", "shared")?;
+
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+    listener.set_nonblocking(true)?;
+    let mut child = lumin_command(root.path())?
+        .args([
+            "pre-write",
+            "--operation-id",
+            "op-pre-conflict-recheck-open",
+            "--path",
+            "src/new.ts",
+            "--jobs",
+            "1",
+        ])
+        .env(
+            "LUMIN_TEST_GATE_PREWRITE_FINAL_BARRIER",
+            listener.local_addr()?.to_string(),
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let (mut stream, frame) =
+        wait_for_gate_barrier(&listener, &mut child, "pre-write conflict recheck")?;
+    let frame = frame.split_whitespace().collect::<Vec<_>>();
+    assert_eq!(frame.first().copied(), Some("finalizing"));
+    assert_eq!(frame.get(1).copied(), Some("op-pre-conflict-recheck-open"));
+    assert!(frame.get(2).is_some());
+
+    let abandoned = run(
+        root.path(),
+        &[
+            "gate",
+            "abandon",
+            &writer_gate,
+            "--operation-id",
+            "op-pre-conflict-recheck-abandon",
+            "--reason",
+            "release the semantic input",
+        ],
+    )?;
+    assert_status(&abandoned, 0);
+    assert_eq!(field(&abandoned.stdout, "decision")?, "deny");
+
+    release_gate_barrier(&mut stream)?;
+    drop(stream);
+    let output = child.wait_with_output()?;
+    assert_eq!(
+        output.status.code(),
+        Some(5),
+        "unexpected pre-write conflict-recheck result: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let response: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(
+        response.get("decision").and_then(Value::as_str),
+        Some("stale")
+    );
+    let signals = response
+        .get("signals")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("pre-write conflict signals are missing"))?;
+    assert!(signals.iter().any(|signal| {
+        signal.get("kind").and_then(Value::as_str) == Some("transition-catalog-changed")
+    }));
+    assert!(!signals.iter().any(|signal| {
+        signal.get("kind").and_then(Value::as_str) == Some("semantic-input-conflict")
+    }));
+    let attempted = response
+        .pointer("/observationBinding/attemptedDomain")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("pre-write attempted domain is missing"))?;
+    for expected in ["config/base.json", "shared/root"] {
+        assert!(
+            attempted
+                .iter()
+                .any(|path| { path.get("display").and_then(Value::as_str) == Some(expected) }),
+            "pre-write attempted domain omitted {expected}: {attempted:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn stale_pre_write_capture_retains_and_rechecks_its_semantic_bindings()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = semantic_read_closure_fixture()?;

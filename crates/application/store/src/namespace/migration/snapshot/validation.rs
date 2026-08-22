@@ -160,6 +160,16 @@ fn validate_gate_observations(
             }) if observation_id == &baseline.observation_id
                 && opening.catalog_revision == Some(baseline.catalog_revision) =>
             {
+                if gate.lifecycle == GateLifecycle::Active
+                    && (gate.leased_write_set.iter().collect::<BTreeSet<_>>()
+                        != baseline.leased_write_set.iter().collect::<BTreeSet<_>>()
+                        || gate.alias_closures.iter().collect::<BTreeSet<_>>()
+                            != baseline.alias_closures.iter().collect::<BTreeSet<_>>())
+                {
+                    return Err(StoreError::Integrity(format!(
+                        "active gate {key} lease/alias domain disagrees with its sealed baseline"
+                    )));
+                }
                 let derived = derive_gate_baseline_observation_id(GateBaselineObservationInput {
                     catalog_revision: baseline.catalog_revision,
                     transition_sequence: baseline.transition_sequence,
@@ -249,6 +259,23 @@ fn validate_gate_observations(
         if wrong_observation_kind {
             return Err(StoreError::Integrity(format!(
                 "gate {key} revision {} carries the wrong observation kind",
+                revision.revision
+            )));
+        }
+        if revision.revision > 0
+            && matches!(
+                revision.observation_binding.as_ref(),
+                Some(ObservationBinding::Unsealed { .. })
+            )
+            && (revision.snapshot.is_some()
+                || revision.actual_write_set.is_some()
+                || !revision.protected_semantic_inputs.is_empty()
+                || !revision.alias_closures.is_empty()
+                || !revision.reconciled_transition_sequences.is_empty()
+                || !revision.deltas.is_empty())
+        {
+            return Err(StoreError::Integrity(format!(
+                "gate {key} unsealed close revision {} retained complete-observation payloads",
                 revision.revision
             )));
         }

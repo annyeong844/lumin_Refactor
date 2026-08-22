@@ -134,6 +134,7 @@ impl OperationSession<'_> {
             baseline,
             leased_write_set,
             alias_closures,
+            attempted_semantic_inputs,
             mut signals,
         } = finish;
         let operation_id = &self.operation_id;
@@ -157,6 +158,7 @@ impl OperationSession<'_> {
                 &operation,
                 baseline.as_ref(),
                 &leased_write_set,
+                &attempted_semantic_inputs,
                 &mut signals,
             )?;
             let reserved_state_identities = guard.reserved_state_identities()?;

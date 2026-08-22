@@ -1,10 +1,10 @@
 use std::fs;
 
 use lumin_evidence::{
-    GateRecord, RetentionMutationResult, RetentionOperationRecord, RetentionOperationResult,
-    RetentionPlanScope,
+    GateDecision, GateRecord, RetentionMutationResult, RetentionOperationRecord,
+    RetentionOperationResult, RetentionPlanScope,
 };
-use lumin_model::{AttemptId, OperationId, RunId};
+use lumin_model::{AttemptId, ObservationBinding, OperationId, RunId, UnsealedObservationReason};
 use redb::{Database, ReadableTable};
 
 use crate::gate::GATES;
@@ -191,6 +191,40 @@ fn migration_reconstructs_gate_observations_with_their_catalog_revision()
 }
 
 #[test]
+fn migration_rejects_an_active_lease_domain_weaker_than_its_sealed_baseline()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(&store, "op-active-domain", "src/active-domain.ts")?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("active-domain gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        gate.leased_write_set.clear();
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("lease/alias domain disagrees with its sealed baseline")
+    ));
+    Ok(())
+}
+
+#[test]
 fn migration_reconstructs_close_observations_with_their_catalog_revision()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
@@ -227,6 +261,51 @@ fn migration_reconstructs_close_observations_with_their_catalog_revision()
         store.migrate_lifecycle_store(),
         Err(StoreError::Integrity(message))
             if message.contains("close observation revision 1 cannot be reconstructed")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_complete_observation_payloads_on_an_unsealed_close()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(&store, "op-unsealed-payload", "src/unsealed.ts")?;
+    close_active_gate_for_migration(&store, &gate_id)?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("unsealed-payload gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        let revision = gate
+            .revisions
+            .get_mut(1)
+            .ok_or("unsealed-payload gate omitted its close revision")?;
+        revision.decision = GateDecision::Stale;
+        revision.observation_binding = Some(ObservationBinding::Unsealed {
+            reason: UnsealedObservationReason::AnalysisFailed,
+            attempted_domain: Vec::new(),
+            last_complete_read_set: Vec::new(),
+            conflicting_or_unbounded_inputs: Vec::new(),
+        });
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("unsealed close revision 1 retained complete-observation payloads")
     ));
     Ok(())
 }

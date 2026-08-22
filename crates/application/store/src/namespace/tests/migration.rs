@@ -422,6 +422,7 @@ fn open_active_gate_for(
             baseline: Some(baseline),
             leased_write_set: vec![source_lease],
             alias_closures: Vec::new(),
+            attempted_semantic_inputs: Vec::new(),
             signals: Vec::new(),
         },
         |_, catalog_revision, _| ObservationFinalization {

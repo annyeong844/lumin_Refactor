@@ -37,6 +37,7 @@ fn process_death_releases_pre_write_reservations_and_allows_same_operation_retry
             baseline: None,
             leased_write_set: vec![lease(demanded)],
             alias_closures: Vec::new(),
+            attempted_semantic_inputs: Vec::new(),
             signals: vec![GateSignal::AnalysisFailed {
                 detail: "test rejection".to_owned(),
             }],
