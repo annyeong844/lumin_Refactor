@@ -1224,10 +1224,25 @@ pub fn derive_pre_write_final_validation_signals(
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>();
-    let mut changed_paths = expected_inputs
-        .symmetric_difference(&observed_inputs)
+    let mut changed_paths = observed_inputs
+        .difference(&expected_inputs)
         .map(|input| input.path.clone())
         .collect::<BTreeSet<_>>();
+    let expected_source_inputs = expected_inputs
+        .iter()
+        .filter(|input| input.state == SemanticInputState::Source)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let observed_source_inputs = observed_inputs
+        .iter()
+        .filter(|input| input.state == SemanticInputState::Source)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    changed_paths.extend(
+        expected_source_inputs
+            .symmetric_difference(&observed_source_inputs)
+            .map(|input| input.path.clone()),
+    );
 
     let expected_bindings = evidence
         .expected_semantic_read_bindings
@@ -1972,6 +1987,78 @@ mod tests {
             signals.reverse();
             assert_eq!(gate_policy::decision(&signals), expected);
         }
+    }
+
+    #[test]
+    fn final_validation_uses_explicit_drift_for_captured_non_source_inputs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let captured = input("config/base.json", "captured")?;
+        let evidence = PreWriteFinalValidationEvidence {
+            expected_semantic_read_bindings: Vec::new(),
+            observed_semantic_read_bindings: Vec::new(),
+            observed_semantic_inputs: Vec::new(),
+            observed_leased_write_set: Vec::new(),
+            observed_alias_closures: Vec::new(),
+            write_domain_drift_paths: Vec::new(),
+            semantic_input_validation_drift_paths: Vec::new(),
+        };
+
+        assert!(
+            derive_pre_write_final_validation_signals(
+                std::slice::from_ref(&captured),
+                &[],
+                &[],
+                &evidence,
+            )
+            .is_empty()
+        );
+
+        let evidence = PreWriteFinalValidationEvidence {
+            semantic_input_validation_drift_paths: vec![captured.path.clone()],
+            ..evidence
+        };
+        assert_eq!(
+            derive_pre_write_final_validation_signals(
+                std::slice::from_ref(&captured),
+                &[],
+                &[],
+                &evidence,
+            ),
+            vec![GateSignal::ProtectedInputChanged {
+                paths: vec![captured.path],
+            }],
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn final_validation_detects_source_removal_and_new_non_source_inputs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut captured_source = input("src/a.ts", "captured")?;
+        captured_source.state = SemanticInputState::Source;
+        let observed_config = input("config/new.json", "observed")?;
+        let evidence = PreWriteFinalValidationEvidence {
+            expected_semantic_read_bindings: Vec::new(),
+            observed_semantic_read_bindings: Vec::new(),
+            observed_semantic_inputs: vec![observed_config.clone()],
+            observed_leased_write_set: Vec::new(),
+            observed_alias_closures: Vec::new(),
+            write_domain_drift_paths: Vec::new(),
+            semantic_input_validation_drift_paths: Vec::new(),
+        };
+
+        assert_eq!(
+            derive_pre_write_final_validation_signals(
+                std::slice::from_ref(&captured_source),
+                &[],
+                &[],
+                &evidence,
+            ),
+            vec![GateSignal::ProtectedInputChanged {
+                paths: vec![captured_source.path, observed_config.path],
+            }],
+        );
+        Ok(())
     }
 
     #[test]
