@@ -7,7 +7,8 @@ use lumin_evidence::{
 };
 use lumin_model::{
     AnalysisInputId, AttemptId, DeltaFactFamily, DeltaKey, GateDeltaClassification,
-    GateDeltaRecord, ObservationBinding, OperationId, RunId, UnsealedObservationReason,
+    GateDeltaRecord, ObservationBinding, OperationId, ResolutionProfile, RunId,
+    UnsealedObservationReason,
 };
 use redb::{Database, ReadableTable};
 
@@ -197,6 +198,106 @@ fn migration_reconstructs_gate_observations_with_their_catalog_revision()
         store.migrate_lifecycle_store(),
         Err(StoreError::Integrity(message))
             if message.contains("baseline observation cannot be reconstructed")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_binds_analysis_options_to_the_opening_operation_and_sealed_baseline()
+-> Result<(), Box<dyn std::error::Error>> {
+    for corruption in ["gate-and-operation", "operation-only"] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        let operation_id = OperationId::from_string(format!("op-analysis-options-{corruption}"));
+        let gate_id = open_active_gate_for(
+            &store,
+            operation_id.as_str(),
+            &format!("src/analysis-options-{corruption}.ts"),
+        )?;
+        let mut forged_options = store.load_gate(&gate_id)?.analysis_options;
+        forged_options.resolution_profile = Some(ResolutionProfile::Node16);
+        forged_options.scan_invocation.resolution_profile = Some(ResolutionProfile::Node16);
+        drop(store);
+
+        let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+        let write = database.begin_write()?;
+        if corruption == "gate-and-operation" {
+            let mut table = write.open_table(GATES)?;
+            let bytes = table
+                .get(gate_id.as_str())?
+                .ok_or("analysis-options gate is missing")?
+                .value()
+                .to_vec();
+            let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+            gate.analysis_options = forged_options.clone();
+            let changed = serde_json::to_vec(&gate)?;
+            table.insert(gate_id.as_str(), changed.as_slice())?;
+        }
+        {
+            let mut table = write.open_table(OPERATIONS)?;
+            let bytes = table
+                .get(operation_id.as_str())?
+                .ok_or("analysis-options opening operation is missing")?
+                .value()
+                .to_vec();
+            let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+            operation.analysis_options = Some(forged_options);
+            let changed = serde_json::to_vec(&operation)?;
+            table.insert(operation_id.as_str(), changed.as_slice())?;
+        }
+        write.commit()?;
+        drop(database);
+
+        let store = open_store(root.path())?;
+        assert!(matches!(
+            store.migrate_lifecycle_store(),
+            Err(StoreError::Integrity(message))
+                if message.contains("analysis invocation disagrees with its sealed baseline")
+                    || message.contains("analysis options disagree with its opening operation")
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_close_only_payloads_on_the_opening_revision()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(&store, "op-opening-payload", "src/opening-payload.ts")?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("opening-payload gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        let forged_snapshot = gate
+            .baseline
+            .as_ref()
+            .ok_or("opening-payload gate omitted its baseline")?
+            .snapshot
+            .clone();
+        gate.revisions
+            .first_mut()
+            .ok_or("opening-payload gate omitted its opening revision")?
+            .snapshot = Some(forged_snapshot);
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("opening revision retained close-only payloads")
     ));
     Ok(())
 }

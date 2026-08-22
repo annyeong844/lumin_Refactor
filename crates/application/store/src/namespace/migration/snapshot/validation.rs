@@ -249,6 +249,36 @@ fn validate_gate_observations(
         .revisions
         .first()
         .ok_or_else(|| StoreError::Integrity(format!("gate {key} omitted its opening revision")))?;
+    let opening_analysis_options = operations
+        .get(opening.operation_id.as_str())
+        .and_then(|operation| operation.analysis_options.as_ref())
+        .ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "gate {key} opening operation omitted its analysis options"
+            ))
+        })?;
+    if opening_analysis_options != &gate.analysis_options {
+        return Err(StoreError::Integrity(format!(
+            "gate {key} analysis options disagree with its opening operation"
+        )));
+    }
+    if gate.analysis_options.resolution_profile
+        != gate.analysis_options.scan_invocation.resolution_profile
+    {
+        return Err(StoreError::Integrity(format!(
+            "gate {key} analysis options have inconsistent resolution profiles"
+        )));
+    }
+    if opening.snapshot.is_some()
+        || opening.actual_write_set.is_some()
+        || !opening.changed_paths.is_empty()
+        || !opening.reconciled_transition_sequences.is_empty()
+        || !opening.deltas.is_empty()
+    {
+        return Err(StoreError::Integrity(format!(
+            "gate {key} opening revision retained close-only payloads"
+        )));
+    }
     match &gate.baseline {
         Some(baseline) => match &opening.observation_binding {
             Some(ObservationBinding::Sealed {
@@ -256,6 +286,11 @@ fn validate_gate_observations(
             }) if observation_id == &baseline.observation_id
                 && opening.catalog_revision == Some(baseline.catalog_revision) =>
             {
+                if gate.analysis_options.scan_invocation != baseline.snapshot.scan_invocation {
+                    return Err(StoreError::Integrity(format!(
+                        "gate {key} analysis invocation disagrees with its sealed baseline"
+                    )));
+                }
                 validate_analysis_snapshot(key, "baseline", &baseline.snapshot)?;
                 if gate.lifecycle == GateLifecycle::Active
                     && (gate.leased_write_set.iter().collect::<BTreeSet<_>>()
