@@ -8,7 +8,8 @@ use lumin_evidence::{
     AnalysisSnapshot, GATE_OPERATION_SCHEMA_VERSION, GATE_RECORD_SCHEMA_VERSION, GateBaseline,
     GateBaselineObservationInput, GateCloseObservationInput, GateDecision, GateLifecycle,
     GateOperationKind, GateOperationStatus, GateRecord, GateRevision, GateSignal, OperationRecord,
-    PhysicalAliasClosureRecord, RUN_EVIDENCE_SCHEMA_VERSION, WorktreeTransition, WriteLeaseKind,
+    PhysicalAliasClosureRecord, RUN_EVIDENCE_SCHEMA_VERSION,
+    SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, WorktreeTransition, WriteLeaseKind,
     apply_worktree_transition_for_domain, derive_gate_baseline_observation_id,
     derive_gate_close_observation_id, derive_protected_semantic_inputs,
     derive_unsealed_gate_observation_binding, gate_abandon_request_digest, gate_policy,
@@ -508,6 +509,14 @@ fn validate_gate_observations(
             }) if observation_id == &baseline.observation_id
                 && opening.catalog_revision == Some(baseline.catalog_revision) =>
             {
+                if gate.lifecycle == GateLifecycle::Active
+                    && baseline.analysis_contract != SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID
+                {
+                    return Err(StoreError::IncompatibleStateSchema(format!(
+                        "active gate {key} uses unsupported analysis contract {}",
+                        baseline.analysis_contract
+                    )));
+                }
                 if baseline.transition_sequence != opening_operation.transition_sequence {
                     return Err(StoreError::Integrity(format!(
                         "gate {key} baseline transition boundary disagrees with its opening operation"
@@ -1372,6 +1381,27 @@ fn validate_operation_gate_refs(
                 "operation {} references a missing gate",
                 operation.operation_id.as_str()
             )));
+        }
+        if operation.status != GateOperationStatus::Committed
+            && matches!(
+                operation.kind,
+                GateOperationKind::PostWrite | GateOperationKind::GateAbandon
+            )
+        {
+            let gate = gates.get(operation.gate_id.as_str()).ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "unfinished operation {} references a missing gate",
+                    operation.operation_id.as_str()
+                ))
+            })?;
+            if gate.lifecycle != GateLifecycle::Active
+                || gate.current_revision != operation.target_revision
+            {
+                return Err(StoreError::Integrity(format!(
+                    "unfinished operation {} cannot resume against its target gate revision",
+                    operation.operation_id.as_str()
+                )));
+            }
         }
         if let Some(result) = &operation.result {
             let gate = gates.get(operation.gate_id.as_str()).ok_or_else(|| {

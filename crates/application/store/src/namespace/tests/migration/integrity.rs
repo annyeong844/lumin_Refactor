@@ -3643,6 +3643,137 @@ fn migration_rejects_reasons_on_non_administrative_gate_operations()
     Ok(())
 }
 
+#[test]
+fn migration_rejects_unfinished_post_write_against_a_terminal_gate()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(
+        &store,
+        "op-unrecoverable-post-write-open",
+        "src/unrecoverable-post-write.ts",
+    )?;
+    close_active_gate_for_migration(&store, &gate_id)?;
+    let gate = store.load_gate(&gate_id)?;
+    let close_operation_id = gate
+        .revisions
+        .last()
+        .ok_or("closed gate omitted its close revision")?
+        .operation_id
+        .clone();
+    let target_revision = gate.current_revision;
+    drop(store);
+
+    let pending_operation_id = OperationId::from_string("op-unrecoverable-post-write".to_owned());
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get(close_operation_id.as_str())?
+            .ok_or("close operation is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        operation.operation_id = pending_operation_id.clone();
+        operation.status = GateOperationStatus::Pending;
+        operation.target_revision = target_revision;
+        operation.interruption_count = 0;
+        operation.operation_liveness = Some(OperationLivenessLease {
+            lease_nonce: "0".repeat(32),
+            owner_process_id: 1,
+            lock_physical_identity: Some(PhysicalFileIdentity::Unix {
+                device: 1,
+                inode: 1,
+            }),
+        });
+        operation.result = None;
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert(pending_operation_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("cannot resume against its target gate revision")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_an_unsupported_active_analysis_contract()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(
+        &store,
+        "op-unsupported-analysis-contract",
+        "src/unsupported-analysis-contract.ts",
+    )?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    let (operation_id, binding) = {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("active gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        gate.baseline
+            .as_mut()
+            .ok_or("active gate omitted its baseline")?
+            .analysis_contract = "unsupported-analysis-contract".to_owned();
+        let binding = reconstructed_baseline_binding(&gate)?;
+        let ObservationBinding::Sealed {
+            observation: SealedGateObservation::Baseline { observation_id },
+        } = &binding
+        else {
+            return Err("unsupported-contract fixture produced the wrong binding".into());
+        };
+        gate.baseline
+            .as_mut()
+            .ok_or("active gate baseline disappeared")?
+            .observation_id = observation_id.clone();
+        gate.revisions[0].observation_binding = Some(binding.clone());
+        let operation_id = gate.revisions[0].operation_id.clone();
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+        (operation_id, binding)
+    };
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get(operation_id.as_str())?
+            .ok_or("opening operation is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        operation
+            .result
+            .as_mut()
+            .ok_or("opening operation result is missing")?
+            .observation_binding = Some(binding);
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert(operation_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::IncompatibleStateSchema(message))
+            if message.contains("unsupported analysis contract")
+    ));
+    Ok(())
+}
+
 fn corrupt_unsealed_binding(
     binding: &mut GateObservationBinding,
     corruption: &str,

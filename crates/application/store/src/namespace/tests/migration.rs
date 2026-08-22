@@ -5,12 +5,12 @@ use std::fs;
 use lumin_evidence::{
     ActualWriteSet, CapabilityRecord, DEAD_CODE_CAPABILITY_ID, GateAnalysisOptions,
     GateBaselineObservationInput, GateCloseObservationInput, GateObservationBinding, GateSignal,
-    RepoPathProjection, RunEvidence, SemanticInputRecord, SemanticInputState,
-    SemanticReadReservationBinding, UnsealedGateObservationInputs, WriteLease, WriteLeaseKind,
-    apply_worktree_transition, derive_gate_baseline_observation_id,
-    derive_gate_close_observation_id, derive_protected_semantic_inputs,
-    derive_unsealed_gate_observation_binding, gate_policy, post_write_request_digest,
-    pre_write_request_digest, seal_analysis_snapshot,
+    RepoPathProjection, RunEvidence, SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID,
+    SemanticInputRecord, SemanticInputState, SemanticReadReservationBinding,
+    UnsealedGateObservationInputs, WriteLease, WriteLeaseKind, apply_worktree_transition,
+    derive_gate_baseline_observation_id, derive_gate_close_observation_id,
+    derive_protected_semantic_inputs, derive_unsealed_gate_observation_binding, gate_policy,
+    post_write_request_digest, pre_write_request_digest, seal_analysis_snapshot,
 };
 use lumin_model::{
     CapabilityState, GateId, ObservationBinding, OperationId, RepoPath, SealedGateObservation,
@@ -438,7 +438,7 @@ fn open_active_gate_for_with_protected_inputs(
         PreWriteStart::Committed(_) => return Err("active gate fixture was rejected".into()),
     };
     let baseline = GateBaselineDraft {
-        analysis_contract: "migration-test-contract".to_owned(),
+        analysis_contract: SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID.to_owned(),
         snapshot: seal_analysis_snapshot(
             protected_semantic_inputs.clone(),
             evidence(),

@@ -15,6 +15,12 @@ use crate::{RepoPathProjection, RunEvidence, delta::lifecycle_delta_input_for};
 pub type GateObservationBinding = ObservationBinding<RepoPathProjection>;
 pub const GATE_RECORD_SCHEMA_VERSION: &str = "lumin-gate.v2";
 pub const GATE_OPERATION_SCHEMA_VERSION: &str = "lumin-operation.v1";
+/// Analysis contract that this lifecycle schema can resume for an active gate.
+///
+/// `lumin-engine` remains the value authority and verifies that its current
+/// derivation equals this migration compatibility boundary.
+pub const SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID: &str =
+    "655854af620a6d54e44f40f6768b5c6a5e1f4cb1381367eee2dc7998baeb1236";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
