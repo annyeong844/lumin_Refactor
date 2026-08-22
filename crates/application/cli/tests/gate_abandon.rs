@@ -35,7 +35,7 @@ fn abandon_survives_process_reopen_and_refuses_a_second_terminal_revision()
     ];
 
     let first = run(root.path(), &command)?;
-    assert_status(&first, 0);
+    assert_status(&first, 3);
     let first_json: Value = serde_json::from_str(&first.stdout)?;
     assert_eq!(
         first_json.get("lifecycle").and_then(Value::as_str),
@@ -53,7 +53,7 @@ fn abandon_survives_process_reopen_and_refuses_a_second_terminal_revision()
     assert_eq!(first_json.get("revision").and_then(Value::as_u64), Some(1));
 
     let retry = run(root.path(), &command)?;
-    assert_status(&retry, 0);
+    assert_status(&retry, 3);
     assert_eq!(retry.stdout, first.stdout);
 
     assert_abandon_views(root.path(), &gate_id)?;

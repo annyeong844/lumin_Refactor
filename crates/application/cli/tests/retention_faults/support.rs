@@ -99,7 +99,7 @@ impl Fixture {
                 "retention fault fixture",
             ],
         )?;
-        assert_status(&abandoned, 0);
+        assert_status(&abandoned, 3);
         let prepared = run(root.path(), &Self::gate_plan_arguments())?;
         assert_status(&prepared, 0);
         let mut fixture = Self {

@@ -8,7 +8,7 @@ use lumin_evidence::{
     AnalysisSnapshot, GATE_RECORD_SCHEMA_VERSION, GateBaseline, GateBaselineObservationInput,
     GateCloseObservationInput, GateDecision, GateLifecycle, GateOperationKind, GateOperationStatus,
     GateRecord, GateRevision, GateSignal, OperationRecord, PhysicalAliasClosureRecord,
-    WorktreeTransition, WriteLeaseKind, apply_worktree_transition,
+    WorktreeTransition, WriteLeaseKind, apply_worktree_transition_for_domain,
     derive_gate_baseline_observation_id, derive_gate_close_observation_id,
     derive_protected_semantic_inputs, derive_unsealed_gate_observation_binding, gate_policy,
     seal_analysis_snapshot,
@@ -36,6 +36,7 @@ pub(super) fn validate_referential_closure(
     let (transitions, transition_sequences) = read_transitions(snapshot)?;
     let operations = read_operations(snapshot)?;
     let gates = read_gates(snapshot, &operations, &transitions, &transition_sequences)?;
+    validate_baseline_transition_boundaries(&transitions, &gates)?;
     validate_gate_id_sequence(snapshot, &gates, &operations)?;
     validate_transition_catalog_sequence(snapshot, &transition_sequences, &gates, &operations)?;
     validate_active_gate_catalog(snapshot, &gates, &operations)?;
@@ -130,6 +131,59 @@ fn read_operations(
         operations.insert(key.as_str(), operation);
     }
     Ok(operations)
+}
+
+fn validate_baseline_transition_boundaries(
+    transitions: &BTreeMap<u64, WorktreeTransition>,
+    gates: &BTreeMap<&str, GateRecord>,
+) -> Result<(), StoreError> {
+    for (key, gate) in gates {
+        let Some(baseline) = gate.baseline.as_ref() else {
+            continue;
+        };
+        let opening_authorized = gate
+            .revisions
+            .first()
+            .is_some_and(|revision| revision.decision.authorizes());
+        if !opening_authorized {
+            continue;
+        }
+        for transition in transitions.values() {
+            let owner = gates
+                .get(transition.capsule.gate_id.as_str())
+                .ok_or_else(|| {
+                    StoreError::Integrity(format!(
+                        "transition {} references a missing gate",
+                        transition.sequence
+                    ))
+                })?;
+            let close_revision = owner
+                .revisions
+                .iter()
+                .find(|revision| revision.revision == transition.capsule.revision)
+                .ok_or_else(|| {
+                    StoreError::Integrity(format!(
+                        "transition {} references a missing gate revision",
+                        transition.sequence
+                    ))
+                })?;
+            let close_catalog_revision = close_revision.catalog_revision.ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "transition {} omitted its authorizing catalog epoch",
+                    transition.sequence
+                ))
+            })?;
+            let included = transition.sequence <= baseline.transition_sequence;
+            let predates_opening = close_catalog_revision < baseline.catalog_revision;
+            let follows_opening = close_catalog_revision > baseline.catalog_revision;
+            if included != predates_opening || (!included && !follows_opening) {
+                return Err(StoreError::Integrity(format!(
+                    "gate {key} baseline transition boundary disagrees with its catalog epoch"
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn read_gates<'a>(
@@ -393,10 +447,11 @@ fn validate_gate_observations(
         .revisions
         .first()
         .ok_or_else(|| StoreError::Integrity(format!("gate {key} omitted its opening revision")))?;
-    let opening_analysis_options = operations
+    let opening_operation = operations
         .get(opening.operation_id.as_str())
-        .and_then(|operation| operation.analysis_options.as_ref())
-        .ok_or_else(|| {
+        .ok_or_else(|| StoreError::Integrity(format!("gate {key} opening operation is missing")))?;
+    let opening_analysis_options =
+        opening_operation.analysis_options.as_ref().ok_or_else(|| {
             StoreError::Integrity(format!(
                 "gate {key} opening operation omitted its analysis options"
             ))
@@ -430,6 +485,11 @@ fn validate_gate_observations(
             }) if observation_id == &baseline.observation_id
                 && opening.catalog_revision == Some(baseline.catalog_revision) =>
             {
+                if baseline.transition_sequence != opening_operation.transition_sequence {
+                    return Err(StoreError::Integrity(format!(
+                        "gate {key} baseline transition boundary disagrees with its opening operation"
+                    )));
+                }
                 if opening.protected_semantic_inputs != baseline.protected_semantic_inputs
                     || opening.alias_closures != baseline.alias_closures
                 {
@@ -1012,7 +1072,12 @@ fn reconstruct_close_baseline(
                 revision.revision
             ))
         })?;
-        if !apply_worktree_transition(&mut reconciled, transition) {
+        if !apply_worktree_transition_for_domain(
+            &mut reconciled,
+            transition,
+            &baseline.leased_write_set,
+            &baseline.protected_semantic_inputs,
+        ) {
             return Err(StoreError::Integrity(format!(
                 "gate {key} sealed close revision {} cannot replay transition {sequence}",
                 revision.revision
@@ -1142,6 +1207,10 @@ fn validate_gate_lifecycle(
             !opening.decision.authorizes()
                 && gate.revisions.len() == 1
                 && tail_kind == Some(GateOperationKind::PreWrite)
+                && gate.leased_write_set.is_empty()
+                && gate.alias_closures.is_empty()
+                && gate.protected_semantic_inputs.is_empty()
+                && gate.transition_refs.is_empty()
         }
         GateLifecycle::Closed => {
             sealed_authorizing_close && tail_kind == Some(GateOperationKind::PostWrite)
@@ -1213,7 +1282,9 @@ fn validate_operation_gate_refs(
                 GateOperationKind::GateAbandon => GateLifecycle::Abandoned,
             };
             let expected_leased_write_set = match operation.kind {
-                GateOperationKind::PreWrite if gate.baseline.is_none() => Vec::new(),
+                GateOperationKind::PreWrite if gate.lifecycle == GateLifecycle::Rejected => {
+                    Vec::new()
+                }
                 GateOperationKind::PreWrite | GateOperationKind::PostWrite => gate
                     .baseline
                     .as_ref()
@@ -1333,7 +1404,13 @@ fn reconstruct_transition_before(
 
     let mut reconstructed = baseline.snapshot.clone();
     for sequence in expected_sequences {
-        apply_worktree_transition(&mut reconstructed, transitions.get(&sequence)?).then_some(())?;
+        apply_worktree_transition_for_domain(
+            &mut reconstructed,
+            transitions.get(&sequence)?,
+            &baseline.leased_write_set,
+            &baseline.protected_semantic_inputs,
+        )
+        .then_some(())?;
     }
     Some(reconstructed)
 }

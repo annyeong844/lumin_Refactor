@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use lumin_evidence::{
     ActualWriteSet, AnalysisSnapshot, GateBaseline, GateRecord, GateSignal,
     PhysicalAliasClosureRecord, RepoPathProjection, SemanticInputRecord, WorktreeTransition,
-    apply_worktree_transition,
+    apply_worktree_transition_for_domain,
 };
 use lumin_store::ActiveGateLease;
 
@@ -47,7 +47,12 @@ pub(super) fn reconcile_transitions(
             sequences.push(transition.sequence);
             continue;
         }
-        if !apply_worktree_transition(&mut adjusted, transition) {
+        if !apply_worktree_transition_for_domain(
+            &mut adjusted,
+            transition,
+            &gate.leased_write_set,
+            &baseline.protected_semantic_inputs,
+        ) {
             signals.push(GateSignal::TransitionChainBroken {
                 sequence: transition.sequence,
             });
@@ -181,7 +186,7 @@ mod tests {
         AnalysisMetrics, CapabilityRecord, DEAD_CODE_CAPABILITY_ID,
         DEPENDENCY_OWNERSHIP_CAPABILITY_ID, DependencyIntentRecord, DependencyOwnerRecord,
         PathPrefixIdentity, RunEvidence, ScanInvocationTier, SemanticInputState, TransitionCapsule,
-        WriteLease, WriteLeaseKind, seal_analysis_snapshot,
+        WriteLease, WriteLeaseKind, apply_worktree_transition, seal_analysis_snapshot,
     };
     use lumin_model::{
         CapabilityState, GateBaselineObservationId, GateCloseObservationId, GateId,
@@ -357,6 +362,72 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn different_scan_scope_ignores_a_proven_disjoint_transition()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path_a = path("packages/a/src/main.ts")?;
+        let path_b = path("packages/b/src/main.ts")?;
+        let adjusted = snapshot_with_include(
+            vec![input("packages/a/src/main.ts", "a")?],
+            owner("packages/a/src/main.ts", "left-pad", "packages/a")?,
+            intent("packages/a/src/main.ts", "left-pad")?,
+            "packages/a/**",
+        );
+        let transition = WorktreeTransition {
+            sequence: 3,
+            capsule: TransitionCapsule {
+                gate_id: GateId::from_string("gate-b-scope".to_owned()),
+                revision: 1,
+                baseline_observation_id: baseline_observation_id(),
+                close_observation_id: close_observation_id(),
+                before_snapshot: snapshot_with_include(
+                    vec![input("packages/b/src/main.ts", "before")?],
+                    owner("packages/b/src/main.ts", "is-odd", "packages/b")?,
+                    intent("packages/b/src/main.ts", "is-odd")?,
+                    "packages/b/**",
+                ),
+                after_snapshot: snapshot_with_include(
+                    vec![input("packages/b/src/main.ts", "after")?],
+                    owner("packages/b/src/main.ts", "is-odd", "packages/b")?,
+                    intent("packages/b/src/main.ts", "is-odd")?,
+                    "packages/b/**",
+                ),
+                changed_paths: vec![path_b.clone()],
+                leased_write_set: Vec::new(),
+            },
+        };
+        let lease_a = WriteLease {
+            path: path_a,
+            kind: WriteLeaseKind::ExistingFile,
+            physical_identity: None,
+            nearest_existing_parent: None,
+            prefix_identities: Vec::new(),
+        };
+
+        let mut strict = adjusted.clone();
+        assert!(!apply_worktree_transition(&mut strict, &transition));
+
+        let mut disjoint = adjusted.clone();
+        assert!(apply_worktree_transition_for_domain(
+            &mut disjoint,
+            &transition,
+            std::slice::from_ref(&lease_a),
+            &adjusted.inputs,
+        ));
+        assert_eq!(disjoint, adjusted);
+
+        let mut protected = adjusted.clone();
+        let protected_b = input("packages/b/src/main.ts", "before")?;
+        assert!(!apply_worktree_transition_for_domain(
+            &mut protected,
+            &transition,
+            &[lease_a],
+            &[protected_b],
+        ));
+        assert_eq!(protected, adjusted);
+        Ok(())
+    }
+
     fn baseline_observation_id() -> GateBaselineObservationId {
         GateBaselineObservationId::from_string("gate_baseline_observation_test".to_owned())
     }
@@ -399,6 +470,23 @@ mod tests {
                 ..ScanInvocationTier::default()
             },
             Vec::new(),
+        )
+    }
+
+    fn snapshot_with_include(
+        inputs: Vec<SemanticInputRecord>,
+        dependency_owner: DependencyOwnerRecord,
+        dependency_intent: DependencyIntentRecord,
+        include: &str,
+    ) -> AnalysisSnapshot {
+        let snapshot = snapshot(inputs, dependency_owner, dependency_intent);
+        let mut invocation = snapshot.scan_invocation.clone();
+        invocation.includes = vec![include.to_owned()];
+        seal_analysis_snapshot(
+            snapshot.inputs,
+            snapshot.evidence,
+            invocation,
+            snapshot.entry_selections,
         )
     }
 

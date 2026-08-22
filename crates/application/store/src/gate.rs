@@ -569,6 +569,24 @@ fn completed_pre_write_records(
     } else {
         GateLifecycle::Rejected
     };
+    let durable_leased_write_set = if decision.authorizes() {
+        leased_write_set.clone()
+    } else {
+        Vec::new()
+    };
+    let durable_alias_closures = if decision.authorizes() {
+        alias_closures.clone()
+    } else {
+        Vec::new()
+    };
+    let observed_protected_semantic_inputs = baseline.as_ref().map_or_else(Vec::new, |baseline| {
+        baseline.protected_semantic_inputs.clone()
+    });
+    let durable_protected_semantic_inputs = if decision.authorizes() {
+        observed_protected_semantic_inputs.clone()
+    } else {
+        Vec::new()
+    };
     let result = GateOperationResult {
         operation_id: operation.operation_id.clone(),
         request_digest: operation.request_digest.clone(),
@@ -579,28 +597,25 @@ fn completed_pre_write_records(
         observation_binding: Some(observation_binding.clone()),
         reason: None,
         signals: signals.clone(),
-        leased_write_set: leased_write_set.clone(),
+        leased_write_set: durable_leased_write_set.clone(),
         actual_write_set: None,
         deltas: Vec::new(),
     };
     let analysis_options = operation.analysis_options.clone().ok_or_else(|| {
         StoreError::Integrity("pre-write operation omitted analysis options".to_owned())
     })?;
-    let protected_semantic_inputs = baseline.as_ref().map_or_else(Vec::new, |baseline| {
-        baseline.protected_semantic_inputs.clone()
-    });
     let gate = GateRecord {
         schema_version: GATE_RECORD_SCHEMA_VERSION.to_owned(),
         gate_id: operation.gate_id.clone(),
         lifecycle,
         current_revision: 0,
         declared_write_set: operation.declared_write_set.clone(),
-        leased_write_set,
-        alias_closures: alias_closures.clone(),
+        leased_write_set: durable_leased_write_set,
+        alias_closures: durable_alias_closures,
         transition_refs: Vec::new(),
         analysis_options,
         baseline,
-        protected_semantic_inputs: protected_semantic_inputs.clone(),
+        protected_semantic_inputs: durable_protected_semantic_inputs,
         revisions: vec![GateRevision {
             revision: 0,
             operation_id: operation.operation_id.clone(),
@@ -614,7 +629,7 @@ fn completed_pre_write_records(
             changed_paths: Vec::new(),
             actual_write_set: None,
             snapshot: None,
-            protected_semantic_inputs,
+            protected_semantic_inputs: observed_protected_semantic_inputs,
             alias_closures,
             reconciled_transition_sequences: Vec::new(),
             deltas: Vec::new(),

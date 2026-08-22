@@ -312,7 +312,7 @@ fn failed_close_rechecks_a_semantic_conflict_at_the_final_barrier()
             "release the semantic input",
         ],
     )?;
-    assert_status(&abandoned, 0);
+    assert_status(&abandoned, 3);
     assert_eq!(field(&abandoned.stdout, "decision")?, "deny");
 
     stream.write_all(b"release\n")?;
@@ -420,7 +420,7 @@ fn failed_pre_write_rechecks_a_semantic_conflict_and_retains_prior_reservations(
             "release the semantic input",
         ],
     )?;
-    assert_status(&abandoned, 0);
+    assert_status(&abandoned, 3);
     assert_eq!(field(&abandoned.stdout, "decision")?, "deny");
 
     release_gate_barrier(&mut stream)?;

@@ -12,12 +12,30 @@ pub fn apply_worktree_transition(
     adjusted: &mut AnalysisSnapshot,
     transition: &WorktreeTransition,
 ) -> bool {
+    apply_worktree_transition_inner(adjusted, transition, None)
+}
+
+pub fn apply_worktree_transition_for_domain(
+    adjusted: &mut AnalysisSnapshot,
+    transition: &WorktreeTransition,
+    leased_write_set: &[WriteLease],
+    protected_semantic_inputs: &[SemanticInputRecord],
+) -> bool {
+    apply_worktree_transition_inner(
+        adjusted,
+        transition,
+        Some((leased_write_set, protected_semantic_inputs)),
+    )
+}
+
+fn apply_worktree_transition_inner(
+    adjusted: &mut AnalysisSnapshot,
+    transition: &WorktreeTransition,
+    domain: Option<(&[WriteLease], &[SemanticInputRecord])>,
+) -> bool {
     if *adjusted == transition.capsule.before_snapshot {
         *adjusted = transition.capsule.after_snapshot.clone();
         return true;
-    }
-    if !request_scopes_are_compatible(adjusted, &transition.capsule.before_snapshot) {
-        return false;
     }
 
     let Some(topology_paths) = owned_topology_replay_paths(
@@ -51,6 +69,16 @@ pub fn apply_worktree_transition(
         return false;
     }
 
+    if !request_scopes_are_compatible(adjusted, &transition.capsule.before_snapshot) {
+        return domain.is_some_and(|(leased_write_set, protected_semantic_inputs)| {
+            transition_is_outside_domain(
+                &complete_replay_paths,
+                leased_write_set,
+                protected_semantic_inputs,
+            )
+        });
+    }
+
     let Some(inputs) = apply_rebased_input_delta(
         &adjusted.inputs,
         &transition.capsule.before_snapshot.inputs,
@@ -74,6 +102,21 @@ pub fn apply_worktree_transition(
         transition.capsule.after_snapshot.entry_selections.clone(),
     );
     true
+}
+
+fn transition_is_outside_domain(
+    replay_paths: &[RepoPathProjection],
+    leased_write_set: &[WriteLease],
+    protected_semantic_inputs: &[SemanticInputRecord],
+) -> bool {
+    let protected = protected_semantic_inputs
+        .iter()
+        .map(|input| input.path.canonical.as_slice())
+        .collect::<BTreeSet<_>>();
+    replay_paths.iter().all(|path| {
+        !protected.contains(path.canonical.as_slice())
+            && !leased_write_set.iter().any(|lease| lease.covers(path))
+    })
 }
 
 fn owned_topology_replay_paths(

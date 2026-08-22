@@ -20,13 +20,17 @@ use crate::gate::{
     GATES, OPERATIONS, TRANSITIONS, records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY, transition_key,
 };
 use crate::retention::RETENTION_OPERATIONS;
-use crate::{RUN_CATALOG, RunCatalogRecord, SEQUENCES, StoreError};
+use crate::{
+    GateBaselineDraft, ObservationFinalization, PreWriteFinish, PreWriteStart, RUN_CATALOG,
+    RunCatalogRecord, SEQUENCES, StoreError,
+};
 
 use super::super::open_store;
 use super::{
     append_non_authorizing_close_for_migration, append_unsealed_close_for_migration,
     close_active_gate_for_migration, current_generation, evidence, open_active_gate_for,
-    open_active_gate_for_with_protected_inputs, path, semantic_input,
+    open_active_gate_for_with_protected_inputs, options, path, rejected_test_observation,
+    semantic_input,
 };
 
 fn reconstructed_baseline_binding(
@@ -102,6 +106,189 @@ fn different_physical_identity(identity: PhysicalFileIdentity) -> PhysicalFileId
             file_index: file_index.wrapping_add(1),
         },
     }
+}
+
+fn open_rejected_gate_for(
+    store: &crate::RepositoryStore,
+    operation: &str,
+    source: &str,
+) -> Result<lumin_model::GateId, Box<dyn std::error::Error>> {
+    let operation_id = OperationId::from_string(operation.to_owned());
+    let session = store.begin_operation(&operation_id)?;
+    let source = path(source)?;
+    let lease = WriteLease {
+        path: source.clone(),
+        kind: WriteLeaseKind::ExistingFile,
+        physical_identity: None,
+        nearest_existing_parent: None,
+        prefix_identities: Vec::new(),
+    };
+    let (gate_id, transition_sequence) = match session.reserve_pre_write(
+        "migrate-rejected-digest",
+        std::slice::from_ref(&source),
+        std::slice::from_ref(&lease),
+        &options(),
+        rejected_test_observation,
+    )? {
+        PreWriteStart::Analyze {
+            gate_id,
+            transition_sequence,
+        } => (gate_id, transition_sequence),
+        PreWriteStart::Committed(_) => return Err("rejected gate fixture committed early".into()),
+    };
+    let baseline = GateBaselineDraft {
+        analysis_contract: "migration-rejected-contract".to_owned(),
+        snapshot: seal_analysis_snapshot(Vec::new(), evidence(), Default::default(), Vec::new()),
+        protected_semantic_inputs: Vec::new(),
+        transition_sequence,
+    };
+    let baseline_for_id = baseline.clone();
+    let source_for_id = source.clone();
+    let lease_for_id = lease.clone();
+    let result = session.finish_pre_write(
+        "migrate-rejected-digest",
+        &gate_id,
+        PreWriteFinish {
+            baseline: Some(baseline),
+            leased_write_set: vec![lease],
+            alias_closures: Vec::new(),
+            attempted_semantic_inputs: Vec::new(),
+            signals: vec![GateSignal::ProtectedInputChanged {
+                paths: vec![source],
+            }],
+        },
+        |_, catalog_revision, _| ObservationFinalization {
+            signals: Vec::new(),
+            binding: ObservationBinding::Sealed {
+                observation: SealedGateObservation::Baseline {
+                    observation_id: derive_gate_baseline_observation_id(
+                        GateBaselineObservationInput {
+                            catalog_revision,
+                            transition_sequence: baseline_for_id.transition_sequence,
+                            analysis_contract: &baseline_for_id.analysis_contract,
+                            analysis_input_id: &baseline_for_id.snapshot.analysis_input_id,
+                            declared_write_set: std::slice::from_ref(&source_for_id),
+                            leased_write_set: std::slice::from_ref(&lease_for_id),
+                            alias_closures: &[],
+                            protected_semantic_inputs: &[],
+                        },
+                    ),
+                },
+            },
+        },
+    )?;
+    assert_eq!(result.lifecycle, GateLifecycle::Rejected);
+    assert!(result.leased_write_set.is_empty());
+    Ok(gate_id)
+}
+
+#[test]
+fn migration_rejects_leases_on_a_rejected_gate() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_rejected_gate_for(&store, "op-rejected-lease", "src/rejected.ts")?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("rejected gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        gate.leased_write_set = gate
+            .baseline
+            .as_ref()
+            .ok_or("rejected gate omitted its sealed baseline")?
+            .leased_write_set
+            .clone();
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("lifecycle disagrees with its authorizing revision tail")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_authenticates_the_baseline_transition_boundary_against_catalog_epochs()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_a = open_active_gate_for(&store, "op-boundary-a", "src/a.ts")?;
+    let gate_b = open_active_gate_for(&store, "op-boundary-b", "src/b.ts")?;
+    close_active_gate_for_migration(&store, &gate_b)?;
+    drop(store);
+
+    let opening_operation_id = OperationId::from_string("op-boundary-a".to_owned());
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    let binding = {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_a.as_str())?
+            .ok_or("boundary gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        gate.baseline
+            .as_mut()
+            .ok_or("boundary gate omitted its baseline")?
+            .transition_sequence = 1;
+        gate.transition_refs.clear();
+        let binding = reconstructed_baseline_binding(&gate)?;
+        let ObservationBinding::Sealed {
+            observation: SealedGateObservation::Baseline { observation_id },
+        } = &binding
+        else {
+            return Err("boundary fixture produced the wrong binding".into());
+        };
+        gate.baseline
+            .as_mut()
+            .ok_or("boundary baseline disappeared")?
+            .observation_id = observation_id.clone();
+        gate.revisions[0].observation_binding = Some(binding.clone());
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_a.as_str(), changed.as_slice())?;
+        binding
+    };
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get(opening_operation_id.as_str())?
+            .ok_or("boundary opening operation is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        operation.transition_sequence = 1;
+        operation
+            .result
+            .as_mut()
+            .ok_or("boundary opening result is missing")?
+            .observation_binding = Some(binding);
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert(opening_operation_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("baseline transition boundary disagrees with its catalog epoch")
+    ));
+    Ok(())
 }
 
 #[test]
