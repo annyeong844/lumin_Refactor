@@ -457,6 +457,83 @@ fn migration_rejects_an_active_lease_domain_weaker_than_its_sealed_baseline()
 }
 
 #[test]
+fn migration_reconstructs_the_sealed_lease_domain_from_declared_paths()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("op-cleared-sealed-domain".to_owned());
+    let gate_id = open_active_gate_for(
+        &store,
+        operation_id.as_str(),
+        "src/cleared-sealed-domain.ts",
+    )?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    let binding = {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("cleared-domain gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        gate.leased_write_set.clear();
+        gate.alias_closures.clear();
+        let baseline = gate
+            .baseline
+            .as_mut()
+            .ok_or("cleared-domain gate omitted its baseline")?;
+        baseline.leased_write_set.clear();
+        baseline.alias_closures.clear();
+        let binding = reconstructed_baseline_binding(&gate)?;
+        let ObservationBinding::Sealed {
+            observation: SealedGateObservation::Baseline { observation_id },
+        } = &binding
+        else {
+            return Err("cleared-domain fixture produced the wrong binding".into());
+        };
+        gate.baseline
+            .as_mut()
+            .ok_or("cleared-domain baseline disappeared")?
+            .observation_id = observation_id.clone();
+        gate.revisions[0].observation_binding = Some(binding.clone());
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+        binding
+    };
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get(operation_id.as_str())?
+            .ok_or("cleared-domain operation is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        operation.leased_write_set.clear();
+        let result = operation
+            .result
+            .as_mut()
+            .ok_or("cleared-domain result is missing")?;
+        result.leased_write_set.clear();
+        result.observation_binding = Some(binding);
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert(operation_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("does not have exactly one sealed direct lease")
+    ));
+    Ok(())
+}
+
+#[test]
 fn migration_rejects_an_active_protected_read_set_weaker_than_its_latest_sealed_observation()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;

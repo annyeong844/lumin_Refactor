@@ -7,10 +7,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use lumin_evidence::{
     AnalysisSnapshot, GATE_RECORD_SCHEMA_VERSION, GateBaseline, GateBaselineObservationInput,
     GateCloseObservationInput, GateDecision, GateLifecycle, GateOperationKind, GateOperationStatus,
-    GateRecord, GateRevision, GateSignal, OperationRecord, WorktreeTransition,
-    apply_worktree_transition, derive_gate_baseline_observation_id,
-    derive_gate_close_observation_id, derive_unsealed_gate_observation_binding, gate_policy,
-    seal_analysis_snapshot,
+    GateRecord, GateRevision, GateSignal, OperationRecord, PhysicalAliasClosureRecord,
+    WorktreeTransition, WriteLeaseKind, apply_worktree_transition,
+    derive_gate_baseline_observation_id, derive_gate_close_observation_id,
+    derive_unsealed_gate_observation_binding, gate_policy, seal_analysis_snapshot,
 };
 use lumin_model::{ObservationBinding, SealedGateObservation};
 use serde::de::DeserializeOwned;
@@ -392,6 +392,7 @@ fn validate_gate_observations(
                     )));
                 }
                 validate_analysis_snapshot(key, "baseline", &baseline.snapshot)?;
+                validate_baseline_write_domain(key, gate, baseline)?;
                 if gate.lifecycle == GateLifecycle::Active
                     && (gate.leased_write_set.iter().collect::<BTreeSet<_>>()
                         != baseline.leased_write_set.iter().collect::<BTreeSet<_>>()
@@ -695,6 +696,152 @@ fn validate_gate_observations(
         )));
     }
     validate_gate_lifecycle(key, gate, opening, operations)
+}
+
+fn validate_baseline_write_domain(
+    key: &str,
+    gate: &GateRecord,
+    baseline: &GateBaseline,
+) -> Result<(), StoreError> {
+    let mut normalized_leases = baseline.leased_write_set.clone();
+    normalized_leases.sort();
+    normalized_leases.dedup();
+    if normalized_leases != baseline.leased_write_set {
+        return Err(StoreError::Integrity(format!(
+            "gate {key} sealed lease domain is not canonical"
+        )));
+    }
+
+    let mut captured_by_identity = BTreeMap::<
+        lumin_model::PhysicalFileIdentity,
+        BTreeSet<lumin_evidence::RepoPathProjection>,
+    >::new();
+    for input in &baseline.snapshot.inputs {
+        if let Some(identity) = &input.physical_identity {
+            captured_by_identity
+                .entry(identity.clone())
+                .or_default()
+                .insert(input.path.clone());
+        }
+    }
+
+    let mut seeded_identities = BTreeSet::new();
+    for declared in &gate.declared_write_set {
+        let direct = baseline
+            .leased_write_set
+            .iter()
+            .filter(|lease| lease.path == *declared)
+            .collect::<Vec<_>>();
+        if direct.len() != 1 {
+            return Err(StoreError::Integrity(format!(
+                "gate {key} declared path {} does not have exactly one sealed direct lease",
+                declared.display
+            )));
+        }
+        let direct = direct[0];
+        if let Some(identity) = baseline
+            .snapshot
+            .inputs
+            .iter()
+            .find(|input| input.path == *declared)
+            .and_then(|input| input.physical_identity.as_ref())
+        {
+            if direct.kind != WriteLeaseKind::ExistingFile
+                || direct.physical_identity.as_ref() != Some(identity)
+            {
+                return Err(StoreError::Integrity(format!(
+                    "gate {key} declared existing path {} disagrees with its captured physical identity",
+                    declared.display
+                )));
+            }
+            seeded_identities.insert(identity.clone());
+        }
+        let descendant_identities = baseline
+            .snapshot
+            .inputs
+            .iter()
+            .filter(|input| {
+                input.path != *declared
+                    && input.path.components.starts_with(&declared.components)
+                    && input.physical_identity.is_some()
+            })
+            .filter_map(|input| input.physical_identity.clone())
+            .collect::<Vec<_>>();
+        if !descendant_identities.is_empty() && direct.kind != WriteLeaseKind::Directory {
+            return Err(StoreError::Integrity(format!(
+                "gate {key} declared directory {} lost its sealed directory lease",
+                declared.display
+            )));
+        }
+        if direct.kind == WriteLeaseKind::Directory {
+            seeded_identities.extend(descendant_identities);
+        }
+    }
+
+    for lease in &baseline.leased_write_set {
+        if lease.kind != WriteLeaseKind::ExistingFile {
+            continue;
+        }
+        let Some(identity) = &lease.physical_identity else {
+            continue;
+        };
+        let captured = baseline.snapshot.inputs.iter().any(|input| {
+            input.path == lease.path && input.physical_identity.as_ref() == Some(identity)
+        });
+        if !captured {
+            return Err(StoreError::Integrity(format!(
+                "gate {key} existing lease {} has no matching captured physical identity",
+                lease.path.display
+            )));
+        }
+        seeded_identities.insert(identity.clone());
+    }
+
+    let mut expected_alias_closures = Vec::new();
+    for identity in seeded_identities {
+        let members = captured_by_identity.get(&identity).ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "gate {key} sealed physical lease has no captured alias domain"
+            ))
+        })?;
+        for member in members {
+            let matching_leases = baseline
+                .leased_write_set
+                .iter()
+                .filter(|lease| {
+                    lease.kind == WriteLeaseKind::ExistingFile
+                        && lease.path == *member
+                        && lease.physical_identity.as_ref() == Some(&identity)
+                })
+                .count();
+            if matching_leases != 1 {
+                return Err(StoreError::Integrity(format!(
+                    "gate {key} captured alias {} does not have exactly one physical lease",
+                    member.display
+                )));
+            }
+        }
+        expected_alias_closures.push(PhysicalAliasClosureRecord {
+            physical_identity: identity,
+            members: members.iter().cloned().collect(),
+        });
+    }
+
+    let mut normalized_alias_closures = baseline.alias_closures.clone();
+    for closure in &mut normalized_alias_closures {
+        closure.members.sort();
+        closure.members.dedup();
+    }
+    normalized_alias_closures.sort();
+    normalized_alias_closures.dedup();
+    if normalized_alias_closures != baseline.alias_closures
+        || baseline.alias_closures != expected_alias_closures
+    {
+        return Err(StoreError::Integrity(format!(
+            "gate {key} sealed physical-alias closure cannot be reconstructed"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_opening_snapshot_policy(
