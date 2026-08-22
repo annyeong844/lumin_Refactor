@@ -237,6 +237,21 @@ fn validate_gate_history(
             "gate {key} retains a missing transition"
         )));
     }
+    if gate.lifecycle == GateLifecycle::Active {
+        let baseline = gate.baseline.as_ref().ok_or_else(|| {
+            StoreError::Integrity(format!("active gate {key} omitted its sealed baseline"))
+        })?;
+        let expected = transition_sequences
+            .iter()
+            .copied()
+            .filter(|sequence| *sequence > baseline.transition_sequence)
+            .collect::<Vec<_>>();
+        if gate.transition_refs != expected {
+            return Err(StoreError::Integrity(format!(
+                "active gate {key} transition reference set disagrees with the complete catalog"
+            )));
+        }
+    }
     Ok(())
 }
 

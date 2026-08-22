@@ -509,6 +509,45 @@ fn migration_rejects_a_transition_before_snapshot_outside_its_replayed_chain()
 }
 
 #[test]
+fn migration_rejects_an_active_gate_with_an_incomplete_transition_reference_set()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let active_gate =
+        open_active_gate_for(&store, "op-active-transition-ref", "src/active-ref.ts")?;
+    let closing_gate =
+        open_active_gate_for(&store, "op-closing-transition-ref", "src/closing-ref.ts")?;
+    close_active_gate_for_migration(&store, &closing_gate)?;
+    assert_eq!(store.load_gate(&active_gate)?.transition_refs, [1]);
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(active_gate.as_str())?
+            .ok_or("active transition-reference gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        gate.transition_refs.clear();
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(active_gate.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("transition reference set disagrees with the complete catalog")
+    ));
+    Ok(())
+}
+
+#[test]
 fn migration_reconstructs_close_observations_with_their_catalog_revision()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
