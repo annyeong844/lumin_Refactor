@@ -209,6 +209,7 @@ fn pre_write_observation_binds_promotion_and_interrupted_admission_leaves_no_act
         }
     };
     assert!(peer.ip().is_loopback());
+    stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(30)))?;
     let mut frame = String::new();
     BufReader::new(stream.try_clone()?).read_line(&mut frame)?;
@@ -373,6 +374,7 @@ fn pre_write_observation_binds_promotion_and_interrupted_admission_leaves_no_act
         Some(observation_id)
     );
     final_promotion_reobserves_the_complete_write_domain()?;
+    final_promotion_reenumerates_new_directory_source_aliases()?;
     final_close_reobserves_the_complete_write_domain()?;
     Ok(())
 }
@@ -423,6 +425,7 @@ fn final_promotion_reobserves_the_complete_write_domain() -> Result<(), Box<dyn 
         }
     };
     assert!(peer.ip().is_loopback());
+    stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(30)))?;
     stream.set_write_timeout(Some(Duration::from_secs(30)))?;
     let mut frame = String::new();
@@ -460,7 +463,8 @@ fn final_promotion_reobserves_the_complete_write_domain() -> Result<(), Box<dyn 
         response
             .pointer("/observationBinding/state")
             .and_then(Value::as_str),
-        Some("sealed")
+        Some("sealed"),
+        "unexpected final-topology response: {response:#?}"
     );
     assert_eq!(
         response
@@ -498,6 +502,135 @@ fn final_promotion_reobserves_the_complete_write_domain() -> Result<(), Box<dyn 
             changed
                 .iter()
                 .any(|path| { path.get("display").and_then(Value::as_str) == Some(expected) })
+        );
+    }
+    let active = run(root.path(), &["gate", "list", "--active"])?;
+    assert_status(&active, 0);
+    assert_eq!(
+        serde_json::from_str::<Value>(&active.stdout)?
+            .get("total")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    Ok(())
+}
+
+fn final_promotion_reenumerates_new_directory_source_aliases()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    fs::create_dir(root.path().join("src/feature"))?;
+    fs::write(
+        root.path().join("src/feature/existing.ts"),
+        "export const existing = 1;\n",
+    )?;
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+    listener.set_nonblocking(true)?;
+    let mut child = lumin_command(root.path())?
+        .args([
+            "pre-write",
+            "--operation-id",
+            "op-final-directory-alias",
+            "--path",
+            "src/feature",
+            "--jobs",
+            "1",
+        ])
+        .env(
+            "LUMIN_TEST_GATE_PREWRITE_FINAL_BARRIER",
+            listener.local_addr()?.to_string(),
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let started = Instant::now();
+    let (mut stream, peer) = loop {
+        match listener.accept() {
+            Ok(accepted) => break accepted,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if let Some(status) = child.try_wait()? {
+                    return Err(std::io::Error::other(format!(
+                        "pre-write exited before directory-alias barrier: {status}"
+                    ))
+                    .into());
+                }
+                if started.elapsed() >= Duration::from_secs(30) {
+                    return Err(std::io::Error::other(
+                        "pre-write did not reach the directory-alias barrier",
+                    )
+                    .into());
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    };
+    assert!(peer.ip().is_loopback());
+    stream.set_nonblocking(false)?;
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(30)))?;
+    let mut frame = String::new();
+    BufReader::new(stream.try_clone()?).read_line(&mut frame)?;
+    let fields = frame.split_whitespace().collect::<Vec<_>>();
+    assert_eq!(
+        fields.len(),
+        3,
+        "unexpected directory-alias frame: {frame:?}"
+    );
+    assert_eq!(fields[0], "finalizing");
+    assert_eq!(fields[1], "op-final-directory-alias");
+
+    fs::write(
+        root.path().join("src/feature/late.ts"),
+        "export const late = 1;\n",
+    )?;
+    fs::hard_link(
+        root.path().join("src/feature/late.ts"),
+        root.path().join("src/late-alias.ts"),
+    )?;
+    stream.write_all(b"release\n")?;
+    stream.flush()?;
+    drop(stream);
+
+    let output = child.wait_with_output()?;
+    assert_eq!(
+        output.status.code(),
+        Some(5),
+        "unexpected directory-alias result: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let response: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(
+        response.get("decision").and_then(Value::as_str),
+        Some("stale")
+    );
+    assert_eq!(
+        response.get("lifecycle").and_then(Value::as_str),
+        Some("rejected")
+    );
+    assert_eq!(
+        response
+            .pointer("/observationBinding/state")
+            .and_then(Value::as_str),
+        Some("sealed")
+    );
+    let changed = response
+        .get("signals")
+        .and_then(Value::as_array)
+        .ok_or("directory-alias result omitted its signals")?
+        .iter()
+        .filter(|signal| {
+            signal.get("kind").and_then(Value::as_str) == Some("protected-input-changed")
+        })
+        .filter_map(|signal| signal.get("paths").and_then(Value::as_array))
+        .flatten()
+        .collect::<Vec<_>>();
+    for expected in ["src/feature/late.ts", "src/late-alias.ts"] {
+        assert!(
+            changed
+                .iter()
+                .any(|path| path.get("display").and_then(Value::as_str) == Some(expected))
         );
     }
     let active = run(root.path(), &["gate", "list", "--active"])?;
@@ -575,6 +708,7 @@ fn final_close_reobserves_the_complete_write_domain() -> Result<(), Box<dyn std:
         }
     };
     assert!(peer.ip().is_loopback());
+    stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(30)))?;
     stream.set_write_timeout(Some(Duration::from_secs(30)))?;
     let mut frame = String::new();

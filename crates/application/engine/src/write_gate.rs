@@ -214,12 +214,13 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
                             &validation,
                             reserved_identities,
                         );
-                        if let Some(baseline) = &observation_seed.baseline {
-                            signals.extend(revalidate_write_domain(
+                        if observation_seed.baseline.is_some() {
+                            signals.extend(revalidate_current_write_domain(
                                 &context.root,
+                                &validation,
+                                reserved_identities,
                                 &observation_seed.leased_write_set,
                                 &observation_seed.alias_closures,
-                                &baseline.snapshot.inputs,
                             ));
                         }
                         signals
@@ -392,6 +393,7 @@ impl PreWritePromotion {
 struct FinalFreshnessValidation {
     bindings: Vec<(RepoPath, SemanticReadReservationBinding)>,
     captured_inputs: Vec<SemanticInputRecord>,
+    inventory_request: InventoryRequest,
     reserved_state_lookup: lumin_inventory::ReservedStateIdentityLookup,
 }
 
@@ -469,6 +471,7 @@ fn analyze_pre_write(
     let final_validation = FinalFreshnessValidation {
         bindings: reserved_semantic_bindings,
         captured_inputs: capture.snapshot.inputs.clone(),
+        inventory_request,
         reserved_state_lookup,
     };
     let baseline = GateBaselineDraft {
@@ -665,6 +668,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
     let final_validation = FinalFreshnessValidation {
         bindings: reserved_semantic_bindings,
         captured_inputs: capture.snapshot.inputs.clone(),
+        inventory_request,
         reserved_state_lookup,
     };
     let observation_seed = CloseObservationSeed {
@@ -706,11 +710,12 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                     reserved_identities,
                 );
                 let mut final_signals = final_signals;
-                final_signals.extend(revalidate_write_domain(
+                final_signals.extend(revalidate_current_write_domain(
                     &context.root,
+                    &final_validation,
+                    reserved_identities,
                     &close_write_leases,
                     &observation_seed.alias_closures,
-                    &final_validation.captured_inputs,
                 ));
                 let mut all_signals = store_signals.to_vec();
                 all_signals.extend(final_signals.iter().cloned());
@@ -1077,6 +1082,41 @@ fn final_freshness_validation_signals(
     match stale {
         Ok(paths) if paths.is_empty() => Vec::new(),
         Ok(paths) => vec![GateSignal::ProtectedInputChanged { paths }],
+        Err(error) => vec![GateSignal::AnalysisFailed {
+            detail: error.to_string(),
+        }],
+    }
+}
+
+fn revalidate_current_write_domain(
+    root: &Path,
+    validation: &FinalFreshnessValidation,
+    reserved_identities: &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
+    expected_leases: &[lumin_evidence::WriteLease],
+    expected_alias_closures: &[lumin_evidence::PhysicalAliasClosureRecord],
+) -> Vec<GateSignal> {
+    let current_inventory = lumin_inventory::begin_scan_with_reserved_state_identities(
+        root,
+        &validation.inventory_request,
+        reserved_identities,
+    )
+    .and_then(|pending| pending.finish(root));
+    match current_inventory {
+        Ok(inventory) => {
+            let mut source_paths = inventory
+                .sources
+                .into_iter()
+                .map(|source| source.path)
+                .collect::<Vec<_>>();
+            source_paths.sort();
+            source_paths.dedup();
+            revalidate_write_domain(
+                root,
+                expected_leases,
+                expected_alias_closures,
+                &source_paths,
+            )
+        }
         Err(error) => vec![GateSignal::AnalysisFailed {
             detail: error.to_string(),
         }],
@@ -1453,6 +1493,7 @@ mod tests {
         let validation = FinalFreshnessValidation {
             bindings: vec![reserved.clone()],
             captured_inputs: vec![captured.clone()],
+            inventory_request: InventoryRequest::default(),
             reserved_state_lookup,
         };
 
@@ -1509,6 +1550,7 @@ mod tests {
                 absence_parent: None,
                 physical_redirect_sha256: None,
             }],
+            inventory_request: InventoryRequest::default(),
             reserved_state_lookup,
         };
 
@@ -1562,6 +1604,7 @@ mod tests {
                 absence_parent: None,
                 physical_redirect_sha256: None,
             }],
+            inventory_request: InventoryRequest::default(),
             reserved_state_lookup: lookup,
         };
 
@@ -1604,6 +1647,7 @@ mod tests {
                 absence_parent: None,
                 physical_redirect_sha256: None,
             }],
+            inventory_request: InventoryRequest::default(),
             reserved_state_lookup: lookup,
         };
         let reserved_identities = std::collections::BTreeSet::from([identity]);

@@ -223,10 +223,10 @@ pub(super) fn revalidate_write_domain(
     root: &Path,
     expected_leases: &[WriteLease],
     expected_alias_closures: &[PhysicalAliasClosureRecord],
-    captured_inputs: &[SemanticInputRecord],
+    current_source_paths: &[RepoPath],
 ) -> Vec<GateSignal> {
     let (leases, alias_closures) =
-        match observe_write_domain(root, expected_leases, captured_inputs) {
+        match observe_write_domain(root, expected_leases, current_source_paths) {
             Ok(domain) => domain,
             Err(signals) => return signals,
         };
@@ -258,12 +258,11 @@ pub(super) fn revalidate_write_domain(
 fn observe_write_domain(
     root: &Path,
     lease_paths: &[WriteLease],
-    captured_inputs: &[SemanticInputRecord],
+    current_source_paths: &[RepoPath],
 ) -> Result<(Vec<WriteLease>, Vec<PhysicalAliasClosureRecord>), Vec<GateSignal>> {
-    let semantic_paths = match captured_input_physical_paths(captured_inputs) {
-        Ok(paths) => paths,
-        Err(signal) => return Err(vec![signal]),
-    };
+    let mut semantic_paths = current_source_paths.to_vec();
+    semantic_paths.sort();
+    semantic_paths.dedup();
     let mut leases = Vec::new();
     let mut seeds = BTreeSet::new();
     let mut failures = Vec::new();
@@ -489,7 +488,7 @@ pub(super) fn close_alias_topology(
 ) {
     let mut signals = validate_stable_lease_parents(root, &gate.leased_write_set);
     let (leases, alias_closures) =
-        match observe_write_domain(root, &gate.leased_write_set, &capture.snapshot.inputs) {
+        match observe_write_domain(root, &gate.leased_write_set, &capture.source_paths) {
             Ok(domain) => domain,
             Err(domain_signals) => {
                 signals.extend(domain_signals);
@@ -774,23 +773,14 @@ mod tests {
         assert!(inspection.signals.is_empty());
         assert_eq!(inspection.leases.len(), 1);
         assert_eq!(inspection.leases[0].kind, WriteLeaseKind::NewFile);
-        let captured_inputs = vec![SemanticInputRecord {
-            path: RepoPathProjection::from(&source),
-            state: SemanticInputState::Source,
-            payload_sha256: Some("captured".to_owned()),
-            physical_identity: Some(lumin_inventory::physical_file_identity(
-                &root.path().join("src/main.ts"),
-            )?),
-            absence_parent: None,
-            physical_redirect_sha256: None,
-        }];
 
         std::fs::hard_link(
             root.path().join("src/main.ts"),
             root.path().join("src/new.ts"),
         )?;
+        let current_source_paths = vec![source.clone(), planned.clone()];
         let signals =
-            revalidate_write_domain(root.path(), &inspection.leases, &[], &captured_inputs);
+            revalidate_write_domain(root.path(), &inspection.leases, &[], &current_source_paths);
 
         assert_eq!(signals.len(), 1);
         let GateSignal::ProtectedInputChanged { paths } = &signals[0] else {
