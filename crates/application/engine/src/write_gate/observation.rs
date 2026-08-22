@@ -15,6 +15,7 @@ pub(super) struct BaselineObservationSeed {
     pub(super) declared_write_set: Vec<RepoPathProjection>,
     pub(super) leased_write_set: Vec<WriteLease>,
     pub(super) alias_closures: Vec<PhysicalAliasClosureRecord>,
+    pub(super) attempted_semantic_inputs: Vec<SemanticReadReservationBinding>,
     pub(super) baseline: Option<GateBaselineDraft>,
 }
 
@@ -78,6 +79,11 @@ pub(super) fn unsealed_pre_write_observation_binding(
         .unwrap_or(UnsealedObservationReason::ObservationDomainUnbounded);
     let mut attempted_domain = seed.declared_write_set.clone();
     attempted_domain.extend(seed.leased_write_set.iter().map(|lease| lease.path.clone()));
+    attempted_domain.extend(
+        seed.attempted_semantic_inputs
+            .iter()
+            .map(|input| input.path.clone()),
+    );
     attempted_domain.sort();
     attempted_domain.dedup();
     let mut last_complete_read_set = seed.baseline.as_ref().map_or_else(Vec::new, |baseline| {
@@ -431,6 +437,7 @@ mod tests {
             declared_write_set: vec![path],
             leased_write_set: Vec::new(),
             alias_closures: Vec::new(),
+            attempted_semantic_inputs: Vec::new(),
             baseline: Some(GateBaselineDraft {
                 analysis_contract: "contract".to_owned(),
                 snapshot: AnalysisSnapshot {

@@ -363,3 +363,222 @@ fn failed_close_rechecks_a_semantic_conflict_at_the_final_barrier()
     );
     Ok(())
 }
+
+#[test]
+fn stale_pre_write_capture_retains_and_rechecks_its_semantic_bindings()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = semantic_read_closure_fixture()?;
+    fs::write(
+        root.path().join("src/tsconfig.json"),
+        "{\"extends\":\"../config/base.json\"}\n",
+    )?;
+    let response = run_stale_capture_binding_case(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-stale-capture-open",
+            "--path",
+            "src/new.ts",
+            "--jobs",
+            "1",
+        ],
+        "op-stale-capture-open",
+        "LUMIN_TEST_GATE_PREWRITE_FINAL_BARRIER",
+        "finalizing",
+    )?;
+    assert_stale_capture_binding(&response)?;
+    assert_operation_retains_binding(root.path(), "op-stale-capture-open", &response)?;
+    Ok(())
+}
+
+#[test]
+fn stale_post_write_capture_retains_and_rechecks_its_semantic_bindings()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = semantic_read_closure_fixture()?;
+    fs::write(
+        root.path().join("src/tsconfig.json"),
+        "{\"extends\":\"../config/base.json\"}\n",
+    )?;
+    let gate_id = open_gate(root.path(), "op-stale-capture-baseline", "src/a.ts")?;
+    let response = run_stale_capture_binding_case(
+        root.path(),
+        &[
+            "post-write",
+            &gate_id,
+            "--operation-id",
+            "op-stale-capture-close",
+        ],
+        "op-stale-capture-close",
+        "LUMIN_TEST_GATE_POSTWRITE_FINAL_BARRIER",
+        "close-finalizing",
+    )?;
+    assert_stale_capture_binding(&response)?;
+    assert_operation_retains_binding(root.path(), "op-stale-capture-close", &response)?;
+    Ok(())
+}
+
+fn run_stale_capture_binding_case(
+    root: &Path,
+    arguments: &[&str],
+    operation_id: &str,
+    final_barrier_environment: &str,
+    final_stage: &str,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let capture_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+    capture_listener.set_nonblocking(true)?;
+    let final_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+    final_listener.set_nonblocking(true)?;
+    let mut child = lumin_command(root)?
+        .args(arguments)
+        .env(
+            "LUMIN_TEST_GATE_CAPTURE_FRESHNESS_BARRIER",
+            capture_listener.local_addr()?.to_string(),
+        )
+        .env(
+            final_barrier_environment,
+            final_listener.local_addr()?.to_string(),
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let (mut capture_stream, capture_frame) =
+        wait_for_gate_barrier(&capture_listener, &mut child, "capture freshness")?;
+    let capture_parts = capture_frame.split_whitespace().collect::<Vec<_>>();
+    assert_eq!(capture_parts.first().copied(), Some("capture-freshness"));
+    assert_eq!(capture_parts.get(1).copied(), Some(operation_id));
+    let gate_id = capture_parts
+        .get(2)
+        .ok_or_else(|| std::io::Error::other("capture barrier omitted the gate ID"))?
+        .to_string();
+    fs::write(
+        root.join("config/base.json"),
+        "{\"extends\":\"../shared/root\",\"compilerOptions\":{\"strict\":true}}\n",
+    )?;
+    release_gate_barrier(&mut capture_stream)?;
+
+    let (mut final_stream, final_frame) =
+        wait_for_gate_barrier(&final_listener, &mut child, "final validation")?;
+    assert_eq!(
+        final_frame.trim_end(),
+        format!("{final_stage} {operation_id} {gate_id}")
+    );
+    let replacement = root.join("shared/root.replacement.json");
+    fs::write(&replacement, "{\"compilerOptions\":{\"strict\":true}}\n")?;
+    fs::remove_file(root.join("shared/root.json"))?;
+    fs::rename(replacement, root.join("shared/root.json"))?;
+    release_gate_barrier(&mut final_stream)?;
+
+    let output = child.wait_with_output()?;
+    assert_eq!(
+        output.status.code(),
+        Some(5),
+        "unexpected stale-capture result: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    Ok(serde_json::from_slice(&output.stdout)?)
+}
+
+fn wait_for_gate_barrier(
+    listener: &TcpListener,
+    child: &mut std::process::Child,
+    label: &str,
+) -> Result<(std::net::TcpStream, String), Box<dyn std::error::Error>> {
+    let started = Instant::now();
+    let (stream, peer) = loop {
+        match listener.accept() {
+            Ok(accepted) => break accepted,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if let Some(status) = child.try_wait()? {
+                    return Err(std::io::Error::other(format!(
+                        "gate command exited before the {label} barrier: {status}"
+                    ))
+                    .into());
+                }
+                if started.elapsed() >= Duration::from_secs(30) {
+                    return Err(std::io::Error::other(format!(
+                        "gate command did not reach the {label} barrier"
+                    ))
+                    .into());
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    };
+    assert!(peer.ip().is_loopback());
+    stream.set_nonblocking(false)?;
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(30)))?;
+    let mut frame = String::new();
+    BufReader::new(stream.try_clone()?).read_line(&mut frame)?;
+    Ok((stream, frame))
+}
+
+fn release_gate_barrier(
+    stream: &mut std::net::TcpStream,
+) -> Result<(), Box<dyn std::error::Error>> {
+    stream.write_all(b"release\n")?;
+    stream.flush()?;
+    Ok(())
+}
+
+fn assert_stale_capture_binding(response: &Value) -> Result<(), Box<dyn std::error::Error>> {
+    assert_eq!(
+        response.get("decision").and_then(Value::as_str),
+        Some("stale")
+    );
+    assert_eq!(
+        response
+            .pointer("/observationBinding/state")
+            .and_then(Value::as_str),
+        Some("unsealed")
+    );
+    let attempted = response
+        .pointer("/observationBinding/attemptedDomain")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("stale capture omitted its attempted domain"))?;
+    for expected in ["config/base.json", "shared/root.json"] {
+        assert!(
+            attempted
+                .iter()
+                .any(|path| { path.get("display").and_then(Value::as_str) == Some(expected) })
+        );
+    }
+    let signals = response
+        .get("signals")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("stale capture omitted its signals"))?;
+    let changed_paths = signals
+        .iter()
+        .filter(|signal| {
+            signal.get("kind").and_then(Value::as_str) == Some("protected-input-changed")
+        })
+        .filter_map(|signal| signal.get("paths").and_then(Value::as_array))
+        .flatten()
+        .filter_map(|path| path.get("display").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    assert!(changed_paths.contains(&"config/base.json"));
+    assert!(changed_paths.contains(&"shared/root.json"));
+    assert!(!signals.iter().any(|signal| {
+        signal.get("kind").and_then(Value::as_str) == Some("transition-catalog-changed")
+    }));
+    Ok(())
+}
+
+fn assert_operation_retains_binding(
+    root: &Path,
+    operation_id: &str,
+    response: &Value,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let shown = run(root, &["operation", "show", operation_id])?;
+    assert_status(&shown, 0);
+    let shown: Value = serde_json::from_str(&shown.stdout)?;
+    assert_eq!(
+        shown.pointer("/result/observationBinding"),
+        response.get("observationBinding")
+    );
+    Ok(())
+}

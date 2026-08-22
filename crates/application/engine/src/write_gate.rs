@@ -27,8 +27,9 @@ mod observation;
 mod transitions;
 
 use domain::{
-    DeclaredPathInspection, close_alias_topology, expand_write_domain, inspect_declared_paths,
-    protected_semantic_inputs, revalidate_write_domain,
+    DeclaredPathInspection, captured_input_physical_paths, close_alias_topology,
+    expand_write_domain, inspect_declared_paths, protected_semantic_inputs,
+    revalidate_write_domain,
 };
 use observation::{
     BaselineObservationSeed, CloseObservationSeed, close_observation_binding,
@@ -151,6 +152,7 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         declared_write_set: declared_write_set.clone(),
         leased_write_set: inspection.leases.clone(),
         alias_closures: Vec::new(),
+        attempted_semantic_inputs: Vec::new(),
         baseline: None,
     };
     let operation = context.store.begin_operation(&request.operation_id)?;
@@ -193,11 +195,16 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
     let PreWritePromotion {
         finish,
         final_validation,
+        attempted_semantic_bindings,
     } = promotion;
     let observation_seed = BaselineObservationSeed {
         declared_write_set: declared_write_set.clone(),
         leased_write_set: finish.leased_write_set.clone(),
         alias_closures: finish.alias_closures.clone(),
+        attempted_semantic_inputs: attempted_semantic_bindings
+            .iter()
+            .map(|(_, binding)| binding.clone())
+            .collect(),
         baseline: finish.baseline.clone(),
     };
     wait_at_pre_write_final_barrier(&request.operation_id, &gate_id)?;
@@ -207,27 +214,41 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
             &gate_id,
             finish,
             |reserved_identities, catalog_revision, store_signals| {
-                let final_signals = if pre_write_observation_can_seal(store_signals) {
-                    final_validation.map_or_else(Vec::new, |validation| {
-                        let mut signals = final_freshness_validation_signals(
-                            &context.root,
-                            &validation,
-                            reserved_identities,
-                        );
-                        if observation_seed.baseline.is_some() {
-                            signals.extend(revalidate_current_write_domain(
+                let mut final_signals = if pre_write_observation_can_seal(store_signals) {
+                    final_validation.as_ref().map_or_else(
+                        || {
+                            revalidate_attempted_semantic_inputs(
                                 &context.root,
-                                &validation,
+                                &attempted_semantic_bindings,
                                 reserved_identities,
-                                &observation_seed.leased_write_set,
-                                &observation_seed.alias_closures,
-                            ));
-                        }
-                        signals
-                    })
+                            )
+                        },
+                        |validation| {
+                            let mut signals = final_freshness_validation_signals(
+                                &context.root,
+                                validation,
+                                reserved_identities,
+                            );
+                            if observation_seed.baseline.is_some() {
+                                signals.extend(revalidate_current_write_domain(
+                                    &context.root,
+                                    validation,
+                                    reserved_identities,
+                                    &observation_seed.leased_write_set,
+                                    &observation_seed.alias_closures,
+                                ));
+                            }
+                            signals
+                        },
+                    )
                 } else {
-                    Vec::new()
+                    revalidate_attempted_semantic_inputs(
+                        &context.root,
+                        &attempted_semantic_bindings,
+                        reserved_identities,
+                    )
                 };
+                final_signals.retain(|signal| !store_signals.contains(signal));
                 let mut all_signals = store_signals.to_vec();
                 all_signals.extend(final_signals.iter().cloned());
                 ObservationFinalization {
@@ -262,6 +283,18 @@ fn wait_at_pre_write_final_barrier(
     wait_at_gate_test_barrier(
         "LUMIN_TEST_GATE_PREWRITE_FINAL_BARRIER",
         "finalizing",
+        operation_id,
+        gate_id,
+    )
+}
+
+fn wait_at_capture_freshness_barrier(
+    operation_id: &OperationId,
+    gate_id: &GateId,
+) -> Result<(), EngineError> {
+    wait_at_gate_test_barrier(
+        "LUMIN_TEST_GATE_CAPTURE_FRESHNESS_BARRIER",
+        "capture-freshness",
         operation_id,
         gate_id,
     )
@@ -379,6 +412,7 @@ enum PreWriteAnalysis {
 struct PreWritePromotion {
     finish: PreWriteFinish,
     final_validation: Option<FinalFreshnessValidation>,
+    attempted_semantic_bindings: Vec<(RepoPath, SemanticReadReservationBinding)>,
 }
 
 impl PreWritePromotion {
@@ -386,6 +420,7 @@ impl PreWritePromotion {
         Self {
             finish,
             final_validation: None,
+            attempted_semantic_bindings: Vec::new(),
         }
     }
 }
@@ -424,20 +459,26 @@ fn analyze_pre_write(
                 .reserve_pre_write_semantic_inputs(request_digest, gate_id, paths)
                 .map_err(Into::into)
         },
+        || wait_at_capture_freshness_barrier(&request.operation_id, gate_id),
     ) {
         Ok(ReservedCapture::Finished {
             capture,
             reserved_semantic_bindings,
         }) => (capture, reserved_semantic_bindings),
-        Ok(ReservedCapture::Blocked { signal, .. }) => {
-            return Ok(PreWriteAnalysis::Finished(Box::new(
-                PreWritePromotion::without_validation(PreWriteFinish {
+        Ok(ReservedCapture::Blocked {
+            signal,
+            attempted_semantic_bindings,
+        }) => {
+            return Ok(PreWriteAnalysis::Finished(Box::new(PreWritePromotion {
+                finish: PreWriteFinish {
                     baseline: None,
                     leased_write_set: inspection.leases,
                     alias_closures: Vec::new(),
                     signals: vec![signal],
-                }),
-            )));
+                },
+                final_validation: None,
+                attempted_semantic_bindings,
+            })));
         }
         Ok(ReservedCapture::Committed(result)) => {
             return Ok(PreWriteAnalysis::Committed(result));
@@ -469,7 +510,7 @@ fn analyze_pre_write(
         &leased_write_set,
     ));
     let final_validation = FinalFreshnessValidation {
-        bindings: reserved_semantic_bindings,
+        bindings: reserved_semantic_bindings.clone(),
         captured_inputs: capture.snapshot.inputs.clone(),
         inventory_request,
         reserved_state_lookup,
@@ -488,6 +529,7 @@ fn analyze_pre_write(
             signals,
         },
         final_validation: Some(final_validation),
+        attempted_semantic_bindings: reserved_semantic_bindings,
     })))
 }
 
@@ -586,6 +628,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                 .reserve_post_write_semantic_inputs(&request_digest, &request.gate_id, paths)
                 .map_err(Into::into)
         },
+        || wait_at_capture_freshness_barrier(&request.operation_id, &request.gate_id),
     ) {
         Ok(ReservedCapture::Finished {
             capture,
@@ -805,6 +848,17 @@ fn finish_failed_close(
             .map(|(_, binding)| binding.clone())
             .collect(),
     };
+    let attempted_conflict_inputs = if signals
+        .iter()
+        .any(|signal| matches!(signal, GateSignal::SemanticInputConflict { .. }))
+    {
+        attempted_semantic_bindings
+            .iter()
+            .map(|(_, binding)| binding.clone())
+            .collect()
+    } else {
+        Vec::new()
+    };
     wait_at_post_write_final_barrier(&request.operation_id, &request.gate_id)?;
     operation
         .finish_post_write(
@@ -818,19 +872,17 @@ fn finish_failed_close(
                 actual_write_set: None,
                 alias_closures: gate.alias_closures.clone(),
                 reconciled_transition_sequences: Vec::new(),
-                attempted_semantic_inputs: attempted_semantic_bindings
-                    .iter()
-                    .map(|(_, binding)| binding.clone())
-                    .collect(),
+                attempted_semantic_inputs: attempted_conflict_inputs,
                 signals,
                 deltas: Vec::new(),
             },
             |reserved_identities, catalog_revision, store_signals| {
-                let final_signals = revalidate_attempted_semantic_inputs(
+                let mut final_signals = revalidate_attempted_semantic_inputs(
                     &request.root,
                     &attempted_semantic_bindings,
                     reserved_identities,
                 );
+                final_signals.retain(|signal| !store_signals.contains(signal));
                 let mut all_signals = store_signals.to_vec();
                 all_signals.extend(final_signals.iter().cloned());
                 ObservationFinalization {
@@ -867,6 +919,7 @@ fn capture_reserved_repository(
     mut reserve: impl FnMut(
         &[SemanticReadReservationBinding],
     ) -> Result<SemanticReadReservation, EngineError>,
+    mut before_freshness: impl FnMut() -> Result<(), EngineError>,
 ) -> Result<ReservedCapture, EngineError> {
     let mut reserved_semantic_bindings = Vec::new();
     let dependency_candidates =
@@ -925,6 +978,7 @@ fn capture_reserved_repository(
                     &mut capture,
                     &reserved_semantic_bindings[..dependency_candidate_binding_count],
                 );
+                before_freshness()?;
                 let stale = stale_reserved_semantic_paths(
                     root,
                     &reserved_semantic_bindings,
@@ -934,7 +988,7 @@ fn capture_reserved_repository(
                 if !stale.is_empty() {
                     return Ok(ReservedCapture::Blocked {
                         signal: GateSignal::ProtectedInputChanged { paths: stale },
-                        attempted_semantic_bindings: Vec::new(),
+                        attempted_semantic_bindings: reserved_semantic_bindings,
                     });
                 }
                 return Ok(ReservedCapture::Finished {
@@ -1108,6 +1162,11 @@ fn revalidate_current_write_domain(
                 .into_iter()
                 .map(|source| source.path)
                 .collect::<Vec<_>>();
+            let captured_paths = match captured_input_physical_paths(&validation.captured_inputs) {
+                Ok(paths) => paths,
+                Err(signal) => return vec![signal],
+            };
+            source_paths.extend(captured_paths);
             source_paths.sort();
             source_paths.dedup();
             revalidate_write_domain(

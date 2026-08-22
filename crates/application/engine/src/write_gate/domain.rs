@@ -341,7 +341,7 @@ fn observe_write_domain(
     Ok((leases, alias_closures))
 }
 
-fn captured_input_physical_paths(
+pub(super) fn captured_input_physical_paths(
     inputs: &[SemanticInputRecord],
 ) -> Result<Vec<RepoPath>, GateSignal> {
     let mut paths = inputs
@@ -487,8 +487,15 @@ pub(super) fn close_alias_topology(
     Vec<GateSignal>,
 ) {
     let mut signals = validate_stable_lease_parents(root, &gate.leased_write_set);
+    let semantic_paths = match captured_input_physical_paths(&capture.snapshot.inputs) {
+        Ok(paths) => paths,
+        Err(signal) => {
+            signals.push(signal);
+            return (Vec::new(), Vec::new(), signals);
+        }
+    };
     let (leases, alias_closures) =
-        match observe_write_domain(root, &gate.leased_write_set, &capture.source_paths) {
+        match observe_write_domain(root, &gate.leased_write_set, &semantic_paths) {
             Ok(domain) => domain,
             Err(domain_signals) => {
                 signals.extend(domain_signals);
