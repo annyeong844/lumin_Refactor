@@ -269,11 +269,11 @@ fn observe_write_domain(
     let mut drift_paths = Vec::new();
     semantic_paths.retain(
         |path| match lumin_inventory::inspect_write_target(root, path) {
-            Ok(observation) if observation.kind == WriteTargetKind::ExistingFile => true,
-            Ok(_) => {
+            Ok(observation) if observation.kind == WriteTargetKind::NewFile => {
                 drift_paths.push(RepoPathProjection::from(path));
                 false
             }
+            Ok(_) | Err(WriteTargetError::LinkedDirectory(_)) => true,
             Err(error) => {
                 failures.push(error.to_string());
                 false
@@ -844,6 +844,38 @@ mod tests {
         };
         assert!(paths.contains(&RepoPathProjection::from(&source)));
         assert!(paths.contains(&RepoPathProjection::from(&planned)));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unchanged_directory_and_redirect_semantic_paths_are_not_drift()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir()?;
+        let outside = tempfile::tempdir()?;
+        std::fs::create_dir(root.path().join("config"))?;
+        std::fs::create_dir(root.path().join("src"))?;
+        std::fs::write(root.path().join("src/main.ts"), "export const main = 1;\n")?;
+        symlink(outside.path(), root.path().join("redirect"))?;
+
+        let source = RepoPath::from_portable("src/main.ts")?;
+        let config = RepoPath::from_portable("config")?;
+        let redirect = RepoPath::from_portable("redirect")?;
+        let source_observation = lumin_inventory::inspect_write_target(root.path(), &source)?;
+        let expected_lease = write_lease(&source_observation);
+
+        let observed = observe_write_domain(
+            root.path(),
+            std::slice::from_ref(&expected_lease),
+            &[source.clone(), config, redirect],
+        )
+        .map_err(|signals| format!("unchanged semantic paths were rejected: {signals:?}"))?;
+
+        assert_eq!(observed.0, [expected_lease]);
+        assert_eq!(observed.1.len(), 1);
+        assert_eq!(observed.1[0].members, [RepoPathProjection::from(&source)]);
         Ok(())
     }
 }
