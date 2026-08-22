@@ -363,6 +363,46 @@ fn migration_binds_transition_payloads_to_the_sealed_gate_revision()
 }
 
 #[test]
+fn migration_rejects_a_transition_before_snapshot_outside_its_replayed_chain()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let first_gate = open_active_gate_for(&store, "op-before-chain-a", "src/chain-a.ts")?;
+    let second_gate = open_active_gate_for(&store, "op-before-chain-b", "src/chain-b.ts")?;
+    close_active_gate_for_migration(&store, &second_gate)?;
+    close_active_gate_for_migration(&store, &first_gate)?;
+    store.migrate_lifecycle_store()?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(TRANSITIONS)?;
+        let key = transition_key(2);
+        let bytes = table
+            .get(key.as_str())?
+            .ok_or("second worktree transition is missing")?
+            .value()
+            .to_vec();
+        let mut transition = serde_json::from_slice::<WorktreeTransition>(&bytes)?;
+        transition.capsule.before_snapshot.analysis_input_id =
+            AnalysisInputId::from_string("analysis_input_injected_before".to_owned());
+        let changed = serde_json::to_vec(&transition)?;
+        table.insert(key.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("payload or observation binding disagrees")
+    ));
+    Ok(())
+}
+
+#[test]
 fn migration_reconstructs_close_observations_with_their_catalog_revision()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;

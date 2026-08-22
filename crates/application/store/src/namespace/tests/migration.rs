@@ -6,8 +6,8 @@ use lumin_evidence::{
     ActualWriteSet, CapabilityRecord, DEAD_CODE_CAPABILITY_ID, GateAnalysisOptions,
     GateBaselineObservationInput, GateCloseObservationInput, GateObservationBinding, GateSignal,
     RepoPathProjection, RunEvidence, SemanticInputRecord, SemanticInputState, WriteLease,
-    WriteLeaseKind, derive_gate_baseline_observation_id, derive_gate_close_observation_id,
-    seal_analysis_snapshot,
+    WriteLeaseKind, apply_worktree_transition, derive_gate_baseline_observation_id,
+    derive_gate_close_observation_id, seal_analysis_snapshot,
 };
 use lumin_model::{
     CapabilityState, GateId, ObservationBinding, OperationId, RepoPath, SealedGateObservation,
@@ -551,19 +551,57 @@ fn close_active_gate_for_migration(
     store: &RepositoryStore,
     gate_id: &GateId,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let operation_id = OperationId::from_string("op-migrate-close".to_owned());
+    let operation_id = OperationId::from_string(format!("op-migrate-close-{}", gate_id.as_str()));
+    let request_digest = format!("migrate-close-digest-{}", gate_id.as_str());
     let session = store.begin_operation(&operation_id)?;
-    let gate = match session.begin_post_write("migrate-close-digest", gate_id)? {
-        PostWriteStart::Analyze { gate, .. } => gate,
+    let (gate, transitions) = match session.begin_post_write(&request_digest, gate_id)? {
+        PostWriteStart::Analyze {
+            gate, transitions, ..
+        } => (gate, transitions),
         PostWriteStart::Committed(_) => return Err("migration close committed early".into()),
     };
     let baseline = gate
         .baseline
         .as_ref()
         .ok_or("migration close omitted its baseline")?;
-    let snapshot = baseline.snapshot.clone();
+    let mut reconciled_baseline = baseline.snapshot.clone();
+    let mut reconciled_transition_sequences = Vec::with_capacity(transitions.len());
+    for transition in &transitions {
+        if !apply_worktree_transition(&mut reconciled_baseline, transition) {
+            return Err(format!(
+                "migration fixture could not replay transition {}",
+                transition.sequence
+            )
+            .into());
+        }
+        reconciled_transition_sequences.push(transition.sequence);
+    }
+    let source = gate
+        .declared_write_set
+        .first()
+        .cloned()
+        .ok_or("migration close omitted its declared source")?;
+    let mut current_inputs = reconciled_baseline.inputs.clone();
+    current_inputs.push(SemanticInputRecord {
+        path: source.clone(),
+        state: SemanticInputState::Source,
+        payload_sha256: Some(format!("payload-{}", gate_id.as_str())),
+        physical_identity: None,
+        absence_parent: None,
+        physical_redirect_sha256: None,
+    });
+    let snapshot = seal_analysis_snapshot(
+        current_inputs,
+        reconciled_baseline.evidence.clone(),
+        reconciled_baseline.scan_invocation.clone(),
+        reconciled_baseline.entry_selections.clone(),
+    );
     let protected_semantic_inputs = baseline.protected_semantic_inputs.clone();
-    let actual_write_set = ActualWriteSet::default();
+    let changed_paths = vec![source];
+    let actual_write_set = ActualWriteSet {
+        paths: changed_paths.clone(),
+        ..ActualWriteSet::default()
+    };
     let opening_observation_id = baseline.observation_id.clone();
     let opening_analysis_contract = baseline.analysis_contract.clone();
     let prior_revision = gate.current_revision;
@@ -573,17 +611,19 @@ fn close_active_gate_for_migration(
     let actual_write_set_for_id = actual_write_set.clone();
     let protected_for_id = protected_semantic_inputs.clone();
     let aliases_for_id = alias_closures.clone();
+    let changed_paths_for_id = changed_paths.clone();
+    let reconciled_sequences_for_id = reconciled_transition_sequences.clone();
     session.finish_post_write(
-        "migrate-close-digest",
+        &request_digest,
         gate_id,
         PostWriteFinish {
             snapshot: Some(snapshot.clone()),
             protected_semantic_inputs,
-            reconciled_baseline: Some(snapshot),
-            changed_paths: Vec::new(),
+            reconciled_baseline: Some(reconciled_baseline),
+            changed_paths,
             actual_write_set: Some(actual_write_set),
             alias_closures,
-            reconciled_transition_sequences: Vec::new(),
+            reconciled_transition_sequences,
             attempted_semantic_inputs: Vec::new(),
             signals: Vec::new(),
             deltas: Vec::new(),
@@ -601,10 +641,10 @@ fn close_active_gate_for_migration(
                         analysis_input_id: &analysis_input_id,
                         leased_write_set: &leased_write_set,
                         protected_semantic_inputs: &protected_for_id,
-                        changed_paths: &[],
+                        changed_paths: &changed_paths_for_id,
                         actual_write_set: &actual_write_set_for_id,
                         alias_closures: &aliases_for_id,
-                        reconciled_transition_sequences: &[],
+                        reconciled_transition_sequences: &reconciled_sequences_for_id,
                     }),
                 },
             },

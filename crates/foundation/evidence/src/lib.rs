@@ -2,10 +2,12 @@ mod cache;
 mod delta;
 mod gate;
 mod retention;
+mod transition;
 
 pub use cache::*;
 pub use gate::*;
 pub use retention::*;
+pub use transition::*;
 
 use std::collections::BTreeMap;
 

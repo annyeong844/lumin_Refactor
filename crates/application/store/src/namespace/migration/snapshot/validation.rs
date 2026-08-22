@@ -5,9 +5,10 @@ mod retention;
 use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_evidence::{
-    GATE_RECORD_SCHEMA_VERSION, GateBaselineObservationInput, GateCloseObservationInput,
-    GateLifecycle, GateOperationKind, GateOperationStatus, GateRecord, OperationRecord,
-    WorktreeTransition, derive_gate_baseline_observation_id, derive_gate_close_observation_id,
+    AnalysisSnapshot, GATE_RECORD_SCHEMA_VERSION, GateBaseline, GateBaselineObservationInput,
+    GateCloseObservationInput, GateLifecycle, GateOperationKind, GateOperationStatus, GateRecord,
+    GateRevision, OperationRecord, WorktreeTransition, apply_worktree_transition,
+    derive_gate_baseline_observation_id, derive_gate_close_observation_id,
 };
 use lumin_model::{ObservationBinding, SealedGateObservation};
 use serde::de::DeserializeOwned;
@@ -486,7 +487,12 @@ fn validate_transition_gate_refs(
                 && revision.changed_paths == transition.capsule.changed_paths
                 && baseline.leased_write_set == transition.capsule.leased_write_set
         });
-        if !baseline_matches || !close_matches || !payload_matches {
+        let before_matches = baseline.is_some_and(|baseline| {
+            reconstruct_transition_before(transitions, baseline, revision, transition.sequence)
+                .as_ref()
+                == Some(&transition.capsule.before_snapshot)
+        });
+        if !baseline_matches || !close_matches || !payload_matches || !before_matches {
             return Err(StoreError::Integrity(format!(
                 "transition {} payload or observation binding disagrees with its gate revision",
                 transition.sequence
@@ -494,6 +500,33 @@ fn validate_transition_gate_refs(
         }
     }
     Ok(())
+}
+
+fn reconstruct_transition_before(
+    transitions: &BTreeMap<u64, WorktreeTransition>,
+    baseline: &GateBaseline,
+    revision: &GateRevision,
+    transition_sequence: u64,
+) -> Option<AnalysisSnapshot> {
+    if baseline.transition_sequence >= transition_sequence {
+        return None;
+    }
+    let expected_sequences = transitions
+        .range((
+            std::ops::Bound::Excluded(baseline.transition_sequence),
+            std::ops::Bound::Excluded(transition_sequence),
+        ))
+        .map(|(sequence, _)| *sequence)
+        .collect::<Vec<_>>();
+    if revision.reconciled_transition_sequences != expected_sequences {
+        return None;
+    }
+
+    let mut reconstructed = baseline.snapshot.clone();
+    for sequence in expected_sequences {
+        apply_worktree_transition(&mut reconstructed, transitions.get(&sequence)?).then_some(())?;
+    }
+    Some(reconstructed)
 }
 
 fn validate_run_catalog(snapshot: &LogicalStoreSnapshot) -> Result<(), StoreError> {
