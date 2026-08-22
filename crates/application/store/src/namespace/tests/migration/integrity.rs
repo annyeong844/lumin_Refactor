@@ -8,7 +8,7 @@ use lumin_evidence::{
     RetentionPlanScope, UnsealedGateObservationInputs, WorktreeTransition, WriteLease,
     WriteLeaseKind, derive_gate_baseline_observation_id, derive_gate_close_observation_id,
     derive_protected_semantic_inputs, derive_unsealed_gate_observation_binding,
-    gate_abandon_request_digest, seal_analysis_snapshot,
+    gate_abandon_request_digest, post_write_request_digest, seal_analysis_snapshot,
 };
 use lumin_model::{
     AnalysisInputId, AttemptId, CapabilityState, DeltaFactFamily, DeltaKey,
@@ -30,9 +30,9 @@ use crate::{
 use super::super::open_store;
 use super::{
     append_non_authorizing_close_for_migration, append_unsealed_close_for_migration,
-    close_active_gate_for_migration, current_generation, evidence, open_active_gate_for,
-    open_active_gate_for_with_protected_inputs, options, path, pre_write_digest,
-    rejected_test_observation, semantic_input,
+    close_active_gate_for_migration, current_generation, evidence, observed_lease,
+    open_active_gate_for, open_active_gate_for_with_protected_inputs, options, path,
+    pre_write_digest, rejected_test_observation, semantic_input,
 };
 
 fn reconstructed_baseline_binding(
@@ -452,7 +452,7 @@ fn migration_reconstructs_gate_observations_with_their_catalog_revision()
 
     let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
     let write = database.begin_write()?;
-    {
+    let forged_catalog_revision = {
         let mut table = write.open_table(GATES)?;
         let bytes = table
             .get(gate_id.as_str())?
@@ -469,8 +469,26 @@ fn migration_reconstructs_gate_observations_with_their_catalog_revision()
             .first_mut()
             .ok_or("catalog-bound gate omitted its opening revision")?
             .catalog_revision = Some(baseline.catalog_revision);
+        let forged_catalog_revision = baseline.catalog_revision;
         let changed = serde_json::to_vec(&gate)?;
         table.insert(gate_id.as_str(), changed.as_slice())?;
+        forged_catalog_revision
+    };
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get("op-catalog-binding")?
+            .ok_or("catalog-bound opening operation is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        operation
+            .pre_write_final_validation
+            .as_mut()
+            .ok_or("catalog-bound operation omitted its final validation")?
+            .catalog_revision = forged_catalog_revision;
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert("op-catalog-binding", changed.as_slice())?;
     }
     write.commit()?;
     drop(database);
@@ -1505,6 +1523,8 @@ fn migration_matches_the_complete_operation_result_to_its_revision()
             store.migrate_lifecycle_store(),
             Err(StoreError::Integrity(message))
                 if message.contains("result disagrees with its complete gate revision")
+                    || (corruption == "signals"
+                        && message.contains("result disagrees with its final validation record"))
                     || (corruption == "reason"
                         && message.contains("non-administrative operation"))
         ));
@@ -1549,6 +1569,11 @@ fn migration_recomputes_gate_decisions_from_their_signals() -> Result<(), Box<dy
             .value()
             .to_vec();
         let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        operation
+            .pre_write_final_validation
+            .as_mut()
+            .ok_or("signal-decision operation omitted its final validation")?
+            .signals = forged_signals.clone();
         operation
             .result
             .as_mut()
@@ -1664,17 +1689,15 @@ fn migration_rejects_unfinished_pre_write_gate_id_collisions()
             let operation_id =
                 OperationId::from_string(format!("op-unfinished-gate-id-{collision}-{ordinal}"));
             let session = store.begin_operation(&operation_id)?;
-            let source = path(&format!("src/unfinished-{collision}-{ordinal}.ts"))?;
-            let source_lease = WriteLease {
-                path: source.clone(),
-                kind: WriteLeaseKind::ExistingFile,
-                physical_identity: Some(PhysicalFileIdentity::Unix {
-                    device: 23,
-                    inode: 100 + ordinal as u64,
-                }),
-                nearest_existing_parent: None,
-                prefix_identities: Vec::new(),
-            };
+            let source_name = format!("src/unfinished-{collision}-{ordinal}.ts");
+            fs::create_dir_all(root.path().join("src"))?;
+            fs::write(
+                root.path().join(&source_name),
+                b"export const value = true;\n",
+            )?;
+            let source_path = RepoPath::from_portable(&source_name)?;
+            let source = RepoPathProjection::from(&source_path);
+            let source_lease = observed_lease(root.path(), &source_path)?;
             let analysis_options = options();
             let request_digest = pre_write_digest(std::slice::from_ref(&source), &analysis_options);
             let PreWriteStart::Analyze { gate_id, .. } = session.reserve_pre_write(
@@ -1764,11 +1787,13 @@ fn migration_requires_every_durable_revision_to_have_a_committed_result()
         let root = tempfile::tempdir()?;
         let store = open_store(root.path())?;
         let operation_id = OperationId::from_string(format!("op-revision-{status:?}"));
-        open_active_gate_for(
-            &store,
-            operation_id.as_str(),
-            &format!("src/revision-{status:?}.ts"),
+        let source_name = format!("src/revision-{status:?}.ts");
+        fs::create_dir_all(root.path().join("src"))?;
+        fs::write(
+            root.path().join(&source_name),
+            b"export const value = true;\n",
         )?;
+        open_active_gate_for(&store, operation_id.as_str(), &source_name)?;
         drop(store);
 
         let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
@@ -1782,15 +1807,14 @@ fn migration_requires_every_durable_revision_to_have_a_committed_result()
                 .to_vec();
             let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
             operation.status = status;
+            operation.pre_write_final_validation = None;
             operation.result = None;
             match status {
                 GateOperationStatus::Pending => {
-                    for lease in &mut operation.leased_write_set {
-                        lease.physical_identity = Some(PhysicalFileIdentity::Unix {
-                            device: 1,
-                            inode: 2,
-                        });
-                    }
+                    operation.leased_write_set = vec![observed_lease(
+                        root.path(),
+                        &RepoPath::from_portable(&source_name)?,
+                    )?];
                     operation.operation_liveness = Some(OperationLivenessLease {
                         lease_nonce: "0".repeat(32),
                         owner_process_id: 1,
@@ -2466,16 +2490,86 @@ fn migration_authenticates_final_freshness_signals_in_the_opening_observation()
     let root = tempfile::tempdir()?;
     let store = open_store(root.path())?;
     let operation_id = OperationId::from_string("op-final-freshness-signal".to_owned());
-    let gate_id = open_active_gate_for(
-        &store,
-        operation_id.as_str(),
-        "src/final-freshness-signal.ts",
+    let session = store.begin_operation(&operation_id)?;
+    let source = path("src/final-freshness-signal.ts")?;
+    let source_lease = WriteLease {
+        path: source.clone(),
+        kind: WriteLeaseKind::ExistingFile,
+        physical_identity: None,
+        nearest_existing_parent: None,
+        prefix_identities: Vec::new(),
+    };
+    let analysis_options = options();
+    let request_digest = pre_write_digest(std::slice::from_ref(&source), &analysis_options);
+    let (gate_id, transition_sequence) = match session.reserve_pre_write(
+        &request_digest,
+        std::slice::from_ref(&source),
+        std::slice::from_ref(&source_lease),
+        &analysis_options,
+        rejected_test_observation,
+    )? {
+        PreWriteStart::Analyze {
+            gate_id,
+            transition_sequence,
+        } => (gate_id, transition_sequence),
+        PreWriteStart::Committed(_) => {
+            return Err("final-freshness opening committed early".into());
+        }
+    };
+    let baseline = GateBaselineDraft {
+        analysis_contract: lumin_evidence::SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID.to_owned(),
+        snapshot: seal_analysis_snapshot(Vec::new(), evidence(), Default::default(), Vec::new()),
+        protected_semantic_inputs: Vec::new(),
+        transition_sequence,
+    };
+    let stale_signals = vec![GateSignal::ProtectedInputChanged {
+        paths: vec![source.clone()],
+    }];
+    let baseline_for_id = baseline.clone();
+    let evidence_payload_sha256 =
+        crate::evidence_payload_sha256(&baseline_for_id.snapshot.evidence)?;
+    let source_for_id = source.clone();
+    let lease_for_id = source_lease.clone();
+    let signals_for_id = stale_signals.clone();
+    let result = session.finish_pre_write(
+        &request_digest,
+        &gate_id,
+        PreWriteFinish {
+            baseline: Some(baseline),
+            leased_write_set: vec![source_lease],
+            alias_closures: Vec::new(),
+            attempted_semantic_inputs: Vec::new(),
+            signals: Vec::new(),
+        },
+        |_, catalog_revision, _| ObservationFinalization {
+            signals: stale_signals,
+            binding: ObservationBinding::Sealed {
+                observation: SealedGateObservation::Baseline {
+                    observation_id: derive_gate_baseline_observation_id(
+                        GateBaselineObservationInput {
+                            catalog_revision,
+                            transition_sequence: baseline_for_id.transition_sequence,
+                            analysis_contract: &baseline_for_id.analysis_contract,
+                            analysis_input_id: &baseline_for_id.snapshot.analysis_input_id,
+                            evidence_payload_sha256: &evidence_payload_sha256,
+                            signals: &signals_for_id,
+                            declared_write_set: std::slice::from_ref(&source_for_id),
+                            leased_write_set: std::slice::from_ref(&lease_for_id),
+                            alias_closures: &[],
+                            protected_semantic_inputs: &[],
+                        },
+                    ),
+                },
+            },
+        },
     )?;
+    assert_eq!(result.lifecycle, GateLifecycle::Rejected);
+    assert_eq!(result.decision, GateDecision::Stale);
     drop(store);
 
     let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
     let write = database.begin_write()?;
-    let stale_binding = {
+    let (forged_active_binding, candidate_leases) = {
         let mut table = write.open_table(GATES)?;
         let bytes = table
             .get(gate_id.as_str())?
@@ -2483,9 +2577,17 @@ fn migration_authenticates_final_freshness_signals_in_the_opening_observation()
             .value()
             .to_vec();
         let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
-        gate.revisions[0].signals = vec![GateSignal::ProtectedInputChanged {
-            paths: gate.declared_write_set.clone(),
-        }];
+        gate.revisions[0].signals.clear();
+        gate.revisions[0].decision = GateDecision::Allow;
+        gate.lifecycle = GateLifecycle::Active;
+        let baseline = gate
+            .baseline
+            .as_ref()
+            .ok_or("final-freshness gate omitted its baseline")?;
+        let candidate_leases = baseline.leased_write_set.clone();
+        gate.leased_write_set = candidate_leases.clone();
+        gate.alias_closures = baseline.alias_closures.clone();
+        gate.protected_semantic_inputs = baseline.protected_semantic_inputs.clone();
         let binding = reconstructed_baseline_binding(&gate)?;
         let ObservationBinding::Sealed {
             observation: SealedGateObservation::Baseline { observation_id },
@@ -2498,14 +2600,9 @@ fn migration_authenticates_final_freshness_signals_in_the_opening_observation()
             .ok_or("final-freshness gate omitted its baseline")?
             .observation_id = observation_id.clone();
         gate.revisions[0].observation_binding = Some(binding.clone());
-
-        // Simulate deleting the final-freshness evidence while retaining its sealed ID.
-        gate.revisions[0].signals.clear();
-        gate.revisions[0].decision = GateDecision::Allow;
-        gate.lifecycle = GateLifecycle::Active;
         let changed = serde_json::to_vec(&gate)?;
         table.insert(gate_id.as_str(), changed.as_slice())?;
-        binding
+        (binding, candidate_leases)
     };
     {
         let mut table = write.open_table(OPERATIONS)?;
@@ -2515,14 +2612,24 @@ fn migration_authenticates_final_freshness_signals_in_the_opening_observation()
             .value()
             .to_vec();
         let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        assert_eq!(
+            operation
+                .pre_write_final_validation
+                .as_ref()
+                .ok_or("final-freshness operation omitted its final validation")?
+                .signals,
+            signals_for_id
+        );
+        operation.leased_write_set = candidate_leases.clone();
         let result = operation
             .result
             .as_mut()
             .ok_or("final-freshness operation omitted its result")?;
-        result.observation_binding = Some(stale_binding);
+        result.observation_binding = Some(forged_active_binding);
         result.signals.clear();
         result.decision = GateDecision::Allow;
         result.lifecycle = GateLifecycle::Active;
+        result.leased_write_set = candidate_leases;
         let changed = serde_json::to_vec(&operation)?;
         table.insert(operation_id.as_str(), changed.as_slice())?;
     }
@@ -2533,7 +2640,7 @@ fn migration_authenticates_final_freshness_signals_in_the_opening_observation()
     assert!(matches!(
         store.migrate_lifecycle_store(),
         Err(StoreError::Integrity(message))
-            if message.contains("baseline observation cannot be reconstructed")
+            if message.contains("result disagrees with its final validation record")
     ));
     Ok(())
 }
@@ -2555,19 +2662,17 @@ fn migration_rejects_invalid_unfinished_operation_liveness()
         let store = open_store(root.path())?;
         let operation_id = OperationId::from_string(format!("op-liveness-{corruption}"));
         let session = store.begin_operation(&operation_id)?;
-        let source = path(&format!("src/liveness-{corruption}.ts"))?;
+        let source_name = format!("src/liveness-{corruption}.ts");
+        fs::create_dir_all(root.path().join("src"))?;
+        fs::write(
+            root.path().join(&source_name),
+            b"export const value = true;\n",
+        )?;
+        let source_path = RepoPath::from_portable(&source_name)?;
+        let source = RepoPathProjection::from(&source_path);
         let analysis_options = options();
         let request_digest = pre_write_digest(std::slice::from_ref(&source), &analysis_options);
-        let source_lease = WriteLease {
-            path: source.clone(),
-            kind: WriteLeaseKind::ExistingFile,
-            physical_identity: Some(PhysicalFileIdentity::Unix {
-                device: 31,
-                inode: 101,
-            }),
-            nearest_existing_parent: None,
-            prefix_identities: Vec::new(),
-        };
+        let source_lease = observed_lease(root.path(), &source_path)?;
         assert!(matches!(
             session.reserve_pre_write(
                 &request_digest,
@@ -3000,6 +3105,139 @@ fn migration_recomputes_post_write_request_digests() -> Result<(), Box<dyn std::
         Err(StoreError::Integrity(message))
             if message.contains("post-write operation")
                 && message.contains("authenticated request")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_reopens_pending_pre_write_physical_reservations()
+-> Result<(), Box<dyn std::error::Error>> {
+    for corruption in ["existing-identity", "prefix-identity"] {
+        let root = tempfile::tempdir()?;
+        fs::create_dir_all(root.path().join("src"))?;
+        let source_path = if corruption == "existing-identity" {
+            fs::write(
+                root.path().join("src/pending-existing.ts"),
+                b"export const pending = true;\n",
+            )?;
+            RepoPath::from_portable("src/pending-existing.ts")?
+        } else {
+            RepoPath::from_portable("src/pending-new.ts")?
+        };
+        let source = RepoPathProjection::from(&source_path);
+        let lease = observed_lease(root.path(), &source_path)?;
+        if lease.prefix_identities.is_empty() {
+            return Err("pending physical fixture omitted its prefix chain".into());
+        }
+        let store = open_store(root.path())?;
+        let operation_id = OperationId::from_string(format!("op-pending-{corruption}"));
+        let session = store.begin_operation(&operation_id)?;
+        let analysis_options = options();
+        let request_digest = pre_write_digest(std::slice::from_ref(&source), &analysis_options);
+        assert!(matches!(
+            session.reserve_pre_write(
+                &request_digest,
+                std::slice::from_ref(&source),
+                std::slice::from_ref(&lease),
+                &analysis_options,
+                rejected_test_observation,
+            )?,
+            PreWriteStart::Analyze { .. }
+        ));
+        drop(session);
+        drop(store);
+
+        let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+        let write = database.begin_write()?;
+        {
+            let mut table = write.open_table(OPERATIONS)?;
+            let bytes = table
+                .get(operation_id.as_str())?
+                .ok_or("pending physical operation is missing")?
+                .value()
+                .to_vec();
+            let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+            let lease = operation
+                .leased_write_set
+                .first_mut()
+                .ok_or("pending physical operation omitted its lease")?;
+            if corruption == "existing-identity" {
+                let identity = lease
+                    .physical_identity
+                    .take()
+                    .ok_or("pending existing-file lease omitted its identity")?;
+                lease.physical_identity = Some(different_physical_identity(identity));
+            } else {
+                let prefix = lease
+                    .prefix_identities
+                    .first_mut()
+                    .ok_or("pending new-file lease omitted its prefix")?;
+                prefix.physical_identity =
+                    different_physical_identity(prefix.physical_identity.clone());
+            }
+            let changed = serde_json::to_vec(&operation)?;
+            table.insert(operation_id.as_str(), changed.as_slice())?;
+        }
+        write.commit()?;
+        drop(database);
+
+        let store = open_store(root.path())?;
+        let expected = if corruption == "existing-identity" {
+            "physical identity changed"
+        } else {
+            "prefix identity changed"
+        };
+        assert!(matches!(
+            store.migrate_lifecycle_store(),
+            Err(StoreError::Integrity(message)) if message.contains(expected)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_multiple_semantic_inputs_for_one_canonical_path()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let input = semantic_input("config/unique-input.json")?;
+    let gate_id = open_active_gate_for_with_protected_inputs(
+        &store,
+        "op-duplicate-semantic-input",
+        "src/duplicate-semantic-input.ts",
+        vec![input.clone()],
+    )?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("duplicate semantic-input gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        let mut conflicting = input;
+        conflicting.payload_sha256 = Some("conflicting-payload".to_owned());
+        gate.baseline
+            .as_mut()
+            .ok_or("duplicate semantic-input gate omitted its baseline")?
+            .snapshot
+            .inputs
+            .push(conflicting);
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("more than one semantic input for one canonical path")
     ));
     Ok(())
 }
@@ -3700,6 +3938,72 @@ fn migration_rejects_unfinished_post_write_against_a_terminal_gate()
         Err(StoreError::Integrity(message))
             if message.contains("cannot resume against its target gate revision")
     ));
+    Ok(())
+}
+
+#[test]
+fn migration_preserves_interrupted_post_write_retargeting() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(
+        &store,
+        "op-interrupted-retarget-open",
+        "src/interrupted-retarget.ts",
+    )?;
+    append_non_authorizing_close_for_migration(&store, &gate_id, Vec::new())?;
+    let gate = store.load_gate(&gate_id)?;
+    assert_eq!(gate.current_revision, 1);
+    assert_eq!(gate.lifecycle, GateLifecycle::Active);
+    let completed_close_id = gate
+        .revisions
+        .last()
+        .ok_or("interrupted-retarget gate omitted its close")?
+        .operation_id
+        .clone();
+    drop(store);
+
+    let interrupted_id = OperationId::from_string("op-interrupted-retarget".to_owned());
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get(completed_close_id.as_str())?
+            .ok_or("interrupted-retarget close operation is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        operation.operation_id = interrupted_id.clone();
+        operation.status = GateOperationStatus::Interrupted;
+        operation.target_revision = 0;
+        operation.leased_write_set.clear();
+        operation.semantic_read_reservations.clear();
+        operation.semantic_read_reservation_bindings.clear();
+        operation.interruption_count = 1;
+        operation.operation_liveness = None;
+        operation.pre_write_final_validation = None;
+        operation.result = None;
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert(interrupted_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    store.migrate_lifecycle_store()?;
+    let session = store.begin_operation(&interrupted_id)?;
+    let request_digest = post_write_request_digest(&gate_id);
+    let rebound_gate = match session.begin_post_write(&request_digest, &gate_id)? {
+        crate::PostWriteStart::Analyze { gate, .. } => gate,
+        crate::PostWriteStart::Committed(_) => {
+            return Err("interrupted post-write committed during retargeting".into());
+        }
+    };
+    assert_eq!(rebound_gate.current_revision, 1);
+    let rebound = store.load_operation(&interrupted_id)?;
+    assert_eq!(rebound.status, GateOperationStatus::Pending);
+    assert_eq!(rebound.target_revision, 1);
     Ok(())
 }
 

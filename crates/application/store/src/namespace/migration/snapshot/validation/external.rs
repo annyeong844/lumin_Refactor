@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use lumin_evidence::{
-    GateLifecycle, GateOperationStatus, GateRecord, OperationRecord, WriteLeaseKind,
+    GateLifecycle, GateOperationKind, GateOperationStatus, GateRecord, OperationRecord, WriteLease,
+    WriteLeaseKind,
 };
 use lumin_model::decode_native_path_component;
 use serde::de::DeserializeOwned;
@@ -26,6 +28,7 @@ pub(super) fn validate_external_references(
         &snapshot.cache_eviction_authorizations,
     )?;
     validate_pending_operation_liveness(snapshot, guard)?;
+    validate_pending_pre_write_leases(snapshot, guard)?;
     validate_active_gate_write_prefixes(snapshot, guard)?;
     validate_latest_attempt(snapshot, guard)?;
     let moved_runs = validate_retention_payloads(snapshot, guard)?;
@@ -33,6 +36,165 @@ pub(super) fn validate_external_references(
         validate_run(key, bytes, guard, moved_runs.get(key))?;
     }
     guard.validate_bound_entries()
+}
+
+fn validate_pending_pre_write_leases(
+    snapshot: &LogicalStoreSnapshot,
+    guard: &NamespaceGuard,
+) -> Result<(), StoreError> {
+    for (key, bytes) in &snapshot.operations {
+        let operation = parse_record::<OperationRecord>("operations", key, bytes)?;
+        if operation.status != GateOperationStatus::Pending
+            || operation.kind != GateOperationKind::PreWrite
+        {
+            continue;
+        }
+        for lease in &operation.leased_write_set {
+            validate_pending_pre_write_lease(key, lease, guard)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_pending_pre_write_lease(
+    operation_key: &str,
+    lease: &WriteLease,
+    guard: &NamespaceGuard,
+) -> Result<(), StoreError> {
+    let label = format!(
+        "pending pre-write {operation_key} lease {}",
+        lease.path.display
+    );
+    let held_prefixes = open_worktree_prefixes(lease, guard, &label)?;
+    let native = worktree_path(guard, &lease.path, &label)?;
+    match lease.kind {
+        WriteLeaseKind::ExistingFile => {
+            validate_contained_worktree_path(guard, &native, &label)?;
+            let held = HeldEntry::open_following_file(&native, &label)?;
+            if lease.physical_identity.as_ref() != Some(held.identity()) {
+                return Err(StoreError::Integrity(format!(
+                    "{label} physical identity changed"
+                )));
+            }
+            validate_contained_worktree_path(guard, &native, &label)?;
+            validate_held_prefixes(&held_prefixes, &label)?;
+            held.validate_following_file_path(&native, &label)?;
+            validate_contained_worktree_path(guard, &native, &label)?;
+        }
+        WriteLeaseKind::Directory => {
+            validate_contained_worktree_path(guard, &native, &label)?;
+            let held = HeldEntry::open(
+                &native,
+                EntryKind::Directory,
+                EntryAccess::ReadOnly,
+                false,
+                &label,
+            )?;
+            if lease.physical_identity.as_ref() != Some(held.identity()) {
+                return Err(StoreError::Integrity(format!(
+                    "{label} physical identity changed"
+                )));
+            }
+            validate_held_prefixes(&held_prefixes, &label)?;
+            held.validate_path(
+                &native,
+                EntryKind::Directory,
+                EntryAccess::ReadOnly,
+                false,
+                &label,
+            )?;
+            validate_contained_worktree_path(guard, &native, &label)?;
+        }
+        WriteLeaseKind::NewFile => {
+            validate_absent_worktree_path(&native, &label)?;
+            validate_held_prefixes(&held_prefixes, &label)?;
+            validate_absent_worktree_path(&native, &label)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_held_prefixes(
+    held_prefixes: &[(PathBuf, HeldEntry)],
+    label: &str,
+) -> Result<(), StoreError> {
+    for (native, held) in held_prefixes {
+        held.validate_path(
+            native,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            label,
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_absent_worktree_path(path: &Path, label: &str) -> Result<(), StoreError> {
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Ok(_) => Err(StoreError::Integrity(format!(
+            "{label} no longer names an absent path"
+        ))),
+        Err(error) => Err(StoreError::Io(error.to_string())),
+    }
+}
+
+fn open_worktree_prefixes(
+    lease: &WriteLease,
+    guard: &NamespaceGuard,
+    label: &str,
+) -> Result<Vec<(PathBuf, HeldEntry)>, StoreError> {
+    let mut held_prefixes = Vec::with_capacity(lease.prefix_identities.len());
+    for prefix in &lease.prefix_identities {
+        let native = worktree_path(guard, &prefix.path, label)?;
+        validate_contained_worktree_path(guard, &native, label)?;
+        let held = HeldEntry::open(
+            &native,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            label,
+        )?;
+        if held.identity() != &prefix.physical_identity {
+            return Err(StoreError::Integrity(format!(
+                "{label} prefix identity changed"
+            )));
+        }
+        held_prefixes.push((native, held));
+    }
+    Ok(held_prefixes)
+}
+
+fn worktree_path(
+    guard: &NamespaceGuard,
+    path: &lumin_evidence::RepoPathProjection,
+    label: &str,
+) -> Result<PathBuf, StoreError> {
+    let mut relative = PathBuf::new();
+    for component in &path.components {
+        let native = decode_native_path_component(component).map_err(|error| {
+            StoreError::Integrity(format!("{label} path is not canonical: {error}"))
+        })?;
+        relative.push(native);
+    }
+    Ok(guard.state.repository.path.join(relative))
+}
+
+fn validate_contained_worktree_path(
+    guard: &NamespaceGuard,
+    path: &Path,
+    label: &str,
+) -> Result<(), StoreError> {
+    let root = fs::canonicalize(&guard.state.repository.path)
+        .map_err(|error| StoreError::Io(error.to_string()))?;
+    let target = fs::canonicalize(path).map_err(|error| StoreError::Io(error.to_string()))?;
+    if !target.starts_with(&root) {
+        return Err(StoreError::Integrity(format!(
+            "{label} resolves outside the bound repository root"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_pending_operation_liveness(

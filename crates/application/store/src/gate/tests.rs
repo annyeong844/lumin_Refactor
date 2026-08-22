@@ -190,7 +190,7 @@ fn persisted_v2_optional_gate_additions_default_when_absent()
     assert!(loaded_gate.revisions[0].reason.is_none());
 
     let operation = OperationRecord {
-        schema_version: "lumin-operation.v1".to_owned(),
+        schema_version: "lumin-operation.v2".to_owned(),
         operation_id,
         kind: GateOperationKind::PostWrite,
         request_digest: "digest".to_owned(),
@@ -205,6 +205,7 @@ fn persisted_v2_optional_gate_additions_default_when_absent()
         semantic_read_reservation_bindings: Vec::new(),
         interruption_count: 0,
         operation_liveness: None,
+        pre_write_final_validation: None,
         analysis_options: None,
         result: None,
     };
@@ -281,7 +282,7 @@ fn persisted_reservation_rejects_conflicting_physical_identities()
 -> Result<(), Box<dyn std::error::Error>> {
     let reserved_path = path("config/base.json")?;
     let operation = OperationRecord {
-        schema_version: "lumin-operation.v1".to_owned(),
+        schema_version: "lumin-operation.v2".to_owned(),
         operation_id: OperationId::from_string("operation-conflicting-binding".to_owned()),
         kind: GateOperationKind::PostWrite,
         request_digest: "digest".to_owned(),
@@ -311,6 +312,7 @@ fn persisted_reservation_rejects_conflicting_physical_identities()
         ],
         interruption_count: 0,
         operation_liveness: None,
+        pre_write_final_validation: None,
         analysis_options: None,
         result: None,
     };
@@ -342,7 +344,7 @@ fn persisted_reservation_rejects_direct_and_absence_identities_together()
         },
     });
     let operation = OperationRecord {
-        schema_version: "lumin-operation.v1".to_owned(),
+        schema_version: "lumin-operation.v2".to_owned(),
         operation_id: OperationId::from_string("operation-invalid-absence-binding".to_owned()),
         kind: GateOperationKind::PostWrite,
         request_digest: "digest".to_owned(),
@@ -357,6 +359,7 @@ fn persisted_reservation_rejects_direct_and_absence_identities_together()
         semantic_read_reservation_bindings: vec![binding],
         interruption_count: 0,
         operation_liveness: None,
+        pre_write_final_validation: None,
         analysis_options: None,
         result: None,
     };
@@ -590,7 +593,8 @@ fn pre_write_finish_rejects_a_baseline_that_omits_a_reserved_input()
 fn final_validation_can_stop_pre_write_promotion() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     let store = open_store(root.path())?;
-    let operation = store.begin_operation(&OperationId::from_string("op-open".to_owned()))?;
+    let operation_id = OperationId::from_string("op-open".to_owned());
+    let operation = store.begin_operation(&operation_id)?;
     let source = path("src/main.ts")?;
     let source_lease = lease(source.clone());
     let (gate_id, transition_sequence) = match operation.reserve_pre_write(
@@ -638,10 +642,7 @@ fn final_validation_can_stop_pre_write_promotion() -> Result<(), Box<dyn std::er
 
     assert_eq!(result.lifecycle, GateLifecycle::Rejected);
     assert!(!result.decision.authorizes());
-    assert_eq!(
-        result.leased_write_set.as_slice(),
-        std::slice::from_ref(&source_lease)
-    );
+    assert!(result.leased_write_set.is_empty());
     assert!(matches!(
         result.observation_binding,
         Some(ObservationBinding::Sealed {
@@ -655,8 +656,15 @@ fn final_validation_can_stop_pre_write_promotion() -> Result<(), Box<dyn std::er
         }]
     );
     let persisted = store.load_gate(&gate_id)?;
-    assert!(persisted.baseline.is_some());
-    assert_eq!(persisted.leased_write_set, [source_lease]);
+    assert_eq!(
+        persisted
+            .baseline
+            .as_ref()
+            .ok_or("sealed rejected opening omitted its candidate baseline")?
+            .leased_write_set,
+        [source_lease]
+    );
+    assert!(persisted.leased_write_set.is_empty());
     assert!(persisted.alias_closures.is_empty());
     assert!(persisted.protected_semantic_inputs.is_empty());
     assert!(persisted.transition_refs.is_empty());
@@ -669,6 +677,14 @@ fn final_validation_can_stop_pre_write_promotion() -> Result<(), Box<dyn std::er
             observation: SealedGateObservation::Baseline { .. }
         })
     ));
+    let operation = store.load_operation(&operation_id)?;
+    assert_eq!(
+        operation
+            .pre_write_final_validation
+            .ok_or("committed pre-write omitted its final validation record")?
+            .signals,
+        result.signals
+    );
     Ok(())
 }
 

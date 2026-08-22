@@ -5,12 +5,13 @@ use std::fs;
 use lumin_evidence::{
     ActualWriteSet, CapabilityRecord, DEAD_CODE_CAPABILITY_ID, GateAnalysisOptions,
     GateBaselineObservationInput, GateCloseObservationInput, GateObservationBinding, GateSignal,
-    RepoPathProjection, RunEvidence, SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID,
-    SemanticInputRecord, SemanticInputState, SemanticReadReservationBinding,
-    UnsealedGateObservationInputs, WriteLease, WriteLeaseKind, apply_worktree_transition,
-    derive_gate_baseline_observation_id, derive_gate_close_observation_id,
-    derive_protected_semantic_inputs, derive_unsealed_gate_observation_binding, gate_policy,
-    post_write_request_digest, pre_write_request_digest, seal_analysis_snapshot,
+    PathPrefixIdentity, RepoPathProjection, RunEvidence,
+    SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, SemanticInputRecord, SemanticInputState,
+    SemanticReadReservationBinding, UnsealedGateObservationInputs, WriteLease, WriteLeaseKind,
+    apply_worktree_transition, derive_gate_baseline_observation_id,
+    derive_gate_close_observation_id, derive_protected_semantic_inputs,
+    derive_unsealed_gate_observation_binding, gate_policy, post_write_request_digest,
+    pre_write_request_digest, seal_analysis_snapshot,
 };
 use lumin_model::{
     CapabilityState, GateId, ObservationBinding, OperationId, RepoPath, SealedGateObservation,
@@ -49,6 +50,11 @@ fn rejected_test_observation(_signals: &[GateSignal]) -> GateObservationBinding 
 fn migration_preserves_run_gate_and_pending_operation_records()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::write(
+        root.path().join("src/pending.ts"),
+        b"export const pending = true;\n",
+    )?;
     let store = open_store(root.path())?;
     let evidence = evidence();
     let mut attempt = store.begin_attempt()?;
@@ -58,17 +64,9 @@ fn migration_preserves_run_gate_and_pending_operation_records()
 
     let operation_id = OperationId::from_string("op-migrate-pending".to_owned());
     let session = store.begin_operation(&operation_id)?;
-    let source = path("src/pending.ts")?;
-    let source_lease = WriteLease {
-        path: source.clone(),
-        kind: WriteLeaseKind::ExistingFile,
-        physical_identity: Some(lumin_model::PhysicalFileIdentity::Unix {
-            device: 17,
-            inode: 29,
-        }),
-        nearest_existing_parent: None,
-        prefix_identities: Vec::new(),
-    };
+    let source_path = RepoPath::from_portable("src/pending.ts")?;
+    let source = RepoPathProjection::from(&source_path);
+    let source_lease = observed_lease(root.path(), &source_path)?;
     let analysis_options = options();
     let request_digest = pre_write_digest(std::slice::from_ref(&source), &analysis_options);
     assert!(matches!(
@@ -398,6 +396,35 @@ fn lease(path: RepoPathProjection) -> WriteLease {
         nearest_existing_parent: None,
         prefix_identities: Vec::new(),
     }
+}
+
+fn observed_lease(
+    root: &std::path::Path,
+    path: &RepoPath,
+) -> Result<WriteLease, Box<dyn std::error::Error>> {
+    let observation = lumin_inventory::inspect_write_target(root, path)?;
+    let kind = match observation.kind {
+        lumin_inventory::WriteTargetKind::ExistingFile => WriteLeaseKind::ExistingFile,
+        lumin_inventory::WriteTargetKind::ExistingDirectory => WriteLeaseKind::Directory,
+        lumin_inventory::WriteTargetKind::NewFile => WriteLeaseKind::NewFile,
+    };
+    Ok(WriteLease {
+        path: RepoPathProjection::from(&observation.path),
+        kind,
+        physical_identity: observation.physical_identity,
+        nearest_existing_parent: observation
+            .nearest_existing_parent
+            .as_ref()
+            .map(RepoPathProjection::from),
+        prefix_identities: observation
+            .prefix_identities
+            .into_iter()
+            .map(|(path, physical_identity)| PathPrefixIdentity {
+                path: RepoPathProjection::from(&path),
+                physical_identity,
+            })
+            .collect(),
+    })
 }
 
 fn open_active_gate(store: &RepositoryStore) -> Result<GateId, Box<dyn std::error::Error>> {

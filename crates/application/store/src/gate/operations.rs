@@ -58,6 +58,7 @@ impl OperationSession<'_> {
                     semantic_read_reservation_bindings: Vec::new(),
                     interruption_count: 0,
                     operation_liveness: None,
+                    pre_write_final_validation: None,
                     analysis_options: Some(analysis_options.clone()),
                     result: None,
                 };
@@ -173,6 +174,12 @@ impl OperationSession<'_> {
             let finalization =
                 final_validation(&reserved_state_identities, catalog_revision, &signals);
             signals.extend(finalization.signals);
+            operation.pre_write_final_validation = Some(
+                lumin_evidence::PreWriteFinalValidation {
+                    catalog_revision,
+                    signals: signals.clone(),
+                },
+            );
             let observation_binding = finalization.binding;
             let unsealed_observation_inputs = matches!(
                 &observation_binding,
@@ -319,6 +326,7 @@ impl OperationSession<'_> {
                 semantic_read_reservation_bindings: Vec::new(),
                 interruption_count: 0,
                 operation_liveness: None,
+                pre_write_final_validation: None,
                 analysis_options: None,
                 result: None,
             };

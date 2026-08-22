@@ -46,6 +46,26 @@ impl HeldEntry {
         Self::from_file(file, EntryKind::RegularFile, true, label)
     }
 
+    pub(crate) fn open_following_file(path: &Path, label: &str) -> Result<Self, StoreError> {
+        let file = File::open(path)
+            .map_err(|error| classify_expected_entry_error(error, EntryKind::RegularFile, label))?;
+        Self::from_file(file, EntryKind::RegularFile, false, label)
+    }
+
+    pub(crate) fn validate_following_file_path(
+        &self,
+        path: &Path,
+        label: &str,
+    ) -> Result<(), StoreError> {
+        let current = Self::open_following_file(path, label)?;
+        if current.identity != self.identity || current.mount_id != self.mount_id {
+            return Err(StoreError::Integrity(format!(
+                "{label} physical identity changed"
+            )));
+        }
+        Ok(())
+    }
+
     fn from_file(
         file: File,
         kind: EntryKind,

@@ -570,13 +570,13 @@ fn completed_pre_write_records(
     } else {
         GateLifecycle::Rejected
     };
-    let has_sealed_baseline = baseline.is_some();
-    let retained_leased_write_set = if has_sealed_baseline {
+    let retains_active_domain = decision.authorizes();
+    let retained_leased_write_set = if retains_active_domain {
         leased_write_set.clone()
     } else {
         Vec::new()
     };
-    let retained_alias_closures = if has_sealed_baseline {
+    let retained_alias_closures = if retains_active_domain {
         alias_closures.clone()
     } else {
         Vec::new()
@@ -584,7 +584,7 @@ fn completed_pre_write_records(
     let observed_protected_semantic_inputs = baseline.as_ref().map_or_else(Vec::new, |baseline| {
         baseline.protected_semantic_inputs.clone()
     });
-    let retained_protected_semantic_inputs = if has_sealed_baseline {
+    let retained_protected_semantic_inputs = if retains_active_domain {
         observed_protected_semantic_inputs.clone()
     } else {
         Vec::new()

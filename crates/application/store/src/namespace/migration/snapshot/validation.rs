@@ -466,6 +466,21 @@ fn validate_gate_observations(
                 "gate {key} opening operation omitted its analysis options"
             ))
         })?;
+    let opening_final_validation = opening_operation
+        .pre_write_final_validation
+        .as_ref()
+        .ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "gate {key} opening operation omitted its final validation record"
+            ))
+        })?;
+    if opening.catalog_revision != Some(opening_final_validation.catalog_revision)
+        || opening_final_validation.signals != opening.signals
+    {
+        return Err(StoreError::Integrity(format!(
+            "gate {key} opening revision disagrees with its operation-owned final validation"
+        )));
+    }
     if opening_analysis_options != &gate.analysis_options {
         return Err(StoreError::Integrity(format!(
             "gate {key} analysis options disagree with its opening operation"
@@ -547,13 +562,11 @@ fn validate_gate_observations(
                         "gate {key} baseline protected reads cannot be derived from its sealed snapshot"
                     )));
                 }
-                if matches!(
-                    gate.lifecycle,
-                    GateLifecycle::Active | GateLifecycle::Rejected
-                ) && (gate.leased_write_set.iter().collect::<BTreeSet<_>>()
-                    != baseline.leased_write_set.iter().collect::<BTreeSet<_>>()
-                    || gate.alias_closures.iter().collect::<BTreeSet<_>>()
-                        != baseline.alias_closures.iter().collect::<BTreeSet<_>>())
+                if gate.lifecycle == GateLifecycle::Active
+                    && (gate.leased_write_set.iter().collect::<BTreeSet<_>>()
+                        != baseline.leased_write_set.iter().collect::<BTreeSet<_>>()
+                        || gate.alias_closures.iter().collect::<BTreeSet<_>>()
+                            != baseline.alias_closures.iter().collect::<BTreeSet<_>>())
                 {
                     return Err(StoreError::Integrity(format!(
                         "gate {key} retained lease/alias domain disagrees with its sealed baseline"
@@ -858,6 +871,11 @@ fn validate_gate_observations(
         }
     }
 
+    let expected_top_level_protected = if gate.lifecycle == GateLifecycle::Rejected {
+        &[][..]
+    } else {
+        expected_protected_semantic_inputs.as_slice()
+    };
     if matches!(
         gate.lifecycle,
         GateLifecycle::Active | GateLifecycle::Rejected | GateLifecycle::Closed
@@ -865,9 +883,7 @@ fn validate_gate_observations(
         .protected_semantic_inputs
         .iter()
         .collect::<BTreeSet<_>>()
-        != expected_protected_semantic_inputs
-            .iter()
-            .collect::<BTreeSet<_>>()
+        != expected_top_level_protected.iter().collect::<BTreeSet<_>>()
     {
         return Err(StoreError::Integrity(format!(
             "gate {key} protected read set disagrees with its latest sealed observation"
@@ -1046,14 +1062,40 @@ fn validate_new_file_lease_prefixes(
             lease.path.display
         )));
     }
-    let mut cursor = Some(
-        RepoPath::from_canonical_bytes(&nearest.canonical).map_err(|error| {
-            StoreError::Integrity(format!(
-                "gate {key} new-file lease {} has a noncanonical parent: {error}",
-                lease.path.display
-            ))
-        })?,
-    );
+    let nearest = RepoPath::from_canonical_bytes(&nearest.canonical).map_err(|error| {
+        StoreError::Integrity(format!(
+            "gate {key} new-file lease {} has a noncanonical parent: {error}",
+            lease.path.display
+        ))
+    })?;
+    validate_lease_prefixes(key, lease, nearest)
+}
+
+fn validate_existing_lease_prefixes(
+    key: &str,
+    lease: &lumin_evidence::WriteLease,
+) -> Result<(), StoreError> {
+    let path = RepoPath::from_canonical_bytes(&lease.path.canonical).map_err(|error| {
+        StoreError::Integrity(format!(
+            "gate {key} existing lease {} is not canonical: {error}",
+            lease.path.display
+        ))
+    })?;
+    let parent = path.parent().ok_or_else(|| {
+        StoreError::Integrity(format!(
+            "gate {key} existing lease {} has no parent",
+            lease.path.display
+        ))
+    })?;
+    validate_lease_prefixes(key, lease, parent)
+}
+
+fn validate_lease_prefixes(
+    key: &str,
+    lease: &lumin_evidence::WriteLease,
+    nearest: RepoPath,
+) -> Result<(), StoreError> {
+    let mut cursor = Some(nearest);
     let mut expected_prefixes = Vec::new();
     while let Some(prefix) = cursor {
         cursor = prefix.parent();
@@ -1067,7 +1109,7 @@ fn validate_new_file_lease_prefixes(
         .collect::<Vec<_>>();
     if observed_prefixes != expected_prefixes.iter().collect::<Vec<_>>() {
         return Err(StoreError::Integrity(format!(
-            "gate {key} new-file lease {} has an incomplete physical-prefix chain",
+            "gate {key} lease {} has an incomplete physical-prefix chain",
             lease.path.display
         )));
     }
@@ -1287,6 +1329,16 @@ fn validate_analysis_snapshot(
             snapshot.evidence.schema_version
         )));
     }
+    let mut input_paths = BTreeSet::new();
+    if snapshot
+        .inputs
+        .iter()
+        .any(|input| !input_paths.insert(input.path.canonical.clone()))
+    {
+        return Err(StoreError::Integrity(format!(
+            "gate {gate_key} {role} contains more than one semantic input for one canonical path"
+        )));
+    }
     let evidence_payload_sha256 = crate::evidence_payload_sha256(&snapshot.evidence)?;
     let resealed = seal_analysis_snapshot(
         snapshot.inputs.clone(),
@@ -1332,11 +1384,10 @@ fn validate_gate_lifecycle(
             !opening.decision.authorizes()
                 && gate.revisions.len() == 1
                 && tail_kind == Some(GateOperationKind::PreWrite)
+                && gate.leased_write_set.is_empty()
+                && gate.alias_closures.is_empty()
+                && gate.protected_semantic_inputs.is_empty()
                 && gate.transition_refs.is_empty()
-                && (gate.baseline.is_some()
-                    || (gate.leased_write_set.is_empty()
-                        && gate.alias_closures.is_empty()
-                        && gate.protected_semantic_inputs.is_empty()))
         }
         GateLifecycle::Closed => {
             sealed_authorizing_close
@@ -1394,9 +1445,20 @@ fn validate_operation_gate_refs(
                     operation.operation_id.as_str()
                 ))
             })?;
-            if gate.lifecycle != GateLifecycle::Active
-                || gate.current_revision != operation.target_revision
-            {
+            let resumable_target = match (operation.kind, operation.status) {
+                (GateOperationKind::PostWrite, GateOperationStatus::Interrupted) => {
+                    gate.lifecycle == GateLifecycle::Active
+                        && gate
+                            .revisions
+                            .iter()
+                            .any(|revision| revision.revision == operation.target_revision)
+                }
+                _ => {
+                    gate.lifecycle == GateLifecycle::Active
+                        && gate.current_revision == operation.target_revision
+                }
+            };
+            if !resumable_target {
                 return Err(StoreError::Integrity(format!(
                     "unfinished operation {} cannot resume against its target gate revision",
                     operation.operation_id.as_str()
@@ -1441,7 +1503,9 @@ fn validate_operation_gate_refs(
                 GateOperationKind::GateAbandon => GateLifecycle::Abandoned,
             };
             let expected_leased_write_set = match operation.kind {
-                GateOperationKind::PreWrite if gate.baseline.is_none() => Vec::new(),
+                GateOperationKind::PreWrite if result.lifecycle != GateLifecycle::Active => {
+                    Vec::new()
+                }
                 GateOperationKind::PreWrite | GateOperationKind::PostWrite => gate
                     .baseline
                     .as_ref()
@@ -1613,6 +1677,14 @@ fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreErr
             operation.operation_id.as_str()
         )));
     }
+    if operation.kind != GateOperationKind::PreWrite
+        && operation.pre_write_final_validation.is_some()
+    {
+        return Err(StoreError::Integrity(format!(
+            "non-pre-write operation {} retained a pre-write final validation record",
+            operation.operation_id.as_str()
+        )));
+    }
     if operation.kind == GateOperationKind::PostWrite {
         let expected = post_write_request_digest(&operation.gate_id);
         if operation.request_digest != expected {
@@ -1642,15 +1714,49 @@ fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreErr
                     operation.operation_id.as_str()
                 )));
             }
+            if operation.kind == GateOperationKind::PreWrite {
+                let final_validation = operation.pre_write_final_validation.as_ref().ok_or_else(
+                    || {
+                        StoreError::Integrity(format!(
+                            "committed pre-write operation {} omitted its final validation record",
+                            operation.operation_id.as_str()
+                        ))
+                    },
+                )?;
+                if final_validation.signals != result.signals {
+                    return Err(StoreError::Integrity(format!(
+                        "pre-write operation {} result disagrees with its final validation record",
+                        operation.operation_id.as_str()
+                    )));
+                }
+            }
             validate_operation_observation(operation, result)
         }
-        (GateOperationStatus::Pending, None) => validate_pending_operation_state(operation),
-        (GateOperationStatus::Interrupted, None) => validate_interrupted_operation_state(operation),
+        (GateOperationStatus::Pending, None) => {
+            reject_unfinished_pre_write_final_validation(operation)?;
+            validate_pending_operation_state(operation)
+        }
+        (GateOperationStatus::Interrupted, None) => {
+            reject_unfinished_pre_write_final_validation(operation)?;
+            validate_interrupted_operation_state(operation)
+        }
         _ => Err(StoreError::Integrity(format!(
             "operation {} has an incoherent terminal result",
             operation.operation_id.as_str()
         ))),
     }
+}
+
+fn reject_unfinished_pre_write_final_validation(
+    operation: &OperationRecord,
+) -> Result<(), StoreError> {
+    if operation.pre_write_final_validation.is_some() {
+        return Err(StoreError::Integrity(format!(
+            "unfinished operation {} retained a final validation record",
+            operation.operation_id.as_str()
+        )));
+    }
+    Ok(())
 }
 
 fn validate_pending_operation_state(operation: &OperationRecord) -> Result<(), StoreError> {
@@ -1745,9 +1851,10 @@ fn validate_pending_pre_write_write_domain(operation: &OperationRecord) -> Resul
         let lease = matching[0];
         match lease.kind {
             WriteLeaseKind::ExistingFile | WriteLeaseKind::Directory
-                if lease.physical_identity.is_some()
-                    && lease.nearest_existing_parent.is_none()
-                    && lease.prefix_identities.is_empty() => {}
+                if lease.physical_identity.is_some() && lease.nearest_existing_parent.is_none() =>
+            {
+                validate_existing_lease_prefixes(operation.operation_id.as_str(), lease)?;
+            }
             WriteLeaseKind::NewFile => {
                 validate_new_file_lease_prefixes(operation.operation_id.as_str(), lease)?;
             }
