@@ -133,6 +133,66 @@ fn active_gate_catalog_order_and_revision_increment() -> Result<(), Box<dyn std:
 }
 
 #[test]
+fn active_gate_catalog_advances_when_a_sealed_close_replaces_protected_reads()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let prior = semantic_input("config/prior.json", "prior")?;
+    let gate_id = open_active_gate_with_protected_inputs(
+        &store,
+        "op-catalog-protected-open",
+        "catalog-protected-open",
+        "src/catalog-protected.ts",
+        vec![prior],
+    )?;
+    assert_eq!(store.list_active_gates(None, 100)?.revision, 1);
+
+    let operation = store.begin_operation(&OperationId::from_string(
+        "op-catalog-protected-close".to_owned(),
+    ))?;
+    let gate = match operation.begin_post_write("catalog-protected-close", &gate_id)? {
+        PostWriteStart::Analyze { gate, .. } => gate,
+        PostWriteStart::Committed(_) => return Err("protected-read close committed early".into()),
+    };
+    let baseline = gate
+        .baseline
+        .as_ref()
+        .ok_or("protected-read gate omitted its baseline")?
+        .snapshot
+        .clone();
+    let current = semantic_input("config/current.json", "current")?;
+    let current_snapshot = seal_analysis_snapshot(
+        vec![current.clone()],
+        baseline.evidence.clone(),
+        baseline.scan_invocation.clone(),
+        baseline.entry_selections.clone(),
+    );
+    let result = operation.finish_post_write(
+        "catalog-protected-close",
+        &gate_id,
+        PostWriteFinish {
+            snapshot: Some(current_snapshot),
+            protected_semantic_inputs: vec![current],
+            reconciled_baseline: Some(baseline),
+            changed_paths: Vec::new(),
+            actual_write_set: Some(Default::default()),
+            alias_closures: Vec::new(),
+            reconciled_transition_sequences: Vec::new(),
+            attempted_semantic_inputs: Vec::new(),
+            signals: vec![GateSignal::LifecycleDeltaIncomparable { count: 1 }],
+            deltas: Vec::new(),
+        },
+        |_, _, signals| close_finalization(Vec::new(), signals),
+    )?;
+    assert_eq!(result.decision, GateDecision::Incomplete);
+    assert_eq!(result.lifecycle, GateLifecycle::Active);
+    let active = store.list_active_gates(None, 100)?;
+    assert_eq!(active.total, 1);
+    assert_eq!(active.revision, 2);
+    Ok(())
+}
+
+#[test]
 fn active_gate_catalog_stale_revision_exits_correctly() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     let store = open_store(root.path())?;

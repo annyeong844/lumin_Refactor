@@ -6,15 +6,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_evidence::{
     AnalysisSnapshot, GATE_RECORD_SCHEMA_VERSION, GateBaseline, GateBaselineObservationInput,
-    GateCloseObservationInput, GateLifecycle, GateOperationKind, GateOperationStatus, GateRecord,
-    GateRevision, OperationRecord, WorktreeTransition, apply_worktree_transition,
+    GateCloseObservationInput, GateDecision, GateLifecycle, GateOperationKind, GateOperationStatus,
+    GateRecord, GateRevision, OperationRecord, WorktreeTransition, apply_worktree_transition,
     derive_gate_baseline_observation_id, derive_gate_close_observation_id,
-    derive_unsealed_gate_observation_binding, seal_analysis_snapshot,
+    derive_unsealed_gate_observation_binding, gate_policy, seal_analysis_snapshot,
 };
 use lumin_model::{ObservationBinding, SealedGateObservation};
 use serde::de::DeserializeOwned;
 
-use crate::gate::transition_key;
+use crate::gate::{records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY, transition_key};
 use crate::{RunCatalogRecord, StoreError};
 
 use super::super::super::NamespaceGuard;
@@ -34,6 +34,7 @@ pub(super) fn validate_referential_closure(
     let (transitions, transition_sequences) = read_transitions(snapshot)?;
     let operations = read_operations(snapshot)?;
     let gates = read_gates(snapshot, &operations, &transition_sequences)?;
+    validate_active_gate_catalog(snapshot, &gates, &operations)?;
     validate_operation_gate_refs(&operations, &gates)?;
     validate_transition_gate_refs(&transitions, &gates)?;
     crate::publication::validate_attempt_leases(&snapshot.attempt_leases)?;
@@ -95,6 +96,83 @@ fn read_gates<'a>(
         gates.insert(key.as_str(), gate);
     }
     Ok(gates)
+}
+
+fn validate_active_gate_catalog(
+    snapshot: &LogicalStoreSnapshot,
+    gates: &BTreeMap<&str, GateRecord>,
+    operations: &BTreeMap<&str, OperationRecord>,
+) -> Result<(), StoreError> {
+    let observed = snapshot
+        .sequences
+        .get(ACTIVE_GATE_CATALOG_SEQUENCE_KEY)
+        .copied()
+        .unwrap_or(0);
+    let mut minimum = 0_u64;
+    let mut retained_mutation_count = 0_u64;
+    for (key, gate) in gates {
+        let mut gate_minimum = 0_u64;
+        let mut protected_semantic_inputs =
+            gate.baseline.as_ref().map_or_else(Vec::new, |baseline| {
+                baseline.protected_semantic_inputs.clone()
+            });
+        for revision in &gate.revisions {
+            if let Some(catalog_revision) = revision.catalog_revision {
+                if catalog_revision > observed {
+                    return Err(StoreError::Integrity(format!(
+                        "gate {key} observation catalog revision exceeds the active-gate catalog"
+                    )));
+                }
+                gate_minimum = gate_minimum.max(catalog_revision);
+            }
+            let kind = operations
+                .get(revision.operation_id.as_str())
+                .map(|operation| operation.kind)
+                .ok_or_else(|| {
+                    StoreError::Integrity(format!(
+                        "gate {key} catalog history references a missing operation"
+                    ))
+                })?;
+            let sealed_current_close = kind == GateOperationKind::PostWrite
+                && revision.decision != GateDecision::Stale
+                && matches!(
+                    revision.observation_binding.as_ref(),
+                    Some(ObservationBinding::Sealed {
+                        observation: SealedGateObservation::Close { .. }
+                    })
+                );
+            let replaces_protected_reads = sealed_current_close
+                && revision.protected_semantic_inputs != protected_semantic_inputs;
+            if sealed_current_close {
+                protected_semantic_inputs = revision.protected_semantic_inputs.clone();
+            }
+            let advances_catalog = match kind {
+                GateOperationKind::PreWrite | GateOperationKind::PostWrite => {
+                    revision.decision.authorizes() || replaces_protected_reads
+                }
+                GateOperationKind::GateAbandon => true,
+            };
+            if advances_catalog {
+                retained_mutation_count =
+                    retained_mutation_count.checked_add(1).ok_or_else(|| {
+                        StoreError::Integrity(
+                            "retained active-catalog mutation history overflowed".to_owned(),
+                        )
+                    })?;
+                gate_minimum = gate_minimum.checked_add(1).ok_or_else(|| {
+                    StoreError::Integrity(format!("gate {key} active-catalog history overflowed"))
+                })?;
+            }
+            minimum = minimum.max(gate_minimum);
+        }
+    }
+    minimum = minimum.max(retained_mutation_count);
+    if observed < minimum {
+        return Err(StoreError::Integrity(format!(
+            "active-gate catalog sequence regressed below durable gate history: observed {observed}, minimum {minimum}"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_gate_history(
@@ -233,6 +311,12 @@ fn validate_gate_observations(
         let is_abandon = operations
             .get(revision.operation_id.as_str())
             .is_some_and(|operation| operation.kind == GateOperationKind::GateAbandon);
+        if !is_abandon && revision.decision != gate_policy::decision(&revision.signals) {
+            return Err(StoreError::Integrity(format!(
+                "gate {key} revision {} decision disagrees with canonical signal policy",
+                revision.revision
+            )));
+        }
         if !is_abandon && revision.observation_binding.is_none() {
             return Err(StoreError::Integrity(format!(
                 "gate {key} revision {} omitted its observation binding",
@@ -698,6 +782,14 @@ fn validate_operation_observation(
     operation: &OperationRecord,
     result: &lumin_evidence::GateOperationResult,
 ) -> Result<(), StoreError> {
+    if operation.kind != GateOperationKind::GateAbandon
+        && result.decision != gate_policy::decision(&result.signals)
+    {
+        return Err(StoreError::Integrity(format!(
+            "operation {} decision disagrees with canonical signal policy",
+            operation.operation_id.as_str()
+        )));
+    }
     if operation.kind != GateOperationKind::GateAbandon && result.observation_binding.is_none() {
         return Err(StoreError::Integrity(format!(
             "operation {} omitted its observation binding",

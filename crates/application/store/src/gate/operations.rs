@@ -584,8 +584,14 @@ impl OperationSession<'_> {
                     },
                 )?;
             }
-            if snapshot_can_protect_current_reads(snapshot.as_ref(), &observation_binding, decision)
-            {
+            let can_replace_protected_reads = snapshot_can_protect_current_reads(
+                snapshot.as_ref(),
+                &observation_binding,
+                decision,
+            );
+            let replaces_protected_reads = can_replace_protected_reads
+                && gate.protected_semantic_inputs != protected_semantic_inputs;
+            if can_replace_protected_reads {
                 gate.protected_semantic_inputs = protected_semantic_inputs.clone();
             }
             gate.current_revision = revision;
@@ -622,7 +628,7 @@ impl OperationSession<'_> {
                 deltas,
             });
             persist_operation_result(&write, &gate, &mut operation, &result)?;
-            if result.decision.authorizes() {
+            if result.decision.authorizes() || replaces_protected_reads {
                 records::increment_active_gate_catalog(&write)?;
             }
             guard.commit(write)?;

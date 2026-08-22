@@ -11,9 +11,11 @@ use lumin_model::{
 };
 use redb::{Database, ReadableTable};
 
-use crate::gate::{GATES, OPERATIONS, TRANSITIONS, transition_key};
+use crate::gate::{
+    GATES, OPERATIONS, TRANSITIONS, records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY, transition_key,
+};
 use crate::retention::RETENTION_OPERATIONS;
-use crate::{RUN_CATALOG, RunCatalogRecord, StoreError};
+use crate::{RUN_CATALOG, RunCatalogRecord, SEQUENCES, StoreError};
 
 use super::super::open_store;
 use super::{
@@ -469,13 +471,16 @@ fn migration_rejects_complete_observation_payloads_on_an_unsealed_close()
             .revisions
             .get_mut(1)
             .ok_or("unsealed-payload gate omitted its close revision")?;
-        revision.decision = GateDecision::Stale;
+        revision.decision = GateDecision::Incomplete;
         revision.observation_binding = Some(ObservationBinding::Unsealed {
             reason: UnsealedObservationReason::AnalysisFailed,
             attempted_domain: Vec::new(),
             last_complete_read_set: Vec::new(),
             conflicting_or_unbounded_inputs: Vec::new(),
         });
+        revision.signals = vec![GateSignal::AnalysisFailed {
+            detail: "fixture forces an unsealed close".to_owned(),
+        }];
         let changed = serde_json::to_vec(&gate)?;
         table.insert(gate_id.as_str(), changed.as_slice())?;
     }
@@ -603,7 +608,12 @@ fn migration_matches_the_complete_operation_result_to_its_revision()
                 .ok_or("operation result is missing")?;
             match corruption {
                 "lifecycle" => result.lifecycle = GateLifecycle::Closed,
-                "signals" => result.signals.push(GateSignal::TransitionCatalogChanged),
+                "signals" => {
+                    result
+                        .signals
+                        .push(GateSignal::FindingWarnings { count: 1 });
+                    result.decision = GateDecision::AllowWithWarnings;
+                }
                 "leased-write-set" => result.leased_write_set.clear(),
                 "actual-write-set" => result.actual_write_set = Some(ActualWriteSet::default()),
                 "deltas" => result.deltas.push(GateDeltaRecord {
@@ -630,6 +640,106 @@ fn migration_matches_the_complete_operation_result_to_its_revision()
                 if message.contains("result disagrees with its complete gate revision")
         ));
     }
+    Ok(())
+}
+
+#[test]
+fn migration_recomputes_gate_decisions_from_their_signals() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("op-signal-decision".to_owned());
+    let gate_id = open_active_gate_for(&store, operation_id.as_str(), "src/signal-decision.ts")?;
+    drop(store);
+
+    let forged_signals = vec![GateSignal::AnalysisFailed {
+        detail: "forged migration signal".to_owned(),
+    }];
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("signal-decision gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        gate.revisions
+            .first_mut()
+            .ok_or("signal-decision gate omitted its opening revision")?
+            .signals = forged_signals.clone();
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+    }
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get(operation_id.as_str())?
+            .ok_or("signal-decision operation is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        operation
+            .result
+            .as_mut()
+            .ok_or("signal-decision result is missing")?
+            .signals = forged_signals;
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert(operation_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("decision disagrees with canonical signal policy")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_a_regressed_active_gate_catalog_sequence()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let abandoned_gate = open_active_gate_for(
+        &store,
+        "op-catalog-regression-a",
+        "src/catalog-regression-a.ts",
+    )?;
+    open_active_gate_for(
+        &store,
+        "op-catalog-regression-b",
+        "src/catalog-regression-b.ts",
+    )?;
+    let abandon_id = OperationId::from_string("op-catalog-regression-abandon".to_owned());
+    store.begin_operation(&abandon_id)?.abandon_gate(
+        "catalog-regression-abandon-digest",
+        &abandoned_gate,
+        0,
+        "catalog regression fixture",
+    )?;
+    assert_eq!(store.list_active_gates(None, 100)?.revision, 3);
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(SEQUENCES)?;
+        table.insert(ACTIVE_GATE_CATALOG_SEQUENCE_KEY, 2)?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("active-gate catalog sequence regressed")
+    ));
     Ok(())
 }
 

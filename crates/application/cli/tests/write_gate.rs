@@ -376,6 +376,7 @@ fn pre_write_observation_binds_promotion_and_interrupted_admission_leaves_no_act
     final_promotion_reobserves_the_complete_write_domain()?;
     final_promotion_reenumerates_new_directory_source_aliases()?;
     final_promotion_rejects_a_new_source_outside_the_captured_alias_domain()?;
+    final_promotion_rejects_a_new_configuration_input()?;
     final_promotion_preserves_a_sealed_stale_observation_when_an_alias_seed_disappears()?;
     final_close_reobserves_the_complete_write_domain()?;
     Ok(())
@@ -648,6 +649,26 @@ fn final_promotion_reenumerates_new_directory_source_aliases()
 
 fn final_promotion_rejects_a_new_source_outside_the_captured_alias_domain()
 -> Result<(), Box<dyn std::error::Error>> {
+    final_promotion_rejects_a_late_semantic_input(
+        "op-final-source-set",
+        "src/late-unrelated.ts",
+        "export const lateUnrelated = 1;\n",
+    )
+}
+
+fn final_promotion_rejects_a_new_configuration_input() -> Result<(), Box<dyn std::error::Error>> {
+    final_promotion_rejects_a_late_semantic_input(
+        "op-final-config-set",
+        ".gitignore",
+        "# late semantic policy input\n",
+    )
+}
+
+fn final_promotion_rejects_a_late_semantic_input(
+    operation_id: &str,
+    late_path: &str,
+    contents: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let root = fixture()?;
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
     listener.set_nonblocking(true)?;
@@ -655,7 +676,7 @@ fn final_promotion_rejects_a_new_source_outside_the_captured_alias_domain()
         .args([
             "pre-write",
             "--operation-id",
-            "op-final-source-set",
+            operation_id,
             "--path",
             "src/main.ts",
             "--jobs",
@@ -676,13 +697,13 @@ fn final_promotion_rejects_a_new_source_outside_the_captured_alias_domain()
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 if let Some(status) = child.try_wait()? {
                     return Err(std::io::Error::other(format!(
-                        "pre-write exited before source-set barrier: {status}"
+                        "pre-write exited before semantic-input barrier: {status}"
                     ))
                     .into());
                 }
                 if started.elapsed() >= Duration::from_secs(30) {
                     return Err(std::io::Error::other(
-                        "pre-write did not reach the source-set barrier",
+                        "pre-write did not reach the semantic-input barrier",
                     )
                     .into());
                 }
@@ -701,15 +722,12 @@ fn final_promotion_rejects_a_new_source_outside_the_captured_alias_domain()
     assert_eq!(
         fields.len(),
         3,
-        "unexpected source-set barrier frame: {frame:?}"
+        "unexpected semantic-input barrier frame: {frame:?}"
     );
     assert_eq!(fields[0], "finalizing");
-    assert_eq!(fields[1], "op-final-source-set");
+    assert_eq!(fields[1], operation_id);
 
-    fs::write(
-        root.path().join("src/late-unrelated.ts"),
-        "export const lateUnrelated = 1;\n",
-    )?;
+    fs::write(root.path().join(late_path), contents)?;
     stream.write_all(b"release\n")?;
     stream.flush()?;
     drop(stream);
@@ -718,7 +736,7 @@ fn final_promotion_rejects_a_new_source_outside_the_captured_alias_domain()
     assert_eq!(
         output.status.code(),
         Some(5),
-        "unexpected source-set result: stdout={} stderr={}",
+        "unexpected semantic-input result: stdout={} stderr={}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
@@ -748,8 +766,7 @@ fn final_promotion_rejects_a_new_source_outside_the_captured_alias_domain()
                         .and_then(Value::as_array)
                         .is_some_and(|paths| {
                             paths.iter().any(|path| {
-                                path.get("display").and_then(Value::as_str)
-                                    == Some("src/late-unrelated.ts")
+                                path.get("display").and_then(Value::as_str) == Some(late_path)
                             })
                         })
             }))

@@ -1187,9 +1187,18 @@ fn revalidate_current_write_domain(
     .and_then(|pending| pending.finish(root));
     match current_inventory {
         Ok(inventory) => {
-            let current_source_inputs = crate::semantic_input_records(&inventory)
+            let current_semantic_inputs = crate::semantic_input_records(&inventory)
                 .into_iter()
+                .collect::<std::collections::BTreeSet<_>>();
+            let captured_semantic_inputs = validation
+                .captured_inputs
+                .iter()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>();
+            let current_source_inputs = current_semantic_inputs
+                .iter()
                 .filter(|input| input.state == SemanticInputState::Source)
+                .cloned()
                 .collect::<std::collections::BTreeSet<_>>();
             let captured_source_inputs = validation
                 .captured_inputs
@@ -1198,11 +1207,17 @@ fn revalidate_current_write_domain(
                 .cloned()
                 .collect::<std::collections::BTreeSet<_>>();
             let mut signals = Vec::new();
-            if current_source_inputs != captured_source_inputs {
-                let mut paths = current_source_inputs
+            let mut changed_semantic_paths = current_semantic_inputs
+                .difference(&captured_semantic_inputs)
+                .map(|input| input.path.clone())
+                .collect::<Vec<_>>();
+            changed_semantic_paths.extend(
+                current_source_inputs
                     .symmetric_difference(&captured_source_inputs)
-                    .map(|input| input.path.clone())
-                    .collect::<Vec<_>>();
+                    .map(|input| input.path.clone()),
+            );
+            if !changed_semantic_paths.is_empty() {
+                let mut paths = changed_semantic_paths;
                 paths.sort();
                 paths.dedup();
                 signals.push(GateSignal::ProtectedInputChanged { paths });
