@@ -514,14 +514,16 @@ fn validate_gate_observations(
                         "gate {key} baseline protected reads cannot be derived from its sealed snapshot"
                     )));
                 }
-                if gate.lifecycle == GateLifecycle::Active
-                    && (gate.leased_write_set.iter().collect::<BTreeSet<_>>()
-                        != baseline.leased_write_set.iter().collect::<BTreeSet<_>>()
-                        || gate.alias_closures.iter().collect::<BTreeSet<_>>()
-                            != baseline.alias_closures.iter().collect::<BTreeSet<_>>())
+                if matches!(
+                    gate.lifecycle,
+                    GateLifecycle::Active | GateLifecycle::Rejected
+                ) && (gate.leased_write_set.iter().collect::<BTreeSet<_>>()
+                    != baseline.leased_write_set.iter().collect::<BTreeSet<_>>()
+                    || gate.alias_closures.iter().collect::<BTreeSet<_>>()
+                        != baseline.alias_closures.iter().collect::<BTreeSet<_>>())
                 {
                     return Err(StoreError::Integrity(format!(
-                        "active gate {key} lease/alias domain disagrees with its sealed baseline"
+                        "gate {key} retained lease/alias domain disagrees with its sealed baseline"
                     )));
                 }
                 let derived = derive_gate_baseline_observation_id(GateBaselineObservationInput {
@@ -811,17 +813,19 @@ fn validate_gate_observations(
         }
     }
 
-    if gate.lifecycle == GateLifecycle::Active
-        && gate
-            .protected_semantic_inputs
+    if matches!(
+        gate.lifecycle,
+        GateLifecycle::Active | GateLifecycle::Rejected
+    ) && gate
+        .protected_semantic_inputs
+        .iter()
+        .collect::<BTreeSet<_>>()
+        != expected_protected_semantic_inputs
             .iter()
             .collect::<BTreeSet<_>>()
-            != expected_protected_semantic_inputs
-                .iter()
-                .collect::<BTreeSet<_>>()
     {
         return Err(StoreError::Integrity(format!(
-            "active gate {key} protected read set disagrees with its latest sealed observation"
+            "gate {key} protected read set disagrees with its latest sealed observation"
         )));
     }
     validate_gate_lifecycle(key, gate, opening, operations)
@@ -1207,10 +1211,11 @@ fn validate_gate_lifecycle(
             !opening.decision.authorizes()
                 && gate.revisions.len() == 1
                 && tail_kind == Some(GateOperationKind::PreWrite)
-                && gate.leased_write_set.is_empty()
-                && gate.alias_closures.is_empty()
-                && gate.protected_semantic_inputs.is_empty()
                 && gate.transition_refs.is_empty()
+                && (gate.baseline.is_some()
+                    || (gate.leased_write_set.is_empty()
+                        && gate.alias_closures.is_empty()
+                        && gate.protected_semantic_inputs.is_empty()))
         }
         GateLifecycle::Closed => {
             sealed_authorizing_close && tail_kind == Some(GateOperationKind::PostWrite)
@@ -1282,9 +1287,7 @@ fn validate_operation_gate_refs(
                 GateOperationKind::GateAbandon => GateLifecycle::Abandoned,
             };
             let expected_leased_write_set = match operation.kind {
-                GateOperationKind::PreWrite if gate.lifecycle == GateLifecycle::Rejected => {
-                    Vec::new()
-                }
+                GateOperationKind::PreWrite if gate.baseline.is_none() => Vec::new(),
                 GateOperationKind::PreWrite | GateOperationKind::PostWrite => gate
                     .baseline
                     .as_ref()

@@ -620,7 +620,7 @@ fn final_validation_can_stop_pre_write_promotion() -> Result<(), Box<dyn std::er
                 protected_semantic_inputs: Vec::new(),
                 transition_sequence,
             }),
-            leased_write_set: vec![source_lease],
+            leased_write_set: vec![source_lease.clone()],
             alias_closures: Vec::new(),
             attempted_semantic_inputs: Vec::new(),
             signals: Vec::new(),
@@ -638,7 +638,10 @@ fn final_validation_can_stop_pre_write_promotion() -> Result<(), Box<dyn std::er
 
     assert_eq!(result.lifecycle, GateLifecycle::Rejected);
     assert!(!result.decision.authorizes());
-    assert!(result.leased_write_set.is_empty());
+    assert_eq!(
+        result.leased_write_set.as_slice(),
+        std::slice::from_ref(&source_lease)
+    );
     assert!(matches!(
         result.observation_binding,
         Some(ObservationBinding::Sealed {
@@ -653,7 +656,7 @@ fn final_validation_can_stop_pre_write_promotion() -> Result<(), Box<dyn std::er
     );
     let persisted = store.load_gate(&gate_id)?;
     assert!(persisted.baseline.is_some());
-    assert!(persisted.leased_write_set.is_empty());
+    assert_eq!(persisted.leased_write_set, [source_lease]);
     assert!(persisted.alias_closures.is_empty());
     assert!(persisted.protected_semantic_inputs.is_empty());
     assert!(persisted.transition_refs.is_empty());

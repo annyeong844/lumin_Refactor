@@ -959,7 +959,7 @@ fn abandon(
             "nearest-manifest corpus scenario complete",
         ],
     )?;
-    assert_status(&result, 0);
+    assert_status(&result, 3);
     Ok(())
 }
 

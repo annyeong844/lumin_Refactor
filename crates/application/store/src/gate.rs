@@ -569,12 +569,13 @@ fn completed_pre_write_records(
     } else {
         GateLifecycle::Rejected
     };
-    let durable_leased_write_set = if decision.authorizes() {
+    let has_sealed_baseline = baseline.is_some();
+    let retained_leased_write_set = if has_sealed_baseline {
         leased_write_set.clone()
     } else {
         Vec::new()
     };
-    let durable_alias_closures = if decision.authorizes() {
+    let retained_alias_closures = if has_sealed_baseline {
         alias_closures.clone()
     } else {
         Vec::new()
@@ -582,7 +583,7 @@ fn completed_pre_write_records(
     let observed_protected_semantic_inputs = baseline.as_ref().map_or_else(Vec::new, |baseline| {
         baseline.protected_semantic_inputs.clone()
     });
-    let durable_protected_semantic_inputs = if decision.authorizes() {
+    let retained_protected_semantic_inputs = if has_sealed_baseline {
         observed_protected_semantic_inputs.clone()
     } else {
         Vec::new()
@@ -597,7 +598,7 @@ fn completed_pre_write_records(
         observation_binding: Some(observation_binding.clone()),
         reason: None,
         signals: signals.clone(),
-        leased_write_set: durable_leased_write_set.clone(),
+        leased_write_set: retained_leased_write_set.clone(),
         actual_write_set: None,
         deltas: Vec::new(),
     };
@@ -610,12 +611,12 @@ fn completed_pre_write_records(
         lifecycle,
         current_revision: 0,
         declared_write_set: operation.declared_write_set.clone(),
-        leased_write_set: durable_leased_write_set,
-        alias_closures: durable_alias_closures,
+        leased_write_set: retained_leased_write_set,
+        alias_closures: retained_alias_closures,
         transition_refs: Vec::new(),
         analysis_options,
         baseline,
-        protected_semantic_inputs: durable_protected_semantic_inputs,
+        protected_semantic_inputs: retained_protected_semantic_inputs,
         revisions: vec![GateRevision {
             revision: 0,
             operation_id: operation.operation_id.clone(),

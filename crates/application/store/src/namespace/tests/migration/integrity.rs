@@ -4,9 +4,10 @@ use lumin_evidence::{
     ActualWriteSet, GateBaselineObservationInput, GateCloseObservationInput, GateDecision,
     GateLifecycle, GateObservationBinding, GateOperationStatus, GateRecord, GateSignal,
     OperationRecord, PathPrefixIdentity, RepoPathProjection, RetentionMutationResult,
-    RetentionOperationRecord, RetentionOperationResult, RetentionPlanScope, WorktreeTransition,
-    WriteLease, WriteLeaseKind, derive_gate_baseline_observation_id,
-    derive_gate_close_observation_id, seal_analysis_snapshot,
+    RetentionOperationRecord, RetentionOperationResult, RetentionPlanScope,
+    UnsealedGateObservationInputs, WorktreeTransition, WriteLease, WriteLeaseKind,
+    derive_gate_baseline_observation_id, derive_gate_close_observation_id,
+    derive_unsealed_gate_observation_binding, seal_analysis_snapshot,
 };
 use lumin_model::{
     AnalysisInputId, AttemptId, CapabilityState, DeltaFactFamily, DeltaKey,
@@ -142,9 +143,8 @@ fn open_rejected_gate_for(
         protected_semantic_inputs: Vec::new(),
         transition_sequence,
     };
-    let baseline_for_id = baseline.clone();
-    let source_for_id = source.clone();
-    let lease_for_id = lease.clone();
+    let unsealed_inputs =
+        UnsealedGateObservationInputs::new(vec![lease.clone()], Vec::new(), Vec::new());
     let result = session.finish_pre_write(
         "migrate-rejected-digest",
         &gate_id,
@@ -153,28 +153,17 @@ fn open_rejected_gate_for(
             leased_write_set: vec![lease],
             alias_closures: Vec::new(),
             attempted_semantic_inputs: Vec::new(),
-            signals: vec![GateSignal::ProtectedInputChanged {
-                paths: vec![source],
+            signals: vec![GateSignal::AnalysisFailed {
+                detail: "injected rejected-opening failure".to_owned(),
             }],
         },
-        |_, catalog_revision, _| ObservationFinalization {
+        |_, _, signals| ObservationFinalization {
             signals: Vec::new(),
-            binding: ObservationBinding::Sealed {
-                observation: SealedGateObservation::Baseline {
-                    observation_id: derive_gate_baseline_observation_id(
-                        GateBaselineObservationInput {
-                            catalog_revision,
-                            transition_sequence: baseline_for_id.transition_sequence,
-                            analysis_contract: &baseline_for_id.analysis_contract,
-                            analysis_input_id: &baseline_for_id.snapshot.analysis_input_id,
-                            declared_write_set: std::slice::from_ref(&source_for_id),
-                            leased_write_set: std::slice::from_ref(&lease_for_id),
-                            alias_closures: &[],
-                            protected_semantic_inputs: &[],
-                        },
-                    ),
-                },
-            },
+            binding: derive_unsealed_gate_observation_binding(
+                std::slice::from_ref(&source),
+                &unsealed_inputs,
+                signals,
+            ),
         },
     )?;
     assert_eq!(result.lifecycle, GateLifecycle::Rejected);
@@ -200,10 +189,11 @@ fn migration_rejects_leases_on_a_rejected_gate() -> Result<(), Box<dyn std::erro
             .to_vec();
         let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
         gate.leased_write_set = gate
-            .baseline
-            .as_ref()
-            .ok_or("rejected gate omitted its sealed baseline")?
-            .leased_write_set
+            .revisions
+            .first()
+            .and_then(|revision| revision.unsealed_observation_inputs.as_ref())
+            .ok_or("rejected gate omitted its unsealed observation inputs")?
+            .attempted_write_leases
             .clone();
         let changed = serde_json::to_vec(&gate)?;
         table.insert(gate_id.as_str(), changed.as_slice())?;
