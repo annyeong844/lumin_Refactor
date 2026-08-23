@@ -204,6 +204,24 @@ then removes the intent as the final mutation. A no-intent private artifact is t
 always foreign. Public children now prove the header-valid/payload-corrupt live-intent
 split and the no-intent byte-identical-copy hard-stop without deletion.
 
+## Thirteenth Review Result
+
+Independent review bound exact candidate
+`361172f03d9e969440f385586648355c20b27842` and returned `REOPEN`. It found two
+remaining physical-authority and publication-crash gaps. First, the durable intent bound
+private names and logical digests but not physical identity or link count, so a logically
+identical source/target substitution before cleanup could be mistaken for the authorized
+object and deleted. Second, death while preparing or renaming
+`lifecycle-migration.json` could leave an incomplete canonical file or named pending file
+without a durable intent, contradicting both the crash table and the rule that no-intent
+reserved state is never deleted. The replacement protocol self-binds each canonical
+intent revision, durably binds every private artifact's identity and one-link state before
+its name becomes visible, and permits only final disposition bound to the opened object.
+Intent preparation uses a handle-owned automatically disposed object with no admissible
+pending name, so every pre-flush death yields either no intent or one complete canonical
+intent. Store-crash and both packaged platforms now own the exact publication,
+substitution, multiple-link, and held-object-disposition proof.
+
 ## Decision
 
 The owner amendments define the cleanup command and the sole public store-upgrade route:
@@ -247,12 +265,17 @@ admissible v12 header or matching unfinished v12-to-v13 intent returns the exact
 Any private source/target without that intent is foreign and every command hard-stops
 without adoption or deletion. The migration command accepts at most one split-form
 `--format json`, has no operation ID, and is the one exclusive generation-fenced
-private-v1 reader. Its intent binds the exact private names, generations, schemas, and
-SHA-256 of the complete canonical source/target logical dumps. It migrates or recovers
-the exact v12-to-v13 step, validates the final v13 dump, keeps the intent durable while it
-authenticates and removes the bound private artifacts, flushes their absence, and only
-then removes and flushes the intent as the final mutation. Already-valid v13 with no
-intent or private artifacts is a validating no-op with no generation advance. A
+private-v1 reader. Intent preparation uses a same-volume handle-owned object whose final
+disposition is armed before writing; it publishes that complete held object no-replace
+and has no admissible named pending file, so death leaves only no intent or a complete
+canonical intent. Each canonical revision self-binds its identity, and before a private
+source/target becomes visible the intent durably binds its exact role, name, generation,
+schema, complete logical SHA-256, physical identity, and one-link state. It migrates or
+recovers the exact v12-to-v13 step, validates the final v13 dump, keeps the intent durable
+while it opens and removes only each bound held object through an identity-bound final
+disposition, flushes their absence, and only then removes and flushes the exact terminal
+intent as the final mutation. Already-valid v13 with no intent or private artifacts is a
+validating no-op with no generation advance. A
 header-valid but payload-corrupt source under a live intent therefore receives the
 ordinary migration-required diagnostic first and hard-stops only when migration opens
 it; a byte-identical v12 source introduced after intent removal hard-stops every command
@@ -393,11 +416,14 @@ finding for each item:
    bijection. The migration logical dump includes the canonical synthetic delivery state,
    rejects every invalid legacy shape before replacement, and never exposes any committed
    private-v1 row as a known v2 delivery. Only the public migration command admits v12;
-   its digest-binding intent remains durable until every authorized private artifact is
-   removed and that absence is flushed, and intent removal is the final mutation. Its
+   its self/physical-binding intent remains durable until every authorized private artifact
+   is disposed through the exact held object and that absence is flushed, and intent
+   removal is the final mutation. Intent preparation has no crash-surviving pending name;
+   a substituted identity or second link hard-stops before disposition. Its
    initial success, recovery, and already-current retry emit one byte-identical target-only
    response, while a v13 retry neither replaces the store nor advances its generation.
-   A no-intent artifact is always foreign and is never deleted or advertised as migratable.
+   An unbound, substituted, multiply linked, or no-intent artifact is always foreign and
+   is never deleted or advertised as migratable.
 6. Every regular file and directory is flushed bottom-up and remanifested before
    authorization and after movement; cache, quarantine, and trash entries are flushed
    before validation and result commit, including recovered and empty-cache runs.
@@ -417,15 +443,18 @@ finding for each item:
    lower sequence/result append, without changing either greatest sequence or any other
    durable field. No case uses scheduler timing; an exact guard race also proves cleanup
    cannot overlap publication, retention, or migration. Public migration children also
-   prove the ordinary-command recovery diagnostic, every migration crash boundary,
-   intent-held private cleanup, the header-valid/payload-corrupt split between ordinary
+   prove the ordinary-command recovery diagnostic, exact deaths before/within intent
+   writing and after final-name publication/before parent flush, every later migration
+   crash boundary, identity-bound private cleanup, source/target substitution and
+   multiple-link rejection, the header-valid/payload-corrupt split between ordinary
    routing and migration-only authentication, the no-intent byte-identical-copy hard-stop,
    output-delivery retry, identical current-v13 response, and no second replacement.
 10. Standard, determinism, store-crash, Windows/Linux package, and skill-adapter commands
     are assigned only to behavior they can execute and include `operation show` recovery.
-    Both Windows and Linux package checks invoke the packaged `lumin store migrate` for
-    admission rejection, success, intent-held cleanup recovery, and byte-identical no-op retry;
-    development/store-crash execution alone is insufficient.
+    Both Windows and Linux package checks invoke the packaged `lumin store migrate` and
+    exercise their actual handle-owned publication and identity-bound disposition
+    primitives for admission rejection, success, intent-held cleanup recovery, and
+    byte-identical no-op retry; development/store-crash execution alone is insufficient.
 11. PRODUCT-000, ARCH-000, ARCH-002, SLICE-001 truth, acceptance, and traceability agree
     without weakening any existing reserved-state or durability rule.
 12. No implementation code or mapped-progress claim is accepted as independent truth.
@@ -448,8 +477,10 @@ stdout, both exact delivery completion orders including the byte-identical publi
 projection and one exact private-ledger append after a late lower completion,
 cleanup-operation v2 with explicit public-v1 incompatibility and the exact private-v1
 synthetic migration in which every committed legacy row initially projects `unknown`,
-the public `lumin store migrate` grammar/DTO/error route, intent provenance retained
-through durably flushed private cleanup, header-valid/payload-corrupt ordinary-routing
+the public `lumin store migrate` grammar/DTO/error route, handle-owned intent publication
+at every write/publish/parent-flush boundary, intent self-binding and private physical
+identity/one-link provenance retained through held-object cleanup, source/target
+substitution and multiple-link rejection, header-valid/payload-corrupt ordinary-routing
 versus migration-authentication proof, no-intent byte-identical-source rejection without
 deletion, and byte-identical first/recovery/current response without a second generation
 advance through store-crash and both packaged platform binaries,
