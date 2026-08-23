@@ -1920,6 +1920,7 @@ fn is_strict_close_snapshot_signal(signal: &GateSignal) -> bool {
     matches!(
         signal,
         GateSignal::RequiredEvidenceIncomplete { .. }
+            | GateSignal::RequiredOwnerUnavailable { .. }
             | GateSignal::AdverseFactIntroduced { .. }
             | GateSignal::AdverseFactRegressed { .. }
             | GateSignal::OpacityIntroduced { .. }

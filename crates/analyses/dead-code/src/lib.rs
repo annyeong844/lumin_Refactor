@@ -7,8 +7,8 @@ use lumin_evidence::{
 use lumin_graph::SymbolGraph;
 use lumin_model::{
     DynamicImportTargetScope, EvidenceId, FindingDisposition, FindingId, ImportMetaGlobTargetScope,
-    Limitation, LogicalSourceId, RepoPath, ReviewOnlyReason, SemanticConfigSnapshot,
-    SourceSnapshot, UnresolvedTargetScope,
+    Limitation, LimitationAbsenceEffect, LimitationScopePolicy, LogicalSourceId, RepoPath,
+    ReviewOnlyReason, SemanticConfigSnapshot, SourceSnapshot, UnresolvedTargetScope,
 };
 
 pub fn analyze(
@@ -181,55 +181,104 @@ fn blocked_absence_scope(
     let mut workspace_blocked = false;
     let mut blocked_paths = Vec::new();
     for limitation in limitations {
-        match limitation {
-            Limitation::InternalSpecifierUnresolved {
-                candidates,
-                target_scope,
-                ..
-            } => match target_scope {
-                Some(UnresolvedTargetScope::KnownNoTarget { .. }) if candidates.is_empty() => {}
-                Some(UnresolvedTargetScope::ExplicitTargets) | None if !candidates.is_empty() => {
-                    blocked_paths.extend(candidates.iter().cloned());
+        let policy = limitation.registry_entry();
+        if !absence_effect_blocks_dead_consumers(policy.absence_effect) {
+            continue;
+        }
+        match policy.scope {
+            LimitationScopePolicy::Workspace
+            | LimitationScopePolicy::ExplicitTargetsOrWorkspace => workspace_blocked = true,
+            LimitationScopePolicy::File | LimitationScopePolicy::ResolvedModule => {
+                workspace_blocked = true;
+            }
+            LimitationScopePolicy::ExplicitTargetsOrSourceInventoryOrWorkspace => {
+                let Limitation::DynamicImportNonLiteral { target_scope, .. } = limitation else {
+                    workspace_blocked = true;
+                    continue;
+                };
+                if *target_scope == DynamicImportTargetScope::Workspace {
+                    workspace_blocked = true;
                 }
-                Some(UnresolvedTargetScope::OpaqueWorkspace)
-                | Some(UnresolvedTargetScope::KnownNoTarget { .. })
-                | Some(UnresolvedTargetScope::ExplicitTargets)
-                | None => workspace_blocked = true,
-            },
-            Limitation::JsModuleUseUnknown { .. }
-            | Limitation::SourcePayloadUnavailable { .. }
-            | Limitation::PackageIdentityUnsupported { .. }
-            | Limitation::SfcDialectUnavailable { .. }
-            | Limitation::SfcDecompositionUnknown { .. } => workspace_blocked = true,
-            Limitation::DynamicImportNonLiteral { target_scope, .. } => match target_scope {
-                DynamicImportTargetScope::ExplicitTargets
-                | DynamicImportTargetScope::SourceInventory => {}
-                DynamicImportTargetScope::Workspace => workspace_blocked = true,
-            },
-            Limitation::ImportMetaGlobUnsupported {
-                source_id,
-                target_scope,
-                ..
-            } => match target_scope {
-                ImportMetaGlobTargetScope::ExplicitTargets => {}
-                ImportMetaGlobTargetScope::Package => {
-                    if !block_source_owner(source_id, sources, config, &mut blocked_paths) {
-                        workspace_blocked = true;
+            }
+            LimitationScopePolicy::ExplicitTargetsOrKnownNoTargetOrWorkspace => {
+                let Limitation::InternalSpecifierUnresolved {
+                    candidates,
+                    target_scope,
+                    ..
+                } = limitation
+                else {
+                    workspace_blocked = true;
+                    continue;
+                };
+                match target_scope {
+                    Some(UnresolvedTargetScope::KnownNoTarget { .. }) if candidates.is_empty() => {}
+                    Some(UnresolvedTargetScope::ExplicitTargets) | None
+                        if !candidates.is_empty() =>
+                    {
+                        blocked_paths.extend(candidates.iter().cloned());
                     }
+                    Some(UnresolvedTargetScope::OpaqueWorkspace)
+                    | Some(UnresolvedTargetScope::KnownNoTarget { .. })
+                    | Some(UnresolvedTargetScope::ExplicitTargets)
+                    | None => workspace_blocked = true,
                 }
-            },
-            Limitation::VueTemplateOpaque { source_id, .. }
-            | Limitation::AliasShapeUnsupported { source_id, .. } => {
+            }
+            LimitationScopePolicy::SourceOwnerPackageOrWorkspace => {
+                let Limitation::AliasShapeUnsupported { source_id, .. } = limitation else {
+                    workspace_blocked = true;
+                    continue;
+                };
                 if !block_source_owner(source_id, sources, config, &mut blocked_paths) {
                     workspace_blocked = true;
                 }
             }
-            Limitation::AbsoluteInternalSpecifierUnsupported { .. } => workspace_blocked = true,
-            Limitation::VueExternalScriptModeConflict {
-                source_id,
-                target_source_id,
-                ..
-            } => {
+            LimitationScopePolicy::OwningPackage
+            | LimitationScopePolicy::OwningPackageOrWorkspace => {
+                let Some(path) = limitation_path(limitation) else {
+                    workspace_blocked = true;
+                    continue;
+                };
+                if !block_owned_package(path, sources, config, &mut blocked_paths) {
+                    workspace_blocked = true;
+                }
+            }
+            LimitationScopePolicy::ConfiguredPackagesOrWorkspace => {
+                let Some(path) = limitation_path(limitation) else {
+                    workspace_blocked = true;
+                    continue;
+                };
+                if !block_config_package(path, sources, config, &mut blocked_paths) {
+                    workspace_blocked = true;
+                }
+            }
+            LimitationScopePolicy::ManifestOwnerPackageOrWorkspace => {
+                let Limitation::PackageMetadataUnobservable { path, .. } = limitation else {
+                    workspace_blocked = true;
+                    continue;
+                };
+                if !block_manifest_parent(path, sources, config, &mut blocked_paths) {
+                    workspace_blocked = true;
+                }
+            }
+            LimitationScopePolicy::WorkspaceFromConfig => {
+                let Some(path) = limitation_path(limitation) else {
+                    workspace_blocked = true;
+                    continue;
+                };
+                if !block_workspace(path, sources, config, &mut blocked_paths) {
+                    workspace_blocked = true;
+                }
+            }
+            LimitationScopePolicy::ParentAndTargetOwnersOrWorkspace => {
+                let Limitation::VueExternalScriptModeConflict {
+                    source_id,
+                    target_source_id,
+                    ..
+                } = limitation
+                else {
+                    workspace_blocked = true;
+                    continue;
+                };
                 let parent_known =
                     block_source_owner(source_id, sources, config, &mut blocked_paths);
                 let target_known =
@@ -238,35 +287,30 @@ fn blocked_absence_scope(
                     workspace_blocked = true;
                 }
             }
-            Limitation::PublicSurfaceUnsupported { path, .. }
-            | Limitation::PackageImportsUnsupported { path, .. }
-            | Limitation::ImporterFormatUnsupported { path, .. }
-            | Limitation::PackagePrivacyUnsupported { path, .. } => {
-                if !block_owned_package(path, sources, config, &mut blocked_paths) {
-                    workspace_blocked = true;
+            LimitationScopePolicy::ImportedTargetsOrPackage => match limitation {
+                Limitation::ImportMetaGlobUnsupported {
+                    source_id,
+                    target_scope,
+                    ..
+                } => {
+                    if *target_scope == ImportMetaGlobTargetScope::Package
+                        && !block_source_owner(source_id, sources, config, &mut blocked_paths)
+                    {
+                        workspace_blocked = true;
+                    }
                 }
-            }
-            Limitation::JsRecoverableParseLocal { .. }
-            | Limitation::CommonJsComputedMember { .. }
-            | Limitation::DependencyOwnerAmbiguous { .. }
-            | Limitation::PnpmDependencySemanticsUnsupported { .. } => {}
-            Limitation::PackageMetadataUnobservable { path, .. } => {
-                if !block_manifest_parent(path, sources, config, &mut blocked_paths) {
-                    workspace_blocked = true;
+                Limitation::VueTemplateOpaque { source_id, .. } => {
+                    if !block_source_owner(source_id, sources, config, &mut blocked_paths) {
+                        workspace_blocked = true;
+                    }
                 }
-            }
-            Limitation::TsconfigSemanticsUnsupported { path, .. }
-            | Limitation::TsconfigPayloadUnavailable { path, .. } => {
-                if !block_config_package(path, sources, config, &mut blocked_paths) {
+                _ => workspace_blocked = true,
+            },
+            LimitationScopePolicy::EntryOwnerPackageOrWorkspace => {
+                let Limitation::ExplicitEntryUnavailable { path, .. } = limitation else {
                     workspace_blocked = true;
-                }
-            }
-            Limitation::WorkspaceOwnershipUnsupported { path, .. } => {
-                if !block_workspace(path, sources, config, &mut blocked_paths) {
-                    workspace_blocked = true;
-                }
-            }
-            Limitation::ExplicitEntryUnavailable { path, .. } => {
+                    continue;
+                };
                 if !block_entry_package_prefix(path, sources, config, &mut blocked_paths) {
                     workspace_blocked = true;
                 }
@@ -276,6 +320,57 @@ fn blocked_absence_scope(
     blocked_paths.sort();
     blocked_paths.dedup();
     (workspace_blocked, blocked_paths)
+}
+
+fn absence_effect_blocks_dead_consumers(effect: LimitationAbsenceEffect) -> bool {
+    match effect {
+        LimitationAbsenceEffect::LocalDefinitions
+        | LimitationAbsenceEffect::ModuleValueExports
+        | LimitationAbsenceEffect::DependencyOwnerAndInferredWrites
+        | LimitationAbsenceEffect::PnpmDependencyAndInferredWrites => false,
+        LimitationAbsenceEffect::WorkspaceConsumers
+        | LimitationAbsenceEffect::CandidateConsumers
+        | LimitationAbsenceEffect::PackageConsumers
+        | LimitationAbsenceEffect::PackageTargetsAndConsumers
+        | LimitationAbsenceEffect::ConfigurationDomain
+        | LimitationAbsenceEffect::PublicSurface
+        | LimitationAbsenceEffect::PackageIdentityAndDependencyOwner
+        | LimitationAbsenceEffect::PackagePrivacy
+        | LimitationAbsenceEffect::WorkspaceOwnership
+        | LimitationAbsenceEffect::ScriptAndTemplateBindings
+        | LimitationAbsenceEffect::ComponentIdentity
+        | LimitationAbsenceEffect::UnreachableModules => true,
+    }
+}
+
+fn limitation_path(limitation: &Limitation) -> Option<&str> {
+    match limitation {
+        Limitation::SourcePayloadUnavailable { path, .. }
+        | Limitation::PackageImportsUnsupported { path, .. }
+        | Limitation::ImporterFormatUnsupported { path, .. }
+        | Limitation::PublicSurfaceUnsupported { path, .. }
+        | Limitation::TsconfigSemanticsUnsupported { path, .. }
+        | Limitation::PackageIdentityUnsupported { path, .. }
+        | Limitation::PackageMetadataUnobservable { path, .. }
+        | Limitation::PackagePrivacyUnsupported { path, .. }
+        | Limitation::DependencyOwnerAmbiguous { path, .. }
+        | Limitation::WorkspaceOwnershipUnsupported { path, .. }
+        | Limitation::PnpmDependencySemanticsUnsupported { path, .. }
+        | Limitation::TsconfigPayloadUnavailable { path, .. }
+        | Limitation::ExplicitEntryUnavailable { path, .. } => Some(path),
+        Limitation::JsRecoverableParseLocal { .. }
+        | Limitation::JsModuleUseUnknown { .. }
+        | Limitation::DynamicImportNonLiteral { .. }
+        | Limitation::ImportMetaGlobUnsupported { .. }
+        | Limitation::CommonJsComputedMember { .. }
+        | Limitation::InternalSpecifierUnresolved { .. }
+        | Limitation::AliasShapeUnsupported { .. }
+        | Limitation::AbsoluteInternalSpecifierUnsupported { .. }
+        | Limitation::SfcDialectUnavailable { .. }
+        | Limitation::SfcDecompositionUnknown { .. }
+        | Limitation::VueExternalScriptModeConflict { .. }
+        | Limitation::VueTemplateOpaque { .. } => None,
+    }
 }
 
 fn block_source_owner(
