@@ -20,7 +20,7 @@ pub const GATE_OPERATION_SCHEMA_VERSION: &str = "lumin-operation.v2";
 /// `lumin-engine` remains the value authority; the public frozen-contract
 /// probe verifies its current derivation against this compatibility boundary.
 pub const SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID: &str =
-    "655854af620a6d54e44f40f6768b5c6a5e1f4cb1381367eee2dc7998baeb1236";
+    "913066eca030c23714921cff84b472b1f3d8e428ca3b2666efd88c408063ae95";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

@@ -44,7 +44,7 @@ use observation::{
 };
 use transitions::{active_transition_signals, changed_paths, reconcile_transitions};
 
-const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v27";
+const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v28";
 const DEPENDENCY_CANDIDATE_TOPOLOGY_ONLY: &[u8] = b"dependency-candidate-topology-only.v1";
 
 fn analysis_contract_id() -> String {
@@ -308,6 +308,18 @@ fn wait_at_capture_freshness_barrier(
     wait_at_gate_test_barrier(
         "LUMIN_TEST_GATE_CAPTURE_FRESHNESS_BARRIER",
         "capture-freshness",
+        operation_id,
+        gate_id,
+    )
+}
+
+fn wait_at_post_write_capture_barrier(
+    operation_id: &OperationId,
+    gate_id: &GateId,
+) -> Result<(), EngineError> {
+    wait_at_gate_test_barrier(
+        "LUMIN_TEST_GATE_POSTWRITE_CAPTURE_BARRIER",
+        "close-capturing",
         operation_id,
         gate_id,
     )
@@ -597,6 +609,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
             &gate,
             vec![GateSignal::AnalysisContractChanged],
             Vec::new(),
+            None,
         );
     }
 
@@ -614,6 +627,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                         detail: error.to_string(),
                     }],
                     Vec::new(),
+                    None,
                 );
             }
         };
@@ -631,6 +645,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
             &gate,
             containment_signals,
             Vec::new(),
+            Some((&context.root, &inventory_request)),
         );
     }
 
@@ -652,9 +667,11 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                 .to_string(),
             }],
             Vec::new(),
+            None,
         );
     }
 
+    wait_at_post_write_capture_barrier(&request.operation_id, &request.gate_id)?;
     let reserved_state_lookup = reserved_state_identity_lookup(&context.store);
     let (capture, reserved_semantic_bindings) = match capture_reserved_repository(
         &context.root,
@@ -684,6 +701,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                 &gate,
                 vec![signal],
                 attempted_semantic_bindings,
+                Some((&context.root, &inventory_request)),
             );
         }
         Ok(ReservedCapture::Committed(result)) => return Ok(*result),
@@ -695,15 +713,20 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
             error,
             attempted_semantic_bindings,
         }) => {
+            let signals = post_write_capture_failure_signals(
+                &context.root,
+                &gate.leased_write_set,
+                &inventory_request,
+                &error,
+            );
             return finish_failed_close(
                 &operation,
                 request,
                 &request_digest,
                 &gate,
-                vec![GateSignal::AnalysisFailed {
-                    detail: error.to_string(),
-                }],
+                signals,
                 attempted_semantic_bindings,
+                Some((&context.root, &inventory_request)),
             );
         }
     };
@@ -804,6 +827,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                     &context.root,
                     &final_validation,
                     reserved_identities,
+                    &observation_seed.leased_write_set,
                     &close_write_leases,
                     &observation_seed.alias_closures,
                 );
@@ -874,6 +898,64 @@ fn close_containment_signals(
     signals
 }
 
+fn post_write_capture_failure_signals(
+    root: &Path,
+    opening_leases: &[lumin_evidence::WriteLease],
+    inventory_request: &InventoryRequest,
+    error: &EngineError,
+) -> Vec<GateSignal> {
+    if let EngineError::Inventory(InventoryError::EntryEscapesRoot(escaped)) = error {
+        let escaped_projection = RepoPath::from_portable(escaped)
+            .ok()
+            .map(|path| RepoPathProjection::from(&path));
+        if let Some(lease) = opening_leases.iter().find(|lease| {
+            lease.path.display == escaped.as_str()
+                || escaped_projection
+                    .as_ref()
+                    .is_some_and(|path| lease.covers(path))
+        }) {
+            return vec![match lease.kind {
+                lumin_evidence::WriteLeaseKind::NewFile => {
+                    GateSignal::PlannedPathContainmentViolation {
+                        paths: vec![lease.path.clone()],
+                    }
+                }
+                lumin_evidence::WriteLeaseKind::ExistingFile
+                | lumin_evidence::WriteLeaseKind::Directory => GateSignal::ProtectedInputChanged {
+                    paths: vec![lease.path.clone()],
+                },
+            }];
+        }
+        if let Some(path) = inventory_request
+            .entries
+            .iter()
+            .chain(
+                inventory_request
+                    .dependency_intents
+                    .iter()
+                    .map(|intent| &intent.path),
+            )
+            .find(|path| path.display_escaped() == escaped.as_str())
+        {
+            return vec![GateSignal::ProtectedInputChanged {
+                paths: vec![RepoPathProjection::from(path)],
+            }];
+        }
+        let signals = close_containment_signals(
+            root,
+            opening_leases,
+            &inventory_request.entries,
+            &inventory_request.dependency_intents,
+        );
+        if !signals.is_empty() {
+            return signals;
+        }
+    }
+    vec![GateSignal::AnalysisFailed {
+        detail: error.to_string(),
+    }]
+}
+
 fn validate_analysis_path_names(
     entries: &[RepoPath],
     dependency_intents: &[DependencyIntent],
@@ -913,6 +995,7 @@ fn finish_failed_close(
     gate: &GateRecord,
     signals: Vec<GateSignal>,
     attempted_semantic_bindings: Vec<(RepoPath, SemanticReadReservationBinding)>,
+    final_containment: Option<(&Path, &InventoryRequest)>,
 ) -> Result<GateOperationResult, EngineError> {
     let baseline = gate.baseline.as_ref();
     let observation_seed = CloseObservationSeed {
@@ -956,12 +1039,26 @@ fn finish_failed_close(
                 deltas: Vec::new(),
             },
             |reserved_identities, catalog_revision, store_signals| {
-                let mut final_signals = revalidate_attempted_semantic_inputs(
+                let mut observed_signals =
+                    final_containment.map_or_else(Vec::new, |(root, inventory_request)| {
+                        close_containment_signals(
+                            root,
+                            &gate.leased_write_set,
+                            &inventory_request.entries,
+                            &inventory_request.dependency_intents,
+                        )
+                    });
+                observed_signals.extend(revalidate_attempted_semantic_inputs(
                     &request.root,
                     &attempted_semantic_bindings,
                     reserved_identities,
-                );
-                final_signals.retain(|signal| !store_signals.contains(signal));
+                ));
+                let mut final_signals = Vec::new();
+                for signal in observed_signals {
+                    if !store_signals.contains(&signal) && !final_signals.contains(&signal) {
+                        final_signals.push(signal);
+                    }
+                }
                 let mut all_signals = store_signals.to_vec();
                 all_signals.extend(final_signals.iter().cloned());
                 ObservationFinalization {
@@ -1404,12 +1501,13 @@ fn post_write_final_validation(
     root: &Path,
     validation: &FinalFreshnessValidation,
     reserved_identities: &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
+    opening_leases: &[lumin_evidence::WriteLease],
     expected_leases: &[lumin_evidence::WriteLease],
     expected_alias_closures: &[lumin_evidence::PhysicalAliasClosureRecord],
 ) -> (Vec<GateSignal>, Option<PreWriteFinalValidationEvidence>) {
     let mut containment_signals = close_containment_signals(
         root,
-        expected_leases,
+        opening_leases,
         &validation.inventory_request.entries,
         &validation.inventory_request.dependency_intents,
     );
