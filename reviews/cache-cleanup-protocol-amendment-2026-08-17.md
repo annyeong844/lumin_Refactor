@@ -169,6 +169,24 @@ response, failure behavior, or delivery recovery. The replacement decision regis
 target-only byte-stable response, exact ordinary-command recovery instruction, exclusive
 generation-fenced recovery, and no second replacement on an already-current retry.
 
+## Eleventh Review Result
+
+Independent review bound exact candidate
+`f28cc45debe801f33f8efaafbe40e062e6d4e983` and returned `REOPEN`. It found three
+remaining recovery and distribution gaps. First, even a committed private-v1 row whose
+stored delivery status is `succeeded` or `failed` may have a newer same-result retry
+already transporting after all store and liveness locks were released; mapping that
+legacy status to the greatest completed v2 sequence falsely made delivery final. Second,
+the acceptance trace assigned the new public migration command only to the store-crash
+development lane, so neither shipped Windows nor Linux binary had to contain or execute
+it. Third, a crash after intent removal but before private-source cleanup leaves valid
+v13 plus a store-owned source artifact, yet ordinary-command routing named only v12 and
+live-intent states. The replacement decision gives every committed private-v1 row an
+unfinished synthetic greatest sequence and therefore public `unknown`, assigns migration
+admission/success/recovery/retry probes to both packaged platforms, and defines the sole
+authenticated no-intent source remnant that routes back to `lumin store migrate` while
+all foreign remnants integrity hard-stop.
+
 ## Decision
 
 The owner amendments define the cleanup command and the sole public store-upgrade route:
@@ -198,20 +216,28 @@ it as unsupported before interpreting the delivery enum. The private record sche
 advances to `lumin-cache-cleanup-operation.v2`. Explicit lifecycle migration retains
 zero delivery sequences for valid pending/interrupted private-v1 rows, maps a committed
 legacy `not-attempted` row to synthetic allocated sequence 1 without completion and thus
-public `unknown`, and maps committed `succeeded`/`failed` to allocated and completed
-sequence 1 with the same result. Any other legacy shape is `IncompatibleStateSchema`
-before generation replacement; no query performs lazy conversion, and the next real
-delivery allocates the migrated maximum's successor. The target lifecycle-store header
+public `unknown`, and maps committed `succeeded`/`failed` to historical completed
+sequence 1 plus synthetic allocated sequence 2 without completion. Every committed
+legacy row therefore initially projects `unknown`, because private v1 cannot prove that
+no newer lock-free transport is in flight. Any other legacy shape is
+`IncompatibleStateSchema` before generation replacement; no query performs lazy
+conversion, and the next current delivery allocates sequence 2 or 3 respectively. The
+target lifecycle-store header
 advances from `lumin-lifecycle-store-header.v12` to v13 with the private record schema.
 Ordinary repository-state commands accept only v13 and never migrate on open. An
-admissible v12 header or matching unfinished v12-to-v13 intent returns the exact
-`lumin store migrate` recovery instruction without recovery; other unsupported or invalid
-schemas do not inherit that claim. The migration command accepts at most one split-form
-`--format json`, has no operation ID, and is the one exclusive
+admissible v12 header, matching unfinished v12-to-v13 intent, or exact authenticated
+post-intent source remnant returns the exact `lumin store migrate` recovery instruction
+without recovery; other unsupported schemas or foreign remnants do not inherit that
+claim. The no-intent remnant is recognized only as valid canonical v13 generation `N+1`
+plus the sole no-follow, one-link, same-volume v12
+`lifecycle.store.migration-source` at adjacent generation `N`, with no pending or
+published intent and no target artifact, and an exact transformed logical-dump match.
+The migration command accepts at
+most one split-form `--format json`, has no operation ID, and is the one exclusive
 generation-fenced v12 reader. It migrates or recovers the exact v12-to-v13 step, validates
 the final v13 dump and removes the intent/private artifacts before success; already-valid
-v13 is a validating no-op with no generation advance after exact temporary-remnant
-cleanup. Concurrent invocations serialize so at most one replacement advances the
+v13 is a validating no-op with no generation advance after the command alone validates,
+removes, and durably flushes that exact source remnant. Concurrent invocations serialize so at most one replacement advances the
 generation. Malformed arguments exit `2`; schema, identity, integrity, generation,
 durability, and pre-transport failures exit `1` with empty stdout. Its only successful
 response exits `0` and is the canonical `lumin.lifecycle-store-migration.v1` object with
@@ -328,8 +354,10 @@ finding for each item:
    digest, exits, stdout/stderr rules, lock release, retry, and strictly read-only
    `operation show` recovery are complete. Frozen cleanup-operation v1 never emits
    `unknown`, v2 has no silent v1 fallback, and the private-v1 migration maps each valid
-   pending/interrupted/committed delivery shape to the exact v2 sequence state while an
-   ambiguous committed `not-attempted` becomes `unknown`. Pre-transport delivery
+   pending/interrupted/committed delivery shape to the exact v2 sequence state while
+   every committed row receives an unfinished greatest sequence and becomes `unknown`,
+   including legacy `succeeded`/`failed` whose stored result remains only historical
+   lower-sequence evidence. Pre-transport delivery
    allocation atomically exposes `unknown`, missing completion never appears
    `not-attempted`, neither delivery completion order can select the wrong winner, and
    exact dead-attempt proof, interruption counting, and pending/interrupted/pending
@@ -344,11 +372,12 @@ finding for each item:
    before any rename, retain their child provenance without quadratic historical copies,
    and survive the named lifecycle-store v12-to-v13 migration as an exact row/child
    bijection. The migration logical dump includes the canonical synthetic delivery state,
-   rejects every invalid legacy shape before replacement, and never copies ambiguous
-   legacy `not-attempted` as v2 `not-attempted`. Only the public migration command admits
-   v12; its initial success, recovery, and already-current retry emit one byte-identical
-   target-only response, and a v13 retry neither replaces the store nor advances its
-   generation.
+   rejects every invalid legacy shape before replacement, and never exposes any committed
+   private-v1 row as a known v2 delivery. Only the public migration command admits v12 or
+   cleans the exact authenticated no-intent source remnant; its initial success, recovery,
+   remnant cleanup, and already-current retry emit one byte-identical target-only response,
+   and a v13 retry neither replaces the store nor advances its generation. A foreign or
+   mismatching private artifact is never deleted or advertised as migratable.
 6. Every regular file and directory is flushed bottom-up and remanifested before
    authorization and after movement; cache, quarantine, and trash entries are flushed
    before validation and result commit, including recovered and empty-cache runs.
@@ -369,9 +398,13 @@ finding for each item:
    durable field. No case uses scheduler timing; an exact guard race also proves cleanup
    cannot overlap publication, retention, or migration. Public migration children also
    prove the ordinary-command recovery diagnostic, every migration crash boundary,
+   authenticated post-intent source cleanup versus foreign-remnant hard-stop,
    output-delivery retry, identical current-v13 response, and no second replacement.
 10. Standard, determinism, store-crash, Windows/Linux package, and skill-adapter commands
     are assigned only to behavior they can execute and include `operation show` recovery.
+    Both Windows and Linux package checks invoke the packaged `lumin store migrate` for
+    admission rejection, success, post-intent recovery, and byte-identical no-op retry;
+    development/store-crash execution alone is insufficient.
 11. PRODUCT-000, ARCH-000, ARCH-002, SLICE-001 truth, acceptance, and traceability agree
     without weakening any existing reserved-state or durability rule.
 12. No implementation code or mapped-progress claim is accepted as independent truth.
@@ -393,8 +426,11 @@ allocated-but-unfinished delivery projection before output and after partial or 
 stdout, both exact delivery completion orders including the byte-identical public
 projection and one exact private-ledger append after a late lower completion,
 cleanup-operation v2 with explicit public-v1 incompatibility and the exact private-v1
-synthetic migration, the public `lumin store migrate` grammar/DTO/error route and
-byte-identical first/recovery/current response without a second generation advance,
+synthetic migration in which every committed legacy row initially projects `unknown`,
+the public `lumin store migrate` grammar/DTO/error route, exact authenticated post-intent
+source-remnant cleanup versus foreign-remnant hard-stop, and byte-identical
+first/recovery/current response without a second generation advance through store-crash
+and both packaged platform binaries,
 continuous cache-writer rejection across a dead pending lease, both
 substitution barriers, and unchanged run/gate evidence. The
 public `reserved-state-namespace` row remains unmapped until standard and determinism lanes plus
