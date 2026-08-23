@@ -384,7 +384,10 @@ pub static REGISTRY: &[RegistryRow] = &[
         inv!("parse_failure_propagation", "recoverable_parse_failures_preserve_module_uses_and_remain_file_scoped"),
         inv!("parse_failure_propagation", "unrecoverable_parse_failures_block_workspace_absence_and_gates"),
     ]),
-    row_sd_arch!("limitation-scope-exhaustiveness"),
+    row_sd_arch!("limitation-scope-exhaustiveness", &[
+        inv!("parse_failure_propagation", "recoverable_parse_failures_preserve_module_uses_and_remain_file_scoped"),
+        inv!("parse_failure_propagation", "unrecoverable_parse_failures_block_workspace_absence_and_gates"),
+    ]),
     row_sd!("nearest-manifest", &[
         inv!("nearest_manifest", "dependency_intents_lease_each_nearest_manifest_and_lockfile"),
         inv!("nearest_manifest", "dependency_owner_uncertainty_never_infers_a_lockfile"),
