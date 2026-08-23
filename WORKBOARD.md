@@ -14,16 +14,16 @@ AI agents grounded, queryable evidence before and after they change code.
 | ID | Status | Document | One-line role |
 | --- | --- | --- | --- |
 | METHOD-000 | active | `문서(한글)/SDD.ko.md` (canonical; `SDD.md` English translation) | Defines the permanent Spec-Driven Development workflow for every change. |
-| PRODUCT-000 | reopened; REVIEW-004 follow-up pending | `specs/000-product-contract.md` | Defines what Lumin v2 must guarantee and what it is not. |
-| ARCH-000 | reopened; REVIEW-004 follow-up pending | `architecture/000-system-blueprint.md` | Owns the final system shape, crate boundaries, dependency direction, and canonical command set. |
+| PRODUCT-000 | frozen | `specs/000-product-contract.md` | Defines what Lumin v2 must guarantee and what it is not. |
+| ARCH-000 | frozen | `architecture/000-system-blueprint.md` | Owns the final system shape, crate boundaries, dependency direction, and canonical command set. |
 | ARCH-001 | frozen | `architecture/001-execution-and-ownership.md` | Owns the Kahn/Rayon execution model, determinism, and memory ownership. |
-| ARCH-002 | reopened; follow-up review pending | `architecture/002-evidence-and-write-gate.md` | Owns the evidence store, bounded query protocol, and pre/post transaction. |
+| ARCH-002 | frozen | `architecture/002-evidence-and-write-gate.md` | Owns the evidence store, bounded query protocol, and pre/post transaction. |
 | SLICE-001 | active | `specs/001-foundation-slice.md` | Defines the JS/TS/SFC foundation, with Vue as the first production dialect. |
 | PLAN-001 | active | `PHASE1-CHECKLIST.md` | Owns Phase 1 execution order, dependencies, and verified progress without restating acceptance contracts. |
 | REVIEW-001 | superseded | `reviews/architecture-v1-adversarial-2026-07-15.md` | Records the first adversarial findings and first amendment decisions. |
 | REVIEW-002 | complete, monitoring | `reviews/architecture-v1-independent-verification-2026-07-15.md` | Preserves the exact independent verification and may reopen only on a concrete regression or counterexample. |
 | REVIEW-003 | frozen | `reviews/dependency-edge-identity-amendment-2026-08-10.md` | Owns the proportional workspace dependency policy, isolated Cargo admission, and loaded-source boundary. |
-| REVIEW-004 | follow-up review pending | `reviews/cache-cleanup-protocol-amendment-2026-08-17.md` | Owns the cache-cleanup delivery, required store-migration route, and active-cache reservation amendment; follow-up implementation remains blocked until independent `PASS`. |
+| REVIEW-004 | frozen | `reviews/cache-cleanup-protocol-amendment-2026-08-17.md` | Owns the cache-cleanup delivery, required store-migration route, and active-cache reservation amendment. |
 
 ## Active Work
 
@@ -55,7 +55,7 @@ implementation history.
 
 | Phase | State | Exit condition |
 | --- | --- | --- |
-| Phase 0: architecture | narrowly reopened for REVIEW-004 | The exact REVIEW-004 follow-up candidate receives independent `PASS`; every unrelated Phase 0 decision remains frozen. |
+| Phase 0: architecture | frozen | Focused amendments have owner approval and independent `PASS`; reopen only on a concrete counterexample. |
 | Phase 1: foundation slice | active | SLICE-001 passes its complete acceptance corpus on Windows and Linux prebuilt binaries. |
 | Phase 2: capability growth | not started | New capabilities enter through the frozen DAG without creating a second engine. |
 | Phase 3: legacy retirement | not started | Required compatibility exports and corpus parity are complete; Node analysis paths are removed. |

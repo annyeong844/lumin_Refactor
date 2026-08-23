@@ -2,7 +2,7 @@
 
 Document role: focused Architecture v1 amendment and independent-review record
 
-Status: post-merge follow-up candidate awaits independent PASS
+Status: frozen; post-merge follow-up independent PASS recorded
 
 Date: 2026-08-24
 
@@ -299,6 +299,17 @@ the exact immutable target-header anchor and ordinary current-v13 integrity inst
 historical payload digest. Native-v13 and migrated-v13 output layouts now have separate
 exact truths, with only the latter requiring the authorized terminal journal and retired
 source.
+
+## Seventeenth Review Result
+
+Independent review bound exact candidate
+`0e87d86338656fde9b508da6a7644c97fcd00e8a` and reported no major issues. The normalized
+REVIEW-004 follow-up verdict is `PASS`: no remaining P1/P2 gap was found in the
+canonical-v12 root authorization, acyclic migrated-target `MigrationProvenanceAnchor`,
+typed unpublished-target supersession, mutation-aware current-v13 admission, or distinct
+native/migrated output layouts. This result section and the Workboard status are record-only
+follow-up; they do not change the independently reviewed PRODUCT-000, ARCH-000, ARCH-002,
+or SLICE-001 owner bytes. Owner merge is still required before Rust implementation begins.
 
 ## Decision
 
