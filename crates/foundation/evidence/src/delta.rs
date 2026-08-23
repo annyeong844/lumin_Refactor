@@ -253,8 +253,43 @@ fn source_owner_intersects(
     evidence: &RunEvidence,
     leased_write_set: &[WriteLease],
 ) -> bool {
-    source_package_scope(source_id, evidence)
-        .is_none_or(|scope| package_scope_intersects_write_set(&scope, evidence, leased_write_set))
+    source_context_inputs_intersect(source_id, evidence, leased_write_set)
+        || source_package_scope(source_id, evidence).is_none_or(|scope| {
+            package_scope_intersects_write_set(&scope, evidence, leased_write_set)
+        })
+}
+
+fn source_context_inputs_intersect(
+    source_id: &LogicalSourceId,
+    evidence: &RunEvidence,
+    leased_write_set: &[WriteLease],
+) -> bool {
+    let Some(context) = evidence
+        .source_contexts
+        .iter()
+        .find(|context| &context.source_id == source_id)
+    else {
+        return true;
+    };
+    if std::iter::once(&context.path)
+        .chain(&context.configuration_paths)
+        .any(|path| leased_write_set.iter().any(|lease| lease.covers(path)))
+    {
+        return true;
+    }
+    let Some(package_root) = &context.package_root else {
+        return false;
+    };
+    let Some(manifest_path) = RepoPath::from_canonical_bytes(&package_root.canonical)
+        .ok()
+        .and_then(|root| root.join_portable("package.json").ok())
+        .map(|path| RepoPathProjection::from(&path))
+    else {
+        return true;
+    };
+    leased_write_set
+        .iter()
+        .any(|lease| lease.covers(&manifest_path))
 }
 
 fn source_package_scope(
@@ -399,16 +434,7 @@ fn public_surface_consumer_intersects(
     else {
         return false;
     };
-    let Some(context) = evidence
-        .source_contexts
-        .iter()
-        .find(|context| &context.source_id == importer)
-    else {
-        return true;
-    };
-    std::iter::once(&context.path)
-        .chain(&context.configuration_paths)
-        .any(|path| leased_write_set.iter().any(|lease| lease.covers(path)))
+    source_context_inputs_intersect(importer, evidence, leased_write_set)
 }
 
 fn workspace_config_intersects(
@@ -1491,6 +1517,37 @@ mod tests {
     }
 
     #[test]
+    fn alias_gap_intersects_its_importer_configuration() -> Result<(), Box<dyn std::error::Error>> {
+        let package_a = RepoPath::from_portable("packages/a")?;
+        let package_b = RepoPath::from_portable("packages/b")?;
+        let source_a = RepoPath::from_portable("packages/a/src/main.ts")?;
+        let source_b = RepoPath::from_portable("packages/b/src/main.ts")?;
+        let inherited_config = RepoPath::from_portable("tsconfig.json")?;
+        let source_a_id = LogicalSourceId::from_path(&source_a);
+        let mut context_a = source_context(&source_a, &package_a);
+        context_a.configuration_paths = vec![RepoPathProjection::from(&inherited_config)];
+        let mut evidence = evidence_with_limitations(vec![Limitation::AliasShapeUnsupported {
+            source_id: source_a_id,
+            detail: "node16 import-mode resolution requires an explicit extension".to_owned(),
+        }]);
+        evidence.source_contexts = vec![context_a, source_context(&source_b, &package_b)];
+
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&inherited_config)],)
+                .required_evidence_gap_count,
+            1,
+            "an importer alias gap lost its consulted ancestor config",
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&source_b)])
+                .required_evidence_gap_count,
+            0,
+            "an importer alias gap escaped into a disjoint package",
+        );
+        Ok(())
+    }
+
+    #[test]
     fn package_scope_uses_the_canonical_limitation_path() -> Result<(), Box<dyn std::error::Error>>
     {
         let package_a = RepoPath::from_canonical_bytes(
@@ -1565,6 +1622,7 @@ mod tests {
         let consumer_a = RepoPath::from_portable("packages/app-a/main.ts")?;
         let consumer_b = RepoPath::from_portable("packages/app-b/main.ts")?;
         let consumer_a_config = RepoPath::from_portable("packages/app-a/tsconfig.json")?;
+        let consumer_a_manifest = RepoPath::from_portable("packages/app-a/package.json")?;
         let target_a = RepoPath::from_portable("packages/lib-a/index.ts")?;
         let target_b = RepoPath::from_portable("packages/lib-b/index.ts")?;
         let importer_a = LogicalSourceId::from_path(&consumer_a);
@@ -1622,6 +1680,12 @@ mod tests {
                 .required_evidence_gap_count,
             1,
             "the originating consumer's consulted config lost its public-surface gap",
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&consumer_a_manifest)])
+                .required_evidence_gap_count,
+            1,
+            "the originating consumer's manifest lost its public-surface gap",
         );
         Ok(())
     }

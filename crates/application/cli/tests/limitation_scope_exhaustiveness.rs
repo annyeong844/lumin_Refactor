@@ -146,6 +146,77 @@ fn configured_scope_follows_affected_importers() -> Result<(), Box<dyn std::erro
     )?;
     limiting_config_itself_intersects()?;
     consulted_parent_config_intersects()?;
+    alias_gap_follows_importer_config()?;
+    Ok(())
+}
+
+fn alias_gap_follows_importer_config() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"alias-config-root","private":true,"workspaces":["packages/*"]}"#,
+    )?;
+    write(
+        root.path(),
+        "tsconfig.json",
+        r#"{"compilerOptions":{"moduleResolution":"bundler","paths":{"pkg/*":["src/*"]}}}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/affected/package.json",
+        r#"{"name":"@scope/alias-affected","private":true}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/affected/src/main.ts",
+        "import { value } from 'pkg/../../../outside'; console.log(value);\n",
+    )?;
+    write(
+        root.path(),
+        "packages/clear/package.json",
+        r#"{"name":"@scope/alias-clear","private":true}"#,
+    )?;
+    write(root.path(), "packages/clear/tsconfig.json", "{}\n")?;
+    write(
+        root.path(),
+        "packages/clear/src/main.ts",
+        "export const clear = 1;\n",
+    )?;
+
+    let configured = json_command(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-limitation-alias-config",
+            "--path",
+            "tsconfig.json",
+            "--jobs",
+            "1",
+        ],
+        4,
+    )?;
+    assert_eq!(
+        signal_count(&configured, "required-evidence-incomplete"),
+        Some(1),
+        "the importer alias gap lost its consulted ancestor config",
+    );
+
+    let clear = json_command(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-limitation-alias-config-clear",
+            "--path",
+            "packages/clear/src/main.ts",
+            "--jobs",
+            "1",
+        ],
+        0,
+    )?;
+    assert!(!has_signal(&clear, "required-evidence-incomplete"));
     Ok(())
 }
 
@@ -653,12 +724,12 @@ fn public_surface_required_evidence_follows_its_consumer() -> Result<(), Box<dyn
     write(
         root.path(),
         "packages/app/package.json",
-        r#"{"name":"@scope/app","private":true}"#,
+        r#"{"name":"@scope/app","private":true,"type":"module"}"#,
     )?;
     write(
         root.path(),
         "packages/app/tsconfig.json",
-        r#"{"compilerOptions":{"moduleResolution":"bundler"}}"#,
+        r#"{"compilerOptions":{"moduleResolution":"node16","module":"node16"}}"#,
     )?;
     write(
         root.path(),
@@ -668,12 +739,12 @@ fn public_surface_required_evidence_follows_its_consumer() -> Result<(), Box<dyn
     write(
         root.path(),
         "packages/app-b/package.json",
-        r#"{"name":"@scope/app-b","private":true}"#,
+        r#"{"name":"@scope/app-b","private":true,"type":"module"}"#,
     )?;
     write(
         root.path(),
         "packages/app-b/tsconfig.json",
-        r#"{"compilerOptions":{"moduleResolution":"bundler"}}"#,
+        r#"{"compilerOptions":{"moduleResolution":"node16","module":"node16"}}"#,
     )?;
     write(
         root.path(),
@@ -773,6 +844,24 @@ fn public_surface_required_evidence_follows_its_consumer() -> Result<(), Box<dyn
         signal_count(&consumer_config, "required-evidence-incomplete"),
         Some(1),
         "the originating consumer's config lost its public-surface limitation",
+    );
+    let consumer_manifest = json_command(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-limitation-surface-consumer-manifest",
+            "--path",
+            "packages/app/package.json",
+            "--jobs",
+            "1",
+        ],
+        4,
+    )?;
+    assert_eq!(
+        signal_count(&consumer_manifest, "required-evidence-incomplete"),
+        Some(1),
+        "the Node16 consumer manifest lost its public-surface limitation",
     );
     let clear = json_command(
         root.path(),
