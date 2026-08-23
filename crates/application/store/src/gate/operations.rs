@@ -51,6 +51,7 @@ impl OperationSession<'_> {
                     request_digest,
                     None,
                 )?;
+                validate_stored_validation_receipt(&write, &operation)?;
                 if let Some(result) = operation.result {
                     return Ok(PreWriteStart::Committed(Box::new(result)));
                 }
@@ -138,21 +139,13 @@ impl OperationSession<'_> {
                     unsealed_observation_inputs,
                     catalog_revision,
                 )?;
-                operation.status = GateOperationStatus::Committed;
                 operation.leased_write_set.clear();
-                operation.operation_liveness = None;
-                operation.result = Some(result.clone());
-                write_record(&write, GATES, gate.gate_id.as_str(), &gate)?;
-                write_record(
-                    &write,
-                    OPERATIONS,
-                    operation.operation_id.as_str(),
-                    &operation,
-                )?;
+                persist_operation_result(&write, &gate, &mut operation, &result)?;
                 guard.commit(write)?;
                 return Ok(PreWriteStart::Committed(Box::new(result)));
             }
 
+            persist_validation_receipt(&write, &operation)?;
             write_record(
                 &write,
                 OPERATIONS,
@@ -310,6 +303,7 @@ impl OperationSession<'_> {
                     request_digest,
                     Some(gate_id),
                 )?;
+                validate_stored_validation_receipt(&write, &operation)?;
                 if let Some(result) = operation.result {
                     return Ok(PostWriteStart::Committed(Box::new(result)));
                 }

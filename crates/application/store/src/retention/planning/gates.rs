@@ -1,14 +1,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_evidence::{
-    GateLifecycle, GateRecord, OperationRecord, RetentionExclusionReason, RetentionItemKind,
-    RetentionPlanExclusion, RetentionPlanItem, RunEvidence, WorktreeTransition,
+    GateLifecycle, GateRecord, GateValidationReceipt, OperationRecord, RetentionExclusionReason,
+    RetentionItemKind, RetentionPlanExclusion, RetentionPlanItem, RunEvidence, WorktreeTransition,
 };
 use redb::WriteTransaction;
 use serde::Serialize;
 
 use crate::StoreError;
-use crate::gate::{GATES, OPERATIONS, TRANSITIONS};
+use crate::gate::{GATES, OPERATIONS, TRANSITIONS, VALIDATION_RECEIPTS};
 use crate::namespace::NamespaceGuard;
 
 use super::{PlanContents, read_raw_records, retention_item_from_bytes};
@@ -20,6 +20,12 @@ pub(super) fn collect(
 ) -> Result<PlanContents, StoreError> {
     let gates = read_raw_records::<GateRecord>(write, GATES, "gates")?;
     let operations = read_raw_records::<OperationRecord>(write, OPERATIONS, "operations")?;
+    let validation_receipts = read_raw_records::<GateValidationReceipt>(
+        write,
+        VALIDATION_RECEIPTS,
+        "gate-validation-receipts",
+    )?;
+    validate_validation_receipts(&operations, &validation_receipts)?;
     let transitions =
         read_raw_records::<WorktreeTransition>(write, TRANSITIONS, "worktree-transitions")?;
     let protected = protected_terminal_gates(&gates, &transitions)?;
@@ -65,7 +71,14 @@ pub(super) fn collect(
             });
             continue;
         }
-        collect_gate_items(gate, gate_bytes, &operations, &transitions, &mut items)?;
+        collect_gate_items(
+            gate,
+            gate_bytes,
+            &operations,
+            &validation_receipts,
+            &transitions,
+            &mut items,
+        )?;
     }
 
     items.sort();
@@ -117,6 +130,7 @@ fn collect_gate_items(
     gate: &GateRecord,
     gate_bytes: &[u8],
     operations: &BTreeMap<String, (OperationRecord, Vec<u8>)>,
+    validation_receipts: &BTreeMap<String, (GateValidationReceipt, Vec<u8>)>,
     transitions: &BTreeMap<String, (WorktreeTransition, Vec<u8>)>,
     items: &mut Vec<RetentionPlanItem>,
 ) -> Result<(), StoreError> {
@@ -153,12 +167,18 @@ fn collect_gate_items(
     }
     for (key, (operation, bytes)) in operations {
         if operation.gate_id == gate.gate_id {
-            items.push(retention_item_from_bytes(
-                RetentionItemKind::Operation,
-                sequence,
-                key.clone(),
-                bytes,
-            ));
+            let receipt_bytes = validation_receipts
+                .get(key)
+                .map(|(_, receipt_bytes)| receipt_bytes.as_slice());
+            let (identity_sha256, byte_count) =
+                crate::gate::operation_retention_identity(bytes, receipt_bytes);
+            items.push(RetentionPlanItem {
+                kind: RetentionItemKind::Operation,
+                owning_sequence: sequence,
+                record_id: key.clone(),
+                identity_sha256,
+                byte_count,
+            });
         }
     }
     for (key, (transition, bytes)) in transitions {
@@ -170,6 +190,31 @@ fn collect_gate_items(
                 bytes,
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_validation_receipts(
+    operations: &BTreeMap<String, (OperationRecord, Vec<u8>)>,
+    receipts: &BTreeMap<String, (GateValidationReceipt, Vec<u8>)>,
+) -> Result<(), StoreError> {
+    for (key, (operation, _)) in operations {
+        let expected = crate::gate::validation_receipt_for_operation(operation)?;
+        let observed = receipts.get(key).map(|(receipt, _)| receipt);
+        match (expected.as_ref(), observed) {
+            (Some(expected), Some(observed)) if expected == observed => {}
+            (None, None) => {}
+            _ => {
+                return Err(StoreError::Integrity(format!(
+                    "operation {key} disagrees with its store-owned validation receipt"
+                )));
+            }
+        }
+    }
+    if let Some(orphan) = receipts.keys().find(|key| !operations.contains_key(*key)) {
+        return Err(StoreError::Integrity(format!(
+            "gate validation receipt {orphan} lost its owning operation"
+        )));
     }
     Ok(())
 }

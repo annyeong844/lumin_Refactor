@@ -8,7 +8,10 @@ use lumin_model::{OperationId, PhysicalFileIdentity, digest_hex};
 use crate::{RepositoryStore, StoreError, StoreGeneration, io_error, namespace, nonce_hex};
 
 use super::records::{read_records, write_record};
-use super::{OPERATIONS, validate_reservation_binding_set};
+use super::{
+    OPERATIONS, remove_validation_receipt, validate_reservation_binding_set,
+    validate_stored_validation_receipt,
+};
 
 pub struct OperationSession<'store> {
     pub(super) store: &'store RepositoryStore,
@@ -60,6 +63,7 @@ impl RepositoryStore {
                     continue;
                 }
                 validate_reservation_binding_set(&operation)?;
+                validate_stored_validation_receipt(&write, &operation)?;
                 if !operation_lock_is_interrupted(
                     guard,
                     &operation,
@@ -77,6 +81,7 @@ impl RepositoryStore {
                 operation.semantic_read_reservations.clear();
                 operation.semantic_read_reservation_bindings.clear();
                 operation.operation_liveness = None;
+                remove_validation_receipt(&write, &operation)?;
                 write_record(
                     &write,
                     OPERATIONS,

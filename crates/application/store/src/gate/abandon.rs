@@ -23,6 +23,7 @@ impl OperationSession<'_> {
                 target_revision,
                 reason,
             )?;
+            validate_stored_validation_receipt(&write, &operation)?;
             if let Some(result) = operation.result.clone() {
                 return Ok(result);
             }

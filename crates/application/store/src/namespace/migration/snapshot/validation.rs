@@ -5,9 +5,10 @@ mod retention;
 use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_evidence::{
-    AnalysisSnapshot, GATE_OPERATION_SCHEMA_VERSION, GATE_RECORD_SCHEMA_VERSION, GateBaseline,
-    GateBaselineObservationInput, GateCloseObservationInput, GateDecision, GateLifecycle,
-    GateOperationKind, GateOperationStatus, GateRecord, GateRevision, GateSignal, OperationRecord,
+    AnalysisSnapshot, GATE_OPERATION_SCHEMA_VERSION, GATE_RECORD_SCHEMA_VERSION,
+    GATE_VALIDATION_RECEIPT_SCHEMA_VERSION, GateBaseline, GateBaselineObservationInput,
+    GateCloseObservationInput, GateDecision, GateLifecycle, GateOperationKind, GateOperationStatus,
+    GateRecord, GateRevision, GateSignal, GateValidationReceipt, OperationRecord,
     PhysicalAliasClosureRecord, PreWriteAdmissionConflictOwner, PreWriteAdmissionEvidence,
     RUN_EVIDENCE_SCHEMA_VERSION, SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, WorktreeTransition,
     WriteLeaseKind, apply_worktree_transition_for_domain, derive_gate_baseline_observation_id,
@@ -40,6 +41,7 @@ pub(super) fn validate_referential_closure(
     snapshot: &LogicalStoreSnapshot,
 ) -> Result<(), StoreError> {
     let (transitions, transition_sequences) = read_transitions(snapshot)?;
+    let validation_receipts = read_validation_receipts(snapshot)?;
     let operations = read_operations(snapshot)?;
     let gates = read_gates(snapshot, &operations, &transitions, &transition_sequences)?;
     validate_pre_write_admissions(snapshot, &operations, &gates)?;
@@ -50,6 +52,7 @@ pub(super) fn validate_referential_closure(
     validate_active_gate_catalog(snapshot, &gates, &operations)?;
     validate_operation_gate_refs(&operations, &gates)?;
     validate_transition_gate_refs(&transitions, &gates)?;
+    validate_validation_receipts(snapshot, &operations, &validation_receipts)?;
     crate::publication::validate_attempt_leases(&snapshot.attempt_leases)?;
     validate_run_catalog(snapshot)?;
     cache::validate_cache(snapshot, &operations)?;
@@ -124,6 +127,29 @@ fn read_transitions(
     Ok((transitions, sequences))
 }
 
+fn read_validation_receipts(
+    snapshot: &LogicalStoreSnapshot,
+) -> Result<BTreeMap<&str, GateValidationReceipt>, StoreError> {
+    let mut receipts = BTreeMap::new();
+    for (key, bytes) in &snapshot.validation_receipts {
+        let receipt =
+            parse_record::<GateValidationReceipt>("gate-validation-receipts", key, bytes)?;
+        if receipt.schema_version != GATE_VALIDATION_RECEIPT_SCHEMA_VERSION {
+            return Err(StoreError::IncompatibleStateSchema(format!(
+                "gate validation receipt {key} uses unsupported schema {}; expected {GATE_VALIDATION_RECEIPT_SCHEMA_VERSION}",
+                receipt.schema_version
+            )));
+        }
+        if receipt.operation_id.as_str() != key {
+            return Err(StoreError::Integrity(format!(
+                "gate validation receipt key {key} disagrees with its operation"
+            )));
+        }
+        receipts.insert(key.as_str(), receipt);
+    }
+    Ok(receipts)
+}
+
 fn read_operations(
     snapshot: &LogicalStoreSnapshot,
 ) -> Result<BTreeMap<&str, OperationRecord>, StoreError> {
@@ -145,6 +171,34 @@ fn read_operations(
         operations.insert(key.as_str(), operation);
     }
     Ok(operations)
+}
+
+fn validate_validation_receipts(
+    snapshot: &LogicalStoreSnapshot,
+    operations: &BTreeMap<&str, OperationRecord>,
+    receipts: &BTreeMap<&str, GateValidationReceipt>,
+) -> Result<(), StoreError> {
+    for (key, operation) in operations {
+        let expected = crate::gate::validation_receipt_for_operation(operation)?;
+        match (expected.as_ref(), receipts.get(key)) {
+            (Some(expected), Some(observed)) if expected == observed => {}
+            (None, None) => {}
+            _ => {
+                return Err(StoreError::Integrity(format!(
+                    "operation {key} disagrees with its store-owned validation receipt"
+                )));
+            }
+        }
+    }
+    if let Some(orphan) = receipts
+        .keys()
+        .find(|key| !snapshot.operations.contains_key(**key))
+    {
+        return Err(StoreError::Integrity(format!(
+            "gate validation receipt {orphan} lost its owning operation"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_baseline_transition_boundaries(
@@ -2069,6 +2123,22 @@ fn validate_operation_gate_refs(
                     operation.operation_id.as_str()
                 )));
             }
+            if operation.kind == GateOperationKind::PostWrite
+                && operation.status == GateOperationStatus::Pending
+            {
+                let baseline = gate.baseline.as_ref().ok_or_else(|| {
+                    StoreError::Integrity(format!(
+                        "pending post-write operation {} targets a gate without a sealed baseline",
+                        operation.operation_id.as_str()
+                    ))
+                })?;
+                if operation.leased_write_set != baseline.leased_write_set {
+                    return Err(StoreError::Integrity(format!(
+                        "pending post-write operation {} lease projection disagrees with its active gate",
+                        operation.operation_id.as_str()
+                    )));
+                }
+            }
         }
         if let Some(result) = &operation.result {
             let gate = gates.get(operation.gate_id.as_str()).ok_or_else(|| {
@@ -2259,6 +2329,28 @@ fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreErr
             "non-administrative operation {} retained a reason",
             operation.operation_id.as_str()
         )));
+    }
+    if operation.kind == GateOperationKind::PreWrite && operation.target_revision != 0 {
+        return Err(StoreError::Integrity(format!(
+            "pre-write operation {} retained a nonzero target revision",
+            operation.operation_id.as_str()
+        )));
+    }
+    if operation.kind == GateOperationKind::GateAbandon {
+        let reason = operation.reason.as_deref().ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "administrative abandon operation {} omitted its reason",
+                operation.operation_id.as_str()
+            ))
+        })?;
+        if operation.request_digest
+            != gate_abandon_request_digest(&operation.gate_id, operation.target_revision, reason)
+        {
+            return Err(StoreError::Integrity(format!(
+                "administrative abandon operation {} disagrees with its authenticated request",
+                operation.operation_id.as_str()
+            )));
+        }
     }
     if operation.kind == GateOperationKind::PreWrite {
         let options = operation.analysis_options.as_ref().ok_or_else(|| {

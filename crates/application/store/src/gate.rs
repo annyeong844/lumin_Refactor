@@ -16,6 +16,7 @@ mod abandon;
 mod coordination;
 mod liveness;
 mod operations;
+mod receipts;
 pub(crate) mod records;
 #[cfg(test)]
 mod tests;
@@ -26,6 +27,11 @@ use coordination::{
 };
 pub use liveness::OperationSession;
 pub(crate) use liveness::validate_migration_operation_liveness;
+pub(crate) use receipts::{operation_retention_identity, validation_receipt_for_operation};
+use receipts::{
+    persist_validation_receipt, remove_validation_receipt, validate_loaded_validation_receipt,
+    validate_stored_validation_receipt,
+};
 use records::{
     current_active_gate_catalog, current_transition_sequence, load_record, next_gate_id,
     next_transition_sequence, read_record, read_records, write_record,
@@ -33,6 +39,8 @@ use records::{
 
 pub(crate) const GATES: TableDefinition<&str, &[u8]> = TableDefinition::new("gates");
 pub(crate) const OPERATIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("operations");
+pub(crate) const VALIDATION_RECEIPTS: TableDefinition<&str, &[u8]> =
+    TableDefinition::new("gate-validation-receipts");
 pub(crate) const TRANSITIONS: TableDefinition<&str, &[u8]> =
     TableDefinition::new("worktree-transitions");
 
@@ -197,6 +205,7 @@ impl RepositoryStore {
                 request_digest,
                 None,
             )?;
+            validate_loaded_validation_receipt(&database, &operation)?;
             Ok(operation.result)
         })
     }
@@ -241,8 +250,13 @@ impl RepositoryStore {
         self.recover_interrupted_operations(None)?;
         self.with_shared_lock(|guard| {
             let database = guard.open_database()?;
-            load_record::<OperationRecord>(&database, OPERATIONS, operation_id.as_str())?
-                .ok_or_else(|| StoreError::OperationNotFound(operation_id.as_str().to_owned()))
+            let operation =
+                load_record::<OperationRecord>(&database, OPERATIONS, operation_id.as_str())?
+                    .ok_or_else(|| {
+                        StoreError::OperationNotFound(operation_id.as_str().to_owned())
+                    })?;
+            validate_loaded_validation_receipt(&database, &operation)?;
+            Ok(operation)
         })
     }
 
@@ -427,6 +441,7 @@ fn load_operation_for_finish(
             ))
         })?;
     validate_operation(&operation, kind, request_digest, gate_id)?;
+    validate_stored_validation_receipt(write, &operation)?;
     Ok(operation)
 }
 
@@ -874,6 +889,7 @@ fn persist_operation_result(
     operation.semantic_read_reservation_bindings.clear();
     operation.operation_liveness = None;
     operation.result = Some(result.clone());
+    persist_validation_receipt(write, operation)?;
     write_record(write, GATES, gate.gate_id.as_str(), gate)?;
     write_record(
         write,

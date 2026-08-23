@@ -1504,6 +1504,43 @@ pub struct PostWriteFinalValidation {
     pub evidence: Option<PostWriteFinalValidationEvidence>,
 }
 
+pub const GATE_VALIDATION_RECEIPT_SCHEMA_VERSION: &str = "lumin-gate-validation-receipt.v1";
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+pub enum GateValidationReceiptPayload {
+    PreWriteInspection {
+        declared_path_inspection: Vec<PreWriteDeclaredPathInspection>,
+        leased_write_set: Vec<WriteLease>,
+    },
+    PreWriteAdmission {
+        evidence: PreWriteAdmissionEvidence,
+    },
+    PreWriteFinal {
+        validation: PreWriteFinalValidation,
+    },
+    PostWriteFinal {
+        validation: PostWriteFinalValidation,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GateValidationReceipt {
+    pub schema_version: String,
+    pub operation_id: OperationId,
+    pub gate_id: GateId,
+    pub request_digest: String,
+    pub target_revision: u64,
+    #[serde(default)]
+    pub pre_write_declared_path_inspection: Vec<PreWriteDeclaredPathInspection>,
+    pub payload: GateValidationReceiptPayload,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OperationRecord {

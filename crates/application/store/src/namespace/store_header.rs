@@ -10,7 +10,7 @@ use super::{NamespaceBinding, NamespaceGuard, entry_exists, require_state_volume
 
 const STORE_HEADER: TableDefinition<&str, &[u8]> = TableDefinition::new("store-header");
 const STORE_HEADER_KEY: &str = "namespace";
-pub(super) const STORE_HEADER_SCHEMA: &str = "lumin-lifecycle-store-header.v6";
+pub(super) const STORE_HEADER_SCHEMA: &str = "lumin-lifecycle-store-header.v7";
 pub(super) const STORE_HEADER_TABLE_NAME: &str = "store-header";
 
 #[derive(Deserialize, Serialize)]
@@ -175,7 +175,7 @@ mod tests {
             "repository marker",
         )?;
         let prior = serde_json::to_vec(&LifecycleStoreHeader {
-            schema_version: "lumin-lifecycle-store-header.v5".to_owned(),
+            schema_version: "lumin-lifecycle-store-header.v6".to_owned(),
             binding: marker.binding.clone(),
             generation: StoreGeneration::INITIAL,
         })?;

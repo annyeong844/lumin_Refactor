@@ -20,7 +20,8 @@ use lumin_model::{
 use redb::{Database, ReadableTable};
 
 use crate::gate::{
-    GATES, OPERATIONS, TRANSITIONS, records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY, transition_key,
+    GATES, OPERATIONS, TRANSITIONS, VALIDATION_RECEIPTS, records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY,
+    transition_key,
 };
 use crate::retention::RETENTION_OPERATIONS;
 use crate::{
@@ -35,6 +36,8 @@ use super::{
     open_active_gate_for, open_active_gate_for_with_protected_inputs, options, path,
     pre_write_digest, rejected_test_observation, semantic_input,
 };
+
+mod receipts;
 
 fn reconstructed_baseline_binding(
     gate: &GateRecord,
@@ -1054,7 +1057,7 @@ fn migration_reconstructs_new_file_parent_and_prefix_bindings()
             table.insert(gate_id.as_str(), changed.as_slice())?;
             (binding, lease)
         };
-        {
+        let receipt = {
             let mut table = write.open_table(OPERATIONS)?;
             let bytes = table
                 .get(operation_id.as_str())?
@@ -1075,7 +1078,15 @@ fn migration_reconstructs_new_file_parent_and_prefix_bindings()
                 .ok_or("new-file-prefix result is missing")?;
             result.leased_write_set = vec![lease];
             result.observation_binding = Some(binding);
+            let receipt = crate::gate::validation_receipt_for_operation(&operation)?
+                .ok_or("new-file-prefix operation omitted its validation receipt")?;
             let changed = serde_json::to_vec(&operation)?;
+            table.insert(operation_id.as_str(), changed.as_slice())?;
+            receipt
+        };
+        {
+            let mut table = write.open_table(VALIDATION_RECEIPTS)?;
+            let changed = serde_json::to_vec(&receipt)?;
             table.insert(operation_id.as_str(), changed.as_slice())?;
         }
         write.commit()?;
@@ -3339,7 +3350,7 @@ fn migration_reopens_pending_pre_write_physical_reservations()
 
         let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
         let write = database.begin_write()?;
-        {
+        let receipt = {
             let mut table = write.open_table(OPERATIONS)?;
             let bytes = table
                 .get(operation_id.as_str())?
@@ -3375,7 +3386,15 @@ fn migration_reopens_pending_pre_write_physical_reservations()
                 .first_mut()
                 .ok_or("pending physical operation omitted its inspection evidence")?
                 .lease = Some(changed_lease);
+            let receipt = crate::gate::validation_receipt_for_operation(&operation)?
+                .ok_or("pending physical operation omitted its validation receipt")?;
             let changed = serde_json::to_vec(&operation)?;
+            table.insert(operation_id.as_str(), changed.as_slice())?;
+            receipt
+        };
+        {
+            let mut table = write.open_table(VALIDATION_RECEIPTS)?;
+            let changed = serde_json::to_vec(&receipt)?;
             table.insert(operation_id.as_str(), changed.as_slice())?;
         }
         write.commit()?;

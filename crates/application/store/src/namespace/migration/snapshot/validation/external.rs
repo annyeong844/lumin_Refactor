@@ -3,8 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use lumin_evidence::{
-    GateLifecycle, GateOperationKind, GateOperationStatus, GateRecord, OperationRecord, WriteLease,
-    WriteLeaseKind,
+    GateLifecycle, GateOperationKind, GateOperationStatus, GateRecord, OperationRecord,
+    SemanticReadReservationBinding, WriteLease, WriteLeaseKind,
 };
 use lumin_model::decode_native_path_component;
 use serde::de::DeserializeOwned;
@@ -29,6 +29,7 @@ pub(super) fn validate_external_references(
     )?;
     validate_pending_operation_liveness(snapshot, guard)?;
     validate_pending_pre_write_leases(snapshot, guard)?;
+    validate_pending_semantic_read_bindings(snapshot, guard)?;
     validate_active_gate_write_prefixes(snapshot, guard)?;
     validate_latest_attempt(snapshot, guard)?;
     let moved_runs = validate_retention_payloads(snapshot, guard)?;
@@ -36,6 +37,142 @@ pub(super) fn validate_external_references(
         validate_run(key, bytes, guard, moved_runs.get(key))?;
     }
     guard.validate_bound_entries()
+}
+
+fn validate_pending_semantic_read_bindings(
+    snapshot: &LogicalStoreSnapshot,
+    guard: &NamespaceGuard,
+) -> Result<(), StoreError> {
+    for (key, bytes) in &snapshot.operations {
+        let operation = parse_record::<OperationRecord>("operations", key, bytes)?;
+        if operation.status != GateOperationStatus::Pending {
+            continue;
+        }
+        for binding in &operation.semantic_read_reservation_bindings {
+            validate_pending_semantic_read_binding(key, binding, guard)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_pending_semantic_read_binding(
+    operation_key: &str,
+    binding: &SemanticReadReservationBinding,
+    guard: &NamespaceGuard,
+) -> Result<(), StoreError> {
+    let label = format!(
+        "pending operation {operation_key} semantic-read reservation {}",
+        binding.path.display
+    );
+    let native = worktree_path(guard, &binding.path, &label)?;
+    match (&binding.physical_identity, &binding.absence_parent) {
+        (Some(expected), None) => {
+            let held = HeldResolvedWorktreeEntry::open(guard, &native, &label)?;
+            if held.entry.identity() != expected {
+                return Err(StoreError::Integrity(format!(
+                    "{label} physical identity changed"
+                )));
+            }
+            held.validate(&native, &label)
+        }
+        (None, Some(parent)) => {
+            let parent_native = worktree_path(guard, &parent.path, &label)?;
+            let held_parent = HeldResolvedWorktreeEntry::open(guard, &parent_native, &label)?;
+            if held_parent.entry.identity() != &parent.physical_identity {
+                return Err(StoreError::Integrity(format!(
+                    "{label} absence-parent identity changed"
+                )));
+            }
+            validate_absent_worktree_path(&native, &label)?;
+            held_parent.validate(&parent_native, &label)?;
+            validate_absent_worktree_path(&native, &label)
+        }
+        (None, None) => validate_broken_redirect(guard, &native, &label),
+        (Some(_), Some(_)) => Err(StoreError::Integrity(format!(
+            "{label} carries both direct and absence identities"
+        ))),
+    }
+}
+
+struct HeldResolvedWorktreeEntry {
+    canonical_path: PathBuf,
+    kind: EntryKind,
+    entry: HeldEntry,
+}
+
+impl HeldResolvedWorktreeEntry {
+    fn open(guard: &NamespaceGuard, path: &Path, label: &str) -> Result<Self, StoreError> {
+        let canonical_root = fs::canonicalize(&guard.state.repository.path)
+            .map_err(|error| StoreError::Io(error.to_string()))?;
+        let canonical_path =
+            fs::canonicalize(path).map_err(|error| StoreError::Io(error.to_string()))?;
+        if !canonical_path.starts_with(&canonical_root) {
+            return Err(StoreError::Integrity(format!(
+                "{label} resolves outside the bound repository root"
+            )));
+        }
+        let metadata =
+            fs::metadata(&canonical_path).map_err(|error| StoreError::Io(error.to_string()))?;
+        let kind = if metadata.is_dir() {
+            EntryKind::Directory
+        } else if metadata.is_file() {
+            EntryKind::RegularFile
+        } else {
+            return Err(StoreError::Integrity(format!(
+                "{label} has an unsupported physical entry kind"
+            )));
+        };
+        let entry = HeldEntry::open(&canonical_path, kind, EntryAccess::ReadOnly, false, label)?;
+        Ok(Self {
+            canonical_path,
+            kind,
+            entry,
+        })
+    }
+
+    fn validate(&self, path: &Path, label: &str) -> Result<(), StoreError> {
+        self.validate_target(path, label)?;
+        self.entry.validate_path(
+            &self.canonical_path,
+            self.kind,
+            EntryAccess::ReadOnly,
+            false,
+            label,
+        )?;
+        self.validate_target(path, label)
+    }
+
+    fn validate_target(&self, path: &Path, label: &str) -> Result<(), StoreError> {
+        let current = fs::canonicalize(path).map_err(|error| StoreError::Io(error.to_string()))?;
+        if current != self.canonical_path {
+            return Err(StoreError::Integrity(format!(
+                "{label} physical identity changed"
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn validate_broken_redirect(
+    guard: &NamespaceGuard,
+    path: &Path,
+    label: &str,
+) -> Result<(), StoreError> {
+    let parent = path.parent().ok_or_else(|| {
+        StoreError::Integrity(format!("{label} unresolved redirect omitted its parent"))
+    })?;
+    validate_contained_worktree_path(guard, parent, label)?;
+    let validate = || match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() && fs::canonicalize(path).is_err() => {
+            Ok(())
+        }
+        Ok(_) => Err(StoreError::Integrity(format!(
+            "{label} no longer names an unresolved redirect"
+        ))),
+        Err(error) => Err(StoreError::Io(error.to_string())),
+    };
+    validate()?;
+    validate()
 }
 
 fn validate_pending_pre_write_leases(
@@ -132,7 +269,14 @@ fn validate_held_prefixes(
 
 fn validate_absent_worktree_path(path: &Path, label: &str) -> Result<(), StoreError> {
     match fs::symlink_metadata(path) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Ok(())
+        }
         Ok(_) => Err(StoreError::Integrity(format!(
             "{label} no longer names an absent path"
         ))),

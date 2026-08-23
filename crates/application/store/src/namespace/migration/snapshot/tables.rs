@@ -6,7 +6,7 @@ use redb::{
 };
 
 use crate::cache::{CACHE_CLEANUP_OPERATIONS, CACHE_EVICTION_AUTHORIZATIONS};
-use crate::gate::{GATES, OPERATIONS, TRANSITIONS};
+use crate::gate::{GATES, OPERATIONS, TRANSITIONS, VALIDATION_RECEIPTS};
 use crate::retention::{RETENTION_OPERATIONS, RETENTION_PLANS, RETENTION_TOMBSTONES, RUN_PINS};
 use crate::{ATTEMPT_LEASES, POINTERS, RUN_CATALOG, SEQUENCES, StoreError, backend_error};
 
@@ -14,11 +14,12 @@ use super::super::super::store_header::STORE_HEADER_TABLE_NAME;
 use super::LogicalStoreSnapshot;
 use super::validation::validate_referential_closure;
 
-const KNOWN_TABLES: [&str; 14] = [
+const KNOWN_TABLES: [&str; 15] = [
     "attempt-leases",
     "cache-cleanup-operations",
     "cache-eviction-authorizations",
     "gates",
+    "gate-validation-receipts",
     "operations",
     "pointers",
     "run-catalog",
@@ -40,6 +41,7 @@ pub(super) fn read_snapshot(read: &ReadTransaction) -> Result<LogicalStoreSnapsh
         pointers: read_bytes_table(read, POINTERS)?,
         gates: read_bytes_table(read, GATES)?,
         operations: read_bytes_table(read, OPERATIONS)?,
+        validation_receipts: read_bytes_table(read, VALIDATION_RECEIPTS)?,
         transitions: read_bytes_table(read, TRANSITIONS)?,
         retention_plans: read_bytes_table(read, RETENTION_PLANS)?,
         retention_operations: read_bytes_table(read, RETENTION_OPERATIONS)?,
@@ -63,6 +65,7 @@ pub(super) fn write_snapshot(
     write_bytes_table(&write, POINTERS, &snapshot.pointers)?;
     write_bytes_table(&write, GATES, &snapshot.gates)?;
     write_bytes_table(&write, OPERATIONS, &snapshot.operations)?;
+    write_bytes_table(&write, VALIDATION_RECEIPTS, &snapshot.validation_receipts)?;
     write_bytes_table(&write, TRANSITIONS, &snapshot.transitions)?;
     write_bytes_table(&write, RETENTION_PLANS, &snapshot.retention_plans)?;
     write_bytes_table(&write, RETENTION_OPERATIONS, &snapshot.retention_operations)?;

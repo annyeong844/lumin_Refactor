@@ -21,6 +21,7 @@ pub(super) struct LogicalStoreSnapshot {
     pointers: BTreeMap<String, Vec<u8>>,
     gates: BTreeMap<String, Vec<u8>>,
     operations: BTreeMap<String, Vec<u8>>,
+    validation_receipts: BTreeMap<String, Vec<u8>>,
     transitions: BTreeMap<String, Vec<u8>>,
     retention_plans: BTreeMap<String, Vec<u8>>,
     retention_operations: BTreeMap<String, Vec<u8>>,
