@@ -552,7 +552,7 @@ fn abandon_gate(
             "profile identity comparison complete",
         ],
     )?;
-    assert_status(&abandoned, 0);
+    assert_status(&abandoned, 3);
     Ok(())
 }
 

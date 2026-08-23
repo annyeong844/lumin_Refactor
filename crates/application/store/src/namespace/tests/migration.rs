@@ -3,12 +3,26 @@ mod integrity;
 use std::fs;
 
 use lumin_evidence::{
-    CapabilityRecord, DEAD_CODE_CAPABILITY_ID, GateAnalysisOptions, GateBaseline,
-    RepoPathProjection, RunEvidence, WriteLease, WriteLeaseKind, seal_analysis_snapshot,
+    ActualWriteSet, CapabilityRecord, DEAD_CODE_CAPABILITY_ID, DeclaredPathUnsupportedReason,
+    GateAnalysisOptions, GateBaselineObservationInput, GateCloseObservationInput,
+    GateObservationBinding, GateSignal, PathPrefixIdentity, PostWriteFinalValidationEvidence,
+    PreWriteDeclaredPathInspection, PreWriteFinalValidationEvidence, RepoPathProjection,
+    RunEvidence, SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, SemanticInputRecord,
+    SemanticInputState, SemanticReadReservationBinding, UnsealedGateObservationInputs, WriteLease,
+    WriteLeaseKind, apply_worktree_transition, derive_gate_baseline_observation_id,
+    derive_gate_close_observation_id, derive_protected_semantic_inputs,
+    derive_unsealed_gate_observation_binding, gate_policy, post_write_request_digest,
+    pre_write_request_digest, seal_analysis_snapshot,
 };
-use lumin_model::{CapabilityState, GateId, OperationId, RepoPath};
+use lumin_model::{
+    CapabilityState, GateId, ObservationBinding, OperationId, RepoPath, SealedGateObservation,
+    UnsealedObservationReason,
+};
 
-use crate::{PreWriteFinish, PreWriteStart, RepositoryStore, StoreError, StoreGeneration};
+use crate::{
+    GateBaselineDraft, ObservationFinalization, PostWriteFinish, PostWriteStart, PreWriteFinish,
+    PreWriteStart, RepositoryStore, SemanticReadReservation, StoreError, StoreGeneration,
+};
 
 use super::super::migration::{MigrationCrashPoint, migrate_with_hook};
 use super::open_store;
@@ -24,10 +38,117 @@ const CRASH_POINTS: [MigrationCrashPoint; 8] = [
     MigrationCrashPoint::IntentRemoved,
 ];
 
+fn rejected_test_observation(_signals: &[GateSignal]) -> GateObservationBinding {
+    ObservationBinding::Unsealed {
+        reason: UnsealedObservationReason::AdmissionConflict,
+        attempted_domain: Vec::new(),
+        last_complete_read_set: Vec::new(),
+        conflicting_or_unbounded_inputs: Vec::new(),
+    }
+}
+
+fn clean_pre_write_final_validation_evidence(
+    semantic_inputs: Vec<SemanticInputRecord>,
+    leased_write_set: Vec<WriteLease>,
+) -> PreWriteFinalValidationEvidence {
+    PreWriteFinalValidationEvidence {
+        expected_semantic_read_bindings: Vec::new(),
+        observed_semantic_read_bindings: Vec::new(),
+        observed_semantic_inputs: semantic_inputs,
+        observed_leased_write_set: leased_write_set,
+        observed_alias_closures: Vec::new(),
+        write_domain_drift_paths: Vec::new(),
+        semantic_input_validation_drift_paths: Vec::new(),
+    }
+}
+
+fn clean_post_write_final_validation_evidence(
+    semantic_inputs: Vec<SemanticInputRecord>,
+    leased_write_set: Vec<WriteLease>,
+    alias_closures: Vec<lumin_evidence::PhysicalAliasClosureRecord>,
+) -> PostWriteFinalValidationEvidence {
+    PostWriteFinalValidationEvidence {
+        expected_leased_write_set: leased_write_set.clone(),
+        expected_alias_closures: alias_closures.clone(),
+        observation: PreWriteFinalValidationEvidence {
+            expected_semantic_read_bindings: Vec::new(),
+            observed_semantic_read_bindings: Vec::new(),
+            observed_semantic_inputs: semantic_inputs,
+            observed_leased_write_set: leased_write_set,
+            observed_alias_closures: alias_closures,
+            write_domain_drift_paths: Vec::new(),
+            semantic_input_validation_drift_paths: Vec::new(),
+        },
+    }
+}
+
+#[test]
+fn migration_preserves_an_admission_conflict_without_final_validation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let owner_gate_id =
+        open_active_gate_for(&store, "op-admission-conflict-owner", "src/conflict.ts")?;
+
+    let operation_id = OperationId::from_string("op-admission-conflict-rejected".to_owned());
+    let session = store.begin_operation(&operation_id)?;
+    let source = path("src/conflict.ts")?;
+    let source_lease = lease(source.clone());
+    let analysis_options = options();
+    let request_digest = pre_write_digest(std::slice::from_ref(&source), &analysis_options);
+    let unsealed_inputs =
+        UnsealedGateObservationInputs::new(vec![source_lease.clone()], Vec::new(), Vec::new());
+    let source_for_binding = source.clone();
+    let rejected = match session.reserve_pre_write(
+        &request_digest,
+        std::slice::from_ref(&source),
+        std::slice::from_ref(&source_lease),
+        &analysis_options,
+        |signals| {
+            derive_unsealed_gate_observation_binding(
+                std::slice::from_ref(&source_for_binding),
+                &unsealed_inputs,
+                signals,
+            )
+        },
+    )? {
+        PreWriteStart::Committed(result) => *result,
+        PreWriteStart::Analyze { .. } => {
+            return Err("conflicting pre-write unexpectedly reached analysis".into());
+        }
+    };
+    assert!(matches!(
+        rejected.signals.as_slice(),
+        [GateSignal::WriteConflict { .. }]
+    ));
+    let persisted = store.load_operation(&operation_id)?;
+    let admission = persisted
+        .pre_write_admission_evidence
+        .as_ref()
+        .ok_or("admission rejection omitted its operation-owned evidence")?;
+    assert!(!admission.conflict_owners.is_empty());
+    assert!(persisted.pre_write_final_validation.is_none());
+    close_active_gate_for_migration(&store, &owner_gate_id)?;
+    drop(store);
+
+    let store = open_store(root.path())?;
+    store.migrate_lifecycle_store()?;
+    assert_eq!(
+        store.replay_pre_write_result(&operation_id, &request_digest)?,
+        Some(rejected)
+    );
+    Ok(())
+}
+
 #[test]
 fn migration_preserves_run_gate_and_pending_operation_records()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::write(
+        root.path().join("src/pending.ts"),
+        b"export const pending = true;\n",
+    )?;
     let store = open_store(root.path())?;
     let evidence = evidence();
     let mut attempt = store.begin_attempt()?;
@@ -37,13 +158,18 @@ fn migration_preserves_run_gate_and_pending_operation_records()
 
     let operation_id = OperationId::from_string("op-migrate-pending".to_owned());
     let session = store.begin_operation(&operation_id)?;
-    let source = path("src/pending.ts")?;
+    let source_path = RepoPath::from_portable("src/pending.ts")?;
+    let source = RepoPathProjection::from(&source_path);
+    let source_lease = observed_lease(root.path(), &source_path)?;
+    let analysis_options = options();
+    let request_digest = pre_write_digest(std::slice::from_ref(&source), &analysis_options);
     assert!(matches!(
         session.reserve_pre_write(
-            "migrate-pending-digest",
+            &request_digest,
             std::slice::from_ref(&source),
-            &[lease(source.clone())],
-            &options(),
+            std::slice::from_ref(&source_lease),
+            &analysis_options,
+            rejected_test_observation,
         )?,
         PreWriteStart::Analyze { .. }
     ));
@@ -60,10 +186,54 @@ fn migration_preserves_run_gate_and_pending_operation_records()
     assert_eq!(store.load_gate(&gate_id)?, gate_before);
     assert_eq!(store.load_operation(&operation_id)?, before);
     assert!(matches!(
-        session.reserve_pre_write("migrate-pending-digest", &[], &[], &options()),
+        session.reserve_pre_write(
+            &request_digest,
+            &[],
+            &[],
+            &analysis_options,
+            rejected_test_observation,
+        ),
         Err(StoreError::StoreGenerationChanged { .. })
     ));
     assert_migration_paths_absent(root.path())?;
+    Ok(())
+}
+
+#[test]
+fn migration_preserves_a_pending_rejected_path_inspection() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("op-migrate-pending-rejection".to_owned());
+    let session = store.begin_operation(&operation_id)?;
+    let path = RepoPathProjection::from(&RepoPath::from_portable("notes/new.txt")?);
+    let rejection = GateSignal::DeclaredPathUnsupported {
+        path: path.clone(),
+        reason: DeclaredPathUnsupportedReason::NotAnalyzedSource,
+    };
+    let inspection = PreWriteDeclaredPathInspection {
+        path: path.clone(),
+        lease: None,
+        rejection: Some(rejection),
+    };
+    let analysis_options = options();
+    let request_digest = pre_write_digest(std::slice::from_ref(&path), &analysis_options);
+    assert!(matches!(
+        session.reserve_pre_write_with_inspection(
+            &request_digest,
+            std::slice::from_ref(&path),
+            &[],
+            std::slice::from_ref(&inspection),
+            &analysis_options,
+            rejected_test_observation,
+        )?,
+        PreWriteStart::Analyze { .. }
+    ));
+    let before = store.load_operation(&operation_id)?;
+
+    store.migrate_lifecycle_store()?;
+
+    assert_eq!(store.load_operation(&operation_id)?, before);
     Ok(())
 }
 
@@ -342,6 +512,10 @@ fn options() -> GateAnalysisOptions {
     }
 }
 
+fn pre_write_digest(paths: &[RepoPathProjection], options: &GateAnalysisOptions) -> String {
+    pre_write_request_digest(paths, &options.scan_invocation)
+}
+
 fn path(value: &str) -> Result<RepoPathProjection, Box<dyn std::error::Error>> {
     Ok(RepoPathProjection::from(&RepoPath::from_portable(value)?))
 }
@@ -356,6 +530,35 @@ fn lease(path: RepoPathProjection) -> WriteLease {
     }
 }
 
+fn observed_lease(
+    root: &std::path::Path,
+    path: &RepoPath,
+) -> Result<WriteLease, Box<dyn std::error::Error>> {
+    let observation = lumin_inventory::inspect_write_target(root, path)?;
+    let kind = match observation.kind {
+        lumin_inventory::WriteTargetKind::ExistingFile => WriteLeaseKind::ExistingFile,
+        lumin_inventory::WriteTargetKind::ExistingDirectory => WriteLeaseKind::Directory,
+        lumin_inventory::WriteTargetKind::NewFile => WriteLeaseKind::NewFile,
+    };
+    Ok(WriteLease {
+        path: RepoPathProjection::from(&observation.path),
+        kind,
+        physical_identity: observation.physical_identity,
+        nearest_existing_parent: observation
+            .nearest_existing_parent
+            .as_ref()
+            .map(RepoPathProjection::from),
+        prefix_identities: observation
+            .prefix_identities
+            .into_iter()
+            .map(|(path, physical_identity)| PathPrefixIdentity {
+                path: RepoPathProjection::from(&path),
+                physical_identity,
+            })
+            .collect(),
+    })
+}
+
 fn open_active_gate(store: &RepositoryStore) -> Result<GateId, Box<dyn std::error::Error>> {
     open_active_gate_for(store, "op-migrate-gate", "src/active.ts")
 }
@@ -365,15 +568,27 @@ fn open_active_gate_for(
     operation: &str,
     source: &str,
 ) -> Result<GateId, Box<dyn std::error::Error>> {
+    open_active_gate_for_with_protected_inputs(store, operation, source, Vec::new())
+}
+
+fn open_active_gate_for_with_protected_inputs(
+    store: &RepositoryStore,
+    operation: &str,
+    source: &str,
+    protected_semantic_inputs: Vec<SemanticInputRecord>,
+) -> Result<GateId, Box<dyn std::error::Error>> {
     let operation_id = OperationId::from_string(operation.to_owned());
     let session = store.begin_operation(&operation_id)?;
     let source = path(source)?;
     let source_lease = lease(source.clone());
+    let analysis_options = options();
+    let request_digest = pre_write_digest(std::slice::from_ref(&source), &analysis_options);
     let (gate_id, transition_sequence) = match session.reserve_pre_write(
-        "migrate-gate-digest",
+        &request_digest,
         std::slice::from_ref(&source),
         std::slice::from_ref(&source_lease),
-        &options(),
+        &analysis_options,
+        rejected_test_observation,
     )? {
         PreWriteStart::Analyze {
             gate_id,
@@ -381,28 +596,348 @@ fn open_active_gate_for(
         } => (gate_id, transition_sequence),
         PreWriteStart::Committed(_) => return Err("active gate fixture was rejected".into()),
     };
+    let baseline = GateBaselineDraft {
+        analysis_contract: SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID.to_owned(),
+        snapshot: seal_analysis_snapshot(
+            protected_semantic_inputs.clone(),
+            evidence(),
+            Default::default(),
+            Vec::new(),
+        ),
+        protected_semantic_inputs,
+        transition_sequence,
+    };
+    let baseline_for_id = baseline.clone();
+    let evidence_payload_sha256 =
+        crate::evidence_payload_sha256(&baseline_for_id.snapshot.evidence)?;
+    let source_for_id = source.clone();
+    let lease_for_id = source_lease.clone();
+    let final_validation_evidence = clean_pre_write_final_validation_evidence(
+        baseline_for_id.snapshot.inputs.clone(),
+        vec![source_lease.clone()],
+    );
     session.finish_pre_write(
-        "migrate-gate-digest",
+        &request_digest,
         &gate_id,
         PreWriteFinish {
-            baseline: Some(GateBaseline {
-                analysis_contract: "migration-test-contract".to_owned(),
-                snapshot: seal_analysis_snapshot(
-                    Vec::new(),
-                    evidence(),
-                    Default::default(),
-                    Vec::new(),
-                ),
-                protected_semantic_inputs: Vec::new(),
-                transition_sequence,
-            }),
+            baseline: Some(baseline),
             leased_write_set: vec![source_lease],
             alias_closures: Vec::new(),
+            attempted_semantic_inputs: Vec::new(),
             signals: Vec::new(),
         },
-        |_| Vec::new(),
+        |_, catalog_revision, _| ObservationFinalization {
+            signals: Vec::new(),
+            binding: ObservationBinding::Sealed {
+                observation: SealedGateObservation::Baseline {
+                    observation_id: derive_gate_baseline_observation_id(
+                        GateBaselineObservationInput {
+                            catalog_revision,
+                            transition_sequence: baseline_for_id.transition_sequence,
+                            analysis_contract: &baseline_for_id.analysis_contract,
+                            analysis_input_id: &baseline_for_id.snapshot.analysis_input_id,
+                            evidence_payload_sha256: &evidence_payload_sha256,
+                            signals: &[],
+                            declared_write_set: std::slice::from_ref(&source_for_id),
+                            leased_write_set: std::slice::from_ref(&lease_for_id),
+                            alias_closures: &[],
+                            protected_semantic_inputs: &baseline_for_id.protected_semantic_inputs,
+                        },
+                    ),
+                },
+            },
+            pre_write_evidence: Some(final_validation_evidence),
+            post_write_evidence: None,
+        },
     )?;
     Ok(gate_id)
+}
+
+fn semantic_input(value: &str) -> Result<SemanticInputRecord, Box<dyn std::error::Error>> {
+    Ok(SemanticInputRecord {
+        path: path(value)?,
+        state: SemanticInputState::ConfigPresent,
+        payload_sha256: Some(format!("payload-{value}")),
+        physical_identity: None,
+        absence_parent: None,
+        physical_redirect_sha256: None,
+    })
+}
+
+fn append_non_authorizing_close_for_migration(
+    store: &RepositoryStore,
+    gate_id: &GateId,
+    protected_semantic_inputs: Vec<SemanticInputRecord>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let operation_id = OperationId::from_string("op-migrate-incomplete-close".to_owned());
+    let request_digest = post_write_request_digest(gate_id);
+    let session = store.begin_operation(&operation_id)?;
+    let gate = match session.begin_post_write(&request_digest, gate_id)? {
+        PostWriteStart::Analyze { gate, .. } => gate,
+        PostWriteStart::Committed(_) => return Err("migration close committed early".into()),
+    };
+    let baseline = gate
+        .baseline
+        .as_ref()
+        .ok_or("migration close omitted its baseline")?;
+    let mut current_evidence = evidence();
+    current_evidence
+        .capabilities
+        .first_mut()
+        .ok_or("migration close evidence omitted its required capability")?
+        .state = CapabilityState::Failed;
+    let snapshot = seal_analysis_snapshot(
+        protected_semantic_inputs.clone(),
+        current_evidence,
+        Default::default(),
+        Vec::new(),
+    );
+    let (signals, _, deltas) = gate_policy::closing_signals(
+        &baseline.snapshot,
+        &snapshot,
+        &gate.protected_semantic_inputs,
+        &gate.leased_write_set,
+    );
+    if gate_policy::decision(&signals).authorizes() {
+        return Err("migration non-authorizing close fixture unexpectedly authorized".into());
+    }
+    let actual_write_set = ActualWriteSet::default();
+    let opening_observation_id = baseline.observation_id.clone();
+    let opening_analysis_contract = baseline.analysis_contract.clone();
+    let prior_revision = gate.current_revision;
+    let leased_write_set = gate.leased_write_set.clone();
+    let alias_closures = gate.alias_closures.clone();
+    let analysis_input_id = snapshot.analysis_input_id.clone();
+    let evidence_payload_sha256 = crate::evidence_payload_sha256(&snapshot.evidence)?;
+    let actual_write_set_for_id = actual_write_set.clone();
+    let protected_for_id = protected_semantic_inputs.clone();
+    let aliases_for_id = alias_closures.clone();
+    let signals_for_id = signals.clone();
+    let post_write_evidence = clean_post_write_final_validation_evidence(
+        snapshot.inputs.clone(),
+        leased_write_set.clone(),
+        alias_closures.clone(),
+    );
+    session.finish_post_write(
+        &request_digest,
+        gate_id,
+        PostWriteFinish {
+            snapshot: Some(snapshot),
+            protected_semantic_inputs,
+            reconciled_baseline: Some(baseline.snapshot.clone()),
+            changed_paths: Vec::new(),
+            actual_write_set: Some(actual_write_set),
+            alias_closures,
+            reconciled_transition_sequences: Vec::new(),
+            attempted_semantic_inputs: Vec::new(),
+            signals,
+            deltas,
+        },
+        |_, catalog_revision, _| ObservationFinalization {
+            signals: Vec::new(),
+            binding: ObservationBinding::Sealed {
+                observation: SealedGateObservation::Close {
+                    observation_id: derive_gate_close_observation_id(GateCloseObservationInput {
+                        gate_id,
+                        opening_observation_id: &opening_observation_id,
+                        opening_analysis_contract: &opening_analysis_contract,
+                        prior_revision,
+                        catalog_revision,
+                        analysis_input_id: &analysis_input_id,
+                        evidence_payload_sha256: &evidence_payload_sha256,
+                        signals: &signals_for_id,
+                        leased_write_set: &leased_write_set,
+                        protected_semantic_inputs: &protected_for_id,
+                        changed_paths: &[],
+                        actual_write_set: &actual_write_set_for_id,
+                        alias_closures: &aliases_for_id,
+                        reconciled_transition_sequences: &[],
+                    }),
+                },
+            },
+            pre_write_evidence: None,
+            post_write_evidence: Some(post_write_evidence),
+        },
+    )?;
+    Ok(())
+}
+
+fn close_active_gate_for_migration(
+    store: &RepositoryStore,
+    gate_id: &GateId,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let operation_id = OperationId::from_string(format!("op-migrate-close-{}", gate_id.as_str()));
+    let request_digest = post_write_request_digest(gate_id);
+    let session = store.begin_operation(&operation_id)?;
+    let (gate, transitions) = match session.begin_post_write(&request_digest, gate_id)? {
+        PostWriteStart::Analyze {
+            gate, transitions, ..
+        } => (gate, transitions),
+        PostWriteStart::Committed(_) => return Err("migration close committed early".into()),
+    };
+    let baseline = gate
+        .baseline
+        .as_ref()
+        .ok_or("migration close omitted its baseline")?;
+    let mut reconciled_baseline = baseline.snapshot.clone();
+    let mut reconciled_transition_sequences = Vec::with_capacity(transitions.len());
+    for transition in &transitions {
+        if !apply_worktree_transition(&mut reconciled_baseline, transition) {
+            return Err(format!(
+                "migration fixture could not replay transition {}",
+                transition.sequence
+            )
+            .into());
+        }
+        reconciled_transition_sequences.push(transition.sequence);
+    }
+    let source = gate
+        .declared_write_set
+        .first()
+        .cloned()
+        .ok_or("migration close omitted its declared source")?;
+    let mut current_inputs = reconciled_baseline.inputs.clone();
+    current_inputs.push(SemanticInputRecord {
+        path: source.clone(),
+        state: SemanticInputState::Source,
+        payload_sha256: Some(format!("payload-{}", gate_id.as_str())),
+        physical_identity: None,
+        absence_parent: None,
+        physical_redirect_sha256: None,
+    });
+    let snapshot = seal_analysis_snapshot(
+        current_inputs,
+        reconciled_baseline.evidence.clone(),
+        reconciled_baseline.scan_invocation.clone(),
+        reconciled_baseline.entry_selections.clone(),
+    );
+    let protected_semantic_inputs =
+        derive_protected_semantic_inputs(&snapshot, &gate.leased_write_set);
+    let changed_paths = vec![source];
+    let actual_write_set = ActualWriteSet {
+        paths: changed_paths.clone(),
+        ..ActualWriteSet::default()
+    };
+    let opening_observation_id = baseline.observation_id.clone();
+    let opening_analysis_contract = baseline.analysis_contract.clone();
+    let prior_revision = gate.current_revision;
+    let leased_write_set = gate.leased_write_set.clone();
+    let alias_closures = gate.alias_closures.clone();
+    let analysis_input_id = snapshot.analysis_input_id.clone();
+    let evidence_payload_sha256 = crate::evidence_payload_sha256(&snapshot.evidence)?;
+    let actual_write_set_for_id = actual_write_set.clone();
+    let protected_for_id = protected_semantic_inputs.clone();
+    let aliases_for_id = alias_closures.clone();
+    let changed_paths_for_id = changed_paths.clone();
+    let reconciled_sequences_for_id = reconciled_transition_sequences.clone();
+    let post_write_evidence = clean_post_write_final_validation_evidence(
+        snapshot.inputs.clone(),
+        leased_write_set.clone(),
+        alias_closures.clone(),
+    );
+    session.finish_post_write(
+        &request_digest,
+        gate_id,
+        PostWriteFinish {
+            snapshot: Some(snapshot.clone()),
+            protected_semantic_inputs,
+            reconciled_baseline: Some(reconciled_baseline),
+            changed_paths,
+            actual_write_set: Some(actual_write_set),
+            alias_closures,
+            reconciled_transition_sequences,
+            attempted_semantic_inputs: Vec::new(),
+            signals: Vec::new(),
+            deltas: Vec::new(),
+        },
+        |_, catalog_revision, _| ObservationFinalization {
+            signals: Vec::new(),
+            binding: ObservationBinding::Sealed {
+                observation: SealedGateObservation::Close {
+                    observation_id: derive_gate_close_observation_id(GateCloseObservationInput {
+                        gate_id,
+                        opening_observation_id: &opening_observation_id,
+                        opening_analysis_contract: &opening_analysis_contract,
+                        prior_revision,
+                        catalog_revision,
+                        analysis_input_id: &analysis_input_id,
+                        evidence_payload_sha256: &evidence_payload_sha256,
+                        signals: &[],
+                        leased_write_set: &leased_write_set,
+                        protected_semantic_inputs: &protected_for_id,
+                        changed_paths: &changed_paths_for_id,
+                        actual_write_set: &actual_write_set_for_id,
+                        alias_closures: &aliases_for_id,
+                        reconciled_transition_sequences: &reconciled_sequences_for_id,
+                    }),
+                },
+            },
+            pre_write_evidence: None,
+            post_write_evidence: Some(post_write_evidence),
+        },
+    )?;
+    Ok(())
+}
+
+fn append_unsealed_close_for_migration(
+    store: &RepositoryStore,
+    gate_id: &GateId,
+) -> Result<OperationId, Box<dyn std::error::Error>> {
+    let operation_id =
+        OperationId::from_string(format!("op-migrate-unsealed-close-{}", gate_id.as_str()));
+    let request_digest = post_write_request_digest(gate_id);
+    let session = store.begin_operation(&operation_id)?;
+    let gate = match session.begin_post_write(&request_digest, gate_id)? {
+        PostWriteStart::Analyze { gate, .. } => gate,
+        PostWriteStart::Committed(_) => return Err("migration close committed early".into()),
+    };
+    let attempted = SemanticReadReservationBinding {
+        path: path("config/unsealed-attempt.json")?,
+        physical_identity: None,
+        absence_parent: None,
+    };
+    if session.reserve_post_write_semantic_inputs(
+        &request_digest,
+        gate_id,
+        std::slice::from_ref(&attempted),
+    )? != SemanticReadReservation::Reserved
+    {
+        return Err("migration close could not reserve its attempted semantic input".into());
+    }
+    let signals = vec![GateSignal::AnalysisFailed {
+        detail: "injected migration fixture failure".to_owned(),
+    }];
+    let inputs = UnsealedGateObservationInputs::new(
+        gate.leased_write_set.clone(),
+        vec![attempted.clone()],
+        gate.protected_semantic_inputs
+            .iter()
+            .map(|input| input.path.clone())
+            .collect(),
+    );
+    session.finish_post_write(
+        &request_digest,
+        gate_id,
+        PostWriteFinish {
+            snapshot: None,
+            protected_semantic_inputs: Vec::new(),
+            reconciled_baseline: None,
+            changed_paths: Vec::new(),
+            actual_write_set: None,
+            alias_closures: gate.alias_closures.clone(),
+            reconciled_transition_sequences: Vec::new(),
+            attempted_semantic_inputs: vec![attempted],
+            signals,
+            deltas: Vec::new(),
+        },
+        |_, _, signals| ObservationFinalization {
+            signals: Vec::new(),
+            binding: derive_unsealed_gate_observation_binding(&[], &inputs, signals),
+            pre_write_evidence: None,
+            post_write_evidence: None,
+        },
+    )?;
+    Ok(operation_id)
 }
 
 fn assert_migration_paths_absent(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {

@@ -569,10 +569,11 @@ mod tests {
         finding_relation_id, sort_findings,
     };
     use lumin_model::{
-        AnalysisInputId, EvidenceId, FindingDisposition, GateId, LogicalSourceId, OperationId,
+        AnalysisInputId, EvidenceId, FindingDisposition, GateBaselineObservationId,
+        GateCloseObservationId, GateId, LogicalSourceId, ObservationBinding, OperationId,
         PayloadSnapshotId, PhysicalFileIdentity, RepoPath, RepositoryId, ResolutionProfile,
-        ResolutionProfileSource, RunId, SelectedResolutionProfile, SourceKind, SourceSpan,
-        SymbolNamespace,
+        ResolutionProfileSource, RunId, SealedGateObservation, SelectedResolutionProfile,
+        SourceKind, SourceSpan, SymbolNamespace,
     };
 
     use super::*;
@@ -695,7 +696,7 @@ mod tests {
             evidence: evidence.clone(),
         };
         Ok(GateRecord {
-            schema_version: "lumin-gate.v1".to_owned(),
+            schema_version: "lumin-gate.v2".to_owned(),
             gate_id: GateId::from_string("gate-a".to_owned()),
             lifecycle: GateLifecycle::Closed,
             current_revision: 1,
@@ -709,8 +710,14 @@ mod tests {
                 scan_invocation: Default::default(),
             },
             baseline: Some(GateBaseline {
+                observation_id: GateBaselineObservationId::from_string(
+                    "gate_baseline_observation_test".to_owned(),
+                ),
+                catalog_revision: 0,
                 analysis_contract: "contract".to_owned(),
                 snapshot: snapshot.clone(),
+                leased_write_set: Vec::new(),
+                alias_closures: Vec::new(),
                 protected_semantic_inputs: Vec::new(),
                 transition_sequence: 0,
             }),
@@ -721,6 +728,15 @@ mod tests {
                     operation_id: OperationId::from_string("open".to_owned()),
                     committed_unix_millis: None,
                     decision: GateDecision::Allow,
+                    catalog_revision: Some(0),
+                    observation_binding: Some(ObservationBinding::Sealed {
+                        observation: SealedGateObservation::Baseline {
+                            observation_id: GateBaselineObservationId::from_string(
+                                "gate_baseline_observation_test".to_owned(),
+                            ),
+                        },
+                    }),
+                    unsealed_observation_inputs: None,
                     reason: None,
                     signals: Vec::new(),
                     changed_paths: Vec::new(),
@@ -736,6 +752,15 @@ mod tests {
                     operation_id: OperationId::from_string("close".to_owned()),
                     committed_unix_millis: None,
                     decision: GateDecision::Allow,
+                    catalog_revision: Some(0),
+                    observation_binding: Some(ObservationBinding::Sealed {
+                        observation: SealedGateObservation::Close {
+                            observation_id: GateCloseObservationId::from_string(
+                                "gate_close_observation_test".to_owned(),
+                            ),
+                        },
+                    }),
+                    unsealed_observation_inputs: None,
                     reason: None,
                     signals: Vec::new(),
                     changed_paths: Vec::new(),

@@ -35,12 +35,17 @@ fn abandon_survives_process_reopen_and_refuses_a_second_terminal_revision()
     ];
 
     let first = run(root.path(), &command)?;
-    assert_status(&first, 0);
+    assert_status(&first, 3);
     let first_json: Value = serde_json::from_str(&first.stdout)?;
     assert_eq!(
         first_json.get("lifecycle").and_then(Value::as_str),
         Some("abandoned")
     );
+    assert_eq!(
+        first_json.get("decision").and_then(Value::as_str),
+        Some("deny")
+    );
+    assert!(first_json.get("observationBinding").is_none());
     assert_eq!(
         first_json.get("reason").and_then(Value::as_str),
         Some("planned edit cancelled")
@@ -48,7 +53,7 @@ fn abandon_survives_process_reopen_and_refuses_a_second_terminal_revision()
     assert_eq!(first_json.get("revision").and_then(Value::as_u64), Some(1));
 
     let retry = run(root.path(), &command)?;
-    assert_status(&retry, 0);
+    assert_status(&retry, 3);
     assert_eq!(retry.stdout, first.stdout);
 
     assert_abandon_views(root.path(), &gate_id)?;
@@ -73,6 +78,17 @@ fn assert_abandon_views(root: &Path, gate_id: &str) -> Result<(), Box<dyn std::e
             .pointer("/revisions/1/reason")
             .and_then(Value::as_str),
         Some("planned edit cancelled")
+    );
+    assert_eq!(
+        shown_json
+            .pointer("/revisions/1/decision")
+            .and_then(Value::as_str),
+        Some("deny")
+    );
+    assert!(
+        shown_json
+            .pointer("/revisions/1/observationBinding")
+            .is_none()
     );
     assert_eq!(
         shown_json
@@ -106,6 +122,17 @@ fn assert_abandon_views(root: &Path, gate_id: &str) -> Result<(), Box<dyn std::e
             .pointer("/result/reason")
             .and_then(Value::as_str),
         Some("planned edit cancelled")
+    );
+    assert_eq!(
+        operation_json
+            .pointer("/result/decision")
+            .and_then(Value::as_str),
+        Some("deny")
+    );
+    assert!(
+        operation_json
+            .pointer("/result/observationBinding")
+            .is_none()
     );
     Ok(())
 }

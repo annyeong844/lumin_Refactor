@@ -572,8 +572,8 @@ fn dependency_owner_uncertainty_never_infers_a_lockfile() -> Result<(), Box<dyn 
     assert_signal(&rejected.stdout, "required-evidence-incomplete")?;
     assert_eq!(
         leased_paths(&rejected.stdout)?,
-        BTreeSet::from(["src/main.ts".to_owned()]),
-        "ambiguous ownership must infer neither a manifest nor a lockfile write",
+        BTreeSet::new(),
+        "ambiguous ownership must reject without promoting a durable lease",
     );
     let retry = run(ambiguous.path(), &rejected_arguments)?;
     assert_status(&retry, 4);
@@ -614,8 +614,8 @@ fn dependency_owner_uncertainty_never_infers_a_lockfile() -> Result<(), Box<dyn 
     assert_signal(&rejected.stdout, "required-evidence-incomplete")?;
     assert_eq!(
         leased_paths(&rejected.stdout)?,
-        BTreeSet::from(["packages/app/src/main.ts".to_owned()]),
-        "an unobservable pnpm workspace must not fall back to package workspaces",
+        BTreeSet::new(),
+        "an unobservable pnpm workspace must reject without promoting a durable lease",
     );
 
     let hard_excluded = standalone_fixture()?;
@@ -644,8 +644,8 @@ fn dependency_owner_uncertainty_never_infers_a_lockfile() -> Result<(), Box<dyn 
     assert_signal(&rejected.stdout, "required-evidence-incomplete")?;
     assert_eq!(
         leased_paths(&rejected.stdout)?,
-        BTreeSet::from(["src/main.ts".to_owned()]),
-        "hard-excluded dependency contexts must infer no write owner",
+        BTreeSet::new(),
+        "hard-excluded dependency contexts must reject without promoting a durable lease",
     );
 
     let aliased_hard_excluded = standalone_fixture()?;
@@ -674,8 +674,8 @@ fn dependency_owner_uncertainty_never_infers_a_lockfile() -> Result<(), Box<dyn 
     assert_signal(&rejected.stdout, "required-evidence-incomplete")?;
     assert_eq!(
         leased_paths(&rejected.stdout)?,
-        BTreeSet::from(["src/main.ts".to_owned()]),
-        "a physical alias of a hard-excluded context must infer no write owner",
+        BTreeSet::new(),
+        "a hard-excluded physical alias must reject without promoting a durable lease",
     );
     remove_directory_alias(&aliased_hard_excluded.path().join("context"))?;
 
@@ -751,7 +751,8 @@ fn dependency_owner_uncertainty_never_infers_a_lockfile() -> Result<(), Box<dyn 
     assert_signal(&rejected.stdout, "required-evidence-incomplete")?;
     assert_eq!(
         leased_paths(&rejected.stdout)?,
-        BTreeSet::from(["src/main.ts".to_owned()])
+        BTreeSet::new(),
+        "a missing owner must reject without promoting a durable lease",
     );
 
     let redirected_context = standalone_fixture()?;
@@ -959,7 +960,7 @@ fn abandon(
             "nearest-manifest corpus scenario complete",
         ],
     )?;
-    assert_status(&result, 0);
+    assert_status(&result, 3);
     Ok(())
 }
 

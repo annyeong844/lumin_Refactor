@@ -4,7 +4,7 @@ Status: active
 
 Owner: PLAN-001
 
-Revision: 2026-08-14
+Revision: 2026-08-20
 
 ## Purpose and Ownership
 
@@ -45,10 +45,10 @@ These are execution-matrix counts, not a percentage estimate of product code.
 
 | Lane | Applicable | Mapped | Remaining | Verified aggregate |
 | --- | ---: | ---: | ---: | --- |
-| Standard | 86 | 67 | 19 | Focused `corpus::tests::mode_counts`: 67 mapped, 19 unmapped. |
-| Determinism | 86 | 67 | 19 | Focused `corpus::tests::mode_counts`: 67 mapped, 19 unmapped. |
+| Standard | 86 | 68 | 18 | Focused `corpus::tests::mode_counts`: 68 mapped, 18 unmapped. |
+| Determinism | 86 | 68 | 18 | Focused `corpus::tests::mode_counts`: 68 mapped, 18 unmapped. |
 | Store crash | 11 | 5 | 6 | Focused `corpus::tests::mode_counts`: 5 mapped, 6 unmapped; `cache-cleanup-publication-race`: 1 passed, 0 failed. |
-| **Total execution obligations** | **183** | **139** | **44** | This total deliberately counts each required lane execution. |
+| **Total execution obligations** | **183** | **141** | **42** | This total deliberately counts each required lane execution. |
 
 Known non-corpus exit gaps:
 

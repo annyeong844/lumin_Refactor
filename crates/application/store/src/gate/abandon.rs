@@ -23,10 +23,12 @@ impl OperationSession<'_> {
                 target_revision,
                 reason,
             )?;
+            validate_stored_validation_receipt(&write, &operation)?;
             if let Some(result) = operation.result.clone() {
                 return Ok(result);
             }
 
+            super::integrity::validate_stored_gate_catalog(&write)?;
             let mut gate = load_abandon_target(&write, gate_id, target_revision)?;
             ensure_post_write_revision_available(&write, operation_id, &gate)?;
             if operation.status == GateOperationStatus::Pending {
@@ -55,7 +57,7 @@ fn load_or_create_abandon_operation(
     let Some(operation) = read_record::<OperationRecord>(write, OPERATIONS, operation_id.as_str())?
     else {
         return Ok(OperationRecord {
-            schema_version: "lumin-operation.v1".to_owned(),
+            schema_version: GATE_OPERATION_SCHEMA_VERSION.to_owned(),
             operation_id: operation_id.clone(),
             kind: GateOperationKind::GateAbandon,
             request_digest: request_digest.to_owned(),
@@ -70,6 +72,10 @@ fn load_or_create_abandon_operation(
             semantic_read_reservation_bindings: Vec::new(),
             interruption_count: 0,
             operation_liveness: None,
+            pre_write_declared_path_inspection: Vec::new(),
+            pre_write_admission_evidence: None,
+            pre_write_final_validation: None,
+            post_write_final_validation: None,
             analysis_options: None,
             result: None,
         });
@@ -109,7 +115,10 @@ fn apply_abandon(
         revision,
         operation_id: operation.operation_id.clone(),
         committed_unix_millis: Some(crate::unix_millis()?),
-        decision: GateDecision::Allow,
+        decision: GateDecision::Deny,
+        catalog_revision: None,
+        observation_binding: None,
+        unsealed_observation_inputs: None,
         reason: Some(reason.clone()),
         signals: Vec::new(),
         changed_paths: Vec::new(),
@@ -126,7 +135,8 @@ fn apply_abandon(
         gate_id: gate.gate_id.clone(),
         revision,
         lifecycle: GateLifecycle::Abandoned,
-        decision: GateDecision::Allow,
+        decision: GateDecision::Deny,
+        observation_binding: None,
         reason: Some(reason),
         signals: Vec::new(),
         leased_write_set: Vec::new(),
@@ -140,7 +150,7 @@ fn load_abandon_target(
     gate_id: &GateId,
     target_revision: u64,
 ) -> Result<GateRecord, StoreError> {
-    let gate = read_record::<GateRecord>(write, GATES, gate_id.as_str())?
+    let gate = read_validated_gate(write, gate_id)?
         .ok_or_else(|| StoreError::GateNotFound(gate_id.as_str().to_owned()))?;
     if gate.lifecycle != GateLifecycle::Active {
         return Err(StoreError::GateNotActive(gate_id.as_str().to_owned()));

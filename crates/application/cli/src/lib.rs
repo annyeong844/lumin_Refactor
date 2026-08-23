@@ -691,7 +691,7 @@ fn gate_show(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, Cl
                 Some(revision) => lumin_protocol::gate_show_response_at(&gate, revision)?,
                 None => lumin_protocol::gate_show_response(&gate),
             };
-            lumin_protocol::GateLookupResponseDto::Live(response)
+            lumin_protocol::GateLookupResponseDto::Live(Box::new(response))
         }
         (_, lumin_engine::RecordLookup::Pruning(tombstone)) => {
             lumin_protocol::GateLookupResponseDto::Tombstone(

@@ -1,0 +1,470 @@
+use lumin_evidence::{
+    ActualWriteSet, GateBaselineObservationInput, GateCloseObservationInput,
+    GateObservationBinding, GateRecord, GateRevision, GateSignal, PhysicalAliasClosureRecord,
+    RepoPathProjection, SemanticInputRecord, SemanticReadReservationBinding,
+    UnsealedGateObservationInputs, WriteLease, derive_gate_baseline_observation_id,
+    derive_gate_close_observation_id, derive_unsealed_gate_observation_binding,
+};
+use lumin_model::{
+    GateBaselineObservationId, GateCloseObservationId, GateId, ObservationBinding,
+    SealedGateObservation,
+};
+use lumin_store::GateBaselineDraft;
+
+#[derive(Clone)]
+pub(super) struct BaselineObservationSeed {
+    pub(super) declared_write_set: Vec<RepoPathProjection>,
+    pub(super) leased_write_set: Vec<WriteLease>,
+    pub(super) alias_closures: Vec<PhysicalAliasClosureRecord>,
+    pub(super) attempted_semantic_inputs: Vec<SemanticReadReservationBinding>,
+    pub(super) baseline: Option<GateBaselineDraft>,
+    pub(super) evidence_payload_sha256: Option<String>,
+}
+
+#[derive(Clone)]
+pub(super) struct CloseObservationSeed {
+    pub(super) gate_id: GateId,
+    pub(super) opening_observation_id: Option<GateBaselineObservationId>,
+    pub(super) opening_analysis_contract: Option<String>,
+    pub(super) prior_revision: u64,
+    pub(super) leased_write_set: Vec<WriteLease>,
+    pub(super) snapshot: Option<lumin_evidence::AnalysisSnapshot>,
+    pub(super) evidence_payload_sha256: Option<String>,
+    pub(super) prior_protected_semantic_inputs: Vec<SemanticInputRecord>,
+    pub(super) protected_semantic_inputs: Vec<SemanticInputRecord>,
+    pub(super) changed_paths: Vec<RepoPathProjection>,
+    pub(super) actual_write_set: Option<ActualWriteSet>,
+    pub(super) alias_closures: Vec<PhysicalAliasClosureRecord>,
+    pub(super) reconciled_transition_sequences: Vec<u64>,
+    pub(super) attempted_semantic_inputs: Vec<SemanticReadReservationBinding>,
+}
+
+pub(super) fn pre_write_observation_binding(
+    seed: &BaselineObservationSeed,
+    catalog_revision: u64,
+    signals: &[GateSignal],
+) -> GateObservationBinding {
+    if let Some(baseline) = &seed.baseline
+        && let Some(evidence_payload_sha256) = &seed.evidence_payload_sha256
+        && pre_write_observation_can_seal(signals)
+    {
+        return ObservationBinding::Sealed {
+            observation: SealedGateObservation::Baseline {
+                observation_id: baseline_observation_id(
+                    seed,
+                    baseline,
+                    evidence_payload_sha256,
+                    catalog_revision,
+                    signals,
+                ),
+            },
+        };
+    }
+    unsealed_pre_write_observation_binding(seed, signals)
+}
+
+pub(super) fn pre_write_observation_can_seal(signals: &[GateSignal]) -> bool {
+    !signals.iter().any(|signal| {
+        matches!(
+            signal,
+            GateSignal::AnalysisFailed { .. }
+                | GateSignal::DeclaredPathUnsupported { .. }
+                | GateSignal::WriteConflict { .. }
+                | GateSignal::SemanticInputConflict { .. }
+                | GateSignal::SemanticReadClosureIncomplete { .. }
+                | GateSignal::UnplannedWrite { .. }
+                | GateSignal::ActiveTransitionPending { .. }
+                | GateSignal::TransitionChainBroken { .. }
+                | GateSignal::TransitionCatalogChanged
+        )
+    })
+}
+
+pub(super) fn unsealed_pre_write_observation_binding(
+    seed: &BaselineObservationSeed,
+    signals: &[GateSignal],
+) -> GateObservationBinding {
+    let inputs = unsealed_pre_write_observation_inputs(seed);
+    derive_unsealed_gate_observation_binding(&seed.declared_write_set, &inputs, signals)
+}
+
+pub(super) fn unsealed_pre_write_observation_inputs(
+    seed: &BaselineObservationSeed,
+) -> UnsealedGateObservationInputs {
+    UnsealedGateObservationInputs::new(
+        seed.leased_write_set.clone(),
+        seed.attempted_semantic_inputs.clone(),
+        seed.baseline.as_ref().map_or_else(Vec::new, |baseline| {
+            baseline
+                .protected_semantic_inputs
+                .iter()
+                .map(|input| input.path.clone())
+                .collect()
+        }),
+    )
+}
+
+pub(super) fn unsealed_close_observation_inputs(
+    seed: &CloseObservationSeed,
+) -> UnsealedGateObservationInputs {
+    UnsealedGateObservationInputs::new(
+        seed.leased_write_set.clone(),
+        seed.attempted_semantic_inputs.clone(),
+        seed.prior_protected_semantic_inputs
+            .iter()
+            .map(|input| input.path.clone())
+            .collect(),
+    )
+}
+
+fn baseline_observation_id(
+    seed: &BaselineObservationSeed,
+    baseline: &GateBaselineDraft,
+    evidence_payload_sha256: &str,
+    catalog_revision: u64,
+    signals: &[GateSignal],
+) -> GateBaselineObservationId {
+    derive_gate_baseline_observation_id(GateBaselineObservationInput {
+        catalog_revision,
+        transition_sequence: baseline.transition_sequence,
+        analysis_contract: &baseline.analysis_contract,
+        analysis_input_id: &baseline.snapshot.analysis_input_id,
+        evidence_payload_sha256,
+        signals,
+        declared_write_set: &seed.declared_write_set,
+        leased_write_set: &seed.leased_write_set,
+        alias_closures: &seed.alias_closures,
+        protected_semantic_inputs: &baseline.protected_semantic_inputs,
+    })
+}
+
+pub(super) fn close_observation_binding(
+    seed: &CloseObservationSeed,
+    catalog_revision: u64,
+    signals: &[GateSignal],
+) -> GateObservationBinding {
+    if !close_observation_is_unsealed(signals)
+        && let Some(observation_id) = close_observation_id(seed, catalog_revision, signals)
+    {
+        return ObservationBinding::Sealed {
+            observation: SealedGateObservation::Close { observation_id },
+        };
+    }
+    let inputs = unsealed_close_observation_inputs(seed);
+    derive_unsealed_gate_observation_binding(&[], &inputs, signals)
+}
+
+pub(super) fn observation_binding_matches_owner(
+    gate: &GateRecord,
+    revision: &GateRevision,
+) -> Result<bool, lumin_store::StoreError> {
+    let Some(binding) = revision.observation_binding.as_ref() else {
+        return Ok(false);
+    };
+    let Some(baseline) = gate.baseline.as_ref() else {
+        return Ok(false);
+    };
+    match binding {
+        ObservationBinding::Sealed {
+            observation: SealedGateObservation::Baseline { observation_id },
+        } => {
+            let evidence_payload_sha256 =
+                lumin_store::evidence_payload_sha256(&baseline.snapshot.evidence)?;
+            let derived = derive_gate_baseline_observation_id(GateBaselineObservationInput {
+                catalog_revision: baseline.catalog_revision,
+                transition_sequence: baseline.transition_sequence,
+                analysis_contract: &baseline.analysis_contract,
+                analysis_input_id: &baseline.snapshot.analysis_input_id,
+                evidence_payload_sha256: &evidence_payload_sha256,
+                signals: &revision.signals,
+                declared_write_set: &gate.declared_write_set,
+                leased_write_set: &baseline.leased_write_set,
+                alias_closures: &baseline.alias_closures,
+                protected_semantic_inputs: &baseline.protected_semantic_inputs,
+            });
+            Ok(revision.revision == 0 && &derived == observation_id)
+        }
+        ObservationBinding::Sealed {
+            observation: SealedGateObservation::Close { observation_id },
+        } => {
+            let Some(snapshot) = revision.snapshot.as_ref() else {
+                return Ok(false);
+            };
+            let Some(actual_write_set) = revision.actual_write_set.as_ref() else {
+                return Ok(false);
+            };
+            let Some(catalog_revision) = revision.catalog_revision else {
+                return Ok(false);
+            };
+            let evidence_payload_sha256 = lumin_store::evidence_payload_sha256(&snapshot.evidence)?;
+            let derived = derive_gate_close_observation_id(GateCloseObservationInput {
+                gate_id: &gate.gate_id,
+                opening_observation_id: &baseline.observation_id,
+                opening_analysis_contract: &baseline.analysis_contract,
+                prior_revision: revision.revision.saturating_sub(1),
+                catalog_revision,
+                analysis_input_id: &snapshot.analysis_input_id,
+                evidence_payload_sha256: &evidence_payload_sha256,
+                signals: &revision.signals,
+                leased_write_set: &baseline.leased_write_set,
+                protected_semantic_inputs: &revision.protected_semantic_inputs,
+                changed_paths: &revision.changed_paths,
+                actual_write_set,
+                alias_closures: &revision.alias_closures,
+                reconciled_transition_sequences: &revision.reconciled_transition_sequences,
+            });
+            Ok(revision.revision > 0 && &derived == observation_id)
+        }
+        ObservationBinding::Unsealed { .. } => Ok(false),
+    }
+}
+
+fn close_observation_is_unsealed(signals: &[GateSignal]) -> bool {
+    signals.iter().any(|signal| {
+        matches!(
+            signal,
+            GateSignal::AnalysisFailed { .. }
+                | GateSignal::DeclaredPathUnsupported { .. }
+                | GateSignal::WriteConflict { .. }
+                | GateSignal::SemanticInputConflict { .. }
+                | GateSignal::SemanticReadClosureIncomplete { .. }
+                | GateSignal::ActiveTransitionPending { .. }
+                | GateSignal::TransitionChainBroken { .. }
+                | GateSignal::TransitionCatalogChanged
+        )
+    })
+}
+
+fn close_observation_id(
+    seed: &CloseObservationSeed,
+    catalog_revision: u64,
+    signals: &[GateSignal],
+) -> Option<GateCloseObservationId> {
+    let snapshot = seed.snapshot.as_ref()?;
+    let opening_observation_id = seed.opening_observation_id.as_ref()?;
+    let opening_analysis_contract = seed.opening_analysis_contract.as_ref()?;
+    let actual_write_set = seed.actual_write_set.as_ref()?;
+    let evidence_payload_sha256 = seed.evidence_payload_sha256.as_deref()?;
+    Some(derive_gate_close_observation_id(
+        GateCloseObservationInput {
+            gate_id: &seed.gate_id,
+            opening_observation_id,
+            opening_analysis_contract,
+            prior_revision: seed.prior_revision,
+            catalog_revision,
+            analysis_input_id: &snapshot.analysis_input_id,
+            evidence_payload_sha256,
+            signals,
+            leased_write_set: &seed.leased_write_set,
+            protected_semantic_inputs: &seed.protected_semantic_inputs,
+            changed_paths: &seed.changed_paths,
+            actual_write_set,
+            alias_closures: &seed.alias_closures,
+            reconciled_transition_sequences: &seed.reconciled_transition_sequences,
+        },
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use lumin_evidence::{
+        AnalysisMetrics, AnalysisSnapshot, RunEvidence, SemanticInputState, WriteLeaseKind,
+    };
+    use lumin_model::{AnalysisInputId, RepoPath};
+
+    use super::*;
+
+    #[test]
+    fn baseline_identity_is_set_canonical_and_content_sensitive()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let original = seed("payload-a")?;
+        let mut repeated = original.clone();
+        repeated
+            .declared_write_set
+            .push(repeated.declared_write_set[0].clone());
+        repeated.leased_write_set.reverse();
+        let repeated_input = original
+            .baseline
+            .as_ref()
+            .and_then(|baseline| baseline.protected_semantic_inputs.first())
+            .ok_or("original test baseline omitted its semantic input")?
+            .clone();
+        repeated
+            .baseline
+            .as_mut()
+            .ok_or("repeated test seed omitted its baseline")?
+            .protected_semantic_inputs
+            .push(repeated_input);
+
+        let original_id = id(&original, 7)?;
+        assert_eq!(original_id, id(&repeated, 7)?);
+        assert_ne!(original_id, id(&seed("payload-b")?, 7)?);
+        assert_ne!(original_id, id(&original, 8)?);
+        Ok(())
+    }
+
+    #[test]
+    fn unsealed_pre_write_reports_only_the_sealed_read_set_as_complete()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut seed = seed("payload")?;
+        let unrelated_path =
+            RepoPathProjection::from(&RepoPath::from_portable("src/unrelated.ts")?);
+        seed.baseline
+            .as_mut()
+            .ok_or("test seed omitted its baseline")?
+            .snapshot
+            .inputs
+            .push(SemanticInputRecord {
+                path: unrelated_path.clone(),
+                state: SemanticInputState::Source,
+                payload_sha256: Some("unrelated".to_owned()),
+                physical_identity: None,
+                absence_parent: None,
+                physical_redirect_sha256: None,
+            });
+
+        let ObservationBinding::Unsealed {
+            last_complete_read_set,
+            ..
+        } = unsealed_pre_write_observation_binding(&seed, &[GateSignal::TransitionCatalogChanged])
+        else {
+            return Err("transition drift unexpectedly produced a sealed observation".into());
+        };
+        assert_eq!(last_complete_read_set, seed.declared_write_set);
+        assert!(!last_complete_read_set.contains(&unrelated_path));
+        Ok(())
+    }
+
+    #[test]
+    fn failed_close_binding_retains_the_known_gate_domain() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let leased_path = RepoPathProjection::from(&RepoPath::from_portable("src/lib.ts")?);
+        let protected_path =
+            RepoPathProjection::from(&RepoPath::from_portable("config/base.json")?);
+        let seed = CloseObservationSeed {
+            gate_id: GateId::from_string("gate-test".to_owned()),
+            opening_observation_id: Some(GateBaselineObservationId::from_string(
+                "gate_baseline_observation_test".to_owned(),
+            )),
+            opening_analysis_contract: Some("contract".to_owned()),
+            prior_revision: 3,
+            leased_write_set: vec![WriteLease {
+                path: leased_path.clone(),
+                kind: WriteLeaseKind::ExistingFile,
+                physical_identity: None,
+                nearest_existing_parent: None,
+                prefix_identities: Vec::new(),
+            }],
+            snapshot: None,
+            evidence_payload_sha256: None,
+            prior_protected_semantic_inputs: vec![SemanticInputRecord {
+                path: protected_path.clone(),
+                state: SemanticInputState::ConfigPresent,
+                payload_sha256: Some("captured".to_owned()),
+                physical_identity: None,
+                absence_parent: None,
+                physical_redirect_sha256: None,
+            }],
+            protected_semantic_inputs: vec![SemanticInputRecord {
+                path: protected_path.clone(),
+                state: SemanticInputState::ConfigPresent,
+                payload_sha256: Some("captured".to_owned()),
+                physical_identity: None,
+                absence_parent: None,
+                physical_redirect_sha256: None,
+            }],
+            changed_paths: Vec::new(),
+            actual_write_set: None,
+            alias_closures: Vec::new(),
+            reconciled_transition_sequences: Vec::new(),
+            attempted_semantic_inputs: Vec::new(),
+        };
+
+        let binding = close_observation_binding(
+            &seed,
+            5,
+            &[GateSignal::AnalysisFailed {
+                detail: "capture failed".to_owned(),
+            }],
+        );
+        let ObservationBinding::Unsealed {
+            attempted_domain,
+            last_complete_read_set,
+            conflicting_or_unbounded_inputs,
+            ..
+        } = binding
+        else {
+            return Err("failed close unexpectedly produced a sealed observation".into());
+        };
+        assert_eq!(attempted_domain, vec![leased_path.clone()]);
+        assert_eq!(last_complete_read_set, vec![protected_path]);
+        assert_eq!(conflicting_or_unbounded_inputs, vec![leased_path]);
+        Ok(())
+    }
+
+    fn id(
+        seed: &BaselineObservationSeed,
+        catalog_revision: u64,
+    ) -> Result<GateBaselineObservationId, &'static str> {
+        let baseline = seed
+            .baseline
+            .as_ref()
+            .ok_or("test seed omitted its baseline")?;
+        let evidence_payload_sha256 = seed
+            .evidence_payload_sha256
+            .as_deref()
+            .ok_or("test seed omitted its evidence payload identity")?;
+        Ok(baseline_observation_id(
+            seed,
+            baseline,
+            evidence_payload_sha256,
+            catalog_revision,
+            &[],
+        ))
+    }
+
+    fn seed(payload: &str) -> Result<BaselineObservationSeed, Box<dyn std::error::Error>> {
+        let path = RepoPathProjection::from(&RepoPath::from_portable("src/lib.ts")?);
+        let input = SemanticInputRecord {
+            path: path.clone(),
+            state: SemanticInputState::Source,
+            payload_sha256: Some(payload.to_owned()),
+            physical_identity: None,
+            absence_parent: None,
+            physical_redirect_sha256: None,
+        };
+        let evidence = RunEvidence {
+            schema_version: "lumin-evidence.v1".to_owned(),
+            capabilities: Vec::new(),
+            resolution_profiles: Vec::new(),
+            source_classifications: Vec::new(),
+            source_contexts: Vec::new(),
+            source_observations: Vec::new(),
+            dependency_owners: Vec::new(),
+            resolutions: Vec::new(),
+            metrics: AnalysisMetrics::default(),
+            findings: Vec::new(),
+            limitations: Vec::new(),
+        };
+        let evidence_payload_sha256 = lumin_store::evidence_payload_sha256(&evidence)?;
+        Ok(BaselineObservationSeed {
+            declared_write_set: vec![path],
+            leased_write_set: Vec::new(),
+            alias_closures: Vec::new(),
+            attempted_semantic_inputs: Vec::new(),
+            baseline: Some(GateBaselineDraft {
+                analysis_contract: "contract".to_owned(),
+                snapshot: AnalysisSnapshot {
+                    analysis_input_id: AnalysisInputId::from_string("analysis-input".to_owned()),
+                    inputs: vec![input.clone()],
+                    scan_invocation: Default::default(),
+                    entry_selections: Vec::new(),
+                    evidence,
+                },
+                protected_semantic_inputs: vec![input],
+                transition_sequence: 3,
+            }),
+            evidence_payload_sha256: Some(evidence_payload_sha256),
+        })
+    }
+}

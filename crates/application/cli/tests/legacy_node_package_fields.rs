@@ -401,7 +401,7 @@ fn abandon_gate(
             "public gate evidence complete",
         ],
     )?;
-    assert_status(&abandoned, 0);
+    assert_status(&abandoned, 3);
     assert_eq!(field(&abandoned.stdout, "lifecycle")?, "abandoned");
     Ok(())
 }

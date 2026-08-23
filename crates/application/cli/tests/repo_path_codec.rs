@@ -52,10 +52,18 @@ fn repo_path_codec_golden_vectors_round_trip_through_public_binary()
         .get("leasedWriteSet")
         .and_then(Value::as_array)
         .ok_or_else(|| std::io::Error::other("pre-write omitted leasedWriteSet"))?;
-    let portable = leased
+    assert!(
+        leased.is_empty(),
+        "an unsealed rejected gate must not retain active-like leases"
+    );
+    let attempted = pre
+        .pointer("/observationBinding/attemptedDomain")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("pre-write omitted its attempted domain"))?;
+    let portable = attempted
         .iter()
-        .find_map(|lease| lease.get("path"))
-        .ok_or_else(|| std::io::Error::other("portable write lease is missing"))?;
+        .find(|path| path.get("display").and_then(Value::as_str) == Some("src/a.ts"))
+        .ok_or_else(|| std::io::Error::other("portable attempted path is missing"))?;
     assert_repo_path_dto(portable, PORTABLE_BASE64, "src/a.ts", None);
 
     let native_paths = pre

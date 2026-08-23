@@ -38,6 +38,24 @@
         },
         {
           "origin": "member-authored",
+          "kind": "development",
+          "target": null,
+          "alias": "lumin-engine",
+          "package": "lumin-engine",
+          "requirement": null,
+          "optional": false,
+          "defaultFeatures": true,
+          "features": [
+            "gate-test-fault"
+          ],
+          "sourceKind": "workspace",
+          "resolution": {
+            "kind": "workspace",
+            "member": "lumin-engine"
+          }
+        },
+        {
+          "origin": "member-authored",
           "kind": "normal",
           "target": null,
           "alias": "lumin-engine",
@@ -204,6 +222,7 @@
         "cache-cleanup-test-fault": [
           "lumin-store/cache-cleanup-test-fault"
         ],
+        "gate-test-fault": [],
         "publication-test-crash": [
           "lumin-store/publication-test-crash"
         ],

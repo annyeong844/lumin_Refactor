@@ -152,6 +152,74 @@ fn disjoint_gates_reconcile_a_terminal_transition_on_retry()
     Ok(())
 }
 
+#[test]
+fn disjoint_gates_reconcile_transitions_across_different_scan_scopes()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = disjoint_fixture()?;
+    let gate_a = open_scoped_gate(root.path(), "op-scope-a-open", "src/a.ts", "src/a.ts")?;
+    let gate_b = open_scoped_gate(root.path(), "op-scope-b-open", "src/b.ts", "src/b.ts")?;
+
+    fs::write(root.path().join("src/b.ts"), "console.log('b scoped');\n")?;
+    let close_b = run(
+        root.path(),
+        &["post-write", &gate_b, "--operation-id", "op-scope-b-close"],
+    )?;
+    assert_status(&close_b, 0);
+    assert_eq!(field(&close_b.stdout, "decision")?, "allow");
+
+    fs::write(root.path().join("src/a.ts"), "console.log('a scoped');\n")?;
+    let close_a = run(
+        root.path(),
+        &["post-write", &gate_a, "--operation-id", "op-scope-a-close"],
+    )?;
+    assert_status(&close_a, 0);
+    assert_eq!(field(&close_a.stdout, "decision")?, "allow");
+    let close_a: Value = serde_json::from_str(&close_a.stdout)?;
+    assert_eq!(
+        close_a
+            .get("signals")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(0)
+    );
+
+    let shown = run(root.path(), &["gate", "show", &gate_a])?;
+    assert_status(&shown, 0);
+    let shown: Value = serde_json::from_str(&shown.stdout)?;
+    assert_eq!(
+        shown
+            .pointer("/revisions/1/reconciledTransitionSequences")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(1)
+    );
+    Ok(())
+}
+
+fn open_scoped_gate(
+    root: &Path,
+    operation_id: &str,
+    path: &str,
+    include: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let opened = run(
+        root,
+        &[
+            "pre-write",
+            "--operation-id",
+            operation_id,
+            "--path",
+            path,
+            "--include",
+            include,
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&opened, 0);
+    field(&opened.stdout, "gateId")
+}
+
 fn prepare_and_show_gate_plan(
     root: &Path,
     operation_id: &str,

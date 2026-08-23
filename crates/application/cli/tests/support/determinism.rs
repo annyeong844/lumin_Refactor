@@ -162,19 +162,221 @@ fn gate_evidence(root: &Path, stdout: &str) -> Result<Vec<Value>, Box<dyn std::e
     };
     let gate = lumin_engine::load_gate(root, &GateId::from_string(gate_id.to_owned()))?;
     let mut evidence = Vec::new();
-    if let Some(baseline) = gate.baseline {
-        evidence.push(serde_json::to_value(
-            baseline.snapshot.evidence.semantic_projection(),
-        )?);
+    if let Some(baseline) = gate.baseline.as_ref() {
+        let baseline_matches_owner = gate
+            .revisions
+            .first()
+            .map(|revision| lumin_engine::gate_observation_binding_matches_owner(&gate, revision))
+            .transpose()?
+            .unwrap_or(false);
+        if !baseline_matches_owner {
+            return Err(std::io::Error::other(
+                "sealed baseline observation ID disagrees with its owner inputs",
+            )
+            .into());
+        }
+        let mut baseline_alias_closures = baseline.alias_closures.iter().collect::<Vec<_>>();
+        baseline_alias_closures.sort_by(|left, right| left.members.cmp(&right.members));
+        let baseline_alias_closures = baseline_alias_closures
+            .into_iter()
+            .map(|closure| serde_json::json!({ "members": closure.members }))
+            .collect::<Vec<_>>();
+        evidence.push(serde_json::json!({
+            "schemaVersion": "lumin.gate-baseline-semantic.v1",
+            "gateSchemaVersion": gate.schema_version,
+            "observationId": observation_id_projection(
+                baseline.observation_id.as_str(),
+                "baseline",
+                baseline_matches_owner,
+            ),
+            "analysisContract": baseline.analysis_contract,
+            "catalogRevision": baseline.catalog_revision,
+            "transitionSequence": baseline.transition_sequence,
+            "leasedWriteSet": baseline.leased_write_set.iter().map(|lease| serde_json::json!({
+                "path": lease.path,
+                "kind": lease.kind,
+                "physicalIdentityPresent": lease.physical_identity.is_some(),
+                "nearestExistingParent": lease.nearest_existing_parent,
+                "prefixPaths": lease.prefix_identities.iter().map(|prefix| &prefix.path).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+            "aliasClosures": baseline_alias_closures,
+            "protectedSemanticInputs": baseline.protected_semantic_inputs.iter().map(|input| serde_json::json!({
+                "path": input.path,
+                "state": input.state,
+                "payloadSha256": input.payload_sha256,
+                "physicalIdentityPresent": input.physical_identity.is_some(),
+                "absenceParentPath": input.absence_parent.as_ref().map(|parent| &parent.path),
+                // Redirect digests intentionally bind repository-instance physical identities.
+                // Fresh fixtures compare that the binding exists; the sealed observation ID
+                // still proves the persisted owner consumed the exact instance-specific digest.
+                "physicalRedirectPresent": input.physical_redirect_sha256.is_some(),
+            })).collect::<Vec<_>>(),
+            "snapshot": {
+                "inputs": baseline.snapshot.inputs.iter().map(|input| serde_json::json!({
+                    "path": input.path,
+                    "state": input.state,
+                    "payloadSha256": input.payload_sha256,
+                    "physicalIdentityPresent": input.physical_identity.is_some(),
+                    "absenceParentPath": input.absence_parent.as_ref().map(|parent| &parent.path),
+                    "physicalRedirectPresent": input.physical_redirect_sha256.is_some(),
+                })).collect::<Vec<_>>(),
+                "scanInvocation": baseline.snapshot.scan_invocation,
+                "entrySelections": baseline.snapshot.entry_selections,
+                "evidence": baseline.snapshot.evidence.semantic_projection(),
+            },
+        }));
     }
-    for snapshot in gate
-        .revisions
-        .into_iter()
-        .filter_map(|revision| revision.snapshot)
-    {
-        evidence.push(serde_json::to_value(
-            snapshot.evidence.semantic_projection(),
-        )?);
+    for revision in &gate.revisions {
+        let snapshot = revision.snapshot.as_ref().map(|snapshot| {
+            serde_json::json!({
+                "inputs": snapshot.inputs.iter().map(|input| serde_json::json!({
+                    "path": input.path,
+                    "state": input.state,
+                    "payloadSha256": input.payload_sha256,
+                    "physicalIdentityPresent": input.physical_identity.is_some(),
+                    "absenceParentPath": input.absence_parent.as_ref().map(|parent| &parent.path),
+                    "physicalRedirectPresent": input.physical_redirect_sha256.is_some(),
+                })).collect::<Vec<_>>(),
+                "scanInvocation": snapshot.scan_invocation,
+                "entrySelections": snapshot.entry_selections,
+                "evidence": snapshot.evidence.semantic_projection(),
+            })
+        });
+        let observation_binding = revision
+            .observation_binding
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()?;
+        let sealed_matches_owner = if matches!(
+            revision.observation_binding.as_ref(),
+            Some(lumin_model::ObservationBinding::Sealed { .. })
+        ) {
+            lumin_engine::gate_observation_binding_matches_owner(&gate, revision)?
+        } else {
+            false
+        };
+        let mut revision_alias_closures = revision.alias_closures.iter().collect::<Vec<_>>();
+        revision_alias_closures.sort_by(|left, right| left.members.cmp(&right.members));
+        let revision_alias_closures = revision_alias_closures
+            .into_iter()
+            .map(|closure| serde_json::json!({ "members": closure.members }))
+            .collect::<Vec<_>>();
+        let actual_write_set = revision.actual_write_set.as_ref().map(|actual| {
+            let mut baseline_alias_closures =
+                actual.baseline_alias_closures.iter().collect::<Vec<_>>();
+            baseline_alias_closures.sort_by(|left, right| left.members.cmp(&right.members));
+            let baseline_alias_closures = baseline_alias_closures
+                .into_iter()
+                .map(|closure| serde_json::json!({ "members": closure.members }))
+                .collect::<Vec<_>>();
+            let mut current_alias_closures =
+                actual.current_alias_closures.iter().collect::<Vec<_>>();
+            current_alias_closures.sort_by(|left, right| left.members.cmp(&right.members));
+            let current_alias_closures = current_alias_closures
+                .into_iter()
+                .map(|closure| serde_json::json!({ "members": closure.members }))
+                .collect::<Vec<_>>();
+            serde_json::json!({
+                "paths": actual.paths,
+                "baselineAliasClosures": baseline_alias_closures,
+                "currentAliasClosures": current_alias_closures,
+            })
+        });
+        evidence.push(serde_json::json!({
+            "schemaVersion": "lumin.gate-revision-semantic.v1",
+            "gateId": gate.gate_id,
+            "revision": revision.revision,
+            "priorRevision": revision.revision.saturating_sub(1),
+            "openingAnalysisContract": gate.baseline.as_ref().map(|baseline| &baseline.analysis_contract),
+            "decision": revision.decision,
+            "signals": revision.signals,
+            "catalogRevision": revision.catalog_revision,
+            "observationBinding": observation_binding_projection(
+                observation_binding,
+                revision.revision,
+                sealed_matches_owner,
+            )?,
+            "leasedWriteSet": gate.leased_write_set.iter().map(|lease| serde_json::json!({
+                "path": lease.path,
+                "kind": lease.kind,
+                "physicalIdentityPresent": lease.physical_identity.is_some(),
+                "nearestExistingParent": lease.nearest_existing_parent,
+                "prefixPaths": lease.prefix_identities.iter().map(|prefix| &prefix.path).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+            "protectedSemanticInputs": revision.protected_semantic_inputs.iter().map(|input| serde_json::json!({
+                "path": input.path,
+                "state": input.state,
+                "payloadSha256": input.payload_sha256,
+                "physicalIdentityPresent": input.physical_identity.is_some(),
+                "absenceParentPath": input.absence_parent.as_ref().map(|parent| &parent.path),
+                "physicalRedirectPresent": input.physical_redirect_sha256.is_some(),
+            })).collect::<Vec<_>>(),
+            "changedPaths": revision.changed_paths,
+            "actualWriteSet": actual_write_set,
+            "aliasClosures": revision_alias_closures,
+            "reconciledTransitionSequences": revision.reconciled_transition_sequences,
+            "snapshot": snapshot,
+        }));
     }
     Ok(evidence)
+}
+
+fn observation_binding_projection(
+    binding: Option<Value>,
+    revision: u64,
+    matches_owner: bool,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let Some(mut binding) = binding else {
+        return Ok(Value::Null);
+    };
+    if binding.get("state").and_then(Value::as_str) != Some("sealed") {
+        return Ok(binding);
+    }
+    let kind = binding
+        .pointer("/observation/kind")
+        .and_then(Value::as_str)
+        .ok_or_else(|| std::io::Error::other("sealed observation omitted its kind"))?;
+    let observation_id = binding
+        .pointer("/observation/observationId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| std::io::Error::other("sealed observation omitted its ID"))?
+        .to_owned();
+    if !matches_owner {
+        return Err(std::io::Error::other(format!(
+            "sealed {kind} observation ID disagrees with revision {revision} owner inputs"
+        ))
+        .into());
+    }
+    let equality_class = match kind {
+        "baseline" => "baseline".to_owned(),
+        "close" => format!("close-revision-{revision}"),
+        other => {
+            return Err(std::io::Error::other(format!(
+                "sealed observation has unsupported kind {other:?}"
+            ))
+            .into());
+        }
+    };
+    *binding
+        .pointer_mut("/observation/observationId")
+        .ok_or_else(|| std::io::Error::other("sealed observation omitted its ID"))? =
+        observation_id_projection(&observation_id, &equality_class, matches_owner);
+    Ok(binding)
+}
+
+fn observation_id_projection(value: &str, equality_class: &str, matches_owner: bool) -> Value {
+    let expected_prefix = if equality_class == "baseline" {
+        "gate_baseline_observation_"
+    } else {
+        "gate_close_observation_"
+    };
+    // Observation IDs intentionally bind repository-instance physical identities and the
+    // active catalog revision. Determinism variants use fresh repositories, so compare the
+    // exact persisted equality relation and every semantic owner input rather than erasing
+    // the binding or comparing unrelated inode-derived digest bytes.
+    serde_json::json!({
+        "equalityClass": equality_class,
+        "matchesOwner": matches_owner,
+        "formatValid": value.starts_with(expected_prefix),
+    })
 }

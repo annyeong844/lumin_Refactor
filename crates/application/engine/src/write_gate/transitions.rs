@@ -1,11 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_evidence::{
-    ActualWriteSet, AnalysisSnapshot, DEAD_CODE_CAPABILITY_ID, DEPENDENCY_OWNERSHIP_CAPABILITY_ID,
-    GateBaseline, GateRecord, GateSignal, PhysicalAliasClosureRecord, RepoPathProjection,
-    RunEvidence, SemanticInputRecord, WorktreeTransition, WriteLease, seal_analysis_snapshot,
+    AnalysisSnapshot, GateBaseline, GateRecord, GateSignal, RepoPathProjection,
+    SemanticInputRecord, WorktreeTransition, apply_worktree_transition_for_domain,
 };
-use lumin_model::{CapabilityState, Limitation};
 use lumin_store::ActiveGateLease;
 
 pub(super) fn reconcile_transitions(
@@ -48,7 +46,12 @@ pub(super) fn reconcile_transitions(
             sequences.push(transition.sequence);
             continue;
         }
-        if !apply_transition(&mut adjusted, transition) {
+        if !apply_worktree_transition_for_domain(
+            &mut adjusted,
+            transition,
+            &gate.leased_write_set,
+            &baseline.protected_semantic_inputs,
+        ) {
             signals.push(GateSignal::TransitionChainBroken {
                 sequence: transition.sequence,
             });
@@ -56,271 +59,6 @@ pub(super) fn reconcile_transitions(
         sequences.push(transition.sequence);
     }
     (adjusted, sequences, signals)
-}
-
-fn apply_transition(adjusted: &mut AnalysisSnapshot, transition: &WorktreeTransition) -> bool {
-    if *adjusted == transition.capsule.before_snapshot {
-        *adjusted = transition.capsule.after_snapshot.clone();
-        return true;
-    }
-    if !request_scopes_are_compatible(adjusted, &transition.capsule.before_snapshot) {
-        return false;
-    }
-
-    let Some(topology_paths) = owned_topology_replay_paths(
-        &transition.capsule.before_snapshot.inputs,
-        &transition.capsule.after_snapshot.inputs,
-        &transition.capsule.changed_paths,
-        &transition.capsule.leased_write_set,
-    ) else {
-        return false;
-    };
-    let mut complete_replay_paths = transition.capsule.changed_paths.clone();
-    complete_replay_paths.extend(topology_paths.iter().cloned());
-    complete_replay_paths.sort();
-    complete_replay_paths.dedup();
-
-    let Some(transition_inputs) = apply_input_delta(
-        &transition.capsule.before_snapshot.inputs,
-        &transition.capsule.before_snapshot.inputs,
-        &transition.capsule.after_snapshot.inputs,
-        &complete_replay_paths,
-    ) else {
-        return false;
-    };
-    let verified_after = seal_analysis_snapshot(
-        transition_inputs,
-        transition.capsule.after_snapshot.evidence.clone(),
-        transition.capsule.after_snapshot.scan_invocation.clone(),
-        transition.capsule.after_snapshot.entry_selections.clone(),
-    );
-    if verified_after != transition.capsule.after_snapshot {
-        return false;
-    }
-
-    let Some(inputs) = apply_rebased_input_delta(
-        &adjusted.inputs,
-        &transition.capsule.before_snapshot.inputs,
-        &transition.capsule.after_snapshot.inputs,
-        &transition.capsule.changed_paths,
-        &topology_paths,
-    ) else {
-        return false;
-    };
-    let Some(evidence) = rebase_request_specific_evidence(
-        &adjusted.evidence,
-        &transition.capsule.before_snapshot.evidence,
-        &transition.capsule.after_snapshot.evidence,
-    ) else {
-        return false;
-    };
-    *adjusted = seal_analysis_snapshot(
-        inputs,
-        evidence,
-        adjusted.scan_invocation.clone(),
-        transition.capsule.after_snapshot.entry_selections.clone(),
-    );
-    true
-}
-
-fn owned_topology_replay_paths(
-    before_inputs: &[SemanticInputRecord],
-    after_inputs: &[SemanticInputRecord],
-    changed_paths: &[RepoPathProjection],
-    leased_write_set: &[WriteLease],
-) -> Option<Vec<RepoPathProjection>> {
-    let before = before_inputs
-        .iter()
-        .map(|input| (input.path.canonical.as_slice(), input))
-        .collect::<BTreeMap<_, _>>();
-    let after = after_inputs
-        .iter()
-        .map(|input| (input.path.canonical.as_slice(), input))
-        .collect::<BTreeMap<_, _>>();
-    let changed = changed_paths
-        .iter()
-        .map(|path| path.canonical.as_slice())
-        .collect::<BTreeSet<_>>();
-    let mut topology_paths = Vec::new();
-
-    for (path, baseline) in &before {
-        let current = after.get(path).copied();
-        if current == Some(*baseline) || changed.contains(path) {
-            continue;
-        }
-        let current = current?;
-        if !lumin_evidence::gate_policy::is_owned_missing_boundary_change(
-            baseline,
-            current,
-            leased_write_set,
-            after_inputs,
-        ) {
-            return None;
-        }
-        topology_paths.push(current.path.clone());
-    }
-    if after
-        .keys()
-        .any(|path| !before.contains_key(path) && !changed.contains(path))
-    {
-        return None;
-    }
-    topology_paths.sort();
-    topology_paths.dedup();
-    Some(topology_paths)
-}
-
-fn request_scopes_are_compatible(
-    adjusted: &AnalysisSnapshot,
-    transition_before: &AnalysisSnapshot,
-) -> bool {
-    let mut adjusted_invocation = adjusted.scan_invocation.clone();
-    adjusted_invocation.dependency_intents.clear();
-    let mut transition_invocation = transition_before.scan_invocation.clone();
-    transition_invocation.dependency_intents.clear();
-    adjusted_invocation == transition_invocation
-        && adjusted.entry_selections == transition_before.entry_selections
-}
-
-fn apply_input_delta(
-    base: &[SemanticInputRecord],
-    before_inputs: &[SemanticInputRecord],
-    after_inputs: &[SemanticInputRecord],
-    changed_paths: &[RepoPathProjection],
-) -> Option<Vec<SemanticInputRecord>> {
-    let mut inputs = base
-        .iter()
-        .map(|input| (input.path.canonical.clone(), input.clone()))
-        .collect::<BTreeMap<_, _>>();
-    let before = before_inputs
-        .iter()
-        .map(|input| (input.path.canonical.as_slice(), input))
-        .collect::<BTreeMap<_, _>>();
-    let after = after_inputs
-        .iter()
-        .map(|input| (input.path.canonical.as_slice(), input))
-        .collect::<BTreeMap<_, _>>();
-    for path in changed_paths {
-        if inputs.get(&path.canonical) != before.get(path.canonical.as_slice()).copied() {
-            return None;
-        }
-        match after.get(path.canonical.as_slice()) {
-            Some(input) => {
-                inputs.insert(path.canonical.clone(), (*input).clone());
-            }
-            None => {
-                inputs.remove(&path.canonical);
-            }
-        }
-    }
-    Some(inputs.into_values().collect())
-}
-
-fn apply_rebased_input_delta(
-    base: &[SemanticInputRecord],
-    before_inputs: &[SemanticInputRecord],
-    after_inputs: &[SemanticInputRecord],
-    changed_paths: &[RepoPathProjection],
-    topology_paths: &[RepoPathProjection],
-) -> Option<Vec<SemanticInputRecord>> {
-    let mut inputs = apply_input_delta(base, before_inputs, after_inputs, changed_paths)?
-        .into_iter()
-        .map(|input| (input.path.canonical.clone(), input))
-        .collect::<BTreeMap<_, _>>();
-    let before = before_inputs
-        .iter()
-        .map(|input| (input.path.canonical.as_slice(), input))
-        .collect::<BTreeMap<_, _>>();
-    let after = after_inputs
-        .iter()
-        .map(|input| (input.path.canonical.as_slice(), input))
-        .collect::<BTreeMap<_, _>>();
-    for path in topology_paths {
-        let baseline = before.get(path.canonical.as_slice()).copied()?;
-        let current = after.get(path.canonical.as_slice()).copied()?;
-        match inputs.get(&path.canonical) {
-            None => {}
-            Some(input) if input == baseline => {
-                inputs.insert(path.canonical.clone(), current.clone());
-            }
-            Some(_) => return None,
-        }
-    }
-    Some(inputs.into_values().collect())
-}
-
-fn rebase_request_specific_evidence(
-    adjusted: &RunEvidence,
-    transition_before: &RunEvidence,
-    transition_after: &RunEvidence,
-) -> Option<RunEvidence> {
-    if repository_evidence_projection(adjusted) != repository_evidence_projection(transition_before)
-    {
-        return None;
-    }
-
-    let mut evidence = transition_after.clone();
-    evidence.dependency_owners = adjusted.dependency_owners.clone();
-    evidence
-        .limitations
-        .retain(|limitation| !is_request_specific_dependency_limitation(limitation));
-    evidence.limitations.extend(
-        adjusted
-            .limitations
-            .iter()
-            .filter(|limitation| is_request_specific_dependency_limitation(limitation))
-            .cloned(),
-    );
-    evidence.limitations.sort_by(Limitation::canonical_cmp);
-    evidence.limitations.dedup();
-    refresh_request_sensitive_capabilities(&mut evidence).then_some(evidence)
-}
-
-fn repository_evidence_projection(evidence: &RunEvidence) -> RunEvidence {
-    let mut projection = evidence.clone();
-    projection.dependency_owners.clear();
-    projection
-        .limitations
-        .retain(|limitation| !is_request_specific_dependency_limitation(limitation));
-    projection.capabilities.retain(|capability| {
-        capability.capability_id != DEAD_CODE_CAPABILITY_ID
-            && capability.capability_id != DEPENDENCY_OWNERSHIP_CAPABILITY_ID
-    });
-    projection
-}
-
-// The architecture check must inspect Limitation variants outside macro token streams.
-#[allow(clippy::match_like_matches_macro)]
-fn is_request_specific_dependency_limitation(limitation: &Limitation) -> bool {
-    match limitation {
-        Limitation::DependencyOwnerAmbiguous {
-            required_intent: Some(_),
-            ..
-        } => true,
-        _ => false,
-    }
-}
-
-fn refresh_request_sensitive_capabilities(evidence: &mut RunEvidence) -> bool {
-    let dead_code_state = if evidence.limitations.is_empty() {
-        CapabilityState::Complete
-    } else {
-        CapabilityState::Incomplete
-    };
-    let dependency_ownership_state =
-        super::super::dependency_ownership_state(&evidence.limitations);
-    let mut dead_code_found = false;
-    let mut dependency_ownership_found = false;
-    for capability in &mut evidence.capabilities {
-        if capability.capability_id == DEAD_CODE_CAPABILITY_ID {
-            capability.state = dead_code_state;
-            dead_code_found = true;
-        } else if capability.capability_id == DEPENDENCY_OWNERSHIP_CAPABILITY_ID {
-            capability.state = dependency_ownership_state;
-            dependency_ownership_found = true;
-        }
-    }
-    dead_code_found && dependency_ownership_found
 }
 
 pub(super) fn changed_paths(
@@ -407,48 +145,18 @@ pub(super) fn active_transition_signals(
     }
 }
 
-pub(super) fn closure_expanded_actual_write_set(
-    preliminary_paths: &[RepoPathProjection],
-    baseline_alias_closures: &[PhysicalAliasClosureRecord],
-    current_alias_closures: &[PhysicalAliasClosureRecord],
-) -> ActualWriteSet {
-    let mut paths = preliminary_paths.iter().cloned().collect::<BTreeSet<_>>();
-    loop {
-        let before = paths.len();
-        for closure in baseline_alias_closures.iter().chain(current_alias_closures) {
-            if closure.members.iter().any(|member| paths.contains(member)) {
-                paths.extend(closure.members.iter().cloned());
-            }
-        }
-        if paths.len() == before {
-            break;
-        }
-    }
-    let baseline_alias_closures = baseline_alias_closures
-        .iter()
-        .filter(|closure| closure.members.iter().any(|member| paths.contains(member)))
-        .cloned()
-        .collect();
-    let current_alias_closures = current_alias_closures
-        .iter()
-        .filter(|closure| closure.members.iter().any(|member| paths.contains(member)))
-        .cloned()
-        .collect();
-    ActualWriteSet {
-        paths: paths.into_iter().collect(),
-        baseline_alias_closures,
-        current_alias_closures,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use lumin_evidence::{
-        AnalysisMetrics, CapabilityRecord, DependencyIntentRecord, DependencyOwnerRecord,
-        PathPrefixIdentity, ScanInvocationTier, SemanticInputState, TransitionCapsule,
-        WriteLeaseKind,
+        AnalysisMetrics, CapabilityRecord, DEAD_CODE_CAPABILITY_ID,
+        DEPENDENCY_OWNERSHIP_CAPABILITY_ID, DependencyIntentRecord, DependencyOwnerRecord,
+        PathPrefixIdentity, RunEvidence, ScanInvocationTier, SemanticInputState, TransitionCapsule,
+        WriteLease, WriteLeaseKind, apply_worktree_transition, seal_analysis_snapshot,
     };
-    use lumin_model::{GateId, LogicalSourceId, PhysicalFileIdentity, RepoPath};
+    use lumin_model::{
+        CapabilityState, GateBaselineObservationId, GateCloseObservationId, GateId, Limitation,
+        LogicalSourceId, PhysicalFileIdentity, RepoPath,
+    };
 
     use super::*;
 
@@ -456,26 +164,28 @@ mod tests {
     fn request_specific_dependency_evidence_rebases_disjoint_transition()
     -> Result<(), Box<dyn std::error::Error>> {
         let changed_path = path("packages/b/src/main.ts")?;
-        let mut adjusted = snapshot(
+        let mut adjusted = with_dependency_only_limitation(snapshot(
             vec![input("packages/b/src/main.ts", "before")?],
             owner("packages/a/src/main.ts", "left-pad", "packages/a")?,
             intent("packages/a/src/main.ts", "left-pad")?,
-        );
-        let transition_before = snapshot(
+        ));
+        let transition_before = with_dependency_only_limitation(snapshot(
             vec![input("packages/b/src/main.ts", "before")?],
             owner("packages/b/src/main.ts", "is-odd", "packages/b")?,
             intent("packages/b/src/main.ts", "is-odd")?,
-        );
-        let transition_after = snapshot(
+        ));
+        let transition_after = with_dependency_only_limitation(snapshot(
             vec![input("packages/b/src/main.ts", "after")?],
             owner("packages/b/src/main.ts", "is-odd", "packages/b")?,
             intent("packages/b/src/main.ts", "is-odd")?,
-        );
+        ));
         let transition = WorktreeTransition {
             sequence: 1,
             capsule: TransitionCapsule {
                 gate_id: GateId::from_string("gate-b".to_owned()),
                 revision: 1,
+                baseline_observation_id: baseline_observation_id(),
+                close_observation_id: close_observation_id(),
                 before_snapshot: transition_before,
                 after_snapshot: transition_after,
                 changed_paths: vec![changed_path],
@@ -485,10 +195,14 @@ mod tests {
         let adjusted_owner = adjusted.evidence.dependency_owners.clone();
         let adjusted_invocation = adjusted.scan_invocation.clone();
 
-        assert!(apply_transition(&mut adjusted, &transition));
+        assert!(apply_worktree_transition(&mut adjusted, &transition));
         assert_eq!(adjusted.evidence.dependency_owners, adjusted_owner);
         assert_eq!(adjusted.scan_invocation, adjusted_invocation);
         assert_eq!(adjusted.inputs[0].payload_sha256.as_deref(), Some("after"));
+        assert_eq!(
+            adjusted.evidence.dead_code_state(),
+            CapabilityState::Complete
+        );
         Ok(())
     }
 
@@ -531,6 +245,8 @@ mod tests {
             capsule: TransitionCapsule {
                 gate_id: GateId::from_string("gate-b-topology".to_owned()),
                 revision: 1,
+                baseline_observation_id: baseline_observation_id(),
+                close_observation_id: close_observation_id(),
                 before_snapshot: snapshot(
                     vec![source_before, candidate_before],
                     owner("packages/b/generated/main.ts", "is-odd", "packages/b")?,
@@ -555,7 +271,7 @@ mod tests {
             },
         };
 
-        assert!(apply_transition(&mut adjusted, &transition));
+        assert!(apply_worktree_transition(&mut adjusted, &transition));
         assert_eq!(adjusted.inputs.len(), 1);
         assert_eq!(adjusted.inputs[0].path, source_path);
         assert_eq!(adjusted.inputs[0].state, SemanticInputState::Source);
@@ -601,6 +317,8 @@ mod tests {
             capsule: TransitionCapsule {
                 gate_id: GateId::from_string("gate-b".to_owned()),
                 revision: 1,
+                baseline_observation_id: baseline_observation_id(),
+                close_observation_id: close_observation_id(),
                 before_snapshot: transition_before,
                 after_snapshot: transition_after,
                 changed_paths: vec![changed_path],
@@ -608,9 +326,83 @@ mod tests {
             },
         };
 
-        assert!(!apply_transition(&mut adjusted, &transition));
+        assert!(!apply_worktree_transition(&mut adjusted, &transition));
         assert_eq!(adjusted.inputs[0].payload_sha256.as_deref(), Some("before"));
         Ok(())
+    }
+
+    #[test]
+    fn different_scan_scope_ignores_a_proven_disjoint_transition()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path_a = path("packages/a/src/main.ts")?;
+        let path_b = path("packages/b/src/main.ts")?;
+        let adjusted = snapshot_with_include(
+            vec![input("packages/a/src/main.ts", "a")?],
+            owner("packages/a/src/main.ts", "left-pad", "packages/a")?,
+            intent("packages/a/src/main.ts", "left-pad")?,
+            "packages/a/**",
+        );
+        let transition = WorktreeTransition {
+            sequence: 3,
+            capsule: TransitionCapsule {
+                gate_id: GateId::from_string("gate-b-scope".to_owned()),
+                revision: 1,
+                baseline_observation_id: baseline_observation_id(),
+                close_observation_id: close_observation_id(),
+                before_snapshot: snapshot_with_include(
+                    vec![input("packages/b/src/main.ts", "before")?],
+                    owner("packages/b/src/main.ts", "is-odd", "packages/b")?,
+                    intent("packages/b/src/main.ts", "is-odd")?,
+                    "packages/b/**",
+                ),
+                after_snapshot: snapshot_with_include(
+                    vec![input("packages/b/src/main.ts", "after")?],
+                    owner("packages/b/src/main.ts", "is-odd", "packages/b")?,
+                    intent("packages/b/src/main.ts", "is-odd")?,
+                    "packages/b/**",
+                ),
+                changed_paths: vec![path_b.clone()],
+                leased_write_set: Vec::new(),
+            },
+        };
+        let lease_a = WriteLease {
+            path: path_a,
+            kind: WriteLeaseKind::ExistingFile,
+            physical_identity: None,
+            nearest_existing_parent: None,
+            prefix_identities: Vec::new(),
+        };
+
+        let mut strict = adjusted.clone();
+        assert!(!apply_worktree_transition(&mut strict, &transition));
+
+        let mut disjoint = adjusted.clone();
+        assert!(apply_worktree_transition_for_domain(
+            &mut disjoint,
+            &transition,
+            std::slice::from_ref(&lease_a),
+            &adjusted.inputs,
+        ));
+        assert_eq!(disjoint, adjusted);
+
+        let mut protected = adjusted.clone();
+        let protected_b = input("packages/b/src/main.ts", "before")?;
+        assert!(!apply_worktree_transition_for_domain(
+            &mut protected,
+            &transition,
+            &[lease_a],
+            &[protected_b],
+        ));
+        assert_eq!(protected, adjusted);
+        Ok(())
+    }
+
+    fn baseline_observation_id() -> GateBaselineObservationId {
+        GateBaselineObservationId::from_string("gate_baseline_observation_test".to_owned())
+    }
+
+    fn close_observation_id() -> GateCloseObservationId {
+        GateCloseObservationId::from_string("gate_close_observation_test".to_owned())
     }
 
     fn snapshot(
@@ -647,6 +439,44 @@ mod tests {
                 ..ScanInvocationTier::default()
             },
             Vec::new(),
+        )
+    }
+
+    fn snapshot_with_include(
+        inputs: Vec<SemanticInputRecord>,
+        dependency_owner: DependencyOwnerRecord,
+        dependency_intent: DependencyIntentRecord,
+        include: &str,
+    ) -> AnalysisSnapshot {
+        let snapshot = snapshot(inputs, dependency_owner, dependency_intent);
+        let mut invocation = snapshot.scan_invocation.clone();
+        invocation.includes = vec![include.to_owned()];
+        seal_analysis_snapshot(
+            snapshot.inputs,
+            snapshot.evidence,
+            invocation,
+            snapshot.entry_selections,
+        )
+    }
+
+    fn with_dependency_only_limitation(snapshot: AnalysisSnapshot) -> AnalysisSnapshot {
+        let mut evidence = snapshot.evidence;
+        evidence.limitations = vec![Limitation::PnpmDependencySemanticsUnsupported {
+            path: "pnpm-workspace.yaml".to_owned(),
+            detail: "unsupported pnpm semantics".to_owned(),
+        }];
+        for capability in &mut evidence.capabilities {
+            if capability.capability_id == DEAD_CODE_CAPABILITY_ID {
+                capability.state = CapabilityState::Complete;
+            } else if capability.capability_id == DEPENDENCY_OWNERSHIP_CAPABILITY_ID {
+                capability.state = CapabilityState::Incomplete;
+            }
+        }
+        seal_analysis_snapshot(
+            snapshot.inputs,
+            evidence,
+            snapshot.scan_invocation,
+            snapshot.entry_selections,
         )
     }
 

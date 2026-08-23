@@ -1,5 +1,5 @@
 use lumin_model::GateId;
-use redb::{ReadableTable, TableDefinition, TableError, WriteTransaction};
+use redb::{ReadTransaction, ReadableTable, TableDefinition, TableError, WriteTransaction};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{SEQUENCES, StoreError, backend_error, namespace::StoreDatabase, serialization_error};
@@ -20,6 +20,14 @@ pub(crate) fn increment_active_gate_catalog(write: &WriteTransaction) -> Result<
         .insert(ACTIVE_GATE_CATALOG_SEQUENCE_KEY, next)
         .map_err(backend_error)?;
     Ok(next)
+}
+
+pub(crate) fn current_active_gate_catalog(write: &WriteTransaction) -> Result<u64, StoreError> {
+    let table = write.open_table(SEQUENCES).map_err(backend_error)?;
+    table
+        .get(ACTIVE_GATE_CATALOG_SEQUENCE_KEY)
+        .map_err(backend_error)
+        .map(|value| value.map_or(0, |value| value.value()))
 }
 
 pub(crate) fn current_transition_sequence(write: &WriteTransaction) -> Result<u64, StoreError> {
@@ -69,6 +77,25 @@ pub(crate) fn load_record<T: DeserializeOwned>(
     key: &str,
 ) -> Result<Option<T>, StoreError> {
     let read = database.begin_read()?;
+    let table = match read.open_table(definition) {
+        Ok(table) => table,
+        Err(TableError::TableDoesNotExist(_)) => return Ok(None),
+        Err(error) => return Err(backend_error(error)),
+    };
+    let bytes = table
+        .get(key)
+        .map_err(backend_error)?
+        .map(|value| value.value().to_vec());
+    bytes
+        .map(|bytes| serde_json::from_slice(&bytes).map_err(serialization_error))
+        .transpose()
+}
+
+pub(crate) fn load_record_from_read<T: DeserializeOwned>(
+    read: &ReadTransaction,
+    definition: TableDefinition<'static, &str, &[u8]>,
+    key: &str,
+) -> Result<Option<T>, StoreError> {
     let table = match read.open_table(definition) {
         Ok(table) => table,
         Err(TableError::TableDoesNotExist(_)) => return Ok(None),

@@ -216,8 +216,8 @@ fn ci_row_shards_balance_declared_work_deterministically() {
             "unbalanced {mode} invocation loads: {loads:?}",
         );
         let expected = match mode {
-            CorpusMode::Standard => vec![35, 35, 35, 35],
-            CorpusMode::Determinism => vec![64, 20, 20, 20, 20, 20, 20, 19],
+            CorpusMode::Standard => vec![36, 36, 36, 35],
+            CorpusMode::Determinism => vec![64, 21, 21, 20, 20, 20, 20, 20],
             CorpusMode::StoreCrash => unreachable!("CI does not shard store-crash rows"),
         };
         assert_eq!(loads, expected, "{mode} shard assignment changed");
@@ -377,7 +377,7 @@ fn every_mapped_standard_row_has_a_paired_determinism_invocation() {
         .iter()
         .filter(|row| row.is_mapped(CorpusMode::Determinism))
         .count();
-    assert_eq!(standard, 67);
+    assert_eq!(standard, 68);
     assert_eq!(determinism, standard);
 }
 

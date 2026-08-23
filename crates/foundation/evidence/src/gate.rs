@@ -1,14 +1,26 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_model::{
-    AnalysisInputId, DeltaDimensionChange, DeltaFactFamily, GateDeltaClassification,
-    GateDeltaRecord, GateId, OperationId, PhysicalFileIdentity, ResolutionProfile,
-    ResolutionProfileSource, SelectedResolutionProfile, append_length_prefixed,
+    AnalysisInputId, DeltaDimensionChange, DeltaFactFamily, DynamicImportTargetScope,
+    GateBaselineObservationId, GateCloseObservationId, GateDeltaClassification, GateDeltaRecord,
+    GateId, ImportMetaGlobTargetScope, Limitation, ObservationBinding, OperationId,
+    PhysicalFileIdentity, RepoPath, ResolutionOutcome, ResolutionProfile, ResolutionProfileSource,
+    SelectedResolutionProfile, UnsealedObservationReason, append_length_prefixed,
     classify_lifecycle_deltas, digest_hex,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{RepoPathProjection, RunEvidence, delta::lifecycle_delta_input_for};
+
+pub type GateObservationBinding = ObservationBinding<RepoPathProjection>;
+pub const GATE_RECORD_SCHEMA_VERSION: &str = "lumin-gate.v2";
+pub const GATE_OPERATION_SCHEMA_VERSION: &str = "lumin-operation.v2";
+/// Analysis contract that this lifecycle schema can resume for an active gate.
+///
+/// `lumin-engine` remains the value authority; the public frozen-contract
+/// probe verifies its current derivation against this compatibility boundary.
+pub const SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID: &str =
+    "655854af620a6d54e44f40f6768b5c6a5e1f4cb1381367eee2dc7998baeb1236";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -130,6 +142,48 @@ pub struct ScanInvocationTier {
 }
 
 impl ScanInvocationTier {
+    pub fn validate_patterns(&self) -> Result<(), lumin_model::ScanPatternError> {
+        for pattern in self
+            .includes
+            .iter()
+            .chain(&self.excludes)
+            .chain(self.role_overrides.iter().map(|rule| &rule.pattern))
+        {
+            lumin_model::validate_scan_pattern(pattern)?;
+        }
+        Ok(())
+    }
+
+    pub fn validate_canonical_shape(&self) -> Result<(), String> {
+        for projection in self
+            .entries
+            .iter()
+            .chain(self.dependency_intents.iter().map(|intent| &intent.path))
+        {
+            let path = RepoPath::from_canonical_bytes(&projection.canonical)
+                .map_err(|error| error.to_string())?;
+            if RepoPathProjection::from(&path) != *projection {
+                return Err(format!(
+                    "path projection is not canonical: {}",
+                    projection.display
+                ));
+            }
+        }
+        let mut entries = self.entries.clone();
+        entries.sort();
+        entries.dedup();
+        if entries != self.entries {
+            return Err("entry projections are not sorted and unique".to_owned());
+        }
+        let mut dependency_intents = self.dependency_intents.clone();
+        dependency_intents.sort();
+        dependency_intents.dedup();
+        if dependency_intents != self.dependency_intents {
+            return Err("dependency intents are not sorted and unique".to_owned());
+        }
+        Ok(())
+    }
+
     /// Append canonical length-prefixed framing of all tier fields for deterministic hashing.
     /// Uses exhaustive stable tags for each ScanRole variant.
     pub fn append_semantic_framing(&self, output: &mut Vec<u8>) {
@@ -200,6 +254,33 @@ pub struct GateAnalysisOptions {
     pub resolution_profile: Option<ResolutionProfile>,
     #[serde(default)]
     pub scan_invocation: ScanInvocationTier,
+}
+
+pub fn pre_write_request_digest(
+    declared_write_set: &[RepoPathProjection],
+    scan_invocation: &ScanInvocationTier,
+) -> String {
+    let mut framed = Vec::new();
+    append_length_prefixed(&mut framed, b"lumin-pre-write.v4");
+    scan_invocation.append_semantic_framing(&mut framed);
+    let mut paths = declared_write_set
+        .iter()
+        .map(|path| path.canonical.as_slice())
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    framed.extend_from_slice(&(paths.len() as u64).to_be_bytes());
+    for path in paths {
+        append_length_prefixed(&mut framed, path);
+    }
+    digest_hex(&framed)
+}
+
+pub fn post_write_request_digest(gate_id: &GateId) -> String {
+    let mut framed = Vec::new();
+    append_length_prefixed(&mut framed, b"lumin-post-write.v2");
+    append_length_prefixed(&mut framed, gate_id.as_str().as_bytes());
+    digest_hex(&framed)
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -303,6 +384,446 @@ pub struct ActualWriteSet {
     pub current_alias_closures: Vec<PhysicalAliasClosureRecord>,
 }
 
+pub fn derive_protected_semantic_inputs(
+    snapshot: &AnalysisSnapshot,
+    leases: &[WriteLease],
+) -> Vec<SemanticInputRecord> {
+    let source_paths = snapshot
+        .inputs
+        .iter()
+        .filter(|input| input.state == SemanticInputState::Source)
+        .map(|input| input.path.clone())
+        .collect::<BTreeSet<_>>();
+    let paths_by_id = snapshot
+        .evidence
+        .source_contexts
+        .iter()
+        .map(|source| (source.source_id.clone(), source.path.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let mut adjacency = snapshot
+        .evidence
+        .source_contexts
+        .iter()
+        .map(|source| (source.path.clone(), BTreeSet::new()))
+        .collect::<BTreeMap<_, _>>();
+    for resolution in &snapshot.evidence.resolutions {
+        let ResolutionOutcome::Internal { target } = &resolution.outcome else {
+            continue;
+        };
+        let Some(importer) = paths_by_id.get(&resolution.source_use.importer) else {
+            continue;
+        };
+        let Some(target) = paths_by_id.get(target) else {
+            continue;
+        };
+        adjacency
+            .entry(importer.clone())
+            .or_default()
+            .insert(target.clone());
+        adjacency
+            .entry(target.clone())
+            .or_default()
+            .insert(importer.clone());
+    }
+    for limitation in &snapshot.evidence.limitations {
+        let (source_id, candidates) = match limitation {
+            Limitation::DynamicImportNonLiteral {
+                source_id,
+                candidates,
+                target_scope: DynamicImportTargetScope::ExplicitTargets,
+                ..
+            }
+            | Limitation::ImportMetaGlobUnsupported {
+                source_id,
+                candidates,
+                target_scope: ImportMetaGlobTargetScope::ExplicitTargets,
+                ..
+            } => (source_id, candidates),
+            _ => continue,
+        };
+        let Some(importer) = paths_by_id.get(source_id) else {
+            continue;
+        };
+        for candidate in candidates {
+            let Some(target) = paths_by_id.get(candidate) else {
+                continue;
+            };
+            adjacency
+                .entry(importer.clone())
+                .or_default()
+                .insert(target.clone());
+            adjacency
+                .entry(target.clone())
+                .or_default()
+                .insert(importer.clone());
+        }
+    }
+
+    let protect_all_sources = leases.iter().any(|lease| {
+        matches!(
+            lease.kind,
+            WriteLeaseKind::NewFile | WriteLeaseKind::Directory
+        )
+    });
+    let mut selected = if protect_all_sources {
+        source_paths.clone()
+    } else {
+        leases
+            .iter()
+            .filter(|lease| lease.kind == WriteLeaseKind::ExistingFile)
+            .filter_map(|lease| {
+                source_paths
+                    .iter()
+                    .find(|path| path.canonical == lease.path.canonical)
+                    .cloned()
+            })
+            .collect::<BTreeSet<_>>()
+    };
+    let mut frontier = selected.iter().cloned().collect::<Vec<_>>();
+    while let Some(path) = frontier.pop() {
+        let Some(neighbors) = adjacency.get(&path) else {
+            continue;
+        };
+        for neighbor in neighbors {
+            if selected.insert(neighbor.clone()) {
+                frontier.push(neighbor.clone());
+            }
+        }
+    }
+    let selected_paths = selected
+        .iter()
+        .map(|path| path.canonical.as_slice())
+        .collect::<BTreeSet<_>>();
+    let mut protected = snapshot
+        .inputs
+        .iter()
+        .filter(|input| {
+            input.physical_redirect_sha256.is_some()
+                || !source_paths.contains(&input.path)
+                || selected_paths.contains(input.path.canonical.as_slice())
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    protected.sort();
+    protected.dedup();
+    protected
+}
+
+pub struct GateBaselineObservationInput<'a> {
+    pub catalog_revision: u64,
+    pub transition_sequence: u64,
+    pub analysis_contract: &'a str,
+    pub analysis_input_id: &'a AnalysisInputId,
+    pub evidence_payload_sha256: &'a str,
+    pub signals: &'a [GateSignal],
+    pub declared_write_set: &'a [RepoPathProjection],
+    pub leased_write_set: &'a [WriteLease],
+    pub alias_closures: &'a [PhysicalAliasClosureRecord],
+    pub protected_semantic_inputs: &'a [SemanticInputRecord],
+}
+
+pub fn derive_gate_baseline_observation_id(
+    input: GateBaselineObservationInput<'_>,
+) -> GateBaselineObservationId {
+    let mut framed = Vec::new();
+    append_length_prefixed(&mut framed, b"lumin-gate-baseline-observation.v3");
+    framed.extend_from_slice(&input.catalog_revision.to_be_bytes());
+    framed.extend_from_slice(&input.transition_sequence.to_be_bytes());
+    append_length_prefixed(&mut framed, input.analysis_contract.as_bytes());
+    append_length_prefixed(&mut framed, input.analysis_input_id.as_str().as_bytes());
+    append_length_prefixed(&mut framed, input.evidence_payload_sha256.as_bytes());
+    append_observation_signals(&mut framed, input.signals);
+    append_observation_paths(&mut framed, input.declared_write_set);
+    append_observation_write_leases(&mut framed, input.leased_write_set);
+    append_observation_alias_closures(&mut framed, input.alias_closures);
+    append_observation_semantic_inputs(&mut framed, input.protected_semantic_inputs);
+    GateBaselineObservationId::from_string(format!(
+        "gate_baseline_observation_{}",
+        digest_hex(&framed)
+    ))
+}
+
+pub struct GateCloseObservationInput<'a> {
+    pub gate_id: &'a GateId,
+    pub opening_observation_id: &'a GateBaselineObservationId,
+    pub opening_analysis_contract: &'a str,
+    pub prior_revision: u64,
+    pub catalog_revision: u64,
+    pub analysis_input_id: &'a AnalysisInputId,
+    pub evidence_payload_sha256: &'a str,
+    pub signals: &'a [GateSignal],
+    pub leased_write_set: &'a [WriteLease],
+    pub protected_semantic_inputs: &'a [SemanticInputRecord],
+    pub changed_paths: &'a [RepoPathProjection],
+    pub actual_write_set: &'a ActualWriteSet,
+    pub alias_closures: &'a [PhysicalAliasClosureRecord],
+    pub reconciled_transition_sequences: &'a [u64],
+}
+
+pub fn derive_gate_close_observation_id(
+    input: GateCloseObservationInput<'_>,
+) -> GateCloseObservationId {
+    let mut framed = Vec::new();
+    append_length_prefixed(&mut framed, b"lumin-gate-close-observation.v3");
+    append_length_prefixed(&mut framed, input.gate_id.as_str().as_bytes());
+    append_length_prefixed(
+        &mut framed,
+        input.opening_observation_id.as_str().as_bytes(),
+    );
+    append_length_prefixed(&mut framed, input.opening_analysis_contract.as_bytes());
+    framed.extend_from_slice(&input.prior_revision.to_be_bytes());
+    framed.extend_from_slice(&input.catalog_revision.to_be_bytes());
+    append_length_prefixed(&mut framed, input.analysis_input_id.as_str().as_bytes());
+    append_length_prefixed(&mut framed, input.evidence_payload_sha256.as_bytes());
+    append_observation_signals(&mut framed, input.signals);
+    append_observation_write_leases(&mut framed, input.leased_write_set);
+    append_observation_semantic_inputs(&mut framed, input.protected_semantic_inputs);
+    append_observation_paths(&mut framed, input.changed_paths);
+    append_observation_actual_write_set(&mut framed, input.actual_write_set);
+    append_observation_alias_closures(&mut framed, input.alias_closures);
+    let mut sequences = input.reconciled_transition_sequences.to_vec();
+    sequences.sort_unstable();
+    sequences.dedup();
+    framed.extend_from_slice(&(sequences.len() as u64).to_be_bytes());
+    for sequence in sequences {
+        framed.extend_from_slice(&sequence.to_be_bytes());
+    }
+    GateCloseObservationId::from_string(format!("gate_close_observation_{}", digest_hex(&framed)))
+}
+
+fn append_observation_actual_write_set(output: &mut Vec<u8>, actual: &ActualWriteSet) {
+    append_observation_paths(output, &actual.paths);
+    append_observation_alias_closures(output, &actual.baseline_alias_closures);
+    append_observation_alias_closures(output, &actual.current_alias_closures);
+}
+
+fn append_observation_paths(output: &mut Vec<u8>, paths: &[RepoPathProjection]) {
+    let mut paths = paths
+        .iter()
+        .map(|path| path.canonical.as_slice())
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    output.extend_from_slice(&(paths.len() as u64).to_be_bytes());
+    for path in paths {
+        append_length_prefixed(output, path);
+    }
+}
+
+fn append_observation_write_leases(output: &mut Vec<u8>, leases: &[WriteLease]) {
+    let mut leases = leases.to_vec();
+    leases.sort();
+    leases.dedup();
+    output.extend_from_slice(&(leases.len() as u64).to_be_bytes());
+    for lease in leases {
+        append_length_prefixed(output, &lease.path.canonical);
+        output.push(match lease.kind {
+            WriteLeaseKind::ExistingFile => 1,
+            WriteLeaseKind::NewFile => 2,
+            WriteLeaseKind::Directory => 3,
+        });
+        append_observation_physical_identity(output, lease.physical_identity.as_ref());
+        match lease.nearest_existing_parent {
+            Some(parent) => {
+                output.push(1);
+                append_length_prefixed(output, &parent.canonical);
+            }
+            None => output.push(0),
+        }
+        let mut prefix_identities = lease.prefix_identities;
+        prefix_identities.sort();
+        prefix_identities.dedup();
+        output.extend_from_slice(&(prefix_identities.len() as u64).to_be_bytes());
+        for prefix in prefix_identities {
+            append_length_prefixed(output, &prefix.path.canonical);
+            append_length_prefixed(output, &prefix.physical_identity.canonical_bytes());
+        }
+    }
+}
+
+fn append_observation_alias_closures(
+    output: &mut Vec<u8>,
+    closures: &[PhysicalAliasClosureRecord],
+) {
+    let mut closures = closures.to_vec();
+    closures.sort();
+    closures.dedup();
+    output.extend_from_slice(&(closures.len() as u64).to_be_bytes());
+    for closure in closures {
+        append_length_prefixed(output, &closure.physical_identity.canonical_bytes());
+        append_observation_paths(output, &closure.members);
+    }
+}
+
+fn append_observation_semantic_inputs(output: &mut Vec<u8>, inputs: &[SemanticInputRecord]) {
+    let mut inputs = inputs.to_vec();
+    inputs.sort();
+    inputs.dedup();
+    output.extend_from_slice(&(inputs.len() as u64).to_be_bytes());
+    for input in inputs {
+        append_length_prefixed(output, &input.path.canonical);
+        output.push(input.state.tag());
+        append_observation_optional_bytes(
+            output,
+            input.payload_sha256.as_deref().map(str::as_bytes),
+        );
+        append_observation_physical_identity(output, input.physical_identity.as_ref());
+        match input.absence_parent {
+            Some(parent) => {
+                output.push(1);
+                append_length_prefixed(output, &parent.path.canonical);
+                append_length_prefixed(output, &parent.physical_identity.canonical_bytes());
+            }
+            None => output.push(0),
+        }
+        append_observation_optional_bytes(
+            output,
+            input.physical_redirect_sha256.as_deref().map(str::as_bytes),
+        );
+    }
+}
+
+fn append_observation_signals(output: &mut Vec<u8>, signals: &[GateSignal]) {
+    output.extend_from_slice(&(signals.len() as u64).to_be_bytes());
+    for signal in signals {
+        match signal {
+            GateSignal::FindingWarnings { count } => {
+                output.push(1);
+                output.extend_from_slice(&(*count as u64).to_be_bytes());
+            }
+            GateSignal::PreExistingAdverseFacts { count } => {
+                output.push(2);
+                output.extend_from_slice(&(*count as u64).to_be_bytes());
+            }
+            GateSignal::RequiredEvidenceIncomplete { limitation_count } => {
+                output.push(3);
+                output.extend_from_slice(&(*limitation_count as u64).to_be_bytes());
+            }
+            GateSignal::AnalysisFailed { detail } => {
+                output.push(4);
+                append_length_prefixed(output, detail.as_bytes());
+            }
+            GateSignal::DeclaredPathUnsupported { path, reason } => {
+                output.push(5);
+                append_length_prefixed(output, &path.canonical);
+                output.push(declared_path_unsupported_reason_tag(*reason));
+            }
+            GateSignal::WriteConflict { paths, gate_ids } => {
+                output.push(6);
+                append_observation_signal_paths(output, paths);
+                append_observation_gate_ids(output, gate_ids);
+            }
+            GateSignal::SemanticInputConflict { paths, gate_ids } => {
+                output.push(7);
+                append_observation_signal_paths(output, paths);
+                append_observation_gate_ids(output, gate_ids);
+            }
+            GateSignal::SemanticReadClosureIncomplete { paths } => {
+                output.push(8);
+                append_observation_signal_paths(output, paths);
+            }
+            GateSignal::ProtectedInputChanged { paths } => {
+                output.push(9);
+                append_observation_signal_paths(output, paths);
+            }
+            GateSignal::AnalysisContractChanged => output.push(10),
+            GateSignal::UnplannedWrite { paths } => {
+                output.push(11);
+                append_observation_signal_paths(output, paths);
+            }
+            GateSignal::ActiveTransitionPending { paths, gate_ids } => {
+                output.push(12);
+                append_observation_signal_paths(output, paths);
+                append_observation_gate_ids(output, gate_ids);
+            }
+            GateSignal::TransitionChainBroken { sequence } => {
+                output.push(13);
+                output.extend_from_slice(&sequence.to_be_bytes());
+            }
+            GateSignal::TransitionCatalogChanged => output.push(14),
+            GateSignal::AdverseFactIntroduced { count } => {
+                output.push(15);
+                output.extend_from_slice(&(*count as u64).to_be_bytes());
+            }
+            GateSignal::AdverseFactRegressed { count } => {
+                output.push(16);
+                output.extend_from_slice(&(*count as u64).to_be_bytes());
+            }
+            GateSignal::OpacityIntroduced { count } => {
+                output.push(17);
+                output.extend_from_slice(&(*count as u64).to_be_bytes());
+            }
+            GateSignal::OpacityRegressed { count } => {
+                output.push(18);
+                output.extend_from_slice(&(*count as u64).to_be_bytes());
+            }
+            GateSignal::LifecycleEvidenceRegressed { count } => {
+                output.push(19);
+                output.extend_from_slice(&(*count as u64).to_be_bytes());
+            }
+            GateSignal::LifecycleDeltaIncomparable { count } => {
+                output.push(20);
+                output.extend_from_slice(&(*count as u64).to_be_bytes());
+            }
+            GateSignal::LifecycleBaselineUnavailable { count } => {
+                output.push(21);
+                output.extend_from_slice(&(*count as u64).to_be_bytes());
+            }
+        }
+    }
+}
+
+fn append_observation_signal_paths(output: &mut Vec<u8>, paths: &[RepoPathProjection]) {
+    output.extend_from_slice(&(paths.len() as u64).to_be_bytes());
+    for path in paths {
+        append_length_prefixed(output, &path.canonical);
+    }
+}
+
+fn append_observation_gate_ids(output: &mut Vec<u8>, gate_ids: &[GateId]) {
+    output.extend_from_slice(&(gate_ids.len() as u64).to_be_bytes());
+    for gate_id in gate_ids {
+        append_length_prefixed(output, gate_id.as_str().as_bytes());
+    }
+}
+
+fn declared_path_unsupported_reason_tag(reason: DeclaredPathUnsupportedReason) -> u8 {
+    match reason {
+        DeclaredPathUnsupportedReason::ReservedState => 1,
+        DeclaredPathUnsupportedReason::Missing => 2,
+        DeclaredPathUnsupportedReason::NonRegular => 3,
+        DeclaredPathUnsupportedReason::SymlinkOrAliasedPrefix => 4,
+        DeclaredPathUnsupportedReason::MultiplyLinked => 5,
+        DeclaredPathUnsupportedReason::NotAnalyzedSource => 6,
+        DeclaredPathUnsupportedReason::MissingParent => 7,
+        DeclaredPathUnsupportedReason::OutsideRoot => 8,
+        DeclaredPathUnsupportedReason::UnboundedDirectory => 9,
+    }
+}
+
+fn append_observation_physical_identity(
+    output: &mut Vec<u8>,
+    identity: Option<&PhysicalFileIdentity>,
+) {
+    match identity {
+        Some(identity) => {
+            output.push(1);
+            append_length_prefixed(output, &identity.canonical_bytes());
+        }
+        None => output.push(0),
+    }
+}
+
+fn append_observation_optional_bytes(output: &mut Vec<u8>, value: Option<&[u8]>) {
+    match value {
+        Some(value) => {
+            output.push(1);
+            append_length_prefixed(output, value);
+        }
+        None => output.push(0),
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DeclaredPathUnsupportedReason {
@@ -344,6 +865,9 @@ pub enum GateSignal {
         paths: Vec<RepoPathProjection>,
         gate_ids: Vec<GateId>,
     },
+    SemanticReadClosureIncomplete {
+        paths: Vec<RepoPathProjection>,
+    },
     ProtectedInputChanged {
         paths: Vec<RepoPathProjection>,
     },
@@ -384,9 +908,161 @@ pub enum GateSignal {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct UnsealedGateObservationInputs {
+    #[serde(default)]
+    pub attempted_write_leases: Vec<WriteLease>,
+    #[serde(default)]
+    pub attempted_semantic_inputs: Vec<SemanticReadReservationBinding>,
+    #[serde(default)]
+    pub last_complete_read_set: Vec<RepoPathProjection>,
+}
+
+impl UnsealedGateObservationInputs {
+    pub fn new(
+        mut attempted_write_leases: Vec<WriteLease>,
+        mut attempted_semantic_inputs: Vec<SemanticReadReservationBinding>,
+        mut last_complete_read_set: Vec<RepoPathProjection>,
+    ) -> Self {
+        attempted_write_leases.sort();
+        attempted_write_leases.dedup();
+        attempted_semantic_inputs.sort();
+        attempted_semantic_inputs.dedup();
+        last_complete_read_set.sort();
+        last_complete_read_set.dedup();
+        Self {
+            attempted_write_leases,
+            attempted_semantic_inputs,
+            last_complete_read_set,
+        }
+    }
+
+    pub fn is_canonical(&self) -> bool {
+        Self::new(
+            self.attempted_write_leases.clone(),
+            self.attempted_semantic_inputs.clone(),
+            self.last_complete_read_set.clone(),
+        ) == *self
+    }
+}
+
+pub fn derive_unsealed_gate_observation_binding(
+    primary_paths: &[RepoPathProjection],
+    inputs: &UnsealedGateObservationInputs,
+    signals: &[GateSignal],
+) -> GateObservationBinding {
+    let reason = signals
+        .iter()
+        .find_map(unsealed_observation_reason)
+        .unwrap_or(UnsealedObservationReason::ObservationDomainUnbounded);
+    let mut attempted_domain = primary_paths.to_vec();
+    attempted_domain.extend(
+        inputs
+            .attempted_write_leases
+            .iter()
+            .map(|lease| lease.path.clone()),
+    );
+    attempted_domain.extend(
+        inputs
+            .attempted_semantic_inputs
+            .iter()
+            .map(|input| input.path.clone()),
+    );
+    attempted_domain.sort();
+    attempted_domain.dedup();
+    let mut conflicting_or_unbounded_inputs = observation_signal_paths(signals);
+    if conflicting_or_unbounded_inputs.is_empty() {
+        conflicting_or_unbounded_inputs = attempted_domain.clone();
+    }
+    ObservationBinding::Unsealed {
+        reason,
+        attempted_domain,
+        last_complete_read_set: inputs.last_complete_read_set.clone(),
+        conflicting_or_unbounded_inputs,
+    }
+}
+
+fn unsealed_observation_reason(signal: &GateSignal) -> Option<UnsealedObservationReason> {
+    match signal {
+        GateSignal::WriteConflict { .. } => Some(UnsealedObservationReason::AdmissionConflict),
+        GateSignal::SemanticInputConflict { .. } => {
+            Some(UnsealedObservationReason::SemanticReadConflict)
+        }
+        GateSignal::SemanticReadClosureIncomplete { .. } => {
+            Some(UnsealedObservationReason::SemanticReadClosureIncomplete)
+        }
+        GateSignal::AnalysisFailed { .. } | GateSignal::AnalysisContractChanged => {
+            Some(UnsealedObservationReason::AnalysisFailed)
+        }
+        GateSignal::DeclaredPathUnsupported { .. } => {
+            Some(UnsealedObservationReason::DeclaredPathUnsupported)
+        }
+        GateSignal::ProtectedInputChanged { .. } => {
+            Some(UnsealedObservationReason::ProtectedInputChanged)
+        }
+        GateSignal::TransitionCatalogChanged => {
+            Some(UnsealedObservationReason::TransitionCatalogChanged)
+        }
+        GateSignal::UnplannedWrite { .. } => Some(UnsealedObservationReason::UnplannedWrite),
+        GateSignal::RequiredEvidenceIncomplete { .. }
+        | GateSignal::ActiveTransitionPending { .. }
+        | GateSignal::TransitionChainBroken { .. }
+        | GateSignal::LifecycleDeltaIncomparable { .. }
+        | GateSignal::LifecycleBaselineUnavailable { .. } => {
+            Some(UnsealedObservationReason::ObservationDomainUnbounded)
+        }
+        GateSignal::FindingWarnings { .. }
+        | GateSignal::PreExistingAdverseFacts { .. }
+        | GateSignal::AdverseFactIntroduced { .. }
+        | GateSignal::AdverseFactRegressed { .. }
+        | GateSignal::OpacityIntroduced { .. }
+        | GateSignal::OpacityRegressed { .. }
+        | GateSignal::LifecycleEvidenceRegressed { .. } => None,
+    }
+}
+
+fn observation_signal_paths(signals: &[GateSignal]) -> Vec<RepoPathProjection> {
+    let mut paths = Vec::new();
+    for signal in signals {
+        match signal {
+            GateSignal::DeclaredPathUnsupported { path, .. } => paths.push(path.clone()),
+            GateSignal::WriteConflict {
+                paths: signal_paths,
+                ..
+            }
+            | GateSignal::SemanticInputConflict {
+                paths: signal_paths,
+                ..
+            }
+            | GateSignal::SemanticReadClosureIncomplete {
+                paths: signal_paths,
+            }
+            | GateSignal::ProtectedInputChanged {
+                paths: signal_paths,
+            }
+            | GateSignal::UnplannedWrite {
+                paths: signal_paths,
+            }
+            | GateSignal::ActiveTransitionPending {
+                paths: signal_paths,
+                ..
+            } => paths.extend(signal_paths.iter().cloned()),
+            _ => {}
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GateBaseline {
+    pub observation_id: GateBaselineObservationId,
+    pub catalog_revision: u64,
     pub analysis_contract: String,
     pub snapshot: AnalysisSnapshot,
+    pub leased_write_set: Vec<WriteLease>,
+    pub alias_closures: Vec<PhysicalAliasClosureRecord>,
     #[serde(default)]
     pub protected_semantic_inputs: Vec<SemanticInputRecord>,
     #[serde(default)]
@@ -401,6 +1077,12 @@ pub struct GateRevision {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub committed_unix_millis: Option<u64>,
     pub decision: GateDecision,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation_binding: Option<GateObservationBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unsealed_observation_inputs: Option<UnsealedGateObservationInputs>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     pub signals: Vec<GateSignal>,
@@ -495,6 +1177,15 @@ pub enum GateOperationKind {
     GateAbandon,
 }
 
+pub fn gate_abandon_request_digest(gate_id: &GateId, target_revision: u64, reason: &str) -> String {
+    let mut framed = Vec::new();
+    append_length_prefixed(&mut framed, b"lumin-gate-abandon.v1");
+    append_length_prefixed(&mut framed, gate_id.as_str().as_bytes());
+    framed.extend_from_slice(&target_revision.to_be_bytes());
+    append_length_prefixed(&mut framed, reason.as_bytes());
+    digest_hex(&framed)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum GateOperationStatus {
@@ -522,6 +1213,8 @@ pub struct GateOperationResult {
     pub lifecycle: GateLifecycle,
     pub decision: GateDecision,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation_binding: Option<GateObservationBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     pub signals: Vec<GateSignal>,
     #[serde(default)]
@@ -530,6 +1223,346 @@ pub struct GateOperationResult {
     pub actual_write_set: Option<ActualWriteSet>,
     #[serde(default)]
     pub deltas: Vec<GateDeltaRecord>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreWriteDeclaredPathInspection {
+    pub path: RepoPathProjection,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease: Option<WriteLease>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejection: Option<GateSignal>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum PreWriteAdmissionConflictOwner {
+    PendingOperation {
+        operation_id: OperationId,
+        gate_id: GateId,
+        leased_write_set: Vec<WriteLease>,
+        semantic_read_reservation_bindings: Vec<SemanticReadReservationBinding>,
+    },
+    ActiveGate {
+        gate_id: GateId,
+        revision: u64,
+        leased_write_set: Vec<WriteLease>,
+        protected_semantic_inputs: Vec<SemanticInputRecord>,
+    },
+}
+
+impl PreWriteAdmissionConflictOwner {
+    pub fn gate_id(&self) -> &GateId {
+        match self {
+            Self::PendingOperation { gate_id, .. } | Self::ActiveGate { gate_id, .. } => gate_id,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreWriteAdmissionEvidence {
+    pub catalog_revision: u64,
+    pub attempted_leased_write_set: Vec<WriteLease>,
+    pub conflict_owners: Vec<PreWriteAdmissionConflictOwner>,
+}
+
+pub fn derive_pre_write_admission_signals(evidence: &PreWriteAdmissionEvidence) -> Vec<GateSignal> {
+    let mut paths = Vec::new();
+    let mut gate_ids = Vec::new();
+    for owner in &evidence.conflict_owners {
+        match owner {
+            PreWriteAdmissionConflictOwner::PendingOperation {
+                gate_id,
+                leased_write_set,
+                semantic_read_reservation_bindings,
+                ..
+            } => {
+                collect_admission_write_conflicts(
+                    &evidence.attempted_leased_write_set,
+                    leased_write_set,
+                    &[],
+                    gate_id,
+                    &mut paths,
+                    &mut gate_ids,
+                );
+                for reservation in semantic_read_reservation_bindings {
+                    if evidence.attempted_leased_write_set.iter().any(|lease| {
+                        lease.conflicts_with_semantic_read(
+                            &reservation.path,
+                            reservation.physical_identity.as_ref(),
+                            reservation.absence_parent.as_ref(),
+                        )
+                    }) {
+                        paths.push(reservation.path.clone());
+                        gate_ids.push(gate_id.clone());
+                    }
+                }
+            }
+            PreWriteAdmissionConflictOwner::ActiveGate {
+                gate_id,
+                leased_write_set,
+                protected_semantic_inputs,
+                ..
+            } => collect_admission_write_conflicts(
+                &evidence.attempted_leased_write_set,
+                leased_write_set,
+                protected_semantic_inputs,
+                gate_id,
+                &mut paths,
+                &mut gate_ids,
+            ),
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    gate_ids.sort();
+    gate_ids.dedup();
+    if paths.is_empty() {
+        Vec::new()
+    } else {
+        vec![GateSignal::WriteConflict { paths, gate_ids }]
+    }
+}
+
+fn collect_admission_write_conflicts(
+    candidate_leases: &[WriteLease],
+    existing_leases: &[WriteLease],
+    existing_inputs: &[SemanticInputRecord],
+    existing_gate_id: &GateId,
+    paths: &mut Vec<RepoPathProjection>,
+    gate_ids: &mut Vec<GateId>,
+) {
+    for lease in candidate_leases {
+        if existing_leases
+            .iter()
+            .any(|existing| lease.conflicts_with(existing))
+            || existing_inputs.iter().any(|input| {
+                lease.conflicts_with_semantic_read(
+                    &input.path,
+                    input.physical_identity.as_ref(),
+                    input.absence_parent.as_ref(),
+                )
+            })
+        {
+            paths.push(lease.path.clone());
+            gate_ids.push(existing_gate_id.clone());
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreWriteFinalValidationEvidence {
+    pub expected_semantic_read_bindings: Vec<SemanticReadReservationBinding>,
+    pub observed_semantic_read_bindings: Vec<SemanticReadReservationBinding>,
+    pub observed_semantic_inputs: Vec<SemanticInputRecord>,
+    pub observed_leased_write_set: Vec<WriteLease>,
+    pub observed_alias_closures: Vec<PhysicalAliasClosureRecord>,
+    #[serde(default)]
+    pub write_domain_drift_paths: Vec<RepoPathProjection>,
+    #[serde(default)]
+    pub semantic_input_validation_drift_paths: Vec<RepoPathProjection>,
+}
+
+pub fn derive_pre_write_final_validation_signals(
+    expected_semantic_inputs: &[SemanticInputRecord],
+    expected_leased_write_set: &[WriteLease],
+    expected_alias_closures: &[PhysicalAliasClosureRecord],
+    evidence: &PreWriteFinalValidationEvidence,
+) -> Vec<GateSignal> {
+    let expected_inputs = expected_semantic_inputs
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let observed_inputs = evidence
+        .observed_semantic_inputs
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut changed_paths = observed_inputs
+        .difference(&expected_inputs)
+        .map(|input| input.path.clone())
+        .collect::<BTreeSet<_>>();
+    let expected_source_inputs = expected_inputs
+        .iter()
+        .filter(|input| input.state == SemanticInputState::Source)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let observed_source_inputs = observed_inputs
+        .iter()
+        .filter(|input| input.state == SemanticInputState::Source)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    changed_paths.extend(
+        expected_source_inputs
+            .symmetric_difference(&observed_source_inputs)
+            .map(|input| input.path.clone()),
+    );
+
+    let expected_bindings = evidence
+        .expected_semantic_read_bindings
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let observed_bindings = evidence
+        .observed_semantic_read_bindings
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    changed_paths.extend(
+        expected_bindings
+            .symmetric_difference(&observed_bindings)
+            .map(|binding| binding.path.clone()),
+    );
+
+    let expected_leases = expected_leased_write_set
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let observed_leases = evidence
+        .observed_leased_write_set
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let expected_aliases = expected_alias_closures
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let observed_aliases = evidence
+        .observed_alias_closures
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if expected_leases != observed_leases || expected_aliases != observed_aliases {
+        changed_paths.extend(
+            expected_leases
+                .iter()
+                .chain(&observed_leases)
+                .map(|lease| lease.path.clone()),
+        );
+        changed_paths.extend(
+            expected_aliases
+                .iter()
+                .chain(&observed_aliases)
+                .flat_map(|closure| closure.members.iter().cloned()),
+        );
+    }
+    changed_paths.extend(evidence.write_domain_drift_paths.iter().cloned());
+    changed_paths.extend(
+        evidence
+            .semantic_input_validation_drift_paths
+            .iter()
+            .cloned(),
+    );
+
+    if changed_paths.is_empty() {
+        Vec::new()
+    } else {
+        vec![GateSignal::ProtectedInputChanged {
+            paths: changed_paths.into_iter().collect(),
+        }]
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreWriteFinalValidation {
+    pub catalog_revision: u64,
+    pub signals: Vec<GateSignal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<PreWriteFinalValidationEvidence>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PostWriteFinalValidationEvidence {
+    pub expected_leased_write_set: Vec<WriteLease>,
+    pub expected_alias_closures: Vec<PhysicalAliasClosureRecord>,
+    pub observation: PreWriteFinalValidationEvidence,
+}
+
+pub fn derive_post_write_final_validation_signals(
+    expected_semantic_inputs: &[SemanticInputRecord],
+    evidence: &PostWriteFinalValidationEvidence,
+) -> Vec<GateSignal> {
+    derive_pre_write_final_validation_signals(
+        expected_semantic_inputs,
+        &evidence.expected_leased_write_set,
+        &evidence.expected_alias_closures,
+        &evidence.observation,
+    )
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PostWriteFinalValidation {
+    pub catalog_revision: u64,
+    pub signals: Vec<GateSignal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<PostWriteFinalValidationEvidence>,
+}
+
+pub const GATE_VALIDATION_RECEIPT_SCHEMA_VERSION: &str = "lumin-gate-validation-receipt.v5";
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GateValidationCommitReceipt {
+    pub revision_sha256: String,
+    pub result_sha256: String,
+    pub operation_sha256: String,
+    pub gate_projection_sha256: String,
+    pub committed_unix_millis: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_payload_sha256: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+pub enum GateValidationReceiptPayload {
+    PreWriteInspection {
+        declared_path_inspection: Vec<PreWriteDeclaredPathInspection>,
+        leased_write_set: Vec<WriteLease>,
+    },
+    PostWritePending {
+        leased_write_set: Vec<WriteLease>,
+    },
+    PreWriteAdmission {
+        evidence: PreWriteAdmissionEvidence,
+    },
+    PreWriteFinal {
+        validation: PreWriteFinalValidation,
+    },
+    PostWriteFinal {
+        validation: PostWriteFinalValidation,
+    },
+    GateAbandon {
+        reason: String,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GateValidationReceipt {
+    pub schema_version: String,
+    pub operation_id: OperationId,
+    pub gate_id: GateId,
+    pub request_digest: String,
+    pub target_revision: u64,
+    #[serde(default)]
+    pub pre_write_declared_path_inspection: Vec<PreWriteDeclaredPathInspection>,
+    #[serde(default)]
+    pub semantic_read_reservations: Vec<RepoPathProjection>,
+    #[serde(default)]
+    pub semantic_read_reservation_bindings: Vec<SemanticReadReservationBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<GateValidationCommitReceipt>,
+    pub payload: GateValidationReceiptPayload,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -557,6 +1590,14 @@ pub struct OperationRecord {
     pub interruption_count: u64,
     #[serde(default)]
     pub operation_liveness: Option<OperationLivenessLease>,
+    #[serde(default)]
+    pub pre_write_declared_path_inspection: Vec<PreWriteDeclaredPathInspection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pre_write_admission_evidence: Option<PreWriteAdmissionEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pre_write_final_validation: Option<PreWriteFinalValidation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post_write_final_validation: Option<PostWriteFinalValidation>,
     pub analysis_options: Option<GateAnalysisOptions>,
     pub result: Option<GateOperationResult>,
 }
@@ -566,6 +1607,8 @@ pub struct OperationRecord {
 pub struct TransitionCapsule {
     pub gate_id: GateId,
     pub revision: u64,
+    pub baseline_observation_id: GateBaselineObservationId,
+    pub close_observation_id: GateCloseObservationId,
     pub before_snapshot: AnalysisSnapshot,
     pub after_snapshot: AnalysisSnapshot,
     pub changed_paths: Vec<RepoPathProjection>,
@@ -698,6 +1741,40 @@ fn entry_unavailable_reason_tag(reason: lumin_model::EntryUnavailableReason) -> 
 
 pub mod gate_policy {
     use super::*;
+
+    pub fn closure_expanded_actual_write_set(
+        preliminary_paths: &[RepoPathProjection],
+        baseline_alias_closures: &[PhysicalAliasClosureRecord],
+        current_alias_closures: &[PhysicalAliasClosureRecord],
+    ) -> ActualWriteSet {
+        let mut paths = preliminary_paths.iter().cloned().collect::<BTreeSet<_>>();
+        loop {
+            let before = paths.len();
+            for closure in baseline_alias_closures.iter().chain(current_alias_closures) {
+                if closure.members.iter().any(|member| paths.contains(member)) {
+                    paths.extend(closure.members.iter().cloned());
+                }
+            }
+            if paths.len() == before {
+                break;
+            }
+        }
+        let baseline_alias_closures = baseline_alias_closures
+            .iter()
+            .filter(|closure| closure.members.iter().any(|member| paths.contains(member)))
+            .cloned()
+            .collect();
+        let current_alias_closures = current_alias_closures
+            .iter()
+            .filter(|closure| closure.members.iter().any(|member| paths.contains(member)))
+            .cloned()
+            .collect();
+        ActualWriteSet {
+            paths: paths.into_iter().collect(),
+            baseline_alias_closures,
+            current_alias_closures,
+        }
+    }
 
     pub fn opening_signals(
         snapshot: &AnalysisSnapshot,
@@ -919,6 +1996,7 @@ pub mod gate_policy {
                 GateSignal::AnalysisFailed { .. }
                     | GateSignal::RequiredEvidenceIncomplete { .. }
                     | GateSignal::SemanticInputConflict { .. }
+                    | GateSignal::SemanticReadClosureIncomplete { .. }
                     | GateSignal::ProtectedInputChanged { .. }
                     | GateSignal::ActiveTransitionPending { .. }
                     | GateSignal::TransitionChainBroken { .. }
@@ -963,6 +2041,7 @@ pub mod gate_policy {
             | GateSignal::DeclaredPathUnsupported { .. }
             | GateSignal::WriteConflict { .. }
             | GateSignal::SemanticInputConflict { .. }
+            | GateSignal::SemanticReadClosureIncomplete { .. }
             | GateSignal::ActiveTransitionPending { .. }
             | GateSignal::OpacityIntroduced { .. }
             | GateSignal::OpacityRegressed { .. }
@@ -1161,6 +2240,144 @@ mod tests {
             signals.reverse();
             assert_eq!(gate_policy::decision(&signals), expected);
         }
+    }
+
+    #[test]
+    fn scan_invocation_requires_canonical_sorted_path_tiers()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let first = path("src/a.ts")?;
+        let second = path("src/b.ts")?;
+        let mut invocation = ScanInvocationTier {
+            entries: vec![second.clone(), first.clone()],
+            ..Default::default()
+        };
+        assert!(invocation.validate_canonical_shape().is_err());
+
+        invocation.entries = vec![first.clone(), first];
+        assert!(invocation.validate_canonical_shape().is_err());
+
+        invocation.entries = vec![second];
+        invocation.entries[0].display = "forged.ts".to_owned();
+        assert!(invocation.validate_canonical_shape().is_err());
+
+        invocation.entries.clear();
+        invocation.dependency_intents = vec![
+            DependencyIntentRecord {
+                path: path("package/z.json")?,
+                dependency: "z".to_owned(),
+            },
+            DependencyIntentRecord {
+                path: path("package/a.json")?,
+                dependency: "a".to_owned(),
+            },
+        ];
+        assert!(invocation.validate_canonical_shape().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn admission_conflict_is_derived_from_owner_domains() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let conflict_path = path("src/conflict.ts")?;
+        let lease = WriteLease {
+            path: conflict_path.clone(),
+            kind: WriteLeaseKind::ExistingFile,
+            physical_identity: None,
+            nearest_existing_parent: None,
+            prefix_identities: Vec::new(),
+        };
+        let owner_gate = GateId::from_string("gate_owner".to_owned());
+        let evidence = PreWriteAdmissionEvidence {
+            catalog_revision: 7,
+            attempted_leased_write_set: vec![lease.clone()],
+            conflict_owners: vec![PreWriteAdmissionConflictOwner::ActiveGate {
+                gate_id: owner_gate.clone(),
+                revision: 2,
+                leased_write_set: vec![lease],
+                protected_semantic_inputs: Vec::new(),
+            }],
+        };
+
+        assert_eq!(
+            derive_pre_write_admission_signals(&evidence),
+            vec![GateSignal::WriteConflict {
+                paths: vec![conflict_path],
+                gate_ids: vec![owner_gate],
+            }],
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn final_validation_uses_explicit_drift_for_captured_non_source_inputs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let captured = input("config/base.json", "captured")?;
+        let evidence = PreWriteFinalValidationEvidence {
+            expected_semantic_read_bindings: Vec::new(),
+            observed_semantic_read_bindings: Vec::new(),
+            observed_semantic_inputs: Vec::new(),
+            observed_leased_write_set: Vec::new(),
+            observed_alias_closures: Vec::new(),
+            write_domain_drift_paths: Vec::new(),
+            semantic_input_validation_drift_paths: Vec::new(),
+        };
+
+        assert!(
+            derive_pre_write_final_validation_signals(
+                std::slice::from_ref(&captured),
+                &[],
+                &[],
+                &evidence,
+            )
+            .is_empty()
+        );
+
+        let evidence = PreWriteFinalValidationEvidence {
+            semantic_input_validation_drift_paths: vec![captured.path.clone()],
+            ..evidence
+        };
+        assert_eq!(
+            derive_pre_write_final_validation_signals(
+                std::slice::from_ref(&captured),
+                &[],
+                &[],
+                &evidence,
+            ),
+            vec![GateSignal::ProtectedInputChanged {
+                paths: vec![captured.path],
+            }],
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn final_validation_detects_source_removal_and_new_non_source_inputs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut captured_source = input("src/a.ts", "captured")?;
+        captured_source.state = SemanticInputState::Source;
+        let observed_config = input("config/new.json", "observed")?;
+        let evidence = PreWriteFinalValidationEvidence {
+            expected_semantic_read_bindings: Vec::new(),
+            observed_semantic_read_bindings: Vec::new(),
+            observed_semantic_inputs: vec![observed_config.clone()],
+            observed_leased_write_set: Vec::new(),
+            observed_alias_closures: Vec::new(),
+            write_domain_drift_paths: Vec::new(),
+            semantic_input_validation_drift_paths: Vec::new(),
+        };
+
+        assert_eq!(
+            derive_pre_write_final_validation_signals(
+                std::slice::from_ref(&captured_source),
+                &[],
+                &[],
+                &evidence,
+            ),
+            vec![GateSignal::ProtectedInputChanged {
+                paths: vec![captured_source.path, observed_config.path],
+            }],
+        );
+        Ok(())
     }
 
     #[test]
@@ -1422,6 +2639,32 @@ mod tests {
 
         assert!(signals.is_empty());
         assert_eq!(changed, vec![current_source.path]);
+        Ok(())
+    }
+
+    #[test]
+    fn protected_semantic_inputs_include_non_source_configuration()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let config = input("tsconfig.json", "config")?;
+
+        assert_eq!(
+            derive_protected_semantic_inputs(&snapshot(vec![config.clone()]), &[]),
+            vec![config]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn protected_semantic_inputs_include_source_backed_redirects_without_a_selected_lease()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut redirect = input("packages/lib/dist/index.js", "source")?;
+        redirect.state = SemanticInputState::Source;
+        redirect.physical_redirect_sha256 = Some("redirect".to_owned());
+
+        assert_eq!(
+            derive_protected_semantic_inputs(&snapshot(vec![redirect.clone()]), &[]),
+            vec![redirect]
+        );
         Ok(())
     }
 

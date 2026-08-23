@@ -1,7 +1,32 @@
 use crate::{
     SOURCE_CLASSIFICATION_RULE_VERSION, SourceClassificationRole, SourceRoleClassification,
-    SourceRoleConfigurationSource, SourceRoleReason, SourceRoles,
+    SourceRoleConfigurationSource, SourceRoleReason, SourceRoles, validate_scan_pattern,
 };
+
+#[test]
+fn scan_pattern_validation_matches_the_inventory_admission_grammar() {
+    for pattern in [
+        "src/**",
+        "**/*.ts",
+        "[a-z]/**",
+        "[z-a",
+        "{src,test}/**",
+        r"\!literal",
+    ] {
+        assert!(validate_scan_pattern(pattern).is_ok(), "{pattern}");
+    }
+    for pattern in [
+        "",
+        "!src/**",
+        "../src/**",
+        r"src\",
+        "[z-a]",
+        "{src,test",
+        "src}",
+    ] {
+        assert!(validate_scan_pattern(pattern).is_err(), "{pattern}");
+    }
+}
 
 fn classification(
     role: SourceClassificationRole,

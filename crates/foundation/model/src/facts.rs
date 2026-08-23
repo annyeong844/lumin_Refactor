@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
+use thiserror::Error;
 
 use crate::{
     EmbeddedSourceUnitId, LogicalSourceId, PayloadSnapshotId, PhysicalFileIdentity, RepoPath,
@@ -117,6 +118,167 @@ impl SourceRoles {
 pub struct RoleOverride {
     pub pattern: String,
     pub role: ScanRole,
+}
+
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
+#[error("invalid scan pattern `{pattern}`: {detail}")]
+pub struct ScanPatternError {
+    pattern: String,
+    detail: &'static str,
+}
+
+pub fn validate_scan_pattern(pattern: &str) -> Result<(), ScanPatternError> {
+    if pattern.is_empty() {
+        return Err(scan_pattern_error(pattern, "pattern is empty"));
+    }
+    if pattern.starts_with('!') {
+        return Err(scan_pattern_error(
+            pattern,
+            "negated invocation patterns are unsupported",
+        ));
+    }
+    if pattern.contains("..") {
+        return Err(scan_pattern_error(
+            pattern,
+            "parent traversal is unsupported",
+        ));
+    }
+
+    let mut glob = if pattern.ends_with("\\ ") {
+        pattern
+    } else {
+        pattern.trim_end()
+    };
+    if glob.is_empty() || glob.starts_with('#') {
+        return Ok(());
+    }
+    if glob.starts_with("\\!") || glob.starts_with("\\#") || glob.starts_with('/') {
+        glob = &glob[1..];
+    }
+    if glob.ends_with('/') {
+        glob = &glob[..glob.len() - 1];
+        if glob.ends_with('\\') {
+            glob = &glob[..glob.len() - 1];
+        }
+    }
+    validate_scan_glob_shape(pattern, glob)
+}
+
+fn validate_scan_glob_shape(pattern: &str, glob: &str) -> Result<(), ScanPatternError> {
+    let characters = glob.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    let mut alternate_depth = 0_u64;
+    let mut classes_enabled = true;
+    while index < characters.len() {
+        match characters[index] {
+            '\\' => {
+                index += 1;
+                if index == characters.len() {
+                    return Err(scan_pattern_error(pattern, "dangling escape"));
+                }
+            }
+            '[' if classes_enabled => {
+                let Some(end) = scan_class_end(&characters, index) else {
+                    classes_enabled = false;
+                    index += 1;
+                    continue;
+                };
+                validate_scan_class(pattern, &characters, index, end)?;
+                index = end;
+            }
+            '{' => alternate_depth += 1,
+            '}' => {
+                alternate_depth = alternate_depth.checked_sub(1).ok_or_else(|| {
+                    scan_pattern_error(pattern, "alternate group closes before it opens")
+                })?;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    if alternate_depth != 0 {
+        return Err(scan_pattern_error(pattern, "alternate group is unclosed"));
+    }
+    Ok(())
+}
+
+fn scan_class_end(characters: &[char], opening: usize) -> Option<usize> {
+    let mut index = opening + 1;
+    if matches!(characters.get(index), Some('!') | Some('^')) {
+        index += 1;
+    }
+    let mut first = true;
+    while let Some(character) = characters.get(index) {
+        if *character == ']' && !first {
+            return Some(index);
+        }
+        first = false;
+        index += 1;
+    }
+    None
+}
+
+fn validate_scan_class(
+    pattern: &str,
+    characters: &[char],
+    opening: usize,
+    closing: usize,
+) -> Result<(), ScanPatternError> {
+    let mut index = opening + 1;
+    if matches!(characters.get(index), Some('!') | Some('^')) {
+        index += 1;
+    }
+    let mut ranges = Vec::<(char, char)>::new();
+    let mut first = true;
+    let mut in_range = false;
+    while index < closing {
+        let character = characters[index];
+        if character == '-' {
+            if first {
+                ranges.push(('-', '-'));
+            } else if in_range {
+                let Some(range) = ranges.last_mut() else {
+                    return Err(scan_pattern_error(
+                        pattern,
+                        "character range omitted its start",
+                    ));
+                };
+                if '-' < range.0 {
+                    return Err(scan_pattern_error(pattern, "descending character range"));
+                }
+                range.1 = '-';
+                in_range = false;
+            } else {
+                in_range = true;
+            }
+        } else {
+            if in_range {
+                let Some(range) = ranges.last_mut() else {
+                    return Err(scan_pattern_error(
+                        pattern,
+                        "character range omitted its start",
+                    ));
+                };
+                if character < range.0 {
+                    return Err(scan_pattern_error(pattern, "descending character range"));
+                }
+                range.1 = character;
+            } else {
+                ranges.push((character, character));
+            }
+            in_range = false;
+        }
+        first = false;
+        index += 1;
+    }
+    Ok(())
+}
+
+fn scan_pattern_error(pattern: &str, detail: &'static str) -> ScanPatternError {
+    ScanPatternError {
+        pattern: pattern.to_owned(),
+        detail,
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

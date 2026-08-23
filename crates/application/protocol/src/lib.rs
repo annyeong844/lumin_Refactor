@@ -15,14 +15,14 @@ use lumin_evidence::{
     ActualWriteSet, AnalysisMetrics, CacheCleanupResult, DeclaredPathUnsupportedReason,
     EntrySelectionRecord, FindingRecord, GateDecision, GateLifecycle, GateOperationKind,
     GateOperationResult, GateOperationStatus, GateRecord, GateSignal, OperationRecord,
-    PhysicalAliasClosureRecord, RunEvidence, SourceClassificationRecord, WriteLease,
-    WriteLeaseKind,
+    PhysicalAliasClosureRecord, RepoPathProjection, RunEvidence, SourceClassificationRecord,
+    WriteLease, WriteLeaseKind,
 };
 use lumin_model::{
     AnalysisInputId, AttemptId, AttemptStatus, CapabilityState, FindingDisposition, FindingId,
-    GateDeltaRecord, GateId, Limitation, OperationId, PhysicalFileIdentity, RepositoryRootIdentity,
-    ResolvedSourceUse, RunId, SelectedResolutionProfile, SourceRoleClassification, SourceSpan,
-    SymbolNamespace,
+    GateBaselineObservationId, GateDeltaRecord, GateId, Limitation, ObservationBinding,
+    OperationId, PhysicalFileIdentity, RepositoryRootIdentity, ResolvedSourceUse, RunId,
+    SelectedResolutionProfile, SourceRoleClassification, SourceSpan, SymbolNamespace,
 };
 use serde::Serialize;
 use thiserror::Error;
@@ -179,6 +179,8 @@ pub struct GateMutationResponseDto {
     pub lifecycle: GateLifecycle,
     pub decision: GateDecision,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub observation_binding: Option<ObservationBinding<RepoPathDto>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     pub signals: Vec<GateSignalDto>,
     pub leased_write_set: Vec<WriteLeaseDto>,
@@ -229,6 +231,8 @@ pub struct GateShowResponseDto {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GateBaselineSummaryDto {
+    pub observation_id: GateBaselineObservationId,
+    pub catalog_revision: u64,
     pub analysis_contract: String,
     pub analysis_input_id: AnalysisInputId,
     pub semantic_input_count: usize,
@@ -246,6 +250,10 @@ pub struct GateRevisionSummaryDto {
     pub revision: u64,
     pub operation_id: OperationId,
     pub decision: GateDecision,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub catalog_revision: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observation_binding: Option<ObservationBinding<RepoPathDto>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     pub signals: Vec<GateSignalDto>,
@@ -399,13 +407,17 @@ pub fn cache_cleanup_response(result: &CacheCleanupResult) -> CacheCleanupRespon
 
 pub fn gate_mutation_response(result: &GateOperationResult) -> GateMutationResponseDto {
     GateMutationResponseDto {
-        schema_version: "lumin.gate-mutation.v1",
+        schema_version: "lumin.gate-mutation.v2",
         operation_id: result.operation_id.clone(),
         request_digest: result.request_digest.clone(),
         gate_id: result.gate_id.clone(),
         revision: result.revision,
         lifecycle: result.lifecycle,
         decision: result.decision,
+        observation_binding: result
+            .observation_binding
+            .as_ref()
+            .map(observation_binding_dto),
         reason: result.reason.clone(),
         signals: result.signals.iter().map(GateSignalDto::from).collect(),
         leased_write_set: result
@@ -444,7 +456,7 @@ fn gate_show_response_with_selection(
     selected_revision: Option<u64>,
 ) -> GateShowResponseDto {
     GateShowResponseDto {
-        schema_version: "lumin.gate.v1",
+        schema_version: "lumin.gate.v2",
         gate_id: gate.gate_id.clone(),
         lifecycle: gate.lifecycle,
         current_revision: gate.current_revision,
@@ -465,6 +477,8 @@ fn gate_show_response_with_selection(
             .baseline
             .as_ref()
             .map(|baseline| GateBaselineSummaryDto {
+                observation_id: baseline.observation_id.clone(),
+                catalog_revision: baseline.catalog_revision,
                 analysis_contract: baseline.analysis_contract.clone(),
                 analysis_input_id: baseline.snapshot.analysis_input_id.clone(),
                 semantic_input_count: baseline.snapshot.inputs.len(),
@@ -486,6 +500,11 @@ fn gate_show_response_with_selection(
                 revision: revision.revision,
                 operation_id: revision.operation_id.clone(),
                 decision: revision.decision,
+                catalog_revision: revision.catalog_revision,
+                observation_binding: revision
+                    .observation_binding
+                    .as_ref()
+                    .map(observation_binding_dto),
                 reason: revision.reason.clone(),
                 signals: revision.signals.iter().map(GateSignalDto::from).collect(),
                 changed_paths: revision
@@ -611,6 +630,33 @@ impl From<&EntrySelectionRecord> for EntrySelectionDto {
     }
 }
 
+fn observation_binding_dto(
+    binding: &ObservationBinding<RepoPathProjection>,
+) -> ObservationBinding<RepoPathDto> {
+    match binding {
+        ObservationBinding::Sealed { observation } => ObservationBinding::Sealed {
+            observation: observation.clone(),
+        },
+        ObservationBinding::Unsealed {
+            reason,
+            attempted_domain,
+            last_complete_read_set,
+            conflicting_or_unbounded_inputs,
+        } => ObservationBinding::Unsealed {
+            reason: *reason,
+            attempted_domain: attempted_domain.iter().map(RepoPathDto::from).collect(),
+            last_complete_read_set: last_complete_read_set
+                .iter()
+                .map(RepoPathDto::from)
+                .collect(),
+            conflicting_or_unbounded_inputs: conflicting_or_unbounded_inputs
+                .iter()
+                .map(RepoPathDto::from)
+                .collect(),
+        },
+    }
+}
+
 impl From<&WriteLease> for WriteLeaseDto {
     fn from(lease: &WriteLease) -> Self {
         Self {
@@ -654,7 +700,9 @@ impl From<&GateSignal> for GateSignalDto {
                 dto.paths = paths.iter().map(RepoPathDto::from).collect();
                 dto.gate_ids = gate_ids.clone();
             }
-            GateSignal::ProtectedInputChanged { paths } | GateSignal::UnplannedWrite { paths } => {
+            GateSignal::SemanticReadClosureIncomplete { paths }
+            | GateSignal::ProtectedInputChanged { paths }
+            | GateSignal::UnplannedWrite { paths } => {
                 dto.paths = paths.iter().map(RepoPathDto::from).collect();
             }
             GateSignal::ActiveTransitionPending { paths, gate_ids } => {
@@ -677,6 +725,7 @@ fn signal_kind(signal: &GateSignal) -> &'static str {
         GateSignal::DeclaredPathUnsupported { .. } => "declared-path-unsupported",
         GateSignal::WriteConflict { .. } => "write-conflict",
         GateSignal::SemanticInputConflict { .. } => "semantic-input-conflict",
+        GateSignal::SemanticReadClosureIncomplete { .. } => "semantic-read-closure-incomplete",
         GateSignal::ProtectedInputChanged { .. } => "protected-input-changed",
         GateSignal::AnalysisContractChanged => "analysis-contract-changed",
         GateSignal::UnplannedWrite { .. } => "unplanned-write",

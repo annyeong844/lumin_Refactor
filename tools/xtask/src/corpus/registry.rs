@@ -74,6 +74,8 @@ static INV_ALIAS: &[CorpusInvocation] = &[
 static INV_SEM_READ: &[CorpusInvocation] = &[
     inv!("write_gate", "semantic_demands::pre_write_reserves_semantic_demands_before_capture_and_retries_after_writer_terminal"),
     inv!("write_gate", "semantic_demands::close_time_new_semantic_demand_outside_lease_stays_unplanned_on_retry"),
+    inv!("write_gate", "semantic_demands::failed_pre_write_rechecks_a_semantic_conflict_and_retains_prior_reservations"),
+    inv!("write_gate", "semantic_demands::failed_close_rechecks_a_semantic_conflict_at_the_final_barrier"),
 ];
 #[rustfmt::skip]
 static INV_IDEMP: &[CorpusInvocation] = &[
@@ -399,7 +401,9 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sdc!("state-managed-parent-replacement"),
     row_sd!("gate-config-drift", &[inv!("write_gate", "protected_input_drift_is_stale")]),
     row_sd!("gate-self-semantic-write", &[inv!("write_gate", "planned_semantic_config_write_is_recaptured_and_attributed")]),
-    row_sd!("gate-prewrite-observation"),
+    row_sd!("gate-prewrite-observation", &[
+        inv!("write_gate", "pre_write_observation_binds_promotion_and_interrupted_admission_leaves_no_active_lease"),
+    ]),
     row_sd!("gate-semantic-read-closure", INV_SEM_READ),
     row_sd!("gate-semantic-read-closure-warm-cache"),
     row_sd!("cache-gate-context-projection"),

@@ -4,7 +4,7 @@ use lumin_evidence::{
 use lumin_model::{OperationId, RetentionPlanId, digest_hex};
 use redb::{ReadableTable, TableDefinition, WriteTransaction};
 
-use crate::gate::{GATES, OPERATIONS, TRANSITIONS};
+use crate::gate::{GATES, OPERATIONS, TRANSITIONS, VALIDATION_RECEIPTS};
 use crate::{RUN_CATALOG, StoreError, backend_error};
 
 use super::super::RUN_PINS;
@@ -163,7 +163,7 @@ fn remove_canonical_records(
                 remove_checked(write, GATES, &item.record_id, &item.identity_sha256)?;
             }
             RetentionItemKind::Operation => {
-                remove_checked(write, OPERATIONS, &item.record_id, &item.identity_sha256)?;
+                remove_operation_bundle_checked(write, item)?;
             }
             RetentionItemKind::Transition => {
                 remove_checked(write, TRANSITIONS, &item.record_id, &item.identity_sha256)?;
@@ -178,6 +178,47 @@ fn remove_canonical_records(
             | RetentionItemKind::OrphanPayload
             | RetentionItemKind::Tombstone => {}
         }
+    }
+    Ok(())
+}
+
+fn remove_operation_bundle_checked(
+    write: &WriteTransaction,
+    item: &lumin_evidence::RetentionPlanItem,
+) -> Result<(), StoreError> {
+    let mut operations = write.open_table(OPERATIONS).map_err(backend_error)?;
+    let operation_bytes = operations
+        .get(item.record_id.as_str())
+        .map_err(backend_error)?
+        .map(|value| value.value().to_vec())
+        .ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "retention target disappeared before commit: {}",
+                item.record_id
+            ))
+        })?;
+    let mut receipts = write
+        .open_table(VALIDATION_RECEIPTS)
+        .map_err(backend_error)?;
+    let receipt_bytes = receipts
+        .get(item.record_id.as_str())
+        .map_err(backend_error)?
+        .map(|value| value.value().to_vec());
+    let (identity_sha256, byte_count) =
+        crate::gate::operation_retention_identity(&operation_bytes, receipt_bytes.as_deref());
+    if identity_sha256 != item.identity_sha256 || byte_count != item.byte_count {
+        return Err(StoreError::Integrity(format!(
+            "retention target changed before commit: {}",
+            item.record_id
+        )));
+    }
+    operations
+        .remove(item.record_id.as_str())
+        .map_err(backend_error)?;
+    if receipt_bytes.is_some() {
+        receipts
+            .remove(item.record_id.as_str())
+            .map_err(backend_error)?;
     }
     Ok(())
 }

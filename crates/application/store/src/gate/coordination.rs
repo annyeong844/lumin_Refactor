@@ -1,17 +1,83 @@
 use lumin_evidence::{
     GateLifecycle, GateOperationKind, GateOperationStatus, GateRecord, OperationRecord,
-    RepoPathProjection, SemanticInputRecord, SemanticReadReservationBinding, WorktreeTransition,
-    WriteLease,
+    PreWriteAdmissionConflictOwner, PreWriteAdmissionEvidence, RepoPathProjection,
+    SemanticInputRecord, SemanticReadReservationBinding, WorktreeTransition, WriteLease,
+    derive_pre_write_admission_signals,
 };
 use lumin_model::{GateId, OperationId};
 use redb::WriteTransaction;
 
 use crate::StoreError;
 
-use super::records::{read_record, read_records, transition_key, write_record};
-use super::{
-    ActiveGateLease, ConflictSet, GATES, OPERATIONS, TRANSITIONS, validate_reservation_binding_set,
-};
+use super::integrity::{read_validated_gates, validate_stored_gate_catalog};
+use super::records::{read_records, write_record};
+use super::{ActiveGateLease, ConflictSet, GATES, OPERATIONS, validate_reservation_binding_set};
+
+pub(super) fn pre_write_admission_evidence(
+    write: &WriteTransaction,
+    own_operation_id: &OperationId,
+    attempted_leased_write_set: &[WriteLease],
+    catalog_revision: u64,
+) -> Result<PreWriteAdmissionEvidence, StoreError> {
+    let mut conflict_owners = Vec::new();
+    for operation in read_records::<OperationRecord>(write, OPERATIONS)? {
+        if operation.operation_id == *own_operation_id
+            || operation.status != GateOperationStatus::Pending
+        {
+            continue;
+        }
+        validate_reservation_binding_set(&operation)?;
+        let owner = PreWriteAdmissionConflictOwner::PendingOperation {
+            operation_id: operation.operation_id,
+            gate_id: operation.gate_id,
+            leased_write_set: if operation.kind == GateOperationKind::PreWrite {
+                operation.leased_write_set
+            } else {
+                Vec::new()
+            },
+            semantic_read_reservation_bindings: operation.semantic_read_reservation_bindings,
+        };
+        if admission_owner_conflicts(attempted_leased_write_set, &owner) {
+            conflict_owners.push(owner);
+        }
+    }
+    for gate in read_validated_gates(write)? {
+        if gate.lifecycle != GateLifecycle::Active {
+            continue;
+        }
+        let owner = PreWriteAdmissionConflictOwner::ActiveGate {
+            gate_id: gate.gate_id,
+            revision: gate.current_revision,
+            leased_write_set: gate.leased_write_set,
+            protected_semantic_inputs: gate.protected_semantic_inputs,
+        };
+        if admission_owner_conflicts(attempted_leased_write_set, &owner) {
+            conflict_owners.push(owner);
+        }
+    }
+    conflict_owners.sort();
+    conflict_owners.dedup();
+    let mut attempted_leased_write_set = attempted_leased_write_set.to_vec();
+    attempted_leased_write_set.sort();
+    attempted_leased_write_set.dedup();
+    Ok(PreWriteAdmissionEvidence {
+        catalog_revision,
+        attempted_leased_write_set,
+        conflict_owners,
+    })
+}
+
+fn admission_owner_conflicts(
+    attempted_leased_write_set: &[WriteLease],
+    owner: &PreWriteAdmissionConflictOwner,
+) -> bool {
+    !derive_pre_write_admission_signals(&PreWriteAdmissionEvidence {
+        catalog_revision: 0,
+        attempted_leased_write_set: attempted_leased_write_set.to_vec(),
+        conflict_owners: vec![owner.clone()],
+    })
+    .is_empty()
+}
 
 pub(super) fn conflicts(
     write: &WriteTransaction,
@@ -48,7 +114,7 @@ pub(super) fn conflicts(
             &mut gate_ids,
         );
     }
-    for gate in read_records::<GateRecord>(write, GATES)? {
+    for gate in read_validated_gates(write)? {
         if gate.lifecycle != GateLifecycle::Active
             || own_gate_id.is_some_and(|gate_id| gate.gate_id == *gate_id)
         {
@@ -136,20 +202,20 @@ pub(super) fn post_write_analysis_context(
     gate: &GateRecord,
     transition_sequence: u64,
 ) -> Result<(Vec<WorktreeTransition>, Vec<ActiveGateLease>), StoreError> {
-    let sequences = transition_sequences_for_gate(write, gate, transition_sequence)?;
+    let catalog = validate_stored_gate_catalog(write)?;
+    let sequences =
+        transition_sequences_from_catalog(gate, transition_sequence, &catalog.transitions)?;
     let mut transitions = Vec::with_capacity(sequences.len());
     for sequence in sequences {
-        let transition =
-            read_record::<WorktreeTransition>(write, TRANSITIONS, &transition_key(sequence))?
-                .ok_or_else(|| {
-                    StoreError::Integrity(format!(
-                        "referenced worktree transition is missing: {sequence}"
-                    ))
-                })?;
-        transitions.push(transition);
+        transitions.push(catalog.transitions.get(&sequence).cloned().ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "referenced worktree transition is missing: {sequence}"
+            ))
+        })?);
     }
-    let mut active_gates = read_records::<GateRecord>(write, GATES)?
-        .into_iter()
+    let mut active_gates = catalog
+        .gates
+        .into_values()
         .filter(|other| other.lifecycle == GateLifecycle::Active && other.gate_id != gate.gate_id)
         .map(|other| ActiveGateLease {
             gate_id: other.gate_id,
@@ -164,6 +230,15 @@ pub(super) fn transition_sequences_for_gate(
     write: &WriteTransaction,
     gate: &GateRecord,
     ceiling: u64,
+) -> Result<Vec<u64>, StoreError> {
+    let catalog = validate_stored_gate_catalog(write)?;
+    transition_sequences_from_catalog(gate, ceiling, &catalog.transitions)
+}
+
+fn transition_sequences_from_catalog(
+    gate: &GateRecord,
+    ceiling: u64,
+    catalog: &std::collections::BTreeMap<u64, WorktreeTransition>,
 ) -> Result<Vec<u64>, StoreError> {
     let baseline_sequence = gate
         .baseline
@@ -191,15 +266,11 @@ pub(super) fn transition_sequences_for_gate(
         )));
     }
 
-    let mut catalog = read_records::<WorktreeTransition>(write, TRANSITIONS)?
-        .into_iter()
-        .filter(|transition| {
-            transition.sequence > baseline_sequence && transition.sequence <= ceiling
-        })
-        .map(|transition| transition.sequence)
+    let catalog = catalog
+        .keys()
+        .copied()
+        .filter(|sequence| *sequence > baseline_sequence && *sequence <= ceiling)
         .collect::<Vec<_>>();
-    catalog.sort_unstable();
-    catalog.dedup();
     if references != catalog {
         return Err(StoreError::Integrity(format!(
             "active gate transition references disagree with the catalog: {}",
@@ -216,7 +287,7 @@ pub(super) fn active_write_conflicts(
 ) -> Result<Option<ConflictSet>, StoreError> {
     let mut paths = Vec::new();
     let mut gate_ids = Vec::new();
-    for gate in read_records::<GateRecord>(write, GATES)? {
+    for gate in read_validated_gates(write)? {
         if gate.lifecycle != GateLifecycle::Active || gate.gate_id == *own_gate_id {
             continue;
         }
@@ -262,7 +333,7 @@ pub(super) fn semantic_read_conflicts(
             &mut gate_ids,
         );
     }
-    for gate in read_records::<GateRecord>(write, GATES)? {
+    for gate in read_validated_gates(write)? {
         if gate.lifecycle != GateLifecycle::Active || gate.gate_id == *own_gate_id {
             continue;
         }
@@ -286,7 +357,7 @@ pub(super) fn attach_transition_references(
     originating_gate_id: &GateId,
     sequence: u64,
 ) -> Result<(), StoreError> {
-    for mut gate in read_records::<GateRecord>(write, GATES)? {
+    for mut gate in read_validated_gates(write)? {
         if gate.lifecycle != GateLifecycle::Active || gate.gate_id == *originating_gate_id {
             continue;
         }

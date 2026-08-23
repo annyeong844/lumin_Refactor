@@ -79,7 +79,7 @@ fn gate_mutations_recover_post_commit_delivery_failure_without_duplication()
         "cancelled edit"
     );
     let abandon_retry = run(root.path(), &abandon_args)?;
-    assert_status(&abandon_retry, 0);
+    assert_status(&abandon_retry, 3);
     assert_eq!(json(&abandon_retry.stdout)?, abandon_result);
     assert_conflict(run(
         root.path(),
