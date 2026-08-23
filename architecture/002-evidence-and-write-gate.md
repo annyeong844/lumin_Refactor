@@ -844,13 +844,20 @@ without exchanging the backend or advancing its generation.
 The migration journal is an immutable, append-only chain, but revision zero is not its own
 authority. Before publishing any root candidate, migration creates its unpublished object,
 captures its physical identity, and freezes an authorization core containing the source and
-target generations/schemas, canonical names, source user-logical identity, and exact
-transformed-target user-logical identity. It then commits one append-only
+target generations/schemas, canonical names, and source physical/user-logical identity. The
+core explicitly excludes the not-yet-derived target payload and the later
+post-authorization source bytes. Migration selects the next authorization sequence and
+constructs the immutable target-header
+`MigrationProvenanceAnchor { authorization_sequence, root_name, root_physical_identity,
+root_core_sha256, source_generation, source_schema, source_physical_identity,
+source_user_logical_sha256 }`; native v13 has no such anchor, while migrated v13 requires
+exactly one. It derives the transformed-target user-logical identity including that anchor,
+then commits one append-only
 `MigrationRootAuthorization { authorization_sequence, source_generation, target_generation,
 source_schema, target_schema, root_name, root_physical_identity, root_core_sha256,
 source_user_logical_sha256, target_user_logical_sha256 }` row inside the canonical v12
-generation. This bounded
-migration-control table is excluded from the user logical dump and the v12-to-v13 record
+generation. This bounded migration-control table is excluded from the user logical dump
+and the v12-to-v13 record
 transformation, but its committed bytes are included in the source's later opaque byte hash;
 the retained v12 source therefore preserves independent root authority. After that commit,
 migration reopens the source, requires its user-logical identities unchanged and its control
@@ -941,10 +948,12 @@ complete migration-time bytes/logical dump and the retained private v12 source, 
 the target binding to `CanonicalMutable` and the source binding to `RetainedImmutable`.
 Full target comparison is required through exchange and terminalization only. Every later
 ordinary v13 admission validates the authorized terminal chain, the canonical entry's
-terminal physical identity and immutable v13 header/generation/repository/namespace
-bindings, current link-count policy, the retired source's opaque byte hash and bounded root
-authorization row, and the ordinary current-v13 schema/referential/receipt integrity of the
-now-mutable store. It never compares the current target bytes or logical dump with their
+terminal physical identity, the exact immutable `MigrationProvenanceAnchor` in its v13
+header, generation/repository/namespace bindings, current link-count policy, the retired
+source's opaque byte hash and bounded root-authorization row, and the ordinary current-v13
+schema/referential/receipt integrity of the now-mutable store. The anchor cross-binds the
+current target to the authorized root and original source without depending on mutable
+target bytes. Admission never compares the current target bytes or logical dump with their
 migration-time hashes; legitimate gate, retention, cache, and operation commits necessarily
 change them. No other private-v12 user table is decoded during ordinary v13 admission. A
 physical-identity/header/provenance disagreement or failure of current-v13 integrity remains
@@ -981,22 +990,25 @@ Whole `lifecycle.store` migration is a generation-fenced copy-on-write protocol.
 Migration follows one sequence:
 
 1. Under the exclusive lock, open canonical v12 `lifecycle.store` no-follow, require one
-   link, and derive its user-logical dump plus the exact transformed-target user-logical
-   dump. Prepare revision zero on a same-volume `IntentPublicationHandle` whose unpublished
-   object is automatically removed on close. Linux uses `O_TMPFILE` plus no-replace
+   link, and derive its source user-logical dump. Prepare revision zero on a same-volume
+   `IntentPublicationHandle` whose unpublished object is automatically removed on close.
+   Linux uses `O_TMPFILE` plus no-replace
    `linkat`; Windows uses a delete-on-close handle plus a no-replace final-name publication
    with equivalent lifetime semantics. Capture the candidate identity and authorization
-   core, commit the corresponding `MigrationRootAuthorization` row in generation `N`, and
-   flush the v12 backend. Reopen the canonical source, require its user-logical dump still
-   matches the authorization and its control table contains exactly the canonical append-only
-   authorization history, derive its post-authorization complete byte hash, finalize revision
-   zero with that source binding and exact authorization sequence, then
+   core, select the next authorization sequence, construct the target's immutable
+   `MigrationProvenanceAnchor`, and derive the exact transformed-target user-logical dump
+   containing it. Commit the corresponding `MigrationRootAuthorization` row in generation
+   `N`, and flush the v12 backend. Reopen the canonical source, require its user-logical dump
+   still matches the authorization and its control table contains exactly the canonical
+   append-only authorization history, derive its post-authorization complete byte hash,
+   finalize revision zero with that source binding and exact authorization sequence, then
    write/flush/publish the held object no-replace as
    `lifecycle-migration.json`, reopen it, and flush `.lumin`. There is no admissible named
    `.pending` intent. A live nonterminal journal blocks every mutation except migration
    recovery; existing durable operations, reservations, active gates, and process leases
    remain records to migrate rather than being expired.
-2. Build and flush the generation `N+1` target through a handle-owned unpublished object.
+2. Build and flush the generation `N+1` target, including the exact immutable
+   `MigrationProvenanceAnchor`, through a handle-owned unpublished object.
    Append and parent-flush one immutable successor carrying
    `PendingPublication(target_binding)` before the held target has a name. Publish that same
    object no-replace at its unique bound name, reopen its identity, and flush `.lumin`; then
@@ -1028,11 +1040,13 @@ Migration follows one sequence:
    exchange moved a racing substitute, that substitute remains at the other bound reserved
    name and is never cleanup authority.
 5. Authenticate the canonical v13 target's complete migration-time bytes/logical dump and
-   now-private v12 source against the post-exchange bindings, then append and flush one
+   exact target-header anchor, plus the now-private v12 source/root authorization, against
+   the post-exchange bindings, then append and flush one
    terminal journal revision carrying the ordered `Exchanged`, `RetainedImmutable`, and
    `CanonicalMutable` transitions. Reopen the full chain and both objects once more before
-   success. Thereafter the target is validated by its immutable provenance/header facts and
-   ordinary current-v13 integrity rather than by the historical target payload digest. The
+   success. Thereafter the target is validated by its exact immutable
+   `MigrationProvenanceAnchor` and ordinary current-v13 integrity rather than by the
+   historical target payload digest. The
    terminal journal and retired source remain immutable reserved provenance for the
    repository lifetime; neither is deleted, renamed, retention-eligible, nor a cleanup
    candidate.
@@ -1055,7 +1069,7 @@ Every migration crash point has one recovery rule:
 | during exchange before the parent flush | migration alone admits an exact identity-proven pre-exchange placement (`N` canonical), source-retired intermediate (canonical absent, source at its retirement name, target still at its private name), or post-exchange placement (`N+1` canonical and `N` private); it completes the no-disposition protocol from that phase, while any other missing/invalid/substituted name is an integrity hard-stop |
 | after durable exchange flush and before terminal-revision publication | `N+1` is authoritative only to migration recovery; ordinary commands still route to migration, which authenticates the retained source and canonical target and appends the terminal revision |
 | after terminal-revision publication but before its parent flush | recovery observes either the nonterminal head and resumes terminalization or the complete terminal chain; both objects remain present and no cleanup or removal is attempted |
-| after a durable terminal revision or migration output failure | current v13 admission validates the terminal chain, immutable target provenance/header facts, ordinary current-v13 integrity, and retained opaque v12 source/root authorization; it does not compare mutable target payload bytes with the migration-time digest, and retry returns the same DTO without exchange, journal append, deletion, or generation advance |
+| after a durable terminal revision or migration output failure | current v13 admission validates the terminal chain, exact immutable target-header `MigrationProvenanceAnchor`, ordinary current-v13 integrity, and retained opaque v12 source/root authorization; it does not compare mutable target payload bytes with the migration-time digest, and retry returns the same DTO without exchange, journal append, deletion, or generation advance |
 
 The public fault proof first stops before and after the v12 root-authorization commit and
 before/after root publication. It proves that a self-consistent revision zero without the
@@ -1091,6 +1105,12 @@ journal-bound objects proves that ordinary commands return the migration-require
 and migration alone resumes; a superficially similar missing-canonical namespace without
 those bindings remains an immutable integrity hard-stop.
 
+After terminalization, another fixture changes or cross-binds only the canonical target
+header's `MigrationProvenanceAnchor` and requires the next ordinary admission to hard-stop
+before serving or mutating current state. The legitimate post-migration mutation fixture
+instead keeps that anchor byte-identical while changing ordinary v13 records and payload
+bytes, proving the anchor is immutable provenance rather than a frozen whole-store digest.
+
 An exact race barrier stops after the pre-exchange one-link validation while a competing
 public child creates a hard link in another same-filesystem directory. The migration child
 remains held until that link is visible, then resumes through its post-exchange and
@@ -1111,8 +1131,8 @@ internals, synthesizes the DTO, or embeds migration logic.
 
 After first migration success, the same fault corpus commits one ordinary v13 lifecycle
 mutation that changes the canonical store's bytes and logical dump while retaining its
-physical identity and immutable header/provenance fields. A fresh ordinary command and an
-already-current `lumin store migrate` retry must both accept the new current-v13 integrity,
+physical identity and exact immutable `MigrationProvenanceAnchor`. A fresh ordinary command
+and an already-current `lumin store migrate` retry must both accept the new current-v13 integrity,
 return their canonical outputs, and leave the terminal journal/retired source byte-for-byte
 unchanged; an implementation that compares the target with its migration-time payload hash
 must fail this fixture. The output-layout fixture separately proves native v13 contains no
@@ -1139,7 +1159,7 @@ chain and one retained v12 source in addition to the ordinary bounded layout.
 
 ## 13. Acceptance Criteria
 
-1. A complete default audit on native v13 creates only the repository state marker, lifecycle lock/store, four immutable top-level managed-parent anchors, the immutable nested cache-quarantine anchor, small attempt/run envelopes, latest pointer, and canonical evidence store, with no migration journal or source artifact. A repository migrated from v12 retains exactly one authorized contiguous journal chain whose unique maximal revision is terminal, including all immutable predecessors, and one retired immutable v12 source in addition to that bounded layout; no second, forked, gapped, or unfinished chain, staging name, superseded target object, or extra migration artifact is accepted.
+1. A complete default audit on native v13 creates only the repository state marker, lifecycle lock/store, four immutable top-level managed-parent anchors, the immutable nested cache-quarantine anchor, small attempt/run envelopes, latest pointer, and canonical evidence store; its lifecycle header has no migration anchor and no migration journal or source artifact exists. A repository migrated from v12 has exactly one authorized `MigrationProvenanceAnchor` in the mutable v13 header, one contiguous journal chain whose unique maximal revision is terminal and whose immutable predecessors remain present, and one retired immutable v12 source in addition to that bounded layout; no second, forked, gapped, or unfinished chain, staging name, superseded target object, or extra migration artifact is accepted.
 2. An agent can answer a focused finding question without opening either file directly.
 3. Every bounded response, including binary- and run-scoped capabilities, supports explicit continuation.
 4. Projection limits, source-role policy, and finding disposition cannot change canonical counts or hide a grounded finding from an unfiltered default query; only an explicit echoed caller filter may narrow a collection.
@@ -1159,7 +1179,7 @@ chain and one retained v12 source in addition to the ordinary bounded layout.
 18. Existing aliases, directory descendants, new paths, and both sides of a rename obey the path identity contract; declaring one existing alias leases and reanalyzes the complete admitted physical-alias closure, while unleased topology changes cannot authorize close.
 19. Gate decisions, machine output, and process exit codes follow the stable decision table.
 20. Nested evidence and relation lists cannot bypass bounded query envelopes.
-21. `lumin store migrate` is the only v12 admission route, refuses absent state without creating it, returns the same bounded `ready` response after migration or retry, and publishes no crash-surviving pending name. Canonical v12 durably authorizes revision zero before publication; immutable successors carry the closed pending/published/superseded/exchanged binding state machine, and each intent successor uses a unique append-only name without replacing its predecessor. Migration binds canonical source and private target by byte/logical and physical identity and exchanges them through an implementable no-disposition primitive. The exact terminal journal and retired v12 source remain immutable provenance, while the canonical v13 target becomes mutation-aware current state whose later admission checks immutable provenance/header facts plus current-v13 integrity rather than its historical payload hash. The exact journal-proven canonical-absent intermediate is migration-recoverable, while every unexplained missing store or unbound/substituted/no-journal artifact is foreign. Migration cannot rewrite completed logical evidence in place, erase active gate history, let an old-generation handle commit after exchange, or turn a racing hard link into deletion; it maps private cleanup-operation v1 records only through the exact fail-closed synthetic delivery state in Section 2.5 and is exercised through store-crash fixtures, both shipped platform packages, and both packaged skill adapters.
+21. `lumin store migrate` is the only v12 admission route, refuses absent state without creating it, returns the same bounded `ready` response after migration or retry, and publishes no crash-surviving pending name. Canonical v12 durably authorizes revision zero before publication; that authority also fixes the target header's immutable `MigrationProvenanceAnchor`, immutable successors carry the closed pending/published/superseded/exchanged binding state machine, and each intent successor uses a unique append-only name without replacing its predecessor. Migration binds canonical source and private target by byte/logical and physical identity and exchanges them through an implementable no-disposition primitive. The exact terminal journal and retired v12 source remain immutable provenance, while the anchored canonical v13 target becomes mutation-aware current state whose later admission checks that immutable cross-binding plus current-v13 integrity rather than its historical payload hash. The exact journal-proven canonical-absent intermediate is migration-recoverable, while every unexplained missing store or unbound/substituted/no-journal artifact is foreign. Migration cannot rewrite completed logical evidence in place, erase active gate history, let an old-generation handle commit after exchange, or turn a racing hard link into deletion; it maps private cleanup-operation v1 records only through the exact fail-closed synthetic delivery state in Section 2.5 and is exercised through store-crash fixtures, both shipped platform packages, and both packaged skill adapters.
 22. Every run query is pinned to one immutable run, and every nested page can be requested explicitly without following latest.
 23. `AnalysisContractId` compatibility cannot be invalidated merely by a different `AnalysisInputId`.
 24. Pre-write rejection owns no lease; failed post-write remains active with an immutable attempted revision.

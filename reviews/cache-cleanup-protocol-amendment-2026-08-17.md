@@ -288,11 +288,14 @@ foreign actor could manufacture an apparently resumable root.
 
 The replacement decision commits an append-only root authorization inside canonical v12
 before revision-zero publication, then finalizes that root against the post-authorization
-source. The journal folds a closed role-specific event machine: only a proven-dead absent
+source. That authorization also fixes an immutable migrated-v13 target-header
+`MigrationProvenanceAnchor` to the root and source; its framing excludes the later target
+digest from the root core, so the cross-binding is acyclic. The journal folds a closed
+role-specific event machine: only a proven-dead absent
 pending target may become `SupersededUnpublished`; a visible target becomes `Published`,
 and published identities cannot be superseded. Terminalization authenticates the complete
 migration-time target once and transitions it to `CanonicalMutable`; later admission checks
-immutable provenance/header facts and ordinary current-v13 integrity instead of the
+the exact immutable target-header anchor and ordinary current-v13 integrity instead of the
 historical payload digest. Native-v13 and migrated-v13 output layouts now have separate
 exact truths, with only the latter requiring the authorized terminal journal and retired
 source.
@@ -346,7 +349,9 @@ handle-owned objects and published no-replace at unique final names. Before root
 publication, canonical v12 commits the greatest append-only `MigrationRootAuthorization`
 for that exact candidate identity/core and source/transformed-target user-logical facts;
 the root is finalized against the post-authorization source, so it cannot authorize
-itself. Each immutable successor names the exact predecessor, and no update replaces or
+itself. The authorization fixes a `MigrationProvenanceAnchor` in the migrated v13 header
+that cross-binds the root/source without including mutable target payload bytes. Each
+immutable successor names the exact predecessor, and no update replaces or
 removes it. The chain binds the opened canonical v12 source and held private v13 target by
 role, pre/post-exchange name, generation, schema, complete migration-time byte/logical
 SHA-256, physical identity, and publication-time one-link state. Its closed event fold
@@ -362,8 +367,9 @@ source. A racing hard link therefore causes fail-closed validation without requi
 impossible Linux exclusion or deleting any object. Already-valid native v13 with no
 journal and migrated v13 with an exact terminal journal/source are validating no-ops with
 no generation advance. After terminalization, normal v13 mutations may change the target
-bytes/logical dump; later admission validates its terminal physical/header provenance and
-current-v13 integrity rather than the migration-time target digest. A header-valid but
+bytes/logical dump; later admission validates its terminal physical identity, exact
+immutable target-header anchor, and current-v13 integrity rather than the migration-time
+target digest. A header-valid but
 payload-corrupt source under a live journal
 therefore receives the
 ordinary migration-required diagnostic first and hard-stops only when migration opens
@@ -508,8 +514,9 @@ finding for each item:
    bijection. The migration logical dump includes the canonical synthetic delivery state,
    rejects every invalid legacy shape before exchange, and never exposes any committed
    private-v1 row as a known v2 delivery. Only the public migration command admits v12.
-   Canonical v12 authorizes the exact revision-zero candidate before publication; a root
-   cannot authenticate itself, and crash recovery cannot reuse a superseded authorization.
+   Canonical v12 authorizes the exact revision-zero candidate before publication and fixes
+   the migrated target header's immutable root/source anchor; a root cannot authenticate
+   itself, and crash recovery cannot reuse a superseded authorization.
    The append-only journal physically binds canonical source and private target before
    their no-disposition exchange. Every successor is a distinct immutable file linked to
    the exact retained predecessor; no update replaces authority. Its typed event fold
@@ -523,7 +530,7 @@ finding for each item:
    response, while a v13 retry neither exchanges the store, appends a revision, deletes an
    artifact, nor advances its generation. Terminalization alone authenticates the target's
    complete migration-time payload; after a normal v13 mutation, fresh admission validates
-   immutable target provenance/header facts plus current-v13 integrity and does not compare
+   the exact immutable target-header anchor plus current-v13 integrity and does not compare
    against that historical payload digest. An unbound, substituted, or no-journal artifact
    is always foreign and is never deleted or advertised as migratable. Absent state fails
    without initialization.
@@ -546,26 +553,28 @@ finding for each item:
    lower sequence/result append, without changing either greatest sequence or any other
    durable field. No case uses scheduler timing; an exact guard race also proves cleanup
    cannot overlap publication, retention, or migration. Public migration children also
-    prove the ordinary-command recovery diagnostic, exact deaths before/after the v12 root
-    authorization and before/within initial and successor revision writing and after each
-    unique final-name publication/before parent flush, every later migration crash boundary,
-    pending-target absence supersession and exact-visible-target publication,
-    no-disposition exchange,
-    canonical-source/private-target and predecessor substitution, the exact real hard-link
-    attempt after pre-exchange one-link validation, the journal-proven canonical-absent
-    recovery split, the header-valid/payload-corrupt split between ordinary routing and
-    migration-only authentication, the no-journal byte-identical-copy hard-stop,
-    absent-store immutability, output-delivery retry, identical current-v13 response, and
-    no second exchange or journal append. After success, an ordinary current-v13 mutation
-    changes the target payload and the next ordinary admission plus migration no-op must
-    succeed without changing the immutable provenance.
+   prove the ordinary-command recovery diagnostic, exact deaths before/after the v12 root
+   authorization and before/within initial and successor revision writing and after each
+   unique final-name publication/before parent flush, every later migration crash boundary,
+   pending-target absence supersession and exact-visible-target publication,
+   no-disposition exchange,
+   canonical-source/private-target and predecessor substitution, the exact real hard-link
+   attempt after pre-exchange one-link validation, the journal-proven canonical-absent
+   recovery split, the header-valid/payload-corrupt split between ordinary routing and
+   migration-only authentication, the no-journal byte-identical-copy hard-stop,
+   absent-store immutability, target-header-anchor substitution, output-delivery retry,
+   identical current-v13 response, and
+   no second exchange or journal append. After success, an ordinary current-v13 mutation
+   changes the target payload and the next ordinary admission plus migration no-op must
+   succeed without changing the immutable provenance.
 10. Standard, determinism, store-crash, Windows/Linux package, and skill-adapter commands
     are assigned only to behavior they can execute and include `operation show` recovery.
     Both Windows and Linux package checks invoke the packaged `lumin store migrate` and
     exercise their actual handle-owned append-only publication plus no-disposition exchange
     primitives for admission rejection, absent-store refusal, root authorization,
     pending-target recovery, canonical-absent recovery, success, terminal-journal recovery,
-    post-migration mutation admission, and byte-identical no-op retry;
+    target-header-anchor validation, post-migration mutation admission, and byte-identical
+    no-op retry;
     development/store-crash execution alone is insufficient.
     The skill check proves both packaged adapters invoke the public migration command,
     validate its exact DTO, and retry the original command without migration logic.
@@ -594,7 +603,8 @@ projection and one exact private-ledger append after a late lower completion,
 cleanup-operation v2 with explicit public-v1 incompatibility and the exact private-v1
 synthetic migration in which every committed legacy row initially projects `unknown`,
 the public `lumin store migrate` grammar/DTO/error route, canonical-v12 root authorization
-before revision-zero publication, handle-owned initial and successor revision publication
+and acyclic immutable target-header provenance anchor before revision-zero publication,
+handle-owned initial and successor revision publication
 at every write/publish/reopen/parent-flush boundary, exact predecessor chaining with no
 replacement/removal, pending-target visible/absent recovery through the closed binding
 event fold, canonical-source and private-target byte/logical/physical binding followed by
