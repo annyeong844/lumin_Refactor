@@ -28,6 +28,7 @@ impl OperationSession<'_> {
                 return Ok(result);
             }
 
+            super::integrity::validate_stored_gate_catalog(&write)?;
             let mut gate = load_abandon_target(&write, gate_id, target_revision)?;
             ensure_post_write_revision_available(&write, operation_id, &gate)?;
             if operation.status == GateOperationStatus::Pending {

@@ -1,4 +1,6 @@
 use super::*;
+use crate::RetentionPlanRequest;
+use lumin_evidence::{RetentionMutationResult, RetentionPlanScope};
 
 #[test]
 fn gate_queries_and_conflicts_authenticate_the_complete_gate_projection()
@@ -247,6 +249,147 @@ fn pre_write_rejects_an_exhausted_active_catalog_counter() -> Result<(), Box<dyn
 }
 
 #[test]
+fn pre_write_rejects_an_orphaned_pending_validation_receipt()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let orphaned_operation_id = OperationId::from_string("op-orphaned-pending-receipt".to_owned());
+    let orphaned = store.begin_operation(&orphaned_operation_id)?;
+    let orphaned_source = path("src/orphaned-pending-receipt.ts")?;
+    assert!(matches!(
+        orphaned.reserve_pre_write(
+            "orphaned-pending-receipt",
+            std::slice::from_ref(&orphaned_source),
+            &[lease(orphaned_source.clone())],
+            &options(),
+            rejected_test_observation,
+        )?,
+        PreWriteStart::Analyze { .. }
+    ));
+
+    store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        let mut operations = write.open_table(OPERATIONS).map_err(crate::backend_error)?;
+        let removed = operations
+            .remove(orphaned_operation_id.as_str())
+            .map_err(crate::backend_error)?;
+        let operation_was_present = removed.is_some();
+        drop(removed);
+        if !operation_was_present {
+            return Err(StoreError::Integrity(
+                "pending operation fixture disappeared".to_owned(),
+            ));
+        }
+        drop(operations);
+        guard.commit(write)
+    })?;
+
+    let candidate_source = path("src/orphaned-pending-receipt-candidate.ts")?;
+    let candidate = store.begin_operation(&OperationId::from_string(
+        "op-orphaned-pending-receipt-candidate".to_owned(),
+    ))?;
+    assert!(matches!(
+        candidate.reserve_pre_write(
+            "orphaned-pending-receipt-candidate",
+            std::slice::from_ref(&candidate_source),
+            &[lease(candidate_source.clone())],
+            &options(),
+            rejected_test_observation,
+        ),
+        Err(StoreError::Integrity(message))
+            if message.contains("lost its owning operation")
+    ));
+    Ok(())
+}
+
+#[test]
+fn pre_write_promotion_revalidates_the_complete_gate_catalog()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    open_active_gate(
+        &store,
+        "op-promotion-catalog-owner",
+        "promotion-catalog-owner",
+        "src/promotion-catalog-owner.ts",
+    )?;
+
+    let operation_id = OperationId::from_string("op-promotion-catalog-candidate".to_owned());
+    let candidate = store.begin_operation(&operation_id)?;
+    let source = path("src/promotion-catalog-candidate.ts")?;
+    let source_lease = lease(source.clone());
+    let (gate_id, transition_sequence) = match candidate.reserve_pre_write(
+        "promotion-catalog-candidate",
+        std::slice::from_ref(&source),
+        std::slice::from_ref(&source_lease),
+        &options(),
+        rejected_test_observation,
+    )? {
+        PreWriteStart::Analyze {
+            gate_id,
+            transition_sequence,
+        } => (gate_id, transition_sequence),
+        PreWriteStart::Committed(_) => return Err("candidate committed before analysis".into()),
+    };
+
+    store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        let mut sequences = write
+            .open_table(crate::SEQUENCES)
+            .map_err(crate::backend_error)?;
+        sequences
+            .insert(records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY, 0)
+            .map_err(crate::backend_error)?;
+        drop(sequences);
+        guard.commit(write)
+    })?;
+
+    let final_validation_called = std::cell::Cell::new(false);
+    let error = match candidate.finish_pre_write(
+        "promotion-catalog-candidate",
+        &gate_id,
+        PreWriteFinish {
+            baseline: Some(GateBaselineDraft {
+                analysis_contract: "test-contract".to_owned(),
+                snapshot: empty_snapshot(),
+                protected_semantic_inputs: Vec::new(),
+                transition_sequence,
+            }),
+            leased_write_set: vec![source_lease],
+            alias_closures: Vec::new(),
+            attempted_semantic_inputs: Vec::new(),
+            signals: Vec::new(),
+        },
+        |_, _, signals| {
+            final_validation_called.set(true);
+            baseline_finalization(Vec::new(), signals)
+        },
+    ) {
+        Ok(_) => return Err("a regressed catalog reached pre-write promotion".into()),
+        Err(error) => error,
+    };
+    assert!(!final_validation_called.get());
+    assert!(matches!(
+        error,
+        StoreError::Integrity(message)
+            if message.contains("active-gate catalog sequence regressed below durable gate history")
+    ));
+    store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        assert!(records::read_record::<GateRecord>(&write, GATES, gate_id.as_str())?.is_none());
+        let operation =
+            records::read_record::<OperationRecord>(&write, OPERATIONS, operation_id.as_str())?
+                .ok_or_else(|| StoreError::OperationNotFound(operation_id.as_str().to_owned()))?;
+        assert_eq!(operation.status, GateOperationStatus::Pending);
+        Ok(())
+    })?;
+    Ok(())
+}
+
+#[test]
 fn gate_queries_reject_a_transition_ahead_of_its_allocator()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
@@ -333,6 +476,16 @@ fn gate_queries_and_post_write_reject_an_unauthenticated_transition_capsule()
         "transition-auth-close",
     )?;
     assert!(closed.decision.authorizes());
+    let prepared_plan = store.prepare_retention_plan(&RetentionPlanRequest {
+        scope: RetentionPlanScope::Gates {
+            terminal_before_unix_millis: 9_000_000_000_000,
+        },
+        operation_id: OperationId::from_string("op-transition-auth-plan".to_owned()),
+    })?;
+    let plan_id = match prepared_plan {
+        RetentionMutationResult::Prepared { plan_id, .. } => plan_id,
+        _ => return Err("gate retention plan was not prepared".into()),
+    };
 
     store.with_exclusive_lock(|guard| {
         let database = guard.open_database()?;
@@ -352,6 +505,22 @@ fn gate_queries_and_post_write_reject_an_unauthenticated_transition_capsule()
         store.load_gate(&active_gate),
         Err(StoreError::Integrity(message))
             if message.contains("transition 1 payload")
+    ));
+    assert!(matches!(
+        store.prepare_retention_plan(&RetentionPlanRequest {
+            scope: RetentionPlanScope::Gates {
+                terminal_before_unix_millis: 9_000_000_000_000,
+            },
+            operation_id: OperationId::from_string("op-transition-auth-plan-after".to_owned()),
+        }),
+        Err(StoreError::Integrity(message)) if message.contains("transition 1 payload")
+    ));
+    assert!(matches!(
+        store.confirm_retention_plan(
+            &plan_id,
+            &OperationId::from_string("op-transition-auth-confirm".to_owned()),
+        ),
+        Err(StoreError::Integrity(message)) if message.contains("transition 1 payload")
     ));
 
     let close = store.begin_operation(&OperationId::from_string(

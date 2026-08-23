@@ -42,6 +42,7 @@ impl OperationSession<'_> {
             let database = self.open_database(guard)?;
             let write = database.begin_write()?;
             reject_retention_operation_collision(&write, operation_id)?;
+            super::integrity::validate_stored_gate_catalog(&write)?;
             let mut operation = if let Some(mut operation) =
                 read_record::<OperationRecord>(&write, OPERATIONS, operation_id.as_str())?
             {
@@ -74,7 +75,6 @@ impl OperationSession<'_> {
                 self.bind_pending_operation(&mut operation)?;
                 operation
             } else {
-                super::integrity::validate_stored_gate_catalog(&write)?;
                 let mut operation = OperationRecord {
                     schema_version: GATE_OPERATION_SCHEMA_VERSION.to_owned(),
                     operation_id: operation_id.clone(),
@@ -195,6 +195,7 @@ impl OperationSession<'_> {
                 return Ok(result);
             }
             self.validate_pending_operation(&operation)?;
+            super::integrity::validate_stored_gate_catalog(&write)?;
             validate_pre_write_context(
                 &write,
                 &operation,
@@ -461,6 +462,7 @@ impl OperationSession<'_> {
                 return Ok(SemanticReadReservation::Committed(Box::new(result)));
             }
             self.validate_pending_operation(&operation)?;
+            super::integrity::validate_stored_gate_catalog(&write)?;
             if kind == GateOperationKind::PostWrite {
                 load_active_gate_for_post_write(&write, gate_id, &operation)?;
             }
@@ -548,6 +550,7 @@ impl OperationSession<'_> {
                 return Ok(result);
             }
             self.validate_pending_operation(&operation)?;
+            super::integrity::validate_stored_gate_catalog(&write)?;
             let mut gate = load_active_gate_for_post_write(&write, gate_id, &operation)?;
             if let Some(snapshot) = snapshot.as_ref() {
                 validate_captured_reservations(

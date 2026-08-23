@@ -12,7 +12,8 @@ use redb::{ReadTransaction, ReadableTable, TableError, WriteTransaction};
 use crate::{SEQUENCES, StoreError};
 
 use super::receipts::{
-    validate_gate_validation_receipts, validate_stored_gate_validation_receipts,
+    validate_gate_validation_receipts, validate_loaded_validation_receipt_catalog,
+    validate_stored_gate_validation_receipts, validate_stored_validation_receipt_catalog,
 };
 use super::records::{read_record, transition_key};
 use super::{GATES, OPERATIONS, TRANSITIONS};
@@ -205,9 +206,10 @@ pub(super) fn validate_stored_gate_catalog(
     for gate in gates.values() {
         validate_stored_gate_validation_receipts(write, gate)?;
     }
+    let operations = read_operation_map_from_write(write)?;
+    validate_stored_validation_receipt_catalog(write, &gates, &operations)?;
     let transitions = read_transition_map_from_write(write)?;
     validate_transition_catalog(&gates, &transitions)?;
-    let operations = read_operation_map_from_write(write)?;
     validate_allocator_floors(
         &gates,
         &transitions,
@@ -226,9 +228,10 @@ pub(super) fn validate_loaded_gate_catalog(
     for gate in gates.values() {
         validate_gate_validation_receipts(read, gate)?;
     }
+    let operations = read_operation_map_from_read(read)?;
+    validate_loaded_validation_receipt_catalog(read, &gates, &operations)?;
     let transitions = read_transition_map_from_read(read)?;
     validate_transition_catalog(&gates, &transitions)?;
-    let operations = read_operation_map_from_read(read)?;
     validate_allocator_floors(
         &gates,
         &transitions,

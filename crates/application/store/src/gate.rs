@@ -27,7 +27,7 @@ use coordination::{
     pre_write_admission_evidence, semantic_read_conflicts, transition_sequences_for_gate,
 };
 pub(crate) use integrity::validate_active_gate_catalog_history;
-use integrity::{read_validated_gate, validate_loaded_gate_catalog};
+use integrity::{read_validated_gate, validate_loaded_gate_catalog, validate_stored_gate_catalog};
 pub use liveness::OperationSession;
 pub(crate) use liveness::validate_migration_operation_liveness;
 pub(crate) use receipts::{operation_retention_identity, validation_receipt_for_operation};
@@ -39,6 +39,12 @@ use records::{
     current_active_gate_catalog, current_transition_sequence, load_record, next_gate_id,
     next_transition_sequence, read_record, read_records, write_record,
 };
+
+pub(crate) fn validate_stored_gate_catalog_integrity(
+    write: &WriteTransaction,
+) -> Result<(), StoreError> {
+    validate_stored_gate_catalog(write).map(|_| ())
+}
 
 pub(crate) const GATES: TableDefinition<&str, &[u8]> = TableDefinition::new("gates");
 pub(crate) const OPERATIONS: TableDefinition<&str, &[u8]> = TableDefinition::new("operations");

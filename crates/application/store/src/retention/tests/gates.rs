@@ -1,11 +1,13 @@
 use lumin_evidence::{
-    GateAnalysisOptions, GateDecision, GateLifecycle, GateRecord, GateRevision, RecordLookup,
-    RetentionItemKind, RetentionMutationResult, RetentionPlanScope,
+    GateAnalysisOptions, RecordLookup, RepoPathProjection, RetentionItemKind,
+    RetentionMutationResult, RetentionPlanScope, UnsealedGateObservationInputs, WriteLease,
+    derive_unsealed_gate_observation_binding,
 };
-use lumin_model::GateId;
+use lumin_model::{GateId, RepoPath};
 use tempfile::TempDir;
 
 use super::*;
+use crate::gate::PreWriteStart;
 
 #[test]
 fn terminal_gate_plan_removes_gate_but_keeps_tombstone() -> Result<(), Box<dyn std::error::Error>> {
@@ -34,47 +36,64 @@ fn terminal_gate_plan_removes_gate_but_keeps_tombstone() -> Result<(), Box<dyn s
 }
 
 fn insert_terminal_gate(store: &crate::RepositoryStore) -> Result<GateId, crate::StoreError> {
-    store.with_exclusive_lock(|guard| {
-        let database = guard.open_database()?;
-        let write = database.begin_write()?;
-        let gate_id = GateId::from_string("gate_0000000000000001".to_owned());
-        let gate = GateRecord {
-            schema_version: "lumin-gate.v1".to_owned(),
-            gate_id: gate_id.clone(),
-            lifecycle: GateLifecycle::Abandoned,
-            current_revision: 0,
-            declared_write_set: Vec::new(),
-            leased_write_set: Vec::new(),
-            alias_closures: Vec::new(),
-            transition_refs: Vec::new(),
-            analysis_options: GateAnalysisOptions {
-                jobs: 1,
-                resolution_profile: None,
-                scan_invocation: Default::default(),
+    let path = RepoPathProjection::from(
+        &RepoPath::from_portable("src/retention-terminal.ts")
+            .map_err(|error| crate::StoreError::Integrity(error.to_string()))?,
+    );
+    let lease = WriteLease {
+        path: path.clone(),
+        kind: lumin_evidence::WriteLeaseKind::ExistingFile,
+        physical_identity: None,
+        nearest_existing_parent: None,
+        prefix_identities: Vec::new(),
+    };
+    let options = GateAnalysisOptions {
+        jobs: 1,
+        resolution_profile: None,
+        scan_invocation: Default::default(),
+    };
+    let blocker = store.begin_operation(&operation("terminal-gate-blocker"))?;
+    if !matches!(
+        blocker.reserve_pre_write(
+            "terminal-gate-blocker",
+            std::slice::from_ref(&path),
+            std::slice::from_ref(&lease),
+            &options,
+            |signals| {
+                derive_unsealed_gate_observation_binding(
+                    &[],
+                    &UnsealedGateObservationInputs::new(
+                        vec![lease.clone()],
+                        Vec::new(),
+                        Vec::new(),
+                    ),
+                    signals,
+                )
             },
-            baseline: None,
-            protected_semantic_inputs: Vec::new(),
-            revisions: vec![GateRevision {
-                revision: 0,
-                operation_id: operation("terminal-gate-owner"),
-                committed_unix_millis: Some(1),
-                decision: GateDecision::Deny,
-                catalog_revision: None,
-                observation_binding: None,
-                unsealed_observation_inputs: None,
-                reason: Some("test terminal gate".to_owned()),
-                signals: Vec::new(),
-                changed_paths: Vec::new(),
-                actual_write_set: None,
-                snapshot: None,
-                protected_semantic_inputs: Vec::new(),
-                alias_closures: Vec::new(),
-                reconciled_transition_sequences: Vec::new(),
-                deltas: Vec::new(),
-            }],
-        };
-        crate::gate::records::write_record(&write, crate::gate::GATES, gate_id.as_str(), &gate)?;
-        guard.commit(write)?;
-        Ok(gate_id)
-    })
+        )?,
+        PreWriteStart::Analyze { .. }
+    ) {
+        return Err(crate::StoreError::Integrity(
+            "terminal gate blocker did not retain its reservation".to_owned(),
+        ));
+    }
+    let rejected = store.begin_operation(&operation("terminal-gate-owner"))?;
+    match rejected.reserve_pre_write(
+        "terminal-gate-owner",
+        std::slice::from_ref(&path),
+        std::slice::from_ref(&lease),
+        &options,
+        |signals| {
+            derive_unsealed_gate_observation_binding(
+                &[],
+                &UnsealedGateObservationInputs::new(vec![lease.clone()], Vec::new(), Vec::new()),
+                signals,
+            )
+        },
+    )? {
+        PreWriteStart::Committed(result) => Ok(result.gate_id),
+        PreWriteStart::Analyze { .. } => Err(crate::StoreError::Integrity(
+            "terminal gate fixture was unexpectedly authorized".to_owned(),
+        )),
+    }
 }

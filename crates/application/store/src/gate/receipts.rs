@@ -1,9 +1,11 @@
+use std::collections::BTreeMap;
+
 use lumin_evidence::{
     GATE_VALIDATION_RECEIPT_SCHEMA_VERSION, GateOperationKind, GateOperationStatus, GateRecord,
     GateRevision, GateValidationCommitReceipt, GateValidationReceipt, GateValidationReceiptPayload,
     OperationRecord,
 };
-use redb::{ReadTransaction, WriteTransaction};
+use redb::{ReadTransaction, ReadableTable, TableError, WriteTransaction};
 
 use crate::{StoreError, namespace::StoreDatabase};
 
@@ -351,6 +353,36 @@ pub(super) fn validate_stored_validation_receipt(
     validate_validation_receipt_pair(operation, expected, existing)
 }
 
+pub(super) fn validate_stored_validation_receipt_catalog(
+    write: &WriteTransaction,
+    gates: &BTreeMap<String, GateRecord>,
+    operations: &BTreeMap<String, OperationRecord>,
+) -> Result<(), StoreError> {
+    for operation in operations.values() {
+        let expected =
+            validation_receipt_for_operation(operation, gates.get(operation.gate_id.as_str()))?;
+        let existing = read_record::<GateValidationReceipt>(
+            write,
+            VALIDATION_RECEIPTS,
+            operation.operation_id.as_str(),
+        )?;
+        validate_validation_receipt_pair(operation, expected, existing)?;
+    }
+    let table = write
+        .open_table(VALIDATION_RECEIPTS)
+        .map_err(crate::backend_error)?;
+    for row in table.iter().map_err(crate::backend_error)? {
+        let (key, _) = row.map_err(crate::backend_error)?;
+        if !operations.contains_key(key.value()) {
+            return Err(StoreError::Integrity(format!(
+                "gate validation receipt {} lost its owning operation",
+                key.value()
+            )));
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn validate_loaded_validation_receipt(
     database: &StoreDatabase<'_>,
     operation: &OperationRecord,
@@ -363,6 +395,38 @@ pub(super) fn validate_loaded_validation_receipt(
         operation.operation_id.as_str(),
     )?;
     validate_validation_receipt_pair(operation, expected, existing)
+}
+
+pub(super) fn validate_loaded_validation_receipt_catalog(
+    read: &ReadTransaction,
+    gates: &BTreeMap<String, GateRecord>,
+    operations: &BTreeMap<String, OperationRecord>,
+) -> Result<(), StoreError> {
+    for operation in operations.values() {
+        let expected =
+            validation_receipt_for_operation(operation, gates.get(operation.gate_id.as_str()))?;
+        let existing = load_record_from_read::<GateValidationReceipt>(
+            read,
+            VALIDATION_RECEIPTS,
+            operation.operation_id.as_str(),
+        )?;
+        validate_validation_receipt_pair(operation, expected, existing)?;
+    }
+    let table = match read.open_table(VALIDATION_RECEIPTS) {
+        Ok(table) => table,
+        Err(TableError::TableDoesNotExist(_)) => return Ok(()),
+        Err(error) => return Err(crate::backend_error(error)),
+    };
+    for row in table.iter().map_err(crate::backend_error)? {
+        let (key, _) = row.map_err(crate::backend_error)?;
+        if !operations.contains_key(key.value()) {
+            return Err(StoreError::Integrity(format!(
+                "gate validation receipt {} lost its owning operation",
+                key.value()
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn validate_gate_validation_receipts(
