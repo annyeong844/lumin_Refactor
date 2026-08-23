@@ -27,6 +27,9 @@ mod domain;
 mod observation;
 mod transitions;
 
+#[cfg(all(feature = "gate-test-fault", not(debug_assertions)))]
+compile_error!("gate-test-fault is restricted to debug test builds");
+
 use domain::{
     DeclaredPathInspection, captured_input_physical_paths, close_alias_topology,
     expand_write_domain, inspect_declared_paths, observe_write_domain, protected_semantic_inputs,
@@ -319,6 +322,7 @@ fn wait_at_post_write_final_barrier(
     )
 }
 
+#[cfg(feature = "gate-test-fault")]
 fn wait_at_gate_test_barrier(
     environment: &str,
     stage: &str,
@@ -383,6 +387,16 @@ fn wait_at_gate_test_barrier(
         ))
         .into());
     }
+    Ok(())
+}
+
+#[cfg(not(feature = "gate-test-fault"))]
+fn wait_at_gate_test_barrier(
+    _environment: &str,
+    _stage: &str,
+    _operation_id: &OperationId,
+    _gate_id: &GateId,
+) -> Result<(), EngineError> {
     Ok(())
 }
 
