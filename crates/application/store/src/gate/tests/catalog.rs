@@ -171,6 +171,82 @@ fn pre_write_rejects_a_gate_allocator_behind_a_retained_gate()
 }
 
 #[test]
+fn gate_queries_reject_an_active_catalog_counter_below_durable_history()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate(
+        &store,
+        "op-active-catalog-floor",
+        "active-catalog-floor",
+        "src/active-catalog-floor.ts",
+    )?;
+
+    store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        let mut sequences = write
+            .open_table(crate::SEQUENCES)
+            .map_err(crate::backend_error)?;
+        sequences
+            .insert(records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY, 0)
+            .map_err(crate::backend_error)?;
+        drop(sequences);
+        guard.commit(write)
+    })?;
+
+    assert!(matches!(
+        store.load_gate(&gate_id),
+        Err(StoreError::Integrity(message))
+            if message.contains("active-gate catalog sequence regressed below durable gate history")
+    ));
+    Ok(())
+}
+
+#[test]
+fn pre_write_rejects_an_exhausted_active_catalog_counter() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    open_active_gate(
+        &store,
+        "op-active-catalog-exhausted-owner",
+        "active-catalog-exhausted-owner",
+        "src/active-catalog-exhausted-owner.ts",
+    )?;
+
+    store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        let mut sequences = write
+            .open_table(crate::SEQUENCES)
+            .map_err(crate::backend_error)?;
+        sequences
+            .insert(records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY, u64::MAX)
+            .map_err(crate::backend_error)?;
+        drop(sequences);
+        guard.commit(write)
+    })?;
+
+    let source = path("src/active-catalog-exhausted-candidate.ts")?;
+    let candidate = store.begin_operation(&OperationId::from_string(
+        "op-active-catalog-exhausted-candidate".to_owned(),
+    ))?;
+    assert!(matches!(
+        candidate.reserve_pre_write(
+            "active-catalog-exhausted-candidate",
+            std::slice::from_ref(&source),
+            &[lease(source.clone())],
+            &options(),
+            rejected_test_observation,
+        ),
+        Err(StoreError::Integrity(message))
+            if message.contains("active-gate catalog sequence is exhausted")
+    ));
+    Ok(())
+}
+
+#[test]
 fn gate_queries_reject_a_transition_ahead_of_its_allocator()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;

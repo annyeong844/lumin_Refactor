@@ -26,6 +26,7 @@ use coordination::{
     active_write_conflicts, attach_transition_references, conflicts, post_write_analysis_context,
     pre_write_admission_evidence, semantic_read_conflicts, transition_sequences_for_gate,
 };
+pub(crate) use integrity::validate_active_gate_catalog_history;
 use integrity::{read_validated_gate, validate_loaded_gate_catalog};
 pub use liveness::OperationSession;
 pub(crate) use liveness::validate_migration_operation_liveness;

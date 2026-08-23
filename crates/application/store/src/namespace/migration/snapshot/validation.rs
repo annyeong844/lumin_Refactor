@@ -738,85 +738,15 @@ fn validate_active_gate_catalog(
         .get(ACTIVE_GATE_CATALOG_SEQUENCE_KEY)
         .copied()
         .unwrap_or(0);
-    if observed == u64::MAX {
-        return Err(StoreError::Integrity(
-            "active-gate catalog sequence is exhausted and cannot record another mutation"
-                .to_owned(),
-        ));
-    }
-    let mut minimum = 0_u64;
-    let mut retained_mutation_count = 0_u64;
-    for (key, gate) in gates {
-        let mut gate_minimum = 0_u64;
-        let mut preceding_catalog_revision = None;
-        let mut protected_semantic_inputs =
-            gate.baseline.as_ref().map_or_else(Vec::new, |baseline| {
-                baseline.protected_semantic_inputs.clone()
-            });
-        for revision in &gate.revisions {
-            if let Some(catalog_revision) = revision.catalog_revision {
-                if catalog_revision > observed {
-                    return Err(StoreError::Integrity(format!(
-                        "gate {key} observation catalog revision exceeds the active-gate catalog"
-                    )));
-                }
-                if preceding_catalog_revision.is_some_and(|preceding| catalog_revision < preceding)
-                {
-                    return Err(StoreError::Integrity(format!(
-                        "gate {key} observation catalog revision regressed within its durable history"
-                    )));
-                }
-                preceding_catalog_revision = Some(catalog_revision);
-                gate_minimum = gate_minimum.max(catalog_revision);
-            }
-            let kind = operations
-                .get(revision.operation_id.as_str())
+    crate::gate::validate_active_gate_catalog_history(
+        observed,
+        gates.iter().map(|(key, gate)| (*key, gate)),
+        |operation_id| {
+            operations
+                .get(operation_id.as_str())
                 .map(|operation| operation.kind)
-                .ok_or_else(|| {
-                    StoreError::Integrity(format!(
-                        "gate {key} catalog history references a missing operation"
-                    ))
-                })?;
-            let sealed_current_close = kind == GateOperationKind::PostWrite
-                && revision.decision != GateDecision::Stale
-                && matches!(
-                    revision.observation_binding.as_ref(),
-                    Some(ObservationBinding::Sealed {
-                        observation: SealedGateObservation::Close { .. }
-                    })
-                );
-            let replaces_protected_reads = sealed_current_close
-                && revision.protected_semantic_inputs != protected_semantic_inputs;
-            if sealed_current_close {
-                protected_semantic_inputs = revision.protected_semantic_inputs.clone();
-            }
-            let advances_catalog = match kind {
-                GateOperationKind::PreWrite | GateOperationKind::PostWrite => {
-                    revision.decision.authorizes() || replaces_protected_reads
-                }
-                GateOperationKind::GateAbandon => true,
-            };
-            if advances_catalog {
-                retained_mutation_count =
-                    retained_mutation_count.checked_add(1).ok_or_else(|| {
-                        StoreError::Integrity(
-                            "retained active-catalog mutation history overflowed".to_owned(),
-                        )
-                    })?;
-                gate_minimum = gate_minimum.checked_add(1).ok_or_else(|| {
-                    StoreError::Integrity(format!("gate {key} active-catalog history overflowed"))
-                })?;
-            }
-            minimum = minimum.max(gate_minimum);
-        }
-    }
-    minimum = minimum.max(retained_mutation_count);
-    if observed < minimum {
-        return Err(StoreError::Integrity(format!(
-            "active-gate catalog sequence regressed below durable gate history: observed {observed}, minimum {minimum}"
-        )));
-    }
-    Ok(())
+        },
+    )
 }
 
 fn validate_gate_history(

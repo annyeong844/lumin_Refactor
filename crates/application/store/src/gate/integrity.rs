@@ -6,7 +6,7 @@ use lumin_evidence::{
     GateOperationStatus, GateRecord, GateRevision, OperationRecord, WorktreeTransition,
     apply_worktree_transition_for_domain,
 };
-use lumin_model::{GateId, ObservationBinding, SealedGateObservation};
+use lumin_model::{GateId, ObservationBinding, OperationId, SealedGateObservation};
 use redb::{ReadTransaction, ReadableTable, TableError, WriteTransaction};
 
 use crate::{SEQUENCES, StoreError};
@@ -207,12 +207,14 @@ pub(super) fn validate_stored_gate_catalog(
     }
     let transitions = read_transition_map_from_write(write)?;
     validate_transition_catalog(&gates, &transitions)?;
+    let operations = read_operation_map_from_write(write)?;
     validate_allocator_floors(
         &gates,
         &transitions,
-        &read_operation_gate_ids_from_write(write)?,
+        &operations,
         read_sequence_from_write(write, "gate")?,
         read_sequence_from_write(write, "transition")?,
+        read_sequence_from_write(write, super::records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY)?,
     )?;
     Ok(ValidatedGateCatalog { gates, transitions })
 }
@@ -226,12 +228,14 @@ pub(super) fn validate_loaded_gate_catalog(
     }
     let transitions = read_transition_map_from_read(read)?;
     validate_transition_catalog(&gates, &transitions)?;
+    let operations = read_operation_map_from_read(read)?;
     validate_allocator_floors(
         &gates,
         &transitions,
-        &read_operation_gate_ids_from_read(read)?,
+        &operations,
         read_sequence_from_read(read, "gate")?,
         read_sequence_from_read(read, "transition")?,
+        read_sequence_from_read(read, super::records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY)?,
     )?;
     Ok(ValidatedGateCatalog { gates, transitions })
 }
@@ -239,15 +243,16 @@ pub(super) fn validate_loaded_gate_catalog(
 fn validate_allocator_floors(
     gates: &BTreeMap<String, GateRecord>,
     transitions: &BTreeMap<u64, WorktreeTransition>,
-    operation_gate_ids: &[GateId],
+    operations: &BTreeMap<String, OperationRecord>,
     gate_sequence: u64,
     transition_sequence: u64,
+    active_gate_catalog_sequence: u64,
 ) -> Result<(), StoreError> {
     let mut minimum_gate_sequence = 0;
     for gate_id in gates
         .values()
         .map(|gate| &gate.gate_id)
-        .chain(operation_gate_ids)
+        .chain(operations.values().map(|operation| &operation.gate_id))
     {
         minimum_gate_sequence = minimum_gate_sequence.max(canonical_gate_sequence(gate_id)?);
     }
@@ -272,6 +277,105 @@ fn validate_allocator_floors(
         return Err(StoreError::Integrity(
             "transition allocator sequence is exhausted".to_owned(),
         ));
+    }
+    validate_active_gate_catalog_floor(gates, operations, active_gate_catalog_sequence)
+}
+
+fn validate_active_gate_catalog_floor(
+    gates: &BTreeMap<String, GateRecord>,
+    operations: &BTreeMap<String, OperationRecord>,
+    observed: u64,
+) -> Result<(), StoreError> {
+    validate_active_gate_catalog_history(
+        observed,
+        gates.iter().map(|(key, gate)| (key.as_str(), gate)),
+        |operation_id| {
+            operations
+                .get(operation_id.as_str())
+                .map(|operation| operation.kind)
+        },
+    )
+}
+
+pub(crate) fn validate_active_gate_catalog_history<'a>(
+    observed: u64,
+    gates: impl IntoIterator<Item = (&'a str, &'a GateRecord)>,
+    operation_kind: impl Fn(&OperationId) -> Option<GateOperationKind>,
+) -> Result<(), StoreError> {
+    if observed == u64::MAX {
+        return Err(StoreError::Integrity(
+            "active-gate catalog sequence is exhausted and cannot record another mutation"
+                .to_owned(),
+        ));
+    }
+    let mut minimum = 0_u64;
+    let mut retained_mutation_count = 0_u64;
+    for (key, gate) in gates {
+        let mut gate_minimum = 0_u64;
+        let mut preceding_catalog_revision = None;
+        let mut protected_semantic_inputs =
+            gate.baseline.as_ref().map_or_else(Vec::new, |baseline| {
+                baseline.protected_semantic_inputs.clone()
+            });
+        for revision in &gate.revisions {
+            if let Some(catalog_revision) = revision.catalog_revision {
+                if catalog_revision > observed {
+                    return Err(StoreError::Integrity(format!(
+                        "gate {key} observation catalog revision exceeds the active-gate catalog"
+                    )));
+                }
+                if preceding_catalog_revision.is_some_and(|preceding| catalog_revision < preceding)
+                {
+                    return Err(StoreError::Integrity(format!(
+                        "gate {key} observation catalog revision regressed within its durable history"
+                    )));
+                }
+                preceding_catalog_revision = Some(catalog_revision);
+                gate_minimum = gate_minimum.max(catalog_revision);
+            }
+            let kind = operation_kind(&revision.operation_id).ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "gate {key} catalog history references a missing operation"
+                ))
+            })?;
+            let sealed_current_close = kind == GateOperationKind::PostWrite
+                && revision.decision != GateDecision::Stale
+                && matches!(
+                    revision.observation_binding.as_ref(),
+                    Some(ObservationBinding::Sealed {
+                        observation: SealedGateObservation::Close { .. }
+                    })
+                );
+            let replaces_protected_reads = sealed_current_close
+                && revision.protected_semantic_inputs != protected_semantic_inputs;
+            if sealed_current_close {
+                protected_semantic_inputs = revision.protected_semantic_inputs.clone();
+            }
+            let advances_catalog = match kind {
+                GateOperationKind::PreWrite | GateOperationKind::PostWrite => {
+                    revision.decision.authorizes() || replaces_protected_reads
+                }
+                GateOperationKind::GateAbandon => true,
+            };
+            if advances_catalog {
+                retained_mutation_count =
+                    retained_mutation_count.checked_add(1).ok_or_else(|| {
+                        StoreError::Integrity(
+                            "retained active-catalog mutation history overflowed".to_owned(),
+                        )
+                    })?;
+                gate_minimum = gate_minimum.checked_add(1).ok_or_else(|| {
+                    StoreError::Integrity(format!("gate {key} active-catalog history overflowed"))
+                })?;
+            }
+            minimum = minimum.max(gate_minimum);
+        }
+    }
+    minimum = minimum.max(retained_mutation_count);
+    if observed < minimum {
+        return Err(StoreError::Integrity(format!(
+            "active-gate catalog sequence regressed below durable gate history: observed {observed}, minimum {minimum}"
+        )));
     }
     Ok(())
 }
@@ -299,32 +403,55 @@ fn canonical_gate_sequence(gate_id: &GateId) -> Result<u64, StoreError> {
     })
 }
 
-fn read_operation_gate_ids_from_write(write: &WriteTransaction) -> Result<Vec<GateId>, StoreError> {
+fn read_operation_map_from_write(
+    write: &WriteTransaction,
+) -> Result<BTreeMap<String, OperationRecord>, StoreError> {
     let table = write.open_table(OPERATIONS).map_err(crate::backend_error)?;
-    let mut gate_ids = Vec::new();
+    let mut operations = BTreeMap::new();
     for row in table.iter().map_err(crate::backend_error)? {
-        let (_, value) = row.map_err(crate::backend_error)?;
+        let (key, value) = row.map_err(crate::backend_error)?;
         let operation = serde_json::from_slice::<OperationRecord>(value.value())
             .map_err(crate::serialization_error)?;
-        gate_ids.push(operation.gate_id);
+        insert_operation(&mut operations, key.value().to_owned(), operation)?;
     }
-    Ok(gate_ids)
+    Ok(operations)
 }
 
-fn read_operation_gate_ids_from_read(read: &ReadTransaction) -> Result<Vec<GateId>, StoreError> {
+fn read_operation_map_from_read(
+    read: &ReadTransaction,
+) -> Result<BTreeMap<String, OperationRecord>, StoreError> {
     let table = match read.open_table(OPERATIONS) {
         Ok(table) => table,
-        Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+        Err(TableError::TableDoesNotExist(_)) => return Ok(BTreeMap::new()),
         Err(error) => return Err(crate::backend_error(error)),
     };
-    let mut gate_ids = Vec::new();
+    let mut operations = BTreeMap::new();
     for row in table.iter().map_err(crate::backend_error)? {
-        let (_, value) = row.map_err(crate::backend_error)?;
+        let (key, value) = row.map_err(crate::backend_error)?;
         let operation = serde_json::from_slice::<OperationRecord>(value.value())
             .map_err(crate::serialization_error)?;
-        gate_ids.push(operation.gate_id);
+        insert_operation(&mut operations, key.value().to_owned(), operation)?;
     }
-    Ok(gate_ids)
+    Ok(operations)
+}
+
+fn insert_operation(
+    operations: &mut BTreeMap<String, OperationRecord>,
+    key: String,
+    operation: OperationRecord,
+) -> Result<(), StoreError> {
+    if operation.operation_id.as_str() != key {
+        return Err(StoreError::Integrity(format!(
+            "operation key {key} disagrees with operation_id {}",
+            operation.operation_id.as_str()
+        )));
+    }
+    if operations.insert(key.clone(), operation).is_some() {
+        return Err(StoreError::Integrity(format!(
+            "operation catalog contains duplicate key {key}"
+        )));
+    }
+    Ok(())
 }
 
 fn read_sequence_from_write(write: &WriteTransaction, key: &str) -> Result<u64, StoreError> {
