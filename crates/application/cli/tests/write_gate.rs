@@ -1293,7 +1293,7 @@ fn protected_input_drift_is_stale() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(unix)]
 #[test]
-fn incomplete_close_withholds_partial_actual_write_attribution()
+fn escaping_existing_write_target_is_stale_and_withholds_actual_write_attribution()
 -> Result<(), Box<dyn std::error::Error>> {
     use std::os::unix::fs::symlink;
 
@@ -1314,13 +1314,13 @@ fn incomplete_close_withholds_partial_actual_write_attribution()
             "op-incomplete-close",
         ],
     )?;
-    assert_status(&post, 4);
+    assert_status(&post, 5);
     let post_json: Value = serde_json::from_str(&post.stdout)?;
     assert_eq!(
         post_json.get("decision").and_then(Value::as_str),
-        Some("incomplete")
+        Some("stale")
     );
-    assert_has_signal(&post.stdout, "required-evidence-incomplete")?;
+    assert_has_signal(&post.stdout, "protected-input-changed")?;
     assert!(post_json.get("actualWriteSet").is_none());
 
     let shown = run(root.path(), &["gate", "show", &gate_id])?;

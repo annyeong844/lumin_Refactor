@@ -457,7 +457,7 @@ fn validate_entry_containment(
                     ))
                 })?;
                 if !physical.starts_with(canonical_root) {
-                    return Err(InventoryError::EntryEscapesRoot(entry.display_escaped()));
+                    return Err(InventoryError::EntryEscapesRoot(entry.clone()));
                 }
                 if canonical_state.is_some_and(|state| physical.starts_with(state)) {
                     return Err(InventoryError::ReservedEntryPath(entry.display_escaped()));

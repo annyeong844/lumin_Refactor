@@ -724,7 +724,7 @@ fn context_is_hard_excluded(root: &Path, path: &RepoPath) -> Result<bool, Invent
                 })?;
                 let physical_relative = physical_prefix
                     .strip_prefix(&canonical_root)
-                    .map_err(|_| InventoryError::EntryEscapesRoot(path.display_escaped()))?;
+                    .map_err(|_| InventoryError::EntryEscapesRoot(path.clone()))?;
                 if physical_relative.iter().any(hard_excluded_component) {
                     return Ok(true);
                 }

@@ -422,7 +422,9 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("bounded-nested-query", INV_BNQ),
     row_sd!("collection-ordering"),
     row_sd!("capabilities-pagination", INV_CAP),
-    row_sd!("request-path-escape"),
+    row_sd!("request-path-escape", &[
+        inv!("request_path_escape", "request_path_escape_distinguishes_malformed_stale_and_blocked_containment"),
+    ]),
     row_sd!("corrupt-store"),
     row_c!("crash-publication", INV_CRASH_PUB),
     row_c!("concurrent-latest-publication", INV_CONC_PUB),
