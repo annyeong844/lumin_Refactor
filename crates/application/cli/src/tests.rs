@@ -170,10 +170,7 @@ fn parse_failure_is_persisted_as_incomplete() -> Result<(), Box<dyn std::error::
         response.get("status").and_then(Value::as_str),
         Some("incomplete")
     );
-    assert_eq!(
-        response.get("findingCount").and_then(Value::as_u64),
-        Some(0)
-    );
+    assert_eq!(response.get("findingCount"), Some(&Value::Null));
     assert!(
         response
             .get("limitationCount")

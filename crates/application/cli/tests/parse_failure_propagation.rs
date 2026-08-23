@@ -118,7 +118,7 @@ fn unrecoverable_parse_failures_block_workspace_absence_and_gates()
     assert_status(&audit, 0);
     let audit_json: Value = serde_json::from_str(&audit.stdout)?;
     assert_eq!(required_str(&audit_json, "/status")?, "incomplete");
-    assert_eq!(required_u64(&audit_json, "/findingCount")?, 0);
+    assert_eq!(audit_json.get("findingCount"), Some(&Value::Null));
     assert_eq!(required_u64(&audit_json, "/limitationCount")?, 1);
     let run_id = field(&audit.stdout, "runId")?;
 

@@ -369,6 +369,66 @@ fn sfc_dialect_boundary_vue_complete_svelte_astro_unavailable()
     Ok(())
 }
 
+#[test]
+fn required_capability_failure_is_prominent_and_never_renders_zero()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "src/Page.svelte",
+        "<script>export const unavailable = true;</script>\n",
+    )?;
+
+    let audit = run(root.path(), &["audit", "--jobs", "1"])?;
+    assert_status(&audit, 0);
+    let audit_json: Value = serde_json::from_str(&audit.stdout)?;
+    assert_eq!(
+        audit_json.get("schemaVersion").and_then(Value::as_str),
+        Some("lumin.audit.v2")
+    );
+    assert_eq!(
+        audit_json.get("status").and_then(Value::as_str),
+        Some("incomplete")
+    );
+    assert_eq!(audit_json.get("findingCount"), Some(&Value::Null));
+    let run_id = field(&audit.stdout, "runId")?;
+
+    let overview = run(root.path(), &["overview", "--run", &run_id])?;
+    assert_status(&overview, 0);
+    let capability_offset = overview
+        .stdout
+        .find("\"capabilityStates\"")
+        .ok_or_else(|| std::io::Error::other("overview omitted capability states"))?;
+    let finding_count_offset = overview
+        .stdout
+        .find("\"findingCount\"")
+        .ok_or_else(|| std::io::Error::other("overview omitted finding count"))?;
+    assert!(capability_offset < finding_count_offset);
+
+    let overview_json: Value = serde_json::from_str(&overview.stdout)?;
+    assert_eq!(
+        overview_json.get("schemaVersion").and_then(Value::as_str),
+        Some("lumin.overview.v2")
+    );
+    assert_eq!(
+        capability_state(&overview_json, "sfc/svelte.v1"),
+        Some("unavailable")
+    );
+    assert_eq!(
+        capability_state(&overview_json, "dead-code.v1"),
+        Some("incomplete")
+    );
+    assert_eq!(overview_json.get("findingCount"), Some(&Value::Null));
+    assert_eq!(
+        limitations(&overview_json)?
+            .iter()
+            .map(|limitation| limitation.get("reason").and_then(Value::as_str))
+            .collect::<Vec<_>>(),
+        [Some("sfc-dialect-unavailable")]
+    );
+    Ok(())
+}
+
 struct AuditEvidence {
     run_id: String,
     audit_status: String,

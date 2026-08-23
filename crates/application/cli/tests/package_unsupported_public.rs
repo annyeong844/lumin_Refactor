@@ -234,7 +234,7 @@ fn audit_evidence(root: &Path) -> Result<AuditEvidence, Box<dyn std::error::Erro
     let overview_json: Value = serde_json::from_str(&overview.stdout)?;
     assert_eq!(
         overview_json.get("schemaVersion").and_then(Value::as_str),
-        Some("lumin.overview.v1")
+        Some("lumin.overview.v2")
     );
     assert_eq!(
         overview_json.get("findingCount").and_then(Value::as_u64),
