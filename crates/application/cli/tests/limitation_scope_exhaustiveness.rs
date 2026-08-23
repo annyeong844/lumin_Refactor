@@ -14,11 +14,57 @@ type FindingIdentity = (String, String, String);
 fn limitation_scope_exhaustiveness_is_public() -> Result<(), Box<dyn std::error::Error>> {
     file_and_workspace_required_evidence_remain_distinct()?;
     package_required_evidence_does_not_escape_its_owner()?;
+    configured_scope_follows_affected_importers()?;
     public_surface_required_evidence_follows_its_consumer()?;
     resolved_module_opacity_remains_advisory()?;
     mixed_opacity_scope_selects_fact_or_required_gap()?;
     known_empty_target_scope_remains_normalized()?;
     unavailable_sfc_owner_has_a_distinct_gate_signal()?;
+    Ok(())
+}
+
+fn configured_scope_follows_affected_importers() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"configured-root","private":true,"workspaces":["packages/*"]}"#,
+    )?;
+    write(
+        root.path(),
+        "tsconfig.json",
+        r#"{"compilerOptions":{"moduleResolution":"bundler","madeUpFlag":true}}"#,
+    )?;
+    write(root.path(), "src/root.ts", "export const rootValue = 1;\n")?;
+    write(
+        root.path(),
+        "packages/nested/package.json",
+        r#"{"name":"@scope/nested","private":true}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/nested/src/main.ts",
+        "export const nestedValue = 1;\n",
+    )?;
+
+    let nested = json_command(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-limitation-configured-nested",
+            "--path",
+            "packages/nested/src/main.ts",
+            "--jobs",
+            "1",
+        ],
+        4,
+    )?;
+    assert_eq!(
+        signal_count(&nested, "required-evidence-incomplete"),
+        Some(1),
+        "a root config controlling root and nested importers lost its workspace-scoped gap",
+    );
     Ok(())
 }
 
@@ -223,6 +269,16 @@ fn public_surface_required_evidence_follows_its_consumer() -> Result<(), Box<dyn
     )?;
     write(
         root.path(),
+        "packages/app-b/package.json",
+        r#"{"name":"@scope/app-b","private":true}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/app-b/main.ts",
+        "import { selected } from '@scope/lib-b'; console.log(selected);\n",
+    )?;
+    write(
+        root.path(),
         "packages/lib/package.json",
         r#"{"name":"@scope/lib","private":true,"exports":{"custom":"./custom.js","default":"./default.js"}}"#,
     )?;
@@ -234,6 +290,21 @@ fn public_surface_required_evidence_follows_its_consumer() -> Result<(), Box<dyn
     write(
         root.path(),
         "packages/lib/default.ts",
+        "export const selected = 1; export const defaultDead = 2;\n",
+    )?;
+    write(
+        root.path(),
+        "packages/lib-b/package.json",
+        r#"{"name":"@scope/lib-b","private":true,"exports":{"custom":"./custom.js","default":"./default.js"}}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/lib-b/custom.ts",
+        "export const selected = 1; export const customDead = 2;\n",
+    )?;
+    write(
+        root.path(),
+        "packages/lib-b/default.ts",
         "export const selected = 1; export const defaultDead = 2;\n",
     )?;
     write(
@@ -277,7 +348,11 @@ fn public_surface_required_evidence_follows_its_consumer() -> Result<(), Box<dyn
         ],
         4,
     )?;
-    assert!(has_signal(&consumer, "required-evidence-incomplete"));
+    assert_eq!(
+        signal_count(&consumer, "required-evidence-incomplete"),
+        Some(1),
+        "an equal public-surface diagnostic from another package inflated the gate gap count",
+    );
     let clear = json_command(
         root.path(),
         &[
@@ -687,6 +762,16 @@ fn has_signal(response: &Value, kind: &str) -> bool {
                 .iter()
                 .any(|signal| signal.get("kind").and_then(Value::as_str) == Some(kind))
         })
+}
+
+fn signal_count(response: &Value, kind: &str) -> Option<u64> {
+    response
+        .get("signals")?
+        .as_array()?
+        .iter()
+        .find(|signal| signal.get("kind").and_then(Value::as_str) == Some(kind))?
+        .get("count")?
+        .as_u64()
 }
 
 fn json_command(

@@ -4,8 +4,8 @@ use lumin_model::{
     DeltaFact, DeltaFactFamily, DeltaIdentity, DeltaIdentityKind, DeltaKey, DeltaOwnerPayloadValue,
     DeltaValue, DependencyIntentIdentity, DynamicImportTargetScope, FindingDisposition,
     ImportMetaGlobTargetScope, Limitation, LimitationGateRelevance, LimitationScopePolicy,
-    LogicalSourceId, PackageScopeId, RepoPath, ResolutionOutcome, ReviewOnlyReason,
-    UnresolvedTargetScope, append_length_prefixed,
+    LogicalSourceId, PackageScopeId, RepoPath, ResolutionOutcome, ResolutionProfileSource,
+    ReviewOnlyReason, UnresolvedTargetScope, append_length_prefixed,
 };
 
 use crate::{
@@ -171,8 +171,9 @@ fn limitation_intersects_gate_domain(
             limitation_path(limitation)
                 .is_none_or(|path| path_owner_intersects(path, evidence, leased_write_set))
         }
-        LimitationScopePolicy::ConfiguredPackagesOrWorkspace
-        | LimitationScopePolicy::ManifestOwnerPackageOrWorkspace => limitation_path(limitation)
+        LimitationScopePolicy::ConfiguredPackagesOrWorkspace => limitation_path(limitation)
+            .is_none_or(|path| configured_packages_intersect(path, evidence, leased_write_set)),
+        LimitationScopePolicy::ManifestOwnerPackageOrWorkspace => limitation_path(limitation)
             .is_none_or(|path| path_owner_intersects(path, evidence, leased_write_set)),
         LimitationScopePolicy::WorkspaceFromConfig => limitation_path(limitation)
             .is_none_or(|path| workspace_config_intersects(path, leased_write_set)),
@@ -323,31 +324,61 @@ fn path_owner_intersects(
     )
 }
 
+fn configured_packages_intersect(
+    path: &str,
+    evidence: &RunEvidence,
+    leased_write_set: &[WriteLease],
+) -> bool {
+    let Ok(config_path) = RepoPath::from_portable(path) else {
+        return true;
+    };
+    let mut configured_scope = None::<lumin_model::PackageScope>;
+    let mut affected_importer_found = false;
+    for selected in &evidence.resolution_profiles {
+        let ResolutionProfileSource::Config { path_canonical, .. } = &selected.source else {
+            continue;
+        };
+        if path_canonical.as_slice() != config_path.canonical_bytes() {
+            continue;
+        }
+        affected_importer_found = true;
+        let Some(scope) = source_package_scope(&selected.source_id, evidence) else {
+            return true;
+        };
+        match &configured_scope {
+            Some(existing) if existing.id() != scope.id() => return true,
+            Some(_) => {}
+            None => configured_scope = Some(scope),
+        }
+    }
+    if !affected_importer_found {
+        return true;
+    }
+    configured_scope
+        .is_none_or(|scope| package_scope_intersects_write_set(&scope, evidence, leased_write_set))
+}
+
 fn public_surface_consumer_intersects(
     limitation: &Limitation,
     evidence: &RunEvidence,
     leased_write_set: &[WriteLease],
 ) -> bool {
-    let Limitation::PublicSurfaceUnsupported { detail, .. } = limitation else {
+    let Limitation::PublicSurfaceUnsupported {
+        importer: Some(importer),
+        ..
+    } = limitation
+    else {
         return false;
     };
-    evidence.resolutions.iter().any(|resolution| {
-        let ResolutionOutcome::Unsupported { reason, .. } = &resolution.outcome else {
-            return false;
-        };
-        if reason != detail {
-            return false;
-        }
-        let Some(path) = evidence
-            .source_contexts
-            .iter()
-            .find(|context| context.source_id == resolution.source_use.importer)
-            .map(|context| &context.path)
-        else {
-            return true;
-        };
-        leased_write_set.iter().any(|lease| lease.covers(path))
-    })
+    let Some(path) = evidence
+        .source_contexts
+        .iter()
+        .find(|context| &context.source_id == importer)
+        .map(|context| &context.path)
+    else {
+        return true;
+    };
+    leased_write_set.iter().any(|lease| lease.covers(path))
 }
 
 fn workspace_config_intersects(path: &str, leased_write_set: &[WriteLease]) -> bool {
@@ -1174,6 +1205,111 @@ mod tests {
                 .required_evidence_gap_count,
             1,
             "a broad directory lease discarded its own package-scoped gap",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn configured_scope_uses_affected_importer_owners() -> Result<(), Box<dyn std::error::Error>> {
+        let config = RepoPath::from_portable("tsconfig.json")?;
+        let root_source = RepoPath::from_portable("src/root.ts")?;
+        let nested_package = RepoPath::from_portable("packages/nested")?;
+        let nested_source = RepoPath::from_portable("packages/nested/src/main.ts")?;
+        let mut evidence =
+            evidence_with_limitations(vec![Limitation::TsconfigSemanticsUnsupported {
+                path: config.display_escaped(),
+                detail: "unknown compiler option madeUpFlag".to_owned(),
+            }]);
+        evidence.source_contexts = vec![
+            source_context(&root_source, &RepoPath::empty()),
+            source_context(&nested_source, &nested_package),
+        ];
+        evidence.resolution_profiles = vec![
+            lumin_model::SelectedResolutionProfile {
+                source_id: LogicalSourceId::from_path(&root_source),
+                profile: lumin_model::ResolutionProfile::Bundler,
+                source: ResolutionProfileSource::Config {
+                    path_canonical: config.canonical_bytes().to_vec(),
+                    path_display: config.display_escaped(),
+                },
+            },
+            lumin_model::SelectedResolutionProfile {
+                source_id: LogicalSourceId::from_path(&nested_source),
+                profile: lumin_model::ResolutionProfile::Bundler,
+                source: ResolutionProfileSource::Config {
+                    path_canonical: config.canonical_bytes().to_vec(),
+                    path_display: config.display_escaped(),
+                },
+            },
+        ];
+
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&nested_source)],)
+                .required_evidence_gap_count,
+            1,
+            "a root config controlling multiple package owners must remain workspace-scoped",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn public_surface_scope_uses_exact_originating_importer()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let consumer_a_package = RepoPath::from_portable("packages/app-a")?;
+        let consumer_b_package = RepoPath::from_portable("packages/app-b")?;
+        let target_a_package = RepoPath::from_portable("packages/lib-a")?;
+        let target_b_package = RepoPath::from_portable("packages/lib-b")?;
+        let consumer_a = RepoPath::from_portable("packages/app-a/main.ts")?;
+        let consumer_b = RepoPath::from_portable("packages/app-b/main.ts")?;
+        let target_a = RepoPath::from_portable("packages/lib-a/index.ts")?;
+        let target_b = RepoPath::from_portable("packages/lib-b/index.ts")?;
+        let importer_a = LogicalSourceId::from_path(&consumer_a);
+        let importer_b = LogicalSourceId::from_path(&consumer_b);
+        let detail = "conditional exports mix custom and default branches";
+        let mut evidence = evidence_with_limitations(vec![
+            Limitation::PublicSurfaceUnsupported {
+                path: "packages/lib-a/package.json".to_owned(),
+                detail: detail.to_owned(),
+                importer: Some(importer_a.clone()),
+            },
+            Limitation::PublicSurfaceUnsupported {
+                path: "packages/lib-b/package.json".to_owned(),
+                detail: detail.to_owned(),
+                importer: Some(importer_b.clone()),
+            },
+        ]);
+        evidence.source_contexts = vec![
+            source_context(&consumer_a, &consumer_a_package),
+            source_context(&consumer_b, &consumer_b_package),
+            source_context(&target_a, &target_a_package),
+            source_context(&target_b, &target_b_package),
+        ];
+        let unsupported = |importer: LogicalSourceId, specifier: &str| ResolvedSourceUse {
+            source_use: SourceUseFact {
+                importer,
+                specifier: specifier.to_owned(),
+                imported_name: Some("selected".to_owned()),
+                local_name: Some("selected".to_owned()),
+                namespace: SymbolNamespace::Value,
+                kind: ImportKind::Named,
+                request_kind: ModuleRequestKind::StaticImport,
+                span: SourceSpan { start: 0, end: 40 },
+            },
+            outcome: ResolutionOutcome::Unsupported {
+                specifier: specifier.to_owned(),
+                reason: detail.to_owned(),
+            },
+        };
+        evidence.resolutions = vec![
+            unsupported(importer_a, "@scope/lib-a"),
+            unsupported(importer_b, "@scope/lib-b"),
+        ];
+
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&consumer_a)])
+                .required_evidence_gap_count,
+            1,
+            "an equal diagnostic from another package was attributed to this consumer",
         );
         Ok(())
     }

@@ -82,6 +82,7 @@ pub(crate) fn resolve(
             lane: lane_for_use(settings, source_use.request_kind),
         },
     );
+    bind_public_surface_importer(&mut result, &source_use.importer);
     if !matches!(
         package.privacy,
         PackagePrivacy::Public | PackagePrivacy::Unspecified
@@ -129,6 +130,7 @@ pub(crate) fn resolve_relative_directory(
                     Some(Limitation::PublicSurfaceUnsupported {
                         path: manifest_path.display_escaped(),
                         detail: detail.to_owned(),
+                        importer: Some(source_use.importer.clone()),
                     }),
                 );
             };
@@ -148,6 +150,7 @@ pub(crate) fn resolve_relative_directory(
                     lane: lane_for_use(settings, source_use.request_kind),
                 },
             );
+            bind_public_surface_importer(&mut result, &source_use.importer);
             result.declaration = None;
             result
         }
@@ -199,6 +202,7 @@ pub(crate) fn resolve_relative_directory(
                 Some(Limitation::PublicSurfaceUnsupported {
                     path: manifest_path.display_escaped(),
                     detail: detail.to_owned(),
+                    importer: Some(source_use.importer.clone()),
                 }),
             )
         }
@@ -217,6 +221,15 @@ fn relative_directory_unsupported(
         },
         limitation,
         declaration: None,
+    }
+}
+
+fn bind_public_surface_importer(result: &mut PackageResolution, importer: &LogicalSourceId) {
+    if let Some(Limitation::PublicSurfaceUnsupported {
+        importer: origin, ..
+    }) = &mut result.limitation
+    {
+        *origin = Some(importer.clone());
     }
 }
 
@@ -609,6 +622,7 @@ pub(super) fn unsupported(
         limitation: Some(Limitation::PublicSurfaceUnsupported {
             path: package.manifest_path.display_escaped(),
             detail: detail.to_owned(),
+            importer: None,
         }),
         declaration: None,
     }

@@ -994,7 +994,7 @@ mod tests {
         ));
         assert!(selection.limitations.iter().any(|limitation| matches!(
             limitation,
-            Limitation::PublicSurfaceUnsupported { path, detail }
+            Limitation::PublicSurfaceUnsupported { path, detail, .. }
                 if path == &manifest_path.display_escaped()
                     && detail.contains("no matching package fact")
         )));

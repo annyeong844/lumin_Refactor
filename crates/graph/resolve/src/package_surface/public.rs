@@ -58,6 +58,7 @@ pub(super) fn collect(
                             .push(Limitation::PublicSurfaceUnsupported {
                                 path: package.manifest_path.display_escaped(),
                                 detail,
+                                importer: None,
                             });
                         continue;
                     }
