@@ -401,22 +401,26 @@ quarantine entries.
 The target lifecycle-store header advances from `lumin-lifecycle-store-header.v12` to
 v13 with the private cleanup-operation record. Ordinary repository-state commands accept
 only v13 and never migrate on open. A valid v12 header, matching unfinished v12-to-v13
-intent whether the canonical file is v12 or v13, or exact recognized post-intent source
-remnant exits `1` with empty stdout and exactly
+intent whether the canonical file is v12 or v13, or structurally recognized post-intent
+source candidate exits `1` with empty stdout and exactly
 `lumin: lifecycle store migration requires 'lumin store migrate'\n`
 on stderr; another unsupported or invalid header remains a typed schema/integrity
-hard-stop without a guessed migration route. That no-intent remnant is recognized only
-when valid canonical v13 generation `N+1` has exactly one no-follow, one-link,
-same-volume `lifecycle.store.migration-source` at v12 generation `N`, no pending or
-published intent and no target artifact, adjacent generations, and an exact transformed
-logical-dump match; any extra, foreign, or mismatching remnant hard-stops without deletion.
+hard-stop without a guessed migration route. The bounded ordinary-command classifier
+recognizes a no-intent candidate only when valid canonical v13 generation `N+1` has
+exactly one no-follow, one-link, same-volume `lifecycle.store.migration-source` envelope
+whose header names v12 generation `N`, no pending or published intent and no target
+artifact, and adjacent generations. It never reads private-v1 logical tables. Only the
+migration command may authenticate the complete source and require its exact transformed
+logical dump to equal canonical v13; a payload mismatch then hard-stops before deletion,
+while an extra artifact or envelope/header mismatch hard-stops without a migration claim.
 
 `lumin store migrate` is the sole public v12-to-v13 route. It accepts at most one
 split-form `--format json`, defaults to JSON, and rejects positional arguments, repeated
 or equals-form flags, other options, and non-JSON formats as malformed exit `2`. It
-admits only an existing valid v12, an already current valid v13, or a matching recoverable
-v12-to-v13 intent; it neither initializes absent state nor chains, downgrades, or guesses
-other schemas. On v12 it exclusively performs or recovers the generation-fenced copy,
+admits only an existing valid v12, an already current valid v13, a matching recoverable
+v12-to-v13 intent, or the exact structurally recognized no-intent source candidate; it
+neither initializes absent state nor chains, downgrades, or guesses other schemas. On v12
+it exclusively performs or recovers the generation-fenced copy,
 validates the transformed logical dump and complete namespace binding, removes the intent
 and private artifacts, and reopens v13 before success. On current v13 it validates and
 returns without replacing the store or advancing its generation, after idempotently
@@ -486,7 +490,7 @@ Required behavior:
 - public retention commands execute the ARCH-002 `Prepared -> Pruning -> Pruned` protocol and never bypass the lifecycle store through `lumin-xtask` internals;
 - each run pin returns an independent `PinId`; unpin accepts that ID and cannot remove another consumer's protection;
 - every terminal transition capsule referenced by an active gate remains prune-ineligible until that gate closes or is abandoned;
-- `lumin store migrate` is the only v12 reader, uses transaction-scoped handles and generation fencing, returns the same target-only `ready` response after first success or retry, and prevents an old-generation process from committing after replacement; ordinary repository-state commands never migrate on open;
+- `lumin store migrate` is the only private-v1 logical reader and post-intent source authenticator, uses transaction-scoped handles and generation fencing, returns the same target-only `ready` response after first success or retry, and prevents an old-generation process from committing after replacement; ordinary repository-state commands inspect only the bounded remnant envelope/header needed for the fail-closed instruction and never migrate on open;
 - latest-pointer publication/recovery and retention confirmation serialize through the exclusive catalog-publication guard and merge `latestAttempt` by sequence/phase plus `latestCompleted` by sequence;
 - `.lumin` is admitted no-follow as a repository-bound reserved namespace and cannot enter a scan or gate write through an alias;
 - every path/root and canonical `RepoPathDto`/`RepositoryRootDto` preserves exact `repo-path-semantics.v1` bytes; display/readable text is never an identity;

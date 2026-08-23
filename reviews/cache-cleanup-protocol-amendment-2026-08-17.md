@@ -184,8 +184,9 @@ v13 plus a store-owned source artifact, yet ordinary-command routing named only 
 live-intent states. The replacement decision gives every committed private-v1 row an
 unfinished synthetic greatest sequence and therefore public `unknown`, assigns migration
 admission/success/recovery/retry probes to both packaged platforms, and defines the sole
-authenticated no-intent source remnant that routes back to `lumin store migrate` while
-all foreign remnants integrity hard-stop.
+bounded no-intent source envelope/header that routes back to `lumin store migrate`, which
+alone authenticates its private-v1 payload, while all foreign remnants integrity
+hard-stop before deletion.
 
 ## Decision
 
@@ -225,19 +226,21 @@ conversion, and the next current delivery allocates sequence 2 or 3 respectively
 target lifecycle-store header
 advances from `lumin-lifecycle-store-header.v12` to v13 with the private record schema.
 Ordinary repository-state commands accept only v13 and never migrate on open. An
-admissible v12 header, matching unfinished v12-to-v13 intent, or exact authenticated
-post-intent source remnant returns the exact `lumin store migrate` recovery instruction
-without recovery; other unsupported schemas or foreign remnants do not inherit that
-claim. The no-intent remnant is recognized only as valid canonical v13 generation `N+1`
-plus the sole no-follow, one-link, same-volume v12
-`lifecycle.store.migration-source` at adjacent generation `N`, with no pending or
-published intent and no target artifact, and an exact transformed logical-dump match.
-The migration command accepts at
+admissible v12 header, matching unfinished v12-to-v13 intent, or structurally recognized
+post-intent source candidate returns the exact `lumin store migrate` recovery instruction
+without recovery. The bounded ordinary-command classifier reads only the candidate's
+no-follow physical envelope and v12 header: valid canonical v13 generation `N+1` must sit
+beside the sole one-link, same-volume `lifecycle.store.migration-source` at adjacent
+generation `N`, with no pending or published intent and no target artifact. It never
+opens private-v1 logical tables. The migration command accepts at
 most one split-form `--format json`, has no operation ID, and is the one exclusive
-generation-fenced v12 reader. It migrates or recovers the exact v12-to-v13 step, validates
-the final v13 dump and removes the intent/private artifacts before success; already-valid
-v13 is a validating no-op with no generation advance after the command alone validates,
-removes, and durably flushes that exact source remnant. Concurrent invocations serialize so at most one replacement advances the
+generation-fenced private-v1 reader. It migrates or recovers the exact v12-to-v13 step,
+validates the final v13 dump and removes the intent/private artifacts before success;
+already-valid v13 is a validating no-op with no generation advance after the command
+alone authenticates the complete source-to-canonical transformed logical-dump match,
+removes, and durably flushes that exact source remnant. A structural/header mismatch
+hard-stops without the migration claim, while a candidate payload mismatch hard-stops
+inside migration before deletion. Concurrent invocations serialize so at most one replacement advances the
 generation. Malformed arguments exit `2`; schema, identity, integrity, generation,
 durability, and pre-transport failures exit `1` with empty stdout. Its only successful
 response exits `0` and is the canonical `lumin.lifecycle-store-migration.v1` object with

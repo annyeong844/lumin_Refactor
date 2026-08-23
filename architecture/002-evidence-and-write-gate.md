@@ -185,7 +185,7 @@ Physical reclamation of cache-eviction entries is not part of `lumin cache clean
 
 The required proof uses exact public-child barriers and store-owned durability hooks rather than sleeps. It covers: a syntactically valid self-hashed quarantine tree with no authorization record; top-level and nested-child substitution before move; death after authorization but before rename; death after rename visibility but before tree or parent flush; death after all physical flushes but before `Validated`; death after every row validates but before result commit; dirty regular-file and nested-directory payloads; empty-cache cleanup with prior authenticated quarantine; and both stdout failure classes. Delivery barriers stop after sequence allocation but before output and after a partial or complete stdout value but before completion recording. They force both completion orders: first a lower sequence completes while a greater allocation remains unfinished, so show stays `unknown` until the greater completion selects its result; then a greater sequence completes while the lower completion is held, after which the lower completion commits late. The latter must leave the already selected status and complete public v2 operation projection byte-for-byte unchanged; the private final ledger must equal its pre-release state plus exactly that lower sequence/result, with the greatest allocated/completed sequences and every other durable field unchanged. An exact prior-schema fixture also proves each private-v1 mapping above and rejects every invalid legacy shape before generation replacement. Every recovery uses the same operation ID, asserts `operation show`, remaining relative order, the exact authorization/entry states, parent and anchor identities, and the final durable snapshot. A different operation ID cannot adopt a pending move. Standard, determinism, store fault, and Windows/Linux package lanes together prove response bytes, authentication, flush order, process restart, and unchanged completed run/gate evidence.
 
-The target `lifecycle.store` header schema advances to `lumin-lifecycle-store-header.v13` with the private cleanup-operation record schema. Ordinary repository open and query accept only v13 and never deserialize or project private-v1 cleanup rows; a valid v12 header is `IncompatibleStateSchema` with the exact `lumin store migrate` recovery instruction below. Only that command's exclusive generation-fenced migration reader may admit `lumin-lifecycle-store-header.v12` and apply the exact transformation above.
+The target `lifecycle.store` header schema advances to `lumin-lifecycle-store-header.v13` with the private cleanup-operation record schema. Ordinary repository open and query accept only v13 and never deserialize or project private-v1 cleanup rows; a valid v12 header is `IncompatibleStateSchema` with the exact `lumin store migrate` recovery instruction below. The ordinary-command remnant classifier below may inspect only the private entry's no-follow physical envelope and store header to choose that same diagnostic; it never opens a private-v1 logical table. Only `lumin store migrate` has the exclusive generation-fenced reader that may admit `lumin-lifecycle-store-header.v12`, authenticate its complete logical snapshot, and apply the exact transformation above.
 
 A cache lookup may replay one owner-authored `CachedOwnerStep` keyed by the exact snapshots and semantic owner-task/profile parameters already supplied in that iteration. `NeedsInputs` metadata may depend only on those keyed prerequisites, is not a semantic hit, and cannot reveal a downstream demand derived from uncaptured bytes. During gate analysis every demanded path is conflict-checked and reserved before inventory captures it; only then may the next cold/cached step run. An accepted finished envelope replays the exact owner outcome/capability state, facts or opaque/failure payload, diagnostics, limitations, gate-neutral signals, and consulted inputs. Request-specific signals and lifecycle deltas are recomputed by the owning capability from that validated outcome and current model-owned `GateProjectionContext`.
 
@@ -811,8 +811,8 @@ exact `lumin-lifecycle-store-header.v12 -> lumin-lifecycle-store-header.v13` ste
 does not initialize an absent store, infer a chain from any other old schema, downgrade a
 newer schema, or let another command migrate on open. Every ordinary repository-state
 command that sees a valid v12 header, a matching unfinished v12-to-v13 intent whether
-the canonical file is still v12 or already v13, or the exact recognized post-intent
-cleanup remnant defined below exits `1` with empty stdout and exactly
+the canonical file is still v12 or already v13, or the structurally recognized
+post-intent cleanup candidate defined below exits `1` with empty stdout and exactly
 `lumin: lifecycle store migration requires 'lumin store migrate'\n`
 on stderr; an unrecognized, invalid, foreign, or newer header remains an
 `IncompatibleStateSchema` or integrity hard-stop without this claim of migratability.
@@ -823,16 +823,21 @@ private migration artifacts, reopens the canonical store, and validates the comp
 logical dump before success. On an already current valid v13 store with no unfinished
 intent, it validates the same state without replacing the backend or advancing its
 generation. A matching live v12-to-v13 intent is recovered to its one canonical outcome.
-The sole recognized no-intent cleanup remnant is a valid v13 canonical generation `N+1`
-beside exactly one no-follow, one-link, same-volume
-`lifecycle.store.migration-source` private store at v12 generation `N`, with no pending
-or published intent and no `lifecycle.store.migration-target`; `N+1` must be the checked
-successor of `N`, and applying the exact v12-to-v13 transformation to the retained source
-must reproduce the complete canonical v13 logical dump and referential closure. Only
-`lumin store migrate` may validate, remove, and durably flush that source remnant before
-success. A target without an intent, an extra private artifact, a nonadjacent generation,
-or any source identity/header/transformation mismatch is foreign state and integrity
-hard-stops rather than being deleted or routed as recoverable.
+The sole structurally recognized no-intent cleanup candidate is a valid v13 canonical
+generation `N+1` beside exactly one no-follow, one-link, same-volume
+`lifecycle.store.migration-source` private-store envelope whose header names v12
+generation `N`, with no pending or published intent and no
+`lifecycle.store.migration-target`; `N+1` must be the checked successor of `N`. An
+ordinary command validates only those bounded envelope/header facts and returns the
+migration-required diagnostic without reading or mutating the source logical payload.
+Under the exclusive migration reader, `lumin store migrate` must then authenticate the
+complete retained source and prove that applying the exact v12-to-v13 transformation
+reproduces the canonical v13 logical dump and referential closure before it may remove
+and durably flush the source. A target without an intent, an extra private artifact, a
+nonadjacent generation, or an envelope/header mismatch hard-stops immediately without a
+migration claim; a structurally recognized candidate whose logical payload or
+transformation later disagrees hard-stops inside `lumin store migrate`. Neither class is
+deleted or adopted as foreign state.
 Concurrent migration commands serialize on the same exclusive lock: at most one advances
 the generation, and every follower validates v13 and emits the same response.
 Any schema-shape, identity, referential, generation, durability, or I/O failure exits `1`,
@@ -879,7 +884,7 @@ Every migration crash point has one recovery rule:
 | after validated replacement and before atomic replace | `N` remains authoritative; recovery revalidates and resumes replacement |
 | during replace before the parent flush | exactly one valid generation may occupy canonical `lifecycle.store`: `N` resumes the intent and `N+1` completes it; a missing/invalid canonical store or generation disagreement with the intent is an integrity hard-stop |
 | after durable parent flush and before intent removal | `N+1` is authoritative; recovery revalidates it and removes the intent |
-| after intent removal and during temporary cleanup | `N+1` is authoritative; ordinary commands recognize only the exact source-remnant proof above and return the migration-required diagnostic, while `lumin store migrate` revalidates the v12 source-to-v13 canonical transformation, removes and flushes that source idempotently, and hard-stops on any other remnant |
+| after intent removal and during temporary cleanup | `N+1` is authoritative; ordinary commands recognize only the exact bounded source envelope/header above and return the migration-required diagnostic without reading its logical tables, while `lumin store migrate` authenticates the v12 source-to-v13 canonical transformation, removes and flushes that source idempotently, and hard-stops before deletion on any payload disagreement |
 
 ## 12. Security and Integrity
 
