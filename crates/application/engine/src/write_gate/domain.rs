@@ -6,7 +6,7 @@ use lumin_evidence::{
     PreWriteDeclaredPathInspection, RepoPathProjection, SemanticInputRecord, SemanticInputState,
     WriteLease, WriteLeaseKind,
 };
-use lumin_inventory::{WriteTargetError, WriteTargetKind, WriteTargetObservation};
+use lumin_inventory::{InventoryError, WriteTargetError, WriteTargetKind, WriteTargetObservation};
 use lumin_model::{PhysicalFileIdentity, RepoPath};
 
 use super::RepositoryCapture;
@@ -551,10 +551,78 @@ pub(super) fn close_alias_topology(
     (leases, alias_closures, signals)
 }
 
+pub(super) fn lease_containment_signals(root: &Path, leases: &[WriteLease]) -> Vec<GateSignal> {
+    let mut stale = Vec::new();
+    let mut blocked = Vec::new();
+    let mut failures = Vec::new();
+    for lease in leases {
+        let path = match RepoPath::from_canonical_bytes(&lease.path.canonical) {
+            Ok(path) if RepoPathProjection::from(&path) == lease.path => path,
+            Ok(_) => {
+                failures.push(format!(
+                    "stored write lease projection round-trip failed for {}",
+                    lease.path.display
+                ));
+                continue;
+            }
+            Err(error) => {
+                failures.push(format!(
+                    "stored write lease path is not canonical: {} ({error})",
+                    lease.path.display
+                ));
+                continue;
+            }
+        };
+        match lumin_inventory::validate_caller_entries(root, std::slice::from_ref(&path)) {
+            Ok(()) => {}
+            Err(InventoryError::EntryEscapesRoot(_)) => match lease.kind {
+                WriteLeaseKind::NewFile => blocked.push(lease.path.clone()),
+                WriteLeaseKind::ExistingFile | WriteLeaseKind::Directory => {
+                    stale.push(lease.path.clone());
+                }
+            },
+            Err(error) => failures.push(error.to_string()),
+        }
+    }
+
+    stale.sort();
+    stale.dedup();
+    blocked.sort();
+    blocked.dedup();
+    failures.sort();
+    failures.dedup();
+    let mut signals = Vec::new();
+    if !stale.is_empty() {
+        signals.push(GateSignal::ProtectedInputChanged { paths: stale });
+    }
+    if !blocked.is_empty() {
+        signals.push(GateSignal::PlannedPathContainmentViolation { paths: blocked });
+    }
+    signals.extend(
+        failures
+            .into_iter()
+            .map(|detail| GateSignal::AnalysisFailed { detail }),
+    );
+    signals
+}
+
 fn validate_stable_lease_parents(root: &Path, leases: &[WriteLease]) -> Vec<GateSignal> {
+    let mut signals = lease_containment_signals(root, leases);
+    let escaped = signals
+        .iter()
+        .flat_map(|signal| match signal {
+            GateSignal::ProtectedInputChanged { paths }
+            | GateSignal::PlannedPathContainmentViolation { paths } => paths.as_slice(),
+            _ => &[],
+        })
+        .cloned()
+        .collect::<BTreeSet<_>>();
     let mut stale = Vec::new();
     let mut incomplete = Vec::new();
     for lease in leases {
+        if escaped.contains(&lease.path) {
+            continue;
+        }
         for prefix in &lease.prefix_identities {
             let prefix_path = match RepoPath::from_canonical_bytes(&prefix.path.canonical) {
                 Ok(path) => path,
@@ -625,7 +693,6 @@ fn validate_stable_lease_parents(root: &Path, leases: &[WriteLease]) -> Vec<Gate
             WriteLeaseKind::ExistingFile => {}
         }
     }
-    let mut signals = Vec::new();
     if !stale.is_empty() {
         stale.sort();
         stale.dedup();

@@ -277,8 +277,8 @@ fn assert_alias_drift_fails_closed() -> Result<(), Box<dyn std::error::Error>> {
         root.path(),
         &["post-write", &gate_id, "--operation-id", "op-alias-close"],
     )?;
-    assert_status(&close, 4);
-    assert_eq!(field(&close.stdout, "decision")?, "incomplete");
+    assert_status(&close, 5);
+    assert_eq!(field(&close.stdout, "decision")?, "stale");
     assert_eq!(field(&close.stdout, "lifecycle")?, "active");
     let close_json: Value = serde_json::from_str(&close.stdout)?;
     assert!(
@@ -286,11 +286,7 @@ fn assert_alias_drift_fails_closed() -> Result<(), Box<dyn std::error::Error>> {
             .get("signals")
             .and_then(Value::as_array)
             .is_some_and(|signals| signals.iter().any(|signal| {
-                signal.get("kind").and_then(Value::as_str) == Some("analysis-failed")
-                    && signal
-                        .get("detail")
-                        .and_then(Value::as_str)
-                        .is_some_and(|detail| detail.contains("resolves outside repository root"))
+                signal.get("kind").and_then(Value::as_str) == Some("protected-input-changed")
             }))
     );
 
@@ -305,7 +301,7 @@ fn assert_alias_drift_fails_closed() -> Result<(), Box<dyn std::error::Error>> {
         operation_json
             .pointer("/result/decision")
             .and_then(Value::as_str),
-        Some("incomplete")
+        Some("stale")
     );
 
     let shown = run(root.path(), &["gate", "show", &gate_id])?;
@@ -323,7 +319,7 @@ fn assert_alias_drift_fails_closed() -> Result<(), Box<dyn std::error::Error>> {
         shown_json
             .pointer("/revisions/1/decision")
             .and_then(Value::as_str),
-        Some("incomplete")
+        Some("stale")
     );
     Ok(())
 }

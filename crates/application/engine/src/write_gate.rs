@@ -7,7 +7,9 @@ use lumin_evidence::{
     SemanticInputState, SemanticReadReservationBinding, derive_pre_write_final_validation_signals,
     gate_policy, post_write_request_digest, pre_write_request_digest, seal_analysis_snapshot,
 };
-use lumin_inventory::{InventoryRequest, SemanticInputExpectation, SemanticInputValidationState};
+use lumin_inventory::{
+    InventoryError, InventoryRequest, SemanticInputExpectation, SemanticInputValidationState,
+};
 use lumin_model::{
     ConfigAbsenceParent, DependencyIntent, GateDeltaRecord, GateId, OperationId, RepoPath,
     RepositoryRootIdentity, ResolutionProfile, append_length_prefixed, digest_hex,
@@ -32,7 +34,8 @@ compile_error!("gate-test-fault is restricted to debug test builds");
 
 use domain::{
     DeclaredPathInspection, captured_input_physical_paths, close_alias_topology,
-    expand_write_domain, inspect_declared_paths, observe_write_domain, protected_semantic_inputs,
+    expand_write_domain, inspect_declared_paths, lease_containment_signals, observe_write_domain,
+    protected_semantic_inputs,
 };
 use observation::{
     BaselineObservationSeed, CloseObservationSeed, close_observation_binding,
@@ -614,19 +617,19 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                 );
             }
         };
-    if let Err(error) = validate_analysis_paths(
+    let containment_signals = close_containment_signals(
         &context.root,
+        &gate.leased_write_set,
         &inventory_request.entries,
         &inventory_request.dependency_intents,
-    ) {
+    );
+    if !containment_signals.is_empty() {
         return finish_failed_close(
             &operation,
             request,
             &request_digest,
             &gate,
-            vec![GateSignal::AnalysisFailed {
-                detail: error.to_string(),
-            }],
+            containment_signals,
             Vec::new(),
         );
     }
@@ -797,7 +800,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                 deltas,
             },
             |reserved_identities, catalog_revision, store_signals| {
-                let (final_signals, final_validation_evidence) = pre_write_final_validation(
+                let (final_signals, final_validation_evidence) = post_write_final_validation(
                     &context.root,
                     &final_validation,
                     reserved_identities,
@@ -839,6 +842,36 @@ fn validate_analysis_paths(
         .collect::<Vec<_>>();
     lumin_inventory::validate_caller_entries(root, &dependency_paths)?;
     Ok(())
+}
+
+fn close_containment_signals(
+    root: &Path,
+    leases: &[lumin_evidence::WriteLease],
+    entries: &[RepoPath],
+    dependency_intents: &[DependencyIntent],
+) -> Vec<GateSignal> {
+    let mut signals = lease_containment_signals(root, leases);
+    let mut stale = Vec::new();
+    for path in entries
+        .iter()
+        .chain(dependency_intents.iter().map(|intent| &intent.path))
+    {
+        match lumin_inventory::validate_caller_entries(root, std::slice::from_ref(path)) {
+            Ok(()) => {}
+            Err(InventoryError::EntryEscapesRoot(_)) => {
+                stale.push(RepoPathProjection::from(path));
+            }
+            Err(error) => signals.push(GateSignal::AnalysisFailed {
+                detail: error.to_string(),
+            }),
+        }
+    }
+    stale.sort();
+    stale.dedup();
+    if !stale.is_empty() {
+        signals.push(GateSignal::ProtectedInputChanged { paths: stale });
+    }
+    signals
 }
 
 fn validate_analysis_path_names(
@@ -1365,6 +1398,47 @@ fn pre_write_final_validation(
             None,
         ),
     }
+}
+
+fn post_write_final_validation(
+    root: &Path,
+    validation: &FinalFreshnessValidation,
+    reserved_identities: &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
+    expected_leases: &[lumin_evidence::WriteLease],
+    expected_alias_closures: &[lumin_evidence::PhysicalAliasClosureRecord],
+) -> (Vec<GateSignal>, Option<PreWriteFinalValidationEvidence>) {
+    let mut containment_signals = close_containment_signals(
+        root,
+        expected_leases,
+        &validation.inventory_request.entries,
+        &validation.inventory_request.dependency_intents,
+    );
+    if !containment_signals.is_empty() {
+        let needs_unsealed_marker = containment_signals
+            .iter()
+            .any(|signal| matches!(signal, GateSignal::ProtectedInputChanged { .. }))
+            && !containment_signals.iter().any(|signal| {
+                matches!(
+                    signal,
+                    GateSignal::AnalysisFailed { .. }
+                        | GateSignal::PlannedPathContainmentViolation { .. }
+                )
+            });
+        if needs_unsealed_marker {
+            containment_signals.push(GateSignal::AnalysisFailed {
+                detail: "post-write containment drift prevented a complete final observation"
+                    .to_owned(),
+            });
+        }
+        return (containment_signals, None);
+    }
+    pre_write_final_validation(
+        root,
+        validation,
+        reserved_identities,
+        expected_leases,
+        expected_alias_closures,
+    )
 }
 
 fn revalidate_attempted_semantic_inputs(

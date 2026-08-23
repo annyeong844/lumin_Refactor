@@ -66,6 +66,7 @@ pub enum UnsealedObservationReason {
     DeclaredPathUnsupported,
     ObservationDomainUnbounded,
     ProtectedInputChanged,
+    PlannedPathContainmentViolation,
     TransitionCatalogChanged,
     UnplannedWrite,
 }

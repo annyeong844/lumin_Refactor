@@ -228,6 +228,7 @@ fn close_observation_is_unsealed(signals: &[GateSignal]) -> bool {
                 | GateSignal::WriteConflict { .. }
                 | GateSignal::SemanticInputConflict { .. }
                 | GateSignal::SemanticReadClosureIncomplete { .. }
+                | GateSignal::PlannedPathContainmentViolation { .. }
                 | GateSignal::ActiveTransitionPending { .. }
                 | GateSignal::TransitionChainBroken { .. }
                 | GateSignal::TransitionCatalogChanged

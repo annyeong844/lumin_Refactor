@@ -769,6 +769,10 @@ fn append_observation_signals(output: &mut Vec<u8>, signals: &[GateSignal]) {
                 output.push(21);
                 output.extend_from_slice(&(*count as u64).to_be_bytes());
             }
+            GateSignal::PlannedPathContainmentViolation { paths } => {
+                output.push(22);
+                append_observation_signal_paths(output, paths);
+            }
         }
     }
 }
@@ -873,6 +877,9 @@ pub enum GateSignal {
     },
     AnalysisContractChanged,
     UnplannedWrite {
+        paths: Vec<RepoPathProjection>,
+    },
+    PlannedPathContainmentViolation {
         paths: Vec<RepoPathProjection>,
     },
     ActiveTransitionPending {
@@ -999,6 +1006,9 @@ fn unsealed_observation_reason(signal: &GateSignal) -> Option<UnsealedObservatio
         GateSignal::ProtectedInputChanged { .. } => {
             Some(UnsealedObservationReason::ProtectedInputChanged)
         }
+        GateSignal::PlannedPathContainmentViolation { .. } => {
+            Some(UnsealedObservationReason::PlannedPathContainmentViolation)
+        }
         GateSignal::TransitionCatalogChanged => {
             Some(UnsealedObservationReason::TransitionCatalogChanged)
         }
@@ -1040,6 +1050,9 @@ fn observation_signal_paths(signals: &[GateSignal]) -> Vec<RepoPathProjection> {
                 paths: signal_paths,
             }
             | GateSignal::UnplannedWrite {
+                paths: signal_paths,
+            }
+            | GateSignal::PlannedPathContainmentViolation {
                 paths: signal_paths,
             }
             | GateSignal::ActiveTransitionPending {
@@ -1998,6 +2011,7 @@ pub mod gate_policy {
                     | GateSignal::SemanticInputConflict { .. }
                     | GateSignal::SemanticReadClosureIncomplete { .. }
                     | GateSignal::ProtectedInputChanged { .. }
+                    | GateSignal::PlannedPathContainmentViolation { .. }
                     | GateSignal::ActiveTransitionPending { .. }
                     | GateSignal::TransitionChainBroken { .. }
                     | GateSignal::TransitionCatalogChanged
@@ -2033,6 +2047,7 @@ pub mod gate_policy {
             | GateSignal::AnalysisContractChanged
             | GateSignal::TransitionCatalogChanged => Some(GateEffect::Stale),
             GateSignal::UnplannedWrite { .. }
+            | GateSignal::PlannedPathContainmentViolation { .. }
             | GateSignal::TransitionChainBroken { .. }
             | GateSignal::AdverseFactIntroduced { .. }
             | GateSignal::AdverseFactRegressed { .. } => Some(GateEffect::Block),

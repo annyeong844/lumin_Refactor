@@ -702,6 +702,7 @@ impl From<&GateSignal> for GateSignalDto {
             }
             GateSignal::SemanticReadClosureIncomplete { paths }
             | GateSignal::ProtectedInputChanged { paths }
+            | GateSignal::PlannedPathContainmentViolation { paths }
             | GateSignal::UnplannedWrite { paths } => {
                 dto.paths = paths.iter().map(RepoPathDto::from).collect();
             }
@@ -729,6 +730,7 @@ fn signal_kind(signal: &GateSignal) -> &'static str {
         GateSignal::ProtectedInputChanged { .. } => "protected-input-changed",
         GateSignal::AnalysisContractChanged => "analysis-contract-changed",
         GateSignal::UnplannedWrite { .. } => "unplanned-write",
+        GateSignal::PlannedPathContainmentViolation { .. } => "planned-path-containment-violation",
         GateSignal::ActiveTransitionPending { .. } => "active-transition-pending",
         GateSignal::TransitionChainBroken { .. } => "transition-chain-broken",
         GateSignal::TransitionCatalogChanged => "transition-catalog-changed",
