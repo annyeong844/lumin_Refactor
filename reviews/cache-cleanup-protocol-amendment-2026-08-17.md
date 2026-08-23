@@ -6,7 +6,7 @@ Status: post-merge follow-up candidate awaits independent PASS
 
 Date: 2026-08-24
 
-Owners: PRODUCT-000 Section 2.9, ARCH-000 Section 8, ARCH-002 Sections 2 and 2.5, SLICE-001 Sections 6, 9, 11, 14, and 15
+Owners: PRODUCT-000 Sections 2.8 and 2.9, ARCH-000 Section 8, ARCH-002 Sections 2, 2.5, and 11, SLICE-001 Sections 6, 7, 9, 11, 14, and 15
 
 ## Trigger
 
@@ -158,12 +158,24 @@ maps validated private-v1 records to exact synthetic v2 sequence state, with amb
 committed `not-attempted` becoming `unknown`, and distinguishes the byte-identical public
 v2 projection from the private ledger's one permitted lower-completion append.
 
+## Tenth Review Result
+
+Independent review bound exact candidate
+`a0119ba72cf79d13ddeb54641e487efadb205c2f` and returned `REOPEN`. The candidate made
+v12 an explicit incompatibility boundary and referred users to a migration command, but
+neither the canonical command set nor the public slice defined such a command's grammar,
+response, failure behavior, or delivery recovery. The replacement decision registers
+`lumin store migrate` in ARCH-000 and defines it as the sole public v12 reader, with one
+target-only byte-stable response, exact ordinary-command recovery instruction, exclusive
+generation-fenced recovery, and no second replacement on an already-current retry.
+
 ## Decision
 
-The owner amendments define one public command:
+The owner amendments define the cleanup command and the sole public store-upgrade route:
 
 ```text
 lumin cache clean --operation-id <operation-id> [--format json]
+lumin store migrate [--format json]
 ```
 
 Exactly one split-form operation ID is required. At most one split-form `--format json`
@@ -191,9 +203,28 @@ sequence 1 with the same result. Any other legacy shape is `IncompatibleStateSch
 before generation replacement; no query performs lazy conversion, and the next real
 delivery allocates the migrated maximum's successor. The target lifecycle-store header
 advances from `lumin-lifecycle-store-header.v12` to v13 with the private record schema.
-Ordinary open/query accepts only v13; only the exclusive generation-fenced migrator may
-read v12 and perform this transformation.
-Before every transport, a short
+Ordinary repository-state commands accept only v13 and never migrate on open. An
+admissible v12 header or matching unfinished v12-to-v13 intent returns the exact
+`lumin store migrate` recovery instruction without recovery; other unsupported or invalid
+schemas do not inherit that claim. The migration command accepts at most one split-form
+`--format json`, has no operation ID, and is the one exclusive
+generation-fenced v12 reader. It migrates or recovers the exact v12-to-v13 step, validates
+the final v13 dump and removes the intent/private artifacts before success; already-valid
+v13 is a validating no-op with no generation advance after exact temporary-remnant
+cleanup. Concurrent invocations serialize so at most one replacement advances the
+generation. Malformed arguments exit `2`; schema, identity, integrity, generation,
+durability, and pre-transport failures exit `1` with empty stdout. Its only successful
+response exits `0` and is the canonical `lumin.lifecycle-store-migration.v1` object with
+only `schemaVersion`,
+`storeSchema`, and `status` in that order, naming v13 and `status: "ready"`. Because it
+omits source schema, generation, and a changed bit, initial
+success, post-replacement or output-delivery recovery, and every current-v13 retry are
+byte-identical. Locks and backend handles are released before output; a delivery failure
+uses the same `BrokenPipe`/stdout diagnostic contract as cleanup, leaves v13 authoritative,
+and retry performs no second replacement. It cannot initialize
+absent state, chain another old schema, downgrade, or guess a migration, and performs no
+new gate, retention, or cache-cleanup operation beyond the frozen record transformation.
+Before every cleanup-result transport, a short
 transaction allocates one increasing delivery-attempt sequence, atomically projects
 `lastDeliveryStatus: "unknown"`, and then releases every guard and transaction.
 `not-attempted` is valid only before the first allocation. Completion may project
@@ -213,7 +244,7 @@ show or recovery of the same interrupted attempt does not increment again. A rep
 `clean` is the immutable result of that operation's final observation. Cache payloads
 added later require a new operation ID and are never silently consumed by replay.
 
-ARCH-000 owns the command. ARCH-002 owns its state transition and recovery. Namespace
+ARCH-000 owns both command registrations. ARCH-002 owns their state transitions and recovery. Namespace
 bootstrap creates and binds `trash/cache-evictions` and its immutable `namespace.anchor`
 under the existing `Trash` parent. This is one nested `CacheEvictionParentBinding`, not a
 fifth top-level managed-parent kind. The marker and store header bind it with the four
@@ -289,8 +320,10 @@ quarantine and authorization remain.
 The reviewer must bind one exact candidate commit and report `PASS`, `REOPEN`, or a new
 finding for each item:
 
-1. ARCH-000 authorizes the exact operation-ID command; Product, ARCH-002, Slice, adapters,
-   acceptance criteria, and traceability expose no conflicting command or exception.
+1. ARCH-000 authorizes both the exact cleanup operation-ID command and
+   `lumin store migrate`; Product, ARCH-002, Slice, adapters, acceptance criteria, and
+   traceability agree on their grammar, DTOs, exits, retry, and ownership without a
+   conflicting command, lazy migration, or invented operation-ID exception.
 2. The cleanup-result v2 field set/order and cleanup-operation v2 projection, request
    digest, exits, stdout/stderr rules, lock release, retry, and strictly read-only
    `operation show` recovery are complete. Frozen cleanup-operation v1 never emits
@@ -312,7 +345,10 @@ finding for each item:
    and survive the named lifecycle-store v12-to-v13 migration as an exact row/child
    bijection. The migration logical dump includes the canonical synthetic delivery state,
    rejects every invalid legacy shape before replacement, and never copies ambiguous
-   legacy `not-attempted` as v2 `not-attempted`.
+   legacy `not-attempted` as v2 `not-attempted`. Only the public migration command admits
+   v12; its initial success, recovery, and already-current retry emit one byte-identical
+   target-only response, and a v13 retry neither replaces the store nor advances its
+   generation.
 6. Every regular file and directory is flushed bottom-up and remanifested before
    authorization and after movement; cache, quarantine, and trash entries are flushed
    before validation and result commit, including recovered and empty-cache runs.
@@ -331,7 +367,9 @@ finding for each item:
    v2 projection remains byte-identical and the private ledger changes by exactly the
    lower sequence/result append, without changing either greatest sequence or any other
    durable field. No case uses scheduler timing; an exact guard race also proves cleanup
-   cannot overlap publication, retention, or migration.
+   cannot overlap publication, retention, or migration. Public migration children also
+   prove the ordinary-command recovery diagnostic, every migration crash boundary,
+   output-delivery retry, identical current-v13 response, and no second replacement.
 10. Standard, determinism, store-crash, Windows/Linux package, and skill-adapter commands
     are assigned only to behavior they can execute and include `operation show` recovery.
 11. PRODUCT-000, ARCH-000, ARCH-002, SLICE-001 truth, acceptance, and traceability agree
@@ -346,7 +384,7 @@ amended owner candidate receives independent `PASS` and merges.
 
 ## Verification After Freeze
 
-The three post-merge follow-up behaviors may be implemented only after their exact amended
+The post-merge follow-up behaviors may be implemented only after their exact amended
 candidate receives owner approval and an independent `PASS`. Focused checks must then
 cover nested-binding bootstrap/replacement,
 operation admission/idempotency, foreign self-hashed quarantine, authorization-plan
@@ -355,7 +393,9 @@ allocated-but-unfinished delivery projection before output and after partial or 
 stdout, both exact delivery completion orders including the byte-identical public
 projection and one exact private-ledger append after a late lower completion,
 cleanup-operation v2 with explicit public-v1 incompatibility and the exact private-v1
-synthetic migration, continuous cache-writer rejection across a dead pending lease, both
+synthetic migration, the public `lumin store migrate` grammar/DTO/error route and
+byte-identical first/recovery/current response without a second generation advance,
+continuous cache-writer rejection across a dead pending lease, both
 substitution barriers, and unchanged run/gate evidence. The
 public `reserved-state-namespace` row remains unmapped until standard and determinism lanes plus
 Windows/Linux package checks execute those behaviors through the packaged CLI and the

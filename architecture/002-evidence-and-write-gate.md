@@ -185,7 +185,7 @@ Physical reclamation of cache-eviction entries is not part of `lumin cache clean
 
 The required proof uses exact public-child barriers and store-owned durability hooks rather than sleeps. It covers: a syntactically valid self-hashed quarantine tree with no authorization record; top-level and nested-child substitution before move; death after authorization but before rename; death after rename visibility but before tree or parent flush; death after all physical flushes but before `Validated`; death after every row validates but before result commit; dirty regular-file and nested-directory payloads; empty-cache cleanup with prior authenticated quarantine; and both stdout failure classes. Delivery barriers stop after sequence allocation but before output and after a partial or complete stdout value but before completion recording. They force both completion orders: first a lower sequence completes while a greater allocation remains unfinished, so show stays `unknown` until the greater completion selects its result; then a greater sequence completes while the lower completion is held, after which the lower completion commits late. The latter must leave the already selected status and complete public v2 operation projection byte-for-byte unchanged; the private final ledger must equal its pre-release state plus exactly that lower sequence/result, with the greatest allocated/completed sequences and every other durable field unchanged. An exact prior-schema fixture also proves each private-v1 mapping above and rejects every invalid legacy shape before generation replacement. Every recovery uses the same operation ID, asserts `operation show`, remaining relative order, the exact authorization/entry states, parent and anchor identities, and the final durable snapshot. A different operation ID cannot adopt a pending move. Standard, determinism, store fault, and Windows/Linux package lanes together prove response bytes, authentication, flush order, process restart, and unchanged completed run/gate evidence.
 
-The target `lifecycle.store` header schema advances to `lumin-lifecycle-store-header.v13` with the private cleanup-operation record schema. Ordinary repository open and query accept only v13 and never deserialize or project private-v1 cleanup rows; a v12 header is `IncompatibleStateSchema` with the migration route. Only the exclusive generation-fenced migration reader may admit `lumin-lifecycle-store-header.v12` and apply the exact transformation above.
+The target `lifecycle.store` header schema advances to `lumin-lifecycle-store-header.v13` with the private cleanup-operation record schema. Ordinary repository open and query accept only v13 and never deserialize or project private-v1 cleanup rows; a valid v12 header is `IncompatibleStateSchema` with the exact `lumin store migrate` recovery instruction below. Only that command's exclusive generation-fenced migration reader may admit `lumin-lifecycle-store-header.v12` and apply the exact transformation above.
 
 A cache lookup may replay one owner-authored `CachedOwnerStep` keyed by the exact snapshots and semantic owner-task/profile parameters already supplied in that iteration. `NeedsInputs` metadata may depend only on those keyed prerequisites, is not a semantic hit, and cannot reveal a downstream demand derived from uncaptured bytes. During gate analysis every demanded path is conflict-checked and reserved before inventory captures it; only then may the next cold/cached step run. An accepted finished envelope replays the exact owner outcome/capability state, facts or opaque/failure payload, diagnostics, limitations, gate-neutral signals, and consulted inputs. Request-specific signals and lifecycle deltas are recomputed by the owning capability from that validated outcome and current model-owned `GateProjectionContext`.
 
@@ -798,7 +798,55 @@ If a process disappears before terminal publication, later store recovery follow
 
 Completed run directories are never migrated in place. Compatible old run schemas are read through versioned adapters or a disposable derived index. Unsupported schemas are reported as incompatible, not corrupt or empty.
 
-Whole `lifecycle.store` migration is a generation-fenced copy-on-write protocol. The marker-bound, one-link `.lumin/lifecycle.lock`, exact four-kind top-level managed-parent/anchor set, and exact nested quarantine binding are outside the replaceable backend and are never themselves replaced. Every ordinary store transaction proves the complete namespace binding, acquires the shared side, opens the current backend only after acquiring it, validates the backend `StoreGeneration` plus global/parent/quarantine binding, closes the backend handle before releasing the lock, and retains at most a generation token across analysis. No backend handle crosses a transaction boundary. Migration acquires the exclusive side through the same complete proof, so replacement begins only after every old-generation handle has closed; a replaced lock, state directory, parent, nested quarantine, or anchor hard-stops before either generation can commit.
+The sole public migration surface for this schema step is:
+
+```text
+lumin store migrate [--format json]
+```
+
+The command accepts at most one split-form `--format json` and no positional argument,
+equals-form flag, repeated flag, or other option; JSON is the default and only format.
+Malformed input exits `2` before state admission. The current binary supports only the
+exact `lumin-lifecycle-store-header.v12 -> lumin-lifecycle-store-header.v13` step. It
+does not initialize an absent store, infer a chain from any other old schema, downgrade a
+newer schema, or let another command migrate on open. Every ordinary repository-state
+command that sees a valid v12 header or a matching unfinished v12-to-v13 intent, whether
+the canonical file is still v12 or already v13, exits `1` with empty stdout and exactly
+`lumin: lifecycle store migration requires 'lumin store migrate'\n`
+on stderr; an unrecognized, invalid, foreign, or newer header remains an
+`IncompatibleStateSchema` or integrity hard-stop without this claim of migratability.
+
+On valid v12, `lumin store migrate` acquires the exclusive marker-bound lock, executes or
+recovers the exact generation-fenced transformation below, removes the durable intent and
+private migration artifacts, reopens the canonical store, and validates the complete v13
+logical dump before success. On an already current valid v13 store with no unfinished
+intent, it validates the same state without replacing the backend or advancing its
+generation. A matching live v12-to-v13 intent is recovered to its one canonical outcome,
+and exact post-intent temporary remnants are cleaned idempotently before success.
+Concurrent migration commands serialize on the same exclusive lock: at most one advances
+the generation, and every follower validates v13 and emits the same response.
+Any schema-shape, identity, referential, generation, durability, or I/O failure exits `1`,
+leaves stdout empty, emits the ordinary `lumin:` diagnostic when stderr remains writable,
+and follows the crash table below; no success is emitted while an intent or private
+migration artifact remains.
+
+Success exits `0`, writes one `lumin.lifecycle-store-migration.v1` object whose only
+fields in canonical order are `schemaVersion`, `storeSchema`, and `status`, with
+`storeSchema: "lumin-lifecycle-store-header.v13"` and `status: "ready"`, then writes the
+normal newline and nothing to stderr. The response deliberately omits source schema,
+generation, and a changed/no-op bit, so the first successful migration, recovery after a
+post-replacement process death, and every already-current retry return identical bytes.
+This command has no operation ID or `operation show` variant: its sole target schema and
+singleton durable `MigrationIntent` make the state transition intrinsically idempotent,
+and it performs no new gate, retention, or cache-cleanup operation; its only record
+transformation is the exact frozen v12-to-v13 schema mapping.
+Every backend handle and exclusive guard is released before transport. A `BrokenPipe`
+exits `1` with empty stderr; another stdout write/flush failure exits `1` and emits exactly
+`lumin: cannot write stdout\n` when stderr is writable. Either failure leaves the validated
+v13 store authoritative, and rerunning the same command returns the identical success
+object without another replacement or generation advance.
+
+Whole `lifecycle.store` migration is a generation-fenced copy-on-write protocol. The marker-bound, one-link `.lumin/lifecycle.lock`, exact four-kind top-level managed-parent/anchor set, and exact nested quarantine binding are outside the replaceable backend and are never themselves replaced. Every ordinary store transaction proves the complete namespace binding, acquires the shared side, opens the current backend only after acquiring it, validates the backend `StoreGeneration` plus global/parent/quarantine binding, closes the backend handle before releasing the lock, and retains at most a generation token across analysis. No backend handle crosses a transaction boundary. `lumin store migrate` acquires the exclusive side through the same complete proof, so replacement begins only after every old-generation handle has closed; a replaced lock, state directory, parent, nested quarantine, or anchor hard-stops before either generation can commit.
 
 Migration follows one sequence:
 
@@ -863,7 +911,7 @@ Every migration crash point has one recovery rule:
 18. Existing aliases, directory descendants, new paths, and both sides of a rename obey the path identity contract; declaring one existing alias leases and reanalyzes the complete admitted physical-alias closure, while unleased topology changes cannot authorize close.
 19. Gate decisions, machine output, and process exit codes follow the stable decision table.
 20. Nested evidence and relation lists cannot bypass bounded query envelopes.
-21. Lifecycle-store migration cannot rewrite completed logical evidence in place, erase active gate history, or let an old-generation handle commit after replacement; private cleanup-operation v1 records map only through the exact fail-closed synthetic delivery state in Section 2.5.
+21. `lumin store migrate` is the only v12 admission route, returns the same bounded `ready` response after migration or retry, cannot rewrite completed logical evidence in place, erase active gate history, or let an old-generation handle commit after replacement, and maps private cleanup-operation v1 records only through the exact fail-closed synthetic delivery state in Section 2.5.
 22. Every run query is pinned to one immutable run, and every nested page can be requested explicitly without following latest.
 23. `AnalysisContractId` compatibility cannot be invalidated merely by a different `AnalysisInputId`.
 24. Pre-write rejection owns no lease; failed post-write remains active with an immutable attempted revision.
@@ -881,7 +929,7 @@ Every migration crash point has one recovery rule:
 36. Known `Pruning` and `Pruned` records remain publicly distinguishable from never-existing IDs through plan, operation, and direct-record lookup.
 37. Post-write reuses the exact caller-supplied opening scan/entry/profile override tier, rejects replacement parameters, and recomputes config-derived effective values only from validated self-writable inputs.
 38. Lifecycle effects consume one exhaustive owner-produced total delta relation over identity, targets, affected domain, confidence, grounding, and evidence rather than static limitation rows.
-39. Independent `PinId` and active-gate transition references protect one another, minimal tombstones remain auditable, and generation-fenced lifecycle-store migration preserves the complete logical catalog.
+39. Independent `PinId` and active-gate transition references protect one another, minimal tombstones remain auditable, and the public generation-fenced lifecycle-store migration command preserves the complete logical catalog while ordinary repository-state commands never migrate on open.
 40. Concurrent latest publishers, recovery, retention confirmation, cache cleanup, and migration serialize through one marker-bound exclusive guard; field-wise monotonic keys cannot regress, strand a terminal attempt behind `Running`, lose an independent pointer update, duplicate a cache move, or split across replacement lock objects.
 41. Every repository path/root, machine DTO, NUL-stream input, stable ID, ordering key, cursor, and gate set reproduces the exact checked-in path-codec vectors and rejects noncanonical encodings; logical sources and alias-write closure survive physical aliases while payload reuse cannot erase package/config/role context.
 42. `.lumin` and every alias/descendant are no-follow reserved state; state-directory/lifecycle-lock identities, the exact four-kind top-level managed-parent set, and the exact nested cache-quarantine directory/anchor/nonce binding are durably bound and revalidated. Foreign identity, copied/replaced state, redirected parents, caller writes, unauthorized self-consistent quarantine, substitution, or external mutation fails before scan evidence, gate success, or cleanup success. Cleanup commits store-owned authorization before any no-replace move, continuously blocks every other active-cache writer through `pending -> interrupted -> pending`, flushes and remanifests each complete tree plus cache/quarantine/trash directories before validation/result commit, recovers only through the matching operation ID, and never performs pathname-based physical deletion.

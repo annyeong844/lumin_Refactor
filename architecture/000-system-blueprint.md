@@ -2,9 +2,9 @@
 
 Document role: final architecture blueprint and review packet
 
-Status: frozen
+Status: reopened for the narrow REVIEW-004 follow-up
 
-Revision: 2026-07-19
+Revision: 2026-08-24
 
 Parent: PRODUCT-000
 
@@ -426,10 +426,11 @@ lumin gate
 lumin runs
 lumin export
 lumin cache clean --operation-id <operation-id> [--format json]
+lumin store migrate [--format json]
 lumin help-agent
 ```
 
-`lumin-protocol` owns command DTOs and machine formats; `lumin-cli` owns parsing and exit mapping. ARCH-002 owns the cache-cleanup state transition, integrity, crash-retry, and delivery contract. Other documents may narrow a slice's available subset but cannot add commands. Codex and Claude Code skills teach this small surface without embedding schemas, classification logic, platform binary selection policy, or internal capability lists.
+`lumin-protocol` owns command DTOs and machine formats; `lumin-cli` owns parsing and exit mapping. ARCH-002 owns the cache-cleanup and lifecycle-store migration state transitions, integrity, crash-retry, and delivery contracts. Other documents may narrow a slice's available subset but cannot add commands. Codex and Claude Code skills teach this small surface without embedding schemas, classification logic, platform binary selection policy, or internal capability lists.
 
 ## 9. Build and Distribution
 

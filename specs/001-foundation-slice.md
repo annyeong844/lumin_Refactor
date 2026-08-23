@@ -328,6 +328,7 @@ lumin files --run <run-id> <path> [--cursor <cursor>]
 lumin capabilities [--run <run-id>] [--cursor <cursor>]
 lumin export sarif --run <run-id>
 lumin cache clean --operation-id <operation-id> [--format json]
+lumin store migrate [--format json]
 ```
 
 All collection queries are bounded, deterministic, and cursor-resumable. Required capability failure appears in `overview` before ordinary findings.
@@ -394,9 +395,40 @@ durability, row validation, and final result commit. Cleanup never physically de
 quarantine entries.
 
 The target lifecycle-store header advances from `lumin-lifecycle-store-header.v12` to
-v13 with the private cleanup-operation record. Ordinary open/query accepts only v13 and
-rejects v12 as `IncompatibleStateSchema`; only the exclusive generation-fenced migration
-command may read v12 and apply the exact transformation above.
+v13 with the private cleanup-operation record. Ordinary repository-state commands accept
+only v13 and never migrate on open. A valid v12 header or matching unfinished v12-to-v13 intent,
+whether the canonical file is v12 or v13, exits `1` with empty stdout and exactly
+`lumin: lifecycle store migration requires 'lumin store migrate'\n`
+on stderr; another unsupported or invalid header remains a typed schema/integrity
+hard-stop without a guessed migration route.
+
+`lumin store migrate` is the sole public v12-to-v13 route. It accepts at most one
+split-form `--format json`, defaults to JSON, and rejects positional arguments, repeated
+or equals-form flags, other options, and non-JSON formats as malformed exit `2`. It
+admits only an existing valid v12, an already current valid v13, or a matching recoverable
+v12-to-v13 intent; it neither initializes absent state nor chains, downgrades, or guesses
+other schemas. On v12 it exclusively performs or recovers the generation-fenced copy,
+validates the transformed logical dump and complete namespace binding, removes the intent
+and private artifacts, and reopens v13 before success. On current v13 it validates and
+returns without replacing the store or advancing its generation, after idempotently
+cleaning any exact post-intent temporary remnants. Concurrent migration commands
+serialize; at most one advances the generation and every follower validates v13 and
+returns the same response.
+
+Success exits `0` and writes one `lumin.lifecycle-store-migration.v1` object whose only
+fields in canonical order are `schemaVersion`, `storeSchema`, and `status`, with
+`storeSchema: "lumin-lifecycle-store-header.v13"` and `status: "ready"`, followed by one
+newline and empty stderr. It exposes no source schema, generation, or changed bit, so the
+initial success, post-replacement recovery, and already-current retry are byte-identical.
+It has no operation ID or operation-show variant: the single target schema and durable
+singleton intent make it intrinsically idempotent, and it performs no new gate,
+retention, or cache-cleanup operation beyond the exact frozen record transformation. All
+handles and guards are released before output. A pre-transport migration
+failure exits `1` with empty stdout and the ordinary diagnostic. `BrokenPipe` exits `1`
+with empty stderr; another stdout write/flush failure emits exactly
+`lumin: cannot write stdout\n` when stderr is writable. Either delivery failure leaves
+validated v13 authoritative, and rerun returns the same object without another generation
+advance.
 
 ## 7. Write-Gate Contract
 
@@ -444,7 +476,7 @@ Required behavior:
 - public retention commands execute the ARCH-002 `Prepared -> Pruning -> Pruned` protocol and never bypass the lifecycle store through `lumin-xtask` internals;
 - each run pin returns an independent `PinId`; unpin accepts that ID and cannot remove another consumer's protection;
 - every terminal transition capsule referenced by an active gate remains prune-ineligible until that gate closes or is abandoned;
-- lifecycle-store migration uses transaction-scoped handles and generation fencing, so an old-generation process cannot commit after replacement;
+- `lumin store migrate` is the only v12 reader, uses transaction-scoped handles and generation fencing, returns the same target-only `ready` response after first success or retry, and prevents an old-generation process from committing after replacement; ordinary repository-state commands never migrate on open;
 - latest-pointer publication/recovery and retention confirmation serialize through the exclusive catalog-publication guard and merge `latestAttempt` by sequence/phase plus `latestCompleted` by sequence;
 - `.lumin` is admitted no-follow as a repository-bound reserved namespace and cannot enter a scan or gate write through an alias;
 - every path/root and canonical `RepoPathDto`/`RepositoryRootDto` preserves exact `repo-path-semantics.v1` bytes; display/readable text is never an identity;
@@ -612,7 +644,7 @@ Every corpus row, including retention and migration fault injection, drives the 
 | `retention-independent-pins` | Two consumers receive distinct `PinId` values for one run; removing either leaves the other protection intact and prune eligibility changes only after the last reference is removed. |
 | `retention-active-transition-reference` | A opens, disjoint B closes, and a prune plan for B reports A's transition reference and excludes B/capsule; A later reconciles and closes, after which a new plan may include the released closure. |
 | `retention-crash-protocol` | Faults before/after tombstone, during each canonical-to-trash move, before `Pruned`, and during physical reclamation recover to the single ARCH-002 state without treating a missing payload as successful deletion. |
-| `lifecycle-store-migration` | One process holds a v12 generation token while another migrates to v13; transaction-scoped handles close before replacement, state-directory/lock bindings remain fixed, every migration crash point selects the ARCH-002 recovery rule, all logical records/references survive, and the old process must reopen/revalidate before its late mutation can commit. The exact v12 fixture maps pending/interrupted cleanup rows to zero sequences, committed legacy `not-attempted` to synthetic allocated sequence 1 and public `unknown`, and committed `succeeded`/`failed` to allocated/completed sequence 1; every invalid legacy shape fails before generation replacement. |
+| `lifecycle-store-migration` | Public children prove that ordinary repository-state commands reject the exact v12 fixture with the `lumin store migrate` instruction and no mutation, then the migration command alone advances it to v13. One process holds the v12 generation token while that command migrates; transaction-scoped handles close before replacement, state-directory/lock bindings remain fixed, every crash point selects the ARCH-002 recovery rule, all logical records/references survive, and the old process must reopen/revalidate before its late mutation can commit. The fixture maps pending/interrupted cleanup rows to zero sequences, committed legacy `not-attempted` to synthetic allocated sequence 1 and public `unknown`, and committed `succeeded`/`failed` to allocated/completed sequence 1; every invalid legacy shape fails before replacement. Initial success, recovery after replacement/output failure, and an already-current retry emit the same exact `lumin.lifecycle-store-migration.v1` bytes, while v13 retry performs no replacement or generation advance. |
 
 The corpus must include repositories synthesized from or minimized around real failure shapes, including Vue core-style package layouts and a Next.js route-group layout. A copied fixture records origin, license, source revision, and modifications in a local `PROVENANCE.md`; synthetic structure is preferred when copied code is unnecessary. Store-state fixtures are generated in a test temp root and do not require committing ignored `.lumin` output.
 
@@ -751,7 +783,7 @@ These are Phase 1 exit criteria for the completed product. They are not Phase 0 
 28. Independent run pins cannot remove one another's protection, and lifecycle migration/tombstone rules preserve the complete durable catalog while applying only the exact private-v1 cleanup-delivery transformation.
 29. The engine capability registry alone emits compiled-profile unavailable facts/signals and never substitutes analysis for an absent capability owner.
 30. Retention cannot remove a terminal transition capsule while an active gate references it, and releasing that reference cannot alter the active gate's later reconciliation result.
-31. Lifecycle-store v12-to-v13 migration uses transaction-scoped handles and generation fencing; every crash point has one recovery rule, an old-generation late writer cannot commit without reopening and revalidation, and validated private-v1 cleanup rows map to the canonical synthetic sequence state while every invalid shape fails before replacement.
+31. `lumin store migrate` is the sole public v12-to-v13 route: ordinary repository-state commands return its exact fail-closed instruction, its target-only success DTO is byte-identical after first migration, crash/output recovery, and already-current retry, and v13 retry performs no replacement or generation advance. The command uses transaction-scoped handles and generation fencing; every crash point has one recovery rule, an old-generation late writer cannot commit without reopening and revalidation, and validated private-v1 cleanup rows map to the canonical synthetic sequence state while every invalid shape fails before replacement.
 32. Every post-write delta compares with the immutable opening semantic baseline, and a sealed stale or prior failed close cannot silently replace that baseline or current protected reads.
 33. Repository-input cache entries contain only gate-neutral signals; the owning capability recomputes request-specific signals for each current `GateProjectionContext`.
 34. Concurrent publishers, recovery, retention confirmation, cache cleanup, and migration serialize through one marker-bound exclusive catalog guard; sequence/phase and completed-sequence maxima never regress, strand `Running`, lose an update, duplicate a cleanup transition, or split across replacement lock objects.
@@ -796,7 +828,7 @@ Every row in this table traces a Phase 1 acceptance criterion. The commands and 
 | 28 | `references_and_lifecycle_migration_preserve_truth` | `retention-independent-pins`, `retention-active-transition-reference`, and lifecycle migration fixtures | `lumin-xtask corpus foundation --store-crash` | Independent pins/references survive one another; migration preserves attempts, operations, transitions, plans, tombstones, pins, and gates, and applies only the canonical private-v1 cleanup-delivery transformation. |
 | 29 | `capability_unavailability_has_one_owner` | `capability-availability-authority` | `lumin-xtask architecture-check` and corpus foundation | The engine registry alone emits availability facts/signals, evidence policy maps them, and no fallback capability runs. |
 | 30 | `active_gates_protect_transition_proof` | `retention-active-transition-reference` | `lumin-xtask corpus foundation --store-crash` | B's terminal capsule remains excluded while A references it; A later reconciles exactly and reference release enables a new plan. |
-| 31 | `lifecycle_migration_fences_generations` | `lifecycle-store-migration` | `lumin-xtask corpus foundation --store-crash` | Multi-process v12-to-v13 fault injection preserves one generation and rejects/reopens every old-generation late mutation; exact v12 cleanup rows map to canonical synthetic sequences or fail before replacement. |
+| 31 | `lifecycle_migration_fences_generations` | `lifecycle-store-migration` | `lumin-xtask corpus foundation --store-crash` | Packaged public commands reject v12 without mutation, then `lumin store migrate` alone drives multi-process v12-to-v13 fault injection. It preserves one generation, rejects/reopens every old-generation late mutation, maps exact v12 cleanup rows to canonical synthetic sequences or fails before replacement, and returns the same exact target-only DTO on migration, recovery, and no-op retry without another generation advance. |
 | 32 | `failed_close_keeps_opening_baseline` | `gate-immutable-opening-delta` | `lumin-xtask corpus foundation` | Retry still classifies against opening facts, and stale historical evidence never becomes current read protection. |
 | 33 | `cache_projection_is_gate_contextual` | `cache-gate-context-projection` | `lumin-xtask corpus foundation --determinism` | One cached outcome yields owner-recomputed signals for each intent; no prior gate effect is replayed. |
 | 34 | `latest_publication_is_serializable` | `concurrent-latest-publication`, `publication-retention-race`, `cache-cleanup-publication-race`, `state-lock-replacement-split-brain` | `lumin-xtask corpus foundation --store-crash` | Forced reverse completion, same-sequence terminal promotion, publication/retention/cleanup races, and lock replacement preserve monotonic fields, one accepted guard, no duplicate move, and no dangling pointer. |
