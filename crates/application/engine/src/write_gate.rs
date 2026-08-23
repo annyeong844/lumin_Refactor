@@ -631,10 +631,31 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                 );
             }
         };
+    let opening_entry_paths = match opening_entry_paths(&baseline.snapshot.entry_selections) {
+        Ok(paths) => paths,
+        Err(error) => {
+            return finish_failed_close(
+                &operation,
+                request,
+                &request_digest,
+                &gate,
+                vec![GateSignal::AnalysisFailed {
+                    detail: error.to_string(),
+                }],
+                Vec::new(),
+                None,
+            );
+        }
+    };
+    let containment_context = CloseContainmentContext {
+        root: &context.root,
+        entries: &opening_entry_paths,
+        dependency_intents: &inventory_request.dependency_intents,
+    };
     let containment_signals = close_containment_signals(
         &context.root,
         &gate.leased_write_set,
-        &inventory_request.entries,
+        &opening_entry_paths,
         &inventory_request.dependency_intents,
     );
     if !containment_signals.is_empty() {
@@ -645,7 +666,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
             &gate,
             containment_signals,
             Vec::new(),
-            Some((&context.root, &inventory_request)),
+            Some(containment_context),
         );
     }
 
@@ -701,7 +722,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                 &gate,
                 vec![signal],
                 attempted_semantic_bindings,
-                Some((&context.root, &inventory_request)),
+                Some(containment_context),
             );
         }
         Ok(ReservedCapture::Committed(result)) => return Ok(*result),
@@ -716,7 +737,8 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
             let signals = post_write_capture_failure_signals(
                 &context.root,
                 &gate.leased_write_set,
-                &inventory_request,
+                &opening_entry_paths,
+                &inventory_request.dependency_intents,
                 &error,
             );
             return finish_failed_close(
@@ -726,7 +748,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                 &gate,
                 signals,
                 attempted_semantic_bindings,
-                Some((&context.root, &inventory_request)),
+                Some(containment_context),
             );
         }
     };
@@ -828,6 +850,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                     &final_validation,
                     reserved_identities,
                     &observation_seed.leased_write_set,
+                    &opening_entry_paths,
                     &close_write_leases,
                     &observation_seed.alias_closures,
                 );
@@ -868,6 +891,30 @@ fn validate_analysis_paths(
     Ok(())
 }
 
+fn opening_entry_paths(
+    selections: &[lumin_evidence::EntrySelectionRecord],
+) -> Result<Vec<RepoPath>, EngineError> {
+    let mut paths = Vec::with_capacity(selections.len());
+    for selection in selections {
+        let path = RepoPath::from_canonical_bytes(&selection.path.canonical).map_err(|error| {
+            EngineError::TierProjectionCorrupt(format!(
+                "failed to decode opening entry selection {}: {error}",
+                selection.path.display
+            ))
+        })?;
+        if RepoPathProjection::from(&path) != selection.path {
+            return Err(EngineError::TierProjectionCorrupt(format!(
+                "opening entry selection projection round-trip failed for {}",
+                selection.path.display
+            )));
+        }
+        paths.push(path);
+    }
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
 fn close_containment_signals(
     root: &Path,
     leases: &[lumin_evidence::WriteLease],
@@ -901,19 +948,21 @@ fn close_containment_signals(
 fn post_write_capture_failure_signals(
     root: &Path,
     opening_leases: &[lumin_evidence::WriteLease],
-    inventory_request: &InventoryRequest,
+    opening_entries: &[RepoPath],
+    dependency_intents: &[DependencyIntent],
     error: &EngineError,
 ) -> Vec<GateSignal> {
     if let EngineError::Inventory(InventoryError::EntryEscapesRoot(escaped)) = error {
-        let escaped_projection = RepoPath::from_portable(escaped)
-            .ok()
-            .map(|path| RepoPathProjection::from(&path));
-        if let Some(lease) = opening_leases.iter().find(|lease| {
-            lease.path.display == escaped.as_str()
-                || escaped_projection
-                    .as_ref()
-                    .is_some_and(|path| lease.covers(path))
-        }) {
+        let escaped_projection = RepoPathProjection::from(escaped);
+        let lease = opening_leases
+            .iter()
+            .find(|lease| lease.path.canonical == escaped_projection.canonical)
+            .or_else(|| {
+                opening_leases
+                    .iter()
+                    .find(|lease| lease.covers(&escaped_projection))
+            });
+        if let Some(lease) = lease {
             return vec![match lease.kind {
                 lumin_evidence::WriteLeaseKind::NewFile => {
                     GateSignal::PlannedPathContainmentViolation {
@@ -926,27 +975,17 @@ fn post_write_capture_failure_signals(
                 },
             }];
         }
-        if let Some(path) = inventory_request
-            .entries
+        if let Some(path) = opening_entries
             .iter()
-            .chain(
-                inventory_request
-                    .dependency_intents
-                    .iter()
-                    .map(|intent| &intent.path),
-            )
-            .find(|path| path.display_escaped() == escaped.as_str())
+            .chain(dependency_intents.iter().map(|intent| &intent.path))
+            .find(|path| *path == escaped)
         {
             return vec![GateSignal::ProtectedInputChanged {
                 paths: vec![RepoPathProjection::from(path)],
             }];
         }
-        let signals = close_containment_signals(
-            root,
-            opening_leases,
-            &inventory_request.entries,
-            &inventory_request.dependency_intents,
-        );
+        let signals =
+            close_containment_signals(root, opening_leases, opening_entries, dependency_intents);
         if !signals.is_empty() {
             return signals;
         }
@@ -954,6 +993,13 @@ fn post_write_capture_failure_signals(
     vec![GateSignal::AnalysisFailed {
         detail: error.to_string(),
     }]
+}
+
+#[derive(Clone, Copy)]
+struct CloseContainmentContext<'a> {
+    root: &'a Path,
+    entries: &'a [RepoPath],
+    dependency_intents: &'a [DependencyIntent],
 }
 
 fn validate_analysis_path_names(
@@ -995,7 +1041,7 @@ fn finish_failed_close(
     gate: &GateRecord,
     signals: Vec<GateSignal>,
     attempted_semantic_bindings: Vec<(RepoPath, SemanticReadReservationBinding)>,
-    final_containment: Option<(&Path, &InventoryRequest)>,
+    final_containment: Option<CloseContainmentContext<'_>>,
 ) -> Result<GateOperationResult, EngineError> {
     let baseline = gate.baseline.as_ref();
     let observation_seed = CloseObservationSeed {
@@ -1039,15 +1085,14 @@ fn finish_failed_close(
                 deltas: Vec::new(),
             },
             |reserved_identities, catalog_revision, store_signals| {
-                let mut observed_signals =
-                    final_containment.map_or_else(Vec::new, |(root, inventory_request)| {
-                        close_containment_signals(
-                            root,
-                            &gate.leased_write_set,
-                            &inventory_request.entries,
-                            &inventory_request.dependency_intents,
-                        )
-                    });
+                let mut observed_signals = final_containment.map_or_else(Vec::new, |context| {
+                    close_containment_signals(
+                        context.root,
+                        &gate.leased_write_set,
+                        context.entries,
+                        context.dependency_intents,
+                    )
+                });
                 observed_signals.extend(revalidate_attempted_semantic_inputs(
                     &request.root,
                     &attempted_semantic_bindings,
@@ -1502,13 +1547,14 @@ fn post_write_final_validation(
     validation: &FinalFreshnessValidation,
     reserved_identities: &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
     opening_leases: &[lumin_evidence::WriteLease],
+    opening_entries: &[RepoPath],
     expected_leases: &[lumin_evidence::WriteLease],
     expected_alias_closures: &[lumin_evidence::PhysicalAliasClosureRecord],
 ) -> (Vec<GateSignal>, Option<PreWriteFinalValidationEvidence>) {
     let mut containment_signals = close_containment_signals(
         root,
         opening_leases,
-        &validation.inventory_request.entries,
+        opening_entries,
         &validation.inventory_request.dependency_intents,
     );
     if !containment_signals.is_empty() {
@@ -1812,6 +1858,38 @@ pub fn gate_observation_binding_matches_owner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capture_escape_classifies_by_canonical_path_when_displays_collide()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let escaped = RepoPath::from_canonical_bytes(
+            b"LUMRPATH\x00\x01\x00\x00\x00\x01\x03\x00\x00\x00\x02\xd8\x00",
+        )?;
+        let decoy = RepoPath::from_portable("wtf16[d800]")?;
+        assert_ne!(escaped, decoy);
+        assert_eq!(escaped.display_escaped(), decoy.display_escaped());
+
+        let lease = |path: &RepoPath, kind| lumin_evidence::WriteLease {
+            path: RepoPathProjection::from(path),
+            kind,
+            physical_identity: None,
+            nearest_existing_parent: None,
+            prefix_identities: Vec::new(),
+        };
+        let leases = [
+            lease(&decoy, lumin_evidence::WriteLeaseKind::NewFile),
+            lease(&escaped, lumin_evidence::WriteLeaseKind::ExistingFile),
+        ];
+        let error = EngineError::Inventory(InventoryError::EntryEscapesRoot(escaped.clone()));
+
+        assert_eq!(
+            post_write_capture_failure_signals(Path::new("."), &leases, &[], &[], &error),
+            [GateSignal::ProtectedInputChanged {
+                paths: vec![RepoPathProjection::from(&escaped)]
+            }]
+        );
+        Ok(())
+    }
 
     #[test]
     fn final_freshness_rejects_a_created_reserved_dependency_candidate()

@@ -2,7 +2,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::path::Path;
-use std::process::{Child, Stdio};
+use std::process::{Child, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -19,6 +19,7 @@ fn request_path_escape_distinguishes_malformed_stale_and_blocked_containment()
     assert_admitted_entry_escape_is_stale()?;
     assert_planned_new_path_escape_is_denied()?;
     assert_capture_escape_uses_opening_lease_kind()?;
+    assert_config_entry_capture_escape_is_stale()?;
     assert_final_escape_preserves_new_file_kind()?;
     Ok(())
 }
@@ -230,7 +231,8 @@ fn assert_capture_escape_uses_opening_lease_kind() -> Result<(), Box<dyn std::er
     create_directory_alias(outside.path(), &alias)?;
     release_barrier(&mut barrier)?;
 
-    let output = child.wait_with_output()?;
+    let output =
+        wait_with_recorded_post_write(root.path(), &gate_id, "op-capture-escape-close", child)?;
     assert_eq!(
         output.status.code(),
         Some(5),
@@ -257,6 +259,94 @@ fn assert_capture_escape_uses_opening_lease_kind() -> Result<(), Box<dyn std::er
     assert_committed_result(
         root.path(),
         "op-capture-escape-close",
+        "stale",
+        "protected-input-changed",
+    )?;
+    assert_active_revision(root.path(), &gate_id, 1, "stale")?;
+    remove_directory_alias(&alias)?;
+    Ok(())
+}
+
+fn assert_config_entry_capture_escape_is_stale() -> Result<(), Box<dyn std::error::Error>> {
+    let root = source_fixture()?;
+    fs::create_dir(root.path().join("configured"))?;
+    fs::write(
+        root.path().join("configured/entry.ts"),
+        "export const configured = true;\n",
+    )?;
+    let alias = root.path().join("config-entry");
+    create_directory_alias(&root.path().join("configured"), &alias)?;
+    fs::write(
+        root.path().join("lumin.json"),
+        r#"{"schemaVersion":"lumin-config.v1","entries":["config-entry/entry.ts"]}"#,
+    )?;
+    let opened = run(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-config-entry-escape-open",
+            "--path",
+            "src/main.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&opened, 0);
+    let gate_id = field(&opened.stdout, "gateId")?;
+
+    let (child, mut barrier) = post_write_at_barrier(
+        root.path(),
+        &gate_id,
+        "op-config-entry-escape-close",
+        "LUMIN_TEST_GATE_POSTWRITE_CAPTURE_BARRIER",
+        "close-capturing",
+    )?;
+    let outside = tempfile::tempdir()?;
+    fs::write(
+        outside.path().join("entry.ts"),
+        "export const escaped = true;\n",
+    )?;
+    remove_directory_alias(&alias)?;
+    create_directory_alias(outside.path(), &alias)?;
+    release_barrier(&mut barrier)?;
+
+    let output = wait_with_recorded_post_write(
+        root.path(),
+        &gate_id,
+        "op-config-entry-escape-close",
+        child,
+    )?;
+    assert_eq!(
+        output.status.code(),
+        Some(5),
+        "unexpected config-entry capture result: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let response: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(required_string(&response, "/decision")?, "stale");
+    assert_eq!(required_string(&response, "/lifecycle")?, "active");
+    assert_eq!(
+        required_string(&response, "/observationBinding/reason")?,
+        "protected-input-changed"
+    );
+    assert_signal_path(
+        &response,
+        "protected-input-changed",
+        "config-entry/entry.ts",
+    )?;
+    assert!(
+        response
+            .get("signals")
+            .and_then(Value::as_array)
+            .is_some_and(|signals| !signals.iter().any(|signal| {
+                signal.get("kind").and_then(Value::as_str) == Some("analysis-failed")
+            }))
+    );
+    assert_committed_result(
+        root.path(),
+        "op-config-entry-escape-close",
         "stale",
         "protected-input-changed",
     )?;
@@ -305,7 +395,8 @@ fn assert_final_escape_preserves_new_file_kind() -> Result<(), Box<dyn std::erro
     create_directory_alias(outside.path(), &alias)?;
     release_barrier(&mut barrier)?;
 
-    let output = child.wait_with_output()?;
+    let output =
+        wait_with_recorded_post_write(root.path(), &gate_id, "op-final-escape-close", child)?;
     assert_eq!(
         output.status.code(),
         Some(3),
@@ -391,6 +482,23 @@ fn release_barrier(stream: &mut TcpStream) -> Result<(), Box<dyn std::error::Err
     stream.write_all(b"release\n")?;
     stream.flush()?;
     Ok(())
+}
+
+fn wait_with_recorded_post_write(
+    root: &Path,
+    gate_id: &str,
+    operation_id: &str,
+    child: Child,
+) -> Result<Output, Box<dyn std::error::Error>> {
+    let output = child.wait_with_output()?;
+    let replay = run(
+        root,
+        &["post-write", gate_id, "--operation-id", operation_id],
+    )?;
+    assert_eq!(replay.status, output.status.code().unwrap_or(-1));
+    assert_eq!(replay.stdout.as_bytes(), output.stdout.as_slice());
+    assert_eq!(replay.stderr.as_bytes(), output.stderr.as_slice());
+    Ok(output)
 }
 
 fn assert_committed_result(

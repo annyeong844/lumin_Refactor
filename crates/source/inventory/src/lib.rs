@@ -136,8 +136,8 @@ pub enum InventoryError {
     ReservedEntryPath(String),
     #[error("semantic input aliases the reserved .lumin namespace: {0}")]
     ReservedSemanticInputPath(String),
-    #[error("caller path resolves outside repository root: {0}")]
-    EntryEscapesRoot(String),
+    #[error("caller path resolves outside repository root: {}", .0.display_escaped())]
+    EntryEscapesRoot(RepoPath),
 }
 
 fn native_relative(path: &RepoPath) -> Result<PathBuf, InventoryError> {
@@ -503,7 +503,7 @@ fn classify_entry(
             ))
         })?;
         if !target.starts_with(&canonical_root) {
-            return Err(InventoryError::EntryEscapesRoot(path.display_escaped()));
+            return Err(InventoryError::EntryEscapesRoot(path.clone()));
         }
         let target_metadata = fs::metadata(&native).map_err(|error| {
             InventoryError::PhysicalIdentity(format!(
