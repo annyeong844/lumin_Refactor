@@ -10,6 +10,8 @@ use serde_json::Value;
 
 mod support;
 
+#[path = "write_gate/mixed_vue.rs"]
+mod mixed_vue;
 #[path = "write_gate/reopen_queries.rs"]
 mod reopen_queries;
 #[path = "write_gate/semantic_demands.rs"]

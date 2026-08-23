@@ -416,7 +416,9 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("lifecycle-operation-idempotency", INV_IDEMP),
     row_sd!("gate-reopen-after-process-exit", &[inv!("write_gate", "pre_and_post_survive_process_reopen")]),
     row_sd!("unplanned-edit", INV_UNPLANNED),
-    row_sd!("mixed-vue-gate"),
+    row_sd!("mixed-vue-gate", &[
+        inv!("write_gate", "mixed_vue::mixed_js_and_vue_changes_share_one_gate_and_preserve_owner_facts"),
+    ]),
     row_sd!("required-capability-failure"),
     row_sd!("snapshot-and-latest", &[inv!("publication", "first_failed_attempt_remains_visible_without_a_completed_run")]),
     row_sd!("bounded-nested-query", INV_BNQ),
