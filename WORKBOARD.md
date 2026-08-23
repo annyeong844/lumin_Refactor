@@ -2,7 +2,7 @@
 
 Status: Phase 1 foundation implementation active
 
-Revision: 2026-08-19
+Revision: 2026-08-24
 
 ## One-Line Purpose
 
@@ -55,7 +55,7 @@ implementation history.
 
 | Phase | State | Exit condition |
 | --- | --- | --- |
-| Phase 0: architecture | frozen | Independent document/design review, standalone feasibility, clean provenance, the unmuted finding amendment, and owner-approved numeric targets are complete. External target audit is advisory unless it supplies a concrete counterexample. |
+| Phase 0: architecture | narrowly reopened for REVIEW-004 | The exact cache-cleanup follow-up candidate receives independent `PASS`; every unrelated Phase 0 decision remains frozen. |
 | Phase 1: foundation slice | active | SLICE-001 passes its complete acceptance corpus on Windows and Linux prebuilt binaries. |
 | Phase 2: capability growth | not started | New capabilities enter through the frozen DAG without creating a second engine. |
 | Phase 3: legacy retirement | not started | Required compatibility exports and corpus parity are complete; Node analysis paths are removed. |

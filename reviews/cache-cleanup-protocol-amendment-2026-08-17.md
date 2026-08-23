@@ -4,7 +4,7 @@ Document role: focused Architecture v1 amendment and independent-review record
 
 Status: post-merge follow-up candidate awaits independent PASS
 
-Date: 2026-08-19
+Date: 2026-08-24
 
 Owners: PRODUCT-000 Section 2.9, ARCH-000 Section 8, ARCH-002 Sections 2 and 2.5, SLICE-001 Sections 6, 9, 11, 14, and 15
 
@@ -130,6 +130,20 @@ mutation reservation with operation creation and retains it through
 quarantine, manifest, or response field changes. The exact follow-up candidate requires
 an independent `PASS` before its Rust implementation may resume.
 
+## Eighth Review Result
+
+Independent review bound exact candidate
+`b927cda1acf891c50528e50cae6a723537effb9c` and returned `REOPEN`. It found three
+remaining contract and routing gaps. First, acceptance forced a lower completion while
+a greater delivery attempt remained unfinished but did not force the converse ordering,
+so a late lower completion could still overwrite the greatest attempt's final status.
+Second, adding `unknown` to `lumin.cache-cleanup-operation.v1` changed a frozen public
+enum without changing its schema identity. Third, the Workboard reopened ARCH-002 while
+its Phase Ledger still represented all of Phase 0 as frozen. The replacement decision
+forces both completion orders and asserts the unchanged durable snapshot after the late
+lower completion, advances the cleanup-operation projection to v2 with no v1 fallback,
+and marks only the REVIEW-004 portion of Phase 0 narrowly reopened.
+
 ## Decision
 
 The owner amendments define one public command:
@@ -147,11 +161,16 @@ stdout empty. `BrokenPipe` leaves stderr empty, while another stdout write/flush
 emits exactly `lumin: cannot write stdout\n` when stderr remains writable. No storage
 transaction, publication guard, or operation-liveness lease remains held during output.
 Delivery recovery uses the same operation ID or the bounded
-`lumin.cache-cleanup-operation.v1` projection from `lumin operation show`, never a new
+`lumin.cache-cleanup-operation.v2` projection from `lumin operation show`, never a new
 whole-command mutation. That projection exposes only its operation identity/kind/digest,
 status and interruption count, authorized/validated counts, stored result, and last
 delivery status; it never embeds unbounded manifests. Show is strictly read-only and
-does not prove process liveness or change a record. Before every transport, a short
+does not prove process liveness or change a record. The amended binary always emits the
+v2 projection and provides no v1 negotiation or fallback. Frozen v1 never contains
+`unknown`; a v1-only client observes the distinct v2 `schemaVersion` and rejects it as
+unsupported before interpreting the delivery enum. Existing durable cleanup records are
+private state and are projected through v2 only after current store-schema admission.
+Before every transport, a short
 transaction allocates one increasing delivery-attempt sequence, atomically projects
 `lastDeliveryStatus: "unknown"`, and then releases every guard and transaction.
 `not-attempted` is valid only before the first allocation. Completion may project
@@ -248,12 +267,13 @@ finding for each item:
 
 1. ARCH-000 authorizes the exact operation-ID command; Product, ARCH-002, Slice, adapters,
    acceptance criteria, and traceability expose no conflicting command or exception.
-2. The v2 field set/order, request digest, exits, stdout/stderr rules, lock release, retry,
-   and strictly read-only `operation show` recovery are complete; pre-transport delivery
-   allocation atomically exposes `unknown`, missing completion never appears
-   `not-attempted`, lower completion cannot mask a greater unfinished attempt, and exact
-   dead-attempt proof, interruption counting, and pending/interrupted/pending transitions
-   agree.
+2. The cleanup-result v2 field set/order and cleanup-operation v2 projection, request
+   digest, exits, stdout/stderr rules, lock release, retry, and strictly read-only
+   `operation show` recovery are complete. Frozen cleanup-operation v1 never emits
+   `unknown`, v2 has no silent v1 fallback, pre-transport delivery allocation atomically
+   exposes `unknown`, missing completion never appears `not-attempted`, neither delivery
+   completion order can select the wrong winner, and exact dead-attempt proof,
+   interruption counting, and pending/interrupted/pending transitions agree.
 3. Namespace bootstrap durably binds the nested quarantine parent/anchor in marker/store
    while the lock remains global-bootstrap-only; replacement, mount, copied-state, or
    crash recovery cannot form a second binding, and a marker/store schema lacking it
@@ -274,10 +294,13 @@ finding for each item:
 8. Top-level and nested substitution barriers stop the exact turn, preserve the winning
    object and remaining order, and assert authorization states plus final snapshot.
 9. Public process-death fixtures cover after authorization, rename visibility, physical
-   durability, row validation, final result commit, delivery allocation, partial and
-   complete stdout before completion, and reverse-order delivery completion without
-   scheduler timing; an exact guard race also proves cleanup cannot overlap publication,
-   retention, or migration.
+   durability, row validation, final result commit, delivery allocation, and partial and
+   complete stdout before completion. Exact barriers force both delivery orders: lower
+   completion while the greater attempt is unfinished, and greater completion followed
+   by the held lower completion committing late. The latter asserts the selected status
+   and complete durable snapshot remain unchanged. No case uses scheduler timing; an
+   exact guard race also proves cleanup cannot overlap publication, retention, or
+   migration.
 10. Standard, determinism, store-crash, Windows/Linux package, and skill-adapter commands
     are assigned only to behavior they can execute and include `operation show` recovery.
 11. PRODUCT-000, ARCH-000, ARCH-002, SLICE-001 truth, acceptance, and traceability agree
@@ -298,8 +321,9 @@ cover nested-binding bootstrap/replacement,
 operation admission/idempotency, foreign self-hashed quarantine, authorization-plan
 durability, bottom-up flush order, every recovery boundary, exact CLI transport behavior,
 allocated-but-unfinished delivery projection before output and after partial or complete
-stdout, concurrent reverse-order delivery completion, continuous cache-writer rejection
-across a dead pending lease, both substitution barriers, and unchanged run/gate evidence. The
+stdout, both exact delivery completion orders including the unchanged snapshot after a
+late lower completion, cleanup-operation v2 with explicit v1 incompatibility, continuous
+cache-writer rejection across a dead pending lease, both substitution barriers, and unchanged run/gate evidence. The
 public `reserved-state-namespace` row remains unmapped until standard and determinism lanes plus
 Windows/Linux package checks execute those behaviors through the packaged CLI and the
 skill package check proves operation-ID generation and recovery. Passing an internal
