@@ -175,8 +175,11 @@ fn limitation_intersects_gate_domain(
             .is_none_or(|path| configured_packages_intersect(path, evidence, leased_write_set)),
         LimitationScopePolicy::ManifestOwnerPackageOrWorkspace => limitation_path(limitation)
             .is_none_or(|path| path_owner_intersects(path, evidence, leased_write_set)),
-        LimitationScopePolicy::WorkspaceFromConfig => limitation_path(limitation)
-            .is_none_or(|path| workspace_config_intersects(path, evidence, leased_write_set)),
+        LimitationScopePolicy::WorkspaceFromConfig => {
+            limitation_path(limitation).is_none_or(|path| {
+                workspace_config_intersects(path, evidence, dependency_intents, leased_write_set)
+            })
+        }
         LimitationScopePolicy::ParentAndTargetOwnersOrWorkspace => {
             let Limitation::VueExternalScriptModeConflict {
                 source_id,
@@ -342,23 +345,30 @@ fn configured_packages_intersect(
     if configured_paths.next().is_some() {
         return true;
     }
-    if leased_write_set
+    let affected_contexts = evidence
+        .source_contexts
         .iter()
-        .any(|lease| lease.covers(&config_path))
-    {
+        .filter(|context| {
+            context
+                .configuration_paths
+                .iter()
+                .any(|configured_path| configured_path.canonical == config_path.canonical)
+        })
+        .collect::<Vec<_>>();
+    if affected_contexts.is_empty() {
+        return true;
+    }
+    if affected_contexts.iter().any(|context| {
+        context.configuration_paths.iter().any(|configured_path| {
+            leased_write_set
+                .iter()
+                .any(|lease| lease.covers(configured_path))
+        })
+    }) {
         return true;
     }
     let mut configured_scope = None::<lumin_model::PackageScope>;
-    let mut affected_importer_found = false;
-    for context in &evidence.source_contexts {
-        if !context
-            .configuration_paths
-            .iter()
-            .any(|configured_path| configured_path.canonical == config_path.canonical)
-        {
-            continue;
-        }
-        affected_importer_found = true;
+    for context in affected_contexts {
         let Some(root) = context
             .package_root
             .as_ref()
@@ -372,9 +382,6 @@ fn configured_packages_intersect(
             Some(_) => {}
             None => configured_scope = Some(scope),
         }
-    }
-    if !affected_importer_found {
-        return true;
     }
     configured_scope
         .is_none_or(|scope| package_scope_intersects_write_set(&scope, evidence, leased_write_set))
@@ -392,20 +399,22 @@ fn public_surface_consumer_intersects(
     else {
         return false;
     };
-    let Some(path) = evidence
+    let Some(context) = evidence
         .source_contexts
         .iter()
         .find(|context| &context.source_id == importer)
-        .map(|context| &context.path)
     else {
         return true;
     };
-    leased_write_set.iter().any(|lease| lease.covers(path))
+    std::iter::once(&context.path)
+        .chain(&context.configuration_paths)
+        .any(|path| leased_write_set.iter().any(|lease| lease.covers(path)))
 }
 
 fn workspace_config_intersects(
     path: &str,
     evidence: &RunEvidence,
+    dependency_intents: &[DependencyIntentRecord],
     leased_write_set: &[WriteLease],
 ) -> bool {
     let Some(root) = known_limitation_path(path, evidence, leased_write_set)
@@ -419,7 +428,9 @@ fn workspace_config_intersects(
         lease.path.components.starts_with(&root.components)
             || (lease.kind == WriteLeaseKind::Directory
                 && root.components.starts_with(&lease.path.components))
-    })
+    }) || dependency_intents
+        .iter()
+        .any(|intent| intent.path.components.starts_with(&root.components))
 }
 
 fn known_limitation_path(
@@ -1292,6 +1303,46 @@ mod tests {
     }
 
     #[test]
+    fn pnpm_workspace_gap_intersects_dependency_intent_context()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace_root = RepoPath::from_portable("workspaces/affected")?;
+        let workspace_config = workspace_root.join_portable("pnpm-workspace.yaml")?;
+        let affected_package = RepoPath::from_portable("workspaces/affected/packages/app")?;
+        let affected_source =
+            RepoPath::from_portable("workspaces/affected/packages/app/src/main.ts")?;
+        let clear_package = RepoPath::from_portable("packages/clear")?;
+        let clear_source = RepoPath::from_portable("packages/clear/src/main.ts")?;
+        let mut evidence =
+            evidence_with_limitations(vec![Limitation::PnpmDependencySemanticsUnsupported {
+                path: workspace_config.display_escaped(),
+                detail: "pnpm packageConfigs semantics are unsupported".to_owned(),
+            }]);
+        evidence.source_contexts = vec![
+            source_context(&affected_source, &affected_package),
+            source_context(&clear_source, &clear_package),
+        ];
+        let intent = dependency_intent("workspaces/affected/packages/app/src/main.ts", "zod")?;
+
+        assert_eq!(
+            lifecycle_delta_input_for(
+                &evidence,
+                std::slice::from_ref(&intent),
+                &[existing_file_lease(&clear_source)],
+            )
+            .required_evidence_gap_count,
+            1,
+            "a dependency intent inside the affected pnpm workspace lost its required gap",
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&clear_source)])
+                .required_evidence_gap_count,
+            0,
+            "pnpm dependency uncertainty escaped into a disjoint ordinary source write",
+        );
+        Ok(())
+    }
+
+    #[test]
     fn configured_scope_uses_affected_importer_owners() -> Result<(), Box<dyn std::error::Error>> {
         let config = RepoPath::from_portable("tsconfig.json")?;
         let root_source = RepoPath::from_portable("src/root.ts")?;
@@ -1404,6 +1455,42 @@ mod tests {
     }
 
     #[test]
+    fn configured_scope_includes_every_consulted_config() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let inherited_config = RepoPath::from_portable("tsconfig.json")?;
+        let package_a = RepoPath::from_portable("packages/a")?;
+        let package_b = RepoPath::from_portable("packages/b")?;
+        let controlling_config = RepoPath::from_portable("packages/a/tsconfig.json")?;
+        let source_a = RepoPath::from_portable("packages/a/src/main.ts")?;
+        let source_b = RepoPath::from_portable("packages/b/src/main.ts")?;
+        let mut context_a = source_context(&source_a, &package_a);
+        context_a.configuration_paths = vec![
+            RepoPathProjection::from(&inherited_config),
+            RepoPathProjection::from(&controlling_config),
+        ];
+        let mut evidence =
+            evidence_with_limitations(vec![Limitation::TsconfigSemanticsUnsupported {
+                path: controlling_config.display_escaped(),
+                detail: "inherited profile and child module are incompatible".to_owned(),
+            }]);
+        evidence.source_contexts = vec![context_a, source_context(&source_b, &package_b)];
+
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&inherited_config)],)
+                .required_evidence_gap_count,
+            1,
+            "a consulted parent config escaped the affected importer's required gap",
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&source_b)])
+                .required_evidence_gap_count,
+            0,
+            "consulted parent config ownership escaped into a disjoint package",
+        );
+        Ok(())
+    }
+
+    #[test]
     fn package_scope_uses_the_canonical_limitation_path() -> Result<(), Box<dyn std::error::Error>>
     {
         let package_a = RepoPath::from_canonical_bytes(
@@ -1477,6 +1564,7 @@ mod tests {
         let target_b_package = RepoPath::from_portable("packages/lib-b")?;
         let consumer_a = RepoPath::from_portable("packages/app-a/main.ts")?;
         let consumer_b = RepoPath::from_portable("packages/app-b/main.ts")?;
+        let consumer_a_config = RepoPath::from_portable("packages/app-a/tsconfig.json")?;
         let target_a = RepoPath::from_portable("packages/lib-a/index.ts")?;
         let target_b = RepoPath::from_portable("packages/lib-b/index.ts")?;
         let importer_a = LogicalSourceId::from_path(&consumer_a);
@@ -1494,8 +1582,10 @@ mod tests {
                 importer: Some(importer_b.clone()),
             },
         ]);
+        let mut consumer_a_context = source_context(&consumer_a, &consumer_a_package);
+        consumer_a_context.configuration_paths = vec![RepoPathProjection::from(&consumer_a_config)];
         evidence.source_contexts = vec![
-            source_context(&consumer_a, &consumer_a_package),
+            consumer_a_context,
             source_context(&consumer_b, &consumer_b_package),
             source_context(&target_a, &target_a_package),
             source_context(&target_b, &target_b_package),
@@ -1526,6 +1616,12 @@ mod tests {
                 .required_evidence_gap_count,
             1,
             "an equal diagnostic from another package was attributed to this consumer",
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&consumer_a_config)])
+                .required_evidence_gap_count,
+            1,
+            "the originating consumer's consulted config lost its public-surface gap",
         );
         Ok(())
     }

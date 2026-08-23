@@ -17,6 +17,7 @@ fn limitation_scope_exhaustiveness_is_public() -> Result<(), Box<dyn std::error:
     configured_scope_follows_affected_importers()?;
     blocked_extends_targets_retain_importer_ownership()?;
     public_surface_required_evidence_follows_its_consumer()?;
+    pnpm_workspace_required_evidence_follows_dependency_intent()?;
     resolved_module_opacity_remains_advisory()?;
     mixed_opacity_scope_selects_fact_or_required_gap()?;
     known_empty_target_scope_remains_normalized()?;
@@ -144,6 +145,81 @@ fn configured_scope_follows_affected_importers() -> Result<(), Box<dyn std::erro
         true,
     )?;
     limiting_config_itself_intersects()?;
+    consulted_parent_config_intersects()?;
+    Ok(())
+}
+
+fn consulted_parent_config_intersects() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"inherited-config-root","private":true,"workspaces":["packages/*"]}"#,
+    )?;
+    write(
+        root.path(),
+        "tsconfig.json",
+        r#"{"compilerOptions":{"moduleResolution":"node16"}}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/affected/package.json",
+        r#"{"name":"@scope/inherited-affected","private":true}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/affected/tsconfig.json",
+        r#"{"extends":"../../tsconfig.json","compilerOptions":{"module":"esnext"}}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/affected/src/main.ts",
+        "export const affected = 1;\n",
+    )?;
+    write(
+        root.path(),
+        "packages/clear/package.json",
+        r#"{"name":"@scope/inherited-clear","private":true}"#,
+    )?;
+    write(root.path(), "packages/clear/tsconfig.json", "{}\n")?;
+    write(
+        root.path(),
+        "packages/clear/src/main.ts",
+        "export const clear = 1;\n",
+    )?;
+
+    let inherited = json_command(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-limitation-inherited-config",
+            "--path",
+            "tsconfig.json",
+            "--jobs",
+            "1",
+        ],
+        4,
+    )?;
+    assert_eq!(
+        signal_count(&inherited, "required-evidence-incomplete"),
+        Some(1),
+        "the consulted parent config escaped the child importer's limitation",
+    );
+    let clear = json_command(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-limitation-inherited-config-clear",
+            "--path",
+            "packages/clear/src/main.ts",
+            "--jobs",
+            "1",
+        ],
+        0,
+    )?;
+    assert!(!has_signal(&clear, "required-evidence-incomplete"));
     Ok(())
 }
 
@@ -581,6 +657,11 @@ fn public_surface_required_evidence_follows_its_consumer() -> Result<(), Box<dyn
     )?;
     write(
         root.path(),
+        "packages/app/tsconfig.json",
+        r#"{"compilerOptions":{"moduleResolution":"bundler"}}"#,
+    )?;
+    write(
+        root.path(),
         "packages/app/main.ts",
         "import { selected } from '@scope/lib'; console.log(selected);\n",
     )?;
@@ -588,6 +669,11 @@ fn public_surface_required_evidence_follows_its_consumer() -> Result<(), Box<dyn
         root.path(),
         "packages/app-b/package.json",
         r#"{"name":"@scope/app-b","private":true}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/app-b/tsconfig.json",
+        r#"{"compilerOptions":{"moduleResolution":"bundler"}}"#,
     )?;
     write(
         root.path(),
@@ -631,14 +717,16 @@ fn public_surface_required_evidence_follows_its_consumer() -> Result<(), Box<dyn
     )?;
     write(
         root.path(),
+        "packages/clear/tsconfig.json",
+        r#"{"compilerOptions":{"moduleResolution":"bundler"}}"#,
+    )?;
+    write(
+        root.path(),
         "packages/clear/candidate.ts",
         "export const clearDead = 1;\n",
     )?;
 
-    let audit = run(
-        root.path(),
-        &["audit", "--jobs", "1", "--resolution-profile", "bundler"],
-    )?;
+    let audit = run(root.path(), &["audit", "--jobs", "1"])?;
     assert_status(&audit, 0);
     let run_id = field(&audit.stdout, "runId")?;
     let overview = json_command(root.path(), &["overview", "--run", &run_id], 0)?;
@@ -660,8 +748,6 @@ fn public_surface_required_evidence_follows_its_consumer() -> Result<(), Box<dyn
             "packages/app/main.ts",
             "--jobs",
             "1",
-            "--resolution-profile",
-            "bundler",
         ],
         4,
     )?;
@@ -669,6 +755,24 @@ fn public_surface_required_evidence_follows_its_consumer() -> Result<(), Box<dyn
         signal_count(&consumer, "required-evidence-incomplete"),
         Some(1),
         "an equal public-surface diagnostic from another package inflated the gate gap count",
+    );
+    let consumer_config = json_command(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-limitation-surface-consumer-config",
+            "--path",
+            "packages/app/tsconfig.json",
+            "--jobs",
+            "1",
+        ],
+        4,
+    )?;
+    assert_eq!(
+        signal_count(&consumer_config, "required-evidence-incomplete"),
+        Some(1),
+        "the originating consumer's config lost its public-surface limitation",
     );
     let clear = json_command(
         root.path(),
@@ -680,8 +784,89 @@ fn public_surface_required_evidence_follows_its_consumer() -> Result<(), Box<dyn
             "packages/clear/candidate.ts",
             "--jobs",
             "1",
-            "--resolution-profile",
-            "bundler",
+        ],
+        0,
+    )?;
+    assert!(!has_signal(&clear, "required-evidence-incomplete"));
+    Ok(())
+}
+
+fn pnpm_workspace_required_evidence_follows_dependency_intent()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"pnpm-intent-root","private":true}"#,
+    )?;
+    write(
+        root.path(),
+        "workspaces/affected/package.json",
+        r#"{"name":"@scope/affected-root","private":true}"#,
+    )?;
+    write(
+        root.path(),
+        "workspaces/affected/pnpm-workspace.yaml",
+        concat!(
+            "packages:\n",
+            "  - packages/*\n",
+            "packageConfigs:\n",
+            "  project-1:\n",
+            "    saveExact: true\n",
+        ),
+    )?;
+    write(
+        root.path(),
+        "workspaces/affected/packages/app/package.json",
+        r#"{"name":"@scope/affected-app","private":true,"dependencies":{}}"#,
+    )?;
+    write(
+        root.path(),
+        "workspaces/affected/packages/app/src/main.ts",
+        "export const affected = 1;\n",
+    )?;
+    write(
+        root.path(),
+        "packages/clear/package.json",
+        r#"{"name":"@scope/pnpm-clear","private":true}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/clear/src/main.ts",
+        "export const clear = 1;\n",
+    )?;
+
+    let mixed = json_command(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-limitation-pnpm-dependency-intent",
+            "--path",
+            "packages/clear/src/main.ts",
+            "--dependency-at",
+            "workspaces/affected/packages/app/src/main.ts",
+            "zod",
+            "--jobs",
+            "1",
+        ],
+        4,
+    )?;
+    assert_eq!(
+        signal_count(&mixed, "required-evidence-incomplete"),
+        Some(1),
+        "the dependency intent escaped its unsupported pnpm workspace",
+    );
+    let clear = json_command(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-limitation-pnpm-clear",
+            "--path",
+            "packages/clear/src/main.ts",
+            "--jobs",
+            "1",
         ],
         0,
     )?;
