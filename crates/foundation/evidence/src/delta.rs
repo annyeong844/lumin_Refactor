@@ -1285,6 +1285,37 @@ mod tests {
     }
 
     #[test]
+    fn cross_package_sfc_mode_conflict_remains_workspace_scoped()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let package_a = RepoPath::from_portable("packages/a")?;
+        let package_b = RepoPath::from_portable("packages/b")?;
+        let package_c = RepoPath::from_portable("packages/c")?;
+        let parent = RepoPath::from_portable("packages/a/src/App.vue")?;
+        let target = RepoPath::from_portable("packages/b/src/external.ts")?;
+        let unrelated = RepoPath::from_portable("packages/c/src/candidate.ts")?;
+        let mut evidence =
+            evidence_with_limitations(vec![Limitation::VueExternalScriptModeConflict {
+                source_id: LogicalSourceId::from_path(&parent),
+                target_source_id: LogicalSourceId::from_path(&target),
+                declared: "tsx".to_owned(),
+                actual: "typescript".to_owned(),
+            }]);
+        evidence.source_contexts = vec![
+            source_context(&parent, &package_a),
+            source_context(&target, &package_b),
+            source_context(&unrelated, &package_c),
+        ];
+
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&unrelated)])
+                .required_evidence_gap_count,
+            1,
+            "different known parent/target owners must retain the contract's workspace fallback",
+        );
+        Ok(())
+    }
+
+    #[test]
     fn public_surface_scope_uses_exact_originating_importer()
     -> Result<(), Box<dyn std::error::Error>> {
         let consumer_a_package = RepoPath::from_portable("packages/app-a")?;

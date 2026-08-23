@@ -279,13 +279,19 @@ fn blocked_absence_scope(
                     workspace_blocked = true;
                     continue;
                 };
-                let parent_known =
-                    block_source_owner(source_id, sources, config, &mut blocked_paths);
-                let target_known =
-                    block_source_owner(target_source_id, sources, config, &mut blocked_paths);
-                if !parent_known || !target_known {
+                let Some(parent_root) = config.source_packages.get(source_id) else {
                     workspace_blocked = true;
+                    continue;
+                };
+                let Some(target_root) = config.source_packages.get(target_source_id) else {
+                    workspace_blocked = true;
+                    continue;
+                };
+                if parent_root != target_root {
+                    workspace_blocked = true;
+                    continue;
                 }
+                block_sources_under(parent_root, sources, &mut blocked_paths);
             }
             LimitationScopePolicy::ImportedTargetsOrPackage => match limitation {
                 Limitation::ImportMetaGlobUnsupported {
@@ -586,6 +592,39 @@ mod tests {
 
     fn empty_config() -> SemanticConfigSnapshot {
         SemanticConfigSnapshot::default()
+    }
+
+    #[test]
+    fn cross_package_external_script_mode_conflict_blocks_workspace_absence()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let parent = make_source("packages/a/src/App.vue", false)?;
+        let target = make_source("packages/b/src/external.ts", false)?;
+        let unrelated = make_source("packages/c/src/candidate.ts", false)?;
+        let mut config = empty_config();
+        config
+            .source_packages
+            .insert(parent.id.clone(), RepoPath::from_portable("packages/a")?);
+        config
+            .source_packages
+            .insert(target.id.clone(), RepoPath::from_portable("packages/b")?);
+        config
+            .source_packages
+            .insert(unrelated.id.clone(), RepoPath::from_portable("packages/c")?);
+        let limitation = Limitation::VueExternalScriptModeConflict {
+            source_id: parent.id.clone(),
+            target_source_id: target.id.clone(),
+            declared: "tsx".to_owned(),
+            actual: "typescript".to_owned(),
+        };
+
+        let (workspace_blocked, _) = blocked_absence_scope(
+            &[parent, target, unrelated],
+            &config,
+            std::slice::from_ref(&limitation),
+        );
+
+        assert!(workspace_blocked);
+        Ok(())
     }
 
     #[test]

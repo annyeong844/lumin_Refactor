@@ -44,7 +44,7 @@ use observation::{
 };
 use transitions::{active_transition_signals, changed_paths, reconcile_transitions};
 
-const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v30";
+const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v31";
 const DEPENDENCY_CANDIDATE_TOPOLOGY_ONLY: &[u8] = b"dependency-candidate-topology-only.v1";
 
 fn analysis_contract_id() -> String {

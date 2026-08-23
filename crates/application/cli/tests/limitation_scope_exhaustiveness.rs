@@ -19,7 +19,74 @@ fn limitation_scope_exhaustiveness_is_public() -> Result<(), Box<dyn std::error:
     resolved_module_opacity_remains_advisory()?;
     mixed_opacity_scope_selects_fact_or_required_gap()?;
     known_empty_target_scope_remains_normalized()?;
+    cross_package_sfc_conflict_remains_workspace_scoped()?;
     unavailable_sfc_owner_has_a_distinct_gate_signal()?;
+    Ok(())
+}
+
+fn cross_package_sfc_conflict_remains_workspace_scoped() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"cross-package-sfc","private":true,"workspaces":["packages/*"]}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/a/package.json",
+        r#"{"name":"@scope/a","private":true}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/a/src/App.vue",
+        "<script lang=\"tsx\" src=\"../../b/src/external.ts\"></script>\n",
+    )?;
+    write(
+        root.path(),
+        "packages/b/package.json",
+        r#"{"name":"@scope/b","private":true}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/b/src/external.ts",
+        "export const externalCandidate = 1;\n",
+    )?;
+    write(
+        root.path(),
+        "packages/c/package.json",
+        r#"{"name":"@scope/c","private":true}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/c/src/candidate.ts",
+        "export const unrelatedCandidate = 1;\n",
+    )?;
+
+    let audit = run(root.path(), &["audit", "--jobs", "1"])?;
+    assert_status(&audit, 0);
+    let run_id = field(&audit.stdout, "runId")?;
+    assert!(
+        finding_paths(root.path(), &run_id)?.is_empty(),
+        "cross-package SFC uncertainty must disable workspace absence",
+    );
+    let unrelated = json_command(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-limitation-cross-package-sfc",
+            "--path",
+            "packages/c/src/candidate.ts",
+            "--jobs",
+            "1",
+        ],
+        4,
+    )?;
+    assert_eq!(
+        signal_count(&unrelated, "required-evidence-incomplete"),
+        Some(1),
+        "different known SFC owners lost the required workspace-scoped gap",
+    );
     Ok(())
 }
 
