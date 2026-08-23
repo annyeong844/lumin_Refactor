@@ -10,7 +10,9 @@ use crate::gate::{GATES, OPERATIONS, TRANSITIONS, VALIDATION_RECEIPTS};
 use crate::retention::{RETENTION_OPERATIONS, RETENTION_PLANS, RETENTION_TOMBSTONES, RUN_PINS};
 use crate::{ATTEMPT_LEASES, POINTERS, RUN_CATALOG, SEQUENCES, StoreError, backend_error};
 
-use super::super::super::store_header::STORE_HEADER_TABLE_NAME;
+use super::super::super::store_header::{
+    STORE_HEADER_TABLE_NAME, refresh_validation_receipt_set_id,
+};
 use super::LogicalStoreSnapshot;
 use super::validation::validate_referential_closure;
 
@@ -81,6 +83,7 @@ pub(super) fn write_snapshot(
         CACHE_EVICTION_AUTHORIZATIONS,
         &snapshot.cache_eviction_authorizations,
     )?;
+    refresh_validation_receipt_set_id(&write)?;
     write.commit().map_err(backend_error)
 }
 

@@ -5,7 +5,10 @@ use redb::{Database, ReadTransaction, ReadableDatabase, WriteTransaction};
 use crate::{StoreError, StoreGeneration, backend_error, io_error};
 
 use super::platform::{EntryAccess, EntryKind, HeldEntry};
-use super::store_header::{verify_store_header, verify_store_header_write};
+use super::store_header::{
+    refresh_validation_receipt_set_id, verify_store_header, verify_store_header_write,
+    verify_validation_receipt_set_read,
+};
 use super::{NamespaceGuard, require_state_volume};
 
 pub(crate) struct StoreDatabase<'guard> {
@@ -72,10 +75,11 @@ impl NamespaceGuard {
         }
         self.validate_bound_entries()?;
         database.validate_current()?;
-        verify_store_header_write(&write, &self.state.binding, database.generation)?;
+        refresh_validation_receipt_set_id(&write)?;
         write.commit().map_err(backend_error)?;
         self.validate_bound_entries()?;
         database.validate_current()?;
+        database.validate_receipt_set_current()?;
         self.validate_bound_entries()
     }
 
@@ -108,6 +112,7 @@ impl<'guard> StoreDatabase<'guard> {
 
     pub(crate) fn begin_read(&self) -> Result<StoreReadTransaction<'_, 'guard>, StoreError> {
         let read = self.database.begin_read().map_err(backend_error)?;
+        verify_validation_receipt_set_read(&read, &self.guard.state.binding, self.generation)?;
         Ok(StoreReadTransaction {
             read,
             _database: self,
@@ -116,6 +121,7 @@ impl<'guard> StoreDatabase<'guard> {
 
     pub(crate) fn begin_write(&self) -> Result<StoreWriteTransaction<'_, 'guard>, StoreError> {
         let write = self.database.begin_write().map_err(backend_error)?;
+        verify_store_header_write(&write, &self.guard.state.binding, self.generation)?;
         Ok(StoreWriteTransaction {
             write,
             database: self,
@@ -149,6 +155,11 @@ impl<'guard> StoreDatabase<'guard> {
             });
         }
         Ok(())
+    }
+
+    fn validate_receipt_set_current(&self) -> Result<(), StoreError> {
+        let read = self.database.begin_read().map_err(backend_error)?;
+        verify_validation_receipt_set_read(&read, &self.guard.state.binding, self.generation)
     }
 }
 

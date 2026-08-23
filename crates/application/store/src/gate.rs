@@ -29,12 +29,12 @@ pub use liveness::OperationSession;
 pub(crate) use liveness::validate_migration_operation_liveness;
 pub(crate) use receipts::{operation_retention_identity, validation_receipt_for_operation};
 use receipts::{
-    persist_validation_receipt, remove_validation_receipt, validate_loaded_validation_receipt,
-    validate_stored_validation_receipt,
+    persist_validation_receipt, remove_validation_receipt, validate_gate_validation_receipts,
+    validate_loaded_validation_receipt, validate_stored_validation_receipt,
 };
 use records::{
-    current_active_gate_catalog, current_transition_sequence, load_record, next_gate_id,
-    next_transition_sequence, read_record, read_records, write_record,
+    current_active_gate_catalog, current_transition_sequence, load_record, load_record_from_read,
+    next_gate_id, next_transition_sequence, read_record, read_records, write_record,
 };
 
 pub(crate) const GATES: TableDefinition<&str, &[u8]> = TableDefinition::new("gates");
@@ -213,8 +213,11 @@ impl RepositoryStore {
     pub fn load_gate(&self, gate_id: &GateId) -> Result<GateRecord, StoreError> {
         self.with_shared_lock(|guard| {
             let database = guard.open_database()?;
-            load_record::<GateRecord>(&database, GATES, gate_id.as_str())?
-                .ok_or_else(|| StoreError::GateNotFound(gate_id.as_str().to_owned()))
+            let read = database.begin_read()?;
+            let gate = load_record_from_read::<GateRecord>(&read, GATES, gate_id.as_str())?
+                .ok_or_else(|| StoreError::GateNotFound(gate_id.as_str().to_owned()))?;
+            validate_gate_validation_receipts(&read, &gate)?;
+            Ok(gate)
         })
     }
 
@@ -236,9 +239,9 @@ impl RepositoryStore {
                     Ok(lumin_evidence::RecordLookup::Pruning(tombstone.envelope))
                 };
             }
-            drop(read);
-            let gate = load_record::<GateRecord>(&database, GATES, gate_id.as_str())?
+            let gate = load_record_from_read::<GateRecord>(&read, GATES, gate_id.as_str())?
                 .ok_or_else(|| StoreError::GateNotFound(gate_id.as_str().to_owned()))?;
+            validate_gate_validation_receipts(&read, &gate)?;
             Ok(lumin_evidence::RecordLookup::Live(gate))
         })
     }
@@ -364,6 +367,7 @@ impl RepositoryStore {
                 if gate.lifecycle != GateLifecycle::Active {
                     continue;
                 }
+                validate_gate_validation_receipts(&read, &gate)?;
                 // Active requires baseline
                 let baseline = gate.baseline.as_ref().ok_or_else(|| {
                     StoreError::Integrity(format!(

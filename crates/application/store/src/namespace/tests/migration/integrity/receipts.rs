@@ -37,6 +37,7 @@ fn replace_validation_receipt(
         let bytes = serde_json::to_vec(&receipt)?;
         table.insert(operation.operation_id.as_str(), bytes.as_slice())?;
     }
+    reseal_validation_receipt_set(&write)?;
     write.commit()?;
     Ok(())
 }
@@ -364,7 +365,6 @@ fn migration_authenticates_historical_pending_conflict_witnesses()
     ));
     drop(rejected);
     drop(owner);
-    drop(store);
 
     let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
     let write = database.begin_write()?;
@@ -427,7 +427,6 @@ fn migration_authenticates_historical_pending_conflict_witnesses()
     write.commit()?;
     drop(database);
 
-    let store = open_store(root.path())?;
     let outcome = store.migrate_lifecycle_store();
     assert!(
         matches!(
@@ -454,7 +453,6 @@ fn migration_requires_the_store_owned_close_validation_receipt()
         .ok_or("closed gate omitted its close revision")?
         .operation_id
         .clone();
-    drop(store);
 
     let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
     let write = database.begin_write()?;
@@ -465,7 +463,6 @@ fn migration_requires_the_store_owned_close_validation_receipt()
     write.commit()?;
     drop(database);
 
-    let store = open_store(root.path())?;
     assert!(matches!(
         store.migrate_lifecycle_store(),
         Err(StoreError::Integrity(message))
@@ -480,7 +477,7 @@ fn committed_operation_queries_require_the_store_owned_validation_receipt()
     let root = tempfile::tempdir()?;
     let operation_id = OperationId::from_string("op-query-receipt-open".to_owned());
     let store = open_store(root.path())?;
-    open_active_gate_for(&store, operation_id.as_str(), "src/query-receipt.ts")?;
+    let gate_id = open_active_gate_for(&store, operation_id.as_str(), "src/query-receipt.ts")?;
     let operation = store.load_operation(&operation_id)?;
     let request_digest = operation.request_digest.clone();
     drop(store);
@@ -491,10 +488,21 @@ fn committed_operation_queries_require_the_store_owned_validation_receipt()
         let mut table = write.open_table(VALIDATION_RECEIPTS)?;
         table.remove(operation_id.as_str())?;
     }
+    reseal_validation_receipt_set(&write)?;
     write.commit()?;
     drop(database);
 
     let store = open_store(root.path())?;
+    assert!(matches!(
+        store.load_gate(&gate_id),
+        Err(StoreError::Integrity(message))
+            if message.contains("store-owned validation receipt")
+    ));
+    assert!(matches!(
+        store.lookup_gate(&gate_id),
+        Err(StoreError::Integrity(message))
+            if message.contains("store-owned validation receipt")
+    ));
     assert!(matches!(
         store.load_operation(&operation_id),
         Err(StoreError::Integrity(message))

@@ -17,7 +17,7 @@ use lumin_model::{
     PhysicalFileIdentity, RepoPath, ResolutionProfile, RunId, SealedGateObservation,
     UnsealedObservationReason,
 };
-use redb::{Database, ReadableTable};
+use redb::{Database, ReadableTable, WriteTransaction};
 
 use crate::gate::{
     GATES, OPERATIONS, TRANSITIONS, VALIDATION_RECEIPTS, records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY,
@@ -38,6 +38,13 @@ use super::{
 };
 
 mod receipts;
+
+fn reseal_validation_receipt_set(
+    write: &WriteTransaction,
+) -> Result<(), Box<dyn std::error::Error>> {
+    crate::namespace::store_header::refresh_validation_receipt_set_id(write)?;
+    Ok(())
+}
 
 fn reconstructed_baseline_binding(
     gate: &GateRecord,
@@ -1089,6 +1096,7 @@ fn migration_reconstructs_new_file_parent_and_prefix_bindings()
             let changed = serde_json::to_vec(&receipt)?;
             table.insert(operation_id.as_str(), changed.as_slice())?;
         }
+        reseal_validation_receipt_set(&write)?;
         write.commit()?;
         drop(database);
 
@@ -2785,7 +2793,7 @@ fn migration_authenticates_final_freshness_signals_in_the_opening_observation()
     )?;
     assert_eq!(result.lifecycle, GateLifecycle::Rejected);
     assert_eq!(result.decision, GateDecision::Stale);
-    drop(store);
+    drop(session);
 
     let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
     let write = database.begin_write()?;
@@ -2824,7 +2832,7 @@ fn migration_authenticates_final_freshness_signals_in_the_opening_observation()
         table.insert(gate_id.as_str(), changed.as_slice())?;
         (binding, candidate_leases)
     };
-    {
+    let forged_receipt = {
         let mut table = write.open_table(OPERATIONS)?;
         let bytes = table
             .get(operation_id.as_str())?
@@ -2856,7 +2864,15 @@ fn migration_authenticates_final_freshness_signals_in_the_opening_observation()
         result.decision = GateDecision::Allow;
         result.lifecycle = GateLifecycle::Active;
         result.leased_write_set = candidate_leases;
+        let forged_receipt = crate::gate::validation_receipt_for_operation(&operation)?
+            .ok_or("forged final-freshness operation omitted its validation receipt")?;
         let changed = serde_json::to_vec(&operation)?;
+        table.insert(operation_id.as_str(), changed.as_slice())?;
+        forged_receipt
+    };
+    {
+        let mut table = write.open_table(VALIDATION_RECEIPTS)?;
+        let changed = serde_json::to_vec(&forged_receipt)?;
         table.insert(operation_id.as_str(), changed.as_slice())?;
     }
     {
@@ -2866,11 +2882,10 @@ fn migration_authenticates_final_freshness_signals_in_the_opening_observation()
     write.commit()?;
     drop(database);
 
-    let store = open_store(root.path())?;
     assert!(matches!(
         store.migrate_lifecycle_store(),
         Err(StoreError::Integrity(message))
-            if message.contains("final-freshness observations")
+            if message.contains("validation receipt set")
     ));
     Ok(())
 }
@@ -3397,6 +3412,7 @@ fn migration_reopens_pending_pre_write_physical_reservations()
             let changed = serde_json::to_vec(&receipt)?;
             table.insert(operation_id.as_str(), changed.as_slice())?;
         }
+        reseal_validation_receipt_set(&write)?;
         write.commit()?;
         drop(database);
 

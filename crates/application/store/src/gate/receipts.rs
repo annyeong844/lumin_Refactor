@@ -1,13 +1,13 @@
 use lumin_evidence::{
-    GATE_VALIDATION_RECEIPT_SCHEMA_VERSION, GateOperationKind, GateOperationStatus,
+    GATE_VALIDATION_RECEIPT_SCHEMA_VERSION, GateOperationKind, GateOperationStatus, GateRecord,
     GateValidationReceipt, GateValidationReceiptPayload, OperationRecord,
 };
-use redb::WriteTransaction;
+use redb::{ReadTransaction, WriteTransaction};
 
 use crate::{StoreError, namespace::StoreDatabase};
 
-use super::VALIDATION_RECEIPTS;
-use super::records::{load_record, read_record, write_record};
+use super::records::{load_record, load_record_from_read, read_record, write_record};
+use super::{OPERATIONS, VALIDATION_RECEIPTS};
 
 pub(crate) fn validation_receipt_for_operation(
     operation: &OperationRecord,
@@ -192,6 +192,42 @@ pub(super) fn validate_loaded_validation_receipt(
         operation.operation_id.as_str(),
     )?;
     validate_validation_receipt_pair(operation, expected, existing)
+}
+
+pub(super) fn validate_gate_validation_receipts(
+    read: &ReadTransaction,
+    gate: &GateRecord,
+) -> Result<(), StoreError> {
+    for revision in &gate.revisions {
+        let operation = load_record_from_read::<OperationRecord>(
+            read,
+            OPERATIONS,
+            revision.operation_id.as_str(),
+        )?
+        .ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "gate {} revision {} lost its operation {}",
+                gate.gate_id.as_str(),
+                revision.revision,
+                revision.operation_id.as_str()
+            ))
+        })?;
+        if operation.gate_id != gate.gate_id {
+            return Err(StoreError::Integrity(format!(
+                "gate {} revision {} is owned by another operation gate",
+                gate.gate_id.as_str(),
+                revision.revision
+            )));
+        }
+        let expected = validation_receipt_for_operation(&operation)?;
+        let existing = load_record_from_read::<GateValidationReceipt>(
+            read,
+            VALIDATION_RECEIPTS,
+            operation.operation_id.as_str(),
+        )?;
+        validate_validation_receipt_pair(&operation, expected, existing)?;
+    }
+    Ok(())
 }
 
 fn validate_validation_receipt_pair(

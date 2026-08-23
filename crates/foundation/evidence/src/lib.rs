@@ -29,6 +29,20 @@ pub const CAPABILITIES_ORDERING_ID: &str = "capabilities.v1";
 pub const FILE_FINDINGS_ORDERING_ID: &str = "file-findings.v1";
 pub const ACTIVE_GATES_ORDERING_ID: &str = "active-gates.v1";
 
+// The architecture check must inspect Limitation variants outside macro token streams.
+#[allow(clippy::match_like_matches_macro)]
+pub fn dead_code_capability_state(limitations: &[Limitation]) -> CapabilityState {
+    if limitations.iter().any(|limitation| match limitation {
+        Limitation::DependencyOwnerAmbiguous { .. }
+        | Limitation::PnpmDependencySemanticsUnsupported { .. } => false,
+        _ => true,
+    }) {
+        CapabilityState::Incomplete
+    } else {
+        CapabilityState::Complete
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EvidenceQueryScope {
     Binary {
@@ -430,6 +444,33 @@ mod tests {
     use lumin_model::{FindingDisposition, SymbolNamespace};
 
     use super::*;
+
+    #[test]
+    fn dependency_ownership_only_limitations_do_not_degrade_dead_code() {
+        let dependency_only = vec![
+            Limitation::DependencyOwnerAmbiguous {
+                path: "src/main.ts".to_owned(),
+                package_scope: None,
+                required_intent: None,
+                detail: "ambiguous owner".to_owned(),
+            },
+            Limitation::PnpmDependencySemanticsUnsupported {
+                path: "pnpm-workspace.yaml".to_owned(),
+                detail: "unsupported pnpm semantics".to_owned(),
+            },
+        ];
+        assert_eq!(
+            dead_code_capability_state(&dependency_only),
+            CapabilityState::Complete
+        );
+        assert_eq!(
+            dead_code_capability_state(&[Limitation::PackageMetadataUnobservable {
+                path: "package.json".to_owned(),
+                detail: "unreadable".to_owned(),
+            }]),
+            CapabilityState::Incomplete
+        );
+    }
 
     #[test]
     fn canonicalization_deduplicates_identical_nested_rows()

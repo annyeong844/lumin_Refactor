@@ -10,7 +10,9 @@ use crate::{StoreError, StoreGeneration, backend_error, io_error};
 
 use self::tables::{read_snapshot, write_snapshot};
 use super::super::platform::{EntryAccess, EntryKind, HeldEntry};
-use super::super::store_header::{initialize_store, verify_store_header};
+use super::super::store_header::{
+    initialize_store, verify_store_header, verify_validation_receipt_set_read,
+};
 use super::super::{NamespaceGuard, entry_exists, require_state_volume};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -65,6 +67,7 @@ pub(super) fn read_private(
         return Err(StoreError::StoreGenerationChanged { expected, observed });
     }
     let read = database.begin_read().map_err(backend_error)?;
+    verify_validation_receipt_set_read(&read, &guard.state.binding, expected)?;
     let snapshot = read_snapshot(&read)?;
     drop(read);
     drop(database);
@@ -95,7 +98,15 @@ pub(super) fn create_private(
         .create_file(entry.file().try_clone().map_err(io_error)?)
         .map_err(backend_error)?;
     write_snapshot(&database, snapshot)?;
+    let observed_generation = verify_store_header(&database, &guard.state.binding)?;
+    if observed_generation != generation {
+        return Err(StoreError::StoreGenerationChanged {
+            expected: generation,
+            observed: observed_generation,
+        });
+    }
     let read = database.begin_read().map_err(backend_error)?;
+    verify_validation_receipt_set_read(&read, &guard.state.binding, generation)?;
     let observed = read_snapshot(&read)?;
     if &observed != snapshot {
         return Err(StoreError::Integrity(

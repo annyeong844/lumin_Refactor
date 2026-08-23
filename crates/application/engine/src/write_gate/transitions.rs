@@ -154,7 +154,7 @@ mod tests {
         WriteLease, WriteLeaseKind, apply_worktree_transition, seal_analysis_snapshot,
     };
     use lumin_model::{
-        CapabilityState, GateBaselineObservationId, GateCloseObservationId, GateId,
+        CapabilityState, GateBaselineObservationId, GateCloseObservationId, GateId, Limitation,
         LogicalSourceId, PhysicalFileIdentity, RepoPath,
     };
 
@@ -164,21 +164,21 @@ mod tests {
     fn request_specific_dependency_evidence_rebases_disjoint_transition()
     -> Result<(), Box<dyn std::error::Error>> {
         let changed_path = path("packages/b/src/main.ts")?;
-        let mut adjusted = snapshot(
+        let mut adjusted = with_dependency_only_limitation(snapshot(
             vec![input("packages/b/src/main.ts", "before")?],
             owner("packages/a/src/main.ts", "left-pad", "packages/a")?,
             intent("packages/a/src/main.ts", "left-pad")?,
-        );
-        let transition_before = snapshot(
+        ));
+        let transition_before = with_dependency_only_limitation(snapshot(
             vec![input("packages/b/src/main.ts", "before")?],
             owner("packages/b/src/main.ts", "is-odd", "packages/b")?,
             intent("packages/b/src/main.ts", "is-odd")?,
-        );
-        let transition_after = snapshot(
+        ));
+        let transition_after = with_dependency_only_limitation(snapshot(
             vec![input("packages/b/src/main.ts", "after")?],
             owner("packages/b/src/main.ts", "is-odd", "packages/b")?,
             intent("packages/b/src/main.ts", "is-odd")?,
-        );
+        ));
         let transition = WorktreeTransition {
             sequence: 1,
             capsule: TransitionCapsule {
@@ -199,6 +199,10 @@ mod tests {
         assert_eq!(adjusted.evidence.dependency_owners, adjusted_owner);
         assert_eq!(adjusted.scan_invocation, adjusted_invocation);
         assert_eq!(adjusted.inputs[0].payload_sha256.as_deref(), Some("after"));
+        assert_eq!(
+            adjusted.evidence.dead_code_state(),
+            CapabilityState::Complete
+        );
         Ok(())
     }
 
@@ -451,6 +455,27 @@ mod tests {
             snapshot.inputs,
             snapshot.evidence,
             invocation,
+            snapshot.entry_selections,
+        )
+    }
+
+    fn with_dependency_only_limitation(snapshot: AnalysisSnapshot) -> AnalysisSnapshot {
+        let mut evidence = snapshot.evidence;
+        evidence.limitations = vec![Limitation::PnpmDependencySemanticsUnsupported {
+            path: "pnpm-workspace.yaml".to_owned(),
+            detail: "unsupported pnpm semantics".to_owned(),
+        }];
+        for capability in &mut evidence.capabilities {
+            if capability.capability_id == DEAD_CODE_CAPABILITY_ID {
+                capability.state = CapabilityState::Complete;
+            } else if capability.capability_id == DEPENDENCY_OWNERSHIP_CAPABILITY_ID {
+                capability.state = CapabilityState::Incomplete;
+            }
+        }
+        seal_analysis_snapshot(
+            snapshot.inputs,
+            evidence,
+            snapshot.scan_invocation,
             snapshot.entry_selections,
         )
     }

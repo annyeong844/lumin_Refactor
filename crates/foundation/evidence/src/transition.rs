@@ -5,7 +5,7 @@ use lumin_model::{CapabilityState, Limitation};
 use crate::{
     AnalysisSnapshot, DEAD_CODE_CAPABILITY_ID, DEPENDENCY_OWNERSHIP_CAPABILITY_ID,
     RepoPathProjection, RunEvidence, SemanticInputRecord, WorktreeTransition, WriteLease,
-    seal_analysis_snapshot,
+    dead_code_capability_state, seal_analysis_snapshot,
 };
 
 pub fn apply_worktree_transition(
@@ -298,11 +298,7 @@ fn is_request_specific_dependency_limitation(limitation: &Limitation) -> bool {
 }
 
 fn refresh_request_sensitive_capabilities(evidence: &mut RunEvidence) -> bool {
-    let dead_code_state = if evidence.limitations.is_empty() {
-        CapabilityState::Complete
-    } else {
-        CapabilityState::Incomplete
-    };
+    let dead_code_state = dead_code_capability_state(&evidence.limitations);
     let dependency_ownership_state = dependency_ownership_state(&evidence.limitations);
     let mut dead_code_found = false;
     let mut dependency_ownership_found = false;

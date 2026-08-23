@@ -1,5 +1,5 @@
 use lumin_model::GateId;
-use redb::{ReadableTable, TableDefinition, TableError, WriteTransaction};
+use redb::{ReadTransaction, ReadableTable, TableDefinition, TableError, WriteTransaction};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{SEQUENCES, StoreError, backend_error, namespace::StoreDatabase, serialization_error};
@@ -77,6 +77,25 @@ pub(crate) fn load_record<T: DeserializeOwned>(
     key: &str,
 ) -> Result<Option<T>, StoreError> {
     let read = database.begin_read()?;
+    let table = match read.open_table(definition) {
+        Ok(table) => table,
+        Err(TableError::TableDoesNotExist(_)) => return Ok(None),
+        Err(error) => return Err(backend_error(error)),
+    };
+    let bytes = table
+        .get(key)
+        .map_err(backend_error)?
+        .map(|value| value.value().to_vec());
+    bytes
+        .map(|bytes| serde_json::from_slice(&bytes).map_err(serialization_error))
+        .transpose()
+}
+
+pub(crate) fn load_record_from_read<T: DeserializeOwned>(
+    read: &ReadTransaction,
+    definition: TableDefinition<'static, &str, &[u8]>,
+    key: &str,
+) -> Result<Option<T>, StoreError> {
     let table = match read.open_table(definition) {
         Ok(table) => table,
         Err(TableError::TableDoesNotExist(_)) => return Ok(None),

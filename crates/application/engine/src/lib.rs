@@ -41,7 +41,7 @@ use lumin_evidence::{
     DEPENDENCY_OWNERSHIP_CAPABILITY_ID, DependencyOwnerRecord, EntrySelectionRecord,
     PathPrefixIdentity, RepoPathProjection, RunEvidence, ScanInvocationTier, SemanticInputRecord,
     SemanticInputState, SourceClassificationRecord, SourceContextRecord, SourceObservationRecord,
-    seal_analysis_snapshot,
+    dead_code_capability_state, seal_analysis_snapshot,
 };
 use lumin_inventory::{
     InventoryError, InventoryRequest, InventorySnapshot, RepositoryAdmission, SemanticPolicyState,
@@ -587,7 +587,7 @@ impl RepositoryAnalysisSession {
             &self.inventory.config,
             &limitations,
         );
-        let state = dead_code_state(&limitations);
+        let state = dead_code_capability_state(&limitations);
         let mut capabilities = vec![
             CapabilityRecord {
                 capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
@@ -865,20 +865,6 @@ fn dependency_ownership_state(limitations: &[Limitation]) -> CapabilityState {
         | Limitation::WorkspaceOwnershipUnsupported { .. }
         | Limitation::PnpmDependencySemanticsUnsupported { .. } => true,
         _ => false,
-    }) {
-        CapabilityState::Incomplete
-    } else {
-        CapabilityState::Complete
-    }
-}
-
-// The architecture check must inspect Limitation variants outside macro token streams.
-#[allow(clippy::match_like_matches_macro)]
-fn dead_code_state(limitations: &[Limitation]) -> CapabilityState {
-    if limitations.iter().any(|limitation| match limitation {
-        Limitation::DependencyOwnerAmbiguous { .. }
-        | Limitation::PnpmDependencySemanticsUnsupported { .. } => false,
-        _ => true,
     }) {
         CapabilityState::Incomplete
     } else {
