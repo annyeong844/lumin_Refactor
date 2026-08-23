@@ -144,6 +144,20 @@ forces both completion orders and asserts the unchanged durable snapshot after t
 lower completion, advances the cleanup-operation projection to v2 with no v1 fallback,
 and marks only the REVIEW-004 portion of Phase 0 narrowly reopened.
 
+## Ninth Review Result
+
+Independent review bound exact candidate
+`ef6932da7c4968c7aa899c85de84f161d700cd20` and returned `REOPEN`. It found two
+remaining migration and proof contradictions. First, a committed private-v1 cleanup
+record with legacy `not-attempted` may represent a process that wrote stdout and died
+before recording delivery, so direct v2 projection would falsely claim that no sequence
+was allocated. Second, the greater-first proof required the complete durable operation
+snapshot to remain byte-identical after a held lower completion even though the contract
+also required that lower completion to append private evidence. The replacement decision
+maps validated private-v1 records to exact synthetic v2 sequence state, with ambiguous
+committed `not-attempted` becoming `unknown`, and distinguishes the byte-identical public
+v2 projection from the private ledger's one permitted lower-completion append.
+
 ## Decision
 
 The owner amendments define one public command:
@@ -166,10 +180,19 @@ whole-command mutation. That projection exposes only its operation identity/kind
 status and interruption count, authorized/validated counts, stored result, and last
 delivery status; it never embeds unbounded manifests. Show is strictly read-only and
 does not prove process liveness or change a record. The amended binary always emits the
-v2 projection and provides no v1 negotiation or fallback. Frozen v1 never contains
-`unknown`; a v1-only client observes the distinct v2 `schemaVersion` and rejects it as
-unsupported before interpreting the delivery enum. Existing durable cleanup records are
-private state and are projected through v2 only after current store-schema admission.
+v2 projection and provides no v1 negotiation or fallback. Frozen public v1 never
+contains `unknown`; a v1-only client observes the distinct v2 `schemaVersion` and rejects
+it as unsupported before interpreting the delivery enum. The private record schema also
+advances to `lumin-cache-cleanup-operation.v2`. Explicit lifecycle migration retains
+zero delivery sequences for valid pending/interrupted private-v1 rows, maps a committed
+legacy `not-attempted` row to synthetic allocated sequence 1 without completion and thus
+public `unknown`, and maps committed `succeeded`/`failed` to allocated and completed
+sequence 1 with the same result. Any other legacy shape is `IncompatibleStateSchema`
+before generation replacement; no query performs lazy conversion, and the next real
+delivery allocates the migrated maximum's successor. The target lifecycle-store header
+advances from `lumin-lifecycle-store-header.v12` to v13 with the private record schema.
+Ordinary open/query accepts only v13; only the exclusive generation-fenced migrator may
+read v12 and perform this transformation.
 Before every transport, a short
 transaction allocates one increasing delivery-attempt sequence, atomically projects
 `lastDeliveryStatus: "unknown"`, and then releases every guard and transaction.
@@ -177,7 +200,8 @@ transaction allocates one increasing delivery-attempt sequence, atomically proje
 `succeeded` or `failed` only when its sequence is still the greatest allocated sequence;
 while a greater attempt is unfinished, a lower completion leaves `unknown`. Equal
 matching completion is idempotent, equal disagreement is integrity failure, and a lower
-late completion is ignored.
+late completion appends its private sequence/result evidence but cannot change the
+greatest allocated/completed sequences or public projection.
 Immediately after child death the canonical state remains `pending`, and the active-cache
 mutation reservation installed with operation creation remains continuously held. Under
 the exclusive catalog guard, only an identical mutating retry proves the exact execution
@@ -270,10 +294,13 @@ finding for each item:
 2. The cleanup-result v2 field set/order and cleanup-operation v2 projection, request
    digest, exits, stdout/stderr rules, lock release, retry, and strictly read-only
    `operation show` recovery are complete. Frozen cleanup-operation v1 never emits
-   `unknown`, v2 has no silent v1 fallback, pre-transport delivery allocation atomically
-   exposes `unknown`, missing completion never appears `not-attempted`, neither delivery
-   completion order can select the wrong winner, and exact dead-attempt proof,
-   interruption counting, and pending/interrupted/pending transitions agree.
+   `unknown`, v2 has no silent v1 fallback, and the private-v1 migration maps each valid
+   pending/interrupted/committed delivery shape to the exact v2 sequence state while an
+   ambiguous committed `not-attempted` becomes `unknown`. Pre-transport delivery
+   allocation atomically exposes `unknown`, missing completion never appears
+   `not-attempted`, neither delivery completion order can select the wrong winner, and
+   exact dead-attempt proof, interruption counting, and pending/interrupted/pending
+   transitions agree.
 3. Namespace bootstrap durably binds the nested quarantine parent/anchor in marker/store
    while the lock remains global-bootstrap-only; replacement, mount, copied-state, or
    crash recovery cannot form a second binding, and a marker/store schema lacking it
@@ -282,7 +309,10 @@ finding for each item:
    self-hashed foreign state, duplicate/missing rows, and generation disagreement fail.
 5. The operation record, authorization-set ID/count, and complete `Authorized` plan commit
    before any rename, retain their child provenance without quadratic historical copies,
-   and survive lifecycle-store migration as an exact row/child bijection.
+   and survive the named lifecycle-store v12-to-v13 migration as an exact row/child
+   bijection. The migration logical dump includes the canonical synthetic delivery state,
+   rejects every invalid legacy shape before replacement, and never copies ambiguous
+   legacy `not-attempted` as v2 `not-attempted`.
 6. Every regular file and directory is flushed bottom-up and remanifested before
    authorization and after movement; cache, quarantine, and trash entries are flushed
    before validation and result commit, including recovered and empty-cache runs.
@@ -297,10 +327,11 @@ finding for each item:
    durability, row validation, final result commit, delivery allocation, and partial and
    complete stdout before completion. Exact barriers force both delivery orders: lower
    completion while the greater attempt is unfinished, and greater completion followed
-   by the held lower completion committing late. The latter asserts the selected status
-   and complete durable snapshot remain unchanged. No case uses scheduler timing; an
-   exact guard race also proves cleanup cannot overlap publication, retention, or
-   migration.
+   by the held lower completion committing late. The latter asserts the complete public
+   v2 projection remains byte-identical and the private ledger changes by exactly the
+   lower sequence/result append, without changing either greatest sequence or any other
+   durable field. No case uses scheduler timing; an exact guard race also proves cleanup
+   cannot overlap publication, retention, or migration.
 10. Standard, determinism, store-crash, Windows/Linux package, and skill-adapter commands
     are assigned only to behavior they can execute and include `operation show` recovery.
 11. PRODUCT-000, ARCH-000, ARCH-002, SLICE-001 truth, acceptance, and traceability agree
@@ -321,9 +352,11 @@ cover nested-binding bootstrap/replacement,
 operation admission/idempotency, foreign self-hashed quarantine, authorization-plan
 durability, bottom-up flush order, every recovery boundary, exact CLI transport behavior,
 allocated-but-unfinished delivery projection before output and after partial or complete
-stdout, both exact delivery completion orders including the unchanged snapshot after a
-late lower completion, cleanup-operation v2 with explicit v1 incompatibility, continuous
-cache-writer rejection across a dead pending lease, both substitution barriers, and unchanged run/gate evidence. The
+stdout, both exact delivery completion orders including the byte-identical public
+projection and one exact private-ledger append after a late lower completion,
+cleanup-operation v2 with explicit public-v1 incompatibility and the exact private-v1
+synthetic migration, continuous cache-writer rejection across a dead pending lease, both
+substitution barriers, and unchanged run/gate evidence. The
 public `reserved-state-namespace` row remains unmapped until standard and determinism lanes plus
 Windows/Linux package checks execute those behaviors through the packaged CLI and the
 skill package check proves operation-ID generation and recovery. Passing an internal
