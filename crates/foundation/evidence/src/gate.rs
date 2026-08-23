@@ -1504,7 +1504,16 @@ pub struct PostWriteFinalValidation {
     pub evidence: Option<PostWriteFinalValidationEvidence>,
 }
 
-pub const GATE_VALIDATION_RECEIPT_SCHEMA_VERSION: &str = "lumin-gate-validation-receipt.v1";
+pub const GATE_VALIDATION_RECEIPT_SCHEMA_VERSION: &str = "lumin-gate-validation-receipt.v2";
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GateValidationCommitReceipt {
+    pub revision_sha256: String,
+    pub committed_unix_millis: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_payload_sha256: Option<String>,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(
@@ -1526,6 +1535,9 @@ pub enum GateValidationReceiptPayload {
     PostWriteFinal {
         validation: PostWriteFinalValidation,
     },
+    GateAbandon {
+        reason: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1538,6 +1550,8 @@ pub struct GateValidationReceipt {
     pub target_revision: u64,
     #[serde(default)]
     pub pre_write_declared_path_inspection: Vec<PreWriteDeclaredPathInspection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<GateValidationCommitReceipt>,
     pub payload: GateValidationReceiptPayload,
 }
 

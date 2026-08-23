@@ -52,7 +52,7 @@ pub(super) fn validate_referential_closure(
     validate_active_gate_catalog(snapshot, &gates, &operations)?;
     validate_operation_gate_refs(&operations, &gates)?;
     validate_transition_gate_refs(&transitions, &gates)?;
-    validate_validation_receipts(snapshot, &operations, &validation_receipts)?;
+    validate_validation_receipts(snapshot, &gates, &operations, &validation_receipts)?;
     crate::publication::validate_attempt_leases(&snapshot.attempt_leases)?;
     validate_run_catalog(snapshot)?;
     cache::validate_cache(snapshot, &operations)?;
@@ -77,6 +77,11 @@ fn validate_gate_id_sequence(
         .try_fold(0_u64, |maximum, sequence| {
             sequence.map(|sequence| maximum.max(sequence))
         })?;
+    if observed == u64::MAX {
+        return Err(StoreError::Integrity(
+            "gate sequence is exhausted and cannot allocate another gate".to_owned(),
+        ));
+    }
     if observed < minimum {
         return Err(StoreError::Integrity(format!(
             "gate sequence regressed below retained gate allocation: observed {observed}, minimum {minimum}"
@@ -175,11 +180,13 @@ fn read_operations(
 
 fn validate_validation_receipts(
     snapshot: &LogicalStoreSnapshot,
+    gates: &BTreeMap<&str, GateRecord>,
     operations: &BTreeMap<&str, OperationRecord>,
     receipts: &BTreeMap<&str, GateValidationReceipt>,
 ) -> Result<(), StoreError> {
     for (key, operation) in operations {
-        let expected = crate::gate::validation_receipt_for_operation(operation)?;
+        let gate = gates.get(operation.gate_id.as_str());
+        let expected = crate::gate::validation_receipt_for_operation(operation, gate)?;
         match (expected.as_ref(), receipts.get(key)) {
             (Some(expected), Some(observed)) if expected == observed => {}
             (None, None) => {}
@@ -687,6 +694,11 @@ fn validate_transition_catalog_sequence(
     operations: &BTreeMap<&str, OperationRecord>,
 ) -> Result<(), StoreError> {
     let observed = snapshot.sequences.get("transition").copied().unwrap_or(0);
+    if observed == u64::MAX {
+        return Err(StoreError::Integrity(
+            "transition sequence is exhausted and cannot publish another transition".to_owned(),
+        ));
+    }
     let mut minimum = transition_sequences
         .iter()
         .next_back()
@@ -726,6 +738,12 @@ fn validate_active_gate_catalog(
         .get(ACTIVE_GATE_CATALOG_SEQUENCE_KEY)
         .copied()
         .unwrap_or(0);
+    if observed == u64::MAX {
+        return Err(StoreError::Integrity(
+            "active-gate catalog sequence is exhausted and cannot record another mutation"
+                .to_owned(),
+        ));
+    }
     let mut minimum = 0_u64;
     let mut retained_mutation_count = 0_u64;
     for (key, gate) in gates {
@@ -812,6 +830,11 @@ fn validate_gate_history(
         return Err(StoreError::IncompatibleStateSchema(format!(
             "gate {key} uses unsupported schema {}; expected {GATE_RECORD_SCHEMA_VERSION}",
             gate.schema_version
+        )));
+    }
+    if gate.lifecycle == GateLifecycle::Active && gate.current_revision == u64::MAX {
+        return Err(StoreError::Integrity(format!(
+            "active gate {key} exhausted its revision sequence"
         )));
     }
     if gate.revisions.last().map(|revision| revision.revision) != Some(gate.current_revision) {
@@ -2527,6 +2550,7 @@ fn reject_unfinished_pre_write_final_validation(
 }
 
 fn validate_pending_operation_state(operation: &OperationRecord) -> Result<(), StoreError> {
+    validate_unfinished_interruption_capacity(operation)?;
     validate_reservation_binding_set(operation)?;
     if operation.kind == GateOperationKind::PreWrite {
         validate_pending_pre_write_write_domain(operation)?;
@@ -2672,6 +2696,7 @@ fn validate_pending_pre_write_write_domain(operation: &OperationRecord) -> Resul
 }
 
 fn validate_interrupted_operation_state(operation: &OperationRecord) -> Result<(), StoreError> {
+    validate_unfinished_interruption_capacity(operation)?;
     if operation.operation_liveness.is_some()
         || !operation.leased_write_set.is_empty()
         || !operation.semantic_read_reservations.is_empty()
@@ -2679,6 +2704,18 @@ fn validate_interrupted_operation_state(operation: &OperationRecord) -> Result<(
     {
         return Err(StoreError::Integrity(format!(
             "interrupted operation retained provisional state: {}",
+            operation.operation_id.as_str()
+        )));
+    }
+    Ok(())
+}
+
+fn validate_unfinished_interruption_capacity(
+    operation: &OperationRecord,
+) -> Result<(), StoreError> {
+    if operation.interruption_count == u64::MAX {
+        return Err(StoreError::Integrity(format!(
+            "unfinished operation {} exhausted its interruption count",
             operation.operation_id.as_str()
         )));
     }

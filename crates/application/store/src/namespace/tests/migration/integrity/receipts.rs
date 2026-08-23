@@ -28,7 +28,7 @@ fn replace_validation_receipt(
     root: &std::path::Path,
     operation: &OperationRecord,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let receipt = crate::gate::validation_receipt_for_operation(operation)?
+    let receipt = crate::gate::validation_receipt_for_operation(operation, None)?
         .ok_or("operation omitted its expected validation receipt")?;
     let database = Database::open(root.join(".lumin/lifecycle.store"))?;
     let write = database.begin_write()?;
@@ -510,6 +510,259 @@ fn committed_operation_queries_require_the_store_owned_validation_receipt()
     ));
     assert!(matches!(
         store.replay_pre_write_result(&operation_id, &request_digest),
+        Err(StoreError::Integrity(message))
+            if message.contains("store-owned validation receipt")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_exhausted_gate_allocator_sequences() -> Result<(), Box<dyn std::error::Error>>
+{
+    for (key, expected) in [
+        ("gate", "gate sequence is exhausted"),
+        ("transition", "transition sequence is exhausted"),
+        (
+            ACTIVE_GATE_CATALOG_SEQUENCE_KEY,
+            "active-gate catalog sequence is exhausted",
+        ),
+    ] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        drop(store);
+
+        let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+        let write = database.begin_write()?;
+        {
+            let mut table = write.open_table(SEQUENCES)?;
+            table.insert(key, u64::MAX)?;
+        }
+        write.commit()?;
+        drop(database);
+
+        let store = open_store(root.path())?;
+        assert!(matches!(
+            store.migrate_lifecycle_store(),
+            Err(StoreError::Integrity(message)) if message.contains(expected)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_an_active_gate_with_an_exhausted_revision_sequence()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(
+        &store,
+        "op-exhausted-revision-open",
+        "src/exhausted-revision.ts",
+    )?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("active gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        gate.current_revision = u64::MAX;
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("exhausted its revision sequence")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_unfinished_operations_with_exhausted_interruption_counts()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let operation_id = OperationId::from_string("op-exhausted-interruptions".to_owned());
+    let source = RepoPath::from_portable("src/exhausted-interruptions.ts")?;
+    pending_pre_write(root.path(), &operation_id, &source)?;
+    rewrite_operation(root.path(), &operation_id, |operation| {
+        operation.interruption_count = u64::MAX;
+        Ok(())
+    })?;
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("exhausted its interruption count")
+    ));
+    Ok(())
+}
+
+#[test]
+fn committed_abandon_requires_a_header_bound_validation_receipt()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id =
+        open_active_gate_for(&store, "op-abandon-receipt-open", "src/abandon-receipt.ts")?;
+    let gate = store.load_gate(&gate_id)?;
+    let operation_id = OperationId::from_string("op-abandon-receipt".to_owned());
+    let reason = "administrative cleanup";
+    let request_digest = gate_abandon_request_digest(&gate_id, gate.current_revision, reason);
+    store.begin_operation(&operation_id)?.abandon_gate(
+        &request_digest,
+        &gate_id,
+        gate.current_revision,
+        reason,
+    )?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(VALIDATION_RECEIPTS)?;
+        let bytes = table
+            .get(operation_id.as_str())?
+            .ok_or("committed abandon omitted its validation receipt")?
+            .value()
+            .to_vec();
+        let receipt = serde_json::from_slice::<lumin_evidence::GateValidationReceipt>(&bytes)?;
+        assert!(receipt.commit.is_some());
+        assert!(matches!(
+            receipt.payload,
+            lumin_evidence::GateValidationReceiptPayload::GateAbandon { .. }
+        ));
+        table.remove(operation_id.as_str())?;
+    }
+    reseal_validation_receipt_set(&write)?;
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("store-owned validation receipt")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_authenticates_terminal_revision_timestamps_with_the_receipt()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(
+        &store,
+        "op-timestamp-receipt-open",
+        "src/timestamp-receipt.ts",
+    )?;
+    close_active_gate_for_migration(&store, &gate_id)?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("closed gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        gate.revisions
+            .last_mut()
+            .ok_or("closed gate omitted its terminal revision")?
+            .committed_unix_millis = Some(0);
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("store-owned validation receipt")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_authenticates_sealed_evidence_payloads_with_the_receipt()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let operation_id = OperationId::from_string("op-payload-receipt-open".to_owned());
+    let store = open_store(root.path())?;
+    let gate_id = open_active_gate_for(&store, operation_id.as_str(), "src/payload-receipt.ts")?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    let binding = {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(gate_id.as_str())?
+            .ok_or("active gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        gate.baseline
+            .as_mut()
+            .ok_or("active gate omitted its baseline")?
+            .snapshot
+            .evidence
+            .metrics
+            .logical_source_count += 1;
+        let binding = reconstructed_baseline_binding(&gate)?;
+        let ObservationBinding::Sealed {
+            observation: SealedGateObservation::Baseline { observation_id },
+        } = &binding
+        else {
+            return Err("payload fixture produced the wrong observation kind".into());
+        };
+        gate.baseline
+            .as_mut()
+            .ok_or("active gate omitted its baseline")?
+            .observation_id = observation_id.clone();
+        gate.revisions[0].observation_binding = Some(binding.clone());
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(gate_id.as_str(), changed.as_slice())?;
+        binding
+    };
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get(operation_id.as_str())?
+            .ok_or("opening operation is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        operation
+            .result
+            .as_mut()
+            .ok_or("opening operation omitted its result")?
+            .observation_binding = Some(binding);
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert(operation_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
         Err(StoreError::Integrity(message))
             if message.contains("store-owned validation receipt")
     ));

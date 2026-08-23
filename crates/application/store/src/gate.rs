@@ -367,7 +367,6 @@ impl RepositoryStore {
                 if gate.lifecycle != GateLifecycle::Active {
                     continue;
                 }
-                validate_gate_validation_receipts(&read, &gate)?;
                 // Active requires baseline
                 let baseline = gate.baseline.as_ref().ok_or_else(|| {
                     StoreError::Integrity(format!(
@@ -375,6 +374,7 @@ impl RepositoryStore {
                         gate.gate_id.as_str()
                     ))
                 })?;
+                validate_gate_validation_receipts(&read, &gate)?;
                 active_items.push(ActiveGateCatalogItem {
                     gate_id: gate.gate_id.clone(),
                     current_revision: gate.current_revision,
@@ -893,7 +893,7 @@ fn persist_operation_result(
     operation.semantic_read_reservation_bindings.clear();
     operation.operation_liveness = None;
     operation.result = Some(result.clone());
-    persist_validation_receipt(write, operation)?;
+    persist_validation_receipt(write, operation, Some(gate))?;
     write_record(write, GATES, gate.gate_id.as_str(), gate)?;
     write_record(
         write,

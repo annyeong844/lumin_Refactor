@@ -1011,7 +1011,7 @@ fn migration_reconstructs_new_file_parent_and_prefix_bindings()
 
         let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
         let write = database.begin_write()?;
-        let (binding, lease) = {
+        let (binding, lease, receipt_gate) = {
             let mut table = write.open_table(GATES)?;
             let bytes = table
                 .get(gate_id.as_str())?
@@ -1062,7 +1062,7 @@ fn migration_reconstructs_new_file_parent_and_prefix_bindings()
             let lease = gate.leased_write_set[0].clone();
             let changed = serde_json::to_vec(&gate)?;
             table.insert(gate_id.as_str(), changed.as_slice())?;
-            (binding, lease)
+            (binding, lease, gate)
         };
         let receipt = {
             let mut table = write.open_table(OPERATIONS)?;
@@ -1085,8 +1085,9 @@ fn migration_reconstructs_new_file_parent_and_prefix_bindings()
                 .ok_or("new-file-prefix result is missing")?;
             result.leased_write_set = vec![lease];
             result.observation_binding = Some(binding);
-            let receipt = crate::gate::validation_receipt_for_operation(&operation)?
-                .ok_or("new-file-prefix operation omitted its validation receipt")?;
+            let receipt =
+                crate::gate::validation_receipt_for_operation(&operation, Some(&receipt_gate))?
+                    .ok_or("new-file-prefix operation omitted its validation receipt")?;
             let changed = serde_json::to_vec(&operation)?;
             table.insert(operation_id.as_str(), changed.as_slice())?;
             receipt
@@ -2797,7 +2798,7 @@ fn migration_authenticates_final_freshness_signals_in_the_opening_observation()
 
     let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
     let write = database.begin_write()?;
-    let (forged_active_binding, candidate_leases) = {
+    let (forged_active_binding, candidate_leases, forged_gate) = {
         let mut table = write.open_table(GATES)?;
         let bytes = table
             .get(gate_id.as_str())?
@@ -2830,7 +2831,7 @@ fn migration_authenticates_final_freshness_signals_in_the_opening_observation()
         gate.revisions[0].observation_binding = Some(binding.clone());
         let changed = serde_json::to_vec(&gate)?;
         table.insert(gate_id.as_str(), changed.as_slice())?;
-        (binding, candidate_leases)
+        (binding, candidate_leases, gate)
     };
     let forged_receipt = {
         let mut table = write.open_table(OPERATIONS)?;
@@ -2864,8 +2865,9 @@ fn migration_authenticates_final_freshness_signals_in_the_opening_observation()
         result.decision = GateDecision::Allow;
         result.lifecycle = GateLifecycle::Active;
         result.leased_write_set = candidate_leases;
-        let forged_receipt = crate::gate::validation_receipt_for_operation(&operation)?
-            .ok_or("forged final-freshness operation omitted its validation receipt")?;
+        let forged_receipt =
+            crate::gate::validation_receipt_for_operation(&operation, Some(&forged_gate))?
+                .ok_or("forged final-freshness operation omitted its validation receipt")?;
         let changed = serde_json::to_vec(&operation)?;
         table.insert(operation_id.as_str(), changed.as_slice())?;
         forged_receipt
@@ -3401,7 +3403,7 @@ fn migration_reopens_pending_pre_write_physical_reservations()
                 .first_mut()
                 .ok_or("pending physical operation omitted its inspection evidence")?
                 .lease = Some(changed_lease);
-            let receipt = crate::gate::validation_receipt_for_operation(&operation)?
+            let receipt = crate::gate::validation_receipt_for_operation(&operation, None)?
                 .ok_or("pending physical operation omitted its validation receipt")?;
             let changed = serde_json::to_vec(&operation)?;
             table.insert(operation_id.as_str(), changed.as_slice())?;

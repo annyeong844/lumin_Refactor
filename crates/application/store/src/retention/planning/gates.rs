@@ -25,7 +25,7 @@ pub(super) fn collect(
         VALIDATION_RECEIPTS,
         "gate-validation-receipts",
     )?;
-    validate_validation_receipts(&operations, &validation_receipts)?;
+    validate_validation_receipts(&gates, &operations, &validation_receipts)?;
     let transitions =
         read_raw_records::<WorktreeTransition>(write, TRANSITIONS, "worktree-transitions")?;
     let protected = protected_terminal_gates(&gates, &transitions)?;
@@ -195,11 +195,13 @@ fn collect_gate_items(
 }
 
 fn validate_validation_receipts(
+    gates: &BTreeMap<String, (GateRecord, Vec<u8>)>,
     operations: &BTreeMap<String, (OperationRecord, Vec<u8>)>,
     receipts: &BTreeMap<String, (GateValidationReceipt, Vec<u8>)>,
 ) -> Result<(), StoreError> {
     for (key, (operation, _)) in operations {
-        let expected = crate::gate::validation_receipt_for_operation(operation)?;
+        let gate = gates.get(operation.gate_id.as_str()).map(|(gate, _)| gate);
+        let expected = crate::gate::validation_receipt_for_operation(operation, gate)?;
         let observed = receipts.get(key).map(|(receipt, _)| receipt);
         match (expected.as_ref(), observed) {
             (Some(expected), Some(observed)) if expected == observed => {}

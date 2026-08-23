@@ -1,29 +1,41 @@
 use lumin_evidence::{
     GATE_VALIDATION_RECEIPT_SCHEMA_VERSION, GateOperationKind, GateOperationStatus, GateRecord,
-    GateValidationReceipt, GateValidationReceiptPayload, OperationRecord,
+    GateRevision, GateValidationCommitReceipt, GateValidationReceipt, GateValidationReceiptPayload,
+    OperationRecord,
 };
 use redb::{ReadTransaction, WriteTransaction};
 
 use crate::{StoreError, namespace::StoreDatabase};
 
 use super::records::{load_record, load_record_from_read, read_record, write_record};
-use super::{OPERATIONS, VALIDATION_RECEIPTS};
+use super::{GATES, OPERATIONS, VALIDATION_RECEIPTS};
 
 pub(crate) fn validation_receipt_for_operation(
     operation: &OperationRecord,
+    gate: Option<&GateRecord>,
 ) -> Result<Option<GateValidationReceipt>, StoreError> {
-    let payload = if operation.status == GateOperationStatus::Pending
+    let (payload, commit) = if operation.status == GateOperationStatus::Pending
         && operation.kind == GateOperationKind::PreWrite
     {
         validate_pending_pre_write_inspection(operation)?;
-        GateValidationReceiptPayload::PreWriteInspection {
-            declared_path_inspection: operation.pre_write_declared_path_inspection.clone(),
-            leased_write_set: operation.leased_write_set.clone(),
-        }
+        (
+            GateValidationReceiptPayload::PreWriteInspection {
+                declared_path_inspection: operation.pre_write_declared_path_inspection.clone(),
+                leased_write_set: operation.leased_write_set.clone(),
+            },
+            None,
+        )
     } else if operation.status != GateOperationStatus::Committed {
         return Ok(None);
     } else {
-        match operation.kind {
+        let gate = gate.ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "committed operation {} lost its gate record",
+                operation.operation_id.as_str()
+            ))
+        })?;
+        let revision = committed_revision(operation, gate)?;
+        let payload = match operation.kind {
             GateOperationKind::PreWrite => {
                 match (
                     operation.pre_write_admission_evidence.as_ref(),
@@ -54,8 +66,42 @@ pub(crate) fn validation_receipt_for_operation(
                     validation: validation.clone(),
                 }
             }
-            GateOperationKind::GateAbandon => return Ok(None),
-        }
+            GateOperationKind::GateAbandon => {
+                let reason = operation.reason.clone().ok_or_else(|| {
+                    StoreError::Integrity(format!(
+                        "committed abandon operation {} omitted its reason",
+                        operation.operation_id.as_str()
+                    ))
+                })?;
+                GateValidationReceiptPayload::GateAbandon { reason }
+            }
+        };
+        let evidence_payload_sha256 = match operation.kind {
+            GateOperationKind::PreWrite => gate
+                .baseline
+                .as_ref()
+                .map(|baseline| crate::evidence_payload_sha256(&baseline.snapshot.evidence))
+                .transpose()?,
+            GateOperationKind::PostWrite => revision
+                .snapshot
+                .as_ref()
+                .map(|snapshot| crate::evidence_payload_sha256(&snapshot.evidence))
+                .transpose()?,
+            GateOperationKind::GateAbandon => None,
+        };
+        (
+            payload,
+            Some(GateValidationCommitReceipt {
+                revision_sha256: gate_revision_sha256(revision)?,
+                committed_unix_millis: revision.committed_unix_millis.ok_or_else(|| {
+                    StoreError::Integrity(format!(
+                        "committed operation {} has no durable revision timestamp",
+                        operation.operation_id.as_str()
+                    ))
+                })?,
+                evidence_payload_sha256,
+            }),
+        )
     };
     Ok(Some(GateValidationReceipt {
         schema_version: GATE_VALIDATION_RECEIPT_SCHEMA_VERSION.to_owned(),
@@ -64,15 +110,59 @@ pub(crate) fn validation_receipt_for_operation(
         request_digest: operation.request_digest.clone(),
         target_revision: operation.target_revision,
         pre_write_declared_path_inspection: operation.pre_write_declared_path_inspection.clone(),
+        commit,
         payload,
     }))
+}
+
+fn committed_revision<'a>(
+    operation: &OperationRecord,
+    gate: &'a GateRecord,
+) -> Result<&'a GateRevision, StoreError> {
+    let result = operation.result.as_ref().ok_or_else(|| {
+        StoreError::Integrity(format!(
+            "committed operation {} omitted its result",
+            operation.operation_id.as_str()
+        ))
+    })?;
+    if gate.gate_id != operation.gate_id || result.gate_id != operation.gate_id {
+        return Err(StoreError::Integrity(format!(
+            "committed operation {} disagrees with its gate owner",
+            operation.operation_id.as_str()
+        )));
+    }
+    let mut matches = gate.revisions.iter().filter(|revision| {
+        revision.operation_id == operation.operation_id && revision.revision == result.revision
+    });
+    let revision = matches.next().ok_or_else(|| {
+        StoreError::Integrity(format!(
+            "committed operation {} lost its gate revision",
+            operation.operation_id.as_str()
+        ))
+    })?;
+    if matches.next().is_some() {
+        return Err(StoreError::Integrity(format!(
+            "committed operation {} owns multiple gate revisions",
+            operation.operation_id.as_str()
+        )));
+    }
+    Ok(revision)
+}
+
+fn gate_revision_sha256(revision: &GateRevision) -> Result<String, StoreError> {
+    let bytes = serde_json::to_vec(revision).map_err(crate::serialization_error)?;
+    let mut framed = Vec::new();
+    lumin_model::append_length_prefixed(&mut framed, b"lumin-gate-validation-revision.v1");
+    lumin_model::append_length_prefixed(&mut framed, &bytes);
+    Ok(crate::digest_hex(&framed))
 }
 
 pub(super) fn persist_validation_receipt(
     write: &WriteTransaction,
     operation: &OperationRecord,
+    gate: Option<&GateRecord>,
 ) -> Result<(), StoreError> {
-    let expected = validation_receipt_for_operation(operation)?;
+    let expected = validation_receipt_for_operation(operation, gate)?;
     let existing = read_record::<GateValidationReceipt>(
         write,
         VALIDATION_RECEIPTS,
@@ -110,6 +200,8 @@ fn receipt_can_advance(existing: &GateValidationReceipt, expected: &GateValidati
         && existing.target_revision == expected.target_revision
         && existing.pre_write_declared_path_inspection
             == expected.pre_write_declared_path_inspection
+        && existing.commit.is_none()
+        && expected.commit.is_some()
         && inspection_receipt_is_self_consistent(existing)
         && matches!(
             expected.payload,
@@ -172,7 +264,8 @@ pub(super) fn validate_stored_validation_receipt(
     write: &WriteTransaction,
     operation: &OperationRecord,
 ) -> Result<(), StoreError> {
-    let expected = validation_receipt_for_operation(operation)?;
+    let gate = gate_for_stored_operation(write, operation)?;
+    let expected = validation_receipt_for_operation(operation, gate.as_ref())?;
     let existing = read_record::<GateValidationReceipt>(
         write,
         VALIDATION_RECEIPTS,
@@ -185,7 +278,8 @@ pub(super) fn validate_loaded_validation_receipt(
     database: &StoreDatabase<'_>,
     operation: &OperationRecord,
 ) -> Result<(), StoreError> {
-    let expected = validation_receipt_for_operation(operation)?;
+    let gate = gate_for_loaded_operation(database, operation)?;
+    let expected = validation_receipt_for_operation(operation, gate.as_ref())?;
     let existing = load_record::<GateValidationReceipt>(
         database,
         VALIDATION_RECEIPTS,
@@ -219,7 +313,7 @@ pub(super) fn validate_gate_validation_receipts(
                 revision.revision
             )));
         }
-        let expected = validation_receipt_for_operation(&operation)?;
+        let expected = validation_receipt_for_operation(&operation, Some(gate))?;
         let existing = load_record_from_read::<GateValidationReceipt>(
             read,
             VALIDATION_RECEIPTS,
@@ -228,6 +322,40 @@ pub(super) fn validate_gate_validation_receipts(
         validate_validation_receipt_pair(&operation, expected, existing)?;
     }
     Ok(())
+}
+
+fn gate_for_stored_operation(
+    write: &WriteTransaction,
+    operation: &OperationRecord,
+) -> Result<Option<GateRecord>, StoreError> {
+    if operation.status != GateOperationStatus::Committed {
+        return Ok(None);
+    }
+    read_record::<GateRecord>(write, GATES, operation.gate_id.as_str())?
+        .ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "committed operation {} lost its gate record",
+                operation.operation_id.as_str()
+            ))
+        })
+        .map(Some)
+}
+
+fn gate_for_loaded_operation(
+    database: &StoreDatabase<'_>,
+    operation: &OperationRecord,
+) -> Result<Option<GateRecord>, StoreError> {
+    if operation.status != GateOperationStatus::Committed {
+        return Ok(None);
+    }
+    load_record::<GateRecord>(database, GATES, operation.gate_id.as_str())?
+        .ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "committed operation {} lost its gate record",
+                operation.operation_id.as_str()
+            ))
+        })
+        .map(Some)
 }
 
 fn validate_validation_receipt_pair(

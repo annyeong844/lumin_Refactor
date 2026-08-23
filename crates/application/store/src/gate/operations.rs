@@ -145,7 +145,7 @@ impl OperationSession<'_> {
                 return Ok(PreWriteStart::Committed(Box::new(result)));
             }
 
-            persist_validation_receipt(&write, &operation)?;
+            persist_validation_receipt(&write, &operation, None)?;
             write_record(
                 &write,
                 OPERATIONS,
