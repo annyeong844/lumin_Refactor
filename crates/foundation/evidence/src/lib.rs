@@ -306,6 +306,8 @@ pub struct SourceContextRecord {
     pub path: RepoPathProjection,
     pub kind: SourceKind,
     pub package_root: Option<RepoPathProjection>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub configuration_paths: Vec<RepoPathProjection>,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]

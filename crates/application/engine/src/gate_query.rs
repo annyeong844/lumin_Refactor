@@ -1031,6 +1031,7 @@ mod tests {
             path: RepoPathProjection::from(&path),
             kind: SourceKind::TypeScript,
             package_root: None,
+            configuration_paths: Vec::new(),
         };
 
         let mut evidence = run_evidence_with_nested()?;

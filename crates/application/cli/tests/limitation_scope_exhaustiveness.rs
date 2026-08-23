@@ -65,6 +65,90 @@ fn configured_scope_follows_affected_importers() -> Result<(), Box<dyn std::erro
         Some(1),
         "a root config controlling root and nested importers lost its workspace-scoped gap",
     );
+    assert_package_local_config_scope(
+        r#"{"compilerOptions":{"moduleResolution":"classic"}}"#,
+        "failed-profile",
+        false,
+    )?;
+    assert_package_local_config_scope(
+        r#"{"compilerOptions":{"moduleResolution":"bundler","madeUpFlag":true}}"#,
+        "override-profile",
+        true,
+    )?;
+    Ok(())
+}
+
+fn assert_package_local_config_scope(
+    config: &str,
+    operation_suffix: &str,
+    override_profile: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"local-config-root","private":true,"workspaces":["packages/*"]}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/affected/package.json",
+        r#"{"name":"@scope/affected","private":true}"#,
+    )?;
+    write(root.path(), "packages/affected/tsconfig.json", config)?;
+    write(
+        root.path(),
+        "packages/affected/src/main.ts",
+        "export const affectedValue = 1;\n",
+    )?;
+    write(
+        root.path(),
+        "packages/clear/package.json",
+        r#"{"name":"@scope/clear-config","private":true}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/clear/src/main.ts",
+        "export const clearValue = 1;\n",
+    )?;
+
+    let affected_operation = format!("op-limitation-config-affected-{operation_suffix}");
+    let mut affected_arguments = vec![
+        "pre-write",
+        "--operation-id",
+        affected_operation.as_str(),
+        "--path",
+        "packages/affected/src/main.ts",
+        "--jobs",
+        "1",
+    ];
+    if override_profile {
+        affected_arguments.extend(["--resolution-profile", "bundler"]);
+    }
+    let affected = json_command(root.path(), &affected_arguments, 4)?;
+    assert_eq!(
+        signal_count(&affected, "required-evidence-incomplete"),
+        Some(1),
+        "the affected package lost its config limitation",
+    );
+
+    let clear_operation = format!("op-limitation-config-clear-{operation_suffix}");
+    let mut clear_arguments = vec![
+        "pre-write",
+        "--operation-id",
+        clear_operation.as_str(),
+        "--path",
+        "packages/clear/src/main.ts",
+        "--jobs",
+        "1",
+    ];
+    if override_profile {
+        clear_arguments.extend(["--resolution-profile", "bundler"]);
+    }
+    let clear = json_command(root.path(), &clear_arguments, 0)?;
+    assert!(
+        !has_signal(&clear, "required-evidence-incomplete"),
+        "a package-local config limitation escaped into a disjoint package: {clear:#?}",
+    );
     Ok(())
 }
 

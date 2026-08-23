@@ -564,6 +564,7 @@ impl RepositoryAnalysisSession {
             resolved,
             package_surfaces,
             profiles,
+            configured_sources,
             limitations: mut resolver_limitations,
             demands: _,
         } = resolver;
@@ -623,6 +624,12 @@ impl RepositoryAnalysisSession {
                     .source_packages
                     .get(&source.id)
                     .map(RepoPathProjection::from),
+                configuration_paths: configured_sources
+                    .get(&source.id)
+                    .into_iter()
+                    .flatten()
+                    .map(RepoPathProjection::from)
+                    .collect(),
             })
             .collect();
         let source_observations = self

@@ -70,6 +70,7 @@ pub(crate) struct PathMapping {
 pub(crate) struct ConfigSelection {
     pub settings: BTreeMap<LogicalSourceId, ImporterSettings>,
     pub profiles: Vec<SelectedResolutionProfile>,
+    pub configured_sources: BTreeMap<LogicalSourceId, BTreeSet<RepoPath>>,
     pub limitations: Vec<Limitation>,
     pub demands: Vec<ConfigDemand>,
 }
@@ -136,17 +137,24 @@ fn select_importer(
 ) -> Result<(), ResolverError> {
     let controlling = nearest_config(&source.path, config);
     let mut visiting = BTreeSet::new();
+    let mut configured_paths = BTreeSet::new();
     let effective = match controlling {
         Some(ref path) => evaluate_config(
             path,
             config,
             repository_root,
             &mut visiting,
+            &mut configured_paths,
             &mut selection.demands,
             &mut selection.limitations,
         )?,
         None => EffectiveConfig::default(),
     };
+    if !configured_paths.is_empty() {
+        selection
+            .configured_sources
+            .insert(source.id.clone(), configured_paths);
+    }
     let selected_profile = if let Some(profile) = override_profile {
         Some((profile, ResolutionProfileSource::Invocation))
     } else {
@@ -259,9 +267,11 @@ fn evaluate_config(
     config: &SemanticConfigSnapshot,
     repository_root: &RepositoryRootIdentity,
     visiting: &mut BTreeSet<RepoPath>,
+    configured_paths: &mut BTreeSet<RepoPath>,
     demands: &mut Vec<ConfigDemand>,
     limitations: &mut Vec<Limitation>,
 ) -> Result<EffectiveConfig, ResolverError> {
+    configured_paths.insert(path.clone());
     if !visiting.insert(path.clone()) {
         limitations.push(Limitation::TsconfigSemanticsUnsupported {
             path: path.display_escaped(),
@@ -325,6 +335,7 @@ fn evaluate_config(
                     config,
                     repository_root,
                     visiting,
+                    configured_paths,
                     demands,
                     limitations,
                 )?;

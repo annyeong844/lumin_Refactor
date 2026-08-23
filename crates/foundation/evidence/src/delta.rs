@@ -4,8 +4,8 @@ use lumin_model::{
     DeltaFact, DeltaFactFamily, DeltaIdentity, DeltaIdentityKind, DeltaKey, DeltaOwnerPayloadValue,
     DeltaValue, DependencyIntentIdentity, DynamicImportTargetScope, FindingDisposition,
     ImportMetaGlobTargetScope, Limitation, LimitationGateRelevance, LimitationScopePolicy,
-    LogicalSourceId, PackageScopeId, RepoPath, ResolutionOutcome, ResolutionProfileSource,
-    ReviewOnlyReason, UnresolvedTargetScope, append_length_prefixed,
+    LogicalSourceId, PackageScopeId, RepoPath, ResolutionOutcome, ReviewOnlyReason,
+    UnresolvedTargetScope, append_length_prefixed,
 };
 
 use crate::{
@@ -334,17 +334,21 @@ fn configured_packages_intersect(
     };
     let mut configured_scope = None::<lumin_model::PackageScope>;
     let mut affected_importer_found = false;
-    for selected in &evidence.resolution_profiles {
-        let ResolutionProfileSource::Config { path_canonical, .. } = &selected.source else {
-            continue;
-        };
-        if path_canonical.as_slice() != config_path.canonical_bytes() {
+    for context in &evidence.source_contexts {
+        if !context.configuration_paths.iter().any(|configured_path| {
+            configured_path.canonical.as_slice() == config_path.canonical_bytes()
+        }) {
             continue;
         }
         affected_importer_found = true;
-        let Some(scope) = source_package_scope(&selected.source_id, evidence) else {
+        let Some(root) = context
+            .package_root
+            .as_ref()
+            .and_then(|root| RepoPath::from_canonical_bytes(&root.canonical).ok())
+        else {
             return true;
         };
+        let scope = lumin_model::PackageScope::from_root(&root);
         match &configured_scope {
             Some(existing) if existing.id() != scope.id() => return true,
             Some(_) => {}
@@ -1220,34 +1224,62 @@ mod tests {
                 path: config.display_escaped(),
                 detail: "unknown compiler option madeUpFlag".to_owned(),
             }]);
-        evidence.source_contexts = vec![
-            source_context(&root_source, &RepoPath::empty()),
-            source_context(&nested_source, &nested_package),
-        ];
-        evidence.resolution_profiles = vec![
-            lumin_model::SelectedResolutionProfile {
-                source_id: LogicalSourceId::from_path(&root_source),
-                profile: lumin_model::ResolutionProfile::Bundler,
-                source: ResolutionProfileSource::Config {
-                    path_canonical: config.canonical_bytes().to_vec(),
-                    path_display: config.display_escaped(),
-                },
-            },
-            lumin_model::SelectedResolutionProfile {
-                source_id: LogicalSourceId::from_path(&nested_source),
-                profile: lumin_model::ResolutionProfile::Bundler,
-                source: ResolutionProfileSource::Config {
-                    path_canonical: config.canonical_bytes().to_vec(),
-                    path_display: config.display_escaped(),
-                },
-            },
-        ];
+        let controlling_config = RepoPathProjection::from(&config);
+        let mut root_context = source_context(&root_source, &RepoPath::empty());
+        root_context.configuration_paths = vec![controlling_config.clone()];
+        let mut nested_context = source_context(&nested_source, &nested_package);
+        nested_context.configuration_paths = vec![controlling_config];
+        evidence.source_contexts = vec![root_context, nested_context];
 
         assert_eq!(
             lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&nested_source)],)
                 .required_evidence_gap_count,
             1,
             "a root config controlling multiple package owners must remain workspace-scoped",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn configured_scope_survives_failed_or_overridden_profile_selection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let package_a = RepoPath::from_portable("packages/a")?;
+        let package_b = RepoPath::from_portable("packages/b")?;
+        let config = RepoPath::from_portable("packages/a/tsconfig.json")?;
+        let source_a = RepoPath::from_portable("packages/a/src/main.ts")?;
+        let source_b = RepoPath::from_portable("packages/b/src/main.ts")?;
+        let mut context_a = source_context(&source_a, &package_a);
+        context_a.configuration_paths = vec![RepoPathProjection::from(&config)];
+        let mut evidence =
+            evidence_with_limitations(vec![Limitation::TsconfigSemanticsUnsupported {
+                path: config.display_escaped(),
+                detail: "unsupported moduleResolution value classic".to_owned(),
+            }]);
+        evidence.source_contexts = vec![context_a, source_context(&source_b, &package_b)];
+
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&source_b)])
+                .required_evidence_gap_count,
+            0,
+            "a failed package-local profile selection escaped to workspace scope",
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&source_a)])
+                .required_evidence_gap_count,
+            1,
+            "the affected package lost its failed profile-selection gap",
+        );
+
+        evidence.resolution_profiles = vec![lumin_model::SelectedResolutionProfile {
+            source_id: LogicalSourceId::from_path(&source_a),
+            profile: lumin_model::ResolutionProfile::Bundler,
+            source: lumin_model::ResolutionProfileSource::Invocation,
+        }];
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&source_b)])
+                .required_evidence_gap_count,
+            0,
+            "an invocation profile override erased package-local config ownership",
         );
         Ok(())
     }
@@ -1729,6 +1761,7 @@ mod tests {
             path: RepoPathProjection::from(path),
             kind: SourceKind::TypeScript,
             package_root: Some(RepoPathProjection::from(package_root)),
+            configuration_paths: Vec::new(),
         }
     }
 
