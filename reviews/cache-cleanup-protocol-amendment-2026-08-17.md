@@ -246,6 +246,32 @@ post-check hard-link attempt, and absent-store immutability. Both shipped platfo
 execute the real isolation/exchange/disposition primitives, while both packaged Codex and
 Claude adapters must invoke only the public migration command and consume its DTO.
 
+## Fifteenth Review Result
+
+Independent review bound exact candidate
+`c05dc1d5011f7c2d476584e3cc1d3dda70d43938` and returned `REOPEN`. It found three
+remaining feasibility and recovery contradictions. First, the proposed
+`MigrationNamespaceIsolation` required an unprivileged Linux process to exclude a
+noncooperating same-UID `linkat` across the filesystem, while the Linux package contract
+also required migration to succeed; that authority does not exist. Second, replacing an
+occupied `lifecycle-migration.json` during an intent revision could leave an unbound
+staging object or erase the only durable authority at a crash boundary not covered by the
+table. Third, the generic missing-canonical admission rule rejected the exact
+source-retired/canonical-absent exchange state that the recovery protocol required.
+
+The replacement protocol performs no physical cleanup. Linux uses
+`renameat2(RENAME_EXCHANGE)` and Windows uses handle-relative
+`SetFileInformationByHandle(FileRenameInfo, ReplaceIfExists = false)` moves; every
+published object survives the exchange. The
+v12 source remains permanently bound by a terminal append-only migration journal, so a
+racing hard link can trigger fail-closed validation but can never make Lumin delete a
+foreign object. Revision zero and every successor are distinct immutable self-bound files
+published no-replace at unique names and chained to the exact predecessor; no revision
+update overwrites or removes authority. The migration command alone admits the exact
+journal-proven canonical-absent placement, while an unexplained missing store remains an
+immutable integrity hard-stop. Exact public-child barriers cover every initial/successor
+publication boundary, the canonical-absent split, and the real platform hard-link race.
+
 ## Decision
 
 The owner amendments define the cleanup command and the sole public store-upgrade route:
@@ -284,30 +310,29 @@ conversion, and the next current delivery allocates sequence 2 or 3 respectively
 target lifecycle-store header
 advances from `lumin-lifecycle-store-header.v12` to v13 with the private record schema.
 Ordinary repository-state commands accept only v13 and never migrate on open. An
-admissible v12 header or matching unfinished v12-to-v13 intent returns the exact
-`lumin store migrate` recovery instruction without recovery or private-v1 payload reads.
-Any bound source/target without that intent is foreign and every command hard-stops
-without adoption or deletion. The migration command accepts at most one split-form
+admissible v12 header, matching unfinished v12-to-v13 journal, or exact journal-proven
+canonical-absent intermediate returns the `lumin store migrate` recovery instruction
+without recovery or private-v1 logical decoding. Any bound source/target without that
+journal is foreign and every command hard-stops without adoption or deletion. The
+migration command accepts at most one split-form
 `--format json`, has no operation ID, and is the one exclusive generation-fenced
-private-v1 reader. Intent preparation uses a same-volume handle-owned object whose final
-disposition is armed before writing; it publishes that complete held object no-replace
-and has no admissible named pending file, so death leaves only no intent or a complete
-canonical intent. Each canonical revision self-binds its identity; the initial intent
-binds the already opened canonical v12 source and a later revision binds the held private
-v13 target by exact role, pre/post-exchange name, generation, schema, complete logical
-SHA-256, physical identity, and one-link state before target visibility. Every intent
-mutation, source/target exchange, and disposition holds a platform isolation authority
-that fences entry substitution and new hard links from final validation through
-reopen/absence proof and parent flush. Migration exchanges the two identities through an
-atomic replace-with-backup primitive or isolated crash-recoverable no-replace moves,
-validates the final v13 dump, keeps the intent durable while
-it disposes only the now-private source through its held handle under the same link-count
-fence, and only then removes and flushes the exact terminal intent as the final mutation.
-Already-valid v13 with no intent or private artifacts is a validating no-op with no
-generation advance. A
-header-valid but payload-corrupt source under a live intent therefore receives the
+private-v1 reader. Revision zero and every successor are prepared on same-volume
+handle-owned objects and published no-replace at unique final names; each immutable
+self-bound revision names the exact predecessor, and no update replaces or removes it.
+The chain binds the opened canonical v12 source and held private v13 target by role,
+pre/post-exchange name, generation, schema, complete byte/logical SHA-256, physical
+identity, and publication-time one-link state before target visibility. Migration uses
+Linux `renameat2(RENAME_EXCHANGE)` or Windows handle-relative
+`SetFileInformationByHandle(FileRenameInfo, ReplaceIfExists = false)` moves and never
+disposes a published artifact. It validates the final v13 dump,
+appends a terminal revision, and permanently retains that chain and the now-private v12
+source. A racing hard link therefore causes fail-closed validation without requiring an
+impossible Linux exclusion or deleting any object. Already-valid native v13 with no
+journal and migrated v13 with an exact terminal journal/source are validating no-ops with
+no generation advance. A header-valid but payload-corrupt source under a live journal
+therefore receives the
 ordinary migration-required diagnostic first and hard-stops only when migration opens
-it; a byte-identical v12 source introduced after intent removal hard-stops every command
+it; a byte-identical private v12 source without a matching journal hard-stops every command
 without deletion. Concurrent invocations serialize so at most one exchange advances
 the generation. Malformed arguments exit `2`; schema, identity, integrity, generation,
 durability, and pre-transport failures exit `1` with empty stdout. Its only successful
@@ -448,17 +473,18 @@ finding for each item:
    bijection. The migration logical dump includes the canonical synthetic delivery state,
    rejects every invalid legacy shape before exchange, and never exposes any committed
    private-v1 row as a known v2 delivery. Only the public migration command admits v12;
-   its self-bound intent physically binds canonical source and private target before their
-   identity-preserving exchange and remains durable until the retired source is disposed
-   through the exact held object and that absence is flushed. Every intent mutation,
-   exchange, and disposition fences entry substitution and new hard links through parent
-   flush, and intent removal is the final mutation. Intent preparation has no
-   crash-surviving pending name; a substituted identity or second link hard-stops before
-   mutation. Its
+   its append-only journal physically binds canonical source and private target before
+   their no-disposition exchange. Revision zero and every successor are distinct immutable
+   self-bound files linked to the exact retained predecessor; no update replaces authority.
+   The terminal chain and retired source remain permanent provenance because unprivileged
+   Linux cannot fence a noncooperating same-UID hard-link creation through deletion.
+   Revision preparation has no crash-surviving pending name; a substituted identity or
+   observed second link hard-stops without cleanup. Its
    initial success, recovery, and already-current retry emit one byte-identical target-only
-   response, while a v13 retry neither exchanges the store nor advances its generation.
-   An unbound, substituted, multiply linked, or no-intent artifact is always foreign and
-   is never deleted or advertised as migratable. Absent state fails without initialization.
+   response, while a v13 retry neither exchanges the store, appends a revision, deletes an
+   artifact, nor advances its generation. An unbound, substituted, or no-journal artifact
+   is always foreign and is never deleted or advertised as migratable. Absent state fails
+   without initialization.
 6. Every regular file and directory is flushed bottom-up and remanifested before
    authorization and after movement; cache, quarantine, and trash entries are flushed
    before validation and result commit, including recovered and empty-cache runs.
@@ -478,21 +504,22 @@ finding for each item:
    lower sequence/result append, without changing either greatest sequence or any other
    durable field. No case uses scheduler timing; an exact guard race also proves cleanup
    cannot overlap publication, retention, or migration. Public migration children also
-   prove the ordinary-command recovery diagnostic, exact deaths before/within intent
-   writing and after final-name publication/before parent flush, every later migration
-   crash boundary, identity-preserving exchange, canonical-source/private-target and
-   pre-update/pre-removal intent substitution, the exact hard-link attempt after final
-   one-link validation, the header-valid/payload-corrupt split between ordinary routing
-   and migration-only authentication, the no-intent byte-identical-copy hard-stop,
-   absent-store immutability, output-delivery retry, identical current-v13 response, and
-   no second exchange.
+    prove the ordinary-command recovery diagnostic, exact deaths before/within initial and
+    successor revision writing and after each unique final-name publication/before parent
+    flush, every later migration crash boundary, no-disposition exchange,
+    canonical-source/private-target and predecessor substitution, the exact real hard-link
+    attempt after pre-exchange one-link validation, the journal-proven canonical-absent
+    recovery split, the header-valid/payload-corrupt split between ordinary routing and
+    migration-only authentication, the no-journal byte-identical-copy hard-stop,
+    absent-store immutability, output-delivery retry, identical current-v13 response, and
+    no second exchange or journal append.
 10. Standard, determinism, store-crash, Windows/Linux package, and skill-adapter commands
     are assigned only to behavior they can execute and include `operation show` recovery.
     Both Windows and Linux package checks invoke the packaged `lumin store migrate` and
-    exercise their actual handle-owned publication, namespace isolation,
-    identity-preserving exchange, and link-count-fenced disposition primitives for
-    admission rejection, absent-store refusal, success, intent-held cleanup recovery, and
-    byte-identical no-op retry; development/store-crash execution alone is insufficient.
+    exercise their actual handle-owned append-only publication plus no-disposition exchange
+    primitives for admission rejection, absent-store refusal, canonical-absent recovery,
+    success, terminal-journal recovery, and byte-identical no-op retry;
+    development/store-crash execution alone is insufficient.
     The skill check proves both packaged adapters invoke the public migration command,
     validate its exact DTO, and retry the original command without migration logic.
 11. PRODUCT-000, ARCH-000, ARCH-002, SLICE-001 truth, acceptance, and traceability agree
@@ -517,14 +544,17 @@ stdout, both exact delivery completion orders including the byte-identical publi
 projection and one exact private-ledger append after a late lower completion,
 cleanup-operation v2 with explicit public-v1 incompatibility and the exact private-v1
 synthetic migration in which every committed legacy row initially projects `unknown`,
-the public `lumin store migrate` grammar/DTO/error route, handle-owned intent publication
-at every write/publish/parent-flush boundary, intent self-binding and private physical
-identity/one-link provenance retained through held-object cleanup, canonical-source and
-private-target binding followed by identity-preserving exchange, intent substitution
-before revision update and terminal removal, a competing hard-link attempt after final
-one-link validation fenced through disposition and parent flush,
+the public `lumin store migrate` grammar/DTO/error route, handle-owned initial and
+successor revision publication at every write/publish/reopen/parent-flush boundary, exact
+predecessor chaining with no replacement/removal, canonical-source and private-target
+byte/logical/physical binding followed by Linux `renameat2(RENAME_EXCHANGE)` or Windows
+handle-relative `SetFileInformationByHandle(FileRenameInfo, ReplaceIfExists = false)`
+moves, permanent terminal-journal and retired-source provenance, predecessor substitution
+before successor publication, a real competing hard-link attempt after pre-exchange
+validation with no published-object disposition, and exact journal-proven canonical-absent
+recovery,
 header-valid/payload-corrupt ordinary-routing versus migration-authentication proof,
-no-intent byte-identical-source rejection without deletion, absent-store refusal with no
+ no-journal byte-identical-source rejection without deletion, absent-store refusal with no
 state creation, and byte-identical first/recovery/current response without a second
 generation advance through store-crash and both packaged platform binaries,
 continuous cache-writer rejection across a dead pending lease, both
