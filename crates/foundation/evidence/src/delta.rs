@@ -3,8 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use lumin_model::{
     DeltaFact, DeltaFactFamily, DeltaIdentity, DeltaIdentityKind, DeltaKey, DeltaOwnerPayloadValue,
     DeltaValue, DependencyIntentIdentity, DynamicImportTargetScope, FindingDisposition,
-    ImportMetaGlobTargetScope, Limitation, LogicalSourceId, PackageScopeId, RepoPath,
-    ResolutionOutcome, ReviewOnlyReason, UnresolvedTargetScope, append_length_prefixed,
+    ImportMetaGlobTargetScope, Limitation, LimitationGateRelevance, LimitationScopePolicy,
+    LogicalSourceId, PackageScopeId, RepoPath, ResolutionOutcome, ReviewOnlyReason,
+    UnresolvedTargetScope, append_length_prefixed,
 };
 
 use crate::{
@@ -16,6 +17,7 @@ pub(crate) struct LifecycleDeltaInput {
     pub facts: Vec<DeltaFact>,
     pub advisory_limitation_count: usize,
     pub required_evidence_gap_count: usize,
+    pub required_owner_gap_count: usize,
 }
 
 #[cfg(test)]
@@ -41,6 +43,7 @@ pub(crate) fn lifecycle_delta_input_for(
     );
     let mut advisory_limitation_count = 0;
     let mut required_evidence_gap_count = 0;
+    let mut required_owner_gap_count = 0;
     let mut dynamic_import_occurrences = BTreeMap::<(LogicalSourceId, Option<String>), u64>::new();
     let mut import_meta_glob_occurrences = BTreeMap::<(LogicalSourceId, Vec<String>), u64>::new();
     let mut commonjs_computed_occurrences = BTreeMap::<(LogicalSourceId, String), u64>::new();
@@ -92,13 +95,23 @@ pub(crate) fn lifecycle_delta_input_for(
                 facts.push(fact);
             }
             LimitationDelta::RequiredEvidenceGap => {
-                if limitation_intersects_required_evidence(
+                if limitation_intersects_gate_domain(
                     limitation,
                     evidence,
                     dependency_intents,
                     leased_write_set,
                 ) {
                     required_evidence_gap_count += 1;
+                }
+            }
+            LimitationDelta::RequiredOwnerGap => {
+                if limitation_intersects_gate_domain(
+                    limitation,
+                    evidence,
+                    dependency_intents,
+                    leased_write_set,
+                ) {
+                    required_owner_gap_count += 1;
                 }
             }
         }
@@ -108,70 +121,407 @@ pub(crate) fn lifecycle_delta_input_for(
         facts,
         advisory_limitation_count,
         required_evidence_gap_count,
+        required_owner_gap_count,
     }
 }
 
-fn limitation_intersects_required_evidence(
+fn limitation_intersects_gate_domain(
     limitation: &Limitation,
     evidence: &RunEvidence,
     dependency_intents: &[DependencyIntentRecord],
     leased_write_set: &[WriteLease],
 ) -> bool {
-    if let Limitation::JsRecoverableParseLocal { source_id, .. } = limitation {
-        let mut affected_sources = BTreeSet::from([source_id.clone()]);
-        affected_sources.extend(
-            evidence
-                .resolutions
-                .iter()
-                .filter(|resolution| {
-                    matches!(
-                        &resolution.outcome,
-                        ResolutionOutcome::Internal { target } if target == source_id
-                    )
-                })
-                .map(|resolution| resolution.source_use.importer.clone()),
-        );
-        return affected_sources.iter().any(|affected_source| {
-            let Some(path) = evidence
-                .source_contexts
-                .iter()
-                .find(|context| &context.source_id == affected_source)
-                .map(|context| &context.path)
+    match limitation.registry_entry().scope {
+        LimitationScopePolicy::File => {
+            let Limitation::JsRecoverableParseLocal { source_id, .. } = limitation else {
+                return true;
+            };
+            local_definition_scope_intersects(source_id, evidence, leased_write_set)
+        }
+        LimitationScopePolicy::Workspace => true,
+        LimitationScopePolicy::ResolvedModule => true,
+        LimitationScopePolicy::ExplicitTargetsOrWorkspace
+        | LimitationScopePolicy::ExplicitTargetsOrSourceInventoryOrWorkspace
+        | LimitationScopePolicy::ExplicitTargetsOrKnownNoTargetOrWorkspace => true,
+        LimitationScopePolicy::SourceOwnerPackageOrWorkspace => {
+            let Limitation::AliasShapeUnsupported { source_id, .. } = limitation else {
+                return true;
+            };
+            source_owner_intersects(source_id, evidence, leased_write_set)
+        }
+        LimitationScopePolicy::OwningPackage => limitation_path(limitation).is_none_or(|path| {
+            path_owner_intersects(path, evidence, leased_write_set)
+                || public_surface_consumer_intersects(limitation, evidence, leased_write_set)
+        }),
+        LimitationScopePolicy::OwningPackageOrWorkspace => {
+            if let Limitation::DependencyOwnerAmbiguous {
+                package_scope,
+                required_intent,
+                ..
+            } = limitation
+            {
+                return dependency_owner_scope_intersects(
+                    package_scope.as_deref(),
+                    required_intent.as_deref(),
+                    evidence,
+                    dependency_intents,
+                    leased_write_set,
+                );
+            }
+            limitation_path(limitation)
+                .is_none_or(|path| path_owner_intersects(path, evidence, leased_write_set))
+        }
+        LimitationScopePolicy::ConfiguredPackagesOrWorkspace => limitation_path(limitation)
+            .is_none_or(|path| configured_packages_intersect(path, evidence, leased_write_set)),
+        LimitationScopePolicy::ManifestOwnerPackageOrWorkspace => limitation_path(limitation)
+            .is_none_or(|path| path_owner_intersects(path, evidence, leased_write_set)),
+        LimitationScopePolicy::WorkspaceFromConfig => {
+            limitation_path(limitation).is_none_or(|path| {
+                workspace_config_intersects(path, evidence, dependency_intents, leased_write_set)
+            })
+        }
+        LimitationScopePolicy::ParentAndTargetOwnersOrWorkspace => {
+            let Limitation::VueExternalScriptModeConflict {
+                source_id,
+                target_source_id,
+                ..
+            } = limitation
             else {
                 return true;
             };
-            leased_write_set.iter().any(|lease| lease.covers(path))
-        });
+            let Some(parent_scope) = source_package_scope(source_id, evidence) else {
+                return true;
+            };
+            let Some(target_scope) = source_package_scope(target_source_id, evidence) else {
+                return true;
+            };
+            if parent_scope.id() != target_scope.id() {
+                return true;
+            }
+            package_scope_intersects_write_set(&parent_scope, evidence, leased_write_set)
+        }
+        LimitationScopePolicy::ImportedTargetsOrPackage => {
+            let source_id = match limitation {
+                Limitation::ImportMetaGlobUnsupported { source_id, .. }
+                | Limitation::VueTemplateOpaque { source_id, .. } => source_id,
+                _ => return true,
+            };
+            source_owner_intersects(source_id, evidence, leased_write_set)
+        }
+        LimitationScopePolicy::EntryOwnerPackageOrWorkspace => {
+            let Limitation::ExplicitEntryUnavailable { path, .. } = limitation else {
+                return true;
+            };
+            path_owner_intersects(path, evidence, leased_write_set)
+        }
     }
-    if let Limitation::ImportMetaGlobUnsupported {
-        source_id,
-        target_scope: ImportMetaGlobTargetScope::Package,
-        ..
-    } = limitation
-    {
-        let Some(root) = evidence
+}
+
+fn local_definition_scope_intersects(
+    source_id: &LogicalSourceId,
+    evidence: &RunEvidence,
+    leased_write_set: &[WriteLease],
+) -> bool {
+    let mut affected_sources = BTreeSet::from([source_id.clone()]);
+    affected_sources.extend(
+        evidence
+            .resolutions
+            .iter()
+            .filter(|resolution| {
+                matches!(
+                    &resolution.outcome,
+                    ResolutionOutcome::Internal { target } if target == source_id
+                )
+            })
+            .map(|resolution| resolution.source_use.importer.clone()),
+    );
+    affected_sources.iter().any(|affected_source| {
+        let Some(path) = evidence
             .source_contexts
             .iter()
-            .find(|context| &context.source_id == source_id)
-            .and_then(|context| context.package_root.as_ref())
+            .find(|context| &context.source_id == affected_source)
+            .map(|context| &context.path)
+        else {
+            return true;
+        };
+        leased_write_set.iter().any(|lease| lease.covers(path))
+    })
+}
+
+fn source_owner_intersects(
+    source_id: &LogicalSourceId,
+    evidence: &RunEvidence,
+    leased_write_set: &[WriteLease],
+) -> bool {
+    source_context_inputs_intersect(source_id, evidence, leased_write_set)
+        || source_package_scope(source_id, evidence).is_none_or(|scope| {
+            package_scope_intersects_write_set(&scope, evidence, leased_write_set)
+        })
+}
+
+fn source_context_inputs_intersect(
+    source_id: &LogicalSourceId,
+    evidence: &RunEvidence,
+    leased_write_set: &[WriteLease],
+) -> bool {
+    let Some(context) = evidence
+        .source_contexts
+        .iter()
+        .find(|context| &context.source_id == source_id)
+    else {
+        return true;
+    };
+    if std::iter::once(&context.path)
+        .chain(&context.configuration_paths)
+        .any(|path| leased_write_set.iter().any(|lease| lease.covers(path)))
+    {
+        return true;
+    }
+    let Some(package_root) = &context.package_root else {
+        return false;
+    };
+    let Some(manifest_path) = RepoPath::from_canonical_bytes(&package_root.canonical)
+        .ok()
+        .and_then(|root| root.join_portable("package.json").ok())
+        .map(|path| RepoPathProjection::from(&path))
+    else {
+        return true;
+    };
+    leased_write_set
+        .iter()
+        .any(|lease| lease.covers(&manifest_path))
+}
+
+fn source_package_scope(
+    source_id: &LogicalSourceId,
+    evidence: &RunEvidence,
+) -> Option<lumin_model::PackageScope> {
+    evidence
+        .source_contexts
+        .iter()
+        .find(|context| &context.source_id == source_id)?
+        .package_root
+        .as_ref()
+        .and_then(|root| RepoPath::from_canonical_bytes(&root.canonical).ok())
+        .map(|root| lumin_model::PackageScope::from_root(&root))
+}
+
+fn limitation_path(limitation: &Limitation) -> Option<&str> {
+    match limitation {
+        Limitation::SourcePayloadUnavailable { path, .. }
+        | Limitation::PackageImportsUnsupported { path, .. }
+        | Limitation::ImporterFormatUnsupported { path, .. }
+        | Limitation::PublicSurfaceUnsupported { path, .. }
+        | Limitation::TsconfigSemanticsUnsupported { path, .. }
+        | Limitation::PackageIdentityUnsupported { path, .. }
+        | Limitation::PackageMetadataUnobservable { path, .. }
+        | Limitation::PackagePrivacyUnsupported { path, .. }
+        | Limitation::DependencyOwnerAmbiguous { path, .. }
+        | Limitation::WorkspaceOwnershipUnsupported { path, .. }
+        | Limitation::PnpmDependencySemanticsUnsupported { path, .. }
+        | Limitation::TsconfigPayloadUnavailable { path, .. }
+        | Limitation::ExplicitEntryUnavailable { path, .. } => Some(path),
+        Limitation::JsRecoverableParseLocal { .. }
+        | Limitation::JsModuleUseUnknown { .. }
+        | Limitation::DynamicImportNonLiteral { .. }
+        | Limitation::ImportMetaGlobUnsupported { .. }
+        | Limitation::CommonJsComputedMember { .. }
+        | Limitation::InternalSpecifierUnresolved { .. }
+        | Limitation::AliasShapeUnsupported { .. }
+        | Limitation::AbsoluteInternalSpecifierUnsupported { .. }
+        | Limitation::SfcDialectUnavailable { .. }
+        | Limitation::SfcDecompositionUnknown { .. }
+        | Limitation::VueExternalScriptModeConflict { .. }
+        | Limitation::VueTemplateOpaque { .. } => None,
+    }
+}
+
+fn path_owner_intersects(
+    path: &str,
+    evidence: &RunEvidence,
+    leased_write_set: &[WriteLease],
+) -> bool {
+    let Some(projection) = known_limitation_path(path, evidence, leased_write_set) else {
+        return true;
+    };
+    let Some(root) = evidence
+        .source_contexts
+        .iter()
+        .filter_map(|context| context.package_root.as_ref())
+        .filter(|root| projection.components.starts_with(&root.components))
+        .max_by_key(|root| root.components.len())
+        .and_then(|root| RepoPath::from_canonical_bytes(&root.canonical).ok())
+    else {
+        return true;
+    };
+    package_scope_intersects_write_set(
+        &lumin_model::PackageScope::from_root(&root),
+        evidence,
+        leased_write_set,
+    )
+}
+
+fn configured_packages_intersect(
+    path: &str,
+    evidence: &RunEvidence,
+    leased_write_set: &[WriteLease],
+) -> bool {
+    let configured_paths = evidence
+        .source_contexts
+        .iter()
+        .flat_map(|context| &context.configuration_paths)
+        .filter(|configured_path| configured_path.display == path)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut configured_paths = configured_paths.into_iter();
+    let Some(config_path) = configured_paths.next() else {
+        return true;
+    };
+    if configured_paths.next().is_some() {
+        return true;
+    }
+    let affected_contexts = evidence
+        .source_contexts
+        .iter()
+        .filter(|context| {
+            context
+                .configuration_paths
+                .iter()
+                .any(|configured_path| configured_path.canonical == config_path.canonical)
+        })
+        .collect::<Vec<_>>();
+    if affected_contexts.is_empty() {
+        return true;
+    }
+    if affected_contexts.iter().any(|context| {
+        context.configuration_paths.iter().any(|configured_path| {
+            leased_write_set
+                .iter()
+                .any(|lease| lease.covers(configured_path))
+        })
+    }) {
+        return true;
+    }
+    let mut configured_scope = None::<lumin_model::PackageScope>;
+    for context in affected_contexts {
+        let Some(root) = context
+            .package_root
+            .as_ref()
             .and_then(|root| RepoPath::from_canonical_bytes(&root.canonical).ok())
         else {
             return true;
         };
-        return package_scope_intersects_write_set(
-            &lumin_model::PackageScope::from_root(&root),
-            evidence,
-            leased_write_set,
-        );
+        let scope = lumin_model::PackageScope::from_root(&root);
+        match &configured_scope {
+            Some(existing) if existing.id() != scope.id() => return true,
+            Some(_) => {}
+            None => configured_scope = Some(scope),
+        }
     }
-    let Limitation::DependencyOwnerAmbiguous {
-        package_scope,
-        required_intent,
+    configured_scope
+        .is_none_or(|scope| package_scope_intersects_write_set(&scope, evidence, leased_write_set))
+}
+
+fn public_surface_consumer_intersects(
+    limitation: &Limitation,
+    evidence: &RunEvidence,
+    leased_write_set: &[WriteLease],
+) -> bool {
+    let Limitation::PublicSurfaceUnsupported {
+        importer: Some(importer),
         ..
     } = limitation
     else {
+        return false;
+    };
+    source_context_inputs_intersect(importer, evidence, leased_write_set)
+}
+
+fn workspace_config_intersects(
+    path: &str,
+    evidence: &RunEvidence,
+    dependency_intents: &[DependencyIntentRecord],
+    leased_write_set: &[WriteLease],
+) -> bool {
+    let Some(root) = known_limitation_path(path, evidence, leased_write_set)
+        .and_then(|path| RepoPath::from_canonical_bytes(&path.canonical).ok())
+        .and_then(|path| path.parent())
+        .map(|root| RepoPathProjection::from(&root))
+    else {
         return true;
     };
+    leased_write_set.iter().any(|lease| {
+        lease.path.components.starts_with(&root.components)
+            || (lease.kind == WriteLeaseKind::Directory
+                && root.components.starts_with(&lease.path.components))
+    }) || dependency_intents
+        .iter()
+        .any(|intent| intent.path.components.starts_with(&root.components))
+}
+
+fn known_limitation_path(
+    display: &str,
+    evidence: &RunEvidence,
+    leased_write_set: &[WriteLease],
+) -> Option<RepoPathProjection> {
+    let mut matches = BTreeSet::new();
+    {
+        let mut retain = |candidate: &RepoPathProjection| {
+            if candidate.display == display {
+                matches.insert(candidate.clone());
+            }
+        };
+        for context in &evidence.source_contexts {
+            retain(&context.path);
+            if let Some(root) = &context.package_root {
+                retain(root);
+                if let Ok(mut ancestor) = RepoPath::from_canonical_bytes(&root.canonical) {
+                    loop {
+                        for name in ["package.json", "pnpm-workspace.yaml"] {
+                            if let Ok(path) = ancestor.join_portable(name) {
+                                retain(&RepoPathProjection::from(&path));
+                            }
+                        }
+                        let Some(parent) = ancestor.parent() else {
+                            break;
+                        };
+                        ancestor = parent;
+                    }
+                }
+            }
+            for path in &context.configuration_paths {
+                retain(path);
+            }
+        }
+        for owner in &evidence.dependency_owners {
+            retain(&owner.consumer_path);
+            retain(&owner.package_root);
+            retain(&owner.manifest_path);
+            if let Some(path) = &owner.lockfile_path {
+                retain(path);
+            }
+        }
+        for lease in leased_write_set {
+            retain(&lease.path);
+        }
+    }
+
+    match matches.len() {
+        0 => RepoPath::from_portable(display)
+            .ok()
+            .map(|path| RepoPathProjection::from(&path)),
+        1 => matches.into_iter().next(),
+        _ => None,
+    }
+}
+
+fn dependency_owner_scope_intersects(
+    package_scope: Option<&lumin_model::PackageScope>,
+    required_intent: Option<&DependencyIntentIdentity>,
+    evidence: &RunEvidence,
+    dependency_intents: &[DependencyIntentRecord],
+    leased_write_set: &[WriteLease],
+) -> bool {
     if let Some(required_intent) = required_intent {
         return dependency_intents
             .iter()
@@ -386,6 +736,7 @@ fn finding_delta_fact(finding: &FindingRecord) -> DeltaFact {
 enum LimitationDelta {
     Fact(DeltaFact),
     RequiredEvidenceGap,
+    RequiredOwnerGap,
 }
 
 #[cfg(test)]
@@ -600,7 +951,17 @@ fn limitation_delta_at(limitation: &Limitation, construct_ordinal: u64) -> Limit
         | Limitation::SfcDecompositionUnknown { .. }
         | Limitation::VueExternalScriptModeConflict { .. }
         | Limitation::VueTemplateOpaque { .. }
-        | Limitation::ExplicitEntryUnavailable { .. } => LimitationDelta::RequiredEvidenceGap,
+        | Limitation::ExplicitEntryUnavailable { .. } => {
+            match limitation.registry_entry().gate_relevance {
+                LimitationGateRelevance::RequiredOwner => LimitationDelta::RequiredOwnerGap,
+                LimitationGateRelevance::RequiredEvidence
+                | LimitationGateRelevance::NormalizedOpacity
+                | LimitationGateRelevance::NormalizedUnresolvedOrRequiredEvidence
+                | LimitationGateRelevance::NormalizedOpacityOrRequiredEvidence => {
+                    LimitationDelta::RequiredEvidenceGap
+                }
+            }
+        }
     }
 }
 
@@ -968,6 +1329,368 @@ mod tests {
     }
 
     #[test]
+    fn pnpm_workspace_gap_intersects_dependency_intent_context()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace_root = RepoPath::from_portable("workspaces/affected")?;
+        let workspace_config = workspace_root.join_portable("pnpm-workspace.yaml")?;
+        let affected_package = RepoPath::from_portable("workspaces/affected/packages/app")?;
+        let affected_source =
+            RepoPath::from_portable("workspaces/affected/packages/app/src/main.ts")?;
+        let clear_package = RepoPath::from_portable("packages/clear")?;
+        let clear_source = RepoPath::from_portable("packages/clear/src/main.ts")?;
+        let mut evidence =
+            evidence_with_limitations(vec![Limitation::PnpmDependencySemanticsUnsupported {
+                path: workspace_config.display_escaped(),
+                detail: "pnpm packageConfigs semantics are unsupported".to_owned(),
+            }]);
+        evidence.source_contexts = vec![
+            source_context(&affected_source, &affected_package),
+            source_context(&clear_source, &clear_package),
+        ];
+        let intent = dependency_intent("workspaces/affected/packages/app/src/main.ts", "zod")?;
+
+        assert_eq!(
+            lifecycle_delta_input_for(
+                &evidence,
+                std::slice::from_ref(&intent),
+                &[existing_file_lease(&clear_source)],
+            )
+            .required_evidence_gap_count,
+            1,
+            "a dependency intent inside the affected pnpm workspace lost its required gap",
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&clear_source)])
+                .required_evidence_gap_count,
+            0,
+            "pnpm dependency uncertainty escaped into a disjoint ordinary source write",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn configured_scope_uses_affected_importer_owners() -> Result<(), Box<dyn std::error::Error>> {
+        let config = RepoPath::from_portable("tsconfig.json")?;
+        let root_source = RepoPath::from_portable("src/root.ts")?;
+        let nested_package = RepoPath::from_portable("packages/nested")?;
+        let nested_source = RepoPath::from_portable("packages/nested/src/main.ts")?;
+        let mut evidence =
+            evidence_with_limitations(vec![Limitation::TsconfigSemanticsUnsupported {
+                path: config.display_escaped(),
+                detail: "unknown compiler option madeUpFlag".to_owned(),
+            }]);
+        let controlling_config = RepoPathProjection::from(&config);
+        let mut root_context = source_context(&root_source, &RepoPath::empty());
+        root_context.configuration_paths = vec![controlling_config.clone()];
+        let mut nested_context = source_context(&nested_source, &nested_package);
+        nested_context.configuration_paths = vec![controlling_config];
+        evidence.source_contexts = vec![root_context, nested_context];
+
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&nested_source)],)
+                .required_evidence_gap_count,
+            1,
+            "a root config controlling multiple package owners must remain workspace-scoped",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn configured_scope_survives_failed_or_overridden_profile_selection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let package_a = RepoPath::from_portable("packages/a")?;
+        let package_b = RepoPath::from_portable("packages/b")?;
+        let config = RepoPath::from_portable("packages/a/tsconfig.json")?;
+        let source_a = RepoPath::from_portable("packages/a/src/main.ts")?;
+        let source_b = RepoPath::from_portable("packages/b/src/main.ts")?;
+        let mut context_a = source_context(&source_a, &package_a);
+        context_a.configuration_paths = vec![RepoPathProjection::from(&config)];
+        let mut evidence =
+            evidence_with_limitations(vec![Limitation::TsconfigSemanticsUnsupported {
+                path: config.display_escaped(),
+                detail: "unsupported moduleResolution value classic".to_owned(),
+            }]);
+        evidence.source_contexts = vec![context_a, source_context(&source_b, &package_b)];
+
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&source_b)])
+                .required_evidence_gap_count,
+            0,
+            "a failed package-local profile selection escaped to workspace scope",
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&source_a)])
+                .required_evidence_gap_count,
+            1,
+            "the affected package lost its failed profile-selection gap",
+        );
+
+        evidence.resolution_profiles = vec![lumin_model::SelectedResolutionProfile {
+            source_id: LogicalSourceId::from_path(&source_a),
+            profile: lumin_model::ResolutionProfile::Bundler,
+            source: lumin_model::ResolutionProfileSource::Invocation,
+        }];
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&source_b)])
+                .required_evidence_gap_count,
+            0,
+            "an invocation profile override erased package-local config ownership",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn configured_scope_uses_canonical_paths_and_includes_the_limiting_config()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let non_scalar_root = RepoPath::from_canonical_bytes(
+            b"LUMRPATH\x00\x01\x00\x00\x00\x01\x03\x00\x00\x00\x02\xd8\x00",
+        )?;
+        let config = non_scalar_root.join_portable("tsconfig.json")?;
+        let package_a = RepoPath::from_portable("packages/a")?;
+        let package_b = RepoPath::from_portable("packages/b")?;
+        let source_a = RepoPath::from_portable("packages/a/src/main.ts")?;
+        let source_b = RepoPath::from_portable("packages/b/src/main.ts")?;
+        let mut context_a = source_context(&source_a, &package_a);
+        context_a.configuration_paths = vec![RepoPathProjection::from(&config)];
+        let mut evidence =
+            evidence_with_limitations(vec![Limitation::TsconfigSemanticsUnsupported {
+                path: config.display_escaped(),
+                detail: "unsupported config under a non-scalar component".to_owned(),
+            }]);
+        evidence.source_contexts = vec![context_a, source_context(&source_b, &package_b)];
+
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&source_b)])
+                .required_evidence_gap_count,
+            0,
+            "a canonical package-local config path escaped to workspace scope",
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&source_a)])
+                .required_evidence_gap_count,
+            1,
+            "the affected package lost its canonical config gap",
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&config)])
+                .required_evidence_gap_count,
+            1,
+            "a write to the limiting config itself escaped the required gap",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn configured_scope_includes_every_consulted_config() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let inherited_config = RepoPath::from_portable("tsconfig.json")?;
+        let package_a = RepoPath::from_portable("packages/a")?;
+        let package_b = RepoPath::from_portable("packages/b")?;
+        let controlling_config = RepoPath::from_portable("packages/a/tsconfig.json")?;
+        let source_a = RepoPath::from_portable("packages/a/src/main.ts")?;
+        let source_b = RepoPath::from_portable("packages/b/src/main.ts")?;
+        let mut context_a = source_context(&source_a, &package_a);
+        context_a.configuration_paths = vec![
+            RepoPathProjection::from(&inherited_config),
+            RepoPathProjection::from(&controlling_config),
+        ];
+        let mut evidence =
+            evidence_with_limitations(vec![Limitation::TsconfigSemanticsUnsupported {
+                path: controlling_config.display_escaped(),
+                detail: "inherited profile and child module are incompatible".to_owned(),
+            }]);
+        evidence.source_contexts = vec![context_a, source_context(&source_b, &package_b)];
+
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&inherited_config)],)
+                .required_evidence_gap_count,
+            1,
+            "a consulted parent config escaped the affected importer's required gap",
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&source_b)])
+                .required_evidence_gap_count,
+            0,
+            "consulted parent config ownership escaped into a disjoint package",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn alias_gap_intersects_its_importer_configuration() -> Result<(), Box<dyn std::error::Error>> {
+        let package_a = RepoPath::from_portable("packages/a")?;
+        let package_b = RepoPath::from_portable("packages/b")?;
+        let source_a = RepoPath::from_portable("packages/a/src/main.ts")?;
+        let source_b = RepoPath::from_portable("packages/b/src/main.ts")?;
+        let inherited_config = RepoPath::from_portable("tsconfig.json")?;
+        let source_a_id = LogicalSourceId::from_path(&source_a);
+        let mut context_a = source_context(&source_a, &package_a);
+        context_a.configuration_paths = vec![RepoPathProjection::from(&inherited_config)];
+        let mut evidence = evidence_with_limitations(vec![Limitation::AliasShapeUnsupported {
+            source_id: source_a_id,
+            detail: "node16 import-mode resolution requires an explicit extension".to_owned(),
+        }]);
+        evidence.source_contexts = vec![context_a, source_context(&source_b, &package_b)];
+
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&inherited_config)],)
+                .required_evidence_gap_count,
+            1,
+            "an importer alias gap lost its consulted ancestor config",
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&source_b)])
+                .required_evidence_gap_count,
+            0,
+            "an importer alias gap escaped into a disjoint package",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn package_scope_uses_the_canonical_limitation_path() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let package_a = RepoPath::from_canonical_bytes(
+            b"LUMRPATH\x00\x01\x00\x00\x00\x01\x03\x00\x00\x00\x02\xd8\x00",
+        )?;
+        let manifest_a = package_a.join_portable("package.json")?;
+        let source_a = package_a.join_portable("src")?.join_portable("main.ts")?;
+        let package_b = RepoPath::from_portable("packages/b")?;
+        let source_b = RepoPath::from_portable("packages/b/src/main.ts")?;
+        let mut evidence = evidence_with_limitations(vec![Limitation::PackageImportsUnsupported {
+            path: manifest_a.display_escaped(),
+            detail: "unsupported imports under a non-scalar component".to_owned(),
+        }]);
+        evidence.source_contexts = vec![
+            source_context(&source_a, &package_a),
+            source_context(&source_b, &package_b),
+        ];
+
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&source_b)])
+                .required_evidence_gap_count,
+            0,
+            "a canonical package limitation escaped into a disjoint package",
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&source_a)])
+                .required_evidence_gap_count,
+            1,
+            "the owning package lost its canonical limitation",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cross_package_sfc_mode_conflict_remains_workspace_scoped()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let package_a = RepoPath::from_portable("packages/a")?;
+        let package_b = RepoPath::from_portable("packages/b")?;
+        let package_c = RepoPath::from_portable("packages/c")?;
+        let parent = RepoPath::from_portable("packages/a/src/App.vue")?;
+        let target = RepoPath::from_portable("packages/b/src/external.ts")?;
+        let unrelated = RepoPath::from_portable("packages/c/src/candidate.ts")?;
+        let mut evidence =
+            evidence_with_limitations(vec![Limitation::VueExternalScriptModeConflict {
+                source_id: LogicalSourceId::from_path(&parent),
+                target_source_id: LogicalSourceId::from_path(&target),
+                declared: "tsx".to_owned(),
+                actual: "typescript".to_owned(),
+            }]);
+        evidence.source_contexts = vec![
+            source_context(&parent, &package_a),
+            source_context(&target, &package_b),
+            source_context(&unrelated, &package_c),
+        ];
+
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&unrelated)])
+                .required_evidence_gap_count,
+            1,
+            "different known parent/target owners must retain the contract's workspace fallback",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn public_surface_scope_uses_exact_originating_importer()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let consumer_a_package = RepoPath::from_portable("packages/app-a")?;
+        let consumer_b_package = RepoPath::from_portable("packages/app-b")?;
+        let target_a_package = RepoPath::from_portable("packages/lib-a")?;
+        let target_b_package = RepoPath::from_portable("packages/lib-b")?;
+        let consumer_a = RepoPath::from_portable("packages/app-a/main.ts")?;
+        let consumer_b = RepoPath::from_portable("packages/app-b/main.ts")?;
+        let consumer_a_config = RepoPath::from_portable("packages/app-a/tsconfig.json")?;
+        let consumer_a_manifest = RepoPath::from_portable("packages/app-a/package.json")?;
+        let target_a = RepoPath::from_portable("packages/lib-a/index.ts")?;
+        let target_b = RepoPath::from_portable("packages/lib-b/index.ts")?;
+        let importer_a = LogicalSourceId::from_path(&consumer_a);
+        let importer_b = LogicalSourceId::from_path(&consumer_b);
+        let detail = "conditional exports mix custom and default branches";
+        let mut evidence = evidence_with_limitations(vec![
+            Limitation::PublicSurfaceUnsupported {
+                path: "packages/lib-a/package.json".to_owned(),
+                detail: detail.to_owned(),
+                importer: Some(importer_a.clone()),
+            },
+            Limitation::PublicSurfaceUnsupported {
+                path: "packages/lib-b/package.json".to_owned(),
+                detail: detail.to_owned(),
+                importer: Some(importer_b.clone()),
+            },
+        ]);
+        let mut consumer_a_context = source_context(&consumer_a, &consumer_a_package);
+        consumer_a_context.configuration_paths = vec![RepoPathProjection::from(&consumer_a_config)];
+        evidence.source_contexts = vec![
+            consumer_a_context,
+            source_context(&consumer_b, &consumer_b_package),
+            source_context(&target_a, &target_a_package),
+            source_context(&target_b, &target_b_package),
+        ];
+        let unsupported = |importer: LogicalSourceId, specifier: &str| ResolvedSourceUse {
+            source_use: SourceUseFact {
+                importer,
+                specifier: specifier.to_owned(),
+                imported_name: Some("selected".to_owned()),
+                local_name: Some("selected".to_owned()),
+                namespace: SymbolNamespace::Value,
+                kind: ImportKind::Named,
+                request_kind: ModuleRequestKind::StaticImport,
+                span: SourceSpan { start: 0, end: 40 },
+            },
+            outcome: ResolutionOutcome::Unsupported {
+                specifier: specifier.to_owned(),
+                reason: detail.to_owned(),
+            },
+        };
+        evidence.resolutions = vec![
+            unsupported(importer_a, "@scope/lib-a"),
+            unsupported(importer_b, "@scope/lib-b"),
+        ];
+
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&consumer_a)])
+                .required_evidence_gap_count,
+            1,
+            "an equal diagnostic from another package was attributed to this consumer",
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&consumer_a_config)])
+                .required_evidence_gap_count,
+            1,
+            "the originating consumer's consulted config lost its public-surface gap",
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&consumer_a_manifest)])
+                .required_evidence_gap_count,
+            1,
+            "the originating consumer's manifest lost its public-surface gap",
+        );
+        Ok(())
+    }
+
+    #[test]
     fn recoverable_parse_gap_intersects_its_source_and_direct_consumers()
     -> Result<(), Box<dyn std::error::Error>> {
         let broken = RepoPath::from_portable("src/broken.ts")?;
@@ -1037,7 +1760,7 @@ mod tests {
         });
         let fact = match delta {
             LimitationDelta::Fact(fact) => fact,
-            LimitationDelta::RequiredEvidenceGap => {
+            LimitationDelta::RequiredEvidenceGap | LimitationDelta::RequiredOwnerGap => {
                 return Err("bounded unresolved edge should produce a delta fact");
             }
         };
@@ -1062,7 +1785,7 @@ mod tests {
         });
         let fact = match delta {
             LimitationDelta::Fact(fact) => fact,
-            LimitationDelta::RequiredEvidenceGap => {
+            LimitationDelta::RequiredEvidenceGap | LimitationDelta::RequiredOwnerGap => {
                 return Err("bounded dynamic import should produce an opacity fact");
             }
         };
@@ -1094,13 +1817,13 @@ mod tests {
 
         let first = match limitation_delta(&limitation(7)) {
             LimitationDelta::Fact(fact) => fact,
-            LimitationDelta::RequiredEvidenceGap => {
+            LimitationDelta::RequiredEvidenceGap | LimitationDelta::RequiredOwnerGap => {
                 return Err("resolved computed require should produce an opacity fact");
             }
         };
         let shifted = match limitation_delta(&limitation(107)) {
             LimitationDelta::Fact(fact) => fact,
-            LimitationDelta::RequiredEvidenceGap => {
+            LimitationDelta::RequiredEvidenceGap | LimitationDelta::RequiredOwnerGap => {
                 return Err("shifted computed require should remain comparable");
             }
         };
@@ -1135,7 +1858,7 @@ mod tests {
 
         let fact = match limitation_delta(&limitation(ImportMetaGlobTargetScope::ExplicitTargets)) {
             LimitationDelta::Fact(fact) => fact,
-            LimitationDelta::RequiredEvidenceGap => {
+            LimitationDelta::RequiredEvidenceGap | LimitationDelta::RequiredOwnerGap => {
                 return Err("explicit glob candidates were not comparable".into());
             }
         };
@@ -1298,6 +2021,19 @@ mod tests {
     }
 
     #[test]
+    fn unavailable_sfc_dialect_is_a_required_owner_gap() {
+        let input = lifecycle_delta_input(&evidence_with_limitations(vec![
+            Limitation::SfcDialectUnavailable {
+                source_id: LogicalSourceId::from_string("source-svelte".to_owned()),
+                dialect: "svelte".to_owned(),
+            },
+        ]));
+        assert_eq!(input.required_owner_gap_count, 1);
+        assert_eq!(input.required_evidence_gap_count, 0);
+        assert_eq!(input.advisory_limitation_count, 0);
+    }
+
+    #[test]
     fn known_no_target_is_a_complete_unresolved_fact() -> Result<(), &'static str> {
         let delta = limitation_delta(&Limitation::InternalSpecifierUnresolved {
             importer: LogicalSourceId::from_string("source-1".to_owned()),
@@ -1309,7 +2045,7 @@ mod tests {
         });
         let fact = match delta {
             LimitationDelta::Fact(fact) => fact,
-            LimitationDelta::RequiredEvidenceGap => {
+            LimitationDelta::RequiredEvidenceGap | LimitationDelta::RequiredOwnerGap => {
                 return Err("known closed export should produce a delta fact");
             }
         };
@@ -1369,6 +2105,7 @@ mod tests {
             path: RepoPathProjection::from(path),
             kind: SourceKind::TypeScript,
             package_root: Some(RepoPathProjection::from(package_root)),
+            configuration_paths: Vec::new(),
         }
     }
 
@@ -1416,7 +2153,9 @@ mod tests {
             target_scope: Some(UnresolvedTargetScope::ExplicitTargets),
         }) {
             LimitationDelta::Fact(fact) => Ok(fact),
-            LimitationDelta::RequiredEvidenceGap => Err("bounded unresolved edge was not a fact"),
+            LimitationDelta::RequiredEvidenceGap | LimitationDelta::RequiredOwnerGap => {
+                Err("bounded unresolved edge was not a fact")
+            }
         }
     }
 }

@@ -45,10 +45,10 @@ These are execution-matrix counts, not a percentage estimate of product code.
 
 | Lane | Applicable | Mapped | Remaining | Verified aggregate |
 | --- | ---: | ---: | ---: | --- |
-| Standard | 86 | 71 | 15 | Focused `corpus::tests::mode_counts`: 71 mapped, 15 unmapped; `required-capability-failure`: 1 passed, 0 failed. |
-| Determinism | 86 | 71 | 15 | Focused `corpus::tests::mode_counts`: 71 mapped, 15 unmapped; `required-capability-failure`: 2 variants passed, 0 failed. |
+| Standard | 86 | 72 | 14 | Focused `corpus::tests::mode_counts`: 72 mapped, 14 unmapped; `limitation-scope-exhaustiveness`: 1 passed, 0 failed. |
+| Determinism | 86 | 72 | 14 | Focused `corpus::tests::mode_counts`: 72 mapped, 14 unmapped; `limitation-scope-exhaustiveness`: 2 variants passed, 0 failed. |
 | Store crash | 11 | 5 | 6 | Focused `corpus::tests::mode_counts`: 5 mapped, 6 unmapped; `cache-cleanup-publication-race`: 1 passed, 0 failed. |
-| **Total execution obligations** | **183** | **147** | **36** | This total deliberately counts each required lane execution. |
+| **Total execution obligations** | **183** | **149** | **34** | This total deliberately counts each required lane execution. |
 
 Known non-corpus exit gaps:
 

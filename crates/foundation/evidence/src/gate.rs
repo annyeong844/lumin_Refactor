@@ -20,7 +20,7 @@ pub const GATE_OPERATION_SCHEMA_VERSION: &str = "lumin-operation.v2";
 /// `lumin-engine` remains the value authority; the public frozen-contract
 /// probe verifies its current derivation against this compatibility boundary.
 pub const SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID: &str =
-    "913066eca030c23714921cff84b472b1f3d8e428ca3b2666efd88c408063ae95";
+    "467bd505facef80a6e5aaa03602b7342fe280262e9fa24363428eb832be9b4e5";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -773,6 +773,10 @@ fn append_observation_signals(output: &mut Vec<u8>, signals: &[GateSignal]) {
                 output.push(22);
                 append_observation_signal_paths(output, paths);
             }
+            GateSignal::RequiredOwnerUnavailable { limitation_count } => {
+                output.push(23);
+                output.extend_from_slice(&(*limitation_count as u64).to_be_bytes());
+            }
         }
     }
 }
@@ -852,6 +856,9 @@ pub enum GateSignal {
         count: usize,
     },
     RequiredEvidenceIncomplete {
+        limitation_count: usize,
+    },
+    RequiredOwnerUnavailable {
         limitation_count: usize,
     },
     AnalysisFailed {
@@ -1014,6 +1021,7 @@ fn unsealed_observation_reason(signal: &GateSignal) -> Option<UnsealedObservatio
         }
         GateSignal::UnplannedWrite { .. } => Some(UnsealedObservationReason::UnplannedWrite),
         GateSignal::RequiredEvidenceIncomplete { .. }
+        | GateSignal::RequiredOwnerUnavailable { .. }
         | GateSignal::ActiveTransitionPending { .. }
         | GateSignal::TransitionChainBroken { .. }
         | GateSignal::LifecycleDeltaIncomparable { .. }
@@ -1805,6 +1813,11 @@ pub mod gate_policy {
                 limitation_count: delta_input.required_evidence_gap_count,
             });
         }
+        if delta_input.required_owner_gap_count > 0 {
+            signals.push(GateSignal::RequiredOwnerUnavailable {
+                limitation_count: delta_input.required_owner_gap_count,
+            });
+        }
         if !evidence.findings.is_empty() {
             signals.push(GateSignal::FindingWarnings {
                 count: evidence.findings.len(),
@@ -1917,6 +1930,11 @@ pub mod gate_policy {
                 limitation_count: current_delta_input.required_evidence_gap_count,
             });
         }
+        if current_delta_input.required_owner_gap_count > 0 {
+            signals.push(GateSignal::RequiredOwnerUnavailable {
+                limitation_count: current_delta_input.required_owner_gap_count,
+            });
+        }
         if !protected.is_empty() {
             signals.push(GateSignal::ProtectedInputChanged { paths: protected });
         }
@@ -2008,6 +2026,7 @@ pub mod gate_policy {
                 signal,
                 GateSignal::AnalysisFailed { .. }
                     | GateSignal::RequiredEvidenceIncomplete { .. }
+                    | GateSignal::RequiredOwnerUnavailable { .. }
                     | GateSignal::SemanticInputConflict { .. }
                     | GateSignal::SemanticReadClosureIncomplete { .. }
                     | GateSignal::ProtectedInputChanged { .. }
@@ -2052,6 +2071,7 @@ pub mod gate_policy {
             | GateSignal::AdverseFactIntroduced { .. }
             | GateSignal::AdverseFactRegressed { .. } => Some(GateEffect::Block),
             GateSignal::RequiredEvidenceIncomplete { .. }
+            | GateSignal::RequiredOwnerUnavailable { .. }
             | GateSignal::AnalysisFailed { .. }
             | GateSignal::DeclaredPathUnsupported { .. }
             | GateSignal::WriteConflict { .. }

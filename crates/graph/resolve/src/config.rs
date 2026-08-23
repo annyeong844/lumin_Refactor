@@ -70,6 +70,7 @@ pub(crate) struct PathMapping {
 pub(crate) struct ConfigSelection {
     pub settings: BTreeMap<LogicalSourceId, ImporterSettings>,
     pub profiles: Vec<SelectedResolutionProfile>,
+    pub configured_sources: BTreeMap<LogicalSourceId, BTreeSet<RepoPath>>,
     pub limitations: Vec<Limitation>,
     pub demands: Vec<ConfigDemand>,
 }
@@ -136,17 +137,24 @@ fn select_importer(
 ) -> Result<(), ResolverError> {
     let controlling = nearest_config(&source.path, config);
     let mut visiting = BTreeSet::new();
+    let mut configured_paths = BTreeSet::new();
     let effective = match controlling {
         Some(ref path) => evaluate_config(
             path,
             config,
             repository_root,
             &mut visiting,
+            &mut configured_paths,
             &mut selection.demands,
             &mut selection.limitations,
         )?,
         None => EffectiveConfig::default(),
     };
+    if !configured_paths.is_empty() {
+        selection
+            .configured_sources
+            .insert(source.id.clone(), configured_paths);
+    }
     let selected_profile = if let Some(profile) = override_profile {
         Some((profile, ResolutionProfileSource::Invocation))
     } else {
@@ -259,9 +267,11 @@ fn evaluate_config(
     config: &SemanticConfigSnapshot,
     repository_root: &RepositoryRootIdentity,
     visiting: &mut BTreeSet<RepoPath>,
+    configured_paths: &mut BTreeSet<RepoPath>,
     demands: &mut Vec<ConfigDemand>,
     limitations: &mut Vec<Limitation>,
 ) -> Result<EffectiveConfig, ResolverError> {
+    configured_paths.insert(path.clone());
     if !visiting.insert(path.clone()) {
         limitations.push(Limitation::TsconfigSemanticsUnsupported {
             path: path.display_escaped(),
@@ -318,13 +328,22 @@ fn evaluate_config(
 
     let mut effective = EffectiveConfig::default();
     if let Some(extends) = document.root.get("extends") {
-        match select_extends(path, extends, config, repository_root, demands, limitations)? {
+        match select_extends(
+            path,
+            extends,
+            config,
+            repository_root,
+            configured_paths,
+            demands,
+            limitations,
+        )? {
             ExtendsSelection::Selected(parent) => {
                 effective = evaluate_config(
                     &parent,
                     config,
                     repository_root,
                     visiting,
+                    configured_paths,
                     demands,
                     limitations,
                 )?;
@@ -353,6 +372,7 @@ fn select_extends(
     value: &ConfigValue,
     config: &SemanticConfigSnapshot,
     repository_root: &RepositoryRootIdentity,
+    configured_paths: &mut BTreeSet<RepoPath>,
     demands: &mut Vec<ConfigDemand>,
     limitations: &mut Vec<Limitation>,
 ) -> Result<ExtendsSelection, ResolverError> {
@@ -391,16 +411,17 @@ fn select_extends(
             specifier,
             &normalized,
             config,
+            configured_paths,
             demands,
             limitations,
         );
     }
     select_workspace_extends(
         config_path,
-        specifier,
         &normalized,
         config,
         repository_root,
+        configured_paths,
         demands,
         limitations,
     )
@@ -411,6 +432,7 @@ fn select_relative_extends(
     original_specifier: &str,
     normalized_specifier: &str,
     config: &SemanticConfigSnapshot,
+    configured_paths: &mut BTreeSet<RepoPath>,
     demands: &mut Vec<ConfigDemand>,
     limitations: &mut Vec<Limitation>,
 ) -> Result<ExtendsSelection, ResolverError> {
@@ -427,19 +449,19 @@ fn select_relative_extends(
             "extends escapes the repository root: {original_specifier}"
         )));
     };
-    select_relative_candidate(exact, config, demands, limitations)
+    select_relative_candidate(exact, config, configured_paths, demands, limitations)
 }
 
 fn select_workspace_extends(
     config_path: &RepoPath,
-    original_specifier: &str,
     normalized_specifier: &str,
     config: &SemanticConfigSnapshot,
     repository_root: &RepositoryRootIdentity,
+    configured_paths: &mut BTreeSet<RepoPath>,
     demands: &mut Vec<ConfigDemand>,
     limitations: &mut Vec<Limitation>,
 ) -> Result<ExtendsSelection, ResolverError> {
-    if config.packages.iter().any(|package| {
+    if let Some(package) = config.packages.iter().find(|package| {
         package.workspace_root.is_some()
             && matches!(
                 &package.identity,
@@ -448,6 +470,7 @@ fn select_workspace_extends(
                 } if identity.as_str() == normalized_specifier
             )
     }) {
+        configured_paths.insert(package.manifest_path.clone());
         return Ok(ExtendsSelection::Blocked);
     }
     let matches = config
@@ -466,12 +489,13 @@ fn select_workspace_extends(
         limitations.push(Limitation::TsconfigSemanticsUnsupported {
             path: config_path.display_escaped(),
             detail: format!(
-                "extends must match one admitted workspace package identity: {original_specifier}"
+                "extends must match one admitted workspace package identity: {normalized_specifier}"
             ),
         });
         return Ok(ExtendsSelection::Blocked);
     }
     let package = matches[0];
+    configured_paths.insert(package.manifest_path.clone());
     let Some(ConfigObservation::Present {
         document: manifest, ..
     }) = config.observations.get(&package.manifest_path)
@@ -479,7 +503,7 @@ fn select_workspace_extends(
         limitations.push(Limitation::TsconfigSemanticsUnsupported {
             path: config_path.display_escaped(),
             detail: format!(
-                "workspace config package manifest is unavailable: {original_specifier}"
+                "workspace config package manifest is unavailable: {normalized_specifier}"
             ),
         });
         return Ok(ExtendsSelection::Blocked);
@@ -543,15 +567,17 @@ fn select_workspace_extends(
             return Ok(ExtendsSelection::Blocked);
         }
     };
-    select_exact_candidate(target, config, demands, limitations)
+    select_exact_candidate(target, config, configured_paths, demands, limitations)
 }
 
 fn select_relative_candidate(
     exact: RepoPath,
     config: &SemanticConfigSnapshot,
+    configured_paths: &mut BTreeSet<RepoPath>,
     demands: &mut Vec<ConfigDemand>,
     limitations: &mut Vec<Limitation>,
 ) -> Result<ExtendsSelection, ResolverError> {
+    configured_paths.insert(exact.clone());
     match config.observations.get(&exact) {
         None => {
             demands.push(ConfigDemand {
@@ -573,7 +599,7 @@ fn select_relative_candidate(
                 return Ok(ExtendsSelection::Blocked);
             }
             let fallback = append_json(&exact)?;
-            select_exact_candidate(fallback, config, demands, limitations)
+            select_exact_candidate(fallback, config, configured_paths, demands, limitations)
         }
         Some(ConfigObservation::Unreadable { .. }) => Ok(ExtendsSelection::Blocked),
     }
@@ -582,9 +608,11 @@ fn select_relative_candidate(
 fn select_exact_candidate(
     path: RepoPath,
     config: &SemanticConfigSnapshot,
+    configured_paths: &mut BTreeSet<RepoPath>,
     demands: &mut Vec<ConfigDemand>,
     limitations: &mut Vec<Limitation>,
 ) -> Result<ExtendsSelection, ResolverError> {
+    configured_paths.insert(path.clone());
     match config.observations.get(&path) {
         None => {
             demands.push(ConfigDemand {

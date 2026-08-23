@@ -2,7 +2,7 @@ mod config;
 mod generated_config_policy;
 mod package_surface;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_model::{
     ConfigSyntax, FileFacts, InventoryBoundSourceUse, Limitation, LogicalSourceId,
@@ -19,7 +19,7 @@ pub use generated_config_policy::{
     RESOLVER_PACKAGE_JSON_FIELDS, RESOLVER_TSCONFIG_TOP_LEVEL,
 };
 
-pub const RESOLVER_VERSION: &str = "config-package-resolution.v6";
+pub const RESOLVER_VERSION: &str = "config-package-resolution.v8";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ImporterFormatClassification {
@@ -47,6 +47,7 @@ pub struct ResolverOutput {
     pub resolved: Vec<ResolvedSourceUse>,
     pub package_surfaces: Vec<PackageSurfaceDeclaration>,
     pub profiles: Vec<SelectedResolutionProfile>,
+    pub configured_sources: BTreeMap<LogicalSourceId, BTreeSet<RepoPath>>,
     pub limitations: Vec<Limitation>,
     pub demands: Vec<ConfigDemand>,
 }
@@ -94,6 +95,7 @@ pub fn resolve_all(
             resolved: Vec::new(),
             package_surfaces: Vec::new(),
             profiles: selection.profiles,
+            configured_sources: selection.configured_sources,
             limitations: selection.limitations,
             demands: selection.demands,
         });
@@ -118,6 +120,7 @@ pub fn resolve_all(
             resolved: Vec::new(),
             package_surfaces: Vec::new(),
             profiles: selection.profiles,
+            configured_sources: selection.configured_sources,
             limitations: selection.limitations,
             demands,
         });
@@ -202,6 +205,7 @@ pub fn resolve_all(
         resolved,
         package_surfaces,
         profiles: selection.profiles,
+        configured_sources: selection.configured_sources,
         limitations: selection.limitations,
         demands: Vec::new(),
     })
@@ -994,7 +998,7 @@ mod tests {
         ));
         assert!(selection.limitations.iter().any(|limitation| matches!(
             limitation,
-            Limitation::PublicSurfaceUnsupported { path, detail }
+            Limitation::PublicSurfaceUnsupported { path, detail, .. }
                 if path == &manifest_path.display_escaped()
                     && detail.contains("no matching package fact")
         )));

@@ -692,6 +692,9 @@ impl From<&GateSignal> for GateSignalDto {
             | GateSignal::RequiredEvidenceIncomplete {
                 limitation_count: count,
             }
+            | GateSignal::RequiredOwnerUnavailable {
+                limitation_count: count,
+            }
             | GateSignal::AdverseFactIntroduced { count }
             | GateSignal::AdverseFactRegressed { count }
             | GateSignal::OpacityIntroduced { count }
@@ -731,6 +734,7 @@ fn signal_kind(signal: &GateSignal) -> &'static str {
         GateSignal::FindingWarnings { .. } => "finding-warnings",
         GateSignal::PreExistingAdverseFacts { .. } => "pre-existing-adverse-facts",
         GateSignal::RequiredEvidenceIncomplete { .. } => "required-evidence-incomplete",
+        GateSignal::RequiredOwnerUnavailable { .. } => "required-owner-unavailable",
         GateSignal::AnalysisFailed { .. } => "analysis-failed",
         GateSignal::DeclaredPathUnsupported { .. } => "declared-path-unsupported",
         GateSignal::WriteConflict { .. } => "write-conflict",

@@ -808,6 +808,8 @@ pub enum Limitation {
     PublicSurfaceUnsupported {
         path: String,
         detail: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        importer: Option<LogicalSourceId>,
     },
     TsconfigSemanticsUnsupported {
         path: String,
