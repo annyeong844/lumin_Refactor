@@ -6,16 +6,16 @@ use lumin_evidence::{
     GateOperationStatus, GateRecord, GateRevision, OperationRecord, WorktreeTransition,
     apply_worktree_transition_for_domain,
 };
-use lumin_model::{ObservationBinding, SealedGateObservation};
+use lumin_model::{GateId, ObservationBinding, SealedGateObservation};
 use redb::{ReadTransaction, ReadableTable, TableError, WriteTransaction};
 
-use crate::StoreError;
+use crate::{SEQUENCES, StoreError};
 
 use super::receipts::{
     validate_gate_validation_receipts, validate_stored_gate_validation_receipts,
 };
 use super::records::{read_record, transition_key};
-use super::{GATES, TRANSITIONS};
+use super::{GATES, OPERATIONS, TRANSITIONS};
 
 pub(super) struct ValidatedGateCatalog {
     pub(super) gates: BTreeMap<String, GateRecord>,
@@ -53,6 +53,16 @@ pub(super) fn operation_result_sha256(operation: &OperationRecord) -> Result<Str
     let bytes = serde_json::to_vec(result).map_err(crate::serialization_error)?;
     let mut framed = Vec::new();
     lumin_model::append_length_prefixed(&mut framed, b"lumin-gate-operation-result.v1");
+    lumin_model::append_length_prefixed(&mut framed, &bytes);
+    Ok(crate::digest_hex(&framed))
+}
+
+pub(super) fn operation_projection_sha256(
+    operation: &OperationRecord,
+) -> Result<String, StoreError> {
+    let bytes = serde_json::to_vec(operation).map_err(crate::serialization_error)?;
+    let mut framed = Vec::new();
+    lumin_model::append_length_prefixed(&mut framed, b"lumin-gate-operation-projection.v1");
     lumin_model::append_length_prefixed(&mut framed, &bytes);
     Ok(crate::digest_hex(&framed))
 }
@@ -197,6 +207,13 @@ pub(super) fn validate_stored_gate_catalog(
     }
     let transitions = read_transition_map_from_write(write)?;
     validate_transition_catalog(&gates, &transitions)?;
+    validate_allocator_floors(
+        &gates,
+        &transitions,
+        &read_operation_gate_ids_from_write(write)?,
+        read_sequence_from_write(write, "gate")?,
+        read_sequence_from_write(write, "transition")?,
+    )?;
     Ok(ValidatedGateCatalog { gates, transitions })
 }
 
@@ -209,7 +226,121 @@ pub(super) fn validate_loaded_gate_catalog(
     }
     let transitions = read_transition_map_from_read(read)?;
     validate_transition_catalog(&gates, &transitions)?;
+    validate_allocator_floors(
+        &gates,
+        &transitions,
+        &read_operation_gate_ids_from_read(read)?,
+        read_sequence_from_read(read, "gate")?,
+        read_sequence_from_read(read, "transition")?,
+    )?;
     Ok(ValidatedGateCatalog { gates, transitions })
+}
+
+fn validate_allocator_floors(
+    gates: &BTreeMap<String, GateRecord>,
+    transitions: &BTreeMap<u64, WorktreeTransition>,
+    operation_gate_ids: &[GateId],
+    gate_sequence: u64,
+    transition_sequence: u64,
+) -> Result<(), StoreError> {
+    let mut minimum_gate_sequence = 0;
+    for gate_id in gates
+        .values()
+        .map(|gate| &gate.gate_id)
+        .chain(operation_gate_ids)
+    {
+        minimum_gate_sequence = minimum_gate_sequence.max(canonical_gate_sequence(gate_id)?);
+    }
+    if gate_sequence < minimum_gate_sequence {
+        return Err(StoreError::Integrity(format!(
+            "gate allocator sequence {gate_sequence} trails retained allocation {minimum_gate_sequence}"
+        )));
+    }
+    if gate_sequence == u64::MAX {
+        return Err(StoreError::Integrity(
+            "gate allocator sequence is exhausted".to_owned(),
+        ));
+    }
+
+    let minimum_transition_sequence = transitions.keys().next_back().copied().unwrap_or(0);
+    if transition_sequence < minimum_transition_sequence {
+        return Err(StoreError::Integrity(format!(
+            "transition allocator sequence {transition_sequence} trails authenticated catalog {minimum_transition_sequence}"
+        )));
+    }
+    if transition_sequence == u64::MAX {
+        return Err(StoreError::Integrity(
+            "transition allocator sequence is exhausted".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn canonical_gate_sequence(gate_id: &GateId) -> Result<u64, StoreError> {
+    let value = gate_id.as_str();
+    let Some(sequence) = value.strip_prefix("gate_") else {
+        return Err(StoreError::Integrity(format!(
+            "gate allocator owner has a noncanonical ID: {value}"
+        )));
+    };
+    if sequence.len() != 16
+        || !sequence
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(StoreError::Integrity(format!(
+            "gate allocator owner has a noncanonical ID: {value}"
+        )));
+    }
+    u64::from_str_radix(sequence, 16).map_err(|error| {
+        StoreError::Integrity(format!(
+            "gate allocator owner ID {value} cannot be decoded: {error}"
+        ))
+    })
+}
+
+fn read_operation_gate_ids_from_write(write: &WriteTransaction) -> Result<Vec<GateId>, StoreError> {
+    let table = write.open_table(OPERATIONS).map_err(crate::backend_error)?;
+    let mut gate_ids = Vec::new();
+    for row in table.iter().map_err(crate::backend_error)? {
+        let (_, value) = row.map_err(crate::backend_error)?;
+        let operation = serde_json::from_slice::<OperationRecord>(value.value())
+            .map_err(crate::serialization_error)?;
+        gate_ids.push(operation.gate_id);
+    }
+    Ok(gate_ids)
+}
+
+fn read_operation_gate_ids_from_read(read: &ReadTransaction) -> Result<Vec<GateId>, StoreError> {
+    let table = match read.open_table(OPERATIONS) {
+        Ok(table) => table,
+        Err(TableError::TableDoesNotExist(_)) => return Ok(Vec::new()),
+        Err(error) => return Err(crate::backend_error(error)),
+    };
+    let mut gate_ids = Vec::new();
+    for row in table.iter().map_err(crate::backend_error)? {
+        let (_, value) = row.map_err(crate::backend_error)?;
+        let operation = serde_json::from_slice::<OperationRecord>(value.value())
+            .map_err(crate::serialization_error)?;
+        gate_ids.push(operation.gate_id);
+    }
+    Ok(gate_ids)
+}
+
+fn read_sequence_from_write(write: &WriteTransaction, key: &str) -> Result<u64, StoreError> {
+    let table = write.open_table(SEQUENCES).map_err(crate::backend_error)?;
+    let value = table.get(key).map_err(crate::backend_error)?;
+    Ok(value.map_or(0, |value| value.value()))
+}
+
+fn read_sequence_from_read(read: &ReadTransaction, key: &str) -> Result<u64, StoreError> {
+    let table = match read.open_table(SEQUENCES) {
+        Ok(table) => table,
+        Err(TableError::TableDoesNotExist(_)) => return Ok(0),
+        Err(error) => return Err(crate::backend_error(error)),
+    };
+    let value = table.get(key).map_err(crate::backend_error)?;
+    Ok(value.map_or(0, |value| value.value()))
 }
 
 fn historical_gate_projection(

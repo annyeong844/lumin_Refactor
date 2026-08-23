@@ -866,6 +866,7 @@ fn publish_authorized_transition(
             ));
         }
     };
+    integrity::validate_stored_gate_catalog(write)?;
     let sequence = next_transition_sequence(write)?;
     let gate_id = gate.gate_id.clone();
     let transition = WorktreeTransition {

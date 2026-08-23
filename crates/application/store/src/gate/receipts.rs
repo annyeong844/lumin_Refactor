@@ -100,6 +100,7 @@ pub(crate) fn validation_receipt_for_operation(
             Some(GateValidationCommitReceipt {
                 revision_sha256: gate_revision_sha256(revision)?,
                 result_sha256: super::integrity::operation_result_sha256(operation)?,
+                operation_sha256: super::integrity::operation_projection_sha256(operation)?,
                 gate_projection_sha256: super::integrity::gate_projection_sha256(
                     gate,
                     revision.revision,

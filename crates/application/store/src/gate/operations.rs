@@ -74,6 +74,7 @@ impl OperationSession<'_> {
                 self.bind_pending_operation(&mut operation)?;
                 operation
             } else {
+                super::integrity::validate_stored_gate_catalog(&write)?;
                 let mut operation = OperationRecord {
                     schema_version: GATE_OPERATION_SCHEMA_VERSION.to_owned(),
                     operation_id: operation_id.clone(),
