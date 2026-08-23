@@ -182,7 +182,7 @@ fn migration_reopens_pending_semantic_read_reservations() -> Result<(), Box<dyn 
         drop(session);
         drop(store);
 
-        rewrite_operation(root.path(), &operation_id, |operation| {
+        let operation = rewrite_operation(root.path(), &operation_id, |operation| {
             let binding = operation
                 .semantic_read_reservation_bindings
                 .first_mut()
@@ -199,6 +199,7 @@ fn migration_reopens_pending_semantic_read_reservations() -> Result<(), Box<dyn 
             }
             Ok(())
         })?;
+        replace_validation_receipt(root.path(), &operation)?;
 
         let store = open_store(root.path())?;
         let outcome = store.migrate_lifecycle_store();
@@ -212,6 +213,89 @@ fn migration_reopens_pending_semantic_read_reservations() -> Result<(), Box<dyn 
             ),
             "unexpected migration outcome: {outcome:?}"
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_erased_pending_semantic_read_sets_against_receipts()
+-> Result<(), Box<dyn std::error::Error>> {
+    for kind in ["pre-write", "post-write"] {
+        let root = tempfile::tempdir()?;
+        fs::create_dir_all(root.path().join("config"))?;
+        fs::write(root.path().join("config/pending-read.json"), b"{}\n")?;
+        let semantic_path = RepoPath::from_portable("config/pending-read.json")?;
+        let observed = lumin_inventory::observe_config_input_identity(root.path(), &semantic_path)?;
+        let binding = lumin_evidence::SemanticReadReservationBinding {
+            path: RepoPathProjection::from(&semantic_path),
+            physical_identity: observed.physical_identity,
+            absence_parent: observed.absence_parent.map(|parent| PathPrefixIdentity {
+                path: RepoPathProjection::from(&parent.path),
+                physical_identity: parent.physical_identity,
+            }),
+        };
+        let operation_id = OperationId::from_string(format!("op-erased-pending-read-{kind}"));
+
+        if kind == "pre-write" {
+            let source = RepoPath::from_portable("src/erased-pending-read.ts")?;
+            let (request_digest, gate_id) = pending_pre_write(root.path(), &operation_id, &source)?;
+            let source_projection = RepoPathProjection::from(&source);
+            let source_lease = observed_lease(root.path(), &source)?;
+            let analysis_options = options();
+            let store = open_store(root.path())?;
+            let session = store.begin_operation(&operation_id)?;
+            assert!(matches!(
+                session.reserve_pre_write(
+                    &request_digest,
+                    std::slice::from_ref(&source_projection),
+                    std::slice::from_ref(&source_lease),
+                    &analysis_options,
+                    rejected_test_observation,
+                )?,
+                PreWriteStart::Analyze { .. }
+            ));
+            assert_eq!(
+                session.reserve_pre_write_semantic_inputs(
+                    &request_digest,
+                    &gate_id,
+                    std::slice::from_ref(&binding),
+                )?,
+                crate::SemanticReadReservation::Reserved
+            );
+        } else {
+            let store = open_store(root.path())?;
+            let gate_id = open_active_gate_for(
+                &store,
+                "op-erased-pending-read-open",
+                "src/erased-pending-close.ts",
+            )?;
+            let request_digest = post_write_request_digest(&gate_id);
+            let session = store.begin_operation(&operation_id)?;
+            assert!(matches!(
+                session.begin_post_write(&request_digest, &gate_id)?,
+                crate::PostWriteStart::Analyze { .. }
+            ));
+            assert_eq!(
+                session.reserve_post_write_semantic_inputs(
+                    &request_digest,
+                    &gate_id,
+                    std::slice::from_ref(&binding),
+                )?,
+                crate::SemanticReadReservation::Reserved
+            );
+        }
+
+        rewrite_operation(root.path(), &operation_id, |operation| {
+            operation.semantic_read_reservations.clear();
+            operation.semantic_read_reservation_bindings.clear();
+            Ok(())
+        })?;
+        let store = open_store(root.path())?;
+        assert!(matches!(
+            store.migrate_lifecycle_store(),
+            Err(StoreError::Integrity(message))
+                if message.contains("store-owned validation receipt")
+        ));
     }
     Ok(())
 }

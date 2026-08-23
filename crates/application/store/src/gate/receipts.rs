@@ -14,17 +14,22 @@ pub(crate) fn validation_receipt_for_operation(
     operation: &OperationRecord,
     gate: Option<&GateRecord>,
 ) -> Result<Option<GateValidationReceipt>, StoreError> {
-    let (payload, commit) = if operation.status == GateOperationStatus::Pending
-        && operation.kind == GateOperationKind::PreWrite
-    {
-        validate_pending_pre_write_inspection(operation)?;
-        (
-            GateValidationReceiptPayload::PreWriteInspection {
-                declared_path_inspection: operation.pre_write_declared_path_inspection.clone(),
+    let (payload, commit) = if operation.status == GateOperationStatus::Pending {
+        super::validate_reservation_binding_set(operation)?;
+        let payload = match operation.kind {
+            GateOperationKind::PreWrite => {
+                validate_pending_pre_write_inspection(operation)?;
+                GateValidationReceiptPayload::PreWriteInspection {
+                    declared_path_inspection: operation.pre_write_declared_path_inspection.clone(),
+                    leased_write_set: operation.leased_write_set.clone(),
+                }
+            }
+            GateOperationKind::PostWrite => GateValidationReceiptPayload::PostWritePending {
                 leased_write_set: operation.leased_write_set.clone(),
             },
-            None,
-        )
+            GateOperationKind::GateAbandon => return Ok(None),
+        };
+        (payload, None)
     } else if operation.status != GateOperationStatus::Committed {
         return Ok(None);
     } else {
@@ -110,6 +115,8 @@ pub(crate) fn validation_receipt_for_operation(
         request_digest: operation.request_digest.clone(),
         target_revision: operation.target_revision,
         pre_write_declared_path_inspection: operation.pre_write_declared_path_inspection.clone(),
+        semantic_read_reservations: operation.semantic_read_reservations.clone(),
+        semantic_read_reservation_bindings: operation.semantic_read_reservation_bindings.clone(),
         commit,
         payload,
     }))
@@ -193,21 +200,69 @@ pub(super) fn persist_validation_receipt(
 }
 
 fn receipt_can_advance(existing: &GateValidationReceipt, expected: &GateValidationReceipt) -> bool {
-    existing.schema_version == expected.schema_version
+    let same_owner = existing.schema_version == expected.schema_version
         && existing.operation_id == expected.operation_id
         && existing.gate_id == expected.gate_id
         && existing.request_digest == expected.request_digest
         && existing.target_revision == expected.target_revision
         && existing.pre_write_declared_path_inspection
-            == expected.pre_write_declared_path_inspection
-        && existing.commit.is_none()
-        && expected.commit.is_some()
-        && inspection_receipt_is_self_consistent(existing)
-        && matches!(
-            expected.payload,
-            GateValidationReceiptPayload::PreWriteAdmission { .. }
-                | GateValidationReceiptPayload::PreWriteFinal { .. }
+            == expected.pre_write_declared_path_inspection;
+    same_owner
+        && (pending_receipt_can_advance(existing, expected)
+            || pending_receipt_can_commit(existing, expected))
+}
+
+fn pending_receipt_can_advance(
+    existing: &GateValidationReceipt,
+    expected: &GateValidationReceipt,
+) -> bool {
+    existing.commit.is_none()
+        && expected.commit.is_none()
+        && existing.payload == expected.payload
+        && pending_receipt_is_self_consistent(existing)
+        && pending_receipt_is_self_consistent(expected)
+        && canonical_subset(
+            &existing.semantic_read_reservations,
+            &expected.semantic_read_reservations,
         )
+        && canonical_subset(
+            &existing.semantic_read_reservation_bindings,
+            &expected.semantic_read_reservation_bindings,
+        )
+}
+
+fn pending_receipt_can_commit(
+    existing: &GateValidationReceipt,
+    expected: &GateValidationReceipt,
+) -> bool {
+    existing.commit.is_none()
+        && expected.commit.is_some()
+        && expected.semantic_read_reservations.is_empty()
+        && expected.semantic_read_reservation_bindings.is_empty()
+        && pending_receipt_is_self_consistent(existing)
+        && matches!(
+            (&existing.payload, &expected.payload),
+            (
+                GateValidationReceiptPayload::PreWriteInspection { .. },
+                GateValidationReceiptPayload::PreWriteAdmission { .. }
+                    | GateValidationReceiptPayload::PreWriteFinal { .. }
+            ) | (
+                GateValidationReceiptPayload::PostWritePending { .. },
+                GateValidationReceiptPayload::PostWriteFinal { .. }
+            )
+        )
+}
+
+fn canonical_subset<T: Ord>(existing: &[T], expected: &[T]) -> bool {
+    canonical_strict_order(existing)
+        && canonical_strict_order(expected)
+        && existing
+            .iter()
+            .all(|item| expected.binary_search(item).is_ok())
+}
+
+fn canonical_strict_order<T: Ord>(items: &[T]) -> bool {
+    items.windows(2).all(|pair| pair[0] < pair[1])
 }
 
 fn validate_pending_pre_write_inspection(operation: &OperationRecord) -> Result<(), StoreError> {
@@ -244,20 +299,35 @@ fn validate_pending_pre_write_inspection(operation: &OperationRecord) -> Result<
     Ok(())
 }
 
-fn inspection_receipt_is_self_consistent(receipt: &GateValidationReceipt) -> bool {
-    let GateValidationReceiptPayload::PreWriteInspection {
-        declared_path_inspection,
-        leased_write_set,
-    } = &receipt.payload
-    else {
-        return false;
+fn pending_receipt_is_self_consistent(receipt: &GateValidationReceipt) -> bool {
+    let payload_is_consistent = match &receipt.payload {
+        GateValidationReceiptPayload::PreWriteInspection {
+            declared_path_inspection,
+            leased_write_set,
+        } => {
+            let inspected_leases = declared_path_inspection
+                .iter()
+                .filter_map(|inspection| inspection.lease.clone())
+                .collect::<Vec<_>>();
+            declared_path_inspection == &receipt.pre_write_declared_path_inspection
+                && &inspected_leases == leased_write_set
+        }
+        GateValidationReceiptPayload::PostWritePending { .. } => {
+            receipt.pre_write_declared_path_inspection.is_empty()
+        }
+        _ => false,
     };
-    let inspected_leases = declared_path_inspection
+    let mut bound_paths = receipt
+        .semantic_read_reservation_bindings
         .iter()
-        .filter_map(|inspection| inspection.lease.clone())
+        .map(|binding| binding.path.clone())
         .collect::<Vec<_>>();
-    declared_path_inspection == &receipt.pre_write_declared_path_inspection
-        && &inspected_leases == leased_write_set
+    bound_paths.sort();
+    bound_paths.dedup();
+    payload_is_consistent
+        && canonical_strict_order(&receipt.semantic_read_reservations)
+        && canonical_strict_order(&receipt.semantic_read_reservation_bindings)
+        && bound_paths == receipt.semantic_read_reservations
 }
 
 pub(super) fn validate_stored_validation_receipt(

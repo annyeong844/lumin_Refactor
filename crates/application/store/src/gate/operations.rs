@@ -330,6 +330,7 @@ impl OperationSession<'_> {
                 self.bind_pending_operation(&mut operation)?;
                 let (transitions, active_gates) =
                     post_write_analysis_context(&write, &gate, operation.transition_sequence)?;
+                persist_validation_receipt(&write, &operation, None)?;
                 write_record(
                     &write,
                     OPERATIONS,
@@ -372,6 +373,7 @@ impl OperationSession<'_> {
             self.bind_pending_operation(&mut operation)?;
             let (transitions, active_gates) =
                 post_write_analysis_context(&write, &gate, operation.transition_sequence)?;
+            persist_validation_receipt(&write, &operation, None)?;
             write_record(
                 &write,
                 OPERATIONS,
@@ -494,6 +496,7 @@ impl OperationSession<'_> {
             operation.semantic_read_reservation_bindings.sort();
             operation.semantic_read_reservation_bindings.dedup();
             validate_reservation_binding_set(&operation)?;
+            persist_validation_receipt(&write, &operation, None)?;
             write_record(
                 &write,
                 OPERATIONS,

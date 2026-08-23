@@ -1504,7 +1504,7 @@ pub struct PostWriteFinalValidation {
     pub evidence: Option<PostWriteFinalValidationEvidence>,
 }
 
-pub const GATE_VALIDATION_RECEIPT_SCHEMA_VERSION: &str = "lumin-gate-validation-receipt.v2";
+pub const GATE_VALIDATION_RECEIPT_SCHEMA_VERSION: &str = "lumin-gate-validation-receipt.v3";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1524,6 +1524,9 @@ pub struct GateValidationCommitReceipt {
 pub enum GateValidationReceiptPayload {
     PreWriteInspection {
         declared_path_inspection: Vec<PreWriteDeclaredPathInspection>,
+        leased_write_set: Vec<WriteLease>,
+    },
+    PostWritePending {
         leased_write_set: Vec<WriteLease>,
     },
     PreWriteAdmission {
@@ -1550,6 +1553,10 @@ pub struct GateValidationReceipt {
     pub target_revision: u64,
     #[serde(default)]
     pub pre_write_declared_path_inspection: Vec<PreWriteDeclaredPathInspection>,
+    #[serde(default)]
+    pub semantic_read_reservations: Vec<RepoPathProjection>,
+    #[serde(default)]
+    pub semantic_read_reservation_bindings: Vec<SemanticReadReservationBinding>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit: Option<GateValidationCommitReceipt>,
     pub payload: GateValidationReceiptPayload,
