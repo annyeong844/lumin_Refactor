@@ -192,6 +192,7 @@ fn open_rejected_gate_for(
                 signals,
             ),
             pre_write_evidence: None,
+            post_write_evidence: None,
         },
     )?;
     assert_eq!(result.lifecycle, GateLifecycle::Rejected);
@@ -562,6 +563,11 @@ fn migration_rejects_a_catalog_revision_regression_within_one_gate()
             .as_mut()
             .ok_or("catalog-regression close result is missing")?
             .observation_binding = Some(forged_binding);
+        operation
+            .post_write_final_validation
+            .as_mut()
+            .ok_or("catalog-regression close final validation is missing")?
+            .catalog_revision = opening_catalog_revision - 1;
         let changed = serde_json::to_vec(&operation)?;
         table.insert(close_operation_id.as_str(), changed.as_slice())?;
     }
@@ -1989,6 +1995,12 @@ fn migration_requires_every_durable_revision_to_have_a_committed_result()
                         root.path(),
                         &RepoPath::from_portable(&source_name)?,
                     )?];
+                    let pending_lease = operation.leased_write_set.first().cloned();
+                    operation
+                        .pre_write_declared_path_inspection
+                        .first_mut()
+                        .ok_or("pending revision operation omitted its inspection evidence")?
+                        .lease = pending_lease;
                     operation.operation_liveness = Some(OperationLivenessLease {
                         lease_nonce: "0".repeat(32),
                         owner_process_id: 1,
@@ -2581,6 +2593,12 @@ fn migration_rejects_signals_that_a_sealed_close_cannot_emit()
             .as_mut()
             .ok_or("close-signal-kind result is missing")?
             .signals
+            .push(injected.clone());
+        operation
+            .post_write_final_validation
+            .as_mut()
+            .ok_or("close-signal-kind final validation is missing")?
+            .signals
             .push(injected);
         let changed = serde_json::to_vec(&operation)?;
         table.insert(operation_id.as_str(), changed.as_slice())?;
@@ -2643,6 +2661,12 @@ fn migration_rejects_an_authorizing_close_before_the_durable_tail()
         result.decision = GateDecision::Allow;
         result.signals.clear();
         result.lifecycle = GateLifecycle::Closed;
+        operation
+            .post_write_final_validation
+            .as_mut()
+            .ok_or("early-authorize close final validation is missing")?
+            .signals
+            .clear();
         let changed = serde_json::to_vec(&operation)?;
         table.insert(close_id.as_str(), changed.as_slice())?;
     }
@@ -2745,6 +2769,7 @@ fn migration_authenticates_final_freshness_signals_in_the_opening_observation()
                 },
             },
             pre_write_evidence: Some(final_validation_evidence),
+            post_write_evidence: None,
         },
     )?;
     assert_eq!(result.lifecycle, GateLifecycle::Rejected);
@@ -3133,34 +3158,16 @@ fn migration_authenticates_final_freshness_signals_in_close_observations()
     close_active_gate_for_migration(&store, &gate_id)?;
     drop(store);
 
+    let gate = open_store(root.path())?.load_gate(&gate_id)?;
+    let operation_id = gate
+        .revisions
+        .get(1)
+        .ok_or("close-freshness revision is missing")?
+        .operation_id
+        .clone();
+    let drift_paths = gate.declared_write_set.clone();
     let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
     let write = database.begin_write()?;
-    let (operation_id, binding) = {
-        let mut table = write.open_table(GATES)?;
-        let bytes = table
-            .get(gate_id.as_str())?
-            .ok_or("close-freshness gate is missing")?
-            .value()
-            .to_vec();
-        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
-        let operation_id = gate
-            .revisions
-            .get(1)
-            .ok_or("close-freshness revision is missing")?
-            .operation_id
-            .clone();
-        gate.revisions[1].signals = vec![GateSignal::ProtectedInputChanged {
-            paths: gate.declared_write_set.clone(),
-        }];
-        let binding = reconstructed_close_binding(&gate, 1)?;
-
-        // Delete the contextual signal while retaining the identity that sealed it.
-        gate.revisions[1].signals.clear();
-        gate.revisions[1].observation_binding = Some(binding.clone());
-        let changed = serde_json::to_vec(&gate)?;
-        table.insert(gate_id.as_str(), changed.as_slice())?;
-        (operation_id, binding)
-    };
     {
         let mut table = write.open_table(OPERATIONS)?;
         let bytes = table
@@ -3169,43 +3176,32 @@ fn migration_authenticates_final_freshness_signals_in_close_observations()
             .value()
             .to_vec();
         let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
-        let result = operation
-            .result
+        let final_validation = operation
+            .post_write_final_validation
             .as_mut()
-            .ok_or("close-freshness result is missing")?;
-        result.signals.clear();
-        result.observation_binding = Some(binding.clone());
+            .ok_or("close-freshness final validation is missing")?;
+        final_validation
+            .evidence
+            .as_mut()
+            .ok_or("close-freshness evidence is missing")?
+            .observation
+            .write_domain_drift_paths = drift_paths;
         let changed = serde_json::to_vec(&operation)?;
         table.insert(operation_id.as_str(), changed.as_slice())?;
-    }
-    {
-        let mut table = write.open_table(TRANSITIONS)?;
-        let key = transition_key(1);
-        let bytes = table
-            .get(key.as_str())?
-            .ok_or("close-freshness transition is missing")?
-            .value()
-            .to_vec();
-        let mut transition = serde_json::from_slice::<WorktreeTransition>(&bytes)?;
-        let ObservationBinding::Sealed {
-            observation: SealedGateObservation::Close { observation_id },
-        } = binding
-        else {
-            return Err("close-freshness fixture produced the wrong binding".into());
-        };
-        transition.capsule.close_observation_id = observation_id;
-        let changed = serde_json::to_vec(&transition)?;
-        table.insert(key.as_str(), changed.as_slice())?;
     }
     write.commit()?;
     drop(database);
 
     let store = open_store(root.path())?;
-    assert!(matches!(
-        store.migrate_lifecycle_store(),
-        Err(StoreError::Integrity(message))
-            if message.contains("close observation revision 1 cannot be reconstructed")
-    ));
+    let outcome = store.migrate_lifecycle_store();
+    assert!(
+        matches!(
+            &outcome,
+            Err(StoreError::Integrity(message))
+                if message.contains("close revision 1 signals disagree")
+        ),
+        "unexpected migration outcome: {outcome:?}"
+    );
     Ok(())
 }
 
@@ -3369,6 +3365,16 @@ fn migration_reopens_pending_pre_write_physical_reservations()
                 prefix.physical_identity =
                     different_physical_identity(prefix.physical_identity.clone());
             }
+            let changed_lease = operation
+                .leased_write_set
+                .first()
+                .cloned()
+                .ok_or("pending physical operation lost its changed lease")?;
+            operation
+                .pre_write_declared_path_inspection
+                .first_mut()
+                .ok_or("pending physical operation omitted its inspection evidence")?
+                .lease = Some(changed_lease);
             let changed = serde_json::to_vec(&operation)?;
             table.insert(operation_id.as_str(), changed.as_slice())?;
         }
@@ -3702,6 +3708,105 @@ fn migration_rejects_an_admission_rejection_without_its_operation_owned_evidence
         store.migrate_lifecycle_store(),
         Err(StoreError::Integrity(message))
             if message.contains("omitted its final validation record")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_binds_admission_conflict_owners_to_the_exact_catalog()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let owner_gate_id = open_active_gate_for(
+        &store,
+        "op-admission-catalog-owner",
+        "src/admission-catalog.ts",
+    )?;
+    let operation_id = OperationId::from_string("op-admission-catalog-rejected".to_owned());
+    let source = path("src/admission-catalog.ts")?;
+    let source_lease = WriteLease {
+        path: source.clone(),
+        kind: WriteLeaseKind::ExistingFile,
+        physical_identity: None,
+        nearest_existing_parent: None,
+        prefix_identities: Vec::new(),
+    };
+    let analysis_options = options();
+    let request_digest = pre_write_digest(std::slice::from_ref(&source), &analysis_options);
+    let attempted =
+        UnsealedGateObservationInputs::new(vec![source_lease.clone()], Vec::new(), Vec::new());
+    let source_for_binding = source.clone();
+    let session = store.begin_operation(&operation_id)?;
+    let rejected = match session.reserve_pre_write(
+        &request_digest,
+        std::slice::from_ref(&source),
+        std::slice::from_ref(&source_lease),
+        &analysis_options,
+        |signals| {
+            derive_unsealed_gate_observation_binding(
+                std::slice::from_ref(&source_for_binding),
+                &attempted,
+                signals,
+            )
+        },
+    )? {
+        PreWriteStart::Committed(result) => *result,
+        PreWriteStart::Analyze { .. } => {
+            return Err("catalog-conflicting pre-write unexpectedly reached analysis".into());
+        }
+    };
+    close_active_gate_for_migration(&store, &owner_gate_id)?;
+    drop(session);
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    let catalog_revision = {
+        let table = write.open_table(SEQUENCES)?;
+        table
+            .get(ACTIVE_GATE_CATALOG_SEQUENCE_KEY)?
+            .ok_or("active-gate catalog sequence is missing")?
+            .value()
+    };
+    {
+        let mut table = write.open_table(OPERATIONS)?;
+        let bytes = table
+            .get(operation_id.as_str())?
+            .ok_or("catalog admission operation is missing")?
+            .value()
+            .to_vec();
+        let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+        operation
+            .pre_write_admission_evidence
+            .as_mut()
+            .ok_or("catalog admission evidence is missing")?
+            .catalog_revision = catalog_revision;
+        let changed = serde_json::to_vec(&operation)?;
+        table.insert(operation_id.as_str(), changed.as_slice())?;
+    }
+    {
+        let mut table = write.open_table(GATES)?;
+        let bytes = table
+            .get(rejected.gate_id.as_str())?
+            .ok_or("catalog rejected gate is missing")?
+            .value()
+            .to_vec();
+        let mut gate = serde_json::from_slice::<GateRecord>(&bytes)?;
+        gate.revisions
+            .first_mut()
+            .ok_or("catalog rejected gate omitted its opening")?
+            .catalog_revision = Some(catalog_revision);
+        let changed = serde_json::to_vec(&gate)?;
+        table.insert(rejected.gate_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("was not active in its admission catalog")
     ));
     Ok(())
 }
@@ -4254,6 +4359,7 @@ fn migration_rejects_unfinished_post_write_against_a_terminal_gate()
                 inode: 1,
             }),
         });
+        operation.post_write_final_validation = None;
         operation.result = None;
         let changed = serde_json::to_vec(&operation)?;
         table.insert(pending_operation_id.as_str(), changed.as_slice())?;
@@ -4312,6 +4418,7 @@ fn migration_preserves_interrupted_post_write_retargeting() -> Result<(), Box<dy
         operation.interruption_count = 1;
         operation.operation_liveness = None;
         operation.pre_write_final_validation = None;
+        operation.post_write_final_validation = None;
         operation.result = None;
         let changed = serde_json::to_vec(&operation)?;
         table.insert(interrupted_id.as_str(), changed.as_slice())?;

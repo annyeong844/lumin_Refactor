@@ -1225,6 +1225,16 @@ pub struct GateOperationResult {
     pub deltas: Vec<GateDeltaRecord>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreWriteDeclaredPathInspection {
+    pub path: RepoPathProjection,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease: Option<WriteLease>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejection: Option<GateSignal>,
+}
+
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum PreWriteAdmissionConflictOwner {
@@ -1467,6 +1477,35 @@ pub struct PreWriteFinalValidation {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PostWriteFinalValidationEvidence {
+    pub expected_leased_write_set: Vec<WriteLease>,
+    pub expected_alias_closures: Vec<PhysicalAliasClosureRecord>,
+    pub observation: PreWriteFinalValidationEvidence,
+}
+
+pub fn derive_post_write_final_validation_signals(
+    expected_semantic_inputs: &[SemanticInputRecord],
+    evidence: &PostWriteFinalValidationEvidence,
+) -> Vec<GateSignal> {
+    derive_pre_write_final_validation_signals(
+        expected_semantic_inputs,
+        &evidence.expected_leased_write_set,
+        &evidence.expected_alias_closures,
+        &evidence.observation,
+    )
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PostWriteFinalValidation {
+    pub catalog_revision: u64,
+    pub signals: Vec<GateSignal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<PostWriteFinalValidationEvidence>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OperationRecord {
     pub schema_version: String,
     pub operation_id: OperationId,
@@ -1490,10 +1529,14 @@ pub struct OperationRecord {
     pub interruption_count: u64,
     #[serde(default)]
     pub operation_liveness: Option<OperationLivenessLease>,
+    #[serde(default)]
+    pub pre_write_declared_path_inspection: Vec<PreWriteDeclaredPathInspection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pre_write_admission_evidence: Option<PreWriteAdmissionEvidence>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pre_write_final_validation: Option<PreWriteFinalValidation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post_write_final_validation: Option<PostWriteFinalValidation>,
     pub analysis_options: Option<GateAnalysisOptions>,
     pub result: Option<GateOperationResult>,
 }

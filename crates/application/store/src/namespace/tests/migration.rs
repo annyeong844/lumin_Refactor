@@ -3,12 +3,13 @@ mod integrity;
 use std::fs;
 
 use lumin_evidence::{
-    ActualWriteSet, CapabilityRecord, DEAD_CODE_CAPABILITY_ID, GateAnalysisOptions,
-    GateBaselineObservationInput, GateCloseObservationInput, GateObservationBinding, GateSignal,
-    PathPrefixIdentity, PreWriteFinalValidationEvidence, RepoPathProjection, RunEvidence,
-    SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, SemanticInputRecord, SemanticInputState,
-    SemanticReadReservationBinding, UnsealedGateObservationInputs, WriteLease, WriteLeaseKind,
-    apply_worktree_transition, derive_gate_baseline_observation_id,
+    ActualWriteSet, CapabilityRecord, DEAD_CODE_CAPABILITY_ID, DeclaredPathUnsupportedReason,
+    GateAnalysisOptions, GateBaselineObservationInput, GateCloseObservationInput,
+    GateObservationBinding, GateSignal, PathPrefixIdentity, PostWriteFinalValidationEvidence,
+    PreWriteDeclaredPathInspection, PreWriteFinalValidationEvidence, RepoPathProjection,
+    RunEvidence, SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, SemanticInputRecord,
+    SemanticInputState, SemanticReadReservationBinding, UnsealedGateObservationInputs, WriteLease,
+    WriteLeaseKind, apply_worktree_transition, derive_gate_baseline_observation_id,
     derive_gate_close_observation_id, derive_protected_semantic_inputs,
     derive_unsealed_gate_observation_binding, gate_policy, post_write_request_digest,
     pre_write_request_digest, seal_analysis_snapshot,
@@ -61,12 +62,33 @@ fn clean_pre_write_final_validation_evidence(
     }
 }
 
+fn clean_post_write_final_validation_evidence(
+    semantic_inputs: Vec<SemanticInputRecord>,
+    leased_write_set: Vec<WriteLease>,
+    alias_closures: Vec<lumin_evidence::PhysicalAliasClosureRecord>,
+) -> PostWriteFinalValidationEvidence {
+    PostWriteFinalValidationEvidence {
+        expected_leased_write_set: leased_write_set.clone(),
+        expected_alias_closures: alias_closures.clone(),
+        observation: PreWriteFinalValidationEvidence {
+            expected_semantic_read_bindings: Vec::new(),
+            observed_semantic_read_bindings: Vec::new(),
+            observed_semantic_inputs: semantic_inputs,
+            observed_leased_write_set: leased_write_set,
+            observed_alias_closures: alias_closures,
+            write_domain_drift_paths: Vec::new(),
+            semantic_input_validation_drift_paths: Vec::new(),
+        },
+    }
+}
+
 #[test]
 fn migration_preserves_an_admission_conflict_without_final_validation()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     let store = open_store(root.path())?;
-    open_active_gate_for(&store, "op-admission-conflict-owner", "src/conflict.ts")?;
+    let owner_gate_id =
+        open_active_gate_for(&store, "op-admission-conflict-owner", "src/conflict.ts")?;
 
     let operation_id = OperationId::from_string("op-admission-conflict-rejected".to_owned());
     let session = store.begin_operation(&operation_id)?;
@@ -106,6 +128,7 @@ fn migration_preserves_an_admission_conflict_without_final_validation()
         .ok_or("admission rejection omitted its operation-owned evidence")?;
     assert!(!admission.conflict_owners.is_empty());
     assert!(persisted.pre_write_final_validation.is_none());
+    close_active_gate_for_migration(&store, &owner_gate_id)?;
     drop(store);
 
     let store = open_store(root.path())?;
@@ -173,6 +196,44 @@ fn migration_preserves_run_gate_and_pending_operation_records()
         Err(StoreError::StoreGenerationChanged { .. })
     ));
     assert_migration_paths_absent(root.path())?;
+    Ok(())
+}
+
+#[test]
+fn migration_preserves_a_pending_rejected_path_inspection() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("op-migrate-pending-rejection".to_owned());
+    let session = store.begin_operation(&operation_id)?;
+    let path = RepoPathProjection::from(&RepoPath::from_portable("notes/new.txt")?);
+    let rejection = GateSignal::DeclaredPathUnsupported {
+        path: path.clone(),
+        reason: DeclaredPathUnsupportedReason::NotAnalyzedSource,
+    };
+    let inspection = PreWriteDeclaredPathInspection {
+        path: path.clone(),
+        lease: None,
+        rejection: Some(rejection),
+    };
+    let analysis_options = options();
+    let request_digest = pre_write_digest(std::slice::from_ref(&path), &analysis_options);
+    assert!(matches!(
+        session.reserve_pre_write_with_inspection(
+            &request_digest,
+            std::slice::from_ref(&path),
+            &[],
+            std::slice::from_ref(&inspection),
+            &analysis_options,
+            rejected_test_observation,
+        )?,
+        PreWriteStart::Analyze { .. }
+    ));
+    let before = store.load_operation(&operation_id)?;
+
+    store.migrate_lifecycle_store()?;
+
+    assert_eq!(store.load_operation(&operation_id)?, before);
     Ok(())
 }
 
@@ -586,6 +647,7 @@ fn open_active_gate_for_with_protected_inputs(
                 },
             },
             pre_write_evidence: Some(final_validation_evidence),
+            post_write_evidence: None,
         },
     )?;
     Ok(gate_id)
@@ -651,6 +713,11 @@ fn append_non_authorizing_close_for_migration(
     let protected_for_id = protected_semantic_inputs.clone();
     let aliases_for_id = alias_closures.clone();
     let signals_for_id = signals.clone();
+    let post_write_evidence = clean_post_write_final_validation_evidence(
+        snapshot.inputs.clone(),
+        leased_write_set.clone(),
+        alias_closures.clone(),
+    );
     session.finish_post_write(
         &request_digest,
         gate_id,
@@ -689,6 +756,7 @@ fn append_non_authorizing_close_for_migration(
                 },
             },
             pre_write_evidence: None,
+            post_write_evidence: Some(post_write_evidence),
         },
     )?;
     Ok(())
@@ -762,6 +830,11 @@ fn close_active_gate_for_migration(
     let aliases_for_id = alias_closures.clone();
     let changed_paths_for_id = changed_paths.clone();
     let reconciled_sequences_for_id = reconciled_transition_sequences.clone();
+    let post_write_evidence = clean_post_write_final_validation_evidence(
+        snapshot.inputs.clone(),
+        leased_write_set.clone(),
+        alias_closures.clone(),
+    );
     session.finish_post_write(
         &request_digest,
         gate_id,
@@ -800,6 +873,7 @@ fn close_active_gate_for_migration(
                 },
             },
             pre_write_evidence: None,
+            post_write_evidence: Some(post_write_evidence),
         },
     )?;
     Ok(())
@@ -860,6 +934,7 @@ fn append_unsealed_close_for_migration(
             signals: Vec::new(),
             binding: derive_unsealed_gate_observation_binding(&[], &inputs, signals),
             pre_write_evidence: None,
+            post_write_evidence: None,
         },
     )?;
     Ok(operation_id)

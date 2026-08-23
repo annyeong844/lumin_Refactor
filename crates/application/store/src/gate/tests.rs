@@ -78,6 +78,7 @@ fn baseline_finalization(
             sealed_baseline_binding()
         },
         pre_write_evidence: None,
+        post_write_evidence: None,
     }
 }
 
@@ -103,6 +104,7 @@ fn close_finalization(extra: Vec<GateSignal>, signals: &[GateSignal]) -> Observa
             sealed_close_binding()
         },
         pre_write_evidence: None,
+        post_write_evidence: None,
     }
 }
 
@@ -207,8 +209,10 @@ fn persisted_v2_optional_gate_additions_default_when_absent()
         semantic_read_reservation_bindings: Vec::new(),
         interruption_count: 0,
         operation_liveness: None,
+        pre_write_declared_path_inspection: Vec::new(),
         pre_write_admission_evidence: None,
         pre_write_final_validation: None,
+        post_write_final_validation: None,
         analysis_options: None,
         result: None,
     };
@@ -316,8 +320,10 @@ fn persisted_reservation_rejects_conflicting_physical_identities()
         ],
         interruption_count: 0,
         operation_liveness: None,
+        pre_write_declared_path_inspection: Vec::new(),
         pre_write_admission_evidence: None,
         pre_write_final_validation: None,
+        post_write_final_validation: None,
         analysis_options: None,
         result: None,
     };
@@ -364,8 +370,10 @@ fn persisted_reservation_rejects_direct_and_absence_identities_together()
         semantic_read_reservation_bindings: vec![binding],
         interruption_count: 0,
         operation_liveness: None,
+        pre_write_declared_path_inspection: Vec::new(),
         pre_write_admission_evidence: None,
         pre_write_final_validation: None,
+        post_write_final_validation: None,
         analysis_options: None,
         result: None,
     };
@@ -750,6 +758,7 @@ fn unsealed_pre_write_releases_leases_but_retains_its_attempted_domain()
                 signals,
             ),
             pre_write_evidence: None,
+            post_write_evidence: None,
         },
     )?;
 

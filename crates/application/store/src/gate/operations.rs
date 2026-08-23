@@ -9,6 +9,34 @@ impl OperationSession<'_> {
         analysis_options: &GateAnalysisOptions,
         rejected_observation: impl FnOnce(&[GateSignal]) -> GateObservationBinding,
     ) -> Result<PreWriteStart, StoreError> {
+        let declared_path_inspection = initial_leases
+            .iter()
+            .cloned()
+            .map(|lease| lumin_evidence::PreWriteDeclaredPathInspection {
+                path: lease.path.clone(),
+                lease: Some(lease),
+                rejection: None,
+            })
+            .collect::<Vec<_>>();
+        self.reserve_pre_write_with_inspection(
+            request_digest,
+            declared_write_set,
+            initial_leases,
+            &declared_path_inspection,
+            analysis_options,
+            rejected_observation,
+        )
+    }
+
+    pub fn reserve_pre_write_with_inspection(
+        &self,
+        request_digest: &str,
+        declared_write_set: &[RepoPathProjection],
+        initial_leases: &[WriteLease],
+        declared_path_inspection: &[lumin_evidence::PreWriteDeclaredPathInspection],
+        analysis_options: &GateAnalysisOptions,
+        rejected_observation: impl FnOnce(&[GateSignal]) -> GateObservationBinding,
+    ) -> Result<PreWriteStart, StoreError> {
         let operation_id = &self.operation_id;
         self.store.with_exclusive_lock(|guard| {
             let database = self.open_database(guard)?;
@@ -38,7 +66,9 @@ impl OperationSession<'_> {
                 operation.leased_write_set = initial_leases.to_vec();
                 operation.semantic_read_reservations.clear();
                 operation.semantic_read_reservation_bindings.clear();
+                operation.pre_write_declared_path_inspection = declared_path_inspection.to_vec();
                 operation.pre_write_admission_evidence = None;
+                operation.pre_write_final_validation = None;
                 operation.analysis_options = Some(analysis_options.clone());
                 self.bind_pending_operation(&mut operation)?;
                 operation
@@ -59,8 +89,10 @@ impl OperationSession<'_> {
                     semantic_read_reservation_bindings: Vec::new(),
                     interruption_count: 0,
                     operation_liveness: None,
+                    pre_write_declared_path_inspection: declared_path_inspection.to_vec(),
                     pre_write_admission_evidence: None,
                     pre_write_final_validation: None,
+                    post_write_final_validation: None,
                     analysis_options: Some(analysis_options.clone()),
                     result: None,
                 };
@@ -300,6 +332,7 @@ impl OperationSession<'_> {
                 operation.leased_write_set = gate.leased_write_set.clone();
                 operation.semantic_read_reservations.clear();
                 operation.semantic_read_reservation_bindings.clear();
+                operation.post_write_final_validation = None;
                 self.bind_pending_operation(&mut operation)?;
                 let (transitions, active_gates) =
                     post_write_analysis_context(&write, &gate, operation.transition_sequence)?;
@@ -335,8 +368,10 @@ impl OperationSession<'_> {
                 semantic_read_reservation_bindings: Vec::new(),
                 interruption_count: 0,
                 operation_liveness: None,
+                pre_write_declared_path_inspection: Vec::new(),
                 pre_write_admission_evidence: None,
                 pre_write_final_validation: None,
+                post_write_final_validation: None,
                 analysis_options: None,
                 result: None,
             };
@@ -537,6 +572,12 @@ impl OperationSession<'_> {
             let finalization =
                 final_validation(&reserved_state_identities, catalog_revision, &signals);
             signals.extend(finalization.signals);
+            operation.post_write_final_validation =
+                Some(lumin_evidence::PostWriteFinalValidation {
+                    catalog_revision,
+                    signals: signals.clone(),
+                    evidence: finalization.post_write_evidence,
+                });
             let observation_binding = finalization.binding;
             let sealed_close = match &observation_binding {
                 lumin_model::ObservationBinding::Sealed {

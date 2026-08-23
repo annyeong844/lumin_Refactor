@@ -2,10 +2,10 @@ use std::path::{Path, PathBuf};
 
 use lumin_evidence::{
     DependencyIntentRecord, GateAnalysisOptions, GateOperationResult, GateRecord, GateSignal,
-    OperationRecord, PathPrefixIdentity, PreWriteFinalValidationEvidence, RepoPathProjection,
-    ScanInvocationTier, SemanticInputRecord, SemanticInputState, SemanticReadReservationBinding,
-    derive_pre_write_final_validation_signals, gate_policy, post_write_request_digest,
-    pre_write_request_digest, seal_analysis_snapshot,
+    OperationRecord, PathPrefixIdentity, PostWriteFinalValidationEvidence,
+    PreWriteFinalValidationEvidence, RepoPathProjection, ScanInvocationTier, SemanticInputRecord,
+    SemanticInputState, SemanticReadReservationBinding, derive_pre_write_final_validation_signals,
+    gate_policy, post_write_request_digest, pre_write_request_digest, seal_analysis_snapshot,
 };
 use lumin_inventory::{InventoryRequest, SemanticInputExpectation, SemanticInputValidationState};
 use lumin_model::{
@@ -30,7 +30,6 @@ mod transitions;
 use domain::{
     DeclaredPathInspection, captured_input_physical_paths, close_alias_topology,
     expand_write_domain, inspect_declared_paths, observe_write_domain, protected_semantic_inputs,
-    revalidate_write_domain,
 };
 use observation::{
     BaselineObservationSeed, CloseObservationSeed, close_observation_binding,
@@ -155,10 +154,11 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         evidence_payload_sha256: None,
     };
     let operation = context.store.begin_operation(&request.operation_id)?;
-    let (gate_id, transition_sequence) = match operation.reserve_pre_write(
+    let (gate_id, transition_sequence) = match operation.reserve_pre_write_with_inspection(
         &request_digest,
         &declared_write_set,
         &inspection.leases,
+        &inspection.evidence,
         &analysis_options,
         |signals| unsealed_pre_write_observation_binding(&admission_observation_seed, signals),
     )? {
@@ -264,6 +264,7 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
                         &all_signals,
                     ),
                     pre_write_evidence: final_validation_evidence,
+                    post_write_evidence: None,
                 }
             },
         )
@@ -782,21 +783,12 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                 deltas,
             },
             |reserved_identities, catalog_revision, store_signals| {
-                let final_signals = final_freshness_validation_signals(
+                let (final_signals, final_validation_evidence) = pre_write_final_validation(
                     &context.root,
                     &final_validation,
                     reserved_identities,
-                );
-                let mut final_signals = final_signals;
-                extend_unique_gate_signals(
-                    &mut final_signals,
-                    revalidate_current_write_domain(
-                        &context.root,
-                        &final_validation,
-                        reserved_identities,
-                        &close_write_leases,
-                        &observation_seed.alias_closures,
-                    ),
+                    &close_write_leases,
+                    &observation_seed.alias_closures,
                 );
                 let mut all_signals = store_signals.to_vec();
                 all_signals.extend(final_signals.iter().cloned());
@@ -808,6 +800,13 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
                         &all_signals,
                     ),
                     pre_write_evidence: None,
+                    post_write_evidence: final_validation_evidence.map(|observation| {
+                        PostWriteFinalValidationEvidence {
+                            expected_leased_write_set: close_write_leases.clone(),
+                            expected_alias_closures: observation_seed.alias_closures.clone(),
+                            observation,
+                        }
+                    }),
                 }
             },
         )
@@ -926,6 +925,7 @@ fn finish_failed_close(
                         &all_signals,
                     ),
                     pre_write_evidence: None,
+                    post_write_evidence: None,
                 }
             },
         )
@@ -1172,6 +1172,7 @@ fn stale_captured_input_topology_paths(
     Ok(stale)
 }
 
+#[cfg(test)]
 fn final_freshness_validation_signals(
     root: &Path,
     validation: &FinalFreshnessValidation,
@@ -1349,96 +1350,6 @@ fn pre_write_final_validation(
             }],
             None,
         ),
-    }
-}
-
-fn revalidate_current_write_domain(
-    root: &Path,
-    validation: &FinalFreshnessValidation,
-    reserved_identities: &std::collections::BTreeSet<lumin_model::PhysicalFileIdentity>,
-    expected_leases: &[lumin_evidence::WriteLease],
-    expected_alias_closures: &[lumin_evidence::PhysicalAliasClosureRecord],
-) -> Vec<GateSignal> {
-    let current_inventory = lumin_inventory::begin_scan_with_reserved_state_identities(
-        root,
-        &validation.inventory_request,
-        reserved_identities,
-    )
-    .and_then(|pending| pending.finish(root));
-    match current_inventory {
-        Ok(inventory) => {
-            let current_semantic_inputs = crate::semantic_input_records(&inventory)
-                .into_iter()
-                .collect::<std::collections::BTreeSet<_>>();
-            let captured_semantic_inputs = validation
-                .captured_inputs
-                .iter()
-                .cloned()
-                .collect::<std::collections::BTreeSet<_>>();
-            let current_source_inputs = current_semantic_inputs
-                .iter()
-                .filter(|input| input.state == SemanticInputState::Source)
-                .cloned()
-                .collect::<std::collections::BTreeSet<_>>();
-            let captured_source_inputs = validation
-                .captured_inputs
-                .iter()
-                .filter(|input| input.state == SemanticInputState::Source)
-                .cloned()
-                .collect::<std::collections::BTreeSet<_>>();
-            let mut signals = Vec::new();
-            let mut changed_semantic_paths = current_semantic_inputs
-                .difference(&captured_semantic_inputs)
-                .map(|input| input.path.clone())
-                .collect::<Vec<_>>();
-            changed_semantic_paths.extend(
-                current_source_inputs
-                    .symmetric_difference(&captured_source_inputs)
-                    .map(|input| input.path.clone()),
-            );
-            if !changed_semantic_paths.is_empty() {
-                let mut paths = changed_semantic_paths;
-                paths.sort();
-                paths.dedup();
-                signals.push(GateSignal::ProtectedInputChanged { paths });
-            }
-            let mut source_paths = inventory
-                .sources
-                .into_iter()
-                .map(|source| source.path)
-                .collect::<Vec<_>>();
-            let captured_paths = match captured_input_physical_paths(&validation.captured_inputs) {
-                Ok(paths) => paths,
-                Err(signal) => return vec![signal],
-            };
-            source_paths.extend(captured_paths);
-            source_paths.sort();
-            source_paths.dedup();
-            extend_unique_gate_signals(
-                &mut signals,
-                revalidate_write_domain(
-                    root,
-                    expected_leases,
-                    expected_alias_closures,
-                    &source_paths,
-                ),
-            );
-            signals
-        }
-        Err(error) => vec![GateSignal::AnalysisFailed {
-            detail: error.to_string(),
-        }],
-    }
-}
-
-fn extend_unique_gate_signals(
-    signals: &mut Vec<GateSignal>,
-    additions: impl IntoIterator<Item = GateSignal>,
-) {
-    for signal in additions {
-        if !signals.contains(&signal) {
-            signals.push(signal);
-        }
     }
 }
 

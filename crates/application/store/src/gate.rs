@@ -2,10 +2,10 @@ use lumin_evidence::{
     ActualWriteSet, AnalysisSnapshot, GATE_OPERATION_SCHEMA_VERSION, GATE_RECORD_SCHEMA_VERSION,
     GateAnalysisOptions, GateBaseline, GateDecision, GateLifecycle, GateObservationBinding,
     GateOperationKind, GateOperationResult, GateOperationStatus, GateRecord, GateRevision,
-    GateSignal, OperationRecord, PhysicalAliasClosureRecord, PreWriteFinalValidationEvidence,
-    RepoPathProjection, SemanticInputRecord, SemanticReadReservationBinding, TransitionCapsule,
-    UnsealedGateObservationInputs, WorktreeTransition, WriteLease,
-    derive_pre_write_admission_signals, gate_policy,
+    GateSignal, OperationRecord, PhysicalAliasClosureRecord, PostWriteFinalValidationEvidence,
+    PreWriteFinalValidationEvidence, RepoPathProjection, SemanticInputRecord,
+    SemanticReadReservationBinding, TransitionCapsule, UnsealedGateObservationInputs,
+    WorktreeTransition, WriteLease, derive_pre_write_admission_signals, gate_policy,
 };
 use lumin_model::{GateBaselineObservationId, GateDeltaRecord, GateId, OperationId};
 use redb::{ReadableTable, TableDefinition, WriteTransaction};
@@ -113,6 +113,7 @@ pub struct ObservationFinalization {
     pub signals: Vec<GateSignal>,
     pub binding: GateObservationBinding,
     pub pre_write_evidence: Option<PreWriteFinalValidationEvidence>,
+    pub post_write_evidence: Option<PostWriteFinalValidationEvidence>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

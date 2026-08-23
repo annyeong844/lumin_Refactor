@@ -2,8 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use lumin_evidence::{
-    GateRecord, GateSignal, PathPrefixIdentity, PhysicalAliasClosureRecord, RepoPathProjection,
-    SemanticInputRecord, SemanticInputState, WriteLease, WriteLeaseKind,
+    GateRecord, GateSignal, PathPrefixIdentity, PhysicalAliasClosureRecord,
+    PreWriteDeclaredPathInspection, RepoPathProjection, SemanticInputRecord, SemanticInputState,
+    WriteLease, WriteLeaseKind,
 };
 use lumin_inventory::{WriteTargetError, WriteTargetKind, WriteTargetObservation};
 use lumin_model::{PhysicalFileIdentity, RepoPath};
@@ -14,27 +15,33 @@ pub(super) struct DeclaredPathInspection {
     pub(super) observations: Vec<WriteTargetObservation>,
     pub(super) leases: Vec<WriteLease>,
     pub(super) signals: Vec<GateSignal>,
+    pub(super) evidence: Vec<PreWriteDeclaredPathInspection>,
 }
 
 pub(super) fn inspect_declared_paths(root: &Path, paths: &[RepoPath]) -> DeclaredPathInspection {
     let mut observations = Vec::new();
     let mut leases = Vec::new();
     let mut signals = Vec::new();
+    let mut evidence = Vec::new();
     for path in paths {
         let projection = RepoPathProjection::from(path);
         match lumin_inventory::is_reserved_state_path(path) {
             Ok(true) => {
-                signals.push(unsupported_path(
+                let signal = unsupported_path(
                     projection,
                     lumin_evidence::DeclaredPathUnsupportedReason::ReservedState,
-                ));
+                );
+                evidence.push(rejected_path_inspection(path, &signal));
+                signals.push(signal);
                 continue;
             }
             Err(_) => {
-                signals.push(unsupported_path(
+                let signal = unsupported_path(
                     projection,
                     lumin_evidence::DeclaredPathUnsupportedReason::NotAnalyzedSource,
-                ));
+                );
+                evidence.push(rejected_path_inspection(path, &signal));
+                signals.push(signal);
                 continue;
             }
             Ok(false) => {}
@@ -48,24 +55,49 @@ pub(super) fn inspect_declared_paths(root: &Path, paths: &[RepoPath]) -> Declare
                 if unsupported_native_file
                     || (observation.kind == WriteTargetKind::NewFile && !supported_source)
                 {
-                    signals.push(unsupported_path(
+                    let signal = unsupported_path(
                         projection,
                         lumin_evidence::DeclaredPathUnsupportedReason::NotAnalyzedSource,
-                    ));
+                    );
+                    evidence.push(rejected_path_inspection(path, &signal));
+                    signals.push(signal);
                     continue;
                 }
-                leases.push(write_lease(&observation));
+                let lease = write_lease(&observation);
+                evidence.push(PreWriteDeclaredPathInspection {
+                    path: lease.path.clone(),
+                    lease: Some(lease.clone()),
+                    rejection: None,
+                });
+                leases.push(lease);
                 observations.push(observation);
             }
-            Err(error) => signals.push(write_target_signal(projection, error)),
+            Err(error) => {
+                let signal = write_target_signal(projection, error);
+                evidence.push(rejected_path_inspection(path, &signal));
+                signals.push(signal);
+            }
         }
     }
     leases.sort();
     leases.dedup();
+    evidence.sort_by(|left, right| left.path.cmp(&right.path));
     DeclaredPathInspection {
         observations,
         leases,
         signals,
+        evidence,
+    }
+}
+
+fn rejected_path_inspection(
+    path: &RepoPath,
+    signal: &GateSignal,
+) -> PreWriteDeclaredPathInspection {
+    PreWriteDeclaredPathInspection {
+        path: RepoPathProjection::from(path),
+        lease: None,
+        rejection: Some(signal.clone()),
     }
 }
 
@@ -219,6 +251,7 @@ pub(super) fn expand_write_domain(
     (leases, alias_closures, signals)
 }
 
+#[cfg(test)]
 pub(super) fn revalidate_write_domain(
     root: &Path,
     expected_leases: &[WriteLease],

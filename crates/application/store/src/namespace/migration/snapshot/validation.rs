@@ -11,10 +11,11 @@ use lumin_evidence::{
     PhysicalAliasClosureRecord, PreWriteAdmissionConflictOwner, PreWriteAdmissionEvidence,
     RUN_EVIDENCE_SCHEMA_VERSION, SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, WorktreeTransition,
     WriteLeaseKind, apply_worktree_transition_for_domain, derive_gate_baseline_observation_id,
-    derive_gate_close_observation_id, derive_pre_write_admission_signals,
-    derive_pre_write_final_validation_signals, derive_protected_semantic_inputs,
-    derive_unsealed_gate_observation_binding, gate_abandon_request_digest, gate_policy,
-    post_write_request_digest, pre_write_request_digest, seal_analysis_snapshot,
+    derive_gate_close_observation_id, derive_post_write_final_validation_signals,
+    derive_pre_write_admission_signals, derive_pre_write_final_validation_signals,
+    derive_protected_semantic_inputs, derive_unsealed_gate_observation_binding,
+    gate_abandon_request_digest, gate_policy, post_write_request_digest, pre_write_request_digest,
+    seal_analysis_snapshot,
 };
 use lumin_model::{ObservationBinding, RepoPath, SealedGateObservation};
 use serde::de::DeserializeOwned;
@@ -386,8 +387,17 @@ fn validate_pre_write_admission_owner(
                     operation.operation_id.as_str()
                 ))
             })?;
-            let expected_protected =
-                protected_semantic_inputs_at_revision(gate, *revision, operations)?;
+            let expected_protected = active_gate_protected_inputs_at_catalog(
+                gate,
+                admission_catalog_revision,
+                operations,
+            )?
+            .ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "pre-write operation {} cites a gate that was not active in its admission catalog",
+                    operation.operation_id.as_str()
+                ))
+            })?;
             if leased_write_set != &baseline.leased_write_set
                 || protected_semantic_inputs != &expected_protected
             {
@@ -511,6 +521,29 @@ fn gate_was_active_at_revision(
         }
     }
     Ok(true)
+}
+
+fn active_gate_protected_inputs_at_catalog(
+    gate: &GateRecord,
+    catalog_revision: u64,
+    operations: &BTreeMap<&str, OperationRecord>,
+) -> Result<Option<Vec<lumin_evidence::SemanticInputRecord>>, StoreError> {
+    let Some(effective_revision) = gate
+        .revisions
+        .iter()
+        .filter(|revision| {
+            revision
+                .catalog_revision
+                .is_some_and(|observed| observed < catalog_revision)
+        })
+        .max_by_key(|revision| revision.revision)
+    else {
+        return Ok(None);
+    };
+    if !gate_was_active_at_revision(gate, effective_revision.revision, operations)? {
+        return Ok(None);
+    }
+    protected_semantic_inputs_at_revision(gate, effective_revision.revision, operations).map(Some)
 }
 
 fn protected_semantic_inputs_at_revision(
@@ -965,7 +998,7 @@ fn validate_gate_observations(
                         "gate {key} sealed opening omitted independently reconstructable final-freshness evidence"
                     ))
                 })?;
-                validate_pre_write_final_validation_evidence(key, baseline, final_evidence)?;
+                validate_final_freshness_evidence(key, &baseline.snapshot, final_evidence)?;
                 let final_freshness_signals = derive_pre_write_final_validation_signals(
                     &baseline.snapshot.inputs,
                     &baseline.leased_write_set,
@@ -1245,14 +1278,47 @@ fn validate_gate_observations(
             }
             let reconciled_baseline =
                 reconstruct_close_baseline(key, baseline, revision, transitions)?;
+            let closing_operation =
+                operations
+                    .get(revision.operation_id.as_str())
+                    .ok_or_else(|| {
+                        StoreError::Integrity(format!(
+                            "gate {key} sealed close revision {} lost its operation",
+                            revision.revision
+                        ))
+                    })?;
+            let final_validation = closing_operation
+                .post_write_final_validation
+                .as_ref()
+                .ok_or_else(|| {
+                    StoreError::Integrity(format!(
+                        "gate {key} sealed close revision {} omitted its final validation record",
+                        revision.revision
+                    ))
+                })?;
+            let final_evidence = final_validation.evidence.as_ref().ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "gate {key} sealed close revision {} omitted independently reconstructable final-freshness evidence",
+                    revision.revision
+                ))
+            })?;
+            let final_freshness_signals =
+                derive_post_write_final_validation_signals(&snapshot.inputs, final_evidence);
             validate_close_snapshot_policy(
                 key,
                 revision,
                 &reconciled_baseline,
                 snapshot,
                 &expected_protected_semantic_inputs,
-                &baseline.leased_write_set,
-                &baseline.alias_closures,
+                baseline,
+                &final_freshness_signals,
+            )?;
+            validate_post_write_final_validation_evidence(
+                key,
+                baseline,
+                revision,
+                snapshot,
+                final_evidence,
             )?;
             let derived = derive_gate_close_observation_id(GateCloseObservationInput {
                 gate_id: &gate.gate_id,
@@ -1278,6 +1344,14 @@ fn validate_gate_observations(
             if &derived != observation_id {
                 return Err(StoreError::Integrity(format!(
                     "gate {key} close observation revision {} cannot be reconstructed",
+                    revision.revision
+                )));
+            }
+            if final_validation.catalog_revision != revision.catalog_revision.unwrap_or_default()
+                || final_validation.signals != revision.signals
+            {
+                return Err(StoreError::Integrity(format!(
+                    "gate {key} sealed close revision {} disagrees with its operation-owned final validation",
                     revision.revision
                 )));
             }
@@ -1552,9 +1626,9 @@ fn is_admission_conflict_rejection(
         )
 }
 
-fn validate_pre_write_final_validation_evidence(
+fn validate_final_freshness_evidence(
     key: &str,
-    baseline: &GateBaseline,
+    snapshot: &AnalysisSnapshot,
     evidence: &lumin_evidence::PreWriteFinalValidationEvidence,
 ) -> Result<(), StoreError> {
     if !canonical_set(&evidence.expected_semantic_read_bindings)
@@ -1570,7 +1644,7 @@ fn validate_pre_write_final_validation_evidence(
         )));
     }
     for binding in &evidence.expected_semantic_read_bindings {
-        let matches_snapshot = baseline.snapshot.inputs.iter().any(|input| {
+        let matches_snapshot = snapshot.inputs.iter().any(|input| {
             input.path == binding.path
                 && input.physical_identity == binding.physical_identity
                 && input.absence_parent == binding.absence_parent
@@ -1592,6 +1666,38 @@ fn validate_pre_write_final_validation_evidence(
             "gate {key} final-freshness evidence contains conflicting observations for one semantic path"
         )));
     }
+    Ok(())
+}
+
+fn validate_post_write_final_validation_evidence(
+    key: &str,
+    baseline: &GateBaseline,
+    revision: &GateRevision,
+    snapshot: &AnalysisSnapshot,
+    evidence: &lumin_evidence::PostWriteFinalValidationEvidence,
+) -> Result<(), StoreError> {
+    if !canonical_set(&evidence.expected_leased_write_set)
+        || !canonical_alias_set(&evidence.expected_alias_closures)
+        || evidence.expected_alias_closures != revision.alias_closures
+        || evidence.expected_leased_write_set.iter().any(|lease| {
+            !baseline
+                .leased_write_set
+                .iter()
+                .any(|baseline_lease| baseline_lease.covers(&lease.path))
+                && !revision.signals.iter().any(|signal| {
+                    matches!(
+                        signal,
+                        GateSignal::UnplannedWrite { paths } if paths.contains(&lease.path)
+                    )
+                })
+        })
+    {
+        return Err(StoreError::Integrity(format!(
+            "gate {key} close revision {} has an invalid final write-domain observation",
+            revision.revision
+        )));
+    }
+    validate_final_freshness_evidence(key, snapshot, &evidence.observation)?;
     Ok(())
 }
 
@@ -1660,19 +1766,19 @@ fn validate_close_snapshot_policy(
     reconciled_baseline: &AnalysisSnapshot,
     snapshot: &AnalysisSnapshot,
     prior_protected_semantic_inputs: &[lumin_evidence::SemanticInputRecord],
-    leased_write_set: &[lumin_evidence::WriteLease],
-    baseline_alias_closures: &[lumin_evidence::PhysicalAliasClosureRecord],
+    baseline: &GateBaseline,
+    final_freshness_signals: &[GateSignal],
 ) -> Result<(), StoreError> {
-    validate_close_alias_closures(key, revision, snapshot, leased_write_set)?;
+    validate_close_alias_closures(key, revision, snapshot, &baseline.leased_write_set)?;
     let (expected_signals, expected_changed_paths, expected_deltas) = gate_policy::closing_signals(
         reconciled_baseline,
         snapshot,
         prior_protected_semantic_inputs,
-        leased_write_set,
+        &baseline.leased_write_set,
     );
     let expected_actual_write_set = gate_policy::closure_expanded_actual_write_set(
         &expected_changed_paths,
-        baseline_alias_closures,
+        &baseline.alias_closures,
         &revision.alias_closures,
     );
     if revision.actual_write_set.as_ref() != Some(&expected_actual_write_set) {
@@ -1699,7 +1805,7 @@ fn validate_close_snapshot_policy(
         .filter(|signal| is_strict_close_snapshot_signal(signal))
         .cloned()
         .collect::<Vec<_>>();
-    let contextual_signals_present = expected_signals
+    let mut expected_contextual = expected_signals
         .iter()
         .filter(|signal| {
             matches!(
@@ -1707,7 +1813,29 @@ fn validate_close_snapshot_policy(
                 GateSignal::ProtectedInputChanged { .. } | GateSignal::UnplannedWrite { .. }
             )
         })
-        .all(|signal| revision.signals.contains(signal));
+        .cloned()
+        .collect::<Vec<_>>();
+    for signal in final_freshness_signals {
+        if matches!(
+            signal,
+            GateSignal::ProtectedInputChanged { .. } | GateSignal::UnplannedWrite { .. }
+        ) && !expected_contextual.contains(signal)
+        {
+            expected_contextual.push(signal.clone());
+        }
+    }
+    let mut observed_contextual = revision
+        .signals
+        .iter()
+        .filter(|signal| {
+            matches!(
+                signal,
+                GateSignal::ProtectedInputChanged { .. } | GateSignal::UnplannedWrite { .. }
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    observed_contextual.dedup();
     let impossible = revision.signals.iter().any(|signal| {
         !is_strict_close_snapshot_signal(signal)
             && !matches!(
@@ -1715,7 +1843,8 @@ fn validate_close_snapshot_policy(
                 GateSignal::ProtectedInputChanged { .. } | GateSignal::UnplannedWrite { .. }
             )
     });
-    if observed_owned != expected_owned || !contextual_signals_present || impossible {
+    if observed_owned != expected_owned || observed_contextual != expected_contextual || impossible
+    {
         return Err(StoreError::Integrity(format!(
             "gate {key} close revision {} signals disagree with its sealed analysis snapshots",
             revision.revision
@@ -2154,11 +2283,20 @@ fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreErr
         )));
     }
     if operation.kind != GateOperationKind::PreWrite
-        && (operation.pre_write_admission_evidence.is_some()
+        && (!operation.pre_write_declared_path_inspection.is_empty()
+            || operation.pre_write_admission_evidence.is_some()
             || operation.pre_write_final_validation.is_some())
     {
         return Err(StoreError::Integrity(format!(
             "non-pre-write operation {} retained pre-write evidence",
+            operation.operation_id.as_str()
+        )));
+    }
+    if operation.kind != GateOperationKind::PostWrite
+        && operation.post_write_final_validation.is_some()
+    {
+        return Err(StoreError::Integrity(format!(
+            "non-post-write operation {} retained post-write evidence",
             operation.operation_id.as_str()
         )));
     }
@@ -2198,6 +2336,18 @@ fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreErr
                 )));
             }
             if operation.kind == GateOperationKind::PreWrite {
+                if operation.pre_write_admission_evidence.is_none()
+                    && operation
+                        .pre_write_declared_path_inspection
+                        .iter()
+                        .filter_map(|inspection| inspection.rejection.as_ref())
+                        .any(|signal| !result.signals.contains(signal))
+                {
+                    return Err(StoreError::Integrity(format!(
+                        "pre-write operation {} result omits its declared-path inspection rejection",
+                        operation.operation_id.as_str()
+                    )));
+                }
                 match operation.pre_write_final_validation.as_ref() {
                     Some(final_validation)
                         if operation.pre_write_admission_evidence.is_none()
@@ -2216,6 +2366,23 @@ fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreErr
                     None => {
                         return Err(StoreError::Integrity(format!(
                             "committed pre-write operation {} omitted its final validation record",
+                            operation.operation_id.as_str()
+                        )));
+                    }
+                }
+            }
+            if operation.kind == GateOperationKind::PostWrite {
+                match operation.post_write_final_validation.as_ref() {
+                    Some(final_validation) if final_validation.signals == result.signals => {}
+                    Some(_) => {
+                        return Err(StoreError::Integrity(format!(
+                            "post-write operation {} result disagrees with its final validation record",
+                            operation.operation_id.as_str()
+                        )));
+                    }
+                    None => {
+                        return Err(StoreError::Integrity(format!(
+                            "committed post-write operation {} omitted its final validation record",
                             operation.operation_id.as_str()
                         )));
                     }
@@ -2257,6 +2424,7 @@ fn reject_unfinished_pre_write_final_validation(
 ) -> Result<(), StoreError> {
     if operation.pre_write_admission_evidence.is_some()
         || operation.pre_write_final_validation.is_some()
+        || operation.post_write_final_validation.is_some()
     {
         return Err(StoreError::Integrity(format!(
             "unfinished operation {} retained completed pre-write evidence",
@@ -2314,7 +2482,51 @@ fn validate_pre_write_analysis_options(
         &format!("pre-write operation {}", operation.operation_id.as_str()),
         &options.scan_invocation,
     )?;
+    validate_declared_path_inspection(operation)?;
     Ok(())
+}
+
+fn validate_declared_path_inspection(
+    operation: &OperationRecord,
+) -> Result<Vec<lumin_evidence::WriteLease>, StoreError> {
+    let observed_paths = operation
+        .pre_write_declared_path_inspection
+        .iter()
+        .map(|inspection| inspection.path.clone())
+        .collect::<Vec<_>>();
+    if observed_paths != operation.declared_write_set {
+        return Err(StoreError::Integrity(format!(
+            "pre-write operation {} inspection does not cover its exact declared path set",
+            operation.operation_id.as_str()
+        )));
+    }
+
+    let mut leases = Vec::new();
+    for inspection in &operation.pre_write_declared_path_inspection {
+        match (&inspection.lease, &inspection.rejection) {
+            (Some(lease), None) if lease.path == inspection.path => leases.push(lease.clone()),
+            (None, Some(GateSignal::DeclaredPathUnsupported { path, .. }))
+                if path == &inspection.path => {}
+            (None, Some(GateSignal::AnalysisFailed { .. })) => {}
+            _ => {
+                return Err(StoreError::Integrity(format!(
+                    "pre-write operation {} has an invalid inspection outcome for {}",
+                    operation.operation_id.as_str(),
+                    inspection.path.display
+                )));
+            }
+        }
+    }
+    let mut canonical = leases.clone();
+    canonical.sort();
+    canonical.dedup();
+    if canonical != leases {
+        return Err(StoreError::Integrity(format!(
+            "pre-write operation {} inspection contains a noncanonical lease set",
+            operation.operation_id.as_str()
+        )));
+    }
+    Ok(leases)
 }
 
 fn validate_scan_invocation_patterns(
@@ -2338,33 +2550,14 @@ fn validate_scan_invocation_patterns(
 }
 
 fn validate_pending_pre_write_write_domain(operation: &OperationRecord) -> Result<(), StoreError> {
-    let mut declared = operation.declared_write_set.clone();
-    declared.sort();
-    declared.dedup();
-    let mut leases = operation.leased_write_set.clone();
-    leases.sort();
-    leases.dedup();
-    if declared != operation.declared_write_set
-        || leases != operation.leased_write_set
-        || declared.len() != leases.len()
-    {
+    let leases = validate_declared_path_inspection(operation)?;
+    if operation.leased_write_set != leases {
         return Err(StoreError::Integrity(format!(
             "pending pre-write operation {} has an incoherent provisional write domain",
             operation.operation_id.as_str()
         )));
     }
-    for path in &declared {
-        let matching = leases
-            .iter()
-            .filter(|lease| lease.path == *path)
-            .collect::<Vec<_>>();
-        if matching.len() != 1 {
-            return Err(StoreError::Integrity(format!(
-                "pending pre-write operation {} does not bind each declared path exactly once",
-                operation.operation_id.as_str()
-            )));
-        }
-        let lease = matching[0];
+    for lease in &leases {
         match lease.kind {
             WriteLeaseKind::ExistingFile | WriteLeaseKind::Directory
                 if lease.physical_identity.is_some() && lease.nearest_existing_parent.is_none() =>
@@ -2378,7 +2571,7 @@ fn validate_pending_pre_write_write_domain(operation: &OperationRecord) -> Resul
                 return Err(StoreError::Integrity(format!(
                     "pending pre-write operation {} has an invalid direct lease for {}",
                     operation.operation_id.as_str(),
-                    path.display
+                    lease.path.display
                 )));
             }
         }
