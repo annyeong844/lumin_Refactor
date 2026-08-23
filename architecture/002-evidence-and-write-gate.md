@@ -815,53 +815,76 @@ the canonical file is still v12 or already v13, exits `1` with empty stdout and 
 `lumin: lifecycle store migration requires 'lumin store migrate'\n`
 on stderr; an unrecognized, invalid, foreign, or newer header remains an
 `IncompatibleStateSchema` or integrity hard-stop without this claim of migratability.
-Any private migration source or target without the matching durable intent is foreign
+Any noncanonical migration source or target without the matching durable intent is foreign
 state and hard-stops; no ordinary command or migration retry reads, adopts, or deletes it.
+A repository root with no initialized `.lumin` namespace exits `1` with empty stdout and
+exactly `lumin: lifecycle store is not initialized\n` on stderr; the command creates no
+directory, marker, lock, store, intent, or other byte. A present namespace whose canonical
+store is missing or whose bootstrap is incomplete is instead an integrity hard-stop and
+is likewise immutable under this command.
 
 On valid v12, `lumin store migrate` acquires the exclusive marker-bound lock, executes or
-recovers the exact generation-fenced transformation below, removes and flushes every
-intent-authorized private artifact, removes the intent last, reopens the canonical store,
+recovers the exact generation-fenced transformation below, exchanges the bound source and
+target identities, removes and flushes every intent-authorized noncanonical artifact,
+removes the intent last, reopens the canonical store,
 and validates the complete v13 logical dump before success. On an already current valid
-v13 store with no unfinished intent, it validates the same state without replacing the
+v13 store with no unfinished intent, it validates the same state without exchanging the
 backend or advancing its generation. A matching live v12-to-v13 intent is recovered to
 its one canonical outcome.
 
-`MigrationIntent` owns an immutable source/target generation, schema, private name, and
-complete logical-dump digest plus a monotonic phase/revision, the canonical intent file's
-own physical identity/one-link binding, and one closed artifact slot per private
-source/target. The writer captures the intent candidate's physical identity before
-serializing that revision. Every revision update holds and revalidates the old self-bound
-intent entry, prepares a new handle-owned self-bound candidate, atomically publishes it,
-and disposes only the held old object; a substituted intent is therefore an integrity
-hard-stop rather than update authority. A bound artifact slot is
-`MigrationArtifactBinding { role, private_name, generation, schema, logical_sha256,
-physical_identity, link_count: 1 }`. No private source or target name may become visible
-until the exact binding for the already opened candidate is durable. A candidate is built
-and flushed through a handle-owned unpublished object whose final disposition is armed
-before its first byte is written. After its identity and one-link publication shape are
-known, migration advances and flushes the intent binding, publishes that same held object
-at the bound no-replace name, flushes `.lumin`, and reopens the name against the held
-handle. If death leaves a bound name absent before canonical replacement, recovery may
-build a fresh handle-owned candidate and advance the binding only after proving the old
-name absent and the canonical source/immutable intent fields unchanged. A visible
-unbound name, duplicate link, or name/role/generation/schema/digest/physical-identity
-disagreement is foreign state and is neither adopted nor removed.
+`MigrationIntent` owns immutable source/target generations, schemas, complete logical-dump
+digests, one monotonic phase/revision, the canonical intent file's own physical
+identity/one-link binding, and one closed binding per exchanged object. The initial intent
+binds the already opened canonical v12 source before publication. A bound slot is
+`MigrationArtifactBinding { role, pre_exchange_name, post_exchange_name, generation,
+schema, logical_sha256, physical_identity, link_count: 1 }`: the source moves from
+`lifecycle.store` to its bound private retirement name, while the target moves from its
+distinct bound private target name to `lifecycle.store`. The target slot becomes durable
+before the held target is made visible. Thus exchange never destroys the object occupying
+a pathname, and neither a canonical-source substitute nor a private-target substitute can
+become exchange authority.
 
-The intent remains durable throughout private-artifact cleanup and is removed only after
-every bound source/target artifact is absent and that absence is durably flushed. It is
-therefore the store-owned provenance and deletion authority for those exact logical and
-physical objects; a byte-identical source copy introduced after intent removal has no
-authorization and is foreign even when its transformation would reproduce canonical
-v13. Removal is never `unlink(path)`, `remove_file(path)`, or validation followed by a
-pathname disposition. Migration opens the exact private entry no-follow from the held
-state-directory handle, requires the intent-bound physical identity and one-link count,
-validates its complete logical payload, revalidates that the entry still names that held
-object immediately before disposition, and uses a supported operating-system final
-disposition bound to that open object (or an enforceable isolation boundary preventing
-replacement through disposition). It then proves the bound name absent and flushes
-`.lumin`. If the platform cannot provide that primitive or any substitution occurs, the
-command hard-stops with the intent and surviving objects intact. A random name, digest,
-advisory lock, or second pathname check is not deletion authority.
+The writer captures each intent candidate's physical identity before serializing that
+revision. Every revision update holds and revalidates the old self-bound intent entry,
+prepares a new handle-owned self-bound candidate, atomically publishes it, and disposes
+only the held old object; a substituted intent is therefore an integrity hard-stop rather
+than update authority. A target candidate is built and flushed through a handle-owned
+unpublished object whose final disposition is armed before its first byte is written.
+After its identity and one-link publication shape are known, migration advances and
+flushes the intent binding, publishes that same held object at the bound no-replace name,
+flushes `.lumin`, and reopens the name against the held handle. If death leaves a bound
+target name absent before exchange, recovery may build a fresh handle-owned candidate and
+advance the binding only after proving the old name absent and the canonical source and
+immutable intent fields unchanged. A visible unbound name, duplicate link, or
+name/role/generation/schema/digest/physical-identity disagreement is foreign state and is
+neither adopted nor removed.
+
+Every publication, intent revision, source/target exchange, and final disposition requires
+a platform `MigrationNamespaceIsolation` capability acquired from the held state-directory
+and exact object handles. From its final identity/link-count validation through the atomic
+mutation, entry reopen or absence proof, and parent-directory flush, this operating-system
+authority excludes entry replacement/removal/rename and excludes creation of another hard
+link to any bound object, including a link in another directory on the same filesystem.
+The guarantee covers competing processes that do not honor Lumin's advisory lock; a
+process-local mutex, random name, ACL convention, advisory lease, second pathname check,
+or check followed by disposition is insufficient. Capability admission occurs before the
+first migration mutation. If either shipped platform cannot provide this exact exclusion
+or loses it, migration fails before mutation and preserves every object.
+
+The intent remains durable throughout cleanup and is removed only after every bound
+noncanonical object is absent and that absence is durably flushed. It is therefore the
+store-owned provenance and disposition authority for those exact logical and physical
+objects; a byte-identical source copy introduced after intent removal has no authorization
+and is foreign even when its transformation would reproduce canonical v13. Removal is
+never `unlink(path)`, `remove_file(path)`, or validation followed by a pathname
+disposition. Under one uninterrupted `MigrationNamespaceIsolation`, migration opens the
+exact entry no-follow from the held state-directory handle, requires the intent-bound
+physical identity and one-link count, validates its complete logical payload, and uses a
+supported final disposition bound to that open object. Because the same authority fences
+new links as well as entry replacement until absence and parent flush are durable, there
+is no link-count check-to-disposition window. If the platform cannot provide that primitive
+or any disagreement predates capability acquisition, the command hard-stops with the
+intent and every surviving object intact.
 Concurrent migration commands serialize on the same exclusive lock: at most one advances
 the generation, and every follower validates v13 and emits the same response.
 Any schema-shape, identity, referential, generation, durability, or I/O failure exits `1`,
@@ -874,7 +897,7 @@ fields in canonical order are `schemaVersion`, `storeSchema`, and `status`, with
 `storeSchema: "lumin-lifecycle-store-header.v13"` and `status: "ready"`, then writes the
 normal newline and nothing to stderr. The response deliberately omits source schema,
 generation, and a changed/no-op bit, so the first successful migration, recovery after a
-post-replacement process death, and every already-current retry return identical bytes.
+post-exchange process death, and every already-current retry return identical bytes.
 This command has no operation ID or `operation show` variant: its sole target schema and
 singleton durable `MigrationIntent` make the state transition intrinsically idempotent,
 and it performs no new gate, retention, or cache-cleanup operation; its only record
@@ -883,51 +906,70 @@ Every backend handle and exclusive guard is released before transport. A `Broken
 exits `1` with empty stderr; another stdout write/flush failure exits `1` and emits exactly
 `lumin: cannot write stdout\n` when stderr is writable. Either failure leaves the validated
 v13 store authoritative, and rerunning the same command returns the identical success
-object without another replacement or generation advance.
+object without another exchange or generation advance.
 
-Whole `lifecycle.store` migration is a generation-fenced copy-on-write protocol. The marker-bound, one-link `.lumin/lifecycle.lock`, exact four-kind top-level managed-parent/anchor set, and exact nested quarantine binding are outside the replaceable backend and are never themselves replaced. Every ordinary store transaction proves the complete namespace binding, acquires the shared side, opens the current backend only after acquiring it, validates the backend `StoreGeneration` plus global/parent/quarantine binding, closes the backend handle before releasing the lock, and retains at most a generation token across analysis. No backend handle crosses a transaction boundary. `lumin store migrate` acquires the exclusive side through the same complete proof, so replacement begins only after every old-generation handle has closed; a replaced lock, state directory, parent, nested quarantine, or anchor hard-stops before either generation can commit.
+Whole `lifecycle.store` migration is a generation-fenced copy-on-write protocol. The marker-bound, one-link `.lumin/lifecycle.lock`, exact four-kind top-level managed-parent/anchor set, and exact nested quarantine binding are outside the exchangeable backend and are never themselves exchanged. Every ordinary store transaction proves the complete namespace binding, acquires the shared side, opens the current backend only after acquiring it, validates the backend `StoreGeneration` plus global/parent/quarantine binding, closes the backend handle before releasing the lock, and retains at most a generation token across analysis. No backend handle crosses a transaction boundary. `lumin store migrate` acquires the exclusive side through the same complete proof, so exchange begins only after every old-generation handle has closed; a replaced lock, state directory, parent, nested quarantine, or anchor hard-stops before either generation can commit.
 
 Migration follows one sequence:
 
-1. Under the exclusive lock, derive SHA-256 over the complete canonical source logical
-   dump and its exact transformed-target logical dump. Prepare the complete canonical
-   initial `MigrationIntent` on a same-volume `IntentPublicationHandle` whose final
-   disposition is bound to that handle before the first byte is written. Linux uses an
-   unnamed handle and Windows a delete-on-close, replacement-denying handle, or a proved
-   equivalent with the same lifetime semantics. Write and flush the whole file, then
-   publish that held object no-replace as `lifecycle-migration.json` and flush `.lumin`.
-   There is no admissible named `.pending` intent. Death before final-name publication
-   closes and disposes the unpublished object; death after publication but before the
-   parent flush can leave only no intent or the complete canonical intent, never a partial
-   canonical file or a surviving staging name. A platform without this guarantee refuses
-   migration before publication. A live intent blocks every mutation except migration
-   recovery; existing durable operations, reservations, active gates, and process leases
-   remain records to migrate rather than being expired.
-2. Build and flush the private source snapshot and generation `N+1` replacement through
-   handle-owned unpublished objects. Before each becomes directory-visible, atomically
-   advance and flush its exact `MigrationArtifactBinding`, then publish the same held
-   object at its bound no-replace name and flush `.lumin`. Preserve and validate
+1. Under the exclusive lock, admit the platform isolation/exchange capabilities, open
+   canonical v12 `lifecycle.store` no-follow, require one link, and derive SHA-256 over its
+   complete logical dump and the exact transformed-target logical dump. The source
+   binding records that held object's canonical pre-exchange name and private
+   post-exchange name. Prepare the complete initial `MigrationIntent` on a same-volume
+   `IntentPublicationHandle` whose final disposition is bound to that handle before the
+   first byte is written. Linux uses an unnamed handle and Windows a delete-on-close,
+   replacement-denying handle, or a proved equivalent with the same lifetime semantics.
+   Under `MigrationNamespaceIsolation`, reopen and revalidate the canonical source's
+   identity and one-link state, write and flush the whole intent file, publish that held
+   object no-replace as `lifecycle-migration.json`, reopen the exact self-bound identity,
+   and flush `.lumin`. There is no admissible named `.pending` intent. Death before
+   final-name publication closes and disposes the unpublished object; death after
+   publication but before the parent flush can leave only no intent or the complete
+   canonical intent, never a partial canonical file or a surviving staging name. A
+   platform without these guarantees refuses migration before publication. A live intent
+   blocks every mutation except migration recovery; existing durable operations,
+   reservations, active gates, and process leases remain records to migrate rather than
+   being expired.
+2. Build and flush the generation `N+1` target through a handle-owned unpublished object.
+   Before it becomes directory-visible, acquire isolation, revalidate the self-bound
+   intent and canonical source, atomically advance and flush its exact target
+   `MigrationArtifactBinding`, then publish the same held object at its bound no-replace
+   pre-exchange name, reopen its identity, and flush `.lumin`. Preserve
+   and validate
    attempt/catalog sequences, operation IDs/results, cache-cleanup authorization
    manifests, reservations, worktree transitions/capsules/references, retention
    plans/tombstones, pins, gate IDs/revisions, and history.
 3. Compare the complete canonical logical dump and referential closure, revalidate every
-   private entry against its held intent binding, then close every source/replacement
-   backend handle and durably flush the replacement and its parent. Failed validation
-   leaves `N` authoritative and the intent recoverable; it cannot publish a partial
-   replacement.
-4. Atomically replace `lifecycle.store`, durably flush `.lumin`, reopen the canonical path,
-   and require that it has the target binding's physical identity, valid `N+1` header, and
-   exact logical identity.
-5. While the intent remains durable, authenticate each remaining private source/target
-   entry against its physical binding and remove only that opened object through the
-   entry-to-held-handle final-disposition protocol above. Flush `.lumin` and prove the
-   complete private-artifact set absent. Only then remove the exact terminal intent through
-   the same identity-bound disposition rule as the final migration mutation and flush
-   `.lumin` again. A no-intent private artifact is never a cleanup candidate.
+   bound entry against its held intent binding, then close every backend handle that is
+   not required for exchange and durably flush the target and its parent. Failed
+   validation leaves `N` authoritative and the intent recoverable; it cannot publish a
+   partial target as canonical.
+4. Acquire one uninterrupted isolation authority; reopen and revalidate the self-bound
+   intent, the canonical source, and the private target by exact physical identity,
+   one-link state, schema, and logical digest. Use an atomic identity-preserving
+   exchange/replace-with-backup primitive, or an isolated crash-recoverable sequence of
+   no-replace handle-relative moves, so the target becomes `lifecycle.store` and the source
+   becomes its distinct bound private retirement name. No permitted turn disposes an
+   object: a multi-move implementation durably records each phase and recovery accepts
+   only the exact pre-exchange, source-retired/canonical-absent, or post-exchange placement
+   proven by both physical identities. A pathname overwrite, remove-then-rename, or move
+   that can dispose a winner is forbidden. Reopen all affected names, prove the bound
+   placement, durably flush `.lumin`, and only then release isolation. A pre-existing
+   canonical substitute hard-stops before exchange without deleting the substitute,
+   original source, target, or intent.
+5. While the intent remains durable, reacquire isolation and authenticate the self-bound
+   intent, canonical v13 target, and now-private source against their post-exchange
+   physical bindings. Remove only that opened private source under the
+   link-count-fenced final-disposition protocol above. Flush `.lumin` and prove the
+   complete noncanonical artifact set absent. Only then remove the exact terminal intent
+   under another uninterrupted isolation authority after revalidating canonical v13 and
+   the empty artifact set, then flush `.lumin` again. A no-intent artifact is never a
+   cleanup candidate.
 
-The private cleanup-operation v1-to-v2 transformation in Section 2.5 is part of the lifecycle-store v12-to-v13 step 2 canonical logical copy. It maps only validated legacy shapes to the exact synthetic delivery state defined there, includes that state in the replacement logical dump, and validates the resulting v2 record before step 3. Every committed legacy status initially projects v2 `unknown`: `not-attempted` becomes one unfinished allocation, while `succeeded`/`failed` retains its historical completion below a distinct unfinished greatest allocation. An invalid or unrecognized legacy shape fails `IncompatibleStateSchema` while generation `N` remains authoritative.
+The private cleanup-operation v1-to-v2 transformation in Section 2.5 is part of the lifecycle-store v12-to-v13 step 2 canonical logical copy. It maps only validated legacy shapes to the exact synthetic delivery state defined there, includes that state in the target logical dump, and validates the resulting v2 record before step 3. Every committed legacy status initially projects v2 `unknown`: `not-attempted` becomes one unfinished allocation, while `succeeded`/`failed` retains its historical completion below a distinct unfinished greatest allocation. An invalid or unrecognized legacy shape fails `IncompatibleStateSchema` while generation `N` remains authoritative.
 
-A process that analyzed while holding generation token `N` must reacquire the shared lock and reopen the canonical store before its next transaction. If it observes `N+1`, it must revalidate its operation, gate revision, catalog/transition revision, and freshness against the new handle before continuing; it may reopen/retry under the same operation ID or return a typed generation-change failure, but it cannot commit through the stale token. A read transaction already holding the shared lock finishes and closes before migration can acquire exclusivity; new reads wait for live migration/recovery and never continue through an old handle during replacement. Logical query scopes and cursors survive migration only when their schema, scope identity, ordering version, and referenced logical records are unchanged; no cursor contains a physical backend generation.
+A process that analyzed while holding generation token `N` must reacquire the shared lock and reopen the canonical store before its next transaction. If it observes `N+1`, it must revalidate its operation, gate revision, catalog/transition revision, and freshness against the new handle before continuing; it may reopen/retry under the same operation ID or return a typed generation-change failure, but it cannot commit through the stale token. A read transaction already holding the shared lock finishes and closes before migration can acquire exclusivity; new reads wait for live migration/recovery and never continue through an old handle during exchange. Logical query scopes and cursors survive migration only when their schema, scope identity, ordering version, and referenced logical records are unchanged; no cursor contains a physical backend generation.
 
 Every migration crash point has one recovery rule:
 
@@ -935,12 +977,12 @@ Every migration crash point has one recovery rule:
 | --- | --- |
 | while preparing the unpublished intent, before final-name publication | generation `N` remains authoritative; closing or process death disposes the handle-owned object, no named staging entry exists, and migration restarts from v12 |
 | after complete intent publication but before its parent flush | generation `N` remains authoritative; recovery observes either no intent and restarts, or one complete canonical intent and resumes it; a partial canonical file or any named staging entry is foreign |
-| after durable intent and before a validated replacement | `N` remains authoritative; an unpublished private candidate dies with its handle, a bound missing name is rebuilt only through a fresh intent revision, and a visible bound artifact is revalidated by physical identity before recovery resumes |
-| after validated replacement and before atomic replace | `N` remains authoritative; recovery revalidates and resumes replacement |
-| during replace before the parent flush | exactly one valid generation may occupy canonical `lifecycle.store`: `N` resumes the intent and `N+1` completes it; a missing/invalid canonical store or generation disagreement with the intent is an integrity hard-stop |
-| after durable parent flush and before/during private cleanup | `N+1` is authoritative and the intent remains durable; recovery authenticates each remaining artifact's exact identity and one-link state, disposes only the held bound object, and flushes its absence before proceeding |
-| after private cleanup flush and before intent removal | `N+1` is authoritative, the intent remains durable, and no private artifact may exist; recovery revalidates that terminal cleanup state and removes the intent |
-| during intent removal or its final parent flush | no private artifact exists; if the intent remains after restart, recovery revalidates v13 plus the empty private set and removes it again, while durable intent absence means migration is complete |
+| after durable intent and before a validated target | `N` remains authoritative; an unpublished target dies with its handle, a bound missing name is rebuilt only through a fresh intent revision, and a visible bound target is revalidated by physical identity before recovery resumes |
+| after validated target and before the exchange protocol | `N` remains authoritative; recovery revalidates the self-bound intent, canonical source, and private target before resuming |
+| during exchange before the parent flush | recovery accepts only an exact identity-proven pre-exchange placement (`N` canonical), source-retired intermediate (canonical absent and both bound objects at their private names), or post-exchange placement (`N+1` canonical and `N` private); it completes the isolated no-disposition protocol from that phase, while any other missing/invalid/substituted name is an integrity hard-stop |
+| after durable exchange flush and before/during private cleanup | `N+1` is authoritative and the intent remains durable; recovery authenticates the private source's exact identity and one-link state, acquires link-count-fenced isolation, disposes only the held bound object, and flushes its absence before proceeding |
+| after private cleanup flush and before intent removal | `N+1` is authoritative, the intent remains durable, and no noncanonical bound object may exist; recovery revalidates that terminal state and removes the exact self-bound intent under isolation |
+| during intent removal or its final parent flush | no noncanonical bound object exists; if the intent remains after restart, recovery revalidates v13 plus the empty artifact set and removes it under link-count-fenced isolation, while durable intent absence means migration is complete |
 
 The public fault proof includes a matching durable intent whose private source has a
 valid no-follow envelope and v12 header but a corrupted private-v1 logical table. An
@@ -954,12 +996,28 @@ without deleting or adopting it. Exact intent-publication barriers kill public c
 before the first byte, after a partial write, after the unpublished file flush, after
 final-name publication, and before/during the parent flush; restart proves no staging name
 survives and observes only v12 with no intent or one complete canonical intent. Separate
-live-intent barriers replace each physically bound private source and target with a
-logically byte-identical one-link object and add a second link to the original. Migration
-must hard-stop before disposition, preserve the substitute/original and intent, and leave
-the canonical generation and every logical record unchanged. Windows and Linux package
-probes execute the platform publication and identity-bound-disposition primitives rather
-than accepting a development-only emulation.
+live-intent barriers replace the canonical source and private target with logically
+byte-identical one-link objects before exchange. Further barriers replace
+`lifecycle-migration.json` immediately before an intent revision and immediately before
+terminal intent removal. Each case resumes under a fresh isolation authority, must
+hard-stop on physical-identity disagreement before exchange, update, or disposition,
+preserve the original and substitute objects plus every bound artifact, and leave the
+canonical generation and logical dump unchanged. An exact disposition barrier stops
+after the final one-link validation while a competing public child attempts to create a
+hard link in another same-filesystem directory: the attempt cannot commit while isolation
+is held, the bound disposition and parent flush complete atomically with respect to it,
+and no foreign link or mutated survivor appears. The proof also substitutes canonical
+v12 `lifecycle.store` after logical validation but before exchange and requires the same
+preserving hard-stop. A never-initialized repository runs `lumin store migrate`, receives
+the exact not-initialized diagnostic, and remains entry-for-entry and byte-for-byte
+unchanged with no `.lumin` creation. Windows and Linux package probes execute the actual
+platform publication, isolation, identity-preserving exchange, and link-count-fenced
+disposition primitives plus the absent-store refusal rather than accepting a
+development-only emulation. `lumin-xtask package-check skills` proves that both packaged
+Codex and Claude adapters respond to the migration-required diagnostic only by invoking
+the public `lumin store migrate` command, accepting the exact target-only DTO, and retrying
+the original public command; neither adapter reads store internals, synthesizes the DTO,
+or embeds migration logic.
 
 ## 12. Security and Integrity
 
@@ -1001,7 +1059,7 @@ than accepting a development-only emulation.
 18. Existing aliases, directory descendants, new paths, and both sides of a rename obey the path identity contract; declaring one existing alias leases and reanalyzes the complete admitted physical-alias closure, while unleased topology changes cannot authorize close.
 19. Gate decisions, machine output, and process exit codes follow the stable decision table.
 20. Nested evidence and relation lists cannot bypass bounded query envelopes.
-21. `lumin store migrate` is the only v12 admission route, returns the same bounded `ready` response after migration or retry, publishes no crash-surviving pending intent, binds every visible private artifact's physical identity and one-link state before publication, retains that intent until identity-bound deletion is durably flushed, rejects every unbound/substituted/no-intent artifact as foreign, cannot rewrite completed logical evidence in place, erase active gate history, or let an old-generation handle commit after replacement, maps private cleanup-operation v1 records only through the exact fail-closed synthetic delivery state in Section 2.5, and is exercised through both shipped platform packages as well as store-crash fixtures.
+21. `lumin store migrate` is the only v12 admission route, refuses absent state without creating it, returns the same bounded `ready` response after migration or retry, publishes no crash-surviving pending intent, binds canonical source, private target, and intent revisions by physical identity and one-link state, exchanges source and target without pathname overwrite, and retains its intent until link-count-fenced disposition is durably flushed. It rejects every unbound/substituted/no-intent artifact as foreign, cannot rewrite completed logical evidence in place, erase active gate history, or let an old-generation handle commit after exchange, maps private cleanup-operation v1 records only through the exact fail-closed synthetic delivery state in Section 2.5, and is exercised through store-crash fixtures, both shipped platform packages, and both packaged skill adapters.
 22. Every run query is pinned to one immutable run, and every nested page can be requested explicitly without following latest.
 23. `AnalysisContractId` compatibility cannot be invalidated merely by a different `AnalysisInputId`.
 24. Pre-write rejection owns no lease; failed post-write remains active with an immutable attempted revision.

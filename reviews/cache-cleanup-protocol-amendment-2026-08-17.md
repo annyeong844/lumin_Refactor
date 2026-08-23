@@ -222,6 +222,30 @@ pending name, so every pre-flush death yields either no intent or one complete c
 intent. Store-crash and both packaged platforms now own the exact publication,
 substitution, multiple-link, and held-object-disposition proof.
 
+## Fourteenth Review Result
+
+Independent review bound exact candidate
+`4f51863247fa8c13c69df2e5ad6d6d104464bb4d` and returned `REOPEN`. It found one
+remaining physical-authorization race and four acceptance/ownership gaps. First, an
+external actor could add a hard link after the one-link check but before disposition;
+entry identity alone did not make link-count validation atomic. Second, source/target
+substitution fixtures omitted the self-bound canonical intent before revision update and
+terminal removal. Third, canonical v12 `lifecycle.store` itself was not physically bound
+at pathname replacement, so a foreign winner could be deleted. Fourth, neither packaged
+skill adapter was assigned the public migration recovery workflow. Fifth, the stated
+absent-store refusal had no public fixture.
+
+The replacement protocol binds canonical source and private target identities and uses an
+identity-preserving exchange/replace-with-backup primitive or isolated crash-recoverable
+no-replace moves rather than pathname overwrite. Every intent
+mutation, exchange, and disposition requires an operating-system isolation authority that
+fences both entry substitution and new hard links from final validation through reopen or
+absence proof and parent flush; lack of that authority rejects migration before mutation.
+Exact public-child barriers now cover canonical-source and intent substitution, the
+post-check hard-link attempt, and absent-store immutability. Both shipped platforms must
+execute the real isolation/exchange/disposition primitives, while both packaged Codex and
+Claude adapters must invoke only the public migration command and consume its DTO.
+
 ## Decision
 
 The owner amendments define the cleanup command and the sole public store-upgrade route:
@@ -262,35 +286,41 @@ advances from `lumin-lifecycle-store-header.v12` to v13 with the private record 
 Ordinary repository-state commands accept only v13 and never migrate on open. An
 admissible v12 header or matching unfinished v12-to-v13 intent returns the exact
 `lumin store migrate` recovery instruction without recovery or private-v1 payload reads.
-Any private source/target without that intent is foreign and every command hard-stops
+Any bound source/target without that intent is foreign and every command hard-stops
 without adoption or deletion. The migration command accepts at most one split-form
 `--format json`, has no operation ID, and is the one exclusive generation-fenced
 private-v1 reader. Intent preparation uses a same-volume handle-owned object whose final
 disposition is armed before writing; it publishes that complete held object no-replace
 and has no admissible named pending file, so death leaves only no intent or a complete
-canonical intent. Each canonical revision self-binds its identity, and before a private
-source/target becomes visible the intent durably binds its exact role, name, generation,
-schema, complete logical SHA-256, physical identity, and one-link state. It migrates or
-recovers the exact v12-to-v13 step, validates the final v13 dump, keeps the intent durable
-while it opens and removes only each bound held object through an identity-bound final
-disposition, flushes their absence, and only then removes and flushes the exact terminal
-intent as the final mutation. Already-valid v13 with no intent or private artifacts is a
-validating no-op with no generation advance. A
+canonical intent. Each canonical revision self-binds its identity; the initial intent
+binds the already opened canonical v12 source and a later revision binds the held private
+v13 target by exact role, pre/post-exchange name, generation, schema, complete logical
+SHA-256, physical identity, and one-link state before target visibility. Every intent
+mutation, source/target exchange, and disposition holds a platform isolation authority
+that fences entry substitution and new hard links from final validation through
+reopen/absence proof and parent flush. Migration exchanges the two identities through an
+atomic replace-with-backup primitive or isolated crash-recoverable no-replace moves,
+validates the final v13 dump, keeps the intent durable while
+it disposes only the now-private source through its held handle under the same link-count
+fence, and only then removes and flushes the exact terminal intent as the final mutation.
+Already-valid v13 with no intent or private artifacts is a validating no-op with no
+generation advance. A
 header-valid but payload-corrupt source under a live intent therefore receives the
 ordinary migration-required diagnostic first and hard-stops only when migration opens
 it; a byte-identical v12 source introduced after intent removal hard-stops every command
-without deletion. Concurrent invocations serialize so at most one replacement advances
+without deletion. Concurrent invocations serialize so at most one exchange advances
 the generation. Malformed arguments exit `2`; schema, identity, integrity, generation,
 durability, and pre-transport failures exit `1` with empty stdout. Its only successful
 response exits `0` and is the canonical `lumin.lifecycle-store-migration.v1` object with
 only `schemaVersion`,
 `storeSchema`, and `status` in that order, naming v13 and `status: "ready"`. Because it
 omits source schema, generation, and a changed bit, initial
-success, post-replacement or output-delivery recovery, and every current-v13 retry are
+success, post-exchange or output-delivery recovery, and every current-v13 retry are
 byte-identical. Locks and backend handles are released before output; a delivery failure
 uses the same `BrokenPipe`/stdout diagnostic contract as cleanup, leaves v13 authoritative,
-and retry performs no second replacement. It cannot initialize
-absent state, chain another old schema, downgrade, or guess a migration, and performs no
+and retry performs no second exchange. A never-initialized repository returns exact
+`lumin: lifecycle store is not initialized\n` with empty stdout and no state creation. It
+cannot chain another old schema, downgrade, or guess a migration, and performs no
 new gate, retention, or cache-cleanup operation beyond the frozen record transformation.
 Before every cleanup-result transport, a short
 transaction allocates one increasing delivery-attempt sequence, atomically projects
@@ -391,7 +421,9 @@ finding for each item:
 1. ARCH-000 authorizes both the exact cleanup operation-ID command and
    `lumin store migrate`; Product, ARCH-002, Slice, adapters, acceptance criteria, and
    traceability agree on their grammar, DTOs, exits, retry, and ownership without a
-   conflicting command, lazy migration, or invented operation-ID exception.
+   conflicting command, lazy migration, or invented operation-ID exception. Both packaged
+   adapters route the migration-required diagnostic through that public command and DTO
+   rather than private state access or embedded migration logic.
 2. The cleanup-result v2 field set/order and cleanup-operation v2 projection, request
    digest, exits, stdout/stderr rules, lock release, retry, and strictly read-only
    `operation show` recovery are complete. Frozen cleanup-operation v1 never emits
@@ -414,16 +446,19 @@ finding for each item:
    before any rename, retain their child provenance without quadratic historical copies,
    and survive the named lifecycle-store v12-to-v13 migration as an exact row/child
    bijection. The migration logical dump includes the canonical synthetic delivery state,
-   rejects every invalid legacy shape before replacement, and never exposes any committed
+   rejects every invalid legacy shape before exchange, and never exposes any committed
    private-v1 row as a known v2 delivery. Only the public migration command admits v12;
-   its self/physical-binding intent remains durable until every authorized private artifact
-   is disposed through the exact held object and that absence is flushed, and intent
-   removal is the final mutation. Intent preparation has no crash-surviving pending name;
-   a substituted identity or second link hard-stops before disposition. Its
+   its self-bound intent physically binds canonical source and private target before their
+   identity-preserving exchange and remains durable until the retired source is disposed
+   through the exact held object and that absence is flushed. Every intent mutation,
+   exchange, and disposition fences entry substitution and new hard links through parent
+   flush, and intent removal is the final mutation. Intent preparation has no
+   crash-surviving pending name; a substituted identity or second link hard-stops before
+   mutation. Its
    initial success, recovery, and already-current retry emit one byte-identical target-only
-   response, while a v13 retry neither replaces the store nor advances its generation.
+   response, while a v13 retry neither exchanges the store nor advances its generation.
    An unbound, substituted, multiply linked, or no-intent artifact is always foreign and
-   is never deleted or advertised as migratable.
+   is never deleted or advertised as migratable. Absent state fails without initialization.
 6. Every regular file and directory is flushed bottom-up and remanifested before
    authorization and after movement; cache, quarantine, and trash entries are flushed
    before validation and result commit, including recovered and empty-cache runs.
@@ -445,16 +480,21 @@ finding for each item:
    cannot overlap publication, retention, or migration. Public migration children also
    prove the ordinary-command recovery diagnostic, exact deaths before/within intent
    writing and after final-name publication/before parent flush, every later migration
-   crash boundary, identity-bound private cleanup, source/target substitution and
-   multiple-link rejection, the header-valid/payload-corrupt split between ordinary
-   routing and migration-only authentication, the no-intent byte-identical-copy hard-stop,
-   output-delivery retry, identical current-v13 response, and no second replacement.
+   crash boundary, identity-preserving exchange, canonical-source/private-target and
+   pre-update/pre-removal intent substitution, the exact hard-link attempt after final
+   one-link validation, the header-valid/payload-corrupt split between ordinary routing
+   and migration-only authentication, the no-intent byte-identical-copy hard-stop,
+   absent-store immutability, output-delivery retry, identical current-v13 response, and
+   no second exchange.
 10. Standard, determinism, store-crash, Windows/Linux package, and skill-adapter commands
     are assigned only to behavior they can execute and include `operation show` recovery.
     Both Windows and Linux package checks invoke the packaged `lumin store migrate` and
-    exercise their actual handle-owned publication and identity-bound disposition
-    primitives for admission rejection, success, intent-held cleanup recovery, and
+    exercise their actual handle-owned publication, namespace isolation,
+    identity-preserving exchange, and link-count-fenced disposition primitives for
+    admission rejection, absent-store refusal, success, intent-held cleanup recovery, and
     byte-identical no-op retry; development/store-crash execution alone is insufficient.
+    The skill check proves both packaged adapters invoke the public migration command,
+    validate its exact DTO, and retry the original command without migration logic.
 11. PRODUCT-000, ARCH-000, ARCH-002, SLICE-001 truth, acceptance, and traceability agree
     without weakening any existing reserved-state or durability rule.
 12. No implementation code or mapped-progress claim is accepted as independent truth.
@@ -479,14 +519,18 @@ cleanup-operation v2 with explicit public-v1 incompatibility and the exact priva
 synthetic migration in which every committed legacy row initially projects `unknown`,
 the public `lumin store migrate` grammar/DTO/error route, handle-owned intent publication
 at every write/publish/parent-flush boundary, intent self-binding and private physical
-identity/one-link provenance retained through held-object cleanup, source/target
-substitution and multiple-link rejection, header-valid/payload-corrupt ordinary-routing
-versus migration-authentication proof, no-intent byte-identical-source rejection without
-deletion, and byte-identical first/recovery/current response without a second generation
-advance through store-crash and both packaged platform binaries,
+identity/one-link provenance retained through held-object cleanup, canonical-source and
+private-target binding followed by identity-preserving exchange, intent substitution
+before revision update and terminal removal, a competing hard-link attempt after final
+one-link validation fenced through disposition and parent flush,
+header-valid/payload-corrupt ordinary-routing versus migration-authentication proof,
+no-intent byte-identical-source rejection without deletion, absent-store refusal with no
+state creation, and byte-identical first/recovery/current response without a second
+generation advance through store-crash and both packaged platform binaries,
 continuous cache-writer rejection across a dead pending lease, both
 substitution barriers, and unchanged run/gate evidence. The
 public `reserved-state-namespace` row remains unmapped until standard and determinism lanes plus
 Windows/Linux package checks execute those behaviors through the packaged CLI and the
-skill package check proves operation-ID generation and recovery. Passing an internal
-store test alone is not acceptance evidence.
+skill package check proves operation-ID generation/recovery plus public migration routing
+for both Codex and Claude adapters. Passing an internal store test alone is not acceptance
+evidence.
