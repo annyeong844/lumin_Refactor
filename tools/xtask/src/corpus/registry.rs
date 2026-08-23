@@ -419,7 +419,9 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("mixed-vue-gate", &[
         inv!("write_gate", "mixed_vue::mixed_js_and_vue_changes_share_one_gate_and_preserve_owner_facts"),
     ]),
-    row_sd!("required-capability-failure"),
+    row_sd!("required-capability-failure", &[
+        inv!("vue_public", "required_capability_failure_is_prominent_and_never_renders_zero"),
+    ]),
     row_sd!("snapshot-and-latest", &[inv!("publication", "first_failed_attempt_remains_visible_without_a_completed_run")]),
     row_sd!("bounded-nested-query", INV_BNQ),
     row_sd!("collection-ordering"),

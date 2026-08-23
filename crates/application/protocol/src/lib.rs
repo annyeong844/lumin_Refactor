@@ -36,7 +36,7 @@ pub struct AuditResponseDto {
     pub run_id: RunId,
     pub sequence: u64,
     pub status: CapabilityState,
-    pub finding_count: usize,
+    pub finding_count: Option<usize>,
     pub limitation_count: usize,
 }
 
@@ -50,7 +50,7 @@ pub struct OverviewResponseDto {
     pub sequence: u64,
     pub capability_states: Vec<CapabilityStateDto>,
     pub resolution_profiles: Vec<lumin_model::SelectedResolutionProfile>,
-    pub finding_count: usize,
+    pub finding_count: Option<usize>,
     pub limitation_count: usize,
     pub limitations: Vec<Limitation>,
     pub analysis_metrics: AnalysisMetrics,
@@ -346,13 +346,13 @@ pub fn audit_response(
     evidence: &RunEvidence,
 ) -> AuditResponseDto {
     AuditResponseDto {
-        schema_version: "lumin.audit.v1",
+        schema_version: "lumin.audit.v2",
         repository_root: RepositoryRootDto::from(repository_root),
         attempt_id,
         run_id,
         sequence,
         status: evidence.dead_code_state(),
-        finding_count: evidence.findings.len(),
+        finding_count: visible_finding_count(evidence),
         limitation_count: evidence.limitations.len(),
     }
 }
@@ -365,7 +365,7 @@ pub fn overview_response(
     evidence: &RunEvidence,
 ) -> OverviewResponseDto {
     OverviewResponseDto {
-        schema_version: "lumin.overview.v1",
+        schema_version: "lumin.overview.v2",
         scope: ScopeDto::Run { id: run_id },
         latest_attempt,
         attempt_id,
@@ -379,10 +379,19 @@ pub fn overview_response(
             })
             .collect(),
         resolution_profiles: evidence.resolution_profiles.clone(),
-        finding_count: evidence.findings.len(),
+        finding_count: visible_finding_count(evidence),
         limitation_count: evidence.limitations.len(),
         limitations: evidence.limitations.clone(),
         analysis_metrics: evidence.metrics.clone(),
+    }
+}
+
+fn visible_finding_count(evidence: &RunEvidence) -> Option<usize> {
+    let count = evidence.findings.len();
+    if count == 0 && evidence.dead_code_state() != CapabilityState::Complete {
+        None
+    } else {
+        Some(count)
     }
 }
 
