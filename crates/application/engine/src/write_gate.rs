@@ -923,10 +923,7 @@ fn close_containment_signals(
 ) -> Vec<GateSignal> {
     let mut signals = lease_containment_signals(root, leases);
     let mut stale = Vec::new();
-    for path in entries
-        .iter()
-        .chain(dependency_intents.iter().map(|intent| &intent.path))
-    {
+    for path in entries {
         match lumin_inventory::validate_caller_entries(root, std::slice::from_ref(path)) {
             Ok(()) => {}
             Err(InventoryError::EntryEscapesRoot(_)) => {
@@ -935,6 +932,15 @@ fn close_containment_signals(
             Err(error) => signals.push(GateSignal::AnalysisFailed {
                 detail: error.to_string(),
             }),
+        }
+    }
+    for intent in dependency_intents {
+        if let Err(error) =
+            lumin_inventory::validate_caller_entries(root, std::slice::from_ref(&intent.path))
+        {
+            signals.push(GateSignal::AnalysisFailed {
+                detail: error.to_string(),
+            });
         }
     }
     stale.sort();
@@ -975,11 +981,7 @@ fn post_write_capture_failure_signals(
                 },
             }];
         }
-        if let Some(path) = opening_entries
-            .iter()
-            .chain(dependency_intents.iter().map(|intent| &intent.path))
-            .find(|path| *path == escaped)
-        {
+        if let Some(path) = opening_entries.iter().find(|path| *path == escaped) {
             return vec![GateSignal::ProtectedInputChanged {
                 paths: vec![RepoPathProjection::from(path)],
             }];
@@ -1888,6 +1890,27 @@ mod tests {
                 paths: vec![RepoPathProjection::from(&escaped)]
             }]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn capture_dependency_context_escape_remains_an_analysis_failure()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let context = RepoPath::from_portable("context")?;
+        let error = EngineError::Inventory(InventoryError::EntryEscapesRoot(context.clone()));
+        let signals = post_write_capture_failure_signals(
+            Path::new("."),
+            &[],
+            &[],
+            &[DependencyIntent {
+                path: context,
+                dependency: "zod".to_owned(),
+            }],
+            &error,
+        );
+
+        assert_eq!(signals.len(), 1);
+        assert!(matches!(signals[0], GateSignal::AnalysisFailed { .. }));
         Ok(())
     }
 
