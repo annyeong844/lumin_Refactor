@@ -1,6 +1,150 @@
 use super::*;
 
 #[test]
+fn gate_queries_and_conflicts_authenticate_the_complete_gate_projection()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let source = path("src/authenticated-gate.ts")?;
+    let gate_id = open_active_gate(
+        &store,
+        "op-authenticated-gate-open",
+        "authenticated-gate-open",
+        &source.display,
+    )?;
+
+    store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        let mut gate = records::read_record::<GateRecord>(&write, GATES, gate_id.as_str())?
+            .ok_or_else(|| StoreError::GateNotFound(gate_id.as_str().to_owned()))?;
+        gate.leased_write_set.clear();
+        records::write_record(&write, GATES, gate_id.as_str(), &gate)?;
+        guard.commit(write)
+    })?;
+
+    assert!(matches!(
+        store.load_gate(&gate_id),
+        Err(StoreError::Integrity(message))
+            if message.contains("store-owned validation receipt")
+    ));
+
+    let conflicting = store.begin_operation(&OperationId::from_string(
+        "op-authenticated-gate-conflict".to_owned(),
+    ))?;
+    assert!(matches!(
+        conflicting.reserve_pre_write(
+            "authenticated-gate-conflict",
+            std::slice::from_ref(&source),
+            &[lease(source.clone())],
+            &options(),
+            rejected_test_observation,
+        ),
+        Err(StoreError::Integrity(message))
+            if message.contains("store-owned validation receipt")
+    ));
+    Ok(())
+}
+
+#[test]
+fn operation_replay_authenticates_the_complete_committed_result()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("op-authenticated-result-open".to_owned());
+    let request_digest = "authenticated-result-open";
+    open_active_gate(
+        &store,
+        operation_id.as_str(),
+        request_digest,
+        "src/authenticated-result.ts",
+    )?;
+
+    store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        let mut operation =
+            records::read_record::<OperationRecord>(&write, OPERATIONS, operation_id.as_str())?
+                .ok_or_else(|| StoreError::OperationNotFound(operation_id.as_str().to_owned()))?;
+        let result = operation.result.as_mut().ok_or_else(|| {
+            StoreError::Integrity("committed fixture omitted its result".to_owned())
+        })?;
+        result.decision = GateDecision::Deny;
+        result.lifecycle = GateLifecycle::Rejected;
+        records::write_record(&write, OPERATIONS, operation_id.as_str(), &operation)?;
+        guard.commit(write)
+    })?;
+
+    assert!(matches!(
+        store.replay_pre_write_result(&operation_id, request_digest),
+        Err(StoreError::Integrity(message))
+            if message.contains("complete gate revision")
+    ));
+    assert!(matches!(
+        store.load_operation(&operation_id),
+        Err(StoreError::Integrity(message))
+            if message.contains("complete gate revision")
+    ));
+    Ok(())
+}
+
+#[test]
+fn gate_queries_and_post_write_reject_an_unauthenticated_transition_capsule()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let active_gate = open_active_gate(
+        &store,
+        "op-transition-auth-active",
+        "transition-auth-active",
+        "src/transition-auth-active.ts",
+    )?;
+    let closing_gate = open_active_gate(
+        &store,
+        "op-transition-auth-owner",
+        "transition-auth-owner",
+        "src/transition-auth-owner.ts",
+    )?;
+    let closed = close_active_gate(
+        &store,
+        &closing_gate,
+        "op-transition-auth-close",
+        "transition-auth-close",
+    )?;
+    assert!(closed.decision.authorizes());
+
+    store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        let key = transition_key(1);
+        let mut transition = records::read_record::<WorktreeTransition>(&write, TRANSITIONS, &key)?
+            .ok_or_else(|| {
+                StoreError::Integrity("terminal transition fixture is missing".to_owned())
+            })?;
+        transition.capsule.after_snapshot.evidence.schema_version =
+            "lumin-evidence.forged".to_owned();
+        records::write_record(&write, TRANSITIONS, &key, &transition)?;
+        guard.commit(write)
+    })?;
+
+    assert!(matches!(
+        store.load_gate(&active_gate),
+        Err(StoreError::Integrity(message))
+            if message.contains("transition 1 payload")
+    ));
+
+    let close = store.begin_operation(&OperationId::from_string(
+        "op-transition-auth-active-close".to_owned(),
+    ))?;
+    assert!(matches!(
+        close.begin_post_write("transition-auth-active-close", &active_gate),
+        Err(StoreError::Integrity(message))
+            if message.contains("transition 1 payload")
+    ));
+    Ok(())
+}
+
+#[test]
 fn post_write_catalog_race_discards_actual_write_attribution_idempotently()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
@@ -376,7 +520,8 @@ fn active_gate_catalog_rejects_an_active_gate_without_baseline()
 
     assert!(matches!(
         store.list_active_gates(None, 100),
-        Err(StoreError::Integrity(message)) if message.contains("omitted its baseline")
+        Err(StoreError::Integrity(message))
+            if message.contains("complete gate revision")
     ));
     Ok(())
 }

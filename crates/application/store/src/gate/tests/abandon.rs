@@ -5,13 +5,30 @@ fn abandon_is_atomic_idempotent_and_creates_one_terminal_revision()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     let store = open_store(root.path())?;
-    let gate_id = open_active_gate(
+    let gate_id = open_active_gate_with_protected_inputs(
         &store,
         "op-abandon-open",
         "abandon-open-digest",
         "src/abandoned.ts",
+        vec![semantic_input("config/base.json", "protected")?],
     )?;
-    seed_releasable_gate_state(&store, &gate_id)?;
+    let transition_owner = open_active_gate(
+        &store,
+        "op-abandon-transition-owner",
+        "abandon-transition-owner",
+        "src/abandon-transition-owner.ts",
+    )?;
+    let transition = close_active_gate(
+        &store,
+        &transition_owner,
+        "op-abandon-transition-close",
+        "abandon-transition-close",
+    )?;
+    assert!(transition.decision.authorizes());
+    let before = store.load_gate(&gate_id)?;
+    assert!(!before.leased_write_set.is_empty());
+    assert!(!before.protected_semantic_inputs.is_empty());
+    assert_eq!(before.transition_refs, [1]);
 
     let operation_id = OperationId::from_string("op-abandon".to_owned());
     let first = store.begin_operation(&operation_id)?.abandon_gate(
@@ -119,35 +136,4 @@ fn abandon_rejects_stale_revision_and_a_live_close() -> Result<(), Box<dyn std::
     ));
     assert_eq!(store.load_gate(&gate_id)?.lifecycle, GateLifecycle::Active);
     Ok(())
-}
-
-fn seed_releasable_gate_state(store: &RepositoryStore, gate_id: &GateId) -> Result<(), StoreError> {
-    store.with_exclusive_lock(|guard| {
-        let database = guard.open_database()?;
-        let write = database.begin_write()?;
-        let mut gate = read_record::<GateRecord>(&write, GATES, gate_id.as_str())?
-            .ok_or_else(|| StoreError::GateNotFound(gate_id.as_str().to_owned()))?;
-        gate.transition_refs = vec![7, 9];
-        gate.protected_semantic_inputs = vec![SemanticInputRecord {
-            path: path("config/base.json")
-                .map_err(|error| StoreError::Integrity(error.to_string()))?,
-            state: SemanticInputState::ConfigPresent,
-            payload_sha256: Some("protected".to_owned()),
-            physical_identity: None,
-            absence_parent: None,
-            physical_redirect_sha256: None,
-        }];
-        gate.alias_closures = vec![PhysicalAliasClosureRecord {
-            physical_identity: lumin_model::PhysicalFileIdentity::Unix {
-                device: 7,
-                inode: 11,
-            },
-            members: vec![
-                path("src/abandoned.ts")
-                    .map_err(|error| StoreError::Integrity(error.to_string()))?,
-            ],
-        }];
-        write_record(&write, GATES, gate_id.as_str(), &gate)?;
-        guard.commit(write)
-    })
 }

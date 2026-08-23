@@ -1504,12 +1504,14 @@ pub struct PostWriteFinalValidation {
     pub evidence: Option<PostWriteFinalValidationEvidence>,
 }
 
-pub const GATE_VALIDATION_RECEIPT_SCHEMA_VERSION: &str = "lumin-gate-validation-receipt.v3";
+pub const GATE_VALIDATION_RECEIPT_SCHEMA_VERSION: &str = "lumin-gate-validation-receipt.v4";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GateValidationCommitReceipt {
     pub revision_sha256: String,
+    pub result_sha256: String,
+    pub gate_projection_sha256: String,
     pub committed_unix_millis: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence_payload_sha256: Option<String>,

@@ -14,6 +14,7 @@ use super::{RepositoryStore, StoreError};
 
 mod abandon;
 mod coordination;
+mod integrity;
 mod liveness;
 mod operations;
 mod receipts;
@@ -25,6 +26,7 @@ use coordination::{
     active_write_conflicts, attach_transition_references, conflicts, post_write_analysis_context,
     pre_write_admission_evidence, semantic_read_conflicts, transition_sequences_for_gate,
 };
+use integrity::{read_validated_gate, validate_loaded_gate_catalog};
 pub use liveness::OperationSession;
 pub(crate) use liveness::validate_migration_operation_liveness;
 pub(crate) use receipts::{operation_retention_identity, validation_receipt_for_operation};
@@ -33,8 +35,8 @@ use receipts::{
     validate_loaded_validation_receipt, validate_stored_validation_receipt,
 };
 use records::{
-    current_active_gate_catalog, current_transition_sequence, load_record, load_record_from_read,
-    next_gate_id, next_transition_sequence, read_record, read_records, write_record,
+    current_active_gate_catalog, current_transition_sequence, load_record, next_gate_id,
+    next_transition_sequence, read_record, read_records, write_record,
 };
 
 pub(crate) const GATES: TableDefinition<&str, &[u8]> = TableDefinition::new("gates");
@@ -214,9 +216,11 @@ impl RepositoryStore {
         self.with_shared_lock(|guard| {
             let database = guard.open_database()?;
             let read = database.begin_read()?;
-            let gate = load_record_from_read::<GateRecord>(&read, GATES, gate_id.as_str())?
+            let mut catalog = validate_loaded_gate_catalog(&read)?;
+            let gate = catalog
+                .gates
+                .remove(gate_id.as_str())
                 .ok_or_else(|| StoreError::GateNotFound(gate_id.as_str().to_owned()))?;
-            validate_gate_validation_receipts(&read, &gate)?;
             Ok(gate)
         })
     }
@@ -239,9 +243,11 @@ impl RepositoryStore {
                     Ok(lumin_evidence::RecordLookup::Pruning(tombstone.envelope))
                 };
             }
-            let gate = load_record_from_read::<GateRecord>(&read, GATES, gate_id.as_str())?
+            let mut catalog = validate_loaded_gate_catalog(&read)?;
+            let gate = catalog
+                .gates
+                .remove(gate_id.as_str())
                 .ok_or_else(|| StoreError::GateNotFound(gate_id.as_str().to_owned()))?;
-            validate_gate_validation_receipts(&read, &gate)?;
             Ok(lumin_evidence::RecordLookup::Live(gate))
         })
     }
@@ -278,6 +284,7 @@ impl RepositoryStore {
             let repository_id = guard.repository_id().clone();
             let database = guard.open_database()?;
             let read = database.begin_read()?;
+            validate_loaded_gate_catalog(&read)?;
             // Read active-gate-catalog revision
             let revision = {
                 match read.open_table(crate::SEQUENCES) {
@@ -667,7 +674,7 @@ fn load_active_gate_for_post_write(
     gate_id: &GateId,
     operation: &OperationRecord,
 ) -> Result<GateRecord, StoreError> {
-    let gate = read_record::<GateRecord>(write, GATES, gate_id.as_str())?
+    let gate = read_validated_gate(write, gate_id)?
         .ok_or_else(|| StoreError::GateNotFound(gate_id.as_str().to_owned()))?;
     if gate.lifecycle != GateLifecycle::Active {
         return Err(StoreError::GateNotActive(gate_id.as_str().to_owned()));
@@ -685,7 +692,7 @@ fn load_active_gate_for_retry(
     write: &WriteTransaction,
     gate_id: &GateId,
 ) -> Result<GateRecord, StoreError> {
-    let gate = read_record::<GateRecord>(write, GATES, gate_id.as_str())?
+    let gate = read_validated_gate(write, gate_id)?
         .ok_or_else(|| StoreError::GateNotFound(gate_id.as_str().to_owned()))?;
     if gate.lifecycle != GateLifecycle::Active {
         return Err(StoreError::GateNotActive(gate_id.as_str().to_owned()));

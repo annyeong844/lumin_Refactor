@@ -149,7 +149,7 @@ fn load_abandon_target(
     gate_id: &GateId,
     target_revision: u64,
 ) -> Result<GateRecord, StoreError> {
-    let gate = read_record::<GateRecord>(write, GATES, gate_id.as_str())?
+    let gate = read_validated_gate(write, gate_id)?
         .ok_or_else(|| StoreError::GateNotFound(gate_id.as_str().to_owned()))?;
     if gate.lifecycle != GateLifecycle::Active {
         return Err(StoreError::GateNotActive(gate_id.as_str().to_owned()));

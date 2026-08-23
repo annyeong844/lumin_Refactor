@@ -40,6 +40,7 @@ pub(crate) fn validation_receipt_for_operation(
             ))
         })?;
         let revision = committed_revision(operation, gate)?;
+        super::integrity::validate_committed_operation_result(operation, gate, revision)?;
         let payload = match operation.kind {
             GateOperationKind::PreWrite => {
                 match (
@@ -98,6 +99,11 @@ pub(crate) fn validation_receipt_for_operation(
             payload,
             Some(GateValidationCommitReceipt {
                 revision_sha256: gate_revision_sha256(revision)?,
+                result_sha256: super::integrity::operation_result_sha256(operation)?,
+                gate_projection_sha256: super::integrity::gate_projection_sha256(
+                    gate,
+                    revision.revision,
+                )?,
                 committed_unix_millis: revision.committed_unix_millis.ok_or_else(|| {
                     StoreError::Integrity(format!(
                         "committed operation {} has no durable revision timestamp",
@@ -362,6 +368,7 @@ pub(super) fn validate_gate_validation_receipts(
     read: &ReadTransaction,
     gate: &GateRecord,
 ) -> Result<(), StoreError> {
+    super::integrity::validate_gate_record_shape(gate)?;
     for revision in &gate.revisions {
         let operation = load_record_from_read::<OperationRecord>(
             read,
@@ -386,6 +393,40 @@ pub(super) fn validate_gate_validation_receipts(
         let expected = validation_receipt_for_operation(&operation, Some(gate))?;
         let existing = load_record_from_read::<GateValidationReceipt>(
             read,
+            VALIDATION_RECEIPTS,
+            operation.operation_id.as_str(),
+        )?;
+        validate_validation_receipt_pair(&operation, expected, existing)?;
+    }
+    Ok(())
+}
+
+pub(super) fn validate_stored_gate_validation_receipts(
+    write: &WriteTransaction,
+    gate: &GateRecord,
+) -> Result<(), StoreError> {
+    super::integrity::validate_gate_record_shape(gate)?;
+    for revision in &gate.revisions {
+        let operation =
+            read_record::<OperationRecord>(write, OPERATIONS, revision.operation_id.as_str())?
+                .ok_or_else(|| {
+                    StoreError::Integrity(format!(
+                        "gate {} revision {} lost its operation {}",
+                        gate.gate_id.as_str(),
+                        revision.revision,
+                        revision.operation_id.as_str()
+                    ))
+                })?;
+        if operation.gate_id != gate.gate_id {
+            return Err(StoreError::Integrity(format!(
+                "gate {} revision {} is owned by another operation gate",
+                gate.gate_id.as_str(),
+                revision.revision
+            )));
+        }
+        let expected = validation_receipt_for_operation(&operation, Some(gate))?;
+        let existing = read_record::<GateValidationReceipt>(
+            write,
             VALIDATION_RECEIPTS,
             operation.operation_id.as_str(),
         )?;

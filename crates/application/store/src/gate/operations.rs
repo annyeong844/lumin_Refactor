@@ -309,7 +309,7 @@ impl OperationSession<'_> {
                 }
                 if operation.status == GateOperationStatus::Pending {
                     self.validate_pending_operation(&operation)?;
-                    let gate = read_record::<GateRecord>(&write, GATES, gate_id.as_str())?
+                    let gate = read_validated_gate(&write, gate_id)?
                         .ok_or_else(|| StoreError::GateNotFound(gate_id.as_str().to_owned()))?;
                     let (transitions, active_gates) =
                         post_write_analysis_context(&write, &gate, operation.transition_sequence)?;
