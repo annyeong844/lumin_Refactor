@@ -176,7 +176,7 @@ fn limitation_intersects_gate_domain(
         LimitationScopePolicy::ManifestOwnerPackageOrWorkspace => limitation_path(limitation)
             .is_none_or(|path| path_owner_intersects(path, evidence, leased_write_set)),
         LimitationScopePolicy::WorkspaceFromConfig => limitation_path(limitation)
-            .is_none_or(|path| workspace_config_intersects(path, leased_write_set)),
+            .is_none_or(|path| workspace_config_intersects(path, evidence, leased_write_set)),
         LimitationScopePolicy::ParentAndTargetOwnersOrWorkspace => {
             let Limitation::VueExternalScriptModeConflict {
                 source_id,
@@ -303,10 +303,9 @@ fn path_owner_intersects(
     evidence: &RunEvidence,
     leased_write_set: &[WriteLease],
 ) -> bool {
-    let Ok(path) = RepoPath::from_portable(path) else {
+    let Some(projection) = known_limitation_path(path, evidence, leased_write_set) else {
         return true;
     };
-    let projection = RepoPathProjection::from(&path);
     let Some(root) = evidence
         .source_contexts
         .iter()
@@ -329,15 +328,34 @@ fn configured_packages_intersect(
     evidence: &RunEvidence,
     leased_write_set: &[WriteLease],
 ) -> bool {
-    let Ok(config_path) = RepoPath::from_portable(path) else {
+    let configured_paths = evidence
+        .source_contexts
+        .iter()
+        .flat_map(|context| &context.configuration_paths)
+        .filter(|configured_path| configured_path.display == path)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let mut configured_paths = configured_paths.into_iter();
+    let Some(config_path) = configured_paths.next() else {
         return true;
     };
+    if configured_paths.next().is_some() {
+        return true;
+    }
+    if leased_write_set
+        .iter()
+        .any(|lease| lease.covers(&config_path))
+    {
+        return true;
+    }
     let mut configured_scope = None::<lumin_model::PackageScope>;
     let mut affected_importer_found = false;
     for context in &evidence.source_contexts {
-        if !context.configuration_paths.iter().any(|configured_path| {
-            configured_path.canonical.as_slice() == config_path.canonical_bytes()
-        }) {
+        if !context
+            .configuration_paths
+            .iter()
+            .any(|configured_path| configured_path.canonical == config_path.canonical)
+        {
             continue;
         }
         affected_importer_found = true;
@@ -385,9 +403,13 @@ fn public_surface_consumer_intersects(
     leased_write_set.iter().any(|lease| lease.covers(path))
 }
 
-fn workspace_config_intersects(path: &str, leased_write_set: &[WriteLease]) -> bool {
-    let Some(root) = RepoPath::from_portable(path)
-        .ok()
+fn workspace_config_intersects(
+    path: &str,
+    evidence: &RunEvidence,
+    leased_write_set: &[WriteLease],
+) -> bool {
+    let Some(root) = known_limitation_path(path, evidence, leased_write_set)
+        .and_then(|path| RepoPath::from_canonical_bytes(&path.canonical).ok())
         .and_then(|path| path.parent())
         .map(|root| RepoPathProjection::from(&root))
     else {
@@ -398,6 +420,62 @@ fn workspace_config_intersects(path: &str, leased_write_set: &[WriteLease]) -> b
             || (lease.kind == WriteLeaseKind::Directory
                 && root.components.starts_with(&lease.path.components))
     })
+}
+
+fn known_limitation_path(
+    display: &str,
+    evidence: &RunEvidence,
+    leased_write_set: &[WriteLease],
+) -> Option<RepoPathProjection> {
+    let mut matches = BTreeSet::new();
+    {
+        let mut retain = |candidate: &RepoPathProjection| {
+            if candidate.display == display {
+                matches.insert(candidate.clone());
+            }
+        };
+        for context in &evidence.source_contexts {
+            retain(&context.path);
+            if let Some(root) = &context.package_root {
+                retain(root);
+                if let Ok(mut ancestor) = RepoPath::from_canonical_bytes(&root.canonical) {
+                    loop {
+                        for name in ["package.json", "pnpm-workspace.yaml"] {
+                            if let Ok(path) = ancestor.join_portable(name) {
+                                retain(&RepoPathProjection::from(&path));
+                            }
+                        }
+                        let Some(parent) = ancestor.parent() else {
+                            break;
+                        };
+                        ancestor = parent;
+                    }
+                }
+            }
+            for path in &context.configuration_paths {
+                retain(path);
+            }
+        }
+        for owner in &evidence.dependency_owners {
+            retain(&owner.consumer_path);
+            retain(&owner.package_root);
+            retain(&owner.manifest_path);
+            if let Some(path) = &owner.lockfile_path {
+                retain(path);
+            }
+        }
+        for lease in leased_write_set {
+            retain(&lease.path);
+        }
+    }
+
+    match matches.len() {
+        0 => RepoPath::from_portable(display)
+            .ok()
+            .map(|path| RepoPathProjection::from(&path)),
+        1 => matches.into_iter().next(),
+        _ => None,
+    }
 }
 
 fn dependency_owner_scope_intersects(
@@ -1280,6 +1358,81 @@ mod tests {
                 .required_evidence_gap_count,
             0,
             "an invocation profile override erased package-local config ownership",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn configured_scope_uses_canonical_paths_and_includes_the_limiting_config()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let non_scalar_root = RepoPath::from_canonical_bytes(
+            b"LUMRPATH\x00\x01\x00\x00\x00\x01\x03\x00\x00\x00\x02\xd8\x00",
+        )?;
+        let config = non_scalar_root.join_portable("tsconfig.json")?;
+        let package_a = RepoPath::from_portable("packages/a")?;
+        let package_b = RepoPath::from_portable("packages/b")?;
+        let source_a = RepoPath::from_portable("packages/a/src/main.ts")?;
+        let source_b = RepoPath::from_portable("packages/b/src/main.ts")?;
+        let mut context_a = source_context(&source_a, &package_a);
+        context_a.configuration_paths = vec![RepoPathProjection::from(&config)];
+        let mut evidence =
+            evidence_with_limitations(vec![Limitation::TsconfigSemanticsUnsupported {
+                path: config.display_escaped(),
+                detail: "unsupported config under a non-scalar component".to_owned(),
+            }]);
+        evidence.source_contexts = vec![context_a, source_context(&source_b, &package_b)];
+
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&source_b)])
+                .required_evidence_gap_count,
+            0,
+            "a canonical package-local config path escaped to workspace scope",
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&source_a)])
+                .required_evidence_gap_count,
+            1,
+            "the affected package lost its canonical config gap",
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&config)])
+                .required_evidence_gap_count,
+            1,
+            "a write to the limiting config itself escaped the required gap",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn package_scope_uses_the_canonical_limitation_path() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let package_a = RepoPath::from_canonical_bytes(
+            b"LUMRPATH\x00\x01\x00\x00\x00\x01\x03\x00\x00\x00\x02\xd8\x00",
+        )?;
+        let manifest_a = package_a.join_portable("package.json")?;
+        let source_a = package_a.join_portable("src")?.join_portable("main.ts")?;
+        let package_b = RepoPath::from_portable("packages/b")?;
+        let source_b = RepoPath::from_portable("packages/b/src/main.ts")?;
+        let mut evidence = evidence_with_limitations(vec![Limitation::PackageImportsUnsupported {
+            path: manifest_a.display_escaped(),
+            detail: "unsupported imports under a non-scalar component".to_owned(),
+        }]);
+        evidence.source_contexts = vec![
+            source_context(&source_a, &package_a),
+            source_context(&source_b, &package_b),
+        ];
+
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&source_b)])
+                .required_evidence_gap_count,
+            0,
+            "a canonical package limitation escaped into a disjoint package",
+        );
+        assert_eq!(
+            lifecycle_delta_input_for(&evidence, &[], &[existing_file_lease(&source_a)])
+                .required_evidence_gap_count,
+            1,
+            "the owning package lost its canonical limitation",
         );
         Ok(())
     }

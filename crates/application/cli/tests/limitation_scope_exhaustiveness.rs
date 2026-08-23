@@ -15,6 +15,7 @@ fn limitation_scope_exhaustiveness_is_public() -> Result<(), Box<dyn std::error:
     file_and_workspace_required_evidence_remain_distinct()?;
     package_required_evidence_does_not_escape_its_owner()?;
     configured_scope_follows_affected_importers()?;
+    blocked_extends_targets_retain_importer_ownership()?;
     public_surface_required_evidence_follows_its_consumer()?;
     resolved_module_opacity_remains_advisory()?;
     mixed_opacity_scope_selects_fact_or_required_gap()?;
@@ -142,6 +143,171 @@ fn configured_scope_follows_affected_importers() -> Result<(), Box<dyn std::erro
         "override-profile",
         true,
     )?;
+    limiting_config_itself_intersects()?;
+    Ok(())
+}
+
+fn limiting_config_itself_intersects() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"config-owner-root","private":true,"workspaces":["packages/*"]}"#,
+    )?;
+    write(
+        root.path(),
+        "tsconfig.json",
+        r#"{"compilerOptions":{"moduleResolution":"classic"}}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/affected/package.json",
+        r#"{"name":"@scope/config-affected","private":true}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/affected/src/main.ts",
+        "export const affected = 1;\n",
+    )?;
+    write(
+        root.path(),
+        "packages/clear/package.json",
+        r#"{"name":"@scope/config-clear","private":true}"#,
+    )?;
+    write(root.path(), "packages/clear/tsconfig.json", "{}\n")?;
+    write(
+        root.path(),
+        "packages/clear/src/main.ts",
+        "export const clear = 1;\n",
+    )?;
+
+    let config_write = json_command(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-limitation-root-config-write",
+            "--path",
+            "tsconfig.json",
+            "--jobs",
+            "1",
+        ],
+        4,
+    )?;
+    assert_eq!(
+        signal_count(&config_write, "required-evidence-incomplete"),
+        Some(1),
+        "the limiting config itself escaped its required evidence gap",
+    );
+
+    let clear = json_command(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-limitation-root-config-clear",
+            "--path",
+            "packages/clear/src/main.ts",
+            "--jobs",
+            "1",
+        ],
+        0,
+    )?;
+    assert!(
+        !has_signal(&clear, "required-evidence-incomplete"),
+        "the root config gap escaped into a package with its own valid config",
+    );
+    Ok(())
+}
+
+fn blocked_extends_targets_retain_importer_ownership() -> Result<(), Box<dyn std::error::Error>> {
+    assert_blocked_extends_scope(r#"{"extends":"./missing.json"}"#, None, "relative")?;
+    assert_blocked_extends_scope(
+        r#"{"extends":"@scope/config"}"#,
+        Some(r#"{"name":"@scope/config","private":true,"tsconfig":false}"#),
+        "workspace",
+    )
+}
+
+fn assert_blocked_extends_scope(
+    affected_config: &str,
+    workspace_config_manifest: Option<&str>,
+    suffix: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "package.json",
+        r#"{"name":"blocked-extends-root","private":true,"workspaces":["packages/*"]}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/affected/package.json",
+        r#"{"name":"@scope/affected","private":true}"#,
+    )?;
+    write(
+        root.path(),
+        "packages/affected/tsconfig.json",
+        affected_config,
+    )?;
+    write(
+        root.path(),
+        "packages/affected/src/main.ts",
+        "export const affected = 1;\n",
+    )?;
+    write(
+        root.path(),
+        "packages/clear/package.json",
+        r#"{"name":"@scope/clear","private":true}"#,
+    )?;
+    write(root.path(), "packages/clear/tsconfig.json", "{}\n")?;
+    write(
+        root.path(),
+        "packages/clear/src/main.ts",
+        "export const clear = 1;\n",
+    )?;
+    if let Some(manifest) = workspace_config_manifest {
+        write(root.path(), "packages/config/package.json", manifest)?;
+    }
+
+    let affected_operation = format!("op-limitation-blocked-{suffix}-affected");
+    let affected = json_command(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            affected_operation.as_str(),
+            "--path",
+            "packages/affected/src/main.ts",
+            "--jobs",
+            "1",
+        ],
+        4,
+    )?;
+    assert_eq!(
+        signal_count(&affected, "required-evidence-incomplete"),
+        Some(1),
+        "the blocked extends target lost its originating importer owner",
+    );
+
+    let clear_operation = format!("op-limitation-blocked-{suffix}-clear");
+    let clear = json_command(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            clear_operation.as_str(),
+            "--path",
+            "packages/clear/src/main.ts",
+            "--jobs",
+            "1",
+        ],
+        0,
+    )?;
+    assert!(
+        !has_signal(&clear, "required-evidence-incomplete"),
+        "a blocked extends target escaped into a disjoint configured package",
+    );
     Ok(())
 }
 

@@ -19,7 +19,7 @@ pub use generated_config_policy::{
     RESOLVER_PACKAGE_JSON_FIELDS, RESOLVER_TSCONFIG_TOP_LEVEL,
 };
 
-pub const RESOLVER_VERSION: &str = "config-package-resolution.v7";
+pub const RESOLVER_VERSION: &str = "config-package-resolution.v8";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ImporterFormatClassification {
