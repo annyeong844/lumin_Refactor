@@ -2,9 +2,9 @@
 
 Document role: final architecture blueprint and review packet
 
-Status: frozen
+Status: reopened for the narrow REVIEW-004 follow-up
 
-Revision: 2026-07-19
+Revision: 2026-08-24
 
 Parent: PRODUCT-000
 
@@ -272,7 +272,7 @@ Type ownership and value authority are distinct:
 | External protocol version and DTO schema | `lumin-protocol` | `lumin-protocol`. |
 | Run envelope, evidence-store, lifecycle-store, and cache schema versions | `lumin-store` | `lumin-store`. |
 | State-namespace schema/marker, `StateDirectoryIdentity`, `LifecycleLockIdentity`, `StateNamespaceNonce`, `ManagedStateParentBinding`, and `CatalogPublicationGuard` | `lumin-store` project API/private values | `lumin-store` creates the namespace/lock once and the closed `Attempts | Runs | Trash | Cache` parent set once. Each parent binding contains its kind, directory physical identity, immutable one-link anchor identity, and random parent nonce. The marker and store header bind the exact ordered set; each anchor cross-binds the repository/root/state/lock/global nonce and its own tuple. Store APIs yield transaction/publication tokens only after entry-to-held-handle revalidation of the global binding and complete parent set. |
-| `StoreGeneration` and `MigrationIntent` | `lumin-store` project API | `lumin-store` allocates the next generation under the exclusive repository migration lock; every transaction is fenced to the generation of the backend handle it opened. |
+| `StoreGeneration`, `MigrationRootAuthorization`, `MigrationProvenanceAnchor`, `MigrationIntentRevision`, `MigrationArtifactBinding`, `MigrationBindingEvent`, and `MigrationExchangeProtocol` | `lumin-store` project API/private values | `lumin-store` allocates the next generation under the exclusive repository migration lock; every transaction is fenced to the generation of the backend handle it opened. Canonical v12 commits the append-only authority for the exact root object before publication and fixes the migrated target header's immutable provenance anchor to that root and source; native v13 has no anchor. The migration journal is a contiguous append-only chain of immutable revisions; its closed binding-event fold distinguishes observed source, pending/published/superseded target, exchange, retained immutable source, and canonical mutable target while preserving every predecessor. Artifact bindings name the exact source/target roles, pre/post-exchange names, generations, schemas, migration-time byte/logical digests, physical identities, and publication-time one-link states. Exchange uses Linux `renameat2(RENAME_EXCHANGE)` or Windows handle-relative `SetFileInformationByHandle(FileRenameInfo, ReplaceIfExists = false)` moves and never disposes a published object. The terminal chain and retired v12 source remain immutable provenance; normal target mutations are validated by the immutable target-header anchor plus current-v13 integrity rather than the historical target digest, and no project type claims to exclude a noncooperating same-UID `linkat`. |
 | Extractor, resolver, graph, and rule semantic versions | project-owned model values | The owning capability crate. |
 
 No crate duplicates a value because it owns a representation. Store and protocol receive model or evidence values through their allowed dependency direction.
@@ -426,10 +426,11 @@ lumin gate
 lumin runs
 lumin export
 lumin cache clean --operation-id <operation-id> [--format json]
+lumin store migrate [--format json]
 lumin help-agent
 ```
 
-`lumin-protocol` owns command DTOs and machine formats; `lumin-cli` owns parsing and exit mapping. ARCH-002 owns the cache-cleanup state transition, integrity, crash-retry, and delivery contract. Other documents may narrow a slice's available subset but cannot add commands. Codex and Claude Code skills teach this small surface without embedding schemas, classification logic, platform binary selection policy, or internal capability lists.
+`lumin-protocol` owns command DTOs and machine formats; `lumin-cli` owns parsing and exit mapping. ARCH-002 owns the cache-cleanup and lifecycle-store migration state transitions, integrity, crash-retry, and delivery contracts. Other documents may narrow a slice's available subset but cannot add commands. Codex and Claude Code skills teach this small surface without embedding schemas, classification logic, platform binary selection policy, internal capability lists, or store-migration logic; after the exact migration-required diagnostic they invoke `lumin store migrate`, validate its public DTO, and retry the original public command.
 
 ## 9. Build and Distribution
 

@@ -4,7 +4,7 @@ Document role: evidence delivery and lifecycle architecture owner
 
 Status: reopened for the narrow REVIEW-004 follow-up
 
-Revision: 2026-08-19
+Revision: 2026-08-24
 
 Parent: ARCH-000
 
@@ -32,7 +32,9 @@ The internal workspace layout is:
   latest.json
   lifecycle.lock
   lifecycle.store
-  lifecycle-migration.json  # present only while a migration intent is live
+  lifecycle-migration.json  # immutable root of a v12 migration journal, if one exists
+  lifecycle-migration.revision-<sequence>.json
+  lifecycle-migration.artifact-<slot>.store  # journal-bound target/retired-source slots
   attempts/
     namespace.anchor         # immutable managed-parent bootstrap
     <attempt-id>/
@@ -165,7 +167,7 @@ It requires exactly one split-form `--operation-id <operation-id>` and accepts a
 
 Integrity, persistence, or output-delivery failure exits `1`. A failure discovered before transport leaves stdout empty and uses the ordinary `lumin:` stderr diagnostic. A stdout stream failure may have transferred a nonauthoritative JSON prefix, but no incomplete value is a delivered success object. `BrokenPipe` exits `1` with empty stderr. Any other stdout write or flush failure exits `1` and, when stderr remains writable, emits exactly `lumin: cannot write stdout\n`; simultaneous stderr failure cannot turn the result into success. No storage transaction, catalog-publication guard, or operation-liveness lease is held during transport. A post-commit process death or delivery failure is recovered through `lumin operation show <operation-id>` or an identical retry with the same operation ID; the retry returns the one stored `lumin.cache-cleanup.v2` result and performs no second eviction. `clean` is the immutable result of that operation's final cache observation, not a claim that later cache writers cannot add payloads; cleaning a later active set requires a new operation ID.
 
-The cleanup variant of `lumin operation show` is one bounded `lumin.cache-cleanup-operation.v1` object. Its only fields, in canonical order, are `schemaVersion`, `operationId`, `kind: "cache-clean"`, `requestDigest`, `status`, `interruptionCount`, `authorizedCount`, `validatedCount`, `result`, and `lastDeliveryStatus`. `status` is `pending`, `interrupted`, or `committed`; a new execution starts `pending` with `interruptionCount: 0`. `authorizedCount` is the immutable plan-row count and `validatedCount` is its durable completed prefix; `result` is `null` until commit and then the exact stored `lumin.cache-cleanup.v2` object. `lastDeliveryStatus` is `not-attempted`, `unknown`, `succeeded`, or `failed`: `not-attempted` means that no delivery sequence has ever been allocated, while `unknown` means that the greatest allocated attempt has no durable completion and may have delivered none, some, or all of its bytes. Counts are scalar summaries, so this recovery query never embeds unbounded manifests or entry lists. The canonical operation record separately retains a strictly increasing greatest allocated delivery sequence, completion evidence keyed by sequence, and the greatest completed sequence, but none of those scalars is public. Before transport, one short exclusive transaction allocates and commits the next sequence and atomically makes the public projection `unknown`; it then releases every storage transaction, publication guard, and liveness lease. Completion records that sequence and its `succeeded` or `failed` result in another short transaction. The public status becomes that result only when the completed sequence is still the greatest allocated sequence. While a greater allocated sequence remains unfinished, completion of any older sequence leaves the projection `unknown`; allocating a newer sequence after a completed attempt likewise changes it immediately back to `unknown`. An equal sequence with the same result is idempotent, an equal sequence with a different result is an integrity hard-stop, and a lower late completion cannot overwrite newer delivery evidence. Thus process death before completion cannot be projected as `not-attempted`, and concurrent identical retries have one backend-independent winner ordered before transport rather than by transaction scheduling after transport.
+The cleanup variant of `lumin operation show` is one bounded `lumin.cache-cleanup-operation.v2` object. Its only fields, in canonical order, are `schemaVersion`, `operationId`, `kind: "cache-clean"`, `requestDigest`, `status`, `interruptionCount`, `authorizedCount`, `validatedCount`, `result`, and `lastDeliveryStatus`. `status` is `pending`, `interrupted`, or `committed`; a new execution starts `pending` with `interruptionCount: 0`. `authorizedCount` is the immutable plan-row count and `validatedCount` is its durable completed prefix; `result` is `null` until commit and then the exact stored `lumin.cache-cleanup.v2` object. `lastDeliveryStatus` is `not-attempted`, `unknown`, `succeeded`, or `failed`: `not-attempted` means that no delivery sequence has ever been allocated, while `unknown` means that the greatest allocated attempt has no durable completion and may have delivered none, some, or all of its bytes. Counts are scalar summaries, so this recovery query never embeds unbounded manifests or entry lists. The amended binary always emits v2 for cleanup-operation projections and offers no v1 negotiation or fallback. The frozen v1 schema retains only `not-attempted`, `succeeded`, and `failed`; a v1-only client therefore sees the distinct v2 `schemaVersion` and must reject it as unsupported before interpreting `lastDeliveryStatus`, never receive `unknown` under a v1 envelope. The v2 projection is backed only by the private `lumin-cache-cleanup-operation.v2` record schema. Lifecycle migration from private v1 records is deterministic and fail-closed: a `pending` or `interrupted` row with no result retains zero allocated/completed delivery sequences; a committed row whose legacy status is `not-attempted` becomes synthetic allocated sequence 1 with no completion; and a committed legacy `succeeded` or `failed` row retains that result as completed historical sequence 1 but also receives a synthetic allocated sequence 2 with no completion. Every migrated committed row therefore projects `unknown`. The unfinished greatest sequence conservatively represents a legacy retry that may already be transporting after all store and liveness locks were released but that private v1 had no pre-transport allocation record with which migration could prove its absence. Any other legacy status/result/lease shape is `IncompatibleStateSchema` before generation replacement. This is an explicit store migration, never a lazy query projection; after replacement an old binary cannot record a v1 completion into v13, and the next current delivery allocates the successor of the migrated maximum—sequence 2 after legacy `not-attempted`, or sequence 3 after legacy `succeeded`/`failed`. Only that current greatest attempt's completion can change the migrated public projection from `unknown`. The canonical operation record separately retains a strictly increasing greatest allocated delivery sequence, completion evidence keyed by sequence, and the greatest completed sequence, but none of those scalars is public. Before transport, one short exclusive transaction allocates and commits the next sequence and atomically makes the public projection `unknown`; it then releases every storage transaction, publication guard, and liveness lease. Completion records that sequence and its `succeeded` or `failed` result in another short transaction. The public status becomes that result only when the completed sequence is still the greatest allocated sequence. While a greater allocated sequence remains unfinished, completion of any older sequence leaves the projection `unknown`; allocating a newer sequence after a completed attempt likewise changes it immediately back to `unknown`. An equal sequence with the same result is idempotent, an equal sequence with a different result is an integrity hard-stop, and a lower late completion appends only its private evidence without overwriting the greatest sequence or public delivery status. Thus process death before completion cannot be projected as `not-attempted`, and concurrent identical retries have one backend-independent winner ordered before transport rather than by transaction scheduling after transport.
 
 `lumin operation show` is strictly read-only: it neither performs a platform liveness check nor changes an operation, execution attempt, reservation, delivery record, or interruption count. Creating a cleanup operation atomically installs one canonical active-cache mutation reservation owned by that operation before the first active-cache manifest read. The reservation remains continuously present through every `pending` lease, process death, the `interrupted` observation, and fresh-lease reattachment; only the transaction that commits the immutable cleanup result releases it. Every store-owned active-cache writer and every different cleanup operation must check this reservation in the same transaction that admits its mutation and reject the unfinished owner before touching payload bytes. The operating-system lock may disappear with a dead process, but the canonical reservation does not.
 
@@ -183,7 +185,9 @@ After all planned rows are `Validated`, cleanup proves that the active cache con
 
 Physical reclamation of cache-eviction entries is not part of `lumin cache clean`, its success state, or its delivery recovery, and ordinary retention reclamation ignores this disjoint family. Cleanup never calls `unlink`, `rmdir`, recursive removal, or an equivalent final disposition on a quarantine payload. A future store-owned reclamation protocol may dispose of one only through an operating-system primitive whose final disposition is bound to the already opened physical object, or through an enforceable isolation boundary that prevents replacement through disposition; the matching canonical authorization row may change only in the same recoverable protocol. A secret or random name, advisory lock, second pathname validation, sleep, or scheduler timing is not such authority. If no supported primitive exists, the noncanonical payload and its canonical authorization remain.
 
-The required proof uses exact public-child barriers and store-owned durability hooks rather than sleeps. It covers: a syntactically valid self-hashed quarantine tree with no authorization record; top-level and nested-child substitution before move; death after authorization but before rename; death after rename visibility but before tree or parent flush; death after all physical flushes but before `Validated`; death after every row validates but before result commit; dirty regular-file and nested-directory payloads; empty-cache cleanup with prior authenticated quarantine; and both stdout failure classes. Delivery barriers stop after sequence allocation but before output, after a partial or complete stdout value but before completion recording, and after a lower sequence completes while a greater allocated sequence remains unfinished. Read-only `operation show` must report `unknown` at each such unfinished boundary, preserve `unknown` after the lower completion, and change to the greater attempt's exact `succeeded` or `failed` result only when that completion commits. Every recovery uses the same operation ID, asserts `operation show`, remaining relative order, the exact authorization/entry states, parent and anchor identities, and the final durable snapshot. A different operation ID cannot adopt a pending move. Standard, determinism, store fault, and Windows/Linux package lanes together prove response bytes, authentication, flush order, process restart, and unchanged completed run/gate evidence.
+The required proof uses exact public-child barriers and store-owned durability hooks rather than sleeps. It covers: a syntactically valid self-hashed quarantine tree with no authorization record; top-level and nested-child substitution before move; death after authorization but before rename; death after rename visibility but before tree or parent flush; death after all physical flushes but before `Validated`; death after every row validates but before result commit; dirty regular-file and nested-directory payloads; empty-cache cleanup with prior authenticated quarantine; and both stdout failure classes. Delivery barriers stop after sequence allocation but before output and after a partial or complete stdout value but before completion recording. They force both completion orders: first a lower sequence completes while a greater allocation remains unfinished, so show stays `unknown` until the greater completion selects its result; then a greater sequence completes while the lower completion is held, after which the lower completion commits late. The latter must leave the already selected status and complete public v2 operation projection byte-for-byte unchanged; the private final ledger must equal its pre-release state plus exactly that lower sequence/result, with the greatest allocated/completed sequences and every other durable field unchanged. An exact prior-schema fixture also proves each private-v1 mapping above and rejects every invalid legacy shape before generation replacement. Every recovery uses the same operation ID, asserts `operation show`, remaining relative order, the exact authorization/entry states, parent and anchor identities, and the final durable snapshot. A different operation ID cannot adopt a pending move. Standard, determinism, store fault, and Windows/Linux package lanes together prove response bytes, authentication, flush order, process restart, and unchanged completed run/gate evidence.
+
+The target `lifecycle.store` header schema advances to `lumin-lifecycle-store-header.v13` with the private cleanup-operation record schema. Ordinary repository open and query accept only v13 and never deserialize or project private-v1 cleanup rows; a valid v12 header is `IncompatibleStateSchema` with the exact `lumin store migrate` recovery instruction below. Only `lumin store migrate` has the exclusive generation-fenced reader that may admit `lumin-lifecycle-store-header.v12`, authenticate its complete logical snapshot, and apply the exact transformation above.
 
 A cache lookup may replay one owner-authored `CachedOwnerStep` keyed by the exact snapshots and semantic owner-task/profile parameters already supplied in that iteration. `NeedsInputs` metadata may depend only on those keyed prerequisites, is not a semantic hit, and cannot reveal a downstream demand derived from uncaptured bytes. During gate analysis every demanded path is conflict-checked and reserved before inventory captures it; only then may the next cold/cached step run. An accepted finished envelope replays the exact owner outcome/capability state, facts or opaque/failure payload, diagnostics, limitations, gate-neutral signals, and consulted inputs. Request-specific signals and lifecycle deltas are recomputed by the owning capability from that validated outcome and current model-owned `GateProjectionContext`.
 
@@ -796,28 +800,344 @@ If a process disappears before terminal publication, later store recovery follow
 
 Completed run directories are never migrated in place. Compatible old run schemas are read through versioned adapters or a disposable derived index. Unsupported schemas are reported as incompatible, not corrupt or empty.
 
-Whole `lifecycle.store` migration is a generation-fenced copy-on-write protocol. The marker-bound, one-link `.lumin/lifecycle.lock`, exact four-kind top-level managed-parent/anchor set, and exact nested quarantine binding are outside the replaceable backend and are never themselves replaced. Every ordinary store transaction proves the complete namespace binding, acquires the shared side, opens the current backend only after acquiring it, validates the backend `StoreGeneration` plus global/parent/quarantine binding, closes the backend handle before releasing the lock, and retains at most a generation token across analysis. No backend handle crosses a transaction boundary. Migration acquires the exclusive side through the same complete proof, so replacement begins only after every old-generation handle has closed; a replaced lock, state directory, parent, nested quarantine, or anchor hard-stops before either generation can commit.
+The sole public migration surface for this schema step is:
+
+```text
+lumin store migrate [--format json]
+```
+
+The command accepts at most one split-form `--format json` and no positional argument,
+equals-form flag, repeated flag, or other option; JSON is the default and only format.
+Malformed input exits `2` before state admission. The current binary supports only the
+exact `lumin-lifecycle-store-header.v12 -> lumin-lifecycle-store-header.v13` step. It
+does not initialize an absent store, infer a chain from any other old schema, downgrade a
+newer schema, or let another command migrate on open. Every ordinary repository-state
+command that sees a valid v12 header, a matching unfinished v12-to-v13 journal, or the
+exact journal-proven canonical-absent exchange intermediate exits `1` with empty stdout
+and exactly `lumin: lifecycle store migration requires 'lumin store migrate'\n`
+on stderr. An unrecognized, invalid, foreign, or newer header remains an
+`IncompatibleStateSchema` or integrity hard-stop without this claim of migratability.
+Any noncanonical migration source or target without the matching durable journal is
+foreign state and hard-stops; no command adopts or deletes it.
+
+A repository root with no initialized `.lumin` namespace exits `1` with empty stdout and
+exactly `lumin: lifecycle store is not initialized\n` on stderr; the command creates no
+directory, marker, lock, store, journal, or other byte. A present namespace whose canonical
+store is missing or whose bootstrap is incomplete is ordinarily an immutable integrity
+hard-stop. The sole exception is the source-retired exchange intermediate: only
+`lumin store migrate` may admit it, and only when the maximal valid unfinished journal
+binds both exact objects and their observed private placements while `lifecycle.store` is
+absent. Other commands may perform only the bounded no-follow identity/envelope check
+needed to select that diagnostic; they never decode either private logical payload or
+change the state.
+
+On valid v12, `lumin store migrate` acquires the exclusive marker-bound lock, executes or
+recovers the exact generation-fenced transformation below, exchanges the bound source and
+target identities without disposing either, appends a terminal journal revision, reopens
+the canonical store, and validates the complete v13 logical dump before success. The
+retired v12 source and the complete journal are immutable migration provenance and remain
+in `.lumin`; this command, retention, and cleanup never reclaim them. On an already-current
+valid v13 store with either no journal (a native v13 repository) or one exact terminal
+journal and retained source (a migrated repository), it validates the applicable state
+without exchanging the backend or advancing its generation.
+
+The migration journal is an immutable, append-only chain, but revision zero is not its own
+authority. Before publishing any root candidate, migration creates its unpublished object,
+captures its physical identity, and freezes an authorization core containing the source and
+target generations/schemas, canonical names, and source physical/user-logical identity. The
+core explicitly excludes the not-yet-derived target payload and the later
+post-authorization source bytes. Migration selects the next authorization sequence and
+constructs the immutable target-header
+`MigrationProvenanceAnchor { authorization_sequence, root_name, root_physical_identity,
+root_core_sha256, source_generation, source_schema, source_physical_identity,
+source_user_logical_sha256 }`; native v13 has no such anchor, while migrated v13 requires
+exactly one. It derives the transformed-target user-logical identity including that anchor,
+then commits one append-only
+`MigrationRootAuthorization { authorization_sequence, source_generation, target_generation,
+source_schema, target_schema, root_name, root_physical_identity, root_core_sha256,
+source_user_logical_sha256, target_user_logical_sha256 }` row inside the canonical v12
+generation. This bounded migration-control table is excluded from the user logical dump
+and the v12-to-v13 record
+transformation, but its committed bytes are included in the source's later opaque byte hash;
+the retained v12 source therefore preserves independent root authority. After that commit,
+migration reopens the source, requires its user-logical identities unchanged and its control
+table to equal the canonical append-only authorization history, captures its
+post-authorization bytes, and only then finalizes the root payload with the exact
+authorization sequence and source binding before flush and publication. Only the greatest
+authorization sequence is current. A root is admissible only
+when its name, physical identity, immutable core digest, generations, and both user-logical
+identities match that exact row. A preexisting or self-consistent root without the row is
+foreign. If the authorized unpublished handle dies before publication and the root name is
+absent when recovery reacquires the exclusive lock, recovery creates a new candidate and
+appends a greater authorization row; the old row remains history and can never authorize a
+later arrival.
+
+Revision zero is the thus-authorized `lifecycle-migration.json`; successor `n` is the
+self-bound `lifecycle-migration.revision-<16-digit-n>.json`. A
+`MigrationIntentRevision` contains its strictly increasing revision and phase, exact root
+authorization identity, exact predecessor name, physical identity and canonical payload
+SHA-256, immutable source/target generations and schemas, and typed binding events. The
+only current authority is the unique maximal contiguous chain from the authorized root. A
+gap, fork, duplicate sequence, invalid predecessor, unknown suffix, or noncanonical
+revision name is foreign state and is preserved on hard-stop.
+
+The initial revision records `ObservedCanonicalSource(binding)` for the already opened
+canonical v12 source. A bound slot is
+`MigrationArtifactBinding { binding_id, role, pre_exchange_name, post_exchange_name,
+generation, schema, byte_sha256, logical_sha256, physical_identity,
+link_count_at_publication: 1 }`. Revisions carry two closed role-specific event paths:
+`ObservedCanonicalSource(binding) -> Exchanged(binding_id) ->
+RetainedImmutable(binding_id)` and `PendingPublication(binding) -> Published(binding_id)
+-> Exchanged(binding_id) -> CanonicalMutable(binding_id)`. Only a target
+`PendingPublication` may instead become `SupersededUnpublished(binding_id)`. Each
+`binding_id` is initialized exactly once. Folding the exact journal chain yields one state
+per binding; a cross-role, duplicate, skipped, reversed, or otherwise unknown transition is
+corruption.
+
+The source moves from `lifecycle.store` to its bound private retirement name, while the
+target moves from its distinct bound private target name to `lifecycle.store`.
+`byte_sha256` authenticates the retained v12 object as opaque bytes without decoding
+private-v1 logical records. A target's `PendingPublication` event is durable before the
+held target becomes visible. After no-replace target publication and parent flush, a new
+immutable successor records `Published`. A recovered pending binding may transition to
+`SupersededUnpublished` only while the exclusive lock proves the original publication
+handle cannot survive, its unique bound name is absent, and no revision ever recorded it
+as published. The successor simultaneously creates a fresh pending binding with a fresh
+name and identity. A published binding can never be superseded. Validation requires every
+current observed/published/exchanged/retained/canonical-mutable object and requires every
+superseded-unpublished name to remain absent; it does not demand a nonexistent object for
+that proven historical state. No published revision or source/target artifact is ever
+unlinked, overwritten, or otherwise physically disposed by migration.
+
+Each successor revision is prepared on a same-volume handle-owned unpublished object. Its
+physical identity is captured before serialization; the complete candidate binds itself
+and its exact predecessor, is flushed, and is linked or moved no-replace directly to its
+unique final revision name. Immediately before and after that publication, migration
+reopens the predecessor and requires its bound identity and payload digest; the predecessor
+is never replaced or removed. Death before
+publication disposes only the still-unpublished handle. Death after publication but before
+the parent flush yields either no successor or one complete successor; recovery validates
+the contiguous chain and resumes. Thus revision publication needs no occupied-name
+replacement, no named staging entry, and no unbound survivor. The same handle-owned,
+no-replace sequence publishes a bound target at its unique name. A visible unbound name,
+extra link observed at admission, or name/role/generation/schema/digest/physical-identity
+disagreement is preserved and hard-stops.
+
+Source/target exchange uses only implementable no-disposition primitives. Linux uses
+`renameat2(RENAME_EXCHANGE)` for the two held same-filesystem entries when supported.
+Windows uses two handle-relative
+`SetFileInformationByHandle(FileRenameInfo, ReplaceIfExists = false)` moves: source to the
+absent bound retirement name, then target to the still-absent canonical name. A platform
+fallback may use the same crash-recorded no-replace sequence. Every turn reopens entries
+no-follow from the held state-directory handle and compares their physical identities and
+link counts before and after the primitive. These checks detect substitution and aliasing;
+they do not pretend to exclude a noncooperating same-UID process from calling `linkat`.
+Because migration never disposes any published artifact, a hard link created in that race
+cannot make Lumin delete a now-foreign object. An observed extra link or post-move identity
+disagreement prevents terminalization and leaves the journal plus every object for
+inspection or exact retry after the external corruption is removed.
+
+The binding names are platform-exact rather than falsely uniform. For Linux atomic
+exchange, `source.post_exchange_name == target.pre_exchange_name`; that one private slot
+changes from the v13 target identity to the retained v12 source identity. For the Windows
+two-move protocol, source retirement and target staging are distinct bound names, and the
+only canonical-absent placement has the source at the former and target at the latter.
+
+The terminal journal revision first authenticates the post-exchange canonical v13 target's
+complete migration-time bytes/logical dump and the retained private v12 source, then moves
+the target binding to `CanonicalMutable` and the source binding to `RetainedImmutable`.
+Full target comparison is required through exchange and terminalization only. Every later
+ordinary v13 admission validates the authorized terminal chain, the canonical entry's
+terminal physical identity, the exact immutable `MigrationProvenanceAnchor` in its v13
+header, generation/repository/namespace bindings, current link-count policy, the retired
+source's opaque byte hash and bounded root-authorization row, and the ordinary current-v13
+schema/referential/receipt integrity of the now-mutable store. The anchor cross-binds the
+current target to the authorized root and original source without depending on mutable
+target bytes. Admission never compares the current target bytes or logical dump with their
+migration-time hashes; legitimate gate, retention, cache, and operation commits necessarily
+change them. No other private-v12 user table is decoded during ordinary v13 admission. A
+physical-identity/header/provenance disagreement or failure of current-v13 integrity remains
+external state corruption and is caught on the next admission; an ordinary authenticated
+v13 mutation is not. No advisory lock is described as mandatory authority over a
+noncooperating process. A future reclamation protocol may remove the retained source or
+journal only after a separately reviewed platform capability proves safe final disposition.
+Until then, preservation is the fail-closed behavior.
+Concurrent migration commands serialize on the same exclusive lock: at most one advances
+the generation, and every follower validates v13 and emits the same response.
+Any schema-shape, identity, referential, generation, durability, or I/O failure exits `1`,
+leaves stdout empty, emits the ordinary `lumin:` diagnostic when stderr remains writable,
+and follows the crash table below; no success is emitted while the journal is nonterminal
+or its exact terminal provenance fails validation.
+
+Success exits `0`, writes one `lumin.lifecycle-store-migration.v1` object whose only
+fields in canonical order are `schemaVersion`, `storeSchema`, and `status`, with
+`storeSchema: "lumin-lifecycle-store-header.v13"` and `status: "ready"`, then writes the
+normal newline and nothing to stderr. The response deliberately omits source schema,
+generation, and a changed/no-op bit, so the first successful migration, recovery after a
+post-exchange process death, and every already-current retry return identical bytes.
+This command has no operation ID or `operation show` variant: its sole target schema and
+singleton append-only migration journal make the state transition intrinsically idempotent,
+and it performs no new gate, retention, or cache-cleanup operation; its only record
+transformation is the exact frozen v12-to-v13 schema mapping.
+Every backend handle and exclusive guard is released before transport. A `BrokenPipe`
+exits `1` with empty stderr; another stdout write/flush failure exits `1` and emits exactly
+`lumin: cannot write stdout\n` when stderr is writable. Either failure leaves the validated
+v13 store authoritative, and rerunning the same command returns the identical success
+object without another exchange or generation advance.
+
+Whole `lifecycle.store` migration is a generation-fenced copy-on-write protocol. The marker-bound, one-link `.lumin/lifecycle.lock`, exact four-kind top-level managed-parent/anchor set, and exact nested quarantine binding are outside the exchangeable backend and are never themselves exchanged. Every ordinary store transaction proves the complete namespace binding, acquires the shared side, opens the current backend only after acquiring it, validates the backend `StoreGeneration` plus global/parent/quarantine binding, closes the backend handle before releasing the lock, and retains at most a generation token across analysis. No backend handle crosses a transaction boundary. `lumin store migrate` acquires the exclusive side through the same complete proof, so exchange begins only after every old-generation handle has closed; a replaced lock, state directory, parent, nested quarantine, or anchor hard-stops before either generation can commit.
 
 Migration follows one sequence:
 
-1. Under the exclusive lock, durably publish `lifecycle-migration.json` with `MigrationIntent { from_generation: N, to_generation: N+1, source_schema, target_schema }` and flush `.lumin`. A live intent blocks every mutation except migration recovery; existing durable operations, reservations, active gates, and process leases remain records to migrate rather than being expired.
-2. Build generation `N+1` at a private same-filesystem path from one logical snapshot of `N`. Preserve and validate attempt/catalog sequences, operation IDs/results, cache-cleanup authorization manifests, reservations, worktree transitions/capsules/references, retention plans/tombstones, pins, gate IDs/revisions, and history.
-3. Compare the complete canonical logical dump and referential closure, then close every source/replacement backend handle and durably flush the replacement and its parent. Failed validation leaves `N` authoritative and the intent recoverable; it cannot publish a partial replacement.
-4. Atomically replace `lifecycle.store`, durably flush `.lumin`, reopen the canonical path, and require a valid `N+1` header and logical identity.
-5. Durably remove the migration intent, flush `.lumin`, and clean temporary payloads idempotently.
+1. Under the exclusive lock, open canonical v12 `lifecycle.store` no-follow, require one
+   link, and derive its source user-logical dump. Prepare revision zero on a same-volume
+   `IntentPublicationHandle` whose unpublished object is automatically removed on close.
+   Linux uses `O_TMPFILE` plus no-replace
+   `linkat`; Windows uses a delete-on-close handle plus a no-replace final-name publication
+   with equivalent lifetime semantics. Capture the candidate identity and authorization
+   core, select the next authorization sequence, construct the target's immutable
+   `MigrationProvenanceAnchor`, and derive the exact transformed-target user-logical dump
+   containing it. Commit the corresponding `MigrationRootAuthorization` row in generation
+   `N`, and flush the v12 backend. Reopen the canonical source, require its user-logical dump
+   still matches the authorization and its control table contains exactly the canonical
+   append-only authorization history, derive its post-authorization complete byte hash,
+   finalize revision zero with that source binding and exact authorization sequence, then
+   write/flush/publish the held object no-replace as
+   `lifecycle-migration.json`, reopen it, and flush `.lumin`. There is no admissible named
+   `.pending` intent. A live nonterminal journal blocks every mutation except migration
+   recovery; existing durable operations, reservations, active gates, and process leases
+   remain records to migrate rather than being expired.
+2. Build and flush the generation `N+1` target, including the exact immutable
+   `MigrationProvenanceAnchor`, through a handle-owned unpublished object.
+   Append and parent-flush one immutable successor carrying
+   `PendingPublication(target_binding)` before the held target has a name. Publish that same
+   object no-replace at its unique bound name, reopen its identity, and flush `.lumin`; then
+   append and parent-flush a second successor carrying `Published(binding_id)`. Preserve
+   and validate attempt/catalog sequences, operation IDs/results, cache-cleanup
+   authorization manifests, reservations, worktree transitions/capsules/references,
+   retention plans/tombstones, pins, gate IDs/revisions, and history. If recovery finds the
+   pending name absent and proves the publication handle dead, it appends
+   `SupersededUnpublished` together with a fresh pending binding; if the exact pending object
+   is visible, it revalidates and records `Published`. It never treats a missing historical
+   pending binding as a required current artifact.
+3. Compare the complete canonical user-logical dump and referential closure, fold and
+   revalidate the complete journal event chain, require the current source binding and one
+   current published target, and prove every superseded-unpublished name absent. Close every
+   backend handle that is not required for exchange and durably flush the target and its
+   parent. Failed validation leaves `N` authoritative and the journal recoverable; it cannot
+   publish a partial target as canonical.
+4. Reopen and revalidate the journal head, canonical source, and private target by exact
+   physical identity, one-link state, schema, and digest. Use Linux
+   `renameat2(RENAME_EXCHANGE)` or Windows handle-relative
+   `SetFileInformationByHandle(FileRenameInfo, ReplaceIfExists = false)` no-replace moves
+   so the target becomes `lifecycle.store`
+   and the source becomes its distinct bound retirement name. No permitted turn disposes
+   an object. A multi-move implementation accepts only the exact pre-exchange,
+   source-retired/canonical-absent, or post-exchange placement proven by both identities.
+   A pathname overwrite, remove-then-rename, or move that can discard a winner is
+   forbidden. Reopen all affected names, verify identities and current link counts, and
+   durably flush `.lumin`. A mismatch hard-stops with all objects retained; if an atomic
+   exchange moved a racing substitute, that substitute remains at the other bound reserved
+   name and is never cleanup authority.
+5. Authenticate the canonical v13 target's complete migration-time bytes/logical dump and
+   exact target-header anchor, plus the now-private v12 source/root authorization, against
+   the post-exchange bindings, then append and flush one
+   terminal journal revision carrying the ordered `Exchanged`, `RetainedImmutable`, and
+   `CanonicalMutable` transitions. Reopen the full chain and both objects once more before
+   success. Thereafter the target is validated by its exact immutable
+   `MigrationProvenanceAnchor` and ordinary current-v13 integrity rather than by the
+   historical target payload digest. The
+   terminal journal and retired source remain immutable reserved provenance for the
+   repository lifetime; neither is deleted, renamed, retention-eligible, nor a cleanup
+   candidate.
 
-A process that analyzed while holding generation token `N` must reacquire the shared lock and reopen the canonical store before its next transaction. If it observes `N+1`, it must revalidate its operation, gate revision, catalog/transition revision, and freshness against the new handle before continuing; it may reopen/retry under the same operation ID or return a typed generation-change failure, but it cannot commit through the stale token. A read transaction already holding the shared lock finishes and closes before migration can acquire exclusivity; new reads wait for live migration/recovery and never continue through an old handle during replacement. Logical query scopes and cursors survive migration only when their schema, scope identity, ordering version, and referenced logical records are unchanged; no cursor contains a physical backend generation.
+The private cleanup-operation v1-to-v2 transformation in Section 2.5 is part of the lifecycle-store v12-to-v13 step 2 canonical logical copy. It maps only validated legacy shapes to the exact synthetic delivery state defined there, includes that state in the target logical dump, and validates the resulting v2 record before step 3. Every committed legacy status initially projects v2 `unknown`: `not-attempted` becomes one unfinished allocation, while `succeeded`/`failed` retains its historical completion below a distinct unfinished greatest allocation. An invalid or unrecognized legacy shape fails `IncompatibleStateSchema` while generation `N` remains authoritative.
+
+A process that analyzed while holding generation token `N` must reacquire the shared lock and reopen the canonical store before its next transaction. If it observes `N+1`, it must revalidate its operation, gate revision, catalog/transition revision, and freshness against the new handle before continuing; it may reopen/retry under the same operation ID or return a typed generation-change failure, but it cannot commit through the stale token. A read transaction already holding the shared lock finishes and closes before migration can acquire exclusivity; new reads wait for live migration/recovery and never continue through an old handle during exchange. Logical query scopes and cursors survive migration only when their schema, scope identity, ordering version, and referenced logical records are unchanged; no cursor contains a physical backend generation.
 
 Every migration crash point has one recovery rule:
 
 | Crash point | Canonical recovery |
 | --- | --- |
-| before durable `MigrationIntent` | generation `N` remains authoritative; no migration exists |
-| after durable intent and before a validated replacement | `N` remains authoritative; recovery discards or resumes the private copy under the same intent |
-| after validated replacement and before atomic replace | `N` remains authoritative; recovery revalidates and resumes replacement |
-| during replace before the parent flush | exactly one valid generation may occupy canonical `lifecycle.store`: `N` resumes the intent and `N+1` completes it; a missing/invalid canonical store or generation disagreement with the intent is an integrity hard-stop |
-| after durable parent flush and before intent removal | `N+1` is authoritative; recovery revalidates it and removes the intent |
-| after intent removal and during temporary cleanup | `N+1` is authoritative; cleanup alone resumes idempotently |
+| before a durable root authorization | generation `N` remains authoritative and no journal exists; the unpublished root dies with its handle and retry creates a new candidate without adopting any name |
+| after durable root authorization and before root publication | generation `N` plus the append-only authorization row remains authoritative; if the exact authorized object is not already visible, recovery creates a fresh candidate, appends a greater authorization, and only that new identity may become revision zero; an unrecorded or superseded root is foreign |
+| while preparing any unpublished successor revision, before its unique final-name publication | the existing contiguous chain remains authoritative; closing or process death disposes the handle-owned candidate, no named staging entry exists, and migration resumes from the previous head |
+| after a complete revision's no-replace publication but before its parent flush | recovery observes either the previous chain or that chain plus one complete self-bound successor; a partial revision, fork, gap, or named staging entry is foreign and no predecessor is removed |
+| after `PendingPublication` and before a validated target | `N` remains authoritative; an exact visible object is revalidated and followed by `Published`, while an absent name plus proven-dead handle is followed by `SupersededUnpublished` and a fresh pending binding; the superseded name must remain absent and is excluded from current-object validation |
+| after target publication and before the `Published` successor is durable | `N` remains authoritative; recovery reopens the exact pending-bound identity, flushes its parent, appends `Published`, and never substitutes another object |
+| after validated target and before the exchange protocol | `N` remains authoritative; recovery revalidates the journal head, canonical source, and private target before resuming |
+| during exchange before the parent flush | migration alone admits an exact identity-proven pre-exchange placement (`N` canonical), source-retired intermediate (canonical absent, source at its retirement name, target still at its private name), or post-exchange placement (`N+1` canonical and `N` private); it completes the no-disposition protocol from that phase, while any other missing/invalid/substituted name is an integrity hard-stop |
+| after durable exchange flush and before terminal-revision publication | `N+1` is authoritative only to migration recovery; ordinary commands still route to migration, which authenticates the retained source and canonical target and appends the terminal revision |
+| after terminal-revision publication but before its parent flush | recovery observes either the nonterminal head and resumes terminalization or the complete terminal chain; both objects remain present and no cleanup or removal is attempted |
+| after a durable terminal revision or migration output failure | current v13 admission validates the terminal chain, exact immutable target-header `MigrationProvenanceAnchor`, ordinary current-v13 integrity, and retained opaque v12 source/root authorization; it does not compare mutable target payload bytes with the migration-time digest, and retry returns the same DTO without exchange, journal append, deletion, or generation advance |
+
+The public fault proof first stops before and after the v12 root-authorization commit and
+before/after root publication. It proves that a self-consistent revision zero without the
+matching greatest v12 authorization is foreign, that a dead unpublished root is replaced
+only after a greater authorization row, and that a superseded root identity cannot later be
+adopted. The public fault proof also includes a matching durable journal whose private source has a
+valid no-follow envelope and v12 header but a corrupted private-v1 logical table. An
+ordinary repository-state child must return the exact migration-required diagnostic
+without opening that table or changing any byte. A following `lumin store migrate` child
+must discover the corruption only under the exclusive migration reader, exit `1` with an
+integrity diagnostic, and leave the canonical store, journal, artifact, and generation
+unchanged. The proof also places a byte-identical valid v12 source at the private name
+without a matching journal and requires every command, including migration, to hard-stop
+without deleting or adopting it. Exact publication barriers kill public children before
+the first byte, after a partial write, after candidate flush, after each unique final-name
+publication, after reopen, and before/during the parent flush for revision zero, a target-
+binding successor, and the terminal successor. Restart proves no staging name survives
+and observes exactly the previous contiguous chain or that chain plus one complete next
+revision; every published predecessor remains byte-for-byte present. Separate target
+fixtures kill the child after `PendingPublication` with the target absent and after the
+target becomes visible but before `Published`: the former appends exactly one
+`SupersededUnpublished` plus fresh pending binding and forever requires the old name absent,
+while the latter authenticates that exact object and appends only `Published`.
+
+Separate live-journal barriers replace the canonical source and private target with
+logically byte-identical one-link objects before exchange, and replace revision zero or
+the current predecessor immediately before successor publication. Each mismatch must
+hard-stop before the next operation, preserve the original and substitute objects plus
+every journal revision, and leave all logical records unchanged. The proof also substitutes
+canonical v12 `lifecycle.store` after logical validation but before exchange and requires
+the same no-deletion outcome. A source-retired/canonical-absent fixture with both exact
+journal-bound objects proves that ordinary commands return the migration-required route
+and migration alone resumes; a superficially similar missing-canonical namespace without
+those bindings remains an immutable integrity hard-stop.
+
+After terminalization, another fixture changes or cross-binds only the canonical target
+header's `MigrationProvenanceAnchor` and requires the next ordinary admission to hard-stop
+before serving or mutating current state. The legitimate post-migration mutation fixture
+instead keeps that anchor byte-identical while changing ordinary v13 records and payload
+bytes, proving the anchor is immutable provenance rather than a frozen whole-store digest.
+
+An exact race barrier stops after the pre-exchange one-link validation while a competing
+public child creates a hard link in another same-filesystem directory. The migration child
+remains held until that link is visible, then resumes through its post-exchange and
+pre-terminal validation. Linux does not pretend to block `linkat`: the fixture proves the
+real `renameat2(RENAME_EXCHANGE)` path never unlinks either object, rejects terminal
+success on the extra link, and retains the source, target, journal, and new link on
+hard-stop. Windows proves the corresponding two-handle-relative-no-replace-move recovery
+path. A never-initialized
+repository runs `lumin store migrate`, receives the exact not-initialized diagnostic, and
+remains entry-for-entry and byte-for-byte unchanged with no `.lumin` creation. Windows and
+Linux package probes execute their actual handle-owned append-only publication and
+no-disposition exchange primitives plus canonical-absent recovery and absent-store refusal
+rather than accepting a development-only emulation. `lumin-xtask package-check skills`
+proves that both packaged Codex and Claude adapters respond to the migration-required
+diagnostic only by invoking the public `lumin store migrate` command, accepting the exact
+target-only DTO, and retrying the original public command; neither adapter reads store
+internals, synthesizes the DTO, or embeds migration logic.
+
+After first migration success, the same fault corpus commits one ordinary v13 lifecycle
+mutation that changes the canonical store's bytes and logical dump while retaining its
+physical identity and exact immutable `MigrationProvenanceAnchor`. A fresh ordinary command
+and an already-current `lumin store migrate` retry must both accept the new current-v13 integrity,
+return their canonical outputs, and leave the terminal journal/retired source byte-for-byte
+unchanged; an implementation that compares the target with its migration-time payload hash
+must fail this fixture. The output-layout fixture separately proves native v13 contains no
+migration provenance, while migrated v13 contains exactly the authorized terminal journal
+chain and one retained v12 source in addition to the ordinary bounded layout.
 
 ## 12. Security and Integrity
 
@@ -839,7 +1159,7 @@ Every migration crash point has one recovery rule:
 
 ## 13. Acceptance Criteria
 
-1. A complete default audit creates only the repository state marker, lifecycle lock/store, four immutable top-level managed-parent anchors, the immutable nested cache-quarantine anchor, small attempt/run envelopes, latest pointer, and canonical evidence store; the migration intent exists only while migration is live.
+1. A complete default audit on native v13 creates only the repository state marker, lifecycle lock/store, four immutable top-level managed-parent anchors, the immutable nested cache-quarantine anchor, small attempt/run envelopes, latest pointer, and canonical evidence store; its lifecycle header has no migration anchor and no migration journal or source artifact exists. A repository migrated from v12 has exactly one authorized `MigrationProvenanceAnchor` in the mutable v13 header, one contiguous journal chain whose unique maximal revision is terminal and whose immutable predecessors remain present, and one retired immutable v12 source in addition to that bounded layout; no second, forked, gapped, or unfinished chain, staging name, superseded target object, or extra migration artifact is accepted.
 2. An agent can answer a focused finding question without opening either file directly.
 3. Every bounded response, including binary- and run-scoped capabilities, supports explicit continuation.
 4. Projection limits, source-role policy, and finding disposition cannot change canonical counts or hide a grounded finding from an unfiltered default query; only an explicit echoed caller filter may narrow a collection.
@@ -859,17 +1179,17 @@ Every migration crash point has one recovery rule:
 18. Existing aliases, directory descendants, new paths, and both sides of a rename obey the path identity contract; declaring one existing alias leases and reanalyzes the complete admitted physical-alias closure, while unleased topology changes cannot authorize close.
 19. Gate decisions, machine output, and process exit codes follow the stable decision table.
 20. Nested evidence and relation lists cannot bypass bounded query envelopes.
-21. Lifecycle-store migration cannot rewrite completed logical evidence in place, erase active gate history, or let an old-generation handle commit after replacement.
+21. `lumin store migrate` is the only v12 admission route, refuses absent state without creating it, returns the same bounded `ready` response after migration or retry, and publishes no crash-surviving pending name. Canonical v12 durably authorizes revision zero before publication; that authority also fixes the target header's immutable `MigrationProvenanceAnchor`, immutable successors carry the closed pending/published/superseded/exchanged binding state machine, and each intent successor uses a unique append-only name without replacing its predecessor. Migration binds canonical source and private target by byte/logical and physical identity and exchanges them through an implementable no-disposition primitive. The exact terminal journal and retired v12 source remain immutable provenance, while the anchored canonical v13 target becomes mutation-aware current state whose later admission checks that immutable cross-binding plus current-v13 integrity rather than its historical payload hash. The exact journal-proven canonical-absent intermediate is migration-recoverable, while every unexplained missing store or unbound/substituted/no-journal artifact is foreign. Migration cannot rewrite completed logical evidence in place, erase active gate history, let an old-generation handle commit after exchange, or turn a racing hard link into deletion; it maps private cleanup-operation v1 records only through the exact fail-closed synthetic delivery state in Section 2.5 and is exercised through store-crash fixtures, both shipped platform packages, and both packaged skill adapters.
 22. Every run query is pinned to one immutable run, and every nested page can be requested explicitly without following latest.
 23. `AnalysisContractId` compatibility cannot be invalidated merely by a different `AnalysisInputId`.
 24. Pre-write rejection owns no lease; failed post-write remains active with an immutable attempted revision.
 25. Post-write drift during analysis cannot authorize or release a gate.
 26. Every publication crash point recovers according to Section 2.3 without a dangling pointer becoming clean evidence.
-27. Retrying any mutating gate, retention, or cache-cleanup command with the same operation ID/request returns the same committed result without duplicating a revision, plan, cache authorization, or physical move; conflicting reuse is malformed, and a cleanup delivery attempt without durable completion is projected as `unknown`, never `not-attempted`, success, or failure.
+27. Retrying any mutating gate, retention, or cache-cleanup command with the same operation ID/request returns the same committed result without duplicating a revision, plan, cache authorization, or physical move; conflicting reuse is malformed, and a cleanup delivery attempt without durable completion—including the synthetic greatest attempt of every migrated committed private-v1 row—is projected as `unknown`, never `not-attempted`, success, or failure.
 28. Shared-worktree changes are approved only when this gate or an exact immutable intervening transition explains every observed identity change, and referenced transition capsules remain available while an active gate may need them.
 29. Retention cannot delete either latest-pointer target or break its attempt/run linkage.
 30. Open and close observations are derived only after owner-reported semantic inputs reach a fixed point; every added read is demanded, conflict-checked, and reserved before inventory captures it or an owner/cache validator consumes it.
-31. Gate abandon, run pin/unpin, prune-plan creation/confirmation, and cache cleanup recover committed results by operation ID after delivery failure; lower delivery completion cannot mask a greater unfinished attempt, and completion of the greatest allocated attempt deterministically establishes its public result.
+31. Gate abandon, run pin/unpin, prune-plan creation/confirmation, and cache cleanup recover committed results by operation ID after delivery failure; lower delivery completion cannot mask a greater unfinished attempt, completion of the greatest allocated attempt deterministically establishes its public result, and a later lower completion appends private evidence without changing that public projection.
 32. Every retention deletion crash point recovers to exactly one `Prepared`, `Pruning`, or `Pruned` truth and never exposes missing payload as clean deletion.
 33. Validated warm cache replay preserves the same owner outcome/capability state, diagnostics, payload, limitations, semantic inputs, gate-neutral signals, request-specific effects, observation binding, and semantic dump as cold execution.
 34. A nonauthorizing closure failure persists typed `Unsealed` evidence and never invents a baseline or close observation ID.
@@ -877,7 +1197,7 @@ Every migration crash point has one recovery rule:
 36. Known `Pruning` and `Pruned` records remain publicly distinguishable from never-existing IDs through plan, operation, and direct-record lookup.
 37. Post-write reuses the exact caller-supplied opening scan/entry/profile override tier, rejects replacement parameters, and recomputes config-derived effective values only from validated self-writable inputs.
 38. Lifecycle effects consume one exhaustive owner-produced total delta relation over identity, targets, affected domain, confidence, grounding, and evidence rather than static limitation rows.
-39. Independent `PinId` and active-gate transition references protect one another, minimal tombstones remain auditable, and generation-fenced lifecycle-store migration preserves the complete logical catalog.
+39. Independent `PinId` and active-gate transition references protect one another, minimal tombstones remain auditable, and the public generation-fenced lifecycle-store migration command preserves the complete logical catalog while ordinary repository-state commands never migrate on open.
 40. Concurrent latest publishers, recovery, retention confirmation, cache cleanup, and migration serialize through one marker-bound exclusive guard; field-wise monotonic keys cannot regress, strand a terminal attempt behind `Running`, lose an independent pointer update, duplicate a cache move, or split across replacement lock objects.
 41. Every repository path/root, machine DTO, NUL-stream input, stable ID, ordering key, cursor, and gate set reproduces the exact checked-in path-codec vectors and rejects noncanonical encodings; logical sources and alias-write closure survive physical aliases while payload reuse cannot erase package/config/role context.
 42. `.lumin` and every alias/descendant are no-follow reserved state; state-directory/lifecycle-lock identities, the exact four-kind top-level managed-parent set, and the exact nested cache-quarantine directory/anchor/nonce binding are durably bound and revalidated. Foreign identity, copied/replaced state, redirected parents, caller writes, unauthorized self-consistent quarantine, substitution, or external mutation fails before scan evidence, gate success, or cleanup success. Cleanup commits store-owned authorization before any no-replace move, continuously blocks every other active-cache writer through `pending -> interrupted -> pending`, flushes and remanifests each complete tree plus cache/quarantine/trash directories before validation/result commit, recovers only through the matching operation ID, and never performs pathname-based physical deletion.
