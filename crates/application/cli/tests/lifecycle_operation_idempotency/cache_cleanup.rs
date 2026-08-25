@@ -135,8 +135,8 @@ fn cleanup_retry_exposes_one_read_only_interrupted_barrier_before_reattachment()
     assert_active_cache_writer_blocked(root.path(), "blocked-while-interrupted.bin")?;
     assert_seed_cache_intact(root.path())?;
 
-    interrupted_permit.release()?;
-    let pending_permit = interrupted_barrier.accept_stage(&mut retry, "pending", operation_id)?;
+    let recovery_permit = interrupted_permit.release_for_next()?;
+    let pending_permit = recovery_permit.wait_for_stage("pending", operation_id)?;
     let pending = show_operation(root.path(), operation_id)?;
     assert_cleanup_projection(&pending, "pending", 1, 2, 0, true)?;
     assert_active_cache_writer_blocked(root.path(), "blocked-after-reattachment.bin")?;
@@ -695,20 +695,11 @@ impl CleanupBarrier {
         process: &mut PausedCleanup,
         operation_id: &str,
     ) -> Result<CleanupPermit, Box<dyn std::error::Error>> {
-        self.accept_stage(process, self.stage, operation_id)
-    }
-
-    fn accept_stage(
-        &self,
-        process: &mut PausedCleanup,
-        stage: &str,
-        operation_id: &str,
-    ) -> Result<CleanupPermit, Box<dyn std::error::Error>> {
         let started = Instant::now();
         loop {
             match self.listener.accept() {
                 Ok((stream, peer)) if peer.ip().is_loopback() => {
-                    return CleanupPermit::new(stream, stage, operation_id);
+                    return CleanupPermit::new(stream, self.stage, operation_id);
                 }
                 Ok(_) => {
                     return Err(std::io::Error::other(
@@ -723,7 +714,7 @@ impl CleanupBarrier {
                 let output = process.take_output()?;
                 return Err(std::io::Error::other(format!(
                     "cleanup exited before {} barrier: status={:?}\nstdout={}\nstderr={}",
-                    stage,
+                    self.stage,
                     output.status.code(),
                     String::from_utf8_lossy(&output.stdout),
                     String::from_utf8_lossy(&output.stderr),
@@ -733,7 +724,7 @@ impl CleanupBarrier {
             if started.elapsed() >= BARRIER_WAIT_LIMIT {
                 return Err(std::io::Error::other(format!(
                     "cleanup did not reach {} barrier",
-                    stage
+                    self.stage
                 ))
                 .into());
             }
@@ -754,10 +745,23 @@ impl CleanupPermit {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         stream.set_nonblocking(false)?;
         stream.set_read_timeout(Some(BARRIER_WAIT_LIMIT))?;
+        Self { stream }.wait_for_stage(stage, operation_id)
+    }
+
+    fn wait_for_stage(
+        self,
+        stage: &str,
+        operation_id: &str,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut frame = String::new();
-        BufReader::new(stream.try_clone()?).read_line(&mut frame)?;
+        BufReader::new(self.stream.try_clone()?).read_line(&mut frame)?;
         assert_eq!(frame.trim_end(), format!("{stage} {operation_id}"));
-        Ok(Self { stream })
+        Ok(self)
+    }
+
+    fn release_for_next(mut self) -> Result<Self, Box<dyn std::error::Error>> {
+        self.stream.write_all(b"release\n")?;
+        Ok(self)
     }
 
     fn release(mut self) -> Result<(), Box<dyn std::error::Error>> {
