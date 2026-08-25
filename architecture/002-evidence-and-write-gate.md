@@ -883,16 +883,20 @@ revision name is foreign state and is preserved on hard-stop.
 
 The initial revision records `ObservedCanonicalSource(binding)` for the already opened
 canonical v12 source. A bound slot is
-`MigrationArtifactBinding { binding_id, role, pre_exchange_name, post_exchange_name,
-generation, schema, byte_sha256, logical_sha256, physical_identity,
+`MigrationArtifactBinding { binding_id, role, publication_attempt, pre_exchange_name,
+post_exchange_name, generation, schema, byte_sha256, logical_sha256, physical_identity,
 link_count_at_publication: 1 }`. Revisions carry two closed role-specific event paths:
 `ObservedCanonicalSource(binding) -> Exchanged(binding_id) ->
 RetainedImmutable(binding_id)` and `PendingPublication(binding) -> Published(binding_id)
 -> Exchanged(binding_id) -> CanonicalMutable(binding_id)`. Only a target
 `PendingPublication` may instead become `SupersededUnpublished(binding_id)`. Each
-`binding_id` is initialized exactly once. Folding the exact journal chain yields one state
-per binding; a cross-role, duplicate, skipped, reversed, or otherwise unknown transition is
-corruption.
+`binding_id` is initialized exactly once. The source has publication attempt zero; target
+attempts are the contiguous sequence starting at one, and that attempt is part of the v2
+binding-ID framing so a newly prepared target remains distinct even if the operating system
+reuses the dead unpublished target's physical identity. The private journal envelope is v2;
+another journal or binding framing is never upgraded in place. Folding the exact journal
+chain yields one state per binding; a cross-role, duplicate, skipped, reversed, or otherwise
+unknown transition is corruption.
 
 The source moves from `lifecycle.store` to its bound private retirement name, while the
 target moves from its distinct bound private target name to `lifecycle.store`.

@@ -22,7 +22,7 @@ const MIGRATION_ARTIFACT_PREFIX: &str = "lifecycle.store.migration-";
 pub(super) const MIGRATION_ROOT_AUTHORIZATIONS_TABLE_NAME: &str = "migration-root-authorizations";
 const MIGRATION_ROOT_AUTHORIZATIONS: TableDefinition<&str, &[u8]> =
     TableDefinition::new(MIGRATION_ROOT_AUTHORIZATIONS_TABLE_NAME);
-const MIGRATION_JOURNAL_SCHEMA: &str = "lumin-lifecycle-migration-journal.v1";
+const MIGRATION_JOURNAL_SCHEMA: &str = "lumin-lifecycle-migration-journal.v2";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -61,6 +61,7 @@ struct MigrationArtifactDigests {
 pub(super) struct MigrationArtifactBinding {
     pub(super) binding_id: String,
     pub(super) role: MigrationArtifactRole,
+    pub(super) publication_attempt: u64,
     pub(super) pre_exchange_name: String,
     pub(super) post_exchange_name: String,
     pub(super) generation: StoreGeneration,
@@ -169,6 +170,10 @@ impl MigrationJournal {
             ));
         }
         Ok(target)
+    }
+
+    pub(super) fn next_target_publication_attempt(&self) -> Result<u64, StoreError> {
+        target_publication_attempt_for_count(self.targets.len())
     }
 
     fn head(&self) -> Result<&JournalEntry, StoreError> {
@@ -311,6 +316,7 @@ pub(super) fn source_binding(
 ) -> Result<MigrationArtifactBinding, StoreError> {
     build_binding(
         MigrationArtifactRole::Source,
+        0,
         MigrationArtifactNames {
             pre_exchange: "lifecycle.store".to_owned(),
             post_exchange: post_exchange_name,
@@ -326,6 +332,7 @@ pub(super) fn source_binding(
 
 pub(super) fn target_binding(
     physical_identity: PhysicalFileIdentity,
+    publication_attempt: u64,
     pre_exchange_name: String,
     generation: StoreGeneration,
     byte_sha256: String,
@@ -333,6 +340,7 @@ pub(super) fn target_binding(
 ) -> Result<MigrationArtifactBinding, StoreError> {
     build_binding(
         MigrationArtifactRole::Target,
+        publication_attempt,
         MigrationArtifactNames {
             pre_exchange: pre_exchange_name,
             post_exchange: "lifecycle.store".to_owned(),
@@ -619,6 +627,7 @@ fn root_intent(
 
 fn build_binding(
     role: MigrationArtifactRole,
+    publication_attempt: u64,
     names: MigrationArtifactNames,
     generation: StoreGeneration,
     digests: MigrationArtifactDigests,
@@ -631,6 +640,7 @@ fn build_binding(
     let mut binding = MigrationArtifactBinding {
         binding_id: String::new(),
         role,
+        publication_attempt,
         pre_exchange_name: names.pre_exchange,
         post_exchange_name: names.post_exchange,
         generation,
@@ -647,8 +657,9 @@ fn build_binding(
 
 fn derive_binding_id(binding: &MigrationArtifactBinding) -> Result<String, StoreError> {
     let bytes = serde_json::to_vec(&serde_json::json!({
-        "schemaVersion": "lumin-lifecycle-migration-artifact-binding.v1",
+        "schemaVersion": "lumin-lifecycle-migration-artifact-binding.v2",
         "role": binding.role,
+        "publicationAttempt": binding.publication_attempt,
         "preExchangeName": binding.pre_exchange_name,
         "postExchangeName": binding.post_exchange_name,
         "generation": binding.generation,
@@ -675,7 +686,12 @@ fn validate_binding(binding: &MigrationArtifactBinding) -> Result<(), StoreError
         MigrationArtifactRole::Source => PRIOR_STORE_HEADER_SCHEMA,
         MigrationArtifactRole::Target => STORE_HEADER_SCHEMA,
     };
+    let valid_publication_attempt = match binding.role {
+        MigrationArtifactRole::Source => binding.publication_attempt == 0,
+        MigrationArtifactRole::Target => binding.publication_attempt > 0,
+    };
     if binding.schema != expected_schema
+        || !valid_publication_attempt
         || binding.link_count_at_publication != 1
         || !is_sha256(&binding.byte_sha256)
         || !is_sha256(&binding.logical_sha256)
@@ -778,11 +794,20 @@ fn apply_event(
         )),
         MigrationBindingEvent::PendingPublication { binding } => {
             validate_binding(binding)?;
-            if binding.role != MigrationArtifactRole::Target
-                || !ids.insert(binding.binding_id.clone())
-            {
+            if binding.role != MigrationArtifactRole::Target {
                 return Err(StoreError::Integrity(
-                    "migration target binding is duplicate or has the wrong role".to_owned(),
+                    "migration target binding has the wrong role".to_owned(),
+                ));
+            }
+            let expected_attempt = target_publication_attempt_for_count(targets.len())?;
+            if binding.publication_attempt != expected_attempt {
+                return Err(StoreError::Integrity(
+                    "migration target publication attempts are not contiguous".to_owned(),
+                ));
+            }
+            if !ids.insert(binding.binding_id.clone()) {
+                return Err(StoreError::Integrity(
+                    "migration target binding is duplicate".to_owned(),
                 ));
             }
             if targets
@@ -1123,9 +1148,101 @@ fn phase_rank(phase: MigrationPhase) -> u8 {
     }
 }
 
+fn target_publication_attempt_for_count(target_count: usize) -> Result<u64, StoreError> {
+    u64::try_from(target_count)
+        .ok()
+        .and_then(|count| count.checked_add(1))
+        .ok_or_else(|| {
+            StoreError::Integrity("migration target publication attempts exhausted".to_owned())
+        })
+}
+
 fn is_sha256(value: &str) -> bool {
     value.len() == 64
         && value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn superseded_target_attempt_remains_unique_when_physical_identity_is_reused()
+    -> Result<(), StoreError> {
+        let digest = "0".repeat(64);
+        let source_binding = source_binding(
+            PhysicalFileIdentity::Unix {
+                device: 7,
+                inode: 10,
+            },
+            "lifecycle.store.migration-source".to_owned(),
+            StoreGeneration::INITIAL,
+            digest.clone(),
+            digest.clone(),
+        )?;
+        let target_generation = StoreGeneration::INITIAL
+            .checked_next()
+            .ok_or_else(|| StoreError::Integrity("test target generation overflowed".to_owned()))?;
+        let reused_identity = PhysicalFileIdentity::Unix {
+            device: 7,
+            inode: 11,
+        };
+        let first = target_binding(
+            reused_identity.clone(),
+            1,
+            "lifecycle.store.migration-target".to_owned(),
+            target_generation,
+            digest.clone(),
+            digest.clone(),
+        )?;
+        let second = target_binding(
+            reused_identity,
+            2,
+            first.pre_exchange_name.clone(),
+            target_generation,
+            digest.clone(),
+            digest,
+        )?;
+        assert_ne!(first.binding_id, second.binding_id);
+
+        let mut source = FoldedBinding {
+            binding: source_binding.clone(),
+            state: MigrationBindingState::Observed,
+        };
+        let mut targets = BTreeMap::new();
+        let mut ids = BTreeSet::from([source_binding.binding_id]);
+        apply_event(
+            &MigrationBindingEvent::PendingPublication {
+                binding: first.clone(),
+            },
+            &mut source,
+            &mut targets,
+            &mut ids,
+        )?;
+        apply_event(
+            &MigrationBindingEvent::SupersededUnpublished {
+                binding_id: first.binding_id,
+            },
+            &mut source,
+            &mut targets,
+            &mut ids,
+        )?;
+        apply_event(
+            &MigrationBindingEvent::PendingPublication {
+                binding: second.clone(),
+            },
+            &mut source,
+            &mut targets,
+            &mut ids,
+        )?;
+
+        assert_eq!(targets.len(), 2);
+        assert_eq!(
+            targets.get(&second.binding_id).map(|target| target.state),
+            Some(MigrationBindingState::Pending)
+        );
+        Ok(())
+    }
 }

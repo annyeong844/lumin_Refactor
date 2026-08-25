@@ -424,7 +424,7 @@ fn ensure_target_published(
                 hook,
             );
         }
-        let attempt = journal.targets.len() + 1;
+        let attempt = journal.next_target_publication_attempt()?;
         let candidate = prepare_target_candidate(guard, &journal, attempt)?;
         let new_binding = candidate.1.clone();
         journal = append_revision(
@@ -447,7 +447,7 @@ fn ensure_target_published(
     let (unpublished, binding) = if let Some(prepared) = prepared {
         prepared
     } else {
-        let attempt = journal.targets.len() + 1;
+        let attempt = journal.next_target_publication_attempt()?;
         let prepared = prepare_target_candidate(guard, &journal, attempt)?;
         journal = append_revision(
             guard,
@@ -502,10 +502,8 @@ fn ensure_target_published(
 fn prepare_target_candidate(
     guard: &NamespaceGuard,
     journal: &MigrationJournal,
-    attempt: usize,
+    attempt: u64,
 ) -> Result<(UnpublishedFile, MigrationArtifactBinding), StoreError> {
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    let _ = attempt;
     let source = open_bound_source(guard, journal)?;
     let transformed = source.snapshot.clone().transformed_from_v12()?;
     let anchor = anchor_for(journal);
@@ -537,6 +535,7 @@ fn prepare_target_candidate(
     )?;
     let binding = target_binding(
         unpublished.entry().identity().clone(),
+        attempt,
         name,
         journal.root_authorization.target_generation,
         file_sha256(unpublished.entry())?,
