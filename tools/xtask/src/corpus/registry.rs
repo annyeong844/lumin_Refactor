@@ -443,7 +443,11 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd_arch!("capability-availability-authority"),
     row_sd!("gate-unsealed-observation"),
     row_sd!("gate-analysis-input-reconciliation"),
-    row_sd!("gate-final-observation"),
+    row_sd!("gate-final-observation", &[
+        inv!("write_gate", "final_observation_rechecks_current_domain_before_sealing"),
+        inv!("write_gate", "protected_input_drift_is_stale"),
+        inv!("write_gate", "planned_semantic_config_write_is_recaptured_and_attributed"),
+    ]),
     row_sd_arch!("gate-lifecycle-effects", INV_GATE_EFFECTS),
     row_sd!("gate-immutable-opening-delta"),
     row_sd!("lifecycle-operation-idempotency", INV_IDEMP),

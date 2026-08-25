@@ -7,7 +7,7 @@ use std::process::Stdio;
 use serde_json::Value;
 
 mod command;
-mod determinism;
+pub(crate) mod determinism;
 
 pub use command::lumin_command;
 

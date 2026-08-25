@@ -18,7 +18,7 @@ enum JobsPolicy {
     One,
 }
 
-pub(super) fn effective_arguments(
+pub(crate) fn effective_arguments(
     arguments: &[OsString],
 ) -> Result<Vec<OsString>, Box<dyn std::error::Error>> {
     let capture = std::env::var(CAPTURE_ENV);

@@ -21,6 +21,20 @@ mod transition_retention;
 
 use support::{assert_status, field, lumin_command, run};
 
+fn lumin_command_with_args(
+    root: &Path,
+    arguments: &[&str],
+) -> Result<std::process::Command, Box<dyn std::error::Error>> {
+    let arguments = arguments
+        .iter()
+        .map(std::ffi::OsString::from)
+        .collect::<Vec<_>>();
+    let effective_arguments = support::determinism::effective_arguments(&arguments)?;
+    let mut command = lumin_command(root)?;
+    command.args(effective_arguments);
+    Ok(command)
+}
+
 #[test]
 fn pre_and_post_survive_process_reopen() -> Result<(), Box<dyn std::error::Error>> {
     let root = fixture()?;
@@ -170,16 +184,16 @@ fn pre_write_observation_binds_promotion_and_interrupted_admission_leaves_no_act
     let root = fixture()?;
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
     listener.set_nonblocking(true)?;
-    let mut child = lumin_command(root.path())?
-        .args([
-            "pre-write",
-            "--operation-id",
-            "op-observation",
-            "--path",
-            "src/lib.ts",
-            "--jobs",
-            "1",
-        ])
+    let arguments = [
+        "pre-write",
+        "--operation-id",
+        "op-observation",
+        "--path",
+        "src/lib.ts",
+        "--jobs",
+        "1",
+    ];
+    let mut child = lumin_command_with_args(root.path(), &arguments)?
         .env(
             "LUMIN_TEST_GATE_ADMISSION_BARRIER",
             listener.local_addr()?.to_string(),
@@ -306,18 +320,7 @@ fn pre_write_observation_binds_promotion_and_interrupted_admission_leaves_no_act
         Some(0)
     );
 
-    let retry = run(
-        root.path(),
-        &[
-            "pre-write",
-            "--operation-id",
-            "op-observation",
-            "--path",
-            "src/lib.ts",
-            "--jobs",
-            "1",
-        ],
-    )?;
+    let retry = run(root.path(), &arguments)?;
     assert_status(&retry, 0);
     let retry_json: Value = serde_json::from_str(&retry.stdout)?;
     assert_eq!(
@@ -375,6 +378,12 @@ fn pre_write_observation_binds_promotion_and_interrupted_admission_leaves_no_act
             .and_then(Value::as_str),
         Some(observation_id)
     );
+    Ok(())
+}
+
+#[test]
+fn final_observation_rechecks_current_domain_before_sealing()
+-> Result<(), Box<dyn std::error::Error>> {
     final_promotion_reobserves_the_complete_write_domain()?;
     final_promotion_reenumerates_new_directory_source_aliases()?;
     final_promotion_rejects_a_new_source_outside_the_captured_alias_domain()?;
@@ -389,16 +398,16 @@ fn final_promotion_reobserves_the_complete_write_domain() -> Result<(), Box<dyn 
     let root = fixture()?;
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
     listener.set_nonblocking(true)?;
-    let mut child = lumin_command(root.path())?
-        .args([
-            "pre-write",
-            "--operation-id",
-            "op-final-topology",
-            "--path",
-            "src/new.ts",
-            "--jobs",
-            "1",
-        ])
+    let arguments = [
+        "pre-write",
+        "--operation-id",
+        "op-final-topology",
+        "--path",
+        "src/new.ts",
+        "--jobs",
+        "1",
+    ];
+    let mut child = lumin_command_with_args(root.path(), &arguments)?
         .env(
             "LUMIN_TEST_GATE_PREWRITE_FINAL_BARRIER",
             listener.local_addr()?.to_string(),
@@ -455,6 +464,7 @@ fn final_promotion_reobserves_the_complete_write_domain() -> Result<(), Box<dyn 
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
+    assert_replayed_mutation(root.path(), &arguments, &output)?;
     let response: Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(
         response.get("decision").and_then(Value::as_str),
@@ -530,16 +540,16 @@ fn final_promotion_reenumerates_new_directory_source_aliases()
     )?;
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
     listener.set_nonblocking(true)?;
-    let mut child = lumin_command(root.path())?
-        .args([
-            "pre-write",
-            "--operation-id",
-            "op-final-directory-alias",
-            "--path",
-            "src/feature",
-            "--jobs",
-            "1",
-        ])
+    let arguments = [
+        "pre-write",
+        "--operation-id",
+        "op-final-directory-alias",
+        "--path",
+        "src/feature",
+        "--jobs",
+        "1",
+    ];
+    let mut child = lumin_command_with_args(root.path(), &arguments)?
         .env(
             "LUMIN_TEST_GATE_PREWRITE_FINAL_BARRIER",
             listener.local_addr()?.to_string(),
@@ -605,6 +615,7 @@ fn final_promotion_reenumerates_new_directory_source_aliases()
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
+    assert_replayed_mutation(root.path(), &arguments, &output)?;
     let response: Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(
         response.get("decision").and_then(Value::as_str),
@@ -674,16 +685,16 @@ fn final_promotion_rejects_a_late_semantic_input(
     let root = fixture()?;
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
     listener.set_nonblocking(true)?;
-    let mut child = lumin_command(root.path())?
-        .args([
-            "pre-write",
-            "--operation-id",
-            operation_id,
-            "--path",
-            "src/main.ts",
-            "--jobs",
-            "1",
-        ])
+    let arguments = [
+        "pre-write",
+        "--operation-id",
+        operation_id,
+        "--path",
+        "src/main.ts",
+        "--jobs",
+        "1",
+    ];
+    let mut child = lumin_command_with_args(root.path(), &arguments)?
         .env(
             "LUMIN_TEST_GATE_PREWRITE_FINAL_BARRIER",
             listener.local_addr()?.to_string(),
@@ -742,6 +753,7 @@ fn final_promotion_rejects_a_late_semantic_input(
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
+    assert_replayed_mutation(root.path(), &arguments, &output)?;
     let response: Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(
         response.get("decision").and_then(Value::as_str),
@@ -796,16 +808,16 @@ fn final_promotion_preserves_a_sealed_stale_observation_when_an_alias_seed_disap
     fs::write(&captured, "export const captured = 1;\n")?;
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
     listener.set_nonblocking(true)?;
-    let mut child = lumin_command(root.path())?
-        .args([
-            "pre-write",
-            "--operation-id",
-            "op-final-directory-disappearance",
-            "--path",
-            "src/feature",
-            "--jobs",
-            "1",
-        ])
+    let arguments = [
+        "pre-write",
+        "--operation-id",
+        "op-final-directory-disappearance",
+        "--path",
+        "src/feature",
+        "--jobs",
+        "1",
+    ];
+    let mut child = lumin_command_with_args(root.path(), &arguments)?
         .env(
             "LUMIN_TEST_GATE_PREWRITE_FINAL_BARRIER",
             listener.local_addr()?.to_string(),
@@ -861,6 +873,7 @@ fn final_promotion_preserves_a_sealed_stale_observation_when_an_alias_seed_disap
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
+    assert_replayed_mutation(root.path(), &arguments, &output)?;
     let response: Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(
         response.get("decision").and_then(Value::as_str),
@@ -922,13 +935,13 @@ fn final_close_reobserves_the_complete_write_domain() -> Result<(), Box<dyn std:
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
     listener.set_nonblocking(true)?;
-    let mut child = lumin_command(root.path())?
-        .args([
-            "post-write",
-            &gate_id,
-            "--operation-id",
-            "op-close-topology",
-        ])
+    let arguments = [
+        "post-write",
+        gate_id.as_str(),
+        "--operation-id",
+        "op-close-topology",
+    ];
+    let mut child = lumin_command_with_args(root.path(), &arguments)?
         .env(
             "LUMIN_TEST_GATE_POSTWRITE_FINAL_BARRIER",
             listener.local_addr()?.to_string(),
@@ -986,6 +999,7 @@ fn final_close_reobserves_the_complete_write_domain() -> Result<(), Box<dyn std:
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
     );
+    assert_replayed_mutation(root.path(), &arguments, &output)?;
     let response: Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(
         response.get("decision").and_then(Value::as_str),
@@ -1411,6 +1425,14 @@ fn planned_semantic_config_write_is_recaptured_and_attributed()
         "{\"name\":\"app\",\"type\":\"commonjs\"}\n",
     )?;
     let gate_id = open_gate(root.path(), "op-config-open", "package.json")?;
+    let opening = run(root.path(), &["gate", "show", &gate_id])?;
+    assert_status(&opening, 0);
+    let opening_json: Value = serde_json::from_str(&opening.stdout)?;
+    let opening_analysis_input_id = opening_json
+        .pointer("/baseline/analysisInputId")
+        .and_then(Value::as_str)
+        .ok_or("opening gate omitted its analysis input ID")?
+        .to_owned();
 
     fs::write(
         root.path().join("package.json"),
@@ -1440,12 +1462,21 @@ fn planned_semantic_config_write_is_recaptured_and_attributed()
 
     let shown = run(root.path(), &["gate", "show", &gate_id])?;
     assert_status(&shown, 0);
+    let shown_json: Value = serde_json::from_str(&shown.stdout)?;
     assert_eq!(
-        display_paths(
-            &serde_json::from_str::<Value>(&shown.stdout)?,
-            "/revisions/1/actualWriteSet/paths",
-        )?,
+        display_paths(&shown_json, "/revisions/1/actualWriteSet/paths")?,
         vec!["package.json"]
+    );
+    let close_analysis_input_id = shown_json
+        .pointer("/revisions/1/analysisInputId")
+        .and_then(Value::as_str)
+        .ok_or("sealed close omitted its current analysis input ID")?;
+    assert_ne!(opening_analysis_input_id, close_analysis_input_id);
+    assert_eq!(
+        shown_json
+            .pointer("/revisions/1/observationBinding/observation/kind")
+            .and_then(Value::as_str),
+        Some("close")
     );
     Ok(())
 }
@@ -1781,6 +1812,18 @@ fn assert_display_path_set(
     let mut expected = expected.to_vec();
     expected.sort_unstable();
     assert_eq!(actual, expected);
+    Ok(())
+}
+
+fn assert_replayed_mutation(
+    root: &Path,
+    arguments: &[&str],
+    output: &std::process::Output,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let replay = run(root, arguments)?;
+    assert_eq!(replay.status, output.status.code().unwrap_or(-1));
+    assert_eq!(replay.stdout.as_bytes(), output.stdout.as_slice());
+    assert_eq!(replay.stderr.as_bytes(), output.stderr.as_slice());
     Ok(())
 }
 
