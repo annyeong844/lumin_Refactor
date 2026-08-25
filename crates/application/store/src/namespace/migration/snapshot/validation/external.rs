@@ -512,6 +512,11 @@ fn validate_retention_payloads(
     let mut moved_runs = BTreeMap::new();
     for (key, bytes) in &snapshot.retention_plans {
         let plan = parse_record::<StoredRetentionPlan>("retention-plans", key, bytes)?;
+        if &plan.record.repository_id != guard.repository_id() {
+            return Err(StoreError::Integrity(format!(
+                "retention plan {key} changed repository ownership"
+            )));
+        }
         if plan.progress.is_none() {
             continue;
         }

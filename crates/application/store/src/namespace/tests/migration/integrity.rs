@@ -17,13 +17,13 @@ use lumin_model::{
     PhysicalFileIdentity, RepoPath, ResolutionProfile, RunId, SealedGateObservation,
     UnsealedObservationReason,
 };
-use redb::{Database, ReadableTable, WriteTransaction};
+use redb::{Database, ReadableDatabase, ReadableTable, WriteTransaction};
 
 use crate::gate::{
     GATES, OPERATIONS, TRANSITIONS, VALIDATION_RECEIPTS, records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY,
     transition_key,
 };
-use crate::retention::RETENTION_OPERATIONS;
+use crate::retention::{RETENTION_OPERATIONS, RETENTION_PLANS, records::StoredRetentionPlan};
 use crate::{
     GateBaselineDraft, ObservationFinalization, PreWriteFinish, PreWriteStart, RUN_CATALOG,
     RepositoryStore, RunCatalogRecord, SEQUENCES, StoreError,
@@ -4643,6 +4643,87 @@ fn migration_rejects_retention_result_owned_by_another_plan()
     assert!(matches!(
         store.migrate_lifecycle_store(),
         Err(StoreError::Integrity(message)) if message.contains("incoherent kind, status, plan, or result")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_prepared_retention_plan_owned_by_another_repository()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("retention-plan-foreign-owner".to_owned());
+    let result = store.prepare_retention_plan(&crate::RetentionPlanRequest {
+        scope: RetentionPlanScope::Runs {
+            before_unix_millis: u64::MAX,
+        },
+        operation_id: operation_id.clone(),
+    })?;
+    let plan_id = prepared_plan_id(result)?;
+    let namespace_binding = store.namespace.binding.clone();
+    let repository_id = namespace_binding.global.repository_id.clone();
+    drop(store);
+
+    let foreign_root = tempfile::tempdir()?;
+    let foreign_store = open_store(foreign_root.path())?;
+    let foreign_result = foreign_store.prepare_retention_plan(&crate::RetentionPlanRequest {
+        scope: RetentionPlanScope::Runs {
+            before_unix_millis: u64::MAX,
+        },
+        operation_id: operation_id.clone(),
+    })?;
+    let foreign_plan_id = prepared_plan_id(foreign_result)?;
+    assert_eq!(foreign_plan_id, plan_id);
+    assert_ne!(
+        foreign_store.namespace.binding.global.repository_id,
+        repository_id
+    );
+    drop(foreign_store);
+
+    let (foreign_plan, foreign_operation) = {
+        let database = Database::open(foreign_root.path().join(".lumin/lifecycle.store"))?;
+        let read = database.begin_read()?;
+        let plans = read.open_table(RETENTION_PLANS)?;
+        let plan = plans
+            .get(plan_id.as_str())?
+            .ok_or("foreign prepared retention plan is missing")?
+            .value()
+            .to_vec();
+        drop(plans);
+        let operations = read.open_table(RETENTION_OPERATIONS)?;
+        let operation = operations
+            .get(operation_id.as_str())?
+            .ok_or("foreign retention plan operation is missing")?
+            .value()
+            .to_vec();
+        (plan, operation)
+    };
+    let foreign_plan_record = serde_json::from_slice::<StoredRetentionPlan>(&foreign_plan)?;
+    assert_ne!(foreign_plan_record.record.repository_id, repository_id);
+
+    let store_path = root.path().join(".lumin/lifecycle.store");
+    let database = Database::open(&store_path)?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(RETENTION_PLANS)?;
+        table.insert(plan_id.as_str(), foreign_plan.as_slice())?;
+    };
+    {
+        let mut table = write.open_table(RETENTION_OPERATIONS)?;
+        table.insert(operation_id.as_str(), foreign_operation.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    crate::namespace::store_header::rewrite_current_store_header_as_prior_for_test(
+        &store_path,
+        &namespace_binding,
+    )?;
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("changed repository ownership")
     ));
     Ok(())
 }
