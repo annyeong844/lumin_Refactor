@@ -4,10 +4,10 @@ use std::fs;
 
 use lumin_evidence::{
     ActualWriteSet, CacheCleanupExecutionLease, CacheCleanupOperationRecord,
-    CacheCleanupOperationStatus, CapabilityRecord, DEAD_CODE_CAPABILITY_ID,
-    DeclaredPathUnsupportedReason, GateAnalysisOptions, GateBaselineObservationInput,
-    GateCloseObservationInput, GateObservationBinding, GateSignal, PathPrefixIdentity,
-    PostWriteFinalValidationEvidence, PreWriteDeclaredPathInspection,
+    CacheCleanupOperationStatus, CacheEvictionAuthorization, CapabilityRecord,
+    DEAD_CODE_CAPABILITY_ID, DeclaredPathUnsupportedReason, GateAnalysisOptions,
+    GateBaselineObservationInput, GateCloseObservationInput, GateObservationBinding, GateSignal,
+    PathPrefixIdentity, PostWriteFinalValidationEvidence, PreWriteDeclaredPathInspection,
     PreWriteFinalValidationEvidence, RepoPathProjection, RetentionPlanScope, RunEvidence,
     SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, SemanticInputRecord, SemanticInputState,
     SemanticReadReservationBinding, UnsealedGateObservationInputs, WriteLease, WriteLeaseKind,
@@ -509,6 +509,147 @@ fn migration_rejects_a_pending_cleanup_with_a_forged_liveness_identity()
             if message.contains("operation liveness lock physical identity changed")
     ));
     drop(session);
+    Ok(())
+}
+
+#[test]
+fn migration_authenticates_pending_cleanup_initial_authorization_provenance()
+-> Result<(), Box<dyn std::error::Error>> {
+    for corrupt_identity in [true, false] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        fs::write(root.path().join(".lumin/cache/prior.bin"), b"prior")?;
+        let prior_operation =
+            OperationId::from_string(format!("migration-prior-cleanup-{corrupt_identity}"));
+        store.clean_cache_payloads(&prior_operation, "migration-prior-cleanup-request")?;
+        let initial_rows = store.with_exclusive_lock(|guard| {
+            let database = guard.open_database()?;
+            let write = database.begin_write()?;
+            let authorizations = crate::gate::records::read_records::<CacheEvictionAuthorization>(
+                &write,
+                crate::cache::CACHE_EVICTION_AUTHORIZATIONS,
+            )?;
+            Ok(authorizations
+                .iter()
+                .map(crate::cache::authorization_set_frame)
+                .collect::<Vec<_>>())
+        })?;
+        assert_eq!(initial_rows.len(), 1);
+        let correct_id = CacheEvictionAuthorizationSetId::for_canonical_rows(&initial_rows);
+        let correct_count = u64::try_from(initial_rows.len())?;
+        store.rewrite_cache_cleanup_operation_as_prior_for_test(
+            &prior_operation,
+            PriorCacheCleanupDeliveryStatusForTest::NotAttempted,
+        )?;
+
+        let operation_id = OperationId::from_string(format!(
+            "migration-pending-cleanup-provenance-{corrupt_identity}"
+        ));
+        let session = store.begin_operation(&operation_id)?;
+        let operation = CacheCleanupOperationRecord {
+            schema_version: "lumin-cache-cleanup-operation.v2".to_owned(),
+            repository_id: store.namespace.binding.global.repository_id.clone(),
+            operation_id: operation_id.clone(),
+            request_digest: "migration-pending-cleanup-request".to_owned(),
+            status: CacheCleanupOperationStatus::Pending,
+            interruption_count: 0,
+            invocation_id: "1".repeat(32),
+            initial_authorization_set_id: if corrupt_identity {
+                CacheEvictionAuthorizationSetId::for_canonical_rows(&[])
+            } else {
+                correct_id
+            },
+            initial_authorization_count: if corrupt_identity { correct_count } else { 0 },
+            plan_initialized: false,
+            authorization_keys: Vec::new(),
+            validated_count: 0,
+            execution_lease: Some(CacheCleanupExecutionLease {
+                execution_attempt_id: "migration-pending-cleanup-provenance-attempt".to_owned(),
+                liveness: session.liveness().clone(),
+            }),
+            recovery_reservation: None,
+            result: None,
+            greatest_allocated_delivery_sequence: 0,
+            greatest_completed_delivery_sequence: None,
+            delivery_completions: Vec::new(),
+        };
+        store.with_exclusive_lock(|guard| {
+            let database = guard.open_database()?;
+            let write = database.begin_write()?;
+            crate::gate::records::write_record(
+                &write,
+                crate::cache::CACHE_CLEANUP_OPERATIONS,
+                operation_id.as_str(),
+                &operation,
+            )?;
+            guard.commit(write)
+        })?;
+        store.rewrite_cache_cleanup_operation_as_prior_for_test(
+            &operation_id,
+            PriorCacheCleanupDeliveryStatusForTest::NotAttempted,
+        )?;
+        make_prior_store(&store, root.path())?;
+
+        let result = store.migrate_lifecycle_store();
+        assert!(
+            matches!(
+            &result,
+            Err(StoreError::Integrity(message))
+                if message.contains("initial authorization provenance is not exact")
+            ),
+            "unexpected migration result: {result:?}"
+        );
+        drop(session);
+    }
+    Ok(())
+}
+
+#[test]
+fn native_current_reopens_after_external_reference_validation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let current = root.path().join(".lumin/lifecycle.store");
+    let mut changed = false;
+    let result = store.namespace.with_migration_lock(|guard| {
+        super::super::migration::validate_native_current_recheck_for_test(guard, &mut || {
+            set_store_sequence_at_path(&current, "gate", 1)?;
+            changed = true;
+            Ok(())
+        })
+    });
+    assert!(changed);
+    assert!(matches!(
+        result,
+        Err(StoreError::Integrity(message))
+            if message.contains("changed after external reference validation")
+    ));
+    Ok(())
+}
+
+#[test]
+fn terminal_validation_reopens_the_target_after_external_reference_validation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    make_prior_store(&store, root.path())?;
+    let current = root.path().join(".lumin/lifecycle.store");
+    let mut changed = false;
+    let result = store.namespace.with_migration_lock(|guard| {
+        migrate_with_hook(guard, &mut |point| {
+            if point == MigrationCrashPoint::TerminalSourceValidated && !changed {
+                set_store_sequence_at_path(&current, "gate", 1)?;
+                changed = true;
+            }
+            Ok(())
+        })
+    });
+    assert!(changed);
+    assert!(matches!(
+        result,
+        Err(StoreError::Integrity(message))
+            if message.contains("changed after external reference validation")
+    ));
     Ok(())
 }
 
@@ -1097,6 +1238,20 @@ fn set_sequence_for_test(store: &RepositoryStore, key: &str, value: u64) -> Resu
         }
         guard.commit(write)
     })
+}
+
+fn set_store_sequence_at_path(
+    path: &std::path::Path,
+    key: &str,
+    value: u64,
+) -> Result<(), StoreError> {
+    let database = Database::open(path).map_err(crate::backend_error)?;
+    let write = database.begin_write().map_err(crate::backend_error)?;
+    {
+        let mut sequences = write.open_table(SEQUENCES).map_err(crate::backend_error)?;
+        sequences.insert(key, value).map_err(crate::backend_error)?;
+    }
+    write.commit().map_err(crate::backend_error)
 }
 
 fn remove_pointer_for_test(store: &RepositoryStore, key: &str) -> Result<(), StoreError> {

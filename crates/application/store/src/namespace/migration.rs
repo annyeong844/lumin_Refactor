@@ -333,6 +333,21 @@ pub(super) fn migrate_with_hook(
 }
 
 fn validate_native_current(guard: &NamespaceGuard) -> Result<StoreGeneration, StoreError> {
+    validate_native_current_with_after_external(guard, &mut || Ok(()))
+}
+
+#[cfg(test)]
+pub(super) fn validate_native_current_recheck_for_test(
+    guard: &NamespaceGuard,
+    hook: &mut impl FnMut() -> Result<(), StoreError>,
+) -> Result<StoreGeneration, StoreError> {
+    validate_native_current_with_after_external(guard, hook)
+}
+
+fn validate_native_current_with_after_external(
+    guard: &NamespaceGuard,
+    hook: &mut impl FnMut() -> Result<(), StoreError>,
+) -> Result<StoreGeneration, StoreError> {
     let current = open_current_canonical(guard)?;
     if current.anchor.is_some() {
         return Err(StoreError::Integrity(
@@ -340,7 +355,25 @@ fn validate_native_current(guard: &NamespaceGuard) -> Result<StoreGeneration, St
         ));
     }
     current.snapshot.validate_external_references(guard)?;
-    Ok(current.generation)
+    hook()?;
+    revalidate_current_canonical(guard, &current).map(|current| current.generation)
+}
+
+fn revalidate_current_canonical(
+    guard: &NamespaceGuard,
+    expected: &CurrentStore,
+) -> Result<CurrentStore, StoreError> {
+    let observed = open_current_canonical(guard)?;
+    if observed.entry.identity() != expected.entry.identity()
+        || observed.generation != expected.generation
+        || observed.anchor != expected.anchor
+        || observed.snapshot != expected.snapshot
+    {
+        return Err(StoreError::Integrity(
+            "lifecycle.store changed after external reference validation".to_owned(),
+        ));
+    }
+    Ok(observed)
 }
 
 fn begin_migration(
@@ -901,7 +934,6 @@ fn validate_terminal(
     }
     validate_root_authority(&source_database, journal)?;
     drop(source_database);
-    hook(MigrationCrashPoint::TerminalSourceValidated)?;
 
     let current = open_current_canonical(guard)?;
     let target = journal.target()?;
@@ -914,6 +946,7 @@ fn validate_terminal(
         ));
     }
     current.snapshot.validate_external_references(guard)?;
+    hook(MigrationCrashPoint::TerminalSourceValidated)?;
     source.validate_path(
         &guard
             .state
@@ -929,7 +962,7 @@ fn validate_terminal(
             "retained migration source payload changed during terminal validation".to_owned(),
         ));
     }
-    Ok(current)
+    revalidate_current_canonical(guard, &current)
 }
 
 fn validate_nonterminal_envelope(

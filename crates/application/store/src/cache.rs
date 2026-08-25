@@ -1030,7 +1030,7 @@ pub(crate) fn destination_name(
         .ok_or_else(|| StoreError::Integrity("cache destination must be portable UTF-8".to_owned()))
 }
 
-fn authorization_set_frame(authorization: &CacheEvictionAuthorization) -> Vec<u8> {
+pub(crate) fn authorization_set_frame(authorization: &CacheEvictionAuthorization) -> Vec<u8> {
     let mut framed = Vec::new();
     append_length_prefixed(&mut framed, authorization.repository_id.as_str().as_bytes());
     append_length_prefixed(&mut framed, authorization.operation_id.as_str().as_bytes());
