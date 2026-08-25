@@ -726,12 +726,20 @@ fn fold_journal(
         ));
     };
     validate_binding(source)?;
+    let derived_root_core = root_core_sha256(
+        &authorization.root_physical_identity,
+        authorization.source_generation,
+        authorization.target_generation,
+        &source.physical_identity,
+        &authorization.source_user_logical_sha256,
+    )?;
     if source.role != MigrationArtifactRole::Source
         || source.generation != authorization.source_generation
         || source.logical_sha256 != authorization.source_user_logical_sha256
+        || authorization.root_core_sha256 != derived_root_core
     {
         return Err(StoreError::Integrity(
-            "migration source binding disagrees with root authorization".to_owned(),
+            "migration source binding or root core disagrees with root authorization".to_owned(),
         ));
     }
     let mut source = FoldedBinding {

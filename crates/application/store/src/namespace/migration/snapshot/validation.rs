@@ -56,8 +56,74 @@ pub(super) fn validate_referential_closure(
     crate::publication::validate_attempt_leases(&snapshot.attempt_leases)?;
     validate_run_catalog(snapshot)?;
     cache::validate_cache(snapshot, &operations)?;
+    validate_retention_allocator_sequences(snapshot)?;
     retention::validate_retention(snapshot, &operations)?;
     validate_pointers(snapshot)
+}
+
+fn validate_retention_allocator_sequences(
+    snapshot: &LogicalStoreSnapshot,
+) -> Result<(), StoreError> {
+    let maximum_plan = snapshot
+        .retention_plans
+        .keys()
+        .map(|id| canonical_allocated_sequence(id, "retention_plan_", "retention plan"))
+        .try_fold(0_u64, |maximum, sequence| {
+            sequence.map(|sequence| maximum.max(sequence))
+        })?;
+    validate_allocator_sequence(snapshot, "retention-plan", maximum_plan)?;
+
+    let maximum_pin = snapshot
+        .run_pins
+        .keys()
+        .map(|id| canonical_allocated_sequence(id, "pin_", "run pin"))
+        .try_fold(0_u64, |maximum, sequence| {
+            sequence.map(|sequence| maximum.max(sequence))
+        })?;
+    validate_allocator_sequence(snapshot, "run-pin", maximum_pin)
+}
+
+fn validate_allocator_sequence(
+    snapshot: &LogicalStoreSnapshot,
+    key: &str,
+    minimum: u64,
+) -> Result<(), StoreError> {
+    let observed = snapshot.sequences.get(key).copied().unwrap_or(0);
+    if observed == u64::MAX {
+        return Err(StoreError::Integrity(format!(
+            "{key} sequence is exhausted and cannot allocate another record"
+        )));
+    }
+    if observed < minimum {
+        return Err(StoreError::Integrity(format!(
+            "{key} sequence regressed below retained allocation: observed {observed}, minimum {minimum}"
+        )));
+    }
+    Ok(())
+}
+
+fn canonical_allocated_sequence(value: &str, prefix: &str, label: &str) -> Result<u64, StoreError> {
+    let suffix = value.strip_prefix(prefix).ok_or_else(|| {
+        StoreError::Integrity(format!("{label} ID is outside its canonical grammar"))
+    })?;
+    if suffix.len() != 16
+        || !suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(StoreError::Integrity(format!(
+            "{label} ID is outside its canonical grammar"
+        )));
+    }
+    let sequence = u64::from_str_radix(suffix, 16).map_err(|error| {
+        StoreError::Integrity(format!("{label} ID sequence is malformed: {error}"))
+    })?;
+    if sequence == 0 {
+        return Err(StoreError::Integrity(format!(
+            "{label} ID sequence must be nonzero"
+        )));
+    }
+    Ok(sequence)
 }
 
 fn validate_gate_id_sequence(

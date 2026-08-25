@@ -75,6 +75,7 @@ pub(super) enum MigrationCrashPoint {
     CanonicalReplaced,
     ParentFlushed,
     IntentRemoved,
+    TerminalSourceValidated,
 }
 
 impl NamespaceState {
@@ -127,6 +128,7 @@ impl MigrationCrashPoint {
             Self::CanonicalReplaced => "after-replace",
             Self::ParentFlushed => "after-parent-flush",
             Self::IntentRemoved => "after-intent-removal",
+            Self::TerminalSourceValidated => "after-terminal-source-validation",
         }
     }
 }
@@ -134,7 +136,7 @@ impl MigrationCrashPoint {
 pub(super) fn require_idle(guard: &NamespaceGuard) -> Result<(), StoreError> {
     match read_journal(guard)? {
         Some(journal) if journal.phase == MigrationPhase::Terminal => {
-            validate_terminal(guard, &journal).map(|_| ())
+            validate_terminal(guard, &journal, &mut |_| Ok(())).map(|_| ())
         }
         Some(journal) => {
             validate_nonterminal_envelope(guard, &journal)?;
@@ -229,7 +231,7 @@ pub(super) fn remove_bound_root_authorization_for_test(
 pub(super) fn admit_ordinary(guard: &NamespaceGuard) -> Result<(), StoreError> {
     match read_journal(guard)? {
         Some(journal) if journal.phase == MigrationPhase::Terminal => {
-            validate_terminal(guard, &journal).map(|_| ())
+            validate_terminal(guard, &journal, &mut |_| Ok(())).map(|_| ())
         }
         Some(journal) => {
             validate_nonterminal_envelope(guard, &journal)?;
@@ -391,7 +393,7 @@ fn recover_journal(
             MigrationPhase::TargetPublished => exchange_store(guard, journal, hook)?,
             MigrationPhase::Exchanged => terminalize(guard, journal, hook)?,
             MigrationPhase::Terminal => {
-                return validate_terminal(guard, &journal).map(|current| current.generation);
+                return validate_terminal(guard, &journal, hook).map(|current| current.generation);
             }
         };
     }
@@ -824,6 +826,7 @@ fn terminalize(
 fn validate_terminal(
     guard: &NamespaceGuard,
     journal: &MigrationJournal,
+    hook: &mut impl FnMut(MigrationCrashPoint) -> Result<(), StoreError>,
 ) -> Result<CurrentStore, StoreError> {
     if journal.phase != MigrationPhase::Terminal
         || journal.source.state != MigrationBindingState::Retained
@@ -852,6 +855,7 @@ fn validate_terminal(
     }
     validate_root_authority(&source_database, journal)?;
     drop(source_database);
+    hook(MigrationCrashPoint::TerminalSourceValidated)?;
 
     let current = open_current_canonical(guard)?;
     let target = journal.target()?;
@@ -864,6 +868,16 @@ fn validate_terminal(
         ));
     }
     current.snapshot.validate_external_references(guard)?;
+    source.validate_path(
+        &guard
+            .state
+            .state_dir
+            .join(&source_binding.post_exchange_name),
+        EntryKind::RegularFile,
+        EntryAccess::ReadWrite,
+        true,
+        "retained migration source",
+    )?;
     Ok(current)
 }
 

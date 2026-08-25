@@ -122,22 +122,8 @@ pub(super) fn verify_store_header(
     binding: &NamespaceBinding,
 ) -> Result<StoreGeneration, StoreError> {
     let read = database.begin_read().map_err(backend_error)?;
-    let table = match read.open_table(STORE_HEADER) {
-        Ok(table) => table,
-        Err(TableError::TableDoesNotExist(_)) => {
-            return Err(StoreError::Integrity(
-                "lifecycle.store namespace header is missing".to_owned(),
-            ));
-        }
-        Err(error) => return Err(backend_error(error)),
-    };
-    let value = table
-        .get(STORE_HEADER_KEY)
-        .map_err(backend_error)?
-        .ok_or_else(|| {
-            StoreError::Integrity("lifecycle.store namespace header is missing".to_owned())
-        })?;
-    verify_store_header_bytes(value.value(), binding, None).map(|header| header.generation)
+    let bytes = read_store_header_bytes_from_read(&read)?;
+    verify_store_header_bytes(&bytes, binding, None).map(|header| header.generation)
 }
 
 pub(super) fn verify_prior_store_header(
@@ -357,25 +343,53 @@ fn decode_prior_store_header_bytes(bytes: &[u8]) -> Result<PriorLifecycleStoreHe
 }
 
 fn read_store_header_bytes_from_read(read: &ReadTransaction) -> Result<Vec<u8>, StoreError> {
-    let table = read.open_table(STORE_HEADER).map_err(backend_error)?;
-    table
-        .get(STORE_HEADER_KEY)
+    let table = match read.open_table(STORE_HEADER) {
+        Ok(table) => table,
+        Err(TableError::TableDoesNotExist(_)) => {
+            return Err(StoreError::Integrity(
+                "lifecycle.store namespace header is missing".to_owned(),
+            ));
+        }
+        Err(error) => return Err(backend_error(error)),
+    };
+    let mut rows = table.iter().map_err(backend_error)?;
+    let (key, value) = rows
+        .next()
+        .transpose()
         .map_err(backend_error)?
-        .map(|value| value.value().to_vec())
         .ok_or_else(|| {
             StoreError::Integrity("lifecycle.store namespace header is missing".to_owned())
-        })
+        })?;
+    let key = key.value().to_owned();
+    let bytes = value.value().to_vec();
+    if key != STORE_HEADER_KEY || rows.next().transpose().map_err(backend_error)?.is_some() {
+        return Err(StoreError::Integrity(
+            "lifecycle.store namespace header table must contain exactly its canonical row"
+                .to_owned(),
+        ));
+    }
+    Ok(bytes)
 }
 
 fn read_store_header_bytes_from_write(write: &WriteTransaction) -> Result<Vec<u8>, StoreError> {
     let table = write.open_table(STORE_HEADER).map_err(backend_error)?;
-    table
-        .get(STORE_HEADER_KEY)
+    let mut rows = table.iter().map_err(backend_error)?;
+    let (key, value) = rows
+        .next()
+        .transpose()
         .map_err(backend_error)?
-        .map(|value| value.value().to_vec())
         .ok_or_else(|| {
             StoreError::Integrity("lifecycle.store namespace header is missing".to_owned())
-        })
+        })?;
+    let key = key.value().to_owned();
+    let bytes = value.value().to_vec();
+    if key != STORE_HEADER_KEY || rows.next().transpose().map_err(backend_error)?.is_some() {
+        return Err(StoreError::Integrity(
+            "lifecycle.store namespace header table must contain exactly its canonical row"
+                .to_owned(),
+        ));
+    }
+    Ok(bytes)
 }
 
 fn validation_receipt_set_id_from_read(read: &ReadTransaction) -> Result<String, StoreError> {

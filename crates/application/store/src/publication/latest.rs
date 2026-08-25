@@ -206,7 +206,7 @@ pub(super) fn read_attempt(
     Ok(envelope)
 }
 
-pub(super) fn validate_attempt_envelope(envelope: &AttemptEnvelope) -> Result<(), StoreError> {
+pub(crate) fn validate_attempt_envelope(envelope: &AttemptEnvelope) -> Result<(), StoreError> {
     if envelope.schema_version != "lumin-attempt.v1" {
         return Err(StoreError::Integrity(format!(
             "attempt envelope schema {} is unsupported",

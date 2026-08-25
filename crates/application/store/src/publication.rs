@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{RepositoryStore, RunCatalogRecord, StoreError};
 
+pub(crate) use latest::validate_attempt_envelope;
 pub use liveness::AttemptSession;
 
 pub type AttemptState = AttemptStatus;

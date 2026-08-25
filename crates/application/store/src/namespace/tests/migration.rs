@@ -3,25 +3,29 @@ mod integrity;
 use std::fs;
 
 use lumin_evidence::{
-    ActualWriteSet, CapabilityRecord, DEAD_CODE_CAPABILITY_ID, DeclaredPathUnsupportedReason,
-    GateAnalysisOptions, GateBaselineObservationInput, GateCloseObservationInput,
-    GateObservationBinding, GateSignal, PathPrefixIdentity, PostWriteFinalValidationEvidence,
-    PreWriteDeclaredPathInspection, PreWriteFinalValidationEvidence, RepoPathProjection,
-    RunEvidence, SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, SemanticInputRecord,
-    SemanticInputState, SemanticReadReservationBinding, UnsealedGateObservationInputs, WriteLease,
-    WriteLeaseKind, apply_worktree_transition, derive_gate_baseline_observation_id,
+    ActualWriteSet, CacheCleanupExecutionLease, CacheCleanupOperationRecord,
+    CacheCleanupOperationStatus, CapabilityRecord, DEAD_CODE_CAPABILITY_ID,
+    DeclaredPathUnsupportedReason, GateAnalysisOptions, GateBaselineObservationInput,
+    GateCloseObservationInput, GateObservationBinding, GateSignal, PathPrefixIdentity,
+    PostWriteFinalValidationEvidence, PreWriteDeclaredPathInspection,
+    PreWriteFinalValidationEvidence, RepoPathProjection, RetentionPlanScope, RunEvidence,
+    SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, SemanticInputRecord, SemanticInputState,
+    SemanticReadReservationBinding, UnsealedGateObservationInputs, WriteLease, WriteLeaseKind,
+    apply_worktree_transition, derive_gate_baseline_observation_id,
     derive_gate_close_observation_id, derive_protected_semantic_inputs,
     derive_unsealed_gate_observation_binding, gate_policy, post_write_request_digest,
     pre_write_request_digest, seal_analysis_snapshot,
 };
 use lumin_model::{
-    CapabilityState, GateId, ObservationBinding, OperationId, RepoPath, SealedGateObservation,
-    UnsealedObservationReason,
+    CacheEvictionAuthorizationSetId, CapabilityState, GateId, ObservationBinding, OperationId,
+    PhysicalFileIdentity, RepoPath, SealedGateObservation, UnsealedObservationReason,
 };
+use redb::{Database, ReadableTable, TableDefinition};
 
 use crate::{
     GateBaselineDraft, ObservationFinalization, PostWriteFinish, PostWriteStart, PreWriteFinish,
-    PreWriteStart, RepositoryStore, SemanticReadReservation, StoreError, StoreGeneration,
+    PreWriteStart, PriorCacheCleanupDeliveryStatusForTest, RepositoryStore, RetentionPlanRequest,
+    SEQUENCES, SemanticReadReservation, StoreError, StoreGeneration,
 };
 
 use super::super::migration::{MigrationCrashPoint, migrate_with_hook};
@@ -68,6 +72,7 @@ const CRASH_POINTS: &[MigrationCrashPoint] = &[
     MigrationCrashPoint::CanonicalReplaced,
     MigrationCrashPoint::ParentFlushed,
     MigrationCrashPoint::IntentRemoved,
+    MigrationCrashPoint::TerminalSourceValidated,
 ];
 
 #[test]
@@ -327,6 +332,254 @@ fn migration_rejects_changed_attempt_liveness_lock_before_copy()
     ));
     let state = root.path().join(".lumin");
     assert!(!state.join("lifecycle-migration.json").exists());
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_retention_plan_allocator_below_a_retained_plan()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    store.prepare_retention_plan(&RetentionPlanRequest {
+        scope: RetentionPlanScope::Runs {
+            before_unix_millis: u64::MAX,
+        },
+        operation_id: OperationId::from_string("migration-plan-sequence-floor".to_owned()),
+    })?;
+    set_sequence_for_test(&store, "retention-plan", 0)?;
+    make_prior_store(&store, root.path())?;
+
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("retention-plan sequence regressed below retained allocation")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_run_pin_allocator_below_a_retained_pin()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let mut attempt = store.begin_attempt()?;
+    let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+    store.pin_run(
+        &published.run_id,
+        &OperationId::from_string("migration-pin-sequence-floor".to_owned()),
+        "retain allocator owner",
+    )?;
+    set_sequence_for_test(&store, "run-pin", 0)?;
+    make_prior_store(&store, root.path())?;
+
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("run-pin sequence regressed below retained allocation")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_an_incoherent_latest_attempt_envelope()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let mut attempt = store.begin_attempt()?;
+    let attempt_id = attempt.attempt_id().clone();
+    store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+    make_prior_store(&store, root.path())?;
+
+    let path = root
+        .path()
+        .join(".lumin/attempts")
+        .join(attempt_id.as_str())
+        .join("attempt.json");
+    let mut envelope = serde_json::from_slice::<serde_json::Value>(&fs::read(&path)?)?;
+    envelope["runId"] = serde_json::Value::Null;
+    let mut bytes = serde_json::to_vec_pretty(&envelope)?;
+    bytes.push(b'\n');
+    fs::write(path, bytes)?;
+
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("has incoherent terminal fields")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_a_pending_cleanup_with_a_forged_liveness_identity()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("migration-pending-cleanup-liveness".to_owned());
+    let session = store.begin_operation(&operation_id)?;
+    let mut liveness = session.liveness().clone();
+    liveness.lock_physical_identity = liveness
+        .lock_physical_identity
+        .take()
+        .map(different_physical_identity);
+    let operation = CacheCleanupOperationRecord {
+        schema_version: "lumin-cache-cleanup-operation.v2".to_owned(),
+        repository_id: store.namespace.binding.global.repository_id.clone(),
+        operation_id: operation_id.clone(),
+        request_digest: "migration-pending-cleanup-request".to_owned(),
+        status: CacheCleanupOperationStatus::Pending,
+        interruption_count: 0,
+        invocation_id: "0".repeat(32),
+        initial_authorization_set_id: CacheEvictionAuthorizationSetId::for_canonical_rows(&[]),
+        initial_authorization_count: 0,
+        plan_initialized: false,
+        authorization_keys: Vec::new(),
+        validated_count: 0,
+        execution_lease: Some(CacheCleanupExecutionLease {
+            execution_attempt_id: "migration-pending-cleanup-attempt".to_owned(),
+            liveness,
+        }),
+        recovery_reservation: None,
+        result: None,
+        greatest_allocated_delivery_sequence: 0,
+        greatest_completed_delivery_sequence: None,
+        delivery_completions: Vec::new(),
+    };
+    store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        crate::gate::records::write_record(
+            &write,
+            crate::cache::CACHE_CLEANUP_OPERATIONS,
+            operation_id.as_str(),
+            &operation,
+        )?;
+        guard.commit(write)
+    })?;
+    store.rewrite_cache_cleanup_operation_as_prior_for_test(
+        &operation_id,
+        PriorCacheCleanupDeliveryStatusForTest::NotAttempted,
+    )?;
+    make_prior_store(&store, root.path())?;
+
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("operation liveness lock physical identity changed")
+    ));
+    drop(session);
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_extra_store_header_rows() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    make_prior_store(&store, root.path())?;
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let definition = TableDefinition::<&str, &[u8]>::new("store-header");
+        let mut table = write.open_table(definition)?;
+        table.insert("foreign", b"{}".as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("header table must contain exactly its canonical row")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_recomputes_the_root_core_from_source_facts() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    make_prior_store(&store, root.path())?;
+    inject_crash(&store, MigrationCrashPoint::IntentPublished)?;
+
+    let root_path = root.path().join(".lumin/lifecycle-migration.json");
+    let root_bytes = fs::read(&root_path)?;
+    let root_value = serde_json::from_slice::<serde_json::Value>(&root_bytes)?;
+    let previous = root_value
+        .get("rootCoreSha256")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("migration root omitted its core digest")?;
+    let forged = "f".repeat(64);
+    if previous == forged {
+        return Err("migration root unexpectedly used the forged test digest".into());
+    }
+    fs::write(
+        &root_path,
+        replace_digest_bytes(&root_bytes, previous, &forged)?,
+    )?;
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let definition = TableDefinition::<&str, &[u8]>::new("migration-root-authorizations");
+        let mut table = write.open_table(definition)?;
+        let key = "0000000000000001";
+        let authorization = table
+            .get(key)?
+            .ok_or("migration source omitted its root authorization")?
+            .value()
+            .to_vec();
+        let changed = replace_digest_bytes(&authorization, previous, &forged)?;
+        table.insert(key, changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message)) if message.contains("root core disagrees")
+    ));
+    Ok(())
+}
+
+#[cfg(not(windows))]
+#[test]
+fn terminal_validation_rechecks_the_retained_source_path_after_detached_reads()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    make_prior_store(&store, root.path())?;
+    let state = root.path().join(".lumin");
+    let mut replaced = false;
+    let result = store.namespace.with_migration_lock(|guard| {
+        migrate_with_hook(guard, &mut |point| {
+            if point == MigrationCrashPoint::TerminalSourceValidated && !replaced {
+                let retained = fs::read_dir(&state)
+                    .map_err(crate::io_error)?
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.path())
+                    .find(|path| {
+                        path.file_name()
+                            .and_then(std::ffi::OsStr::to_str)
+                            .is_some_and(|name| name.starts_with(RETAINED_MIGRATION_SOURCE_PREFIX))
+                    })
+                    .ok_or_else(|| {
+                        StoreError::Integrity(
+                            "terminal migration omitted its retained source".to_owned(),
+                        )
+                    })?;
+                replace_with_same_bytes(&retained)
+                    .map_err(|error| StoreError::Integrity(error.to_string()))?;
+                replaced = true;
+            }
+            Ok(())
+        })
+    });
+    assert!(replaced);
+    assert!(matches!(
+        result,
+        Err(StoreError::Integrity(message))
+            if message.contains("retained migration source physical identity changed")
+    ));
     Ok(())
 }
 
@@ -653,6 +906,7 @@ fn crash_point_label(point: MigrationCrashPoint) -> &'static str {
         MigrationCrashPoint::CanonicalReplaced => "after-replace",
         MigrationCrashPoint::ParentFlushed => "after-parent-flush",
         MigrationCrashPoint::IntentRemoved => "after-intent-removal",
+        MigrationCrashPoint::TerminalSourceValidated => "after-terminal-source-validation",
     }
 }
 
@@ -692,8 +946,52 @@ fn crash_point(label: &str) -> Result<MigrationCrashPoint, Box<dyn std::error::E
         "after-replace" => Ok(MigrationCrashPoint::CanonicalReplaced),
         "after-parent-flush" => Ok(MigrationCrashPoint::ParentFlushed),
         "after-intent-removal" => Ok(MigrationCrashPoint::IntentRemoved),
+        "after-terminal-source-validation" => Ok(MigrationCrashPoint::TerminalSourceValidated),
         _ => Err(format!("unknown migration death point: {label}").into()),
     }
+}
+
+fn set_sequence_for_test(store: &RepositoryStore, key: &str, value: u64) -> Result<(), StoreError> {
+    store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        {
+            let mut sequences = write.open_table(SEQUENCES).map_err(crate::backend_error)?;
+            sequences.insert(key, value).map_err(crate::backend_error)?;
+        }
+        guard.commit(write)
+    })
+}
+
+fn different_physical_identity(identity: PhysicalFileIdentity) -> PhysicalFileIdentity {
+    match identity {
+        PhysicalFileIdentity::Unix { device, inode } => PhysicalFileIdentity::Unix {
+            device,
+            inode: inode.wrapping_add(1),
+        },
+        PhysicalFileIdentity::Windows {
+            volume_serial,
+            file_index,
+        } => PhysicalFileIdentity::Windows {
+            volume_serial,
+            file_index: file_index.wrapping_add(1),
+        },
+    }
+}
+
+fn replace_digest_bytes(
+    bytes: &[u8],
+    previous: &str,
+    replacement: &str,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let text = std::str::from_utf8(bytes)?;
+    let needle = format!("\"rootCoreSha256\":\"{previous}\"");
+    let replacement = format!("\"rootCoreSha256\":\"{replacement}\"");
+    let changed = text.replacen(&needle, &replacement, 1);
+    if changed == text {
+        return Err("root-core fixture could not locate its canonical digest field".into());
+    }
+    Ok(changed.into_bytes())
 }
 
 fn current_generation(store: &RepositoryStore) -> Result<StoreGeneration, StoreError> {

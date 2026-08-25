@@ -3,8 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use lumin_evidence::{
-    GateLifecycle, GateOperationKind, GateOperationStatus, GateRecord, OperationRecord,
-    SemanticReadReservationBinding, WriteLease, WriteLeaseKind,
+    CacheCleanupOperationRecord, CacheCleanupOperationStatus, GateLifecycle, GateOperationKind,
+    GateOperationStatus, GateRecord, OperationRecord, SemanticReadReservationBinding, WriteLease,
+    WriteLeaseKind,
 };
 use lumin_model::decode_native_path_component;
 use serde::de::DeserializeOwned;
@@ -27,6 +28,7 @@ pub(super) fn validate_external_references(
         &snapshot.cache_cleanup_operations,
         &snapshot.cache_eviction_authorizations,
     )?;
+    validate_pending_cleanup_liveness(snapshot, guard)?;
     validate_pending_operation_liveness(snapshot, guard)?;
     validate_pending_pre_write_leases(snapshot, guard)?;
     validate_pending_semantic_read_bindings(snapshot, guard)?;
@@ -354,6 +356,30 @@ fn validate_pending_operation_liveness(
     Ok(())
 }
 
+fn validate_pending_cleanup_liveness(
+    snapshot: &LogicalStoreSnapshot,
+    guard: &NamespaceGuard,
+) -> Result<(), StoreError> {
+    for (key, bytes) in &snapshot.cache_cleanup_operations {
+        let operation =
+            parse_record::<CacheCleanupOperationRecord>("cache-cleanup-operations", key, bytes)?;
+        if operation.status != CacheCleanupOperationStatus::Pending {
+            continue;
+        }
+        let liveness = &operation
+            .execution_lease
+            .as_ref()
+            .ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "pending cache cleanup {key} omitted its execution lease"
+                ))
+            })?
+            .liveness;
+        crate::gate::validate_migration_liveness_lease(guard, &operation.operation_id, liveness)?;
+    }
+    Ok(())
+}
+
 fn validate_active_gate_write_prefixes(
     snapshot: &LogicalStoreSnapshot,
     guard: &NamespaceGuard,
@@ -436,6 +462,7 @@ fn validate_latest_attempt(
         &attempt_dir.join("attempt.json"),
         "latest attempt envelope",
     )?;
+    crate::publication::validate_attempt_envelope(&envelope)?;
     held_dir.validate_path(
         &attempt_dir,
         EntryKind::Directory,

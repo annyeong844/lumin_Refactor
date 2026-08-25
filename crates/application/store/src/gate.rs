@@ -29,7 +29,9 @@ use coordination::{
 pub(crate) use integrity::validate_active_gate_catalog_history;
 use integrity::{read_validated_gate, validate_loaded_gate_catalog, validate_stored_gate_catalog};
 pub use liveness::OperationSession;
-pub(crate) use liveness::validate_migration_operation_liveness;
+pub(crate) use liveness::{
+    validate_migration_liveness_lease, validate_migration_operation_liveness,
+};
 pub(crate) use receipts::{operation_retention_identity, validation_receipt_for_operation};
 use receipts::{
     persist_validation_receipt, remove_validation_receipt, validate_gate_validation_receipts,

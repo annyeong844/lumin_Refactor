@@ -245,26 +245,30 @@ pub(crate) fn validate_migration_operation_liveness(
     if operation.status != GateOperationStatus::Pending {
         return Ok(());
     }
-    let expected_identity = operation
-        .operation_liveness
-        .as_ref()
-        .and_then(|liveness| liveness.lock_physical_identity.as_ref())
-        .ok_or_else(|| {
-            StoreError::Integrity(format!(
-                "pending operation omitted its lock identity binding: {}",
-                operation.operation_id.as_str()
-            ))
-        })?;
-    let lock_name = operation_lock_name(&operation.operation_id);
+    let liveness = operation.operation_liveness.as_ref().ok_or_else(|| {
+        StoreError::Integrity(format!(
+            "pending operation omitted its liveness binding: {}",
+            operation.operation_id.as_str()
+        ))
+    })?;
+    validate_migration_liveness_lease(guard, &operation.operation_id, liveness)
+}
+
+pub(crate) fn validate_migration_liveness_lease(
+    guard: &namespace::NamespaceGuard,
+    operation_id: &OperationId,
+    liveness: &OperationLivenessLease,
+) -> Result<(), StoreError> {
+    let expected_identity = liveness.lock_physical_identity.as_ref().ok_or_else(|| {
+        StoreError::Integrity(format!(
+            "pending operation omitted its lock identity binding: {}",
+            operation_id.as_str()
+        ))
+    })?;
+    let lock_name = operation_lock_name(operation_id);
     let file = guard.open_state_file(&lock_name, "operation liveness lock")?;
-    validate_operation_lock_identity(
-        guard,
-        &file,
-        &lock_name,
-        &operation.operation_id,
-        expected_identity,
-    )?;
-    validate_migration_operation_lock_contents(&file, &operation.operation_id)
+    validate_operation_lock_identity(guard, &file, &lock_name, operation_id, expected_identity)?;
+    validate_migration_operation_lock_contents(&file, operation_id)
 }
 
 #[cfg(not(windows))]
