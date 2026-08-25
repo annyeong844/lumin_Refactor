@@ -83,6 +83,12 @@ pub(crate) fn validate_attempt_leases(
     liveness::validate_snapshot(rows)
 }
 
+pub(crate) fn validate_migration_attempt_leases(
+    rows: &std::collections::BTreeMap<String, Vec<u8>>,
+) -> Result<(), StoreError> {
+    liveness::validate_migration_snapshot(rows)
+}
+
 pub(crate) fn validate_attempt_lease_locks(
     rows: &std::collections::BTreeMap<String, Vec<u8>>,
     guard: &crate::namespace::NamespaceGuard,

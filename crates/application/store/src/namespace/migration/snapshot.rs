@@ -242,6 +242,7 @@ impl LogicalStoreSnapshot {
     }
 
     pub(super) fn transformed_from_v12(mut self) -> Result<Self, StoreError> {
+        crate::publication::validate_migration_attempt_leases(&self.attempt_leases)?;
         for (key, bytes) in &mut self.cache_cleanup_operations {
             let legacy = serde_json::from_slice::<LegacyCacheCleanupOperationRecord>(bytes)
                 .map_err(|error| {

@@ -236,6 +236,16 @@ pub(super) fn validate_snapshot(
 ) -> Result<(), StoreError> {
     for (key, bytes) in rows {
         let attempt_id = AttemptId::from_string(key.clone());
+        parse_record(bytes, Some(&attempt_id))?;
+    }
+    Ok(())
+}
+
+pub(super) fn validate_migration_snapshot(
+    rows: &std::collections::BTreeMap<String, Vec<u8>>,
+) -> Result<(), StoreError> {
+    for (key, bytes) in rows {
+        let attempt_id = AttemptId::from_string(key.clone());
         let lease = parse_record(bytes, Some(&attempt_id))?;
         if lease.state == AttemptLeaseState::Allocating {
             return Err(StoreError::Integrity(format!(
