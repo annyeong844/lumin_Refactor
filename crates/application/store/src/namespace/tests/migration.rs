@@ -28,7 +28,7 @@ use super::super::migration::{MigrationCrashPoint, migrate_with_hook};
 use super::super::platform::{EntryAccess, EntryKind, HeldEntry};
 use super::open_store;
 
-const CRASH_POINTS: [MigrationCrashPoint; 31] = [
+const CRASH_POINTS: &[MigrationCrashPoint] = &[
     MigrationCrashPoint::PendingIntentCreated,
     MigrationCrashPoint::RootAuthorizationCommitted,
     MigrationCrashPoint::IntentPrepared,
@@ -56,6 +56,7 @@ const CRASH_POINTS: [MigrationCrashPoint; 31] = [
     MigrationCrashPoint::TargetParentFlushed,
     MigrationCrashPoint::TargetPublished,
     MigrationCrashPoint::BeforeExchange,
+    #[cfg(windows)]
     MigrationCrashPoint::SourceRetired,
     MigrationCrashPoint::CanonicalReplaced,
     MigrationCrashPoint::ParentFlushed,
@@ -325,7 +326,7 @@ fn migration_rejects_changed_attempt_liveness_lock_before_copy()
 #[test]
 fn every_migration_process_death_boundary_recovers_on_reopen()
 -> Result<(), Box<dyn std::error::Error>> {
-    for point in CRASH_POINTS {
+    for &point in CRASH_POINTS {
         let root = tempfile::tempdir()?;
         let store = open_store(root.path())?;
         let evidence = evidence();
@@ -640,6 +641,7 @@ fn crash_point_label(point: MigrationCrashPoint) -> &'static str {
         MigrationCrashPoint::TargetParentFlushed => "after-target-parent-flush",
         MigrationCrashPoint::TargetPublished => "after-target-publication",
         MigrationCrashPoint::BeforeExchange => "before-exchange",
+        #[cfg(windows)]
         MigrationCrashPoint::SourceRetired => "after-source-retirement",
         MigrationCrashPoint::CanonicalReplaced => "after-replace",
         MigrationCrashPoint::ParentFlushed => "after-parent-flush",
@@ -678,6 +680,7 @@ fn crash_point(label: &str) -> Result<MigrationCrashPoint, Box<dyn std::error::E
         "after-target-parent-flush" => Ok(MigrationCrashPoint::TargetParentFlushed),
         "after-target-publication" => Ok(MigrationCrashPoint::TargetPublished),
         "before-exchange" => Ok(MigrationCrashPoint::BeforeExchange),
+        #[cfg(windows)]
         "after-source-retirement" => Ok(MigrationCrashPoint::SourceRetired),
         "after-replace" => Ok(MigrationCrashPoint::CanonicalReplaced),
         "after-parent-flush" => Ok(MigrationCrashPoint::ParentFlushed),
