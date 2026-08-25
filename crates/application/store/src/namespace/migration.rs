@@ -30,7 +30,9 @@ use self::snapshot::{
 };
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 use super::platform::exchange_entries;
-use super::platform::{EntryAccess, EntryKind, HeldEntry, UnpublishedFile, move_entry_noreplace};
+#[cfg(windows)]
+use super::platform::move_entry_noreplace;
+use super::platform::{EntryAccess, EntryKind, HeldEntry, UnpublishedFile};
 use super::store_header::{
     MigrationProvenanceAnchor, PRIOR_STORE_HEADER_SCHEMA, STORE_HEADER_SCHEMA,
     create_or_verify_store, store_schema,
@@ -68,6 +70,7 @@ pub(super) enum MigrationCrashPoint {
     TargetParentFlushed,
     TargetPublished,
     BeforeExchange,
+    #[cfg(windows)]
     SourceRetired,
     CanonicalReplaced,
     ParentFlushed,
@@ -119,6 +122,7 @@ impl MigrationCrashPoint {
             Self::TargetParentFlushed => "after-target-parent-flush",
             Self::TargetPublished => "after-target-publication",
             Self::BeforeExchange => "before-exchange",
+            #[cfg(windows)]
             Self::SourceRetired => "after-source-retirement",
             Self::CanonicalReplaced => "after-replace",
             Self::ParentFlushed => "after-parent-flush",
@@ -500,6 +504,8 @@ fn prepare_target_candidate(
     journal: &MigrationJournal,
     attempt: usize,
 ) -> Result<(UnpublishedFile, MigrationArtifactBinding), StoreError> {
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    let _ = attempt;
     let source = open_bound_source(guard, journal)?;
     let transformed = source.snapshot.clone().transformed_from_v12()?;
     let anchor = anchor_for(journal);
