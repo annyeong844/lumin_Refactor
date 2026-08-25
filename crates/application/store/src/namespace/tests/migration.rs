@@ -28,6 +28,13 @@ use super::super::migration::{MigrationCrashPoint, migrate_with_hook};
 use super::super::platform::{EntryAccess, EntryKind, HeldEntry};
 use super::open_store;
 
+const RETAINED_MIGRATION_SOURCE_PREFIX: &str =
+    if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        "lifecycle.store.migration-target-"
+    } else {
+        "lifecycle.store.migration-source-"
+    };
+
 const CRASH_POINTS: &[MigrationCrashPoint] = &[
     MigrationCrashPoint::PendingIntentCreated,
     MigrationCrashPoint::RootAuthorizationCommitted,
@@ -86,7 +93,7 @@ fn prior_store_migrates_once_and_retains_terminal_provenance()
             entry
                 .file_name()
                 .to_string_lossy()
-                .starts_with("lifecycle.store.migration-source-")
+                .starts_with(RETAINED_MIGRATION_SOURCE_PREFIX)
         })
     }));
     Ok(())
@@ -1173,7 +1180,7 @@ fn assert_terminal_migration_paths(
             entry
                 .file_name()
                 .to_string_lossy()
-                .starts_with("lifecycle.store.migration-source-")
+                .starts_with(RETAINED_MIGRATION_SOURCE_PREFIX)
         })
     });
     if !retained {
