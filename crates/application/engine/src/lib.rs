@@ -17,8 +17,8 @@ pub use gate_query::{
     query_run_source_classification, query_run_source_envelope,
 };
 pub use lumin_evidence::{
-    CacheCleanupDeliveryStatus, CacheCleanupResult, GateDecision, GateOperationResult,
-    RecordLookup, RetentionMutationResult, RetentionPlanScope,
+    CacheCleanupDeliveryOutcome, CacheCleanupDeliveryStatus, CacheCleanupResult, GateDecision,
+    GateOperationResult, RecordLookup, RetentionMutationResult, RetentionPlanScope,
 };
 pub use lumin_store::RunCatalogCursor;
 pub use retention::{
@@ -126,6 +126,10 @@ pub enum EngineError {
     ResolverDemandStalled(String),
     #[error("analysis extraction is unavailable after resolution completed")]
     ExtractionUnavailable,
+    #[error("cache cleanup transport omitted its allocated delivery sequence")]
+    CacheCleanupDeliverySequenceMissing,
+    #[error("read-only transport retained a mutation delivery sequence")]
+    UnexpectedMutationDeliverySequence,
     #[error("JS extraction omitted the requested module-format product: {0}")]
     ExtractionProductMissing(String),
     #[error("resolution discovered profile-sensitive inputs after extraction: {0}")]
@@ -909,15 +913,105 @@ pub fn clean_cache(request: &CleanCacheRequest) -> Result<CacheCleanupResult, En
         .map_err(Into::into)
 }
 
+#[cfg(feature = "cache-cleanup-test-fault")]
+pub fn write_active_cache_payload_for_test(
+    root: &Path,
+    name: &str,
+    payload: &[u8],
+) -> Result<(), EngineError> {
+    let context = open_repository_context(root)?;
+    context
+        .store
+        .write_active_cache_payload_for_test(name, payload)
+        .map_err(Into::into)
+}
+
+pub fn migrate_lifecycle_store(root: &Path) -> Result<(), EngineError> {
+    let admission = lumin_inventory::repository_admission(root)?;
+    RepositoryStore::migrate_existing_lifecycle_store(
+        &admission.canonical_root,
+        &admission.binding,
+    )?;
+    Ok(())
+}
+
+#[cfg(feature = "lifecycle-migration-test-fault")]
+pub fn rewrite_lifecycle_store_as_prior_for_test(root: &Path) -> Result<(), EngineError> {
+    let admission = lumin_inventory::repository_admission(root)?;
+    RepositoryStore::open(&admission.canonical_root, &admission.binding)?
+        .rewrite_current_store_header_as_prior_for_test()?;
+    Ok(())
+}
+
+#[cfg(feature = "lifecycle-migration-test-fault")]
+pub use lumin_store::PriorCacheCleanupDeliveryStatusForTest;
+
+#[cfg(feature = "lifecycle-migration-test-fault")]
+pub fn rewrite_lifecycle_store_with_cleanup_as_prior_for_test(
+    root: &Path,
+    operation_id: &OperationId,
+    last_delivery_status: PriorCacheCleanupDeliveryStatusForTest,
+) -> Result<(), EngineError> {
+    let admission = lumin_inventory::repository_admission(root)?;
+    let store = RepositoryStore::open(&admission.canonical_root, &admission.binding)?;
+    store.rewrite_cache_cleanup_operation_as_prior_for_test(operation_id, last_delivery_status)?;
+    store.rewrite_current_store_header_as_prior_for_test()?;
+    Ok(())
+}
+
+#[cfg(feature = "lifecycle-migration-test-fault")]
+pub fn corrupt_migrating_cleanup_operation_for_test(
+    root: &Path,
+    operation_id: &OperationId,
+) -> Result<(), EngineError> {
+    let admission = lumin_inventory::repository_admission(root)?;
+    RepositoryStore::corrupt_migrating_cleanup_operation_for_test(
+        &admission.canonical_root,
+        &admission.binding,
+        operation_id,
+    )?;
+    Ok(())
+}
+
+#[cfg(feature = "lifecycle-migration-test-fault")]
+pub fn corrupt_migration_anchor_for_test(root: &Path) -> Result<(), EngineError> {
+    let admission = lumin_inventory::repository_admission(root)?;
+    RepositoryStore::open(&admission.canonical_root, &admission.binding)?
+        .corrupt_migration_anchor_for_test()?;
+    Ok(())
+}
+
+#[cfg(feature = "lifecycle-migration-test-fault")]
+pub fn remove_bound_root_authorization_for_test(root: &Path) -> Result<(), EngineError> {
+    let admission = lumin_inventory::repository_admission(root)?;
+    RepositoryStore::remove_bound_root_authorization_for_test(
+        &admission.canonical_root,
+        &admission.binding,
+    )?;
+    Ok(())
+}
+
+pub fn allocate_cache_cleanup_delivery(
+    root: &Path,
+    operation_id: &OperationId,
+    request_digest: &str,
+) -> Result<u64, EngineError> {
+    open_repository_context(root)?
+        .store
+        .allocate_cache_cleanup_delivery(operation_id, request_digest)
+        .map_err(Into::into)
+}
+
 pub fn record_cache_cleanup_delivery(
     root: &Path,
     operation_id: &OperationId,
     request_digest: &str,
-    delivery: CacheCleanupDeliveryStatus,
+    sequence: u64,
+    outcome: CacheCleanupDeliveryOutcome,
 ) -> Result<(), EngineError> {
     open_repository_context(root)?
         .store
-        .record_cache_cleanup_delivery(operation_id, request_digest, delivery)
+        .record_cache_cleanup_delivery(operation_id, request_digest, sequence, outcome)
         .map_err(Into::into)
 }
 

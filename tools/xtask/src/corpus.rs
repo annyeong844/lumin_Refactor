@@ -29,6 +29,7 @@ const MAX_ROW_SHARDS: usize = 16;
 pub enum FeatureSet {
     None,
     LifecycleFault,
+    LifecycleCrash,
     PublicationCrash,
     RetentionCrash,
     LifecycleAndPublicationCrash,
@@ -38,7 +39,7 @@ impl FeatureSet {
     pub fn cargo_features(self) -> &'static [&'static str] {
         match self {
             Self::None => &[],
-            Self::LifecycleFault => &["lifecycle-test-fault"],
+            Self::LifecycleFault | Self::LifecycleCrash => &["lifecycle-test-fault"],
             Self::PublicationCrash => &["publication-test-crash"],
             Self::RetentionCrash => &["retention-test-crash"],
             Self::LifecycleAndPublicationCrash => {
@@ -53,6 +54,7 @@ impl FeatureSet {
         match self {
             Self::None => "none",
             Self::LifecycleFault => "lf",
+            Self::LifecycleCrash => "lc",
             Self::PublicationCrash => "pc",
             Self::RetentionCrash => "rc",
             Self::LifecycleAndPublicationCrash => "lfpc",
@@ -62,7 +64,8 @@ impl FeatureSet {
     pub fn is_crash(self) -> bool {
         matches!(
             self,
-            Self::PublicationCrash
+            Self::LifecycleCrash
+                | Self::PublicationCrash
                 | Self::RetentionCrash
                 | Self::LifecycleAndPublicationCrash
                 | Self::PublicationAndRetentionCrash
@@ -468,7 +471,18 @@ fn target_dir(ws: &Path, mode: CorpusMode, feat: FeatureSet) -> PathBuf {
         CorpusMode::Determinism => "d",
         CorpusMode::StoreCrash => "c",
     };
-    ws.join("target").join("xc").join(m).join(feat.dir_key())
+    let root = env::var_os("CARGO_TARGET_DIR").map_or_else(
+        || ws.join("target"),
+        |configured| {
+            let configured = PathBuf::from(configured);
+            if configured.is_absolute() {
+                configured
+            } else {
+                ws.join(configured)
+            }
+        },
+    );
+    root.join("xc").join(m).join(feat.dir_key())
 }
 
 struct InvResult {

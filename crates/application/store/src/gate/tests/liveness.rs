@@ -18,10 +18,12 @@ fn process_death_releases_pre_write_reservations_and_allows_same_operation_retry
     let demanded = path("config/dead-reader.json")?;
     let writer_id = OperationId::from_string("op-after-dead-reader".to_owned());
     let writer = store.begin_operation(&writer_id)?;
+    let writer_digest = canonical_pre_write_digest(&demanded);
+    let writer_lease = current_lease(root.path(), &demanded)?;
     let writer_gate = match writer.reserve_pre_write(
-        "writer-after-death",
+        &writer_digest,
         std::slice::from_ref(&demanded),
-        &[lease(demanded.clone())],
+        std::slice::from_ref(&writer_lease),
         &options(),
         rejected_test_observation,
     )? {
@@ -31,11 +33,11 @@ fn process_death_releases_pre_write_reservations_and_allows_same_operation_retry
         }
     };
     writer.finish_pre_write(
-        "writer-after-death",
+        &writer_digest,
         &writer_gate,
         PreWriteFinish {
             baseline: None,
-            leased_write_set: vec![lease(demanded)],
+            leased_write_set: vec![writer_lease],
             alias_closures: Vec::new(),
             attempted_semantic_inputs: Vec::new(),
             signals: vec![GateSignal::AnalysisFailed {
@@ -50,10 +52,13 @@ fn process_death_releases_pre_write_reservations_and_allows_same_operation_retry
     assert!(committed_writer.operation_liveness.is_none());
 
     let retry = store.begin_operation(&operation_id)?;
+    let retried_source = path("src/dead-reader.ts")?;
+    let retried_digest = canonical_pre_write_digest(&retried_source);
+    let retried_lease = current_lease(root.path(), &retried_source)?;
     let retried_gate = match retry.reserve_pre_write(
-        "dead-pre-write-digest",
-        std::slice::from_ref(&path("src/dead-reader.ts")?),
-        &[lease(path("src/dead-reader.ts")?)],
+        &retried_digest,
+        std::slice::from_ref(&retried_source),
+        std::slice::from_ref(&retried_lease),
         &options(),
         rejected_test_observation,
     )? {
@@ -73,12 +78,9 @@ fn process_death_releases_post_write_revision_without_mutating_the_gate()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     let store = open_store(root.path())?;
-    let gate_id = open_active_gate(
-        &store,
-        "op-active-gate",
-        "active-gate-digest",
-        "src/active.ts",
-    )?;
+    let active_source = path("src/active.ts")?;
+    let active_digest = canonical_pre_write_digest(&active_source);
+    let gate_id = open_active_gate(&store, "op-active-gate", &active_digest, "src/active.ts")?;
     run_death_fixture("post-write", root.path(), Some(&gate_id))?;
 
     let dead_operation = OperationId::from_string("op-dead-post-write".to_owned());
@@ -90,14 +92,15 @@ fn process_death_releases_post_write_revision_without_mutating_the_gate()
 
     let replacement_id = OperationId::from_string("op-replacement-post-write".to_owned());
     let replacement = store.begin_operation(&replacement_id)?;
+    let post_write_digest = lumin_evidence::post_write_request_digest(&gate_id);
     assert!(matches!(
-        replacement.begin_post_write("replacement-post-write-digest", &gate_id)?,
+        replacement.begin_post_write(&post_write_digest, &gate_id)?,
         PostWriteStart::Analyze { .. }
     ));
 
     let retry = store.begin_operation(&dead_operation)?;
     assert!(matches!(
-        retry.begin_post_write("dead-post-write-digest", &gate_id),
+        retry.begin_post_write(&post_write_digest, &gate_id),
         Err(StoreError::GateRevisionBusy(_))
     ));
     assert_eq!(store.load_gate(&gate_id)?.current_revision, 0);
@@ -160,14 +163,17 @@ fn old_generation_operation_reopens_before_any_late_mutation()
     let store = open_store(root.path())?;
     let operation_id = OperationId::from_string("op-generation-change".to_owned());
     let stale = store.begin_operation(&operation_id)?;
+    store.rewrite_current_store_header_as_prior_for_test()?;
     let observed = store.migrate_lifecycle_store()?;
     let source = path("src/generation.ts")?;
+    let request_digest = canonical_pre_write_digest(&source);
+    let source_lease = current_lease(root.path(), &source)?;
 
     assert!(matches!(
         stale.reserve_pre_write(
-            "generation-digest",
+            &request_digest,
             std::slice::from_ref(&source),
-            &[lease(source.clone())],
+            std::slice::from_ref(&source_lease),
             &options(),
             rejected_test_observation,
         ),
@@ -185,9 +191,9 @@ fn old_generation_operation_reopens_before_any_late_mutation()
     let reopened = store.begin_operation(&operation_id)?;
     assert!(matches!(
         reopened.reserve_pre_write(
-            "generation-digest",
+            &request_digest,
             std::slice::from_ref(&source),
-            &[lease(source.clone())],
+            std::slice::from_ref(&source_lease),
             &options(),
             rejected_test_observation,
         )?,
@@ -206,10 +212,12 @@ fn process_death_pre_write_fixture() -> Result<(), Box<dyn std::error::Error>> {
     let operation_id = OperationId::from_string("op-dead-pre-write".to_owned());
     let session = store.begin_operation(&operation_id)?;
     let source = path("src/dead-reader.ts")?;
+    let request_digest = canonical_pre_write_digest(&source);
+    let source_lease = current_lease(&root, &source)?;
     let gate_id = match session.reserve_pre_write(
-        "dead-pre-write-digest",
+        &request_digest,
         std::slice::from_ref(&source),
-        &[lease(source.clone())],
+        std::slice::from_ref(&source_lease),
         &options(),
         rejected_test_observation,
     )? {
@@ -219,7 +227,7 @@ fn process_death_pre_write_fixture() -> Result<(), Box<dyn std::error::Error>> {
     let demanded = path("config/dead-reader.json")?;
     assert_eq!(
         session.reserve_pre_write_semantic_inputs(
-            "dead-pre-write-digest",
+            &request_digest,
             &gate_id,
             &[reservation(demanded, None)],
         )?,
@@ -238,14 +246,15 @@ fn process_death_post_write_fixture() -> Result<(), Box<dyn std::error::Error>> 
     let store = open_store(&root)?;
     let operation_id = OperationId::from_string("op-dead-post-write".to_owned());
     let session = store.begin_operation(&operation_id)?;
+    let request_digest = lumin_evidence::post_write_request_digest(&gate_id);
     assert!(matches!(
-        session.begin_post_write("dead-post-write-digest", &gate_id)?,
+        session.begin_post_write(&request_digest, &gate_id)?,
         PostWriteStart::Analyze { .. }
     ));
     let demanded = path("config/dead-close.json")?;
     assert_eq!(
         session.reserve_post_write_semantic_inputs(
-            "dead-post-write-digest",
+            &request_digest,
             &gate_id,
             &[reservation(demanded, None)],
         )?,
@@ -278,4 +287,17 @@ fn run_death_fixture(
         return Err(format!("process-death fixture exited with {status}").into());
     }
     Ok(())
+}
+
+fn canonical_pre_write_digest(path: &RepoPathProjection) -> String {
+    let options = options();
+    lumin_evidence::pre_write_request_digest(std::slice::from_ref(path), &options.scan_invocation)
+}
+
+fn current_lease(
+    root: &std::path::Path,
+    path: &RepoPathProjection,
+) -> Result<WriteLease, Box<dyn std::error::Error>> {
+    let path = RepoPath::from_canonical_bytes(&path.canonical)?;
+    observed_lease(root, &path)
 }

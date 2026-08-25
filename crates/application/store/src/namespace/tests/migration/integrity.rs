@@ -26,18 +26,38 @@ use crate::gate::{
 use crate::retention::RETENTION_OPERATIONS;
 use crate::{
     GateBaselineDraft, ObservationFinalization, PreWriteFinish, PreWriteStart, RUN_CATALOG,
-    RunCatalogRecord, SEQUENCES, StoreError,
+    RepositoryStore, RunCatalogRecord, SEQUENCES, StoreError,
 };
 
-use super::super::open_store;
+use super::super::open_store as open_ordinary_store;
 use super::{
     append_non_authorizing_close_for_migration, append_unsealed_close_for_migration,
-    close_active_gate_for_migration, current_generation, evidence, observed_lease,
-    open_active_gate_for, open_active_gate_for_with_protected_inputs, options, path,
-    pre_write_digest, rejected_test_observation, semantic_input,
+    close_active_gate_for_migration, evidence, observed_lease, open_active_gate_for,
+    open_active_gate_for_with_protected_inputs, options, path, pre_write_digest,
+    rejected_test_observation, semantic_input,
 };
 
 mod receipts;
+
+fn open_store(root: &std::path::Path) -> Result<RepositoryStore, StoreError> {
+    match open_ordinary_store(root) {
+        Ok(store) => Ok(store),
+        Err(_) => {
+            let admission = lumin_inventory::repository_admission(root)
+                .map_err(|error| StoreError::Integrity(error.to_string()))?;
+            let namespace = crate::namespace::NamespaceState::open_for_migration(
+                &admission.canonical_root,
+                &admission.binding,
+            )?
+            .ok_or(StoreError::LifecycleStoreNotInitialized)?;
+            let state_dir = namespace.state_dir().to_path_buf();
+            Ok(RepositoryStore {
+                state_dir,
+                namespace,
+            })
+        }
+    }
+}
 
 fn reseal_validation_receipt_set(
     write: &WriteTransaction,
@@ -321,20 +341,20 @@ fn migration_authenticates_the_baseline_transition_boundary_against_catalog_epoc
 }
 
 #[test]
-fn unpublished_intent_bytes_are_discarded_before_reopen() -> Result<(), Box<dyn std::error::Error>>
-{
+fn named_unpublished_intent_bytes_are_preserved_as_foreign_state()
+-> Result<(), Box<dyn std::error::Error>> {
     for bytes in [b"".as_slice(), b"{\"fromGeneration\":1".as_slice()] {
         let root = tempfile::tempdir()?;
         drop(open_store(root.path())?);
         let pending = root.path().join(".lumin/lifecycle-migration.json.pending");
         fs::write(&pending, bytes)?;
 
-        let reopened = open_store(root.path())?;
-        assert_eq!(
-            current_generation(&reopened)?,
-            crate::StoreGeneration::INITIAL
-        );
-        assert!(!pending.exists());
+        assert!(matches!(
+            open_ordinary_store(root.path()),
+            Err(StoreError::Integrity(message))
+                if message.contains("noncanonical migration journal artifact")
+        ));
+        assert_eq!(fs::read(&pending)?, bytes);
         assert!(!root.path().join(".lumin/lifecycle-migration.json").exists());
     }
     Ok(())
@@ -347,7 +367,7 @@ fn malformed_published_intent_remains_a_hard_stop() -> Result<(), Box<dyn std::e
     fs::write(root.path().join(".lumin/lifecycle-migration.json"), b"")?;
 
     assert!(matches!(
-        open_store(root.path()),
+        open_ordinary_store(root.path()),
         Err(StoreError::Integrity(_))
     ));
     Ok(())

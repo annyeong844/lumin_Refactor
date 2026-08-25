@@ -25,18 +25,71 @@ use crate::{
 };
 
 use super::super::migration::{MigrationCrashPoint, migrate_with_hook};
+use super::super::platform::{EntryAccess, EntryKind, HeldEntry};
 use super::open_store;
 
-const CRASH_POINTS: [MigrationCrashPoint; 8] = [
+const CRASH_POINTS: [MigrationCrashPoint; 31] = [
     MigrationCrashPoint::PendingIntentCreated,
+    MigrationCrashPoint::RootAuthorizationCommitted,
     MigrationCrashPoint::IntentPrepared,
+    MigrationCrashPoint::RootCandidateWriteStarted,
+    MigrationCrashPoint::RootCandidatePartiallyWritten,
+    MigrationCrashPoint::RootCandidateWritten,
+    MigrationCrashPoint::RootNamePublished,
+    MigrationCrashPoint::RootReopened,
+    MigrationCrashPoint::RootFileFlushed,
+    MigrationCrashPoint::RootParentFlushed,
     MigrationCrashPoint::IntentRenamed,
     MigrationCrashPoint::IntentPublished,
+    MigrationCrashPoint::RevisionCandidateCreated,
+    MigrationCrashPoint::RevisionCandidateWriteStarted,
+    MigrationCrashPoint::RevisionCandidatePartiallyWritten,
+    MigrationCrashPoint::RevisionCandidateWritten,
+    MigrationCrashPoint::RevisionNamePublished,
+    MigrationCrashPoint::RevisionReopened,
+    MigrationCrashPoint::RevisionFileFlushed,
+    MigrationCrashPoint::RevisionParentFlushed,
     MigrationCrashPoint::CopiesValidated,
+    MigrationCrashPoint::TargetNamePublished,
+    MigrationCrashPoint::TargetReopened,
+    MigrationCrashPoint::TargetFileFlushed,
+    MigrationCrashPoint::TargetParentFlushed,
+    MigrationCrashPoint::TargetPublished,
+    MigrationCrashPoint::BeforeExchange,
+    MigrationCrashPoint::SourceRetired,
     MigrationCrashPoint::CanonicalReplaced,
     MigrationCrashPoint::ParentFlushed,
     MigrationCrashPoint::IntentRemoved,
 ];
+
+#[test]
+fn prior_store_migrates_once_and_retains_terminal_provenance()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    super::super::store_header::rewrite_current_store_header_as_prior_for_test(
+        &root.path().join(".lumin/lifecycle.store"),
+        &store.namespace.binding,
+    )?;
+
+    let migrated = store.migrate_lifecycle_store()?;
+    assert_eq!(migrated, next_generation()?);
+    assert_eq!(store.migrate_lifecycle_store()?, migrated);
+    assert!(
+        root.path()
+            .join(".lumin/lifecycle-migration.json")
+            .is_file()
+    );
+    assert!(fs::read_dir(root.path().join(".lumin"))?.any(|entry| {
+        entry.is_ok_and(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("lifecycle.store.migration-source-")
+        })
+    }));
+    Ok(())
+}
 
 fn rejected_test_observation(_signals: &[GateSignal]) -> GateObservationBinding {
     ObservationBinding::Unsealed {
@@ -129,9 +182,7 @@ fn migration_preserves_an_admission_conflict_without_final_validation()
     assert!(!admission.conflict_owners.is_empty());
     assert!(persisted.pre_write_final_validation.is_none());
     close_active_gate_for_migration(&store, &owner_gate_id)?;
-    drop(store);
-
-    let store = open_store(root.path())?;
+    make_prior_store(&store, root.path())?;
     store.migrate_lifecycle_store()?;
     assert_eq!(
         store.replay_pre_write_result(&operation_id, &request_digest)?,
@@ -174,6 +225,7 @@ fn migration_preserves_run_gate_and_pending_operation_records()
         PreWriteStart::Analyze { .. }
     ));
     let before = store.load_operation(&operation_id)?;
+    make_prior_store(&store, root.path())?;
 
     assert_eq!(
         store.migrate_lifecycle_store()?,
@@ -195,7 +247,7 @@ fn migration_preserves_run_gate_and_pending_operation_records()
         ),
         Err(StoreError::StoreGenerationChanged { .. })
     ));
-    assert_migration_paths_absent(root.path())?;
+    assert_terminal_migration_paths(root.path())?;
     Ok(())
 }
 
@@ -230,6 +282,7 @@ fn migration_preserves_a_pending_rejected_path_inspection() -> Result<(), Box<dy
         PreWriteStart::Analyze { .. }
     ));
     let before = store.load_operation(&operation_id)?;
+    make_prior_store(&store, root.path())?;
 
     store.migrate_lifecycle_store()?;
 
@@ -257,6 +310,7 @@ fn migration_rejects_changed_attempt_liveness_lock_before_copy()
         .ok_or("active attempt omitted its liveness lock")?;
     drop(attempt);
     fs::write(lock_path, b"changed liveness binding")?;
+    make_prior_store(&store, root.path())?;
 
     let result = store.migrate_lifecycle_store();
     assert!(matches!(
@@ -264,9 +318,7 @@ fn migration_rejects_changed_attempt_liveness_lock_before_copy()
         Err(StoreError::Integrity(message)) if message.contains("lock contents changed")
     ));
     let state = root.path().join(".lumin");
-    assert!(state.join("lifecycle-migration.json").is_file());
-    assert!(!state.join("lifecycle.store.migration-source").exists());
-    assert!(!state.join("lifecycle.store.migration-target").exists());
+    assert!(!state.join("lifecycle-migration.json").exists());
     Ok(())
 }
 
@@ -279,21 +331,17 @@ fn every_migration_process_death_boundary_recovers_on_reopen()
         let evidence = evidence();
         let mut attempt = store.begin_attempt()?;
         let published = store.publish_run(&mut attempt, &evidence, |_| Ok(()))?;
+        make_prior_store(&store, root.path())?;
         drop(store);
 
         run_death_fixture(root.path(), point)?;
 
+        migrate_public_store(root.path())?;
         let recovered = open_store(root.path())?;
-        let expected_generation = match point {
-            MigrationCrashPoint::PendingIntentCreated | MigrationCrashPoint::IntentPrepared => {
-                StoreGeneration::INITIAL
-            }
-            _ => next_generation()?,
-        };
-        assert_eq!(current_generation(&recovered)?, expected_generation);
+        assert_eq!(current_generation(&recovered)?, next_generation()?);
         assert_eq!(recovered.latest_run_id()?, Some(published.run_id.clone()));
         assert_eq!(recovered.load_run(&published.run_id)?.1, evidence);
-        assert_migration_paths_absent(root.path())?;
+        assert_terminal_migration_paths(root.path())?;
     }
     Ok(())
 }
@@ -302,10 +350,76 @@ fn every_migration_process_death_boundary_recovers_on_reopen()
 fn live_migration_intent_blocks_ordinary_store_work() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     let store = open_store(root.path())?;
+    make_prior_store(&store, root.path())?;
     inject_crash(&store, MigrationCrashPoint::IntentPublished)?;
     assert!(matches!(
         store.begin_attempt(),
-        Err(StoreError::LifecycleMigrationPending { .. })
+        Err(StoreError::LifecycleMigrationRequired)
+    ));
+    Ok(())
+}
+
+#[test]
+fn ordinary_admission_rejects_a_substituted_pending_migration_target()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    make_prior_store(&store, root.path())?;
+    inject_crash(&store, MigrationCrashPoint::TargetPublished)?;
+
+    let state = root.path().join(".lumin");
+    let target = pending_target_path(&state)?;
+    let before = HeldEntry::open(
+        &target,
+        EntryKind::RegularFile,
+        EntryAccess::ReadOnly,
+        true,
+        "pending migration target before substitution",
+    )?;
+    let before_identity = before.identity().clone();
+    drop(before);
+    replace_with_same_bytes(&target)?;
+    let after = HeldEntry::open(
+        &target,
+        EntryKind::RegularFile,
+        EntryAccess::ReadOnly,
+        true,
+        "pending migration target after substitution",
+    )?;
+    assert_ne!(after.identity(), &before_identity);
+    drop(after);
+
+    assert!(matches!(
+        store.begin_attempt(),
+        Err(StoreError::Integrity(_))
+    ));
+    Ok(())
+}
+
+#[test]
+fn ordinary_admission_rejects_an_extra_link_to_a_pending_migration_target()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    make_prior_store(&store, root.path())?;
+    inject_crash(&store, MigrationCrashPoint::TargetPublished)?;
+
+    let state = root.path().join(".lumin");
+    let target = pending_target_path(&state)?;
+    fs::hard_link(&target, root.path().join("linked-migration-target"))?;
+    let linked = HeldEntry::open(
+        &target,
+        EntryKind::RegularFile,
+        EntryAccess::ReadOnly,
+        false,
+        "multiply-linked pending migration target",
+    )?;
+    assert_eq!(linked.links(), 2);
+    drop(linked);
+
+    assert!(matches!(
+        store.begin_attempt(),
+        Err(StoreError::Integrity(_))
     ));
     Ok(())
 }
@@ -315,15 +429,13 @@ fn retry_after_intent_removal_finishes_cleanup_without_advancing_again()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     let store = open_store(root.path())?;
+    make_prior_store(&store, root.path())?;
     inject_crash(&store, MigrationCrashPoint::IntentRemoved)?;
-    assert!(matches!(
-        store.begin_attempt(),
-        Err(StoreError::LifecycleMigrationCleanupPending)
-    ));
+    assert!(store.begin_attempt().is_ok());
 
     assert_eq!(store.migrate_lifecycle_store()?, next_generation()?);
     assert_eq!(current_generation(&store)?, next_generation()?);
-    assert_migration_paths_absent(root.path())?;
+    assert_terminal_migration_paths(root.path())?;
     Ok(())
 }
 
@@ -339,20 +451,25 @@ fn external_payload_change_before_replace_keeps_source_generation_authoritative(
         .join(".lumin/runs")
         .join(published.run_id.as_str())
         .join("evidence.store");
+    let canonical_path = root.path().join(".lumin/lifecycle.store");
+    make_prior_store(&store, root.path())?;
 
+    let mut source_before_failed_exchange = None;
     let result = store.namespace.with_migration_lock(|guard| {
         migrate_with_hook(guard, &mut |point| {
             if point == MigrationCrashPoint::CopiesValidated {
+                source_before_failed_exchange =
+                    Some(fs::read(&canonical_path).map_err(crate::io_error)?);
                 fs::write(&evidence_path, b"tampered evidence").map_err(crate::io_error)?;
             }
             Ok(())
         })
     });
     assert!(matches!(result, Err(StoreError::Integrity(_))));
-    let observed = store
-        .namespace
-        .with_migration_lock(|guard| Ok(guard.open_database()?.generation()))?;
-    assert_eq!(observed, StoreGeneration::INITIAL);
+    assert_eq!(
+        fs::read(canonical_path)?,
+        source_before_failed_exchange.ok_or("migration skipped the validation barrier")?
+    );
     Ok(())
 }
 
@@ -361,6 +478,7 @@ fn missing_canonical_store_during_live_migration_is_a_hard_stop()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     let store = open_store(root.path())?;
+    make_prior_store(&store, root.path())?;
     inject_crash(&store, MigrationCrashPoint::IntentPublished)?;
     fs::remove_file(root.path().join(".lumin/lifecycle.store"))?;
     drop(store);
@@ -398,8 +516,13 @@ fn process_death_migration_fixture() -> Result<(), Box<dyn std::error::Error>> {
     };
     let root = std::path::PathBuf::from(std::env::var("LUMIN_MIGRATION_DEATH_ROOT")?);
     let point = crash_point(&label)?;
-    let store = open_store(&root)?;
-    let _ = store.namespace.with_migration_lock(|guard| {
+    let admission = lumin_inventory::repository_admission(&root)?;
+    let namespace = super::super::NamespaceState::open_for_migration(
+        &admission.canonical_root,
+        &admission.binding,
+    )?
+    .ok_or(StoreError::LifecycleStoreNotInitialized)?;
+    let _ = namespace.with_migration_lock(|guard| {
         migrate_with_hook(guard, &mut |observed| {
             if observed == point {
                 std::process::exit(92);
@@ -431,6 +554,46 @@ fn inject_crash(
     Ok(())
 }
 
+fn replace_with_same_bytes(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = fs::read(path)?;
+    let replacement = path.with_extension("same-bytes-replacement");
+    fs::write(&replacement, bytes)?;
+    fs::remove_file(path)?;
+    fs::rename(replacement, path)?;
+    Ok(())
+}
+
+fn pending_target_path(
+    state: &std::path::Path,
+) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    let mut revisions = fs::read_dir(state)?
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("lifecycle-migration.revision-")
+        })
+        .collect::<Vec<_>>();
+    revisions.sort_by_key(fs::DirEntry::file_name);
+    for revision in revisions.into_iter().rev() {
+        let value = serde_json::from_slice::<serde_json::Value>(&fs::read(revision.path())?)?;
+        let Some(events) = value.get("events").and_then(serde_json::Value::as_array) else {
+            continue;
+        };
+        for event in events.iter().rev() {
+            if event.get("kind").and_then(serde_json::Value::as_str) == Some("pendingPublication") {
+                let name = event
+                    .pointer("/binding/preExchangeName")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or("pending migration target omitted its path")?;
+                return Ok(state.join(name));
+            }
+        }
+    }
+    Err("pending migration target binding was not journaled".into())
+}
+
 fn run_death_fixture(
     root: &std::path::Path,
     point: MigrationCrashPoint,
@@ -451,10 +614,33 @@ fn run_death_fixture(
 fn crash_point_label(point: MigrationCrashPoint) -> &'static str {
     match point {
         MigrationCrashPoint::PendingIntentCreated => "after-pending-intent-create",
+        MigrationCrashPoint::RootAuthorizationCommitted => "after-root-authorization",
         MigrationCrashPoint::IntentPrepared => "after-pending-intent-sync",
+        MigrationCrashPoint::RootCandidateWriteStarted => "after-root-write-start",
+        MigrationCrashPoint::RootCandidatePartiallyWritten => "after-root-partial-write",
+        MigrationCrashPoint::RootCandidateWritten => "after-root-write",
+        MigrationCrashPoint::RootNamePublished => "after-root-name-publication",
+        MigrationCrashPoint::RootReopened => "after-root-reopen",
+        MigrationCrashPoint::RootFileFlushed => "after-root-file-flush",
+        MigrationCrashPoint::RootParentFlushed => "after-root-parent-flush",
         MigrationCrashPoint::IntentRenamed => "after-intent-rename",
         MigrationCrashPoint::IntentPublished => "after-intent",
+        MigrationCrashPoint::RevisionCandidateCreated => "after-revision-candidate-create",
+        MigrationCrashPoint::RevisionCandidateWriteStarted => "after-revision-write-start",
+        MigrationCrashPoint::RevisionCandidatePartiallyWritten => "after-revision-partial-write",
+        MigrationCrashPoint::RevisionCandidateWritten => "after-revision-write",
+        MigrationCrashPoint::RevisionNamePublished => "after-revision-name-publication",
+        MigrationCrashPoint::RevisionReopened => "after-revision-reopen",
+        MigrationCrashPoint::RevisionFileFlushed => "after-revision-file-flush",
+        MigrationCrashPoint::RevisionParentFlushed => "after-revision-parent-flush",
         MigrationCrashPoint::CopiesValidated => "after-validated-replacement",
+        MigrationCrashPoint::TargetNamePublished => "after-target-name-publication",
+        MigrationCrashPoint::TargetReopened => "after-target-reopen",
+        MigrationCrashPoint::TargetFileFlushed => "after-target-file-flush",
+        MigrationCrashPoint::TargetParentFlushed => "after-target-parent-flush",
+        MigrationCrashPoint::TargetPublished => "after-target-publication",
+        MigrationCrashPoint::BeforeExchange => "before-exchange",
+        MigrationCrashPoint::SourceRetired => "after-source-retirement",
         MigrationCrashPoint::CanonicalReplaced => "after-replace",
         MigrationCrashPoint::ParentFlushed => "after-parent-flush",
         MigrationCrashPoint::IntentRemoved => "after-intent-removal",
@@ -464,10 +650,35 @@ fn crash_point_label(point: MigrationCrashPoint) -> &'static str {
 fn crash_point(label: &str) -> Result<MigrationCrashPoint, Box<dyn std::error::Error>> {
     match label {
         "after-pending-intent-create" => Ok(MigrationCrashPoint::PendingIntentCreated),
+        "after-root-authorization" => Ok(MigrationCrashPoint::RootAuthorizationCommitted),
         "after-pending-intent-sync" => Ok(MigrationCrashPoint::IntentPrepared),
+        "after-root-write-start" => Ok(MigrationCrashPoint::RootCandidateWriteStarted),
+        "after-root-partial-write" => Ok(MigrationCrashPoint::RootCandidatePartiallyWritten),
+        "after-root-write" => Ok(MigrationCrashPoint::RootCandidateWritten),
+        "after-root-name-publication" => Ok(MigrationCrashPoint::RootNamePublished),
+        "after-root-reopen" => Ok(MigrationCrashPoint::RootReopened),
+        "after-root-file-flush" => Ok(MigrationCrashPoint::RootFileFlushed),
+        "after-root-parent-flush" => Ok(MigrationCrashPoint::RootParentFlushed),
         "after-intent-rename" => Ok(MigrationCrashPoint::IntentRenamed),
         "after-intent" => Ok(MigrationCrashPoint::IntentPublished),
+        "after-revision-candidate-create" => Ok(MigrationCrashPoint::RevisionCandidateCreated),
+        "after-revision-write-start" => Ok(MigrationCrashPoint::RevisionCandidateWriteStarted),
+        "after-revision-partial-write" => {
+            Ok(MigrationCrashPoint::RevisionCandidatePartiallyWritten)
+        }
+        "after-revision-write" => Ok(MigrationCrashPoint::RevisionCandidateWritten),
+        "after-revision-name-publication" => Ok(MigrationCrashPoint::RevisionNamePublished),
+        "after-revision-reopen" => Ok(MigrationCrashPoint::RevisionReopened),
+        "after-revision-file-flush" => Ok(MigrationCrashPoint::RevisionFileFlushed),
+        "after-revision-parent-flush" => Ok(MigrationCrashPoint::RevisionParentFlushed),
         "after-validated-replacement" => Ok(MigrationCrashPoint::CopiesValidated),
+        "after-target-name-publication" => Ok(MigrationCrashPoint::TargetNamePublished),
+        "after-target-reopen" => Ok(MigrationCrashPoint::TargetReopened),
+        "after-target-file-flush" => Ok(MigrationCrashPoint::TargetFileFlushed),
+        "after-target-parent-flush" => Ok(MigrationCrashPoint::TargetParentFlushed),
+        "after-target-publication" => Ok(MigrationCrashPoint::TargetPublished),
+        "before-exchange" => Ok(MigrationCrashPoint::BeforeExchange),
+        "after-source-retirement" => Ok(MigrationCrashPoint::SourceRetired),
         "after-replace" => Ok(MigrationCrashPoint::CanonicalReplaced),
         "after-parent-flush" => Ok(MigrationCrashPoint::ParentFlushed),
         "after-intent-removal" => Ok(MigrationCrashPoint::IntentRemoved),
@@ -477,6 +688,13 @@ fn crash_point(label: &str) -> Result<MigrationCrashPoint, Box<dyn std::error::E
 
 fn current_generation(store: &RepositoryStore) -> Result<StoreGeneration, StoreError> {
     store.with_shared_lock(|guard| Ok(guard.open_database()?.generation()))
+}
+
+fn make_prior_store(store: &RepositoryStore, root: &std::path::Path) -> Result<(), StoreError> {
+    super::super::store_header::rewrite_current_store_header_as_prior_for_test(
+        &root.join(".lumin/lifecycle.store"),
+        &store.namespace.binding,
+    )
 }
 
 fn next_generation() -> Result<StoreGeneration, Box<dyn std::error::Error>> {
@@ -940,16 +1158,29 @@ fn append_unsealed_close_for_migration(
     Ok(operation_id)
 }
 
-fn assert_migration_paths_absent(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+fn assert_terminal_migration_paths(
+    root: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
     let state = root.join(".lumin");
-    for name in [
-        "lifecycle-migration.json",
-        "lifecycle.store.migration-source",
-        "lifecycle.store.migration-target",
-    ] {
-        if state.join(name).exists() {
-            return Err(format!("migration path still exists: {name}").into());
-        }
+    if !state.join("lifecycle-migration.json").is_file() {
+        return Err("terminal migration omitted its root journal".into());
+    }
+    let retained = fs::read_dir(&state)?.any(|entry| {
+        entry.is_ok_and(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("lifecycle.store.migration-source-")
+        })
+    });
+    if !retained {
+        return Err("terminal migration omitted its retained source".into());
     }
     Ok(())
+}
+
+fn migrate_public_store(root: &std::path::Path) -> Result<StoreGeneration, StoreError> {
+    let admission = lumin_inventory::repository_admission(root)
+        .map_err(|error| StoreError::Integrity(error.to_string()))?;
+    RepositoryStore::migrate_existing_lifecycle_store(&admission.canonical_root, &admission.binding)
 }

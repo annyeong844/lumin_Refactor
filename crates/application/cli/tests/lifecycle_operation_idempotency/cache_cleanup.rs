@@ -10,6 +10,8 @@ use serde_json::Value;
 
 #[path = "../support/cache_cleanup_barrier.rs"]
 mod cache_cleanup_barrier;
+#[path = "../support/cache_cleanup_delivery_barrier.rs"]
+mod cache_cleanup_delivery_barrier;
 
 use super::{
     assert_conflict, assert_delivery_failure, assert_status, field, fixture, open_gate,
@@ -17,9 +19,11 @@ use super::{
 };
 use crate::support::lumin_command;
 use cache_cleanup_barrier::{CacheCleanupBarrier, PausedCleanup};
+use cache_cleanup_delivery_barrier::CacheCleanupDeliveryBarrier;
 
 const CRASH_POINT_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_CRASH_POINT";
 const INTERRUPTED_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_INTERRUPTED_BARRIER";
+const PENDING_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_PENDING_BARRIER";
 const MOVE_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_MOVE_BARRIER";
 const DURABILITY_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_DURABILITY_BARRIER";
 const CRASH_EXIT_CODE: i32 = 95;
@@ -59,6 +63,10 @@ fn cache_cleanup_recovers_every_durable_boundary_with_the_same_operation_id()
             second_show, first_show,
             "operation show changed cleanup state"
         );
+        assert_active_cache_writer_blocked(
+            root.path(),
+            &format!("blocked-after-crash-{index}.bin"),
+        )?;
 
         let foreign = run(
             root.path(),
@@ -102,9 +110,11 @@ fn cleanup_retry_exposes_one_read_only_interrupted_barrier_before_reattachment()
     )?;
     assert_status(&crashed, CRASH_EXIT_CODE);
 
-    let barrier = CleanupBarrier::new()?;
-    let mut retry = barrier.spawn_retry(root.path(), operation_id)?;
-    let permit = barrier.accept(&mut retry, operation_id)?;
+    let interrupted_barrier = CleanupBarrier::new(INTERRUPTED_BARRIER_ENV, "interrupted")?;
+    let pending_barrier = CleanupBarrier::new(PENDING_BARRIER_ENV, "pending")?;
+    let mut retry =
+        interrupted_barrier.spawn_retry_with(root.path(), operation_id, Some(&pending_barrier))?;
+    let interrupted_permit = interrupted_barrier.accept(&mut retry, operation_id)?;
 
     let interrupted = show_operation(root.path(), operation_id)?;
     assert_cleanup_projection(&interrupted, "interrupted", 1, 2, 0, true)?;
@@ -120,12 +130,31 @@ fn cleanup_retry_exposes_one_read_only_interrupted_barrier_before_reattachment()
         &["cache", "clean", "--operation-id", "foreign-interrupted"],
     )?;
     assert_status(&foreign, 4);
+    assert_active_cache_writer_blocked(root.path(), "blocked-while-interrupted.bin")?;
+    assert_seed_cache_intact(root.path())?;
 
-    permit.release()?;
+    interrupted_permit.release()?;
+    let pending_permit = pending_barrier.accept(&mut retry, operation_id)?;
+    let pending = show_operation(root.path(), operation_id)?;
+    assert_cleanup_projection(&pending, "pending", 1, 2, 0, true)?;
+    assert_active_cache_writer_blocked(root.path(), "blocked-after-reattachment.bin")?;
+    assert_seed_cache_intact(root.path())?;
+
+    pending_permit.release()?;
     let recovered = retry.finish()?;
     assert_status(&recovered, 0);
     let committed = show_operation(root.path(), operation_id)?;
     assert_cleanup_projection(&committed, "committed", 1, 2, 2, false)?;
+    let writer = run(
+        root.path(),
+        &["cache", "test-write", "allowed-after-commit.bin", "allowed"],
+    )?;
+    assert_status(&writer, 0);
+    assert!(writer.stdout.is_empty());
+    assert_eq!(
+        fs::read(root.path().join(".lumin/cache/allowed-after-commit.bin"))?,
+        b"allowed"
+    );
     Ok(())
 }
 
@@ -143,7 +172,7 @@ fn repeated_recovery_of_one_interrupted_attempt_does_not_increment_twice()
     )?;
     assert_status(&crashed, CRASH_EXIT_CODE);
 
-    let barrier = CleanupBarrier::new()?;
+    let barrier = CleanupBarrier::new(INTERRUPTED_BARRIER_ENV, "interrupted")?;
     let mut first_retry = barrier.spawn_retry(root.path(), operation_id)?;
     let permit = barrier.accept(&mut first_retry, operation_id)?;
     let interrupted = show_operation(root.path(), operation_id)?;
@@ -233,6 +262,119 @@ fn committed_cache_cleanup_recovers_a_failed_delivery_without_another_move()
         required_string(&delivered, "/lastDeliveryStatus")?,
         "succeeded"
     );
+    Ok(())
+}
+
+#[test]
+fn cleanup_delivery_death_after_allocation_or_stdout_remains_unknown_until_retry()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (index, stage) in [
+        "after-allocation",
+        "after-partial-stdout",
+        "after-complete-stdout",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let root = fixture()?;
+        assert_status(&run(root.path(), &["audit", "--jobs", "1"])?, 0);
+        seed_cache(root.path())?;
+        let operation_id = format!("cache-delivery-death-{index}");
+        let barrier = CacheCleanupDeliveryBarrier::new(stage)?;
+        let mut cleanup = barrier.spawn(root.path(), &operation_id)?;
+        let (sequence, permit) = barrier.accept(&mut cleanup, &operation_id)?;
+        assert_eq!(sequence, 1);
+
+        let unfinished = show_operation(root.path(), &operation_id)?;
+        assert_cleanup_projection(&unfinished, "committed", 0, 2, 2, false)?;
+        assert_last_delivery(&unfinished, "unknown")?;
+        let killed = cleanup.terminate()?;
+        drop(permit);
+        match stage {
+            "after-allocation" => assert!(killed.stdout.is_empty()),
+            "after-partial-stdout" => {
+                assert!(!killed.stdout.is_empty());
+                assert!(!killed.stdout.ends_with('\n'));
+                assert!(serde_json::from_str::<Value>(&killed.stdout).is_err());
+            }
+            "after-complete-stdout" => {
+                assert!(killed.stdout.ends_with('\n'));
+                let delivered: Value = serde_json::from_str(killed.stdout.trim_end())?;
+                assert_eq!(required_string(&delivered, "/operationId")?, operation_id);
+            }
+            _ => unreachable!(),
+        }
+        let still_unfinished = show_operation(root.path(), &operation_id)?;
+        assert_last_delivery(&still_unfinished, "unknown")?;
+
+        let recovered = run(
+            root.path(),
+            &["cache", "clean", "--operation-id", &operation_id],
+        )?;
+        assert_status(&recovered, 0);
+        let completed = show_operation(root.path(), &operation_id)?;
+        assert_last_delivery(&completed, "succeeded")?;
+        assert_anchor_only(root.path())?;
+        assert_eq!(quarantine_payload_count(root.path())?, 2);
+    }
+    Ok(())
+}
+
+#[test]
+fn concurrent_cleanup_deliveries_obey_allocation_order_in_both_completion_orders()
+-> Result<(), Box<dyn std::error::Error>> {
+    exercise_delivery_completion_order(true)?;
+    exercise_delivery_completion_order(false)
+}
+
+fn exercise_delivery_completion_order(lower_first: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    assert_status(&run(root.path(), &["audit", "--jobs", "1"])?, 0);
+    seed_cache(root.path())?;
+    let operation_id = if lower_first {
+        "cache-delivery-lower-first"
+    } else {
+        "cache-delivery-greater-first"
+    };
+    let initial = run(
+        root.path(),
+        &["cache", "clean", "--operation-id", operation_id],
+    )?;
+    assert_status(&initial, 0);
+
+    let lower_barrier = CacheCleanupDeliveryBarrier::new("after-allocation")?;
+    let mut lower = lower_barrier.spawn(root.path(), operation_id)?;
+    let (lower_sequence, lower_permit) = lower_barrier.accept(&mut lower, operation_id)?;
+    let greater_barrier = CacheCleanupDeliveryBarrier::new("after-allocation")?;
+    let mut greater = greater_barrier.spawn(root.path(), operation_id)?;
+    let (greater_sequence, greater_permit) = greater_barrier.accept(&mut greater, operation_id)?;
+    assert_eq!(lower_sequence, 2);
+    assert_eq!(greater_sequence, 3);
+    assert_last_delivery(&show_operation(root.path(), operation_id)?, "unknown")?;
+
+    if lower_first {
+        lower_permit.release()?;
+        assert_status(&lower.finish()?, 0);
+        assert_last_delivery(&show_operation(root.path(), operation_id)?, "unknown")?;
+        greater_permit.release()?;
+        assert_status(&greater.finish()?, 0);
+        assert_last_delivery(&show_operation(root.path(), operation_id)?, "succeeded")?;
+    } else {
+        greater_permit.release()?;
+        assert_status(&greater.finish()?, 0);
+        let before_late = run(root.path(), &["operation", "show", operation_id])?;
+        assert_status(&before_late, 0);
+        let before_late_value: Value = serde_json::from_str(&before_late.stdout)?;
+        assert_last_delivery(&before_late_value, "succeeded")?;
+
+        lower_permit.release()?;
+        assert_status(&lower.finish()?, 0);
+        let after_late = run(root.path(), &["operation", "show", operation_id])?;
+        assert_status(&after_late, 0);
+        assert_eq!(after_late.stdout, before_late.stdout);
+    }
+    assert_anchor_only(root.path())?;
+    assert_eq!(quarantine_payload_count(root.path())?, 2);
     Ok(())
 }
 
@@ -411,6 +553,26 @@ fn seed_cache(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn assert_seed_cache_intact(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    assert_eq!(fs::read(root.join(".lumin/cache/first.bin"))?, b"first");
+    assert_eq!(
+        fs::read(root.join(".lumin/cache/second/nested.bin"))?,
+        b"second"
+    );
+    Ok(())
+}
+
+fn assert_active_cache_writer_blocked(
+    root: &Path,
+    name: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let result = run(root, &["cache", "test-write", name, "must-not-be-written"])?;
+    assert_status(&result, 4);
+    assert!(result.stdout.is_empty());
+    assert!(!root.join(".lumin/cache").join(name).exists());
+    Ok(())
+}
+
 fn assert_cleanup_projection(
     operation: &Value,
     status: &str,
@@ -421,7 +583,7 @@ fn assert_cleanup_projection(
 ) -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(
         required_string(operation, "/schemaVersion")?,
-        "lumin.cache-cleanup-operation.v1"
+        "lumin.cache-cleanup-operation.v2"
     );
     assert_eq!(required_string(operation, "/kind")?, "cache-clean");
     assert_eq!(required_string(operation, "/status")?, status);
@@ -435,6 +597,14 @@ fn assert_cleanup_projection(
         required_value(operation, "/result")?.is_null(),
         result_is_null
     );
+    Ok(())
+}
+
+fn assert_last_delivery(
+    operation: &Value,
+    expected: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_eq!(required_string(operation, "/lastDeliveryStatus")?, expected);
     Ok(())
 }
 
@@ -473,13 +643,22 @@ fn tree_contains_bytes(root: &Path, expected: &[u8]) -> Result<bool, Box<dyn std
 
 struct CleanupBarrier {
     listener: TcpListener,
+    environment: &'static str,
+    stage: &'static str,
 }
 
 impl CleanupBarrier {
-    fn new() -> Result<Self, Box<dyn std::error::Error>> {
+    fn new(
+        environment: &'static str,
+        stage: &'static str,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         listener.set_nonblocking(true)?;
-        Ok(Self { listener })
+        Ok(Self {
+            listener,
+            environment,
+            stage,
+        })
     }
 
     fn spawn_retry(
@@ -487,15 +666,27 @@ impl CleanupBarrier {
         root: &Path,
         operation_id: &str,
     ) -> Result<PausedCleanup, Box<dyn std::error::Error>> {
+        self.spawn_retry_with(root, operation_id, None)
+    }
+
+    fn spawn_retry_with(
+        &self,
+        root: &Path,
+        operation_id: &str,
+        additional: Option<&Self>,
+    ) -> Result<PausedCleanup, Box<dyn std::error::Error>> {
         let mut command = lumin_command(root)?;
         command
             .args(["cache", "clean", "--operation-id", operation_id])
-            .env(
-                INTERRUPTED_BARRIER_ENV,
-                self.listener.local_addr()?.to_string(),
-            )
+            .env(self.environment, self.listener.local_addr()?.to_string())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if let Some(additional) = additional {
+            command.env(
+                additional.environment,
+                additional.listener.local_addr()?.to_string(),
+            );
+        }
         Ok(PausedCleanup::from_child(command.spawn()?))
     }
 
@@ -508,7 +699,7 @@ impl CleanupBarrier {
         loop {
             match self.listener.accept() {
                 Ok((stream, peer)) if peer.ip().is_loopback() => {
-                    return CleanupPermit::new(stream, operation_id);
+                    return CleanupPermit::new(stream, self.stage, operation_id);
                 }
                 Ok(_) => {
                     return Err(std::io::Error::other(
@@ -522,7 +713,8 @@ impl CleanupBarrier {
             if process.has_exited()? {
                 let output = process.take_output()?;
                 return Err(std::io::Error::other(format!(
-                    "cleanup exited before interrupted barrier: status={:?}\nstdout={}\nstderr={}",
+                    "cleanup exited before {} barrier: status={:?}\nstdout={}\nstderr={}",
+                    self.stage,
                     output.status.code(),
                     String::from_utf8_lossy(&output.stdout),
                     String::from_utf8_lossy(&output.stderr),
@@ -530,9 +722,11 @@ impl CleanupBarrier {
                 .into());
             }
             if started.elapsed() >= BARRIER_WAIT_LIMIT {
-                return Err(
-                    std::io::Error::other("cleanup did not reach the interrupted barrier").into(),
-                );
+                return Err(std::io::Error::other(format!(
+                    "cleanup did not reach {} barrier",
+                    self.stage
+                ))
+                .into());
             }
             thread::sleep(Duration::from_millis(10));
         }
@@ -544,12 +738,16 @@ struct CleanupPermit {
 }
 
 impl CleanupPermit {
-    fn new(stream: TcpStream, operation_id: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    fn new(
+        stream: TcpStream,
+        stage: &str,
+        operation_id: &str,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         stream.set_nonblocking(false)?;
         stream.set_read_timeout(Some(BARRIER_WAIT_LIMIT))?;
         let mut frame = String::new();
         BufReader::new(stream.try_clone()?).read_line(&mut frame)?;
-        assert_eq!(frame.trim_end(), format!("interrupted {operation_id}"));
+        assert_eq!(frame.trim_end(), format!("{stage} {operation_id}"));
         Ok(Self { stream })
     }
 

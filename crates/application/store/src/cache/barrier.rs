@@ -8,6 +8,7 @@ use lumin_model::OperationId;
 use crate::StoreError;
 
 const INTERRUPTED_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_INTERRUPTED_BARRIER";
+const PENDING_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_PENDING_BARRIER";
 const MOVE_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_MOVE_BARRIER";
 const DURABILITY_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_DURABILITY_BARRIER";
 const BARRIER_TIMEOUT: Duration = Duration::from_secs(30);
@@ -17,6 +18,10 @@ static DURABILITY_BARRIER_USED: AtomicBool = AtomicBool::new(false);
 
 pub(super) fn wait_interrupted(operation_id: &OperationId) -> Result<(), StoreError> {
     wait(INTERRUPTED_BARRIER_ENV, "interrupted", operation_id, None)
+}
+
+pub(super) fn wait_pending(operation_id: &OperationId) -> Result<(), StoreError> {
+    wait(PENDING_BARRIER_ENV, "pending", operation_id, None)
 }
 
 pub(super) fn wait_before_move(operation_id: &OperationId, ordinal: u64) -> Result<(), StoreError> {

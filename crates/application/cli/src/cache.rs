@@ -9,6 +9,22 @@ pub(super) fn execute(root: &Path, arguments: &mut Arguments) -> Result<CommandO
     let subcommand = arguments
         .next_utf8("cache subcommand")?
         .ok_or(CliError::MissingCommand)?;
+    #[cfg(feature = "lifecycle-test-fault")]
+    if subcommand == "test-write" {
+        let name = arguments.required_utf8("cache test-write name")?;
+        let payload = arguments.required_utf8("cache test-write payload")?;
+        if let Some(argument) = arguments.next_utf8("cache test-write argument")? {
+            return Err(CliError::UnknownArgument(argument));
+        }
+        lumin_engine::write_active_cache_payload_for_test(root, &name, payload.as_bytes())?;
+        return Ok(CommandSuccess {
+            exit_code: 0,
+            stdout: String::new(),
+            result_delivery: CommandResultDelivery::ReadOnly,
+            mutation_delivery: None,
+        }
+        .into());
+    }
     if subcommand != "clean" {
         return Err(CliError::UnknownArgument(subcommand));
     }

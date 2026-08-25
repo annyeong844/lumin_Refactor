@@ -75,6 +75,14 @@ pub struct CacheCleanupResponseDto {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LifecycleStoreMigrationResponseDto {
+    pub schema_version: &'static str,
+    pub store_schema: &'static str,
+    pub status: &'static str,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AttemptSummaryDto {
     pub attempt_id: AttemptId,
     pub sequence: u64,
@@ -411,6 +419,14 @@ pub fn cache_cleanup_response(result: &CacheCleanupResult) -> CacheCleanupRespon
         operation_id: result.operation_id.clone(),
         request_digest: result.request_digest.clone(),
         status: "clean",
+    }
+}
+
+pub const fn lifecycle_store_migration_response() -> LifecycleStoreMigrationResponseDto {
+    LifecycleStoreMigrationResponseDto {
+        schema_version: "lumin.lifecycle-store-migration.v1",
+        store_schema: "lumin-lifecycle-store-header.v13",
+        status: "ready",
     }
 }
 

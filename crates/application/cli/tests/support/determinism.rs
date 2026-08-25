@@ -100,15 +100,23 @@ pub(super) fn record_semantic_evidence(
         }
     };
 
-    let evidence = match arguments.first().and_then(|value| value.to_str()) {
-        Some("audit") if command_succeeded => lumin_engine::load_latest_run(root)?
+    let command = arguments.first().and_then(|value| value.to_str());
+    let subcommand = arguments.get(1).and_then(|value| value.to_str());
+    let evidence = match (command, subcommand) {
+        (Some("audit"), _) if command_succeeded => lumin_engine::load_latest_run(root)?
             .map(|(_, evidence)| serde_json::to_value(evidence.semantic_projection()))
             .transpose()?
             .into_iter()
             .collect(),
-        Some("audit") => Vec::new(),
-        Some("pre-write" | "post-write") => gate_evidence(root, stdout)?,
-        Some("overview") => attempt_failure_evidence(root, stdout)?,
+        (Some("audit"), _) => Vec::new(),
+        (Some("pre-write" | "post-write"), _) => gate_evidence(root, stdout)?,
+        (Some("overview"), _) => attempt_failure_evidence(root, stdout)?,
+        (Some("operation"), Some("show")) if command_succeeded => {
+            cache_cleanup_operation_evidence(stdout)?
+        }
+        (Some("store"), Some("migrate")) if command_succeeded => {
+            lifecycle_migration_evidence(stdout)?
+        }
         _ => Vec::new(),
     };
     if evidence.is_empty() {
@@ -125,6 +133,74 @@ pub(super) fn record_semantic_evidence(
     file.write_all(b"\n")?;
     file.flush()?;
     Ok(())
+}
+
+fn cache_cleanup_operation_evidence(
+    stdout: &str,
+) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
+    let mut response: Value = match serde_json::from_str(stdout) {
+        Ok(response) => response,
+        Err(_) => return Ok(Vec::new()),
+    };
+    if response.get("schemaVersion").and_then(Value::as_str)
+        != Some("lumin.cache-cleanup-operation.v2")
+    {
+        return Ok(Vec::new());
+    }
+    let operation_id = response
+        .get("operationId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| std::io::Error::other("cleanup operation omitted its operation ID"))?
+        .to_owned();
+    let request_digest = response
+        .get("requestDigest")
+        .and_then(Value::as_str)
+        .ok_or_else(|| std::io::Error::other("cleanup operation omitted its request digest"))?
+        .to_owned();
+    let result_operation_matches = response
+        .pointer("/result/operationId")
+        .and_then(Value::as_str)
+        .is_none_or(|observed| observed == operation_id);
+    let result_digest_matches = response
+        .pointer("/result/requestDigest")
+        .and_then(Value::as_str)
+        .is_none_or(|observed| observed == request_digest);
+    response["operationId"] = Value::String("<operation-id>".to_owned());
+    response["requestDigest"] = serde_json::json!({
+        "formatValid": request_digest.len() == 64
+            && request_digest.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "matchesResult": result_digest_matches,
+    });
+    if let Some(result) = response.get_mut("result").and_then(Value::as_object_mut) {
+        result.insert(
+            "operationId".to_owned(),
+            serde_json::json!({ "matchesOwner": result_operation_matches }),
+        );
+        result.insert(
+            "requestDigest".to_owned(),
+            serde_json::json!({ "matchesOwner": result_digest_matches }),
+        );
+    }
+    Ok(vec![serde_json::json!({
+        "schemaVersion": "lumin.cache-cleanup-operation-semantic.v1",
+        "operation": response,
+    })])
+}
+
+fn lifecycle_migration_evidence(stdout: &str) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
+    let response: Value = match serde_json::from_str(stdout) {
+        Ok(response) => response,
+        Err(_) => return Ok(Vec::new()),
+    };
+    if response.get("schemaVersion").and_then(Value::as_str)
+        != Some("lumin.lifecycle-store-migration.v1")
+    {
+        return Ok(Vec::new());
+    }
+    Ok(vec![serde_json::json!({
+        "schemaVersion": "lumin.lifecycle-store-migration-semantic.v1",
+        "response": response,
+    })])
 }
 
 fn attempt_failure_evidence(

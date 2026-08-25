@@ -35,7 +35,22 @@ const KNOWN_TABLES: [&str; 15] = [
 ];
 
 pub(super) fn read_snapshot(read: &ReadTransaction) -> Result<LogicalStoreSnapshot, StoreError> {
-    validate_table_inventory(read)?;
+    let snapshot = read_raw_snapshot(read, false)?;
+    validate_referential_closure(&snapshot)?;
+    Ok(snapshot)
+}
+
+pub(super) fn read_legacy_snapshot(
+    read: &ReadTransaction,
+) -> Result<LogicalStoreSnapshot, StoreError> {
+    read_raw_snapshot(read, true)
+}
+
+fn read_raw_snapshot(
+    read: &ReadTransaction,
+    allow_migration_control: bool,
+) -> Result<LogicalStoreSnapshot, StoreError> {
+    validate_table_inventory(read, allow_migration_control)?;
     let snapshot = LogicalStoreSnapshot {
         sequences: read_u64_table(read, SEQUENCES)?,
         attempt_leases: read_bytes_table(read, ATTEMPT_LEASES)?,
@@ -52,7 +67,6 @@ pub(super) fn read_snapshot(read: &ReadTransaction) -> Result<LogicalStoreSnapsh
         cache_cleanup_operations: read_bytes_table(read, CACHE_CLEANUP_OPERATIONS)?,
         cache_eviction_authorizations: read_bytes_table(read, CACHE_EVICTION_AUTHORIZATIONS)?,
     };
-    validate_referential_closure(&snapshot)?;
     Ok(snapshot)
 }
 
@@ -87,7 +101,10 @@ pub(super) fn write_snapshot(
     write.commit().map_err(backend_error)
 }
 
-fn validate_table_inventory(read: &ReadTransaction) -> Result<(), StoreError> {
+fn validate_table_inventory(
+    read: &ReadTransaction,
+    allow_migration_control: bool,
+) -> Result<(), StoreError> {
     let observed = read
         .list_tables()
         .map_err(backend_error)?
@@ -97,7 +114,10 @@ fn validate_table_inventory(read: &ReadTransaction) -> Result<(), StoreError> {
         .iter()
         .map(|name| (*name).to_owned())
         .collect::<BTreeSet<_>>();
-    let unknown = observed.difference(&known).cloned().collect::<Vec<_>>();
+    let mut unknown = observed.difference(&known).cloned().collect::<Vec<_>>();
+    if allow_migration_control {
+        unknown.retain(|name| name != "migration-root-authorizations");
+    }
     if !unknown.is_empty() {
         return Err(StoreError::Integrity(format!(
             "lifecycle store contains unknown tables: {}",

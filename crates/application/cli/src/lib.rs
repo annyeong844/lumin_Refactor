@@ -1,6 +1,7 @@
 mod cache;
 mod query;
 mod retention;
+mod store;
 
 use std::ffi::OsString;
 use std::io::Read;
@@ -48,6 +49,7 @@ pub enum MutationDeliveryRecord {
         operation_id: OperationId,
         request_digest: String,
     },
+    LifecycleStoreMigration,
 }
 
 #[derive(Debug, Error)]
@@ -194,6 +196,7 @@ fn execute_inner(
         "files" => query::files(root, &mut arguments).map(success),
         "capabilities" => capabilities(root, &mut arguments, build_identity).map(success),
         "cache" => cache::execute(root, &mut arguments),
+        "store" => store::execute(root, &mut arguments),
         "pre-write" => pre_write(root, &mut arguments, input),
         "post-write" => post_write(root, &mut arguments),
         "gate" => gate(root, &mut arguments),

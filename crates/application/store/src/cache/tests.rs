@@ -1,7 +1,10 @@
 use std::fs;
 use std::path::Path;
 
-use lumin_evidence::{CacheCleanupOperationStatus, LifecycleOperationRecord};
+use lumin_evidence::{
+    CacheCleanupDeliveryOutcome, CacheCleanupDeliveryStatus, CacheCleanupOperationStatus,
+    LifecycleOperationRecord,
+};
 use lumin_model::{OperationId, append_length_prefixed, digest_hex};
 
 use super::*;
@@ -54,6 +57,77 @@ fn cleanup_quarantines_payloads_and_replays_one_committed_result()
     assert!(matches!(
         store.load_lifecycle_operation(&operation_id)?,
         LifecycleOperationRecord::CacheCleanup(_)
+    ));
+    Ok(())
+}
+
+#[test]
+fn delivery_ledger_orders_attempts_before_transport_and_ignores_late_lower_completion()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("cache-clean-delivery-ledger".to_owned());
+    let request_digest = digest(&store)?;
+    store.clean_cache_payloads(&operation_id, &request_digest)?;
+
+    let committed = store.load_cache_cleanup_operation(&operation_id)?;
+    assert_eq!(
+        committed.last_delivery_status(),
+        CacheCleanupDeliveryStatus::NotAttempted
+    );
+
+    let lower = store.allocate_cache_cleanup_delivery(&operation_id, &request_digest)?;
+    let greater = store.allocate_cache_cleanup_delivery(&operation_id, &request_digest)?;
+    assert_eq!((lower, greater), (1, 2));
+    assert_eq!(
+        store
+            .load_cache_cleanup_operation(&operation_id)?
+            .last_delivery_status(),
+        CacheCleanupDeliveryStatus::Unknown
+    );
+
+    store.record_cache_cleanup_delivery(
+        &operation_id,
+        &request_digest,
+        greater,
+        CacheCleanupDeliveryOutcome::Succeeded,
+    )?;
+    let before_late = store.load_cache_cleanup_operation(&operation_id)?;
+    assert_eq!(
+        before_late.last_delivery_status(),
+        CacheCleanupDeliveryStatus::Succeeded
+    );
+    assert_eq!(before_late.greatest_completed_delivery_sequence, Some(2));
+
+    store.record_cache_cleanup_delivery(
+        &operation_id,
+        &request_digest,
+        lower,
+        CacheCleanupDeliveryOutcome::Failed,
+    )?;
+    let after_late = store.load_cache_cleanup_operation(&operation_id)?;
+    assert_eq!(
+        after_late.last_delivery_status(),
+        CacheCleanupDeliveryStatus::Succeeded
+    );
+    assert_eq!(after_late.greatest_allocated_delivery_sequence, 2);
+    assert_eq!(after_late.greatest_completed_delivery_sequence, Some(2));
+    assert_eq!(after_late.delivery_completions.len(), 2);
+
+    store.record_cache_cleanup_delivery(
+        &operation_id,
+        &request_digest,
+        lower,
+        CacheCleanupDeliveryOutcome::Failed,
+    )?;
+    assert!(matches!(
+        store.record_cache_cleanup_delivery(
+            &operation_id,
+            &request_digest,
+            lower,
+            CacheCleanupDeliveryOutcome::Succeeded,
+        ),
+        Err(StoreError::Integrity(message)) if message.contains("changed outcome")
     ));
     Ok(())
 }
@@ -133,12 +207,19 @@ fn lifecycle_migration_preserves_cleanup_authorizations_and_result()
     let operation_id = OperationId::from_string("cache-clean-migration".to_owned());
     let request_digest = digest(&store)?;
     let result = store.clean_cache_payloads(&operation_id, &request_digest)?;
+    rewrite_cleanup_operation_as_v1(&store, &operation_id)?;
+    store.rewrite_current_store_header_as_prior_for_test()?;
 
     store.migrate_lifecycle_store()?;
 
+    let migrated = store.load_cache_cleanup_operation(&operation_id)?;
+    assert_eq!(migrated.result, Some(result.clone()));
+    assert_eq!(migrated.greatest_allocated_delivery_sequence, 1);
+    assert_eq!(migrated.greatest_completed_delivery_sequence, None);
+    assert!(migrated.delivery_completions.is_empty());
     assert_eq!(
-        store.load_cache_cleanup_operation(&operation_id)?.result,
-        Some(result.clone())
+        migrated.last_delivery_status(),
+        CacheCleanupDeliveryStatus::Unknown
     );
     assert_eq!(
         store.clean_cache_payloads(&operation_id, &request_digest)?,
@@ -149,4 +230,53 @@ fn lifecycle_migration_preserves_cleanup_authorizations_and_result()
         2
     );
     Ok(())
+}
+
+fn rewrite_cleanup_operation_as_v1(
+    store: &RepositoryStore,
+    operation_id: &OperationId,
+) -> Result<(), StoreError> {
+    store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        let operation = read_record::<lumin_evidence::CacheCleanupOperationRecord>(
+            &write,
+            CACHE_CLEANUP_OPERATIONS,
+            operation_id.as_str(),
+        )?
+        .ok_or_else(|| StoreError::OperationNotFound(operation_id.as_str().to_owned()))?;
+        if operation.greatest_allocated_delivery_sequence != 0
+            || operation.greatest_completed_delivery_sequence.is_some()
+            || !operation.delivery_completions.is_empty()
+        {
+            return Err(StoreError::Integrity(
+                "legacy cleanup fixture already has delivery-v2 evidence".to_owned(),
+            ));
+        }
+        let legacy = serde_json::json!({
+            "schemaVersion": "lumin-cache-cleanup-operation.v1",
+            "repositoryId": operation.repository_id,
+            "operationId": operation.operation_id,
+            "requestDigest": operation.request_digest,
+            "status": operation.status,
+            "interruptionCount": operation.interruption_count,
+            "invocationId": operation.invocation_id,
+            "initialAuthorizationSetId": operation.initial_authorization_set_id,
+            "initialAuthorizationCount": operation.initial_authorization_count,
+            "planInitialized": operation.plan_initialized,
+            "authorizationKeys": operation.authorization_keys,
+            "validatedCount": operation.validated_count,
+            "executionLease": operation.execution_lease,
+            "recoveryReservation": operation.recovery_reservation,
+            "result": operation.result,
+            "lastDeliveryStatus": "not-attempted"
+        });
+        write_record(
+            &write,
+            CACHE_CLEANUP_OPERATIONS,
+            operation_id.as_str(),
+            &legacy,
+        )?;
+        guard.commit(write)
+    })
 }

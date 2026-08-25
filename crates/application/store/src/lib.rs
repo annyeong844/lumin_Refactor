@@ -52,6 +52,38 @@ pub struct RepositoryStore {
     namespace: namespace::NamespaceState,
 }
 
+#[cfg(any(test, feature = "lifecycle-migration-test-fault"))]
+impl RepositoryStore {
+    pub fn rewrite_current_store_header_as_prior_for_test(&self) -> Result<(), StoreError> {
+        self.namespace
+            .rewrite_current_store_header_as_prior_for_test()
+    }
+
+    #[cfg(feature = "lifecycle-migration-test-fault")]
+    pub fn corrupt_migration_anchor_for_test(&self) -> Result<(), StoreError> {
+        self.namespace.corrupt_migration_anchor_for_test()
+    }
+
+    #[cfg(feature = "lifecycle-migration-test-fault")]
+    pub fn remove_bound_root_authorization_for_test(
+        root: &Path,
+        binding: &RepositoryBinding,
+    ) -> Result<(), StoreError> {
+        let namespace = namespace::NamespaceState::open_for_migration(root, binding)?
+            .ok_or(StoreError::LifecycleStoreNotInitialized)?;
+        namespace.remove_bound_root_authorization_for_test()
+    }
+}
+
+#[cfg(any(test, feature = "lifecycle-migration-test-fault"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PriorCacheCleanupDeliveryStatusForTest {
+    NotAttempted,
+    Succeeded,
+    Failed,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublishedRun {
@@ -161,6 +193,10 @@ pub enum StoreError {
     },
     #[error("completed lifecycle migration still has private payloads to clean")]
     LifecycleMigrationCleanupPending,
+    #[error("lifecycle store migration requires 'lumin store migrate'")]
+    LifecycleMigrationRequired,
+    #[error("lifecycle store is not initialized")]
+    LifecycleStoreNotInitialized,
 }
 
 impl RepositoryStore {
@@ -267,6 +303,26 @@ impl RepositoryStore {
 
     pub fn migrate_lifecycle_store(&self) -> Result<StoreGeneration, StoreError> {
         self.namespace.migrate_lifecycle_store()
+    }
+
+    pub fn migrate_existing_lifecycle_store(
+        root: &Path,
+        binding: &RepositoryBinding,
+    ) -> Result<StoreGeneration, StoreError> {
+        let namespace = namespace::NamespaceState::open_for_migration(root, binding)?
+            .ok_or(StoreError::LifecycleStoreNotInitialized)?;
+        namespace.migrate_lifecycle_store()
+    }
+
+    #[cfg(feature = "lifecycle-migration-test-fault")]
+    pub fn corrupt_migrating_cleanup_operation_for_test(
+        root: &Path,
+        binding: &RepositoryBinding,
+        operation_id: &lumin_model::OperationId,
+    ) -> Result<(), StoreError> {
+        let namespace = namespace::NamespaceState::open_for_migration(root, binding)?
+            .ok_or(StoreError::LifecycleStoreNotInitialized)?;
+        namespace.corrupt_migrating_cleanup_operation_for_test(operation_id)
     }
 
     fn with_exclusive_lock<T>(

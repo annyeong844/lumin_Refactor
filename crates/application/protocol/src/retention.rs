@@ -265,7 +265,7 @@ fn cache_cleanup_operation_response(
     operation: &CacheCleanupOperationRecord,
 ) -> CacheCleanupOperationResponseDto {
     CacheCleanupOperationResponseDto {
-        schema_version: "lumin.cache-cleanup-operation.v1",
+        schema_version: "lumin.cache-cleanup-operation.v2",
         operation_id: operation.operation_id.clone(),
         kind: "cache-clean",
         request_digest: operation.request_digest.clone(),
@@ -274,7 +274,7 @@ fn cache_cleanup_operation_response(
         authorized_count: operation.authorized_count(),
         validated_count: operation.validated_count,
         result: operation.result.as_ref().map(crate::cache_cleanup_response),
-        last_delivery_status: operation.last_delivery_status,
+        last_delivery_status: operation.last_delivery_status(),
     }
 }
 

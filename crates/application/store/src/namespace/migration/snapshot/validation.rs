@@ -1919,7 +1919,8 @@ fn validate_close_alias_closures(
 fn is_strict_close_snapshot_signal(signal: &GateSignal) -> bool {
     matches!(
         signal,
-        GateSignal::RequiredEvidenceIncomplete { .. }
+        GateSignal::PreExistingAdverseFacts { .. }
+            | GateSignal::RequiredEvidenceIncomplete { .. }
             | GateSignal::RequiredOwnerUnavailable { .. }
             | GateSignal::AdverseFactIntroduced { .. }
             | GateSignal::AdverseFactRegressed { .. }

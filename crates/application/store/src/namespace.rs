@@ -28,6 +28,19 @@ pub(crate) use platform::{
 use records::*;
 use store_header::*;
 
+fn detached_database(
+    guard: &NamespaceGuard,
+    entry: &HeldEntry,
+) -> Result<redb::Database, StoreError> {
+    let bytes = entry.read_all()?;
+    let detached =
+        platform::UnpublishedFile::create(&guard.state.state_dir, &guard.state_directory)?;
+    detached.entry().replace_contents(&bytes)?;
+    redb::Database::builder()
+        .create_file(detached.entry().file().try_clone().map_err(io_error)?)
+        .map_err(crate::backend_error)
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct NamespaceState {
     repository: HeldRepository,
@@ -63,6 +76,39 @@ struct HeldCacheEvictionParent {
 }
 
 impl NamespaceState {
+    #[cfg(any(test, feature = "lifecycle-migration-test-fault"))]
+    pub(crate) fn rewrite_current_store_header_as_prior_for_test(&self) -> Result<(), StoreError> {
+        store_header::rewrite_current_store_header_as_prior_for_test(
+            &self.state_dir.join("lifecycle.store"),
+            &self.binding,
+        )
+    }
+
+    #[cfg(feature = "lifecycle-migration-test-fault")]
+    pub(crate) fn corrupt_migrating_cleanup_operation_for_test(
+        &self,
+        operation_id: &lumin_model::OperationId,
+    ) -> Result<(), StoreError> {
+        self.with_migration_lock(|guard| {
+            migration::corrupt_bound_cleanup_operation_for_test(guard, operation_id)
+        })
+    }
+
+    #[cfg(feature = "lifecycle-migration-test-fault")]
+    pub(crate) fn corrupt_migration_anchor_for_test(&self) -> Result<(), StoreError> {
+        self.with_migration_lock(|_| {
+            store_header::corrupt_migration_anchor_for_test(
+                &self.state_dir.join("lifecycle.store"),
+                &self.binding,
+            )
+        })
+    }
+
+    #[cfg(feature = "lifecycle-migration-test-fault")]
+    pub(crate) fn remove_bound_root_authorization_for_test(&self) -> Result<(), StoreError> {
+        self.with_migration_lock(migration::remove_bound_root_authorization_for_test)
+    }
+
     pub(super) fn open_if_bound(
         root: &Path,
         binding: &RepositoryBinding,
@@ -119,7 +165,51 @@ impl NamespaceState {
         Self::open_bound(repository, state_dir, state_directory, marker_path)
     }
 
+    pub(super) fn open_for_migration(
+        root: &Path,
+        binding: &RepositoryBinding,
+    ) -> Result<Option<Self>, StoreError> {
+        let repository = HeldRepository::open(root, binding.clone())?;
+        let state_dir = repository.path.join(".lumin");
+        match fs::symlink_metadata(&state_dir) {
+            Ok(metadata) if metadata.file_type().is_dir() => {}
+            Ok(_) => {
+                return Err(StoreError::Integrity(
+                    ".lumin must be a real directory".to_owned(),
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(io_error(error)),
+        }
+        let marker_path = state_dir.join("repository.json");
+        if !entry_exists(&marker_path)? {
+            return Err(StoreError::Integrity(
+                "initialized state namespace omitted repository.json".to_owned(),
+            ));
+        }
+        let state_directory = HeldEntry::open(
+            &state_dir,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            ".lumin",
+        )?;
+        require_state_volume(&state_directory, repository.directory.as_ref(), ".lumin")?;
+        Self::bind_existing(repository, state_dir, state_directory, marker_path).map(Some)
+    }
+
     fn open_bound(
+        repository: HeldRepository,
+        state_dir: PathBuf,
+        state_directory: HeldEntry,
+        marker_path: PathBuf,
+    ) -> Result<Self, StoreError> {
+        let state = Self::bind_existing(repository, state_dir, state_directory, marker_path)?;
+        state.ensure_store_ready()?;
+        Ok(state)
+    }
+
+    fn bind_existing(
         repository: HeldRepository,
         state_dir: PathBuf,
         state_directory: HeldEntry,
@@ -133,13 +223,11 @@ impl NamespaceState {
                 "state directory identity disagrees with repository marker".to_owned(),
             ));
         }
-        let state = Self {
+        Ok(Self {
             repository,
             state_dir,
             binding: marker.binding,
-        };
-        state.ensure_store_ready()?;
-        Ok(state)
+        })
     }
 
     pub(super) fn state_dir(&self) -> &Path {
@@ -223,14 +311,19 @@ impl NamespaceState {
         } else {
             FileExt::lock_shared(lock.file()).map_err(io_error)?;
         }
-        let guard = NamespaceGuard::acquire(self.clone(), lock)?;
+        let guard = NamespaceGuard::acquire_without_store(self.clone(), lock)?;
         let result = match purpose {
-            LockPurpose::Ordinary => {
-                migration::require_idle(&guard).and_then(|()| operation(&guard))
-            }
+            LockPurpose::Ordinary => migration::require_idle(&guard)
+                .and_then(|()| guard.validate_complete())
+                .and_then(|()| operation(&guard)),
             LockPurpose::Migration => operation(&guard),
         };
-        let final_validation = guard.validate_complete();
+        let final_validation = match purpose {
+            LockPurpose::Ordinary => {
+                migration::require_idle(&guard).and_then(|()| guard.validate_complete())
+            }
+            LockPurpose::Migration => guard.validate_bound_entries(),
+        };
         let unlock = FileExt::unlock(guard.lock.file()).map_err(io_error);
         combine_lock_results(result, final_validation, unlock)
     }
@@ -275,7 +368,7 @@ impl NamespaceState {
         let lock = self.open_prevalidated_lock()?;
         FileExt::lock_exclusive(lock.file()).map_err(io_error)?;
         let guard = NamespaceGuard::acquire_without_store(self.clone(), lock)?;
-        let result = migration::recover_on_open(&guard);
+        let result = migration::admit_ordinary(&guard);
         let final_validation = result.and_then(|()| guard.validate_complete());
         let unlock = FileExt::unlock(guard.lock.file()).map_err(io_error);
         combine_lock_results(final_validation, Ok(()), unlock)
@@ -325,12 +418,6 @@ impl HeldRepository {
 }
 
 impl NamespaceGuard {
-    fn acquire(state: NamespaceState, lock: HeldEntry) -> Result<Self, StoreError> {
-        let guard = Self::acquire_without_store(state, lock)?;
-        guard.validate_complete()?;
-        Ok(guard)
-    }
-
     fn acquire_without_store(state: NamespaceState, lock: HeldEntry) -> Result<Self, StoreError> {
         let state_directory = HeldEntry::open(
             &state.state_dir,

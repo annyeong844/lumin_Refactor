@@ -38,7 +38,7 @@ fn gate_queries_and_conflicts_authenticate_the_complete_gate_projection()
         conflicting.reserve_pre_write(
             "authenticated-gate-conflict",
             std::slice::from_ref(&source),
-            &[lease(source.clone())],
+            &[lease(source.clone())?],
             &options(),
             rejected_test_observation,
         ),
@@ -54,11 +54,16 @@ fn operation_replay_authenticates_the_complete_committed_result()
     let root = tempfile::tempdir()?;
     let store = open_store(root.path())?;
     let operation_id = OperationId::from_string("op-authenticated-result-open".to_owned());
-    let request_digest = "authenticated-result-open";
+    let source = path("src/authenticated-result.ts")?;
+    let analysis_options = options();
+    let request_digest = lumin_evidence::pre_write_request_digest(
+        std::slice::from_ref(&source),
+        &analysis_options.scan_invocation,
+    );
     open_active_gate(
         &store,
         operation_id.as_str(),
-        request_digest,
+        &request_digest,
         "src/authenticated-result.ts",
     )?;
 
@@ -78,7 +83,7 @@ fn operation_replay_authenticates_the_complete_committed_result()
     })?;
 
     assert!(matches!(
-        store.replay_pre_write_result(&operation_id, request_digest),
+        store.replay_pre_write_result(&operation_id, &request_digest),
         Err(StoreError::Integrity(message))
             if message.contains("complete gate revision")
     ));
@@ -96,11 +101,16 @@ fn operation_replay_authenticates_the_complete_committed_operation_projection()
     let root = tempfile::tempdir()?;
     let store = open_store(root.path())?;
     let operation_id = OperationId::from_string("op-authenticated-operation-open".to_owned());
-    let request_digest = "authenticated-operation-open";
+    let source = path("src/authenticated-operation.ts")?;
+    let analysis_options = options();
+    let request_digest = lumin_evidence::pre_write_request_digest(
+        std::slice::from_ref(&source),
+        &analysis_options.scan_invocation,
+    );
     open_active_gate(
         &store,
         operation_id.as_str(),
-        request_digest,
+        &request_digest,
         "src/authenticated-operation.ts",
     )?;
 
@@ -119,7 +129,7 @@ fn operation_replay_authenticates_the_complete_committed_operation_projection()
     })?;
 
     assert!(matches!(
-        store.replay_pre_write_result(&operation_id, request_digest),
+        store.replay_pre_write_result(&operation_id, &request_digest),
         Err(StoreError::Integrity(message))
             if message.contains("store-owned validation receipt")
     ));
@@ -162,7 +172,7 @@ fn pre_write_rejects_a_gate_allocator_behind_a_retained_gate()
         candidate.reserve_pre_write(
             "gate-allocator-candidate",
             std::slice::from_ref(&source),
-            &[lease(source.clone())],
+            &[lease(source.clone())?],
             &options(),
             rejected_test_observation,
         ),
@@ -238,7 +248,7 @@ fn pre_write_rejects_an_exhausted_active_catalog_counter() -> Result<(), Box<dyn
         candidate.reserve_pre_write(
             "active-catalog-exhausted-candidate",
             std::slice::from_ref(&source),
-            &[lease(source.clone())],
+            &[lease(source.clone())?],
             &options(),
             rejected_test_observation,
         ),
@@ -260,7 +270,7 @@ fn pre_write_rejects_an_orphaned_pending_validation_receipt()
         orphaned.reserve_pre_write(
             "orphaned-pending-receipt",
             std::slice::from_ref(&orphaned_source),
-            &[lease(orphaned_source.clone())],
+            &[lease(orphaned_source.clone())?],
             &options(),
             rejected_test_observation,
         )?,
@@ -293,7 +303,7 @@ fn pre_write_rejects_an_orphaned_pending_validation_receipt()
         candidate.reserve_pre_write(
             "orphaned-pending-receipt-candidate",
             std::slice::from_ref(&candidate_source),
-            &[lease(candidate_source.clone())],
+            &[lease(candidate_source.clone())?],
             &options(),
             rejected_test_observation,
         ),
@@ -318,7 +328,7 @@ fn pre_write_promotion_revalidates_the_complete_gate_catalog()
     let operation_id = OperationId::from_string("op-promotion-catalog-candidate".to_owned());
     let candidate = store.begin_operation(&operation_id)?;
     let source = path("src/promotion-catalog-candidate.ts")?;
-    let source_lease = lease(source.clone());
+    let source_lease = lease(source.clone())?;
     let (gate_id, transition_sequence) = match candidate.reserve_pre_write(
         "promotion-catalog-candidate",
         std::slice::from_ref(&source),
@@ -618,13 +628,20 @@ fn active_gate_catalog_order_and_revision_increment() -> Result<(), Box<dyn std:
 
     // Exact committed open retry does not advance active membership revision.
     let retry_source = path("src/a.ts")?;
+    let retry_options = options();
+    let retry_digest = lumin_evidence::pre_write_request_digest(
+        std::slice::from_ref(&retry_source),
+        &retry_options.scan_invocation,
+    );
+    let retry_path = RepoPath::from_canonical_bytes(&retry_source.canonical)?;
+    let retry_lease = observed_lease(root.path(), &retry_path)?;
     let retry_open = store.begin_operation(&OperationId::from_string("op-a".to_owned()))?;
     assert!(matches!(
         retry_open.reserve_pre_write(
-            "digest-a",
+            &retry_digest,
             std::slice::from_ref(&retry_source),
-            &[lease(retry_source.clone())],
-            &options(),
+            std::slice::from_ref(&retry_lease),
+            &retry_options,
             rejected_test_observation,
         )?,
         PreWriteStart::Committed(result) if result.gate_id == gate_a

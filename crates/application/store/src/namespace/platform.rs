@@ -66,7 +66,7 @@ impl HeldEntry {
         Ok(())
     }
 
-    fn from_file(
+    pub(crate) fn from_file(
         file: File,
         kind: EntryKind,
         one_link: bool,
@@ -171,6 +171,107 @@ impl HeldEntry {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct UnpublishedFile {
+    entry: HeldEntry,
+}
+
+impl UnpublishedFile {
+    pub(crate) fn create(parent_path: &Path, parent: &HeldEntry) -> Result<Self, StoreError> {
+        let file = create_unpublished_file_platform(parent_path)?;
+        let entry = HeldEntry::from_file(
+            file,
+            EntryKind::RegularFile,
+            false,
+            "unpublished state artifact",
+        )?;
+        if !same_volume_and_mount(&entry, parent) {
+            return Err(StoreError::Integrity(
+                "unpublished state artifact crossed its bound volume or mount".to_owned(),
+            ));
+        }
+        Ok(Self { entry })
+    }
+
+    pub(crate) fn entry(&self) -> &HeldEntry {
+        &self.entry
+    }
+
+    pub(crate) fn publish_noreplace(
+        self,
+        parent: &HeldEntry,
+        parent_path: &Path,
+        name: &OsStr,
+        label: &str,
+        after_publication: impl FnOnce() -> Result<(), StoreError>,
+    ) -> Result<HeldEntry, StoreError> {
+        require_normal_component(name, label)?;
+        if !same_volume_and_mount(&self.entry, parent) {
+            return Err(StoreError::Integrity(format!(
+                "{label} crossed its bound volume or mount"
+            )));
+        }
+        publish_unpublished_file_platform(&self.entry, parent, name)?;
+        after_publication()?;
+        let expected_identity = self.entry.identity().clone();
+        drop(self);
+        let path = parent_path.join(name);
+        let published = HeldEntry::open(
+            &path,
+            EntryKind::RegularFile,
+            EntryAccess::ReadWrite,
+            true,
+            label,
+        )?;
+        if published.identity() != &expected_identity {
+            return Err(StoreError::Integrity(format!(
+                "{label} physical identity changed during publication"
+            )));
+        }
+        Ok(published)
+    }
+}
+
+#[cfg(not(windows))]
+fn create_unpublished_file_platform(parent_path: &Path) -> Result<File, StoreError> {
+    tempfile::tempfile_in(parent_path).map_err(io_error)
+}
+
+#[cfg(windows)]
+fn create_unpublished_file_platform(parent_path: &Path) -> Result<File, StoreError> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_TEMPORARY, FILE_FLAG_DELETE_ON_CLOSE, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE,
+    };
+
+    static NEXT_UNPUBLISHED: AtomicU64 = AtomicU64::new(1);
+    for _ in 0..1024 {
+        let sequence = NEXT_UNPUBLISHED.fetch_add(1, Ordering::Relaxed);
+        let name = format!(
+            ".lumin-unpublished-{:08x}-{sequence:016x}",
+            std::process::id()
+        );
+        match OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE)
+            .open(parent_path.join(name))
+        {
+            Ok(file) => return Ok(file),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(io_error(error)),
+        }
+    }
+    Err(StoreError::Integrity(
+        "could not allocate a unique handle-owned unpublished state object".to_owned(),
+    ))
+}
+
 fn classify_expected_entry_error(
     error: std::io::Error,
     kind: EntryKind,
@@ -225,6 +326,173 @@ pub(crate) fn same_volume_and_mount(left: &HeldEntry, right: &HeldEntry) -> bool
     same_volume(left.identity(), right.identity()) && left.mount_id == right.mount_id
 }
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[allow(
+    unsafe_code,
+    reason = "Linux handle-owned publication requires linkat with AT_EMPTY_PATH"
+)]
+fn publish_unpublished_file_platform(
+    unpublished: &HeldEntry,
+    parent: &HeldEntry,
+    name: &OsStr,
+) -> Result<(), StoreError> {
+    use std::ffi::{CString, c_char, c_int};
+    use std::os::fd::AsRawFd;
+    use std::os::unix::ffi::OsStrExt;
+
+    const AT_EMPTY_PATH: c_int = 0x1000;
+    unsafe extern "C" {
+        fn linkat(
+            olddirfd: c_int,
+            oldpath: *const c_char,
+            newdirfd: c_int,
+            newpath: *const c_char,
+            flags: c_int,
+        ) -> c_int;
+    }
+
+    let empty = CString::new(Vec::<u8>::new())
+        .map_err(|_| StoreError::Integrity("empty publication path contains NUL".to_owned()))?;
+    let name = CString::new(name.as_bytes())
+        .map_err(|_| StoreError::Integrity("publication name contains NUL".to_owned()))?;
+    // SAFETY: both descriptors and NUL-terminated strings remain live for the
+    // call; AT_EMPTY_PATH names the opened unpublished object and linkat does
+    // not replace an existing destination.
+    let result = unsafe {
+        linkat(
+            unpublished.file().as_raw_fd(),
+            empty.as_ptr(),
+            parent.file().as_raw_fd(),
+            name.as_ptr(),
+            AT_EMPTY_PATH,
+        )
+    };
+    if result != 0 {
+        return Err(io_error(std::io::Error::last_os_error()));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+#[allow(
+    unsafe_code,
+    reason = "Windows handle-owned publication requires NtSetInformationFile on the unnamed delete-on-close handle"
+)]
+fn publish_unpublished_file_platform(
+    unpublished: &HeldEntry,
+    parent: &HeldEntry,
+    name: &OsStr,
+) -> Result<(), StoreError> {
+    use std::mem::{offset_of, size_of};
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::io::AsRawHandle;
+
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::Storage::FileSystem::FILE_RENAME_INFO;
+
+    #[repr(C)]
+    struct IoStatusBlock {
+        status_or_pointer: usize,
+        information: usize,
+    }
+
+    #[repr(C)]
+    struct FileDispositionInformationEx {
+        flags: u32,
+    }
+
+    #[link(name = "ntdll")]
+    unsafe extern "system" {
+        fn NtSetInformationFile(
+            file_handle: HANDLE,
+            io_status_block: *mut IoStatusBlock,
+            file_information: *const core::ffi::c_void,
+            length: u32,
+            file_information_class: i32,
+        ) -> i32;
+    }
+
+    const FILE_RENAME_INFORMATION: i32 = 10;
+    const FILE_DISPOSITION_INFORMATION_EX: i32 = 64;
+    const FILE_DISPOSITION_ON_CLOSE: u32 = 0x0000_0008;
+
+    let name = name.encode_wide().collect::<Vec<_>>();
+    let name_bytes = name
+        .len()
+        .checked_mul(size_of::<u16>())
+        .and_then(|length| u32::try_from(length).ok())
+        .ok_or_else(|| StoreError::Integrity("publication name is too long".to_owned()))?;
+    let bytes = offset_of!(FILE_RENAME_INFO, FileName)
+        .checked_add(name.len() * size_of::<u16>())
+        .ok_or_else(|| StoreError::Integrity("publication buffer overflow".to_owned()))?;
+    let words = bytes.div_ceil(size_of::<u64>());
+    let mut buffer = vec![0_u64; words];
+    let information = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+    // SAFETY: the aligned buffer is sized for the fixed header and exact
+    // UTF-16 component. Both handles remain live for both calls.
+    unsafe {
+        (*information).Anonymous.ReplaceIfExists = false;
+        (*information).RootDirectory = parent.file().as_raw_handle() as HANDLE;
+        (*information).FileNameLength = name_bytes;
+        std::ptr::copy_nonoverlapping(
+            name.as_ptr(),
+            std::ptr::addr_of_mut!((*information).FileName).cast::<u16>(),
+            name.len(),
+        );
+        let mut io_status = IoStatusBlock {
+            status_or_pointer: 0,
+            information: 0,
+        };
+        let status = NtSetInformationFile(
+            unpublished.file().as_raw_handle() as HANDLE,
+            &mut io_status,
+            information.cast(),
+            u32::try_from(bytes)
+                .map_err(|_| StoreError::Integrity("publication buffer exceeds u32".to_owned()))?,
+            FILE_RENAME_INFORMATION,
+        );
+        if status < 0 {
+            return Err(StoreError::Io(format!(
+                "handle-owned publication failed with NTSTATUS 0x{:08x}",
+                status as u32
+            )));
+        }
+        // FILE_FLAG_DELETE_ON_CLOSE cannot be cancelled by the legacy boolean
+        // disposition class. The extended class with ON_CLOSE and no DELETE
+        // bit clears that create-time state after the no-replace rename.
+        let disposition = FileDispositionInformationEx {
+            flags: FILE_DISPOSITION_ON_CLOSE,
+        };
+        let status = NtSetInformationFile(
+            unpublished.file().as_raw_handle() as HANDLE,
+            &mut io_status,
+            std::ptr::addr_of!(disposition).cast(),
+            u32::try_from(size_of::<FileDispositionInformationEx>()).map_err(|_| {
+                StoreError::Integrity("publication disposition buffer exceeds u32".to_owned())
+            })?,
+            FILE_DISPOSITION_INFORMATION_EX,
+        );
+        if status < 0 {
+            return Err(StoreError::Io(format!(
+                "handle-owned publication could not clear delete-on-close: NTSTATUS 0x{:08x}",
+                status as u32
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(any(all(target_os = "linux", target_arch = "x86_64"), windows)))]
+fn publish_unpublished_file_platform(
+    _unpublished: &HeldEntry,
+    _parent: &HeldEntry,
+    _name: &OsStr,
+) -> Result<(), StoreError> {
+    Err(StoreError::Integrity(
+        "handle-owned publication supports Windows and Linux x64".to_owned(),
+    ))
+}
+
 pub(crate) fn move_entry_noreplace(
     source_parent: &HeldEntry,
     source_name: &OsStr,
@@ -248,6 +516,66 @@ pub(crate) fn move_entry_noreplace(
         destination_parent,
         destination_name,
     )
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub(crate) fn exchange_entries(
+    parent: &HeldEntry,
+    left_name: &OsStr,
+    left: &HeldEntry,
+    right_name: &OsStr,
+    right: &HeldEntry,
+) -> Result<(), StoreError> {
+    require_normal_component(left_name, "migration exchange source")?;
+    require_normal_component(right_name, "migration exchange target")?;
+    if !same_volume_and_mount(parent, left) || !same_volume_and_mount(parent, right) {
+        return Err(StoreError::Integrity(
+            "migration exchange crossed its bound volume or mount".to_owned(),
+        ));
+    }
+    exchange_entries_platform(parent, left_name, right_name)
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[allow(
+    unsafe_code,
+    reason = "the supported Linux x64 lane requires renameat2 RENAME_EXCHANGE so neither migration object is disposed"
+)]
+fn exchange_entries_platform(
+    parent: &HeldEntry,
+    left_name: &OsStr,
+    right_name: &OsStr,
+) -> Result<(), StoreError> {
+    use std::ffi::{CString, c_char, c_int, c_long, c_uint};
+    use std::os::fd::AsRawFd;
+    use std::os::unix::ffi::OsStrExt;
+
+    const SYS_RENAMEAT2: c_long = 316;
+    const RENAME_EXCHANGE: c_uint = 2;
+    unsafe extern "C" {
+        fn syscall(number: c_long, ...) -> c_long;
+    }
+
+    let left = CString::new(left_name.as_bytes())
+        .map_err(|_| StoreError::Integrity("migration exchange source contains NUL".to_owned()))?;
+    let right = CString::new(right_name.as_bytes())
+        .map_err(|_| StoreError::Integrity("migration exchange target contains NUL".to_owned()))?;
+    // SAFETY: the directory descriptor and both NUL-terminated component names
+    // remain live for the syscall. RENAME_EXCHANGE preserves both objects.
+    let result = unsafe {
+        syscall(
+            SYS_RENAMEAT2,
+            parent.file().as_raw_fd() as c_int,
+            left.as_ptr().cast::<c_char>(),
+            parent.file().as_raw_fd() as c_int,
+            right.as_ptr().cast::<c_char>(),
+            RENAME_EXCHANGE,
+        )
+    };
+    if result != 0 {
+        return Err(io_error(std::io::Error::last_os_error()));
+    }
+    Ok(())
 }
 
 fn require_normal_component(component: &OsStr, label: &str) -> Result<(), StoreError> {

@@ -12,11 +12,13 @@ compile_error!("cache-cleanup-test-fault is restricted to debug test builds");
 mod tests;
 
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(feature = "cache-cleanup-test-fault")]
+use std::path::{Component, Path};
 
 use lumin_evidence::{
-    CacheCleanupDeliveryStatus, CacheCleanupExecutionLease, CacheCleanupOperationRecord,
-    CacheCleanupOperationStatus, CacheCleanupRecoveryReservation, CacheCleanupResult,
-    CacheEvictionAuthorization, CacheEvictionAuthorizationState,
+    CacheCleanupDeliveryCompletion, CacheCleanupDeliveryOutcome, CacheCleanupExecutionLease,
+    CacheCleanupOperationRecord, CacheCleanupOperationStatus, CacheCleanupRecoveryReservation,
+    CacheCleanupResult, CacheEvictionAuthorization, CacheEvictionAuthorizationState,
 };
 use lumin_model::{
     CacheEvictionAuthorizationSetId, OperationId, RepositoryId, append_length_prefixed,
@@ -26,6 +28,10 @@ use redb::{TableDefinition, WriteTransaction};
 
 use crate::gate::records::{load_record, read_record, read_records, write_record};
 use crate::namespace::NamespaceGuard;
+#[cfg(feature = "cache-cleanup-test-fault")]
+use crate::namespace::records::ManagedStateParentKind;
+#[cfg(feature = "cache-cleanup-test-fault")]
+use crate::namespace::{EntryKind, HeldEntry, same_volume_and_mount};
 use crate::{OperationSession, RepositoryStore, StoreError, nonce_hex};
 
 use self::manifest::{
@@ -39,10 +45,97 @@ pub(crate) const CACHE_CLEANUP_OPERATIONS: TableDefinition<&str, &[u8]> =
 pub(crate) const CACHE_EVICTION_AUTHORIZATIONS: TableDefinition<&str, &[u8]> =
     TableDefinition::new("cache-eviction-authorizations");
 
-const CACHE_CLEANUP_OPERATION_SCHEMA: &str = "lumin-cache-cleanup-operation.v1";
+const CACHE_CLEANUP_OPERATION_SCHEMA: &str = "lumin-cache-cleanup-operation.v2";
 const CACHE_EVICTION_AUTHORIZATION_SCHEMA: &str = "lumin-cache-eviction-authorization.v1";
 
 impl RepositoryStore {
+    #[cfg(any(test, feature = "lifecycle-migration-test-fault"))]
+    pub fn rewrite_cache_cleanup_operation_as_prior_for_test(
+        &self,
+        operation_id: &OperationId,
+        last_delivery_status: crate::PriorCacheCleanupDeliveryStatusForTest,
+    ) -> Result<(), StoreError> {
+        self.with_exclusive_lock(|guard| {
+            let database = guard.open_database()?;
+            let write = database.begin_write()?;
+            let operation = read_record::<CacheCleanupOperationRecord>(
+                &write,
+                CACHE_CLEANUP_OPERATIONS,
+                operation_id.as_str(),
+            )?
+            .ok_or_else(|| StoreError::OperationNotFound(operation_id.as_str().to_owned()))?;
+            validate_operation_shape(&operation)?;
+            let legacy = serde_json::json!({
+                "schemaVersion": "lumin-cache-cleanup-operation.v1",
+                "repositoryId": operation.repository_id,
+                "operationId": operation.operation_id,
+                "requestDigest": operation.request_digest,
+                "status": operation.status,
+                "interruptionCount": operation.interruption_count,
+                "invocationId": operation.invocation_id,
+                "initialAuthorizationSetId": operation.initial_authorization_set_id,
+                "initialAuthorizationCount": operation.initial_authorization_count,
+                "planInitialized": operation.plan_initialized,
+                "authorizationKeys": operation.authorization_keys,
+                "validatedCount": operation.validated_count,
+                "executionLease": operation.execution_lease,
+                "recoveryReservation": operation.recovery_reservation,
+                "result": operation.result,
+                "lastDeliveryStatus": last_delivery_status,
+            });
+            write_record(
+                &write,
+                CACHE_CLEANUP_OPERATIONS,
+                operation_id.as_str(),
+                &legacy,
+            )?;
+            guard.commit(write)
+        })
+    }
+
+    #[cfg(feature = "cache-cleanup-test-fault")]
+    pub fn write_active_cache_payload_for_test(
+        &self,
+        name: &str,
+        payload: &[u8],
+    ) -> Result<(), StoreError> {
+        if name == "namespace.anchor"
+            || !matches!(
+                Path::new(name).components().collect::<Vec<_>>().as_slice(),
+                [Component::Normal(_)]
+            )
+        {
+            return Err(StoreError::Integrity(
+                "test cache writer requires one ordinary child name".to_owned(),
+            ));
+        }
+        self.with_exclusive_lock(|guard| {
+            let database = guard.open_database()?;
+            let write = database.begin_write()?;
+            reject_active_cache_mutation_reservation(&write, None)?;
+            let parent = guard.managed_parent_entry(ManagedStateParentKind::Cache)?;
+            let path = guard
+                .managed_parent_path(ManagedStateParentKind::Cache)
+                .join(name);
+            let entry = HeldEntry::create_new(&path, "test active-cache payload")?;
+            if !same_volume_and_mount(&entry, parent) {
+                return Err(StoreError::Integrity(
+                    "test active-cache payload crossed its bound volume or mount".to_owned(),
+                ));
+            }
+            entry.replace_contents(payload)?;
+            entry.validate_path(
+                &path,
+                EntryKind::RegularFile,
+                crate::namespace::EntryAccess::ReadWrite,
+                true,
+                "test active-cache payload",
+            )?;
+            parent.sync_directory()?;
+            guard.commit(write)
+        })
+    }
+
     pub fn clean_cache_payloads(
         &self,
         operation_id: &OperationId,
@@ -79,12 +172,11 @@ impl RepositoryStore {
             .ok_or_else(|| StoreError::OperationNotFound(operation_id.as_str().to_owned()))
     }
 
-    pub fn record_cache_cleanup_delivery(
+    pub fn allocate_cache_cleanup_delivery(
         &self,
         operation_id: &OperationId,
         request_digest: &str,
-        delivery: CacheCleanupDeliveryStatus,
-    ) -> Result<(), StoreError> {
+    ) -> Result<u64, StoreError> {
         self.with_exclusive_lock(|guard| {
             let database = guard.open_database()?;
             let write = database.begin_write()?;
@@ -109,7 +201,83 @@ impl RepositoryStore {
                     operation_id.as_str()
                 )));
             }
-            operation.last_delivery_status = delivery;
+            let sequence = operation
+                .greatest_allocated_delivery_sequence
+                .checked_add(1)
+                .ok_or_else(|| {
+                    StoreError::Integrity(format!(
+                        "cache cleanup delivery sequence overflow: {}",
+                        operation_id.as_str()
+                    ))
+                })?;
+            operation.greatest_allocated_delivery_sequence = sequence;
+            write_record(
+                &write,
+                CACHE_CLEANUP_OPERATIONS,
+                operation_id.as_str(),
+                &operation,
+            )?;
+            guard.commit(write)?;
+            Ok(sequence)
+        })
+    }
+
+    pub fn record_cache_cleanup_delivery(
+        &self,
+        operation_id: &OperationId,
+        request_digest: &str,
+        sequence: u64,
+        outcome: CacheCleanupDeliveryOutcome,
+    ) -> Result<(), StoreError> {
+        self.with_exclusive_lock(|guard| {
+            let database = guard.open_database()?;
+            let write = database.begin_write()?;
+            let mut operation = read_record::<CacheCleanupOperationRecord>(
+                &write,
+                CACHE_CLEANUP_OPERATIONS,
+                operation_id.as_str(),
+            )?
+            .ok_or_else(|| StoreError::OperationNotFound(operation_id.as_str().to_owned()))?;
+            validate_operation_identity(
+                &operation,
+                operation_id,
+                request_digest,
+                guard.repository_id(),
+            )?;
+            validate_operation_shape(&operation)?;
+            if operation.status != CacheCleanupOperationStatus::Committed
+                || operation.result.is_none()
+                || sequence == 0
+                || sequence > operation.greatest_allocated_delivery_sequence
+            {
+                return Err(StoreError::Integrity(format!(
+                    "cache cleanup delivery completion has no allocated attempt: {} sequence {sequence}",
+                    operation_id.as_str()
+                )));
+            }
+            match operation
+                .delivery_completions
+                .binary_search_by_key(&sequence, |completion| completion.sequence)
+            {
+                Ok(index) if operation.delivery_completions[index].outcome == outcome => {
+                    return Ok(());
+                }
+                Ok(_) => {
+                    return Err(StoreError::Integrity(format!(
+                        "cache cleanup delivery sequence changed outcome: {} sequence {sequence}",
+                        operation_id.as_str()
+                    )));
+                }
+                Err(index) => operation.delivery_completions.insert(
+                    index,
+                    CacheCleanupDeliveryCompletion { sequence, outcome },
+                ),
+            }
+            operation.greatest_completed_delivery_sequence = operation
+                .delivery_completions
+                .last()
+                .map(|completion| completion.sequence);
+            validate_operation_shape(&operation)?;
             write_record(
                 &write,
                 CACHE_CLEANUP_OPERATIONS,
@@ -177,13 +345,10 @@ impl RepositoryStore {
                 read_records::<CacheCleanupOperationRecord>(&write, CACHE_CLEANUP_OPERATIONS)?
             {
                 validate_operation_shape(&operation)?;
-                if operation.operation_id != *operation_id
-                    && operation.status != CacheCleanupOperationStatus::Committed
-                {
-                    return Err(StoreError::OperationBusy(
-                        operation.operation_id.as_str().to_owned(),
-                    ));
-                }
+                reject_active_cache_mutation_reservation_for_operation(
+                    &operation,
+                    Some(operation_id),
+                )?;
             }
             Ok(())
         })
@@ -281,16 +446,17 @@ impl RepositoryStore {
         request_digest: &str,
     ) -> Result<(), StoreError> {
         session.validate_live_lock()?;
-        self.with_exclusive_lock(|guard| {
+        let attached = self.with_exclusive_lock(|guard| {
             let database = session.open_database(guard)?;
             let write = database.begin_write()?;
             reject_non_cleanup_collision(&write, session.operation_id())?;
-            reject_foreign_cleanup_owner(&write, session.operation_id())?;
-            let operation = if let Some(mut operation) = read_record::<CacheCleanupOperationRecord>(
-                &write,
-                CACHE_CLEANUP_OPERATIONS,
-                session.operation_id().as_str(),
-            )? {
+            reject_active_cache_mutation_reservation(&write, Some(session.operation_id()))?;
+            let (operation, attached) = if let Some(mut operation) =
+                read_record::<CacheCleanupOperationRecord>(
+                    &write,
+                    CACHE_CLEANUP_OPERATIONS,
+                    session.operation_id().as_str(),
+                )? {
                 validate_operation_identity(
                     &operation,
                     session.operation_id(),
@@ -299,7 +465,7 @@ impl RepositoryStore {
                 )?;
                 validate_operation_shape(&operation)?;
                 if operation.status == CacheCleanupOperationStatus::Committed {
-                    return Ok(());
+                    return Ok(false);
                 }
                 if operation.status == CacheCleanupOperationStatus::Pending {
                     if operation
@@ -307,7 +473,7 @@ impl RepositoryStore {
                         .as_ref()
                         .is_some_and(|lease| lease.liveness == *session.liveness())
                     {
-                        return Ok(());
+                        return Ok(false);
                     }
                     return Err(StoreError::Integrity(format!(
                         "cache cleanup pending lease was not interrupted before reattachment: {}",
@@ -317,36 +483,43 @@ impl RepositoryStore {
                 operation.status = CacheCleanupOperationStatus::Pending;
                 operation.execution_lease = Some(new_execution_lease(session)?);
                 operation.recovery_reservation = None;
-                operation
+                (operation, true)
             } else {
                 let existing = validate_authenticated_quarantine(guard, &write)?;
                 let initial_rows = existing
                     .iter()
                     .map(authorization_set_frame)
                     .collect::<Vec<_>>();
-                CacheCleanupOperationRecord {
-                    schema_version: CACHE_CLEANUP_OPERATION_SCHEMA.to_owned(),
-                    repository_id: guard.repository_id().clone(),
-                    operation_id: session.operation_id().clone(),
-                    request_digest: request_digest.to_owned(),
-                    status: CacheCleanupOperationStatus::Pending,
-                    interruption_count: 0,
-                    invocation_id: nonce_hex()?,
-                    initial_authorization_set_id:
-                        CacheEvictionAuthorizationSetId::for_canonical_rows(&initial_rows),
-                    initial_authorization_count: u64::try_from(existing.len()).map_err(|_| {
-                        StoreError::Integrity(
-                            "cache quarantine authorization count overflow".to_owned(),
-                        )
-                    })?,
-                    plan_initialized: false,
-                    authorization_keys: Vec::new(),
-                    validated_count: 0,
-                    execution_lease: Some(new_execution_lease(session)?),
-                    recovery_reservation: None,
-                    result: None,
-                    last_delivery_status: CacheCleanupDeliveryStatus::NotAttempted,
-                }
+                (
+                    CacheCleanupOperationRecord {
+                        schema_version: CACHE_CLEANUP_OPERATION_SCHEMA.to_owned(),
+                        repository_id: guard.repository_id().clone(),
+                        operation_id: session.operation_id().clone(),
+                        request_digest: request_digest.to_owned(),
+                        status: CacheCleanupOperationStatus::Pending,
+                        interruption_count: 0,
+                        invocation_id: nonce_hex()?,
+                        initial_authorization_set_id:
+                            CacheEvictionAuthorizationSetId::for_canonical_rows(&initial_rows),
+                        initial_authorization_count: u64::try_from(existing.len()).map_err(
+                            |_| {
+                                StoreError::Integrity(
+                                    "cache quarantine authorization count overflow".to_owned(),
+                                )
+                            },
+                        )?,
+                        plan_initialized: false,
+                        authorization_keys: Vec::new(),
+                        validated_count: 0,
+                        execution_lease: Some(new_execution_lease(session)?),
+                        recovery_reservation: None,
+                        result: None,
+                        greatest_allocated_delivery_sequence: 0,
+                        greatest_completed_delivery_sequence: None,
+                        delivery_completions: Vec::new(),
+                    },
+                    true,
+                )
             };
             validate_operation_shape(&operation)?;
             write_record(
@@ -355,8 +528,15 @@ impl RepositoryStore {
                 operation.operation_id.as_str(),
                 &operation,
             )?;
-            guard.commit(write)
-        })
+            guard.commit(write)?;
+            Ok(attached)
+        })?;
+        #[cfg(feature = "cache-cleanup-test-fault")]
+        if attached {
+            barrier::wait_pending(session.operation_id())?;
+        }
+        let _ = attached;
+        Ok(())
     }
 
     fn authorize_cleanup_plan(
@@ -655,19 +835,27 @@ fn reject_non_cleanup_collision(
     Ok(())
 }
 
-fn reject_foreign_cleanup_owner(
+fn reject_active_cache_mutation_reservation(
     write: &WriteTransaction,
-    operation_id: &OperationId,
+    allowed_owner: Option<&OperationId>,
 ) -> Result<(), StoreError> {
     for operation in read_records::<CacheCleanupOperationRecord>(write, CACHE_CLEANUP_OPERATIONS)? {
         validate_operation_shape(&operation)?;
-        if operation.operation_id != *operation_id
-            && operation.status != CacheCleanupOperationStatus::Committed
-        {
-            return Err(StoreError::OperationBusy(
-                operation.operation_id.as_str().to_owned(),
-            ));
-        }
+        reject_active_cache_mutation_reservation_for_operation(&operation, allowed_owner)?;
+    }
+    Ok(())
+}
+
+fn reject_active_cache_mutation_reservation_for_operation(
+    operation: &CacheCleanupOperationRecord,
+    allowed_owner: Option<&OperationId>,
+) -> Result<(), StoreError> {
+    if operation.status != CacheCleanupOperationStatus::Committed
+        && allowed_owner != Some(&operation.operation_id)
+    {
+        return Err(StoreError::OperationBusy(
+            operation.operation_id.as_str().to_owned(),
+        ));
     }
     Ok(())
 }
@@ -888,16 +1076,37 @@ pub(crate) fn validate_operation_shape(
     let counts_valid = operation.validated_count <= operation.authorized_count();
     let plan_valid = operation.plan_initialized
         || (operation.authorization_keys.is_empty() && operation.validated_count == 0);
+    let delivery_sequences_valid = operation
+        .delivery_completions
+        .windows(2)
+        .all(|pair| pair[0].sequence < pair[1].sequence)
+        && operation.delivery_completions.iter().all(|completion| {
+            completion.sequence > 0
+                && completion.sequence <= operation.greatest_allocated_delivery_sequence
+        })
+        && operation.greatest_completed_delivery_sequence
+            == operation
+                .delivery_completions
+                .last()
+                .map(|completion| completion.sequence)
+        && (operation.greatest_allocated_delivery_sequence > 0
+            || operation.delivery_completions.is_empty());
     let state_valid = match operation.status {
         CacheCleanupOperationStatus::Pending => {
             operation.execution_lease.is_some()
                 && operation.recovery_reservation.is_none()
                 && operation.result.is_none()
+                && operation.greatest_allocated_delivery_sequence == 0
+                && operation.greatest_completed_delivery_sequence.is_none()
+                && operation.delivery_completions.is_empty()
         }
         CacheCleanupOperationStatus::Interrupted => {
             operation.execution_lease.is_none()
                 && operation.recovery_reservation.is_some()
                 && operation.result.is_none()
+                && operation.greatest_allocated_delivery_sequence == 0
+                && operation.greatest_completed_delivery_sequence.is_none()
+                && operation.delivery_completions.is_empty()
         }
         CacheCleanupOperationStatus::Committed => {
             operation.execution_lease.is_none()
@@ -917,6 +1126,7 @@ pub(crate) fn validate_operation_shape(
         || !unique
         || !counts_valid
         || !plan_valid
+        || !delivery_sequences_valid
         || !state_valid
     {
         return Err(StoreError::Integrity(format!(

@@ -78,7 +78,7 @@ fn public_cache_cleanup_quarantines_payloads_and_replays_one_committed_result()
     assert_eq!(
         serde_json::from_str::<Value>(&shown.stdout)?,
         json!({
-            "schemaVersion": "lumin.cache-cleanup-operation.v1",
+            "schemaVersion": "lumin.cache-cleanup-operation.v2",
             "operationId": operation_id,
             "kind": "cache-clean",
             "requestDigest": request_digest,
