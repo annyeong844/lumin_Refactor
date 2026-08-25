@@ -350,6 +350,7 @@ fn is_reviewed_run_command(line: &str) -> bool {
         "rustup toolchain install 1.96.0 --profile minimal --component rustfmt --no-self-update",
         "rustup toolchain install 1.96.0 --profile minimal --no-self-update",
         "rustup toolchain install 1.96.0 --profile minimal --component clippy,rustfmt --no-self-update",
+        "rustup target add x86_64-unknown-linux-musl --toolchain 1.96.0",
         "$cargo = rustup which --toolchain 1.96.0 cargo",
         "$clippy = rustup which --toolchain 1.96.0 cargo-clippy",
         "$python = & \"$env:SETUP_PYTHON\" -I -S -c \"import pathlib,sys; print(pathlib.Path(sys.executable).resolve(strict=True))\"",

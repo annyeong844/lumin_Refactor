@@ -129,8 +129,25 @@ fn write_stdout(
     delivery_sequence: Option<u64>,
     stdout: &mut dyn Write,
 ) -> Result<(), std::io::Error> {
-    let bytes = output.stdout.as_bytes();
+    write_stdout_payload(output, delivery_sequence, stdout)?;
+    stdout.write_all(b"\n")?;
+    stdout.flush()?;
     #[cfg(feature = "lifecycle-test-fault")]
+    wait_cache_cleanup_delivery_barrier(
+        output,
+        delivery_sequence,
+        delivery_barrier::Stage::CompleteStdout,
+    )?;
+    Ok(())
+}
+
+#[cfg(feature = "lifecycle-test-fault")]
+fn write_stdout_payload(
+    output: &lumin_cli::CommandOutput,
+    delivery_sequence: Option<u64>,
+    stdout: &mut dyn Write,
+) -> Result<(), std::io::Error> {
+    let bytes = output.stdout.as_bytes();
     if cache_cleanup_delivery_identity(output, delivery_sequence).is_some()
         && delivery_barrier::selected(delivery_barrier::Stage::PartialStdout)?
     {
@@ -146,15 +163,16 @@ fn write_stdout(
     } else {
         stdout.write_all(bytes)?;
     }
-    stdout.write_all(b"\n")?;
-    stdout.flush()?;
-    #[cfg(feature = "lifecycle-test-fault")]
-    wait_cache_cleanup_delivery_barrier(
-        output,
-        delivery_sequence,
-        delivery_barrier::Stage::CompleteStdout,
-    )?;
     Ok(())
+}
+
+#[cfg(not(feature = "lifecycle-test-fault"))]
+fn write_stdout_payload(
+    output: &lumin_cli::CommandOutput,
+    _delivery_sequence: Option<u64>,
+    stdout: &mut dyn Write,
+) -> Result<(), std::io::Error> {
+    stdout.write_all(output.stdout.as_bytes())
 }
 
 #[cfg(feature = "lifecycle-test-fault")]

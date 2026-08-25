@@ -577,15 +577,21 @@ jobs:
         run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --workspace --doc --locked'
 
   release:
-    name: ${{ matrix.os }} release
+    name: ${{ matrix.package_target }} package
     needs: policy
     if: ${{ needs.policy.outputs.run_full == 'true' }}
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-24.04
-          - windows-2022
+        include:
+          - os: ubuntu-24.04
+            package_target: linux-x64
+            build_arguments: --target x86_64-unknown-linux-musl
+            binary_path: x86_64-unknown-linux-musl/release/lumin
+          - os: windows-2022
+            package_target: windows-x64
+            build_arguments: ""
+            binary_path: release/lumin.exe
     runs-on: ${{ matrix.os }}
     steps:
       - name: Initialize isolated Cargo paths
@@ -607,6 +613,11 @@ jobs:
         shell: pwsh
         run: rustup toolchain install 1.96.0 --profile minimal --no-self-update
 
+      - name: Install exact Linux musl target
+        if: ${{ matrix.package_target == 'linux-x64' }}
+        shell: pwsh
+        run: rustup target add x86_64-unknown-linux-musl --toolchain 1.96.0
+
       - name: Record trusted tools
         shell: pwsh
         env:
@@ -621,7 +632,21 @@ jobs:
 
       - name: Build release binary
         shell: pwsh
-        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo build -p lumin-cli --release --locked'
+        env:
+          LUMIN_BUILD_REVISION: ${{ github.sha }}
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo build -p lumin-cli --release --locked ${{ matrix.build_arguments }}'
+
+      - name: Probe packaged binary without runtime build tools
+        shell: pwsh
+        env:
+          LUMIN_PACKAGE_BINARY: ${{ runner.temp }}/lumin-target/${{ matrix.binary_path }}
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- package-check ${{ matrix.package_target }}'
+
+      - name: Probe packaged skills
+        shell: pwsh
+        env:
+          LUMIN_PACKAGE_BINARY: ${{ runner.temp }}/lumin-target/${{ matrix.binary_path }}
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- package-check skills'
 
   required:
     name: Required

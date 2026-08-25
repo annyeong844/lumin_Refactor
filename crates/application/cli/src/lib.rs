@@ -1,4 +1,5 @@
 mod cache;
+mod help_agent;
 mod query;
 mod retention;
 mod store;
@@ -195,6 +196,7 @@ fn execute_inner(
         "related" => query::related(root, &mut arguments).map(success),
         "files" => query::files(root, &mut arguments).map(success),
         "capabilities" => capabilities(root, &mut arguments, build_identity).map(success),
+        "help-agent" => help_agent::execute(&mut arguments).map(success),
         "cache" => cache::execute(root, &mut arguments),
         "store" => store::execute(root, &mut arguments),
         "pre-write" => pre_write(root, &mut arguments, input),
