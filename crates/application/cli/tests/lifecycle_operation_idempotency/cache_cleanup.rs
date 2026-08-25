@@ -111,9 +111,11 @@ fn cleanup_retry_exposes_one_read_only_interrupted_barrier_before_reattachment()
     assert_status(&crashed, CRASH_EXIT_CODE);
 
     let interrupted_barrier = CleanupBarrier::new(INTERRUPTED_BARRIER_ENV, "interrupted")?;
-    let pending_barrier = CleanupBarrier::new(PENDING_BARRIER_ENV, "pending")?;
-    let mut retry =
-        interrupted_barrier.spawn_retry_with(root.path(), operation_id, Some(&pending_barrier))?;
+    let mut retry = interrupted_barrier.spawn_retry_with(
+        root.path(),
+        operation_id,
+        Some(PENDING_BARRIER_ENV),
+    )?;
     let interrupted_permit = interrupted_barrier.accept(&mut retry, operation_id)?;
 
     let interrupted = show_operation(root.path(), operation_id)?;
@@ -134,7 +136,7 @@ fn cleanup_retry_exposes_one_read_only_interrupted_barrier_before_reattachment()
     assert_seed_cache_intact(root.path())?;
 
     interrupted_permit.release()?;
-    let pending_permit = pending_barrier.accept(&mut retry, operation_id)?;
+    let pending_permit = interrupted_barrier.accept_stage(&mut retry, "pending", operation_id)?;
     let pending = show_operation(root.path(), operation_id)?;
     assert_cleanup_projection(&pending, "pending", 1, 2, 0, true)?;
     assert_active_cache_writer_blocked(root.path(), "blocked-after-reattachment.bin")?;
@@ -673,19 +675,17 @@ impl CleanupBarrier {
         &self,
         root: &Path,
         operation_id: &str,
-        additional: Option<&Self>,
+        additional_environment: Option<&'static str>,
     ) -> Result<PausedCleanup, Box<dyn std::error::Error>> {
         let mut command = lumin_command(root)?;
+        let address = self.listener.local_addr()?.to_string();
         command
             .args(["cache", "clean", "--operation-id", operation_id])
-            .env(self.environment, self.listener.local_addr()?.to_string())
+            .env(self.environment, &address)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        if let Some(additional) = additional {
-            command.env(
-                additional.environment,
-                additional.listener.local_addr()?.to_string(),
-            );
+        if let Some(environment) = additional_environment {
+            command.env(environment, &address);
         }
         Ok(PausedCleanup::from_child(command.spawn()?))
     }
@@ -695,11 +695,20 @@ impl CleanupBarrier {
         process: &mut PausedCleanup,
         operation_id: &str,
     ) -> Result<CleanupPermit, Box<dyn std::error::Error>> {
+        self.accept_stage(process, self.stage, operation_id)
+    }
+
+    fn accept_stage(
+        &self,
+        process: &mut PausedCleanup,
+        stage: &str,
+        operation_id: &str,
+    ) -> Result<CleanupPermit, Box<dyn std::error::Error>> {
         let started = Instant::now();
         loop {
             match self.listener.accept() {
                 Ok((stream, peer)) if peer.ip().is_loopback() => {
-                    return CleanupPermit::new(stream, self.stage, operation_id);
+                    return CleanupPermit::new(stream, stage, operation_id);
                 }
                 Ok(_) => {
                     return Err(std::io::Error::other(
@@ -714,7 +723,7 @@ impl CleanupBarrier {
                 let output = process.take_output()?;
                 return Err(std::io::Error::other(format!(
                     "cleanup exited before {} barrier: status={:?}\nstdout={}\nstderr={}",
-                    self.stage,
+                    stage,
                     output.status.code(),
                     String::from_utf8_lossy(&output.stdout),
                     String::from_utf8_lossy(&output.stderr),
@@ -724,7 +733,7 @@ impl CleanupBarrier {
             if started.elapsed() >= BARRIER_WAIT_LIMIT {
                 return Err(std::io::Error::other(format!(
                     "cleanup did not reach {} barrier",
-                    self.stage
+                    stage
                 ))
                 .into());
             }

@@ -161,6 +161,25 @@ pub(super) fn read_document(
     )
 }
 
+pub(crate) fn migration_pointer_ids(
+    state_dir: &std::path::Path,
+    state_directory: &crate::namespace::HeldEntry,
+) -> Result<(Option<AttemptId>, Option<RunId>), StoreError> {
+    let path = state_dir.join(LATEST_NAME);
+    if !entry_exists(&path)? {
+        return Ok((None, None));
+    }
+    let latest = read_document_path(
+        &path,
+        state_directory,
+        "latest pointer during lifecycle migration",
+    )?;
+    Ok((
+        latest.latest_attempt.map(|pointer| pointer.attempt_id),
+        latest.latest_completed.map(|pointer| pointer.run_id),
+    ))
+}
+
 fn read_document_path(
     path: &std::path::Path,
     parent: &crate::namespace::HeldEntry,

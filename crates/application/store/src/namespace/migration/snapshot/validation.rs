@@ -24,6 +24,7 @@ use serde::de::DeserializeOwned;
 use crate::gate::{
     records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY, transition_key, validate_reservation_binding_set,
 };
+use crate::retention::records::StoredRetentionPlan;
 use crate::{RunCatalogRecord, StoreError};
 
 use super::super::super::NamespaceGuard;
@@ -80,7 +81,19 @@ fn validate_retention_allocator_sequences(
         .try_fold(0_u64, |maximum, sequence| {
             sequence.map(|sequence| maximum.max(sequence))
         })?;
-    validate_allocator_sequence(snapshot, "run-pin", maximum_pin)
+    validate_allocator_sequence(snapshot, "run-pin", maximum_pin)?;
+
+    let maximum_catalog_revision = snapshot
+        .retention_plans
+        .iter()
+        .map(|(key, bytes)| {
+            parse_record::<StoredRetentionPlan>("retention-plans", key, bytes)
+                .map(|plan| plan.record.catalog_revision)
+        })
+        .try_fold(0_u64, |maximum, revision| {
+            revision.map(|revision| maximum.max(revision))
+        })?;
+    validate_allocator_sequence(snapshot, "retention-catalog", maximum_catalog_revision)
 }
 
 fn validate_allocator_sequence(

@@ -33,7 +33,7 @@ pub(super) fn validate_external_references(
     validate_pending_pre_write_leases(snapshot, guard)?;
     validate_pending_semantic_read_bindings(snapshot, guard)?;
     validate_active_gate_write_prefixes(snapshot, guard)?;
-    validate_latest_attempt(snapshot, guard)?;
+    validate_latest_pointers(snapshot, guard)?;
     let moved_runs = validate_retention_payloads(snapshot, guard)?;
     for (key, bytes) in &snapshot.run_catalog {
         validate_run(key, bytes, guard, moved_runs.get(key))?;
@@ -438,10 +438,44 @@ fn validate_active_gate_write_prefixes(
     Ok(())
 }
 
-fn validate_latest_attempt(
+fn validate_latest_pointers(
     snapshot: &LogicalStoreSnapshot,
     guard: &NamespaceGuard,
 ) -> Result<(), StoreError> {
+    let table_attempt = snapshot
+        .pointers
+        .get("latest-attempt")
+        .map(|bytes| {
+            std::str::from_utf8(bytes)
+                .map(str::to_owned)
+                .map_err(|error| {
+                    StoreError::Integrity(format!("latest-attempt pointer is not UTF-8: {error}"))
+                })
+        })
+        .transpose()?;
+    let table_completed = snapshot
+        .pointers
+        .get("latest-completed")
+        .map(|bytes| {
+            std::str::from_utf8(bytes)
+                .map(str::to_owned)
+                .map_err(|error| {
+                    StoreError::Integrity(format!("latest-completed pointer is not UTF-8: {error}"))
+                })
+        })
+        .transpose()?;
+    let (document_attempt, document_completed) = crate::publication::migration_pointer_ids(
+        &guard.state.state_dir,
+        guard.state_directory_entry(),
+    )?;
+    if table_attempt.as_deref() != document_attempt.as_ref().map(|id| id.as_str())
+        || table_completed.as_deref() != document_completed.as_ref().map(|id| id.as_str())
+    {
+        return Err(StoreError::Integrity(
+            "lifecycle-store pointer table disagrees with durable latest document".to_owned(),
+        ));
+    }
+
     let Some(attempt_id) = snapshot.pointers.get("latest-attempt") else {
         return Ok(());
     };

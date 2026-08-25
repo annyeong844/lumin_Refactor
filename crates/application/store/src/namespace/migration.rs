@@ -149,6 +149,51 @@ pub(super) fn require_idle(guard: &NamespaceGuard) -> Result<(), StoreError> {
     }
 }
 
+#[cfg(test)]
+pub(super) fn validate_journal_payload_recheck_for_test(
+    guard: &NamespaceGuard,
+    hook: &mut impl FnMut() -> Result<(), StoreError>,
+) -> Result<(), StoreError> {
+    artifacts::read_journal_with_after_fold_for_test(guard, hook)?
+        .ok_or_else(|| StoreError::Integrity("test migration journal is missing".to_owned()))?;
+    Ok(())
+}
+
+#[cfg(test)]
+pub(super) fn validate_rebound_target_for_test(guard: &NamespaceGuard) -> Result<(), StoreError> {
+    let mut journal = read_journal(guard)?
+        .ok_or_else(|| StoreError::Integrity("test migration journal is missing".to_owned()))?;
+    let original = journal.target()?.binding.clone();
+    let path = guard.state.state_dir.join(&original.pre_exchange_name);
+    let entry = HeldEntry::open(
+        &path,
+        EntryKind::RegularFile,
+        EntryAccess::ReadWrite,
+        true,
+        "test rebound migration target",
+    )?;
+    if entry.identity() != &original.physical_identity {
+        return Err(StoreError::Integrity(
+            "test rebound migration target changed identity".to_owned(),
+        ));
+    }
+    let byte_sha256 = file_sha256(&entry)?;
+    drop(entry);
+    let target = journal
+        .targets
+        .get_mut(&original.binding_id)
+        .ok_or_else(|| StoreError::Integrity("test migration target is missing".to_owned()))?;
+    target.binding.byte_sha256 = byte_sha256;
+    let rebound = target.binding.clone();
+    validate_typed_target_at(
+        guard,
+        &journal,
+        &rebound,
+        &rebound.pre_exchange_name,
+        "rebound migration target",
+    )
+}
+
 #[cfg(feature = "lifecycle-migration-test-fault")]
 pub(super) fn corrupt_bound_cleanup_operation_for_test(
     guard: &NamespaceGuard,
@@ -551,6 +596,7 @@ fn exchange_store(
     journal: MigrationJournal,
     hook: &mut impl FnMut(MigrationCrashPoint) -> Result<(), StoreError>,
 ) -> Result<MigrationJournal, StoreError> {
+    validate_target_published_envelope(guard, &journal)?;
     open_exchange_source(guard, &journal)?
         .snapshot
         .transformed_from_v12()?
@@ -878,6 +924,11 @@ fn validate_terminal(
         true,
         "retained migration source",
     )?;
+    if file_sha256(&source)? != source_binding.byte_sha256 {
+        return Err(StoreError::Integrity(
+            "retained migration source payload changed during terminal validation".to_owned(),
+        ));
+    }
     Ok(current)
 }
 
@@ -1029,20 +1080,20 @@ fn validate_target_published_envelope(
     drop(private);
     if before {
         validate_source_envelope_at(guard, journal, "lifecycle.store")?;
-        validate_binding_at(
+        validate_typed_target_at(
             guard,
+            journal,
             target,
             &target.pre_exchange_name,
-            true,
             "published migration target",
         )?;
     } else if after {
         validate_source_envelope_at(guard, journal, &source.post_exchange_name)?;
-        validate_binding_at(
+        validate_typed_target_at(
             guard,
+            journal,
             target,
             &target.post_exchange_name,
-            true,
             "canonical migration target",
         )?;
     } else {
@@ -1071,31 +1122,31 @@ fn validate_target_published_envelope(
     match (canonical_exists, source_exists, target_exists) {
         (true, false, true) => {
             validate_source_envelope_at(guard, journal, "lifecycle.store")?;
-            validate_binding_at(
+            validate_typed_target_at(
                 guard,
+                journal,
                 target,
                 &target.pre_exchange_name,
-                true,
                 "published migration target",
             )?;
         }
         (false, true, true) => {
             validate_source_envelope_at(guard, journal, &source.post_exchange_name)?;
-            validate_binding_at(
+            validate_typed_target_at(
                 guard,
+                journal,
                 target,
                 &target.pre_exchange_name,
-                true,
                 "published migration target",
             )?;
         }
         (true, true, false) => {
             validate_source_envelope_at(guard, journal, &source.post_exchange_name)?;
-            validate_binding_at(
+            validate_typed_target_at(
                 guard,
+                journal,
                 target,
                 &target.post_exchange_name,
-                true,
                 "canonical migration target",
             )?;
         }
@@ -1104,6 +1155,45 @@ fn validate_target_published_envelope(
                 "Windows migration exchange entries have unknown placement".to_owned(),
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_typed_target_at(
+    guard: &NamespaceGuard,
+    journal: &MigrationJournal,
+    binding: &MigrationArtifactBinding,
+    name: &str,
+    label: &str,
+) -> Result<(), StoreError> {
+    let entry = validate_binding_at(guard, binding, name, true, label)?;
+    let anchor = anchor_for(journal);
+    let snapshot = read_current_entry(
+        guard,
+        &entry,
+        journal.root_authorization.target_generation,
+        Some(&anchor),
+    )?;
+    let logical = snapshot.anchored_logical_sha256(&anchor)?;
+    if logical != journal.root_authorization.target_user_logical_sha256
+        || logical != binding.logical_sha256
+    {
+        return Err(StoreError::Integrity(format!(
+            "{label} logical identity disagrees with its authorized target"
+        )));
+    }
+    snapshot.validate_external_references(guard)?;
+    entry.validate_path(
+        &guard.state.state_dir.join(name),
+        EntryKind::RegularFile,
+        EntryAccess::ReadWrite,
+        true,
+        label,
+    )?;
+    if file_sha256(&entry)? != binding.byte_sha256 {
+        return Err(StoreError::Integrity(format!(
+            "{label} payload changed during typed validation"
+        )));
     }
     Ok(())
 }

@@ -488,6 +488,21 @@ fn write_candidate(
 }
 
 pub(super) fn read_journal(guard: &NamespaceGuard) -> Result<Option<MigrationJournal>, StoreError> {
+    read_journal_with_after_fold(guard, &mut || Ok(()))
+}
+
+#[cfg(test)]
+pub(super) fn read_journal_with_after_fold_for_test(
+    guard: &NamespaceGuard,
+    hook: &mut impl FnMut() -> Result<(), StoreError>,
+) -> Result<Option<MigrationJournal>, StoreError> {
+    read_journal_with_after_fold(guard, hook)
+}
+
+fn read_journal_with_after_fold(
+    guard: &NamespaceGuard,
+    hook: &mut impl FnMut() -> Result<(), StoreError>,
+) -> Result<Option<MigrationJournal>, StoreError> {
     let mut revisions = BTreeMap::new();
     let mut root_present = false;
     for item in fs::read_dir(&guard.state.state_dir).map_err(crate::io_error)? {
@@ -533,7 +548,10 @@ pub(super) fn read_journal(guard: &NamespaceGuard) -> Result<Option<MigrationJou
         .map(|name| read_journal_entry(guard, name))
         .collect::<Result<Vec<_>, _>>()?;
     validate_predecessors(&entries)?;
-    fold_journal(guard, entries).map(Some)
+    let journal = fold_journal(guard, entries)?;
+    hook()?;
+    validate_journal_entries_after_fold(guard, &journal)?;
+    Ok(Some(journal))
 }
 
 pub(super) fn validate_root_authority(
@@ -704,6 +722,39 @@ fn validate_binding(binding: &MigrationArtifactBinding) -> Result<(), StoreError
     Ok(())
 }
 
+fn validate_binding_names(
+    binding: &MigrationArtifactBinding,
+    authorization_sequence: u64,
+) -> Result<(), StoreError> {
+    let authorization = format!("{authorization_sequence:016}");
+    let first_target_name = target_name(&format!("{authorization}-0001"));
+    let (expected_pre_exchange, expected_post_exchange) = match binding.role {
+        MigrationArtifactRole::Source => (
+            "lifecycle.store".to_owned(),
+            source_retirement_name(&first_target_name, &authorization),
+        ),
+        MigrationArtifactRole::Target => {
+            #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+            let pre_exchange = first_target_name;
+            #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+            let pre_exchange = target_name(&format!(
+                "{authorization}-{:04}",
+                binding.publication_attempt
+            ));
+            (pre_exchange, "lifecycle.store".to_owned())
+        }
+    };
+    if binding.pre_exchange_name != expected_pre_exchange
+        || binding.post_exchange_name != expected_post_exchange
+    {
+        return Err(StoreError::Integrity(
+            "migration artifact binding names are outside the authorized store-owned grammar"
+                .to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 fn fold_journal(
     guard: &NamespaceGuard,
     entries: Vec<JournalEntry>,
@@ -726,6 +777,7 @@ fn fold_journal(
         ));
     };
     validate_binding(source)?;
+    validate_binding_names(source, authorization.authorization_sequence)?;
     let derived_root_core = root_core_sha256(
         &authorization.root_physical_identity,
         authorization.source_generation,
@@ -757,6 +809,9 @@ fn fold_journal(
             ));
         }
         for event in &entry.intent.events {
+            if let MigrationBindingEvent::PendingPublication { binding } = event {
+                validate_binding_names(binding, authorization.authorization_sequence)?;
+            }
             apply_event(event, &mut source, &mut targets, &mut ids)?;
         }
         last_phase = entry.intent.phase;
@@ -1071,6 +1126,24 @@ fn validate_journal_entry_path(
     )
 }
 
+fn validate_journal_entries_after_fold(
+    guard: &NamespaceGuard,
+    journal: &MigrationJournal,
+) -> Result<(), StoreError> {
+    for entry in &journal.entries {
+        validate_journal_entry_path(guard, entry)?;
+        let bytes = entry.entry.read_all()?;
+        if crate::digest_hex(&bytes) != entry.payload_sha256
+            || bytes != intent_bytes(&entry.intent)?
+        {
+            return Err(StoreError::Integrity(
+                "migration journal payload changed after the journal was folded".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn intent_bytes(intent: &MigrationIntent) -> Result<Vec<u8>, StoreError> {
     let mut bytes = serde_json::to_vec(intent).map_err(serialization_error)?;
     bytes.push(b'\n');
@@ -1175,6 +1248,66 @@ fn is_sha256(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn artifact_binding_names_are_owned_by_the_authorized_migration() -> Result<(), StoreError> {
+        let digest = "0".repeat(64);
+        let authorization_sequence = 7;
+        let authorization = format!("{authorization_sequence:016}");
+        let first_target = target_name(&format!("{authorization}-0001"));
+        let source_post = source_retirement_name(&first_target, &authorization);
+        let source = source_binding(
+            PhysicalFileIdentity::Unix {
+                device: 7,
+                inode: 10,
+            },
+            source_post,
+            StoreGeneration::INITIAL,
+            digest.clone(),
+            digest.clone(),
+        )?;
+        validate_binding_names(&source, authorization_sequence)?;
+
+        let mut forged_source = source.clone();
+        forged_source.post_exchange_name = "repository.json".to_owned();
+        forged_source.binding_id = derive_binding_id(&forged_source)?;
+        validate_binding(&forged_source)?;
+        assert!(matches!(
+            validate_binding_names(&forged_source, authorization_sequence),
+            Err(StoreError::Integrity(message)) if message.contains("store-owned grammar")
+        ));
+
+        let target_generation = StoreGeneration::INITIAL
+            .checked_next()
+            .ok_or_else(|| StoreError::Integrity("test target generation overflowed".to_owned()))?;
+        let target_pre = if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+            first_target
+        } else {
+            target_name(&format!("{authorization}-0001"))
+        };
+        let target = target_binding(
+            PhysicalFileIdentity::Unix {
+                device: 7,
+                inode: 11,
+            },
+            1,
+            target_pre,
+            target_generation,
+            digest.clone(),
+            digest,
+        )?;
+        validate_binding_names(&target, authorization_sequence)?;
+
+        let mut forged_target = target;
+        forged_target.pre_exchange_name = "lifecycle.lock".to_owned();
+        forged_target.binding_id = derive_binding_id(&forged_target)?;
+        validate_binding(&forged_target)?;
+        assert!(matches!(
+            validate_binding_names(&forged_target, authorization_sequence),
+            Err(StoreError::Integrity(message)) if message.contains("store-owned grammar")
+        ));
+        Ok(())
+    }
 
     #[test]
     fn superseded_target_attempt_remains_unique_when_physical_identity_is_reused()

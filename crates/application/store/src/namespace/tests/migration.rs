@@ -23,9 +23,9 @@ use lumin_model::{
 use redb::{Database, ReadableTable, TableDefinition};
 
 use crate::{
-    GateBaselineDraft, ObservationFinalization, PostWriteFinish, PostWriteStart, PreWriteFinish,
-    PreWriteStart, PriorCacheCleanupDeliveryStatusForTest, RepositoryStore, RetentionPlanRequest,
-    SEQUENCES, SemanticReadReservation, StoreError, StoreGeneration,
+    GateBaselineDraft, ObservationFinalization, POINTERS, PostWriteFinish, PostWriteStart,
+    PreWriteFinish, PreWriteStart, PriorCacheCleanupDeliveryStatusForTest, RepositoryStore,
+    RetentionPlanRequest, SEQUENCES, SemanticReadReservation, StoreError, StoreGeneration,
 };
 
 use super::super::migration::{MigrationCrashPoint, migrate_with_hook};
@@ -381,6 +381,48 @@ fn migration_rejects_run_pin_allocator_below_a_retained_pin()
 }
 
 #[test]
+fn migration_rejects_retention_catalog_below_a_retained_plan_revision()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    store.prepare_retention_plan(&RetentionPlanRequest {
+        scope: RetentionPlanScope::Runs {
+            before_unix_millis: u64::MAX,
+        },
+        operation_id: OperationId::from_string("migration-catalog-sequence-floor".to_owned()),
+    })?;
+    set_sequence_for_test(&store, "retention-catalog", 0)?;
+    make_prior_store(&store, root.path())?;
+
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("retention-catalog sequence regressed below retained allocation")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_requires_pointer_table_to_match_the_durable_latest_document()
+-> Result<(), Box<dyn std::error::Error>> {
+    for pointer in ["latest-attempt", "latest-completed"] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        let mut attempt = store.begin_attempt()?;
+        store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+        remove_pointer_for_test(&store, pointer)?;
+        make_prior_store(&store, root.path())?;
+
+        assert!(matches!(
+            store.migrate_lifecycle_store(),
+            Err(StoreError::Integrity(message))
+                if message.contains("pointer table disagrees with durable latest document")
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn migration_rejects_an_incoherent_latest_attempt_envelope()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
@@ -541,6 +583,59 @@ fn migration_recomputes_the_root_core_from_source_facts() -> Result<(), Box<dyn 
     Ok(())
 }
 
+#[test]
+fn migration_revalidates_journal_payloads_after_folding() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    make_prior_store(&store, root.path())?;
+    inject_crash(&store, MigrationCrashPoint::IntentPublished)?;
+    let journal = root.path().join(".lumin/lifecycle-migration.json");
+    let mut changed = false;
+    let result = store.namespace.with_migration_lock(|guard| {
+        super::super::migration::validate_journal_payload_recheck_for_test(guard, &mut || {
+            fs::write(&journal, b"{}\n").map_err(crate::io_error)?;
+            changed = true;
+            Ok(())
+        })
+    });
+    assert!(changed);
+    assert!(matches!(
+        result,
+        Err(StoreError::Integrity(message)) if message.contains("payload changed after")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_authenticates_a_rebound_target_before_exchange()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    make_prior_store(&store, root.path())?;
+    inject_crash(&store, MigrationCrashPoint::TargetPublished)?;
+    let target = pending_target_path(&root.path().join(".lumin"))?;
+    let database = Database::open(&target)?;
+    let write = database.begin_write()?;
+    {
+        let definition = TableDefinition::<&str, &[u8]>::new("store-header");
+        let mut table = write.open_table(definition)?;
+        table.insert("foreign", b"{}".as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let result = store.namespace.with_migration_lock(|guard| {
+        super::super::migration::validate_rebound_target_for_test(guard)
+    });
+    assert!(matches!(
+        result,
+        Err(StoreError::Integrity(message))
+            if message.contains("header table must contain exactly its canonical row")
+    ));
+    Ok(())
+}
+
 #[cfg(not(windows))]
 #[test]
 fn terminal_validation_rechecks_the_retained_source_path_after_detached_reads()
@@ -579,6 +674,47 @@ fn terminal_validation_rechecks_the_retained_source_path_after_detached_reads()
         result,
         Err(StoreError::Integrity(message))
             if message.contains("retained migration source physical identity changed")
+    ));
+    Ok(())
+}
+
+#[test]
+fn terminal_validation_rehashes_the_retained_source_after_detached_reads()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    make_prior_store(&store, root.path())?;
+    let state = root.path().join(".lumin");
+    let mut changed = false;
+    let result = store.namespace.with_migration_lock(|guard| {
+        migrate_with_hook(guard, &mut |point| {
+            if point == MigrationCrashPoint::TerminalSourceValidated && !changed {
+                let retained = fs::read_dir(&state)
+                    .map_err(crate::io_error)?
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.path())
+                    .find(|path| {
+                        path.file_name()
+                            .and_then(std::ffi::OsStr::to_str)
+                            .is_some_and(|name| name.starts_with(RETAINED_MIGRATION_SOURCE_PREFIX))
+                    })
+                    .ok_or_else(|| {
+                        StoreError::Integrity(
+                            "terminal migration omitted its retained source".to_owned(),
+                        )
+                    })?;
+                fs::write(retained, b"changed retained migration source")
+                    .map_err(crate::io_error)?;
+                changed = true;
+            }
+            Ok(())
+        })
+    });
+    assert!(changed);
+    assert!(matches!(
+        result,
+        Err(StoreError::Integrity(message))
+            if message.contains("payload changed during terminal validation")
     ));
     Ok(())
 }
@@ -958,6 +1094,26 @@ fn set_sequence_for_test(store: &RepositoryStore, key: &str, value: u64) -> Resu
         {
             let mut sequences = write.open_table(SEQUENCES).map_err(crate::backend_error)?;
             sequences.insert(key, value).map_err(crate::backend_error)?;
+        }
+        guard.commit(write)
+    })
+}
+
+fn remove_pointer_for_test(store: &RepositoryStore, key: &str) -> Result<(), StoreError> {
+    store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        {
+            let mut pointers = write.open_table(POINTERS).map_err(crate::backend_error)?;
+            if pointers
+                .remove(key)
+                .map_err(crate::backend_error)?
+                .is_none()
+            {
+                return Err(StoreError::Integrity(format!(
+                    "test pointer {key} is missing"
+                )));
+            }
         }
         guard.commit(write)
     })
