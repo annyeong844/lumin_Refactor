@@ -14,9 +14,11 @@ Treat that installed-binary output as the command and recovery contract.
   pin ID needed by the next public command.
 - If mutation delivery is uncertain, use the binary-owned `operation show`
   workflow with the same operation ID. Never repeat the underlying edit.
-- When the binary emits its exact migration-required diagnostic, invoke only
-  public `lumin store migrate`, accept only the exact DTO documented by
-  `lumin help-agent`, and retry the original command unchanged.
+- When the binary emits its exact migration-required diagnostic, follow this exact recovery sequence:
+  1. Preserve the original public command and all arguments unchanged.
+  2. Run `lumin store migrate --format json` and no other migration command.
+  3. Accept only the exact migration DTO printed by `lumin help-agent`.
+  4. Retry the preserved original public command with the same arguments.
 - Never read, edit, infer, or repair `.lumin` internals. Missing, failed, stale,
   unsupported, or truncated evidence is not clean evidence.
 

@@ -8,11 +8,14 @@ mod platform;
 mod skills;
 
 const BINARY_ENVIRONMENT: &str = "LUMIN_PACKAGE_BINARY";
+const FIXTURE_BINARY_ENVIRONMENT: &str = "LUMIN_PACKAGE_FIXTURE_BINARY";
 const MIGRATION_RESPONSE: &str = concat!(
     "{\"schemaVersion\":\"lumin.lifecycle-store-migration.v1\",",
     "\"storeSchema\":\"lumin-lifecycle-store-header.v13\",",
     "\"status\":\"ready\"}",
 );
+const MIGRATION_REQUIRED_DIAGNOSTIC: &str =
+    "lumin: lifecycle store migration requires 'lumin store migrate'\n";
 
 pub(crate) fn run(arguments: &[String]) -> ExitCode {
     let result = match arguments {
@@ -104,6 +107,67 @@ fn expect_string(value: &Value, pointer: &str, expected: &str) -> Result<(), Str
     Ok(())
 }
 
+fn expect_migration_required(output: &std::process::Output, command: &str) -> Result<(), String> {
+    expect_status(output, Some(1), command)?;
+    if !output.stdout.is_empty()
+        || String::from_utf8_lossy(&output.stderr) != MIGRATION_REQUIRED_DIAGNOSTIC
+    {
+        return Err(format!(
+            "{command} did not return the exact migration-required diagnostic; stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(())
+}
+
+fn expect_migration_ready(
+    binary: &Path,
+    root: &Path,
+    arguments: &[&str],
+    command: &str,
+) -> Result<std::process::Output, String> {
+    let output = expect_success(run_binary(binary, root, arguments), command)?;
+    let expected = format!("{MIGRATION_RESPONSE}\n");
+    if output.stdout != expected.as_bytes() {
+        return Err(format!(
+            "{command} returned unexpected stdout: {}",
+            String::from_utf8_lossy(&output.stdout)
+        ));
+    }
+    Ok(output)
+}
+
+fn downgrade_store_as_prior(
+    fixture_binary: &Path,
+    root: &Path,
+    cleanup_delivery: Option<(&str, &str)>,
+) -> Result<(), String> {
+    let output = match cleanup_delivery {
+        Some((operation_id, status)) => run_binary(
+            fixture_binary,
+            root,
+            &[
+                "store",
+                "test-downgrade-v12",
+                "--cleanup-operation",
+                operation_id,
+                "--legacy-delivery",
+                status,
+            ],
+        ),
+        None => run_binary(fixture_binary, root, &["store", "test-downgrade-v12"]),
+    };
+    let output = expect_success(output, "construct authenticated v12 fixture")?;
+    if !output.stdout.is_empty() {
+        return Err(format!(
+            "v12 fixture constructor wrote stdout: {}",
+            String::from_utf8_lossy(&output.stdout)
+        ));
+    }
+    Ok(())
+}
+
 fn validate_help_output(bytes: &[u8]) -> Result<(), String> {
     let stdout = String::from_utf8(bytes.to_vec())
         .map_err(|error| format!("packaged lumin help-agent returned non-UTF-8 output: {error}"))?;
@@ -153,6 +217,18 @@ fn locate_binary(workspace: &Path) -> Result<PathBuf, String> {
         .transpose()?
         .ok_or_else(|| {
             format!("a built lumin binary is required; set {BINARY_ENVIRONMENT} to its exact path")
+        })
+}
+
+fn locate_fixture_binary() -> Result<PathBuf, String> {
+    std::env::var_os(FIXTURE_BINARY_ENVIRONMENT)
+        .map(PathBuf::from)
+        .map(canonical_binary)
+        .transpose()?
+        .ok_or_else(|| {
+            format!(
+                "an isolated lifecycle-test-fault fixture binary is required; set {FIXTURE_BINARY_ENVIRONMENT} to its exact path"
+            )
         })
 }
 

@@ -91,6 +91,10 @@ const CRASH_CORPUS_CASES: &[(&str, &str)] = &[
         "publication-retention-race",
         "foundation --store-crash --row publication-retention-race",
     ),
+    (
+        "lifecycle-store-migration",
+        "foundation --store-crash --row lifecycle-store-migration",
+    ),
 ];
 
 #[derive(Debug, Default)]
@@ -832,9 +836,9 @@ fn validate_corpus_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<Str
         .iter()
         .filter(|line| line.starts_with("- os:"))
         .count()
-        != 21
+        != 23
     {
-        violations.push("corpus job must contain exactly 21 reviewed partitions".to_owned());
+        violations.push("corpus job must contain exactly 23 reviewed partitions".to_owned());
     }
     if lines.iter().any(|line| {
         *line == "exclude:"

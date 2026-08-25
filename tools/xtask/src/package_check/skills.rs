@@ -3,16 +3,29 @@ use std::fs;
 use std::path::Path;
 
 use super::{
-    expect_success, locate_binary, run_binary, scratch_directory_for, validate_help_output,
+    downgrade_store_as_prior, expect_migration_ready, expect_migration_required, expect_string,
+    expect_success, locate_binary, locate_fixture_binary, parse_json, run_binary,
+    scratch_directory_for, validate_help_output,
 };
 
 pub(super) const CODEX_SKILL: &str = "skills/codex/SKILL.md";
 const CLAUDE_SKILL: &str = "skills/claude-code/SKILL.md";
+pub(super) const MIGRATION_WORKFLOW: &str = concat!(
+    "- When the binary emits its exact migration-required diagnostic, follow this exact recovery sequence:\n",
+    "  1. Preserve the original public command and all arguments unchanged.\n",
+    "  2. Run `lumin store migrate --format json` and no other migration command.\n",
+    "  3. Accept only the exact migration DTO printed by `lumin help-agent`.\n",
+    "  4. Retry the preserved original public command with the same arguments.\n",
+);
+const MIGRATION_ARGUMENTS: &[&str] = &["store", "migrate", "--format", "json"];
 
 pub(super) fn check() -> Result<(), String> {
     let workspace = crate::metadata::find_workspace_root().map_err(|error| error.to_string())?;
     validate_skill_sources(&workspace)?;
-    validate_binary_agent_contract(&workspace)?;
+    let binary = locate_binary(&workspace)?;
+    let fixture_binary = locate_fixture_binary()?;
+    validate_binary_agent_contract(&binary)?;
+    validate_packaged_adapter_migration_workflows(&workspace, &binary, &fixture_binary)?;
     Ok(())
 }
 
@@ -37,14 +50,14 @@ fn read_skill(workspace: &Path, relative: &str) -> Result<String, String> {
 }
 
 pub(super) fn validate_adapter(relative: &str, source: &str) -> Result<(), String> {
+    let normalized = source.replace("\r\n", "\n");
+    let source = normalized.as_str();
     for required in [
         "name: lumin",
         "description:",
         "lumin help-agent",
         "unique operation ID",
         "operation show",
-        "lumin store migrate",
-        "retry the original command unchanged",
         "Never read, edit, infer, or repair `.lumin` internals",
     ] {
         if !source.contains(required) {
@@ -52,6 +65,13 @@ pub(super) fn validate_adapter(relative: &str, source: &str) -> Result<(), Strin
                 "{relative} omitted required workflow text: {required}"
             ));
         }
+    }
+    if source.matches(MIGRATION_WORKFLOW).count() != 1
+        || source.matches("lumin store migrate").count() != 1
+    {
+        return Err(format!(
+            "{relative} must contain exactly one canonical migration recovery workflow"
+        ));
     }
     for forbidden in [
         "schemaVersion",
@@ -88,12 +108,11 @@ fn validate_skill_directory(workspace: &Path, relative: &str) -> Result<(), Stri
     Ok(())
 }
 
-fn validate_binary_agent_contract(workspace: &Path) -> Result<(), String> {
-    let binary = locate_binary(workspace)?;
+fn validate_binary_agent_contract(binary: &Path) -> Result<(), String> {
     let scratch = scratch_directory_for("skills")?;
     fs::create_dir(&scratch)
         .map_err(|error| format!("cannot create package-check scratch directory: {error}"))?;
-    let result = expect_success(run_binary(&binary, &scratch, &["help-agent"]), "help-agent")
+    let result = expect_success(run_binary(binary, &scratch, &["help-agent"]), "help-agent")
         .and_then(|output| validate_help_output(&output.stdout));
     let created_state = scratch.join(".lumin").exists();
     let cleanup = fs::remove_dir_all(&scratch)
@@ -103,5 +122,84 @@ fn validate_binary_agent_contract(workspace: &Path) -> Result<(), String> {
     if created_state {
         return Err("packaged lumin help-agent created repository state".to_owned());
     }
+    Ok(())
+}
+
+fn validate_packaged_adapter_migration_workflows(
+    workspace: &Path,
+    binary: &Path,
+    fixture_binary: &Path,
+) -> Result<(), String> {
+    let scratch = scratch_directory_for("skill-migration")?;
+    fs::create_dir(&scratch)
+        .map_err(|error| format!("cannot create skill migration scratch directory: {error}"))?;
+    let result = [(CODEX_SKILL, "codex"), (CLAUDE_SKILL, "claude-code")]
+        .into_iter()
+        .try_for_each(|(relative, name)| {
+            let source = read_skill(workspace, relative)?;
+            validate_adapter(relative, &source)?;
+            execute_adapter_migration_workflow(
+                relative,
+                binary,
+                fixture_binary,
+                &scratch.join(name),
+            )
+        });
+    let cleanup = fs::remove_dir_all(&scratch)
+        .map_err(|error| format!("cannot remove skill migration scratch directory: {error}"));
+    result?;
+    cleanup
+}
+
+fn execute_adapter_migration_workflow(
+    relative: &str,
+    binary: &Path,
+    fixture_binary: &Path,
+    root: &Path,
+) -> Result<(), String> {
+    fs::create_dir_all(root.join("src"))
+        .map_err(|error| format!("cannot create {relative} migration fixture: {error}"))?;
+    fs::write(
+        root.join("package.json"),
+        br#"{"name":"lumin-skill-migration","private":true,"type":"module"}"#,
+    )
+    .map_err(|error| format!("cannot write {relative} migration manifest: {error}"))?;
+    fs::write(
+        root.join("src/lib.ts"),
+        b"export const skillMigration = 1;\n",
+    )
+    .map_err(|error| format!("cannot write {relative} migration source: {error}"))?;
+
+    let audit = expect_success(
+        run_binary(binary, root, &["audit", "--jobs", "1", "--format", "json"]),
+        &format!("{relative} fixture audit"),
+    )?;
+    let audit_json = parse_json(&format!("{relative} fixture audit"), &audit.stdout)?;
+    let run_id = audit_json
+        .pointer("/runId")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("{relative} fixture audit omitted runId"))?
+        .to_owned();
+    downgrade_store_as_prior(fixture_binary, root, None)?;
+
+    let original_arguments = ["overview", "--format", "json"];
+    let blocked = run_binary(binary, root, &original_arguments)?;
+    expect_migration_required(&blocked, &format!("{relative} original command"))?;
+    expect_migration_ready(
+        binary,
+        root,
+        MIGRATION_ARGUMENTS,
+        &format!("{relative} migration command"),
+    )?;
+    let retried = expect_success(
+        run_binary(binary, root, &original_arguments),
+        &format!("{relative} unchanged original-command retry"),
+    )?;
+    let retried_json = parse_json(
+        &format!("{relative} unchanged original-command retry"),
+        &retried.stdout,
+    )?;
+    expect_string(&retried_json, "/schemaVersion", "lumin.overview.v2")?;
+    expect_string(&retried_json, "/scope/id", &run_id)?;
     Ok(())
 }
