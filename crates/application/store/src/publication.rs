@@ -78,6 +78,13 @@ pub(super) fn latest_run_id(store: &RepositoryStore) -> Result<Option<RunId>, St
     latest::completed_run_id(store)
 }
 
+pub(crate) fn migration_has_active_lease(
+    rows: &std::collections::BTreeMap<String, Vec<u8>>,
+    attempt_id: &AttemptId,
+) -> Result<bool, StoreError> {
+    liveness::migration_has_active_lease(rows, attempt_id)
+}
+
 pub(crate) fn validate_attempt_leases(
     rows: &std::collections::BTreeMap<String, Vec<u8>>,
 ) -> Result<(), StoreError> {

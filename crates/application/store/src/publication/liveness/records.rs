@@ -323,6 +323,19 @@ pub(super) fn validate_migration_attempt_links(
     Ok(())
 }
 
+pub(super) fn migration_has_active_lease(
+    rows: &std::collections::BTreeMap<String, Vec<u8>>,
+    attempt_id: &AttemptId,
+) -> Result<bool, StoreError> {
+    rows.get(attempt_id.as_str())
+        .map(|bytes| {
+            parse_record(bytes, Some(attempt_id))
+                .map(|lease| lease.state == AttemptLeaseState::Active)
+        })
+        .transpose()
+        .map(Option::unwrap_or_default)
+}
+
 pub(super) fn validate_snapshot_locks(
     rows: &std::collections::BTreeMap<String, Vec<u8>>,
     guard: &NamespaceGuard,

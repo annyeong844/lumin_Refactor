@@ -540,6 +540,11 @@ fn read_journal_with_after_fold(
         let item = item.map_err(crate::io_error)?;
         let name = item.file_name();
         let Some(name) = name.to_str() else {
+            if has_migration_artifact_prefix(&name) {
+                return Err(StoreError::Integrity(
+                    "noncanonical non-UTF-8 migration journal artifact is present".to_owned(),
+                ));
+            }
             continue;
         };
         if name == MIGRATION_ROOT_NAME {
@@ -583,6 +588,28 @@ fn read_journal_with_after_fold(
     hook()?;
     validate_journal_entries_after_fold(guard, &journal)?;
     Ok(Some(journal))
+}
+
+#[cfg(unix)]
+fn has_migration_artifact_prefix(name: &OsStr) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+
+    name.as_bytes().starts_with(b"lifecycle-migration")
+}
+
+#[cfg(windows)]
+fn has_migration_artifact_prefix(name: &OsStr) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+
+    let mut units = name.encode_wide();
+    "lifecycle-migration"
+        .encode_utf16()
+        .all(|expected| units.next() == Some(expected))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn has_migration_artifact_prefix(_name: &OsStr) -> bool {
+    false
 }
 
 pub(super) fn validate_root_authority(

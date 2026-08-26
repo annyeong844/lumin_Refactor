@@ -5,7 +5,7 @@ use lumin_evidence::{
     CacheCleanupDeliveryOutcome, CacheCleanupDeliveryStatus, CacheCleanupOperationStatus,
     LifecycleOperationRecord,
 };
-use lumin_model::{OperationId, append_length_prefixed, digest_hex};
+use lumin_model::OperationId;
 
 use super::*;
 
@@ -19,11 +19,7 @@ fn open_store(root: &Path) -> Result<RepositoryStore, Box<dyn std::error::Error>
 
 fn digest(store: &RepositoryStore) -> Result<String, StoreError> {
     let repository_id = store.repository_id()?;
-    let mut framed = Vec::new();
-    append_length_prefixed(&mut framed, b"lumin-cache-clean-request.v2");
-    append_length_prefixed(&mut framed, repository_id.as_str().as_bytes());
-    append_length_prefixed(&mut framed, b"cache-clean");
-    Ok(digest_hex(&framed))
+    Ok(lumin_evidence::cache_cleanup_request_digest(&repository_id))
 }
 
 #[test]

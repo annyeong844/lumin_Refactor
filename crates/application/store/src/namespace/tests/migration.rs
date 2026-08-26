@@ -326,10 +326,13 @@ fn migration_rejects_changed_attempt_liveness_lock_before_copy()
     make_prior_store(&store, root.path())?;
 
     let result = store.migrate_lifecycle_store();
-    assert!(matches!(
-        result,
-        Err(StoreError::Integrity(message)) if message.contains("lock contents changed")
-    ));
+    assert!(
+        matches!(
+            &result,
+            Err(StoreError::Integrity(message)) if message.contains("lock contents changed")
+        ),
+        "migration returned an unexpected liveness result: {result:?}"
+    );
     let state = root.path().join(".lumin");
     assert!(!state.join("lifecycle-migration.json").exists());
     Ok(())
@@ -487,6 +490,90 @@ fn migration_requires_pointer_table_to_match_the_durable_latest_document()
                 if message.contains("pointer table disagrees with durable latest document")
         ));
     }
+    Ok(())
+}
+
+#[test]
+fn migration_validates_the_complete_latest_pointer_document()
+-> Result<(), Box<dyn std::error::Error>> {
+    for field in [
+        "attempt-sequence",
+        "attempt-status",
+        "completed-sequence",
+        "pending-attempt-status",
+    ] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        let mut attempt = store.begin_attempt()?;
+        store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+        make_prior_store(&store, root.path())?;
+
+        let path = root.path().join(".lumin/latest.json");
+        let mut latest = serde_json::from_slice::<serde_json::Value>(&fs::read(&path)?)?;
+        let destination = match field {
+            "attempt-sequence" => {
+                let sequence = latest["latestAttempt"]["sequence"]
+                    .as_u64()
+                    .ok_or("latest attempt omitted its sequence")?;
+                latest["latestAttempt"]["sequence"] = sequence
+                    .checked_add(1)
+                    .ok_or("latest attempt sequence overflowed")?
+                    .into();
+                path.clone()
+            }
+            "attempt-status" => {
+                latest["latestAttempt"]["status"] = "failed".into();
+                path.clone()
+            }
+            "completed-sequence" => {
+                let sequence = latest["latestCompleted"]["sequence"]
+                    .as_u64()
+                    .ok_or("latest completed pointer omitted its sequence")?;
+                latest["latestCompleted"]["sequence"] = sequence
+                    .checked_add(1)
+                    .ok_or("latest completed sequence overflowed")?
+                    .into();
+                path.clone()
+            }
+            "pending-attempt-status" => {
+                latest["latestAttempt"]["status"] = "failed".into();
+                path.with_extension("json.pending")
+            }
+            _ => unreachable!(),
+        };
+        let mut bytes = serde_json::to_vec_pretty(&latest)?;
+        bytes.push(b'\n');
+        fs::write(destination, bytes)?;
+
+        let outcome = store.migrate_lifecycle_store();
+        assert!(
+            matches!(outcome, Err(StoreError::Integrity(_))),
+            "migration accepted a corrupt latest pointer {field}: {outcome:?}"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn migration_rejects_non_utf8_migration_artifact_names() -> Result<(), Box<dyn std::error::Error>> {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    make_prior_store(&store, root.path())?;
+    let mut name = b"lifecycle-migration".to_vec();
+    name.push(0xff);
+    fs::write(
+        root.path().join(".lumin").join(OsString::from_vec(name)),
+        b"foreign",
+    )?;
+
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message)) if message.contains("non-UTF-8 migration journal")
+    ));
     Ok(())
 }
 

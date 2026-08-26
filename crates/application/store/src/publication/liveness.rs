@@ -125,6 +125,13 @@ pub(super) fn validate_migration_attempt_links(
     records::validate_migration_attempt_links(rows, attempts, pending_attempts)
 }
 
+pub(super) fn migration_has_active_lease(
+    rows: &std::collections::BTreeMap<String, Vec<u8>>,
+    attempt_id: &AttemptId,
+) -> Result<bool, StoreError> {
+    records::migration_has_active_lease(rows, attempt_id)
+}
+
 pub(super) fn validate_snapshot_locks(
     rows: &std::collections::BTreeMap<String, Vec<u8>>,
     guard: &NamespaceGuard,

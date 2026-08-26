@@ -579,9 +579,23 @@ fn validate_latest_pointers(
                 })
         })
         .transpose()?;
+    let mut read_run = |run_id: &lumin_model::RunId| {
+        let bytes = snapshot.run_catalog.get(run_id.as_str()).ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "latest-completed pointer references missing run {}",
+                run_id.as_str()
+            ))
+        })?;
+        parse_record::<RunCatalogRecord>("run-catalog", run_id.as_str(), bytes)
+    };
+    let mut has_active_lease = |attempt_id: &lumin_model::AttemptId| {
+        crate::publication::migration_has_active_lease(&snapshot.attempt_leases, attempt_id)
+    };
     let (document_attempt, document_completed) = crate::publication::migration_pointer_ids(
         &guard.state.state_dir,
-        guard.state_directory_entry(),
+        guard,
+        &mut read_run,
+        &mut has_active_lease,
     )?;
     if table_attempt.as_deref() != document_attempt.as_ref().map(|id| id.as_str())
         || table_completed.as_deref() != document_completed.as_ref().map(|id| id.as_str())

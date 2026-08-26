@@ -3,7 +3,7 @@ use redb::TableError;
 use serde::{Deserialize, Serialize};
 
 use super::files;
-use super::{AttemptEnvelope, LatestRunSnapshot, attempt_path};
+use super::{AttemptEnvelope, LatestRunSnapshot};
 use crate::namespace::{NamespaceGuard, entry_exists, records::ManagedStateParentKind};
 use crate::{
     POINTERS, RepositoryStore, StoreError, backend_error, read_catalog_record, read_live_run,
@@ -163,21 +163,38 @@ pub(super) fn read_document(
 
 pub(crate) fn migration_pointer_ids(
     state_dir: &std::path::Path,
-    state_directory: &crate::namespace::HeldEntry,
+    guard: &NamespaceGuard,
+    read_run: &mut impl FnMut(&RunId) -> Result<crate::RunCatalogRecord, StoreError>,
+    has_active_lease: &mut impl FnMut(&AttemptId) -> Result<bool, StoreError>,
 ) -> Result<(Option<AttemptId>, Option<RunId>), StoreError> {
     let path = state_dir.join(LATEST_NAME);
-    if !entry_exists(&path)? {
-        return Ok((None, None));
+    let latest = entry_exists(&path)?
+        .then(|| {
+            read_document_path(
+                &path,
+                guard.state_directory_entry(),
+                "latest pointer during lifecycle migration",
+            )
+        })
+        .transpose()?;
+    if let Some(latest) = &latest {
+        validate_document_at(state_dir, guard, latest, read_run, has_active_lease)?;
     }
-    let latest = read_document_path(
-        &path,
-        state_directory,
-        "latest pointer during lifecycle migration",
-    )?;
-    Ok((
-        latest.latest_attempt.map(|pointer| pointer.attempt_id),
-        latest.latest_completed.map(|pointer| pointer.run_id),
-    ))
+    let pending_path = path.with_extension("json.pending");
+    if entry_exists(&pending_path)? {
+        let pending = read_document_path(
+            &pending_path,
+            guard.state_directory_entry(),
+            "pending latest pointer during lifecycle migration",
+        )?;
+        validate_document_at(state_dir, guard, &pending, read_run, has_active_lease)?;
+    }
+    Ok(latest.map_or((None, None), |latest| {
+        (
+            latest.latest_attempt.map(|pointer| pointer.attempt_id),
+            latest.latest_completed.map(|pointer| pointer.run_id),
+        )
+    }))
 }
 
 fn read_document_path(
@@ -205,13 +222,24 @@ pub(super) fn read_attempt(
     guard: &NamespaceGuard,
     attempt_id: &AttemptId,
 ) -> Result<AttemptEnvelope, StoreError> {
+    read_attempt_at(&store.state_dir, guard, attempt_id)
+}
+
+fn read_attempt_at(
+    state_dir: &std::path::Path,
+    guard: &NamespaceGuard,
+    attempt_id: &AttemptId,
+) -> Result<AttemptEnvelope, StoreError> {
     let directory = guard.open_managed_child_directory(
         ManagedStateParentKind::Attempts,
         attempt_id.as_str(),
         "attempt directory",
     )?;
     let envelope = files::read_json(
-        &attempt_path(store, attempt_id),
+        &state_dir
+            .join("attempts")
+            .join(attempt_id.as_str())
+            .join("attempt.json"),
         &directory,
         "attempt envelope",
     )?;
@@ -275,11 +303,33 @@ fn validate_document(
     guard: &NamespaceGuard,
     latest: &LatestPointer,
 ) -> Result<(), StoreError> {
+    let mut read_run = |run_id: &RunId| {
+        let database = guard.open_database()?;
+        read_catalog_record(&database, run_id)
+    };
+    let mut has_active_lease =
+        |attempt_id: &AttemptId| super::liveness::has_active_lease(guard, attempt_id);
+    validate_document_at(
+        &store.state_dir,
+        guard,
+        latest,
+        &mut read_run,
+        &mut has_active_lease,
+    )
+}
+
+fn validate_document_at(
+    state_dir: &std::path::Path,
+    guard: &NamespaceGuard,
+    latest: &LatestPointer,
+    read_run: &mut impl FnMut(&RunId) -> Result<crate::RunCatalogRecord, StoreError>,
+    has_active_lease: &mut impl FnMut(&AttemptId) -> Result<bool, StoreError>,
+) -> Result<(), StoreError> {
     let latest_attempt = latest
         .latest_attempt
         .as_ref()
         .map(|pointer| {
-            let envelope = read_attempt(store, guard, &pointer.attempt_id)?;
+            let envelope = read_attempt_at(state_dir, guard, &pointer.attempt_id)?;
             let pointer_can_lag_terminal = pointer.status == AttemptStatus::Running
                 && phase(envelope.state) > phase(pointer.status);
             if envelope.sequence != pointer.sequence
@@ -289,9 +339,7 @@ fn validate_document(
                     "latestAttempt disagrees with its attempt envelope".to_owned(),
                 ));
             }
-            if pointer.status == AttemptStatus::Running
-                && !super::liveness::has_active_lease(guard, &pointer.attempt_id)?
-            {
+            if pointer.status == AttemptStatus::Running && !has_active_lease(&pointer.attempt_id)? {
                 return Err(StoreError::Integrity(
                     "running latestAttempt has no process-liveness lease".to_owned(),
                 ));
@@ -301,14 +349,13 @@ fn validate_document(
         .transpose()?;
 
     if let Some(pointer) = &latest.latest_completed {
-        let database = guard.open_database()?;
-        let record = read_catalog_record(&database, &pointer.run_id)?;
+        let record = read_run(&pointer.run_id)?;
         if record.sequence != pointer.sequence {
             return Err(StoreError::Integrity(
                 "latestCompleted disagrees with its run catalog record".to_owned(),
             ));
         }
-        let attempt = read_attempt(store, guard, &record.attempt_id)?;
+        let attempt = read_attempt_at(state_dir, guard, &record.attempt_id)?;
         if attempt.state != AttemptStatus::Completed
             || attempt.sequence != record.sequence
             || attempt.run_id.as_ref() != Some(&record.run_id)
