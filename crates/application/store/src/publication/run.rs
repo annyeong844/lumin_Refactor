@@ -349,6 +349,7 @@ pub(crate) fn validate_directory(
     directory: &HeldEntry,
     expected: &RunCatalogRecord,
 ) -> Result<(), StoreError> {
+    validate_directory_inventory(directory_path, expected)?;
     let observed: RunCatalogRecord =
         files::read_json(&directory_path.join("run.json"), directory, "run envelope")?;
     if observed.attempt_id != expected.attempt_id
@@ -387,7 +388,38 @@ pub(crate) fn validate_directory(
         EntryAccess::ReadOnly,
         true,
         "run evidence store",
+    )?;
+    validate_directory_inventory(directory_path, expected)?;
+    directory.validate_path(
+        directory_path,
+        EntryKind::Directory,
+        EntryAccess::ReadOnly,
+        false,
+        "run directory",
     )
+}
+
+fn validate_directory_inventory(
+    directory_path: &Path,
+    expected: &RunCatalogRecord,
+) -> Result<(), StoreError> {
+    let mut names = Vec::new();
+    for entry in fs::read_dir(directory_path).map_err(io_error)? {
+        names.push(entry.map_err(io_error)?.file_name());
+    }
+    names.sort();
+    if names
+        != [
+            std::ffi::OsString::from("evidence.store"),
+            std::ffi::OsString::from("run.json"),
+        ]
+    {
+        return Err(StoreError::Integrity(format!(
+            "run directory contains an unknown entry: {}",
+            expected.run_id.as_str()
+        )));
+    }
+    Ok(())
 }
 
 fn run_path(store: &RepositoryStore, run_id: &RunId) -> PathBuf {

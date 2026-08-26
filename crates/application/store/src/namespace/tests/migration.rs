@@ -17,10 +17,11 @@ use lumin_evidence::{
     pre_write_request_digest, seal_analysis_snapshot,
 };
 use lumin_model::{
-    AttemptStatus, CacheEvictionAuthorizationSetId, CapabilityState, GateId, ObservationBinding,
-    OperationId, PhysicalFileIdentity, RepoPath, SealedGateObservation, UnsealedObservationReason,
+    AttemptId, AttemptStatus, CacheEvictionAuthorizationSetId, CapabilityState, GateId,
+    ObservationBinding, OperationId, PhysicalFileIdentity, RepoPath, SealedGateObservation,
+    UnsealedObservationReason,
 };
-use redb::{Database, ReadableTable, TableDefinition};
+use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 
 use crate::{
     ATTEMPT_LEASES, AttemptEnvelope, GateBaselineDraft, ObservationFinalization, POINTERS,
@@ -1026,6 +1027,79 @@ fn native_current_reopens_after_external_reference_validation()
         Err(StoreError::Integrity(message))
             if message.contains("changed after external reference validation")
     ));
+    Ok(())
+}
+
+#[test]
+fn native_current_repeats_external_reference_validation_before_success()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let attempt_id = AttemptId::from_string("attempt_0000000000000001".to_owned());
+    let attempt_dir = root
+        .path()
+        .join(".lumin/attempts")
+        .join(attempt_id.as_str());
+    let envelope = AttemptEnvelope {
+        schema_version: "lumin-attempt.v1".to_owned(),
+        attempt_id,
+        sequence: 1,
+        state: AttemptStatus::Failed,
+        started_unix_millis: 1,
+        finished_unix_millis: Some(1),
+        run_id: None,
+        failure: Some("injected after external validation".to_owned()),
+    };
+    let mut changed = false;
+    let result = store.namespace.with_migration_lock(|guard| {
+        super::super::migration::validate_native_current_recheck_for_test(guard, &mut || {
+            fs::create_dir(&attempt_dir).map_err(crate::io_error)?;
+            fs::write(
+                attempt_dir.join("attempt.json"),
+                serde_json::to_vec(&envelope).map_err(crate::serialization_error)?,
+            )
+            .map_err(crate::io_error)?;
+            changed = true;
+            Ok(())
+        })
+    });
+    assert!(changed);
+    assert!(matches!(
+        result,
+        Err(StoreError::Integrity(message))
+            if message.contains("attempt sequence regressed below retained allocation")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_recovers_incomplete_attempt_allocations_before_transform()
+-> Result<(), Box<dyn std::error::Error>> {
+    for lock_binding in [None, Some(false), Some(true)] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        let (attempt_id, lock_name) =
+            crate::publication::reserve_migration_attempt_allocation_for_test(
+                &store,
+                lock_binding,
+            )?;
+        make_prior_store(&store, root.path())?;
+
+        store.migrate_lifecycle_store()?;
+
+        let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+        let read = database.begin_read()?;
+        let table = read.open_table(ATTEMPT_LEASES)?;
+        assert!(table.get(attempt_id.as_str())?.is_none());
+        assert!(!root.path().join(".lumin").join(lock_name).exists());
+        drop(table);
+        drop(read);
+        drop(database);
+
+        let mut next = store.begin_attempt()?;
+        assert_eq!(next.attempt_id().as_str(), "attempt_0000000000000002");
+        store.fail_attempt(&mut next, "migration allocation recovery test complete")?;
+    }
     Ok(())
 }
 

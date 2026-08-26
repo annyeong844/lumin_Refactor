@@ -588,6 +588,30 @@ fn migration_validates_every_direct_run_child_and_its_allocator_floor()
     Ok(())
 }
 
+#[test]
+fn migration_rejects_extra_children_in_catalog_owned_runs() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let mut attempt = store.begin_attempt()?;
+    let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+    fs::write(
+        root.path()
+            .join(".lumin/runs")
+            .join(published.run_id.as_str())
+            .join("unowned-payload"),
+        b"not part of the sealed run",
+    )?;
+    make_prior_store(&store, root.path())?;
+
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("run directory contains an unknown entry")
+    ));
+    Ok(())
+}
+
 fn rewrite_run_evidence_identity(
     root: &std::path::Path,
     run_id: &RunId,

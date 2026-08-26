@@ -101,6 +101,21 @@ pub(crate) fn validate_migration_attempt_leases(
     liveness::validate_migration_snapshot(rows)
 }
 
+pub(crate) fn reconcile_migration_attempt_allocations(
+    rows: &mut std::collections::BTreeMap<String, Vec<u8>>,
+    guard: &crate::namespace::NamespaceGuard,
+) -> Result<(), StoreError> {
+    liveness::reconcile_migration_allocations(rows, guard)
+}
+
+#[cfg(test)]
+pub(crate) fn reserve_migration_attempt_allocation_for_test(
+    store: &RepositoryStore,
+    lock_binding: Option<bool>,
+) -> Result<(AttemptId, String), StoreError> {
+    liveness::reserve_migration_allocation_for_test(store, lock_binding)
+}
+
 pub(crate) fn validate_migration_attempt_links(
     rows: &std::collections::BTreeMap<String, Vec<u8>>,
     attempts: &std::collections::BTreeMap<String, Option<AttemptEnvelope>>,

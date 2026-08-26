@@ -117,6 +117,46 @@ pub(super) fn validate_migration_snapshot(
     records::validate_migration_snapshot(rows)
 }
 
+pub(super) fn reconcile_migration_allocations(
+    rows: &mut std::collections::BTreeMap<String, Vec<u8>>,
+    guard: &NamespaceGuard,
+) -> Result<(), StoreError> {
+    let mut recovered = Vec::new();
+    for (key, bytes) in rows.iter() {
+        let attempt_id = AttemptId::from_string(key.clone());
+        let lease = records::parse_record(bytes, Some(&attempt_id))?;
+        if lease.state == AttemptLeaseState::Allocating {
+            recovery::recover_allocation_artifact(guard, &lease)?;
+            recovered.push(key.clone());
+        }
+    }
+    for key in recovered {
+        rows.remove(&key);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(super) fn reserve_migration_allocation_for_test(
+    store: &RepositoryStore,
+    lock_binding: Option<bool>,
+) -> Result<(AttemptId, String), StoreError> {
+    store.with_exclusive_lock(|guard| {
+        let lease_nonce = nonce_hex()?;
+        let lock_name = format!("attempt-liveness-{lease_nonce}.lock");
+        let allocation =
+            records::reserve(guard, lock_name.clone(), lease_nonce, std::process::id())?;
+        if let Some(bound) = lock_binding {
+            let lock = guard.create_state_file(&lock_name, "attempt process-liveness lock")?;
+            lock.file().try_lock_exclusive().map_err(io_error)?;
+            if bound {
+                records::bind_allocating_lock_for_test(&lock, &allocation)?;
+            }
+        }
+        Ok((allocation.attempt_id, lock_name))
+    })
+}
+
 pub(super) fn validate_migration_attempt_links(
     rows: &std::collections::BTreeMap<String, Vec<u8>>,
     attempts: &std::collections::BTreeMap<String, Option<AttemptEnvelope>>,

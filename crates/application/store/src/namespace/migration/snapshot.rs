@@ -241,7 +241,14 @@ impl LogicalStoreSnapshot {
         validation::validate_external_references(self, guard)
     }
 
-    pub(super) fn transformed_from_v12(mut self) -> Result<Self, StoreError> {
+    pub(super) fn transformed_from_v12(
+        mut self,
+        guard: &NamespaceGuard,
+    ) -> Result<Self, StoreError> {
+        crate::publication::reconcile_migration_attempt_allocations(
+            &mut self.attempt_leases,
+            guard,
+        )?;
         crate::publication::validate_migration_attempt_leases(&self.attempt_leases)?;
         for (key, bytes) in &mut self.cache_cleanup_operations {
             let legacy = decode_closed_json::<LegacyCacheCleanupOperationRecord>(bytes).map_err(
@@ -409,8 +416,13 @@ fn validate_legacy_cleanup_operation(
                 && operation.validated_count == operation.authorization_keys.len() as u64
         }
     };
-    let interruption_count_valid = operation.status == CacheCleanupOperationStatus::Committed
-        || operation.interruption_count < u64::MAX;
+    let interruption_count_valid = match operation.status {
+        CacheCleanupOperationStatus::Pending => operation.interruption_count < u64::MAX,
+        CacheCleanupOperationStatus::Interrupted => {
+            (1..u64::MAX).contains(&operation.interruption_count)
+        }
+        CacheCleanupOperationStatus::Committed => true,
+    };
     if operation.schema_version != "lumin-cache-cleanup-operation.v1"
         || operation.operation_id.as_str() != key
         || operation.request_digest.is_empty()
@@ -630,6 +642,21 @@ mod tests {
             Err(StoreError::IncompatibleStateSchema(message))
                 if message.contains("impossible delivery state")
         ));
+
+        let mut impossible_interruption = legacy_operation(
+            "cache-interrupted-zero-count",
+            CacheCleanupOperationStatus::Interrupted,
+            LegacyCacheCleanupDeliveryStatus::NotAttempted,
+        );
+        impossible_interruption.interruption_count = 0;
+        assert!(matches!(
+            transform_legacy_cleanup_operation(
+                "cache-interrupted-zero-count",
+                impossible_interruption,
+            ),
+            Err(StoreError::IncompatibleStateSchema(message))
+                if message.contains("is incoherent")
+        ));
         Ok(())
     }
 
@@ -678,7 +705,11 @@ mod tests {
             operation_id,
             request_digest,
             status,
-            interruption_count: 0,
+            interruption_count: if status == CacheCleanupOperationStatus::Interrupted {
+                1
+            } else {
+                0
+            },
             invocation_id: "0".repeat(32),
             initial_authorization_set_id: CacheEvictionAuthorizationSetId::from_string(
                 "cache-evictions-test".to_owned(),

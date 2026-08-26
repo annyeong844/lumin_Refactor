@@ -443,6 +443,18 @@ pub(super) fn validate_allocating_lock(
     validate_lock(guard, file, &bound)
 }
 
+#[cfg(test)]
+pub(super) fn bind_allocating_lock_for_test(
+    file: &HeldEntry,
+    allocation: &AttemptLeaseRecord,
+) -> Result<(), StoreError> {
+    let mut bound = allocation.clone();
+    bound.lock_physical_identity = Some(file.identity().clone());
+    bound.state = AttemptLeaseState::Active;
+    validate_record(&bound)?;
+    file.replace_contents(&lock_bytes(&bound)?)
+}
+
 pub(super) fn remove(
     guard: &NamespaceGuard,
     expected: &AttemptLeaseRecord,
@@ -505,7 +517,7 @@ pub(super) fn validate_lock_identity(
     Ok(())
 }
 
-fn parse_record(
+pub(super) fn parse_record(
     bytes: &[u8],
     expected_id: Option<&AttemptId>,
 ) -> Result<AttemptLeaseRecord, StoreError> {

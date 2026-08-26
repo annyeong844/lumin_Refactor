@@ -358,6 +358,8 @@ fn validate_native_current_with_after_external(
     }
     current.snapshot.validate_external_references(guard)?;
     hook()?;
+    let current = revalidate_current_canonical(guard, &current)?;
+    current.snapshot.validate_external_references(guard)?;
     revalidate_current_canonical(guard, &current).map(|current| current.generation)
 }
 
@@ -388,7 +390,7 @@ fn begin_migration(
         .checked_next()
         .ok_or_else(|| StoreError::Integrity("lifecycle store generation overflow".to_owned()))?;
     let source_logical = legacy.snapshot.logical_sha256()?;
-    let transformed = legacy.snapshot.clone().transformed_from_v12()?;
+    let transformed = legacy.snapshot.clone().transformed_from_v12(guard)?;
     transformed.validate_external_references(guard)?;
 
     let root = UnpublishedFile::create(&guard.state.state_dir, &guard.state_directory)?;
@@ -587,7 +589,7 @@ fn prepare_target_candidate(
     attempt: u64,
 ) -> Result<(UnpublishedFile, MigrationArtifactBinding), StoreError> {
     let source = open_bound_source(guard, journal)?;
-    let transformed = source.snapshot.clone().transformed_from_v12()?;
+    let transformed = source.snapshot.clone().transformed_from_v12(guard)?;
     let anchor = anchor_for(journal);
     let logical = transformed.anchored_logical_sha256(&anchor)?;
     if logical != journal.root_authorization.target_user_logical_sha256 {
@@ -634,7 +636,7 @@ fn exchange_store(
     validate_target_published_envelope(guard, &journal)?;
     open_exchange_source(guard, &journal)?
         .snapshot
-        .transformed_from_v12()?
+        .transformed_from_v12(guard)?
         .validate_external_references(guard)?;
     let source = journal.source.binding.clone();
     let target = journal.target()?.binding.clone();
