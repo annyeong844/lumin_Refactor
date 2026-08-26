@@ -15,9 +15,9 @@ use std::fmt;
 use lumin_model::{
     BuildIdentity, CapabilityState, EvidenceId, FindingDisposition, FindingId, FindingRelationId,
     GateId, Limitation, LogicalSourceId, PayloadSnapshotId, PhysicalFileIdentity, RepoPath,
-    RepositoryId, ResolutionOutcome, ResolvedSourceUse, RunId, SelectedResolutionProfile,
-    SourceKind, SourceRoleClassification, SourceSpan, SymbolNamespace, append_length_prefixed,
-    digest_hex,
+    RepositoryId, ResolutionOutcome, ResolutionProfileSource, ResolvedSourceUse, RunId,
+    SelectedResolutionProfile, SourceKind, SourceRoleClassification, SourceSpan, SymbolNamespace,
+    append_length_prefixed, digest_hex,
 };
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
@@ -45,6 +45,23 @@ pub fn dead_code_capability_state(limitations: &[Limitation]) -> CapabilityState
         Limitation::DependencyOwnerAmbiguous { .. }
         | Limitation::PnpmDependencySemanticsUnsupported { .. } => false,
         _ => true,
+    }) {
+        CapabilityState::Incomplete
+    } else {
+        CapabilityState::Complete
+    }
+}
+
+// The architecture check must inspect Limitation variants outside macro token streams.
+#[allow(clippy::match_like_matches_macro)]
+pub fn dependency_ownership_capability_state(limitations: &[Limitation]) -> CapabilityState {
+    if limitations.iter().any(|limitation| match limitation {
+        Limitation::PackageMetadataUnobservable { .. }
+        | Limitation::PackageIdentityUnsupported { .. }
+        | Limitation::DependencyOwnerAmbiguous { .. }
+        | Limitation::WorkspaceOwnershipUnsupported { .. }
+        | Limitation::PnpmDependencySemanticsUnsupported { .. } => true,
+        _ => false,
     }) {
         CapabilityState::Incomplete
     } else {
@@ -500,6 +517,17 @@ pub fn validate_run_evidence_identities(
             .iter()
             .map(|record| (record.source_id.as_str(), &record.source_id, &record.path)),
     )?;
+    for context in &evidence.source_contexts {
+        if context
+            .package_root
+            .as_ref()
+            .is_some_and(|root| !context.path.components.starts_with(&root.components))
+        {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "source package-root containment",
+            });
+        }
+    }
     require_unique(
         "source observations",
         evidence
@@ -512,6 +540,34 @@ pub fn validate_run_evidence_identities(
         .iter()
         .map(|record| record.source_id.as_str())
         .collect::<BTreeSet<_>>();
+    let ordered_source_ids = evidence
+        .source_observations
+        .iter()
+        .map(|record| record.source_id.as_str())
+        .collect::<Vec<_>>();
+    if evidence
+        .source_classifications
+        .iter()
+        .map(|record| record.source_id.as_str())
+        .ne(ordered_source_ids.iter().copied())
+        || evidence
+            .source_contexts
+            .iter()
+            .map(|record| record.source_id.as_str())
+            .ne(ordered_source_ids.iter().copied())
+    {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "the observed source inventory",
+        });
+    }
+    for owner in &evidence.dependency_owners {
+        require_source_binding(
+            "dependency owners",
+            owner.consumer.as_str(),
+            &owner.consumer,
+            &owner.consumer_path,
+        )?;
+    }
     require_unique(
         "resolution profiles",
         evidence
@@ -519,6 +575,46 @@ pub fn validate_run_evidence_identities(
             .iter()
             .map(|record| record.source_id.as_str()),
     )?;
+    for profile in &evidence.resolution_profiles {
+        if !source_ids.contains(profile.source_id.as_str()) {
+            return Err(RunEvidenceIdentityError::MissingReference {
+                collection: "resolution-profile sources",
+                identity: profile.source_id.as_str().to_owned(),
+            });
+        }
+        let ResolutionProfileSource::Config {
+            path_canonical,
+            path_display,
+        } = &profile.source
+        else {
+            continue;
+        };
+        let Ok(config_path) = RepoPath::from_canonical_bytes(path_canonical) else {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "resolution-profile config paths",
+            });
+        };
+        let Some(context) = evidence
+            .source_contexts
+            .iter()
+            .find(|context| context.source_id == profile.source_id)
+        else {
+            return Err(RunEvidenceIdentityError::MissingReference {
+                collection: "resolution-profile source contexts",
+                identity: profile.source_id.as_str().to_owned(),
+            });
+        };
+        if config_path.display_escaped() != *path_display
+            || !context
+                .configuration_paths
+                .iter()
+                .any(|path| path.canonical == *path_canonical)
+        {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "resolution-profile config paths",
+            });
+        }
+    }
     for resolution in &evidence.resolutions {
         if !source_ids.contains(resolution.source_use.importer.as_str()) {
             return Err(RunEvidenceIdentityError::MissingReference {
@@ -544,6 +640,13 @@ pub fn validate_run_evidence_identities(
             .map(|record| record.finding_id.as_str()),
     )?;
     for finding in &evidence.findings {
+        if finding.rule_id != DEAD_EXPORT_RULE_ID
+            || finding.owner_capability != DEAD_CODE_CAPABILITY_ID
+        {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "the compiled finding registry",
+            });
+        }
         if !finding.nested_collections_available
             && (!finding.evidence.is_empty() || !finding.relations.is_empty())
         {
@@ -643,6 +746,29 @@ pub fn validate_run_evidence_identities(
             }
         }
     }
+    for finding in &evidence.findings {
+        if !source_ids.contains(finding.source_id.as_str()) {
+            return Err(RunEvidenceIdentityError::MissingReference {
+                collection: "finding sources",
+                identity: finding.source_id.as_str().to_owned(),
+            });
+        }
+        for record in &finding.evidence {
+            if !source_ids.contains(record.source_id.as_str()) {
+                return Err(RunEvidenceIdentityError::MissingReference {
+                    collection: "finding evidence sources",
+                    identity: record.source_id.as_str().to_owned(),
+                });
+            }
+        }
+    }
+    let mut canonical_findings = evidence.findings.clone();
+    sort_findings(&mut canonical_findings);
+    if canonical_findings != evidence.findings {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "canonical finding ordering",
+        });
+    }
     let observed_capability_ids = evidence
         .capabilities
         .iter()
@@ -655,6 +781,27 @@ pub fn validate_run_evidence_identities(
         return Err(RunEvidenceIdentityError::InventoryMismatch {
             collection: "the compiled capability registry",
         });
+    }
+    for (capability_id, expected) in [
+        (
+            DEAD_CODE_CAPABILITY_ID,
+            dead_code_capability_state(&evidence.limitations),
+        ),
+        (
+            DEPENDENCY_OWNERSHIP_CAPABILITY_ID,
+            dependency_ownership_capability_state(&evidence.limitations),
+        ),
+    ] {
+        let observed = evidence
+            .capabilities
+            .iter()
+            .find(|record| record.capability_id == capability_id)
+            .map(|record| record.state);
+        if observed != Some(expected) {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "limitation-derived capability states",
+            });
+        }
     }
     Ok(())
 }
@@ -800,8 +947,8 @@ pub fn sort_findings(findings: &mut [FindingRecord]) {
 #[cfg(test)]
 mod tests {
     use lumin_model::{
-        FindingDisposition, ImportKind, ModuleRequestKind, ResolutionOutcome, ResolvedSourceUse,
-        SourceUseFact, SymbolNamespace,
+        FindingDisposition, ImportKind, ModuleRequestKind, ResolutionOutcome, ResolutionProfile,
+        ResolvedSourceUse, SourceUseFact, SymbolNamespace,
     };
 
     use super::*;
@@ -848,7 +995,11 @@ mod tests {
     }
 
     fn run_evidence_fixture(findings: Vec<FindingRecord>) -> RunEvidence {
-        RunEvidence {
+        let source_rows = findings
+            .iter()
+            .map(|finding| (finding.source_id.clone(), finding.path.clone()))
+            .collect::<Vec<_>>();
+        let mut evidence = RunEvidence {
             schema_version: RUN_EVIDENCE_SCHEMA_VERSION.to_owned(),
             capabilities: RUN_EVIDENCE_CAPABILITY_IDS
                 .into_iter()
@@ -866,7 +1017,48 @@ mod tests {
             metrics: AnalysisMetrics::default(),
             findings,
             limitations: Vec::new(),
-        }
+        };
+        populate_source_inventory(&mut evidence, source_rows);
+        evidence
+    }
+
+    fn populate_source_inventory(
+        evidence: &mut RunEvidence,
+        sources: impl IntoIterator<Item = (LogicalSourceId, RepoPathProjection)>,
+    ) {
+        let sources = sources.into_iter().collect::<BTreeMap<_, _>>();
+        evidence.source_classifications = sources
+            .iter()
+            .map(|(source_id, path)| SourceClassificationRecord {
+                source_id: source_id.clone(),
+                path: path.clone(),
+                classifications: Vec::new(),
+            })
+            .collect();
+        evidence.source_contexts = sources
+            .iter()
+            .map(|(source_id, path)| SourceContextRecord {
+                source_id: source_id.clone(),
+                path: path.clone(),
+                kind: SourceKind::TypeScript,
+                package_root: None,
+                configuration_paths: Vec::new(),
+            })
+            .collect();
+        evidence.source_observations = sources
+            .keys()
+            .map(|source_id| SourceObservationRecord {
+                source_id: source_id.clone(),
+                physical_identity: PhysicalFileIdentity::Unix {
+                    device: 1,
+                    inode: 1,
+                },
+                payload_snapshot_id: PayloadSnapshotId::from_string("payload".to_owned()),
+            })
+            .collect();
+        evidence.metrics.logical_source_count = sources.len();
+        evidence.metrics.physical_source_count = usize::from(!sources.is_empty());
+        evidence.metrics.payload_snapshot_count = usize::from(!sources.is_empty());
     }
 
     #[test]
@@ -972,9 +1164,8 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let owner_path = RepoPath::from_portable("src/owner.ts")?;
         let forged_path = RepoPath::from_portable("src/forged.ts")?;
-        let mut finding = finding_fixture(&owner_path, "misplaced");
-        finding.path = RepoPathProjection::from(&forged_path);
-        let evidence = run_evidence_fixture(vec![finding]);
+        let mut evidence = run_evidence_fixture(vec![finding_fixture(&owner_path, "misplaced")]);
+        evidence.findings[0].path = RepoPathProjection::from(&forged_path);
 
         assert!(matches!(
             validate_run_evidence_identities(&evidence),
@@ -1036,30 +1227,13 @@ mod tests {
         let target = LogicalSourceId::from_path(&target_path);
         let missing = LogicalSourceId::from_path(&missing_path);
         let mut evidence = run_evidence_fixture(Vec::new());
-        evidence.source_observations = vec![
-            SourceObservationRecord {
-                source_id: importer.clone(),
-                physical_identity: PhysicalFileIdentity::Unix {
-                    device: 1,
-                    inode: 1,
-                },
-                payload_snapshot_id: PayloadSnapshotId::from_string("importer-payload".to_owned()),
-            },
-            SourceObservationRecord {
-                source_id: target.clone(),
-                physical_identity: PhysicalFileIdentity::Unix {
-                    device: 1,
-                    inode: 2,
-                },
-                payload_snapshot_id: PayloadSnapshotId::from_string("target-payload".to_owned()),
-            },
-        ];
-        evidence.metrics = AnalysisMetrics {
-            logical_source_count: 2,
-            physical_source_count: 2,
-            payload_snapshot_count: 2,
-            js_parse_product_count: 0,
-        };
+        populate_source_inventory(
+            &mut evidence,
+            [
+                (importer.clone(), RepoPathProjection::from(&importer_path)),
+                (target.clone(), RepoPathProjection::from(&target_path)),
+            ],
+        );
         evidence.resolutions = vec![ResolvedSourceUse {
             source_use: SourceUseFact {
                 importer: importer.clone(),
@@ -1104,6 +1278,10 @@ mod tests {
         let canonical = run_evidence_fixture(Vec::new());
         assert!(validate_run_evidence_identities(&canonical).is_ok());
 
+        let mut engine_owner_order = canonical.clone();
+        engine_owner_order.capabilities.swap(2, 4);
+        assert!(validate_run_evidence_identities(&engine_owner_order).is_ok());
+
         let mut missing = canonical.clone();
         missing.capabilities.pop();
         assert!(matches!(
@@ -1127,6 +1305,272 @@ mod tests {
     }
 
     #[test]
+    fn persisted_capability_states_are_derived_from_limitations() {
+        let mut evidence = run_evidence_fixture(Vec::new());
+        evidence.limitations = vec![Limitation::PackageMetadataUnobservable {
+            path: "package.json".to_owned(),
+            detail: "unreadable".to_owned(),
+        }];
+        for capability in &mut evidence.capabilities {
+            if matches!(
+                capability.capability_id.as_str(),
+                DEAD_CODE_CAPABILITY_ID | DEPENDENCY_OWNERSHIP_CAPABILITY_ID
+            ) {
+                capability.state = CapabilityState::Incomplete;
+            }
+        }
+        assert!(validate_run_evidence_identities(&evidence).is_ok());
+
+        assert_eq!(
+            evidence.capabilities[1].capability_id,
+            DEPENDENCY_OWNERSHIP_CAPABILITY_ID
+        );
+        evidence.capabilities[1].state = CapabilityState::Complete;
+        assert!(matches!(
+            validate_run_evidence_identities(&evidence),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "limitation-derived capability states"
+            })
+        ));
+    }
+
+    #[test]
+    fn persisted_findings_use_the_compiled_rule_registry() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let path = RepoPath::from_portable("src/unsupported-rule.ts")?;
+        let mut evidence = run_evidence_fixture(vec![finding_fixture(&path, "unsupported")]);
+        let finding = &mut evidence.findings[0];
+        finding.rule_id = "opaque/rule.v1".to_owned();
+        finding.finding_id = FindingId::for_export(
+            &finding.rule_id,
+            &finding.source_id,
+            finding.namespace,
+            &finding.exported_name,
+        );
+
+        assert!(matches!(
+            validate_run_evidence_identities(&evidence),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "the compiled finding registry"
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_dependency_owners_bind_consumers_to_paths()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let consumer_path = RepoPath::from_portable("packages/a/src/main.ts")?;
+        let package_root = RepoPath::from_portable("packages/a")?;
+        let manifest_path = RepoPath::from_portable("packages/a/package.json")?;
+        let mut evidence = run_evidence_fixture(Vec::new());
+        evidence.dependency_owners.push(DependencyOwnerRecord {
+            consumer: LogicalSourceId::from_path(&consumer_path),
+            consumer_path: RepoPathProjection::from(&consumer_path),
+            dependency: "dep".to_owned(),
+            package_root: RepoPathProjection::from(&package_root),
+            manifest_path: RepoPathProjection::from(&manifest_path),
+            manifest_payload_sha256: "manifest".to_owned(),
+            lockfile_path: None,
+        });
+        validate_run_evidence_identities(&evidence)?;
+
+        evidence.dependency_owners[0].consumer =
+            LogicalSourceId::from_path(&RepoPath::from_portable("packages/b/src/main.ts")?);
+        assert!(matches!(
+            validate_run_evidence_identities(&evidence),
+            Err(RunEvidenceIdentityError::SourceIdentityMismatch {
+                collection: "dependency owners",
+                ..
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_source_indexes_exactly_cover_observed_sources()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = RepoPath::from_portable("src/observed.ts")?;
+        let source_id = LogicalSourceId::from_path(&path);
+        let mut evidence = run_evidence_fixture(Vec::new());
+        populate_source_inventory(
+            &mut evidence,
+            [(source_id, RepoPathProjection::from(&path))],
+        );
+        validate_run_evidence_identities(&evidence)?;
+
+        evidence.source_classifications.clear();
+        assert!(matches!(
+            validate_run_evidence_identities(&evidence),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "the observed source inventory"
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_config_profiles_bind_canonical_consulted_paths()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source_path = RepoPath::from_portable("src/configured.ts")?;
+        let config_path = RepoPath::from_portable("tsconfig.json")?;
+        let source_id = LogicalSourceId::from_path(&source_path);
+        let mut evidence = run_evidence_fixture(Vec::new());
+        populate_source_inventory(
+            &mut evidence,
+            [(source_id.clone(), RepoPathProjection::from(&source_path))],
+        );
+        evidence.source_contexts[0].configuration_paths =
+            vec![RepoPathProjection::from(&config_path)];
+        evidence.resolution_profiles = vec![SelectedResolutionProfile {
+            source_id,
+            profile: ResolutionProfile::Bundler,
+            source: ResolutionProfileSource::Config {
+                path_canonical: config_path.canonical_bytes().to_vec(),
+                path_display: config_path.display_escaped(),
+            },
+        }];
+        validate_run_evidence_identities(&evidence)?;
+
+        let mut forged_display = evidence.clone();
+        let ResolutionProfileSource::Config { path_display, .. } =
+            &mut forged_display.resolution_profiles[0].source
+        else {
+            unreachable!()
+        };
+        *path_display = "forged.json".to_owned();
+        assert!(matches!(
+            validate_run_evidence_identities(&forged_display),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "resolution-profile config paths"
+            })
+        ));
+
+        let mut unconsulted = evidence;
+        let other = RepoPath::from_portable("other.json")?;
+        unconsulted.resolution_profiles[0].source = ResolutionProfileSource::Config {
+            path_canonical: other.canonical_bytes().to_vec(),
+            path_display: other.display_escaped(),
+        };
+        assert!(matches!(
+            validate_run_evidence_identities(&unconsulted),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "resolution-profile config paths"
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_source_package_roots_contain_their_sources()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source_path = RepoPath::from_portable("packages/a/src/main.ts")?;
+        let source_id = LogicalSourceId::from_path(&source_path);
+        let mut evidence = run_evidence_fixture(Vec::new());
+        populate_source_inventory(
+            &mut evidence,
+            [(source_id, RepoPathProjection::from(&source_path))],
+        );
+        evidence.source_contexts[0].package_root = Some(RepoPathProjection::from(
+            &RepoPath::from_portable("packages/a")?,
+        ));
+        validate_run_evidence_identities(&evidence)?;
+
+        evidence.source_contexts[0].package_root = Some(RepoPathProjection::from(
+            &RepoPath::from_portable("packages/b")?,
+        ));
+        assert!(matches!(
+            validate_run_evidence_identities(&evidence),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "source package-root containment"
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_finding_collections_use_canonical_ordering()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = RepoPath::from_portable("src/ordering.ts")?;
+        let mut source = finding_fixture(&path, "source");
+        let target_a = finding_fixture(&path, "target-a");
+        let target_b = finding_fixture(&path, "target-b");
+        let source_id = source.source_id.clone();
+        let second_evidence = EvidenceRecord {
+            evidence_id: EvidenceId::for_source_span("reference", &source_id, 2, 3, "second"),
+            kind: "reference".to_owned(),
+            source_id,
+            path: RepoPathProjection::from(&path),
+            span: SourceSpan { start: 2, end: 3 },
+            payload_sha256: "second".to_owned(),
+        };
+        source.evidence.push(second_evidence);
+        source.relations = vec![
+            FindingRelationRecord {
+                relation_id: finding_relation_id(
+                    &source.finding_id,
+                    "beta",
+                    &target_b.finding_id,
+                    &source.evidence[1].evidence_id,
+                ),
+                kind: "beta".to_owned(),
+                target_finding_id: target_b.finding_id.clone(),
+                grounding_evidence_id: source.evidence[1].evidence_id.clone(),
+            },
+            FindingRelationRecord {
+                relation_id: finding_relation_id(
+                    &source.finding_id,
+                    "alpha",
+                    &target_a.finding_id,
+                    &source.evidence[0].evidence_id,
+                ),
+                kind: "alpha".to_owned(),
+                target_finding_id: target_a.finding_id.clone(),
+                grounding_evidence_id: source.evidence[0].evidence_id.clone(),
+            },
+        ];
+        let mut findings = vec![target_b, source, target_a];
+        sort_findings(&mut findings);
+        let canonical = run_evidence_fixture(findings);
+        validate_run_evidence_identities(&canonical)?;
+
+        let mut variants = Vec::new();
+        let mut findings_reversed = canonical.clone();
+        findings_reversed.findings.swap(0, 1);
+        variants.push(findings_reversed);
+
+        let mut evidence_reversed = canonical.clone();
+        let source_index = evidence_reversed
+            .findings
+            .iter()
+            .position(|finding| finding.exported_name == "source")
+            .ok_or("source finding missing")?;
+        evidence_reversed.findings[source_index].evidence.swap(0, 1);
+        variants.push(evidence_reversed);
+
+        let mut relations_reversed = canonical;
+        let source_index = relations_reversed
+            .findings
+            .iter()
+            .position(|finding| finding.exported_name == "source")
+            .ok_or("source finding missing")?;
+        relations_reversed.findings[source_index]
+            .relations
+            .swap(0, 1);
+        variants.push(relations_reversed);
+
+        for variant in variants {
+            assert!(matches!(
+                validate_run_evidence_identities(&variant),
+                Err(RunEvidenceIdentityError::InventoryMismatch {
+                    collection: "canonical finding ordering"
+                })
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
     fn persisted_metrics_are_derived_from_source_observations()
     -> Result<(), Box<dyn std::error::Error>> {
         let paths = [
@@ -1145,23 +1589,21 @@ mod tests {
         let payload_one = PayloadSnapshotId::from_string("payload-one".to_owned());
         let payload_two = PayloadSnapshotId::from_string("payload-two".to_owned());
         let mut evidence = run_evidence_fixture(Vec::new());
-        evidence.source_observations = vec![
-            SourceObservationRecord {
-                source_id: LogicalSourceId::from_path(&paths[0]),
-                physical_identity: physical_one.clone(),
-                payload_snapshot_id: payload_one.clone(),
-            },
-            SourceObservationRecord {
-                source_id: LogicalSourceId::from_path(&paths[1]),
-                physical_identity: physical_one,
-                payload_snapshot_id: payload_one,
-            },
-            SourceObservationRecord {
-                source_id: LogicalSourceId::from_path(&paths[2]),
-                physical_identity: physical_two,
-                payload_snapshot_id: payload_two,
-            },
-        ];
+        populate_source_inventory(
+            &mut evidence,
+            paths.iter().map(|path| {
+                (
+                    LogicalSourceId::from_path(path),
+                    RepoPathProjection::from(path),
+                )
+            }),
+        );
+        evidence.source_observations[0].physical_identity = physical_one.clone();
+        evidence.source_observations[0].payload_snapshot_id = payload_one.clone();
+        evidence.source_observations[1].physical_identity = physical_one;
+        evidence.source_observations[1].payload_snapshot_id = payload_one;
+        evidence.source_observations[2].physical_identity = physical_two;
+        evidence.source_observations[2].payload_snapshot_id = payload_two;
         evidence.metrics = AnalysisMetrics {
             logical_source_count: 3,
             physical_source_count: 2,
