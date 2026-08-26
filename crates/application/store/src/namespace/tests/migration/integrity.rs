@@ -682,6 +682,47 @@ fn run_inventory_rechecks_the_held_directory_after_the_exact_barrier()
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn run_evidence_rechecks_the_held_bytes_after_the_final_inventory_barrier()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let mut attempt = store.begin_attempt()?;
+    let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+    let run_dir = root
+        .path()
+        .join(".lumin/runs")
+        .join(published.run_id.as_str());
+    let evidence_path = run_dir.join("evidence.store");
+    let expected =
+        serde_json::from_slice::<RunCatalogRecord>(&fs::read(run_dir.join("run.json"))?)?;
+    let held_dir = HeldEntry::open(
+        &run_dir,
+        EntryKind::Directory,
+        EntryAccess::ReadOnly,
+        false,
+        "test run directory",
+    )?;
+
+    let result = crate::publication::validate_directory_with_inventory_hooks(
+        &run_dir,
+        &held_dir,
+        &expected,
+        || Ok(()),
+        || fs::write(&evidence_path, b"changed after final inventory").map_err(crate::io_error),
+    );
+    assert!(
+        matches!(
+            result,
+            Err(StoreError::Integrity(ref message))
+                if message.contains("evidence store identity mismatch")
+        ),
+        "unexpected validation result: {result:?}"
+    );
+    Ok(())
+}
+
 #[cfg(windows)]
 #[test]
 fn run_inventory_rechecks_the_windows_directory_handle_after_the_exact_barrier()

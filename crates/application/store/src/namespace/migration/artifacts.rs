@@ -176,6 +176,28 @@ impl MigrationJournal {
         target_publication_attempt_for_count(self.targets.len())
     }
 
+    pub(super) fn owned_namespace_names(&self) -> Result<BTreeSet<String>, StoreError> {
+        let mut names = self
+            .entries
+            .iter()
+            .map(|entry| entry.name.clone())
+            .collect::<BTreeSet<_>>();
+        match self.phase {
+            MigrationPhase::ObservedSource => {}
+            MigrationPhase::TargetPending => {
+                names.insert(self.target()?.binding.pre_exchange_name.clone());
+            }
+            MigrationPhase::TargetPublished => {
+                names.insert(self.source.binding.post_exchange_name.clone());
+                names.insert(self.target()?.binding.pre_exchange_name.clone());
+            }
+            MigrationPhase::Exchanged | MigrationPhase::Terminal => {
+                names.insert(self.source.binding.post_exchange_name.clone());
+            }
+        }
+        Ok(names)
+    }
+
     fn head(&self) -> Result<&JournalEntry, StoreError> {
         self.entries.last().ok_or_else(|| {
             StoreError::Integrity("migration journal omitted its authorized root".to_owned())

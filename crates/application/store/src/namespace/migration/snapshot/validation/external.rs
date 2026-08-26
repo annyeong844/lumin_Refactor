@@ -70,6 +70,10 @@ fn validate_state_namespace_inventory(
         "trash".to_owned(),
     ]);
     let attempt_locks = crate::publication::migration_attempt_lock_names(&snapshot.attempt_leases)?;
+    let migration_owned = super::super::super::artifacts::read_journal(guard)?
+        .map(|journal| journal.owned_namespace_names())
+        .transpose()?
+        .unwrap_or_default();
 
     for native_name in guard.state_directory.directory_names("state namespace")? {
         if super::super::super::super::validate_active_unpublished_name(
@@ -82,16 +86,9 @@ fn validate_state_namespace_inventory(
         let name = native_name.into_string().map_err(|_| {
             StoreError::Integrity("state namespace contains a non-UTF-8 entry".to_owned())
         })?;
-        // The migration entrypoint has already folded the journal and rejected
-        // every unbound reserved-name artifact before any snapshot reaches this
-        // validator. Keep those proven names visible while closing the rest of
-        // the state namespace.
-        let migration_owned = name == "lifecycle-migration.json"
-            || name.starts_with("lifecycle-migration.revision-")
-            || name.starts_with("lifecycle.store.migration-");
         if fixed.contains(&name)
             || attempt_locks.contains(&name)
-            || migration_owned
+            || migration_owned.contains(&name)
             || crate::gate::validate_migration_operation_lock_inventory(guard, &name)?
         {
             continue;
@@ -214,22 +211,7 @@ fn validate_attempt_directories(
             "retained attempt directory",
         )?;
 
-        let mut contents = Vec::new();
-        for entry in fs::read_dir(&attempt_dir).map_err(io_error)? {
-            let entry = entry.map_err(io_error)?;
-            let name = entry.file_name().into_string().map_err(|_| {
-                StoreError::Integrity(format!(
-                    "retained attempt {attempt_id} contains a non-UTF-8 entry"
-                ))
-            })?;
-            if name != "attempt.json" && name != "attempt.json.pending" {
-                return Err(StoreError::Integrity(format!(
-                    "retained attempt {attempt_id} contains an unknown entry {name}"
-                )));
-            }
-            contents.push(name);
-        }
-        contents.sort();
+        let contents = validate_attempt_directory_inventory(&held_dir, &attempt_id)?;
 
         let envelope = if contents
             .binary_search_by(|name| name.as_str().cmp("attempt.json"))
@@ -275,6 +257,28 @@ fn validate_attempt_directories(
     )?;
     super::validate_allocator_sequence(snapshot, "attempt", maximum_sequence)?;
     Ok(attempts)
+}
+
+fn validate_attempt_directory_inventory(
+    held_dir: &HeldEntry,
+    attempt_id: &str,
+) -> Result<Vec<String>, StoreError> {
+    let mut contents = Vec::new();
+    for native_name in held_dir.directory_names("retained attempt directory")? {
+        let name = native_name.into_string().map_err(|_| {
+            StoreError::Integrity(format!(
+                "retained attempt {attempt_id} contains a non-UTF-8 entry"
+            ))
+        })?;
+        if name != "attempt.json" && name != "attempt.json.pending" {
+            return Err(StoreError::Integrity(format!(
+                "retained attempt {attempt_id} contains an unknown entry {name}"
+            )));
+        }
+        contents.push(name);
+    }
+    contents.sort();
+    Ok(contents)
 }
 
 fn read_attempt_envelope(
@@ -967,4 +971,48 @@ fn open_state_entry(
     let entry = HeldEntry::open(path, kind, EntryAccess::ReadOnly, one_link, label)?;
     require_state_volume(&entry, &guard.state_directory, label)?;
     Ok(entry)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attempt_inventory_reads_the_held_directory_across_a_namespace_swap()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let attempt_id = "attempt_0000000000000001";
+        let attempt_dir = root.path().join(attempt_id);
+        let moved_dir = root.path().join("held-attempt-directory");
+        fs::create_dir(&attempt_dir)?;
+        fs::write(attempt_dir.join("attempt.json"), b"{}")?;
+        fs::write(attempt_dir.join("unowned-payload"), b"unowned")?;
+        let held_dir = HeldEntry::open(
+            &attempt_dir,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            "test attempt directory",
+        )?;
+
+        fs::rename(&attempt_dir, &moved_dir)?;
+        fs::create_dir(&attempt_dir)?;
+        fs::write(attempt_dir.join("attempt.json"), b"{}")?;
+        let result = validate_attempt_directory_inventory(&held_dir, attempt_id);
+        fs::remove_dir_all(&attempt_dir)?;
+        fs::rename(&moved_dir, &attempt_dir)?;
+        held_dir.validate_path(
+            &attempt_dir,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            "test attempt directory",
+        )?;
+
+        assert!(matches!(
+            result,
+            Err(StoreError::Integrity(message)) if message.contains("unowned-payload")
+        ));
+        Ok(())
+    }
 }

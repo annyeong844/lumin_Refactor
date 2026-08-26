@@ -1536,20 +1536,7 @@ fn reject_unbound_migration_artifacts(
     guard: &NamespaceGuard,
     journal: &MigrationJournal,
 ) -> Result<(), StoreError> {
-    let mut allowed = std::collections::BTreeSet::new();
-    match journal.phase {
-        MigrationPhase::ObservedSource => {}
-        MigrationPhase::TargetPending => {
-            allowed.insert(journal.target()?.binding.pre_exchange_name.as_str());
-        }
-        MigrationPhase::TargetPublished => {
-            allowed.insert(journal.source.binding.post_exchange_name.as_str());
-            allowed.insert(journal.target()?.binding.pre_exchange_name.as_str());
-        }
-        MigrationPhase::Exchanged | MigrationPhase::Terminal => {
-            allowed.insert(journal.source.binding.post_exchange_name.as_str());
-        }
-    }
+    let allowed = journal.owned_namespace_names()?;
     for item in fs::read_dir(&guard.state.state_dir).map_err(io_error)? {
         let item = item.map_err(io_error)?;
         let native_name = item.file_name();

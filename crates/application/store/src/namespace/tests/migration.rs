@@ -585,6 +585,28 @@ fn migration_rejects_latest_pointers_regressed_behind_completed_history()
 }
 
 #[test]
+fn migration_rejects_a_pending_latest_pointer_behind_the_canonical_frontier()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let mut first_attempt = store.begin_attempt()?;
+    store.publish_run(&mut first_attempt, &evidence(), |_| Ok(()))?;
+    let older = fs::read(root.path().join(".lumin/latest.json"))?;
+
+    let mut second_attempt = store.begin_attempt()?;
+    store.publish_run(&mut second_attempt, &evidence(), |_| Ok(()))?;
+    fs::write(root.path().join(".lumin/latest.json.pending"), older)?;
+    make_prior_store(&store, root.path())?;
+
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("pending latest pointer is not the exact next publication")
+    ));
+    Ok(())
+}
+
+#[test]
 fn migration_validates_the_complete_latest_pointer_document()
 -> Result<(), Box<dyn std::error::Error>> {
     for field in [
@@ -1409,6 +1431,34 @@ fn exchange_rechecks_pending_write_leases_after_movement_handles_open()
         "migration source after rejected pending-lease exchange",
     )?;
     assert_eq!(canonical.identity(), &source_identity);
+    Ok(())
+}
+
+#[test]
+fn terminal_validation_rejects_a_late_unbound_migration_artifact()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    make_prior_store(&store, root.path())?;
+    let injected = root.path().join(".lumin/lifecycle.store.migration-opaque");
+    let mut reached = false;
+    let result = store.namespace.with_migration_lock(|guard| {
+        migrate_with_hook(guard, &mut |point| {
+            if point == MigrationCrashPoint::TerminalSourceValidated && !reached {
+                fs::write(&injected, b"unbound migration artifact").map_err(crate::io_error)?;
+                reached = true;
+            }
+            Ok(())
+        })
+    });
+
+    assert!(reached, "migration skipped the terminal validation barrier");
+    assert!(matches!(
+        result,
+        Err(StoreError::Integrity(message))
+            if message.contains("state namespace contains an unowned entry")
+    ));
+    assert_eq!(fs::read(&injected)?, b"unbound migration artifact");
     Ok(())
 }
 

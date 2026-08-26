@@ -425,15 +425,7 @@ fn validate_directory_with_hooks(
         "run evidence store",
     )?;
     files::require_parent_volume(&evidence, directory, "run evidence store")?;
-    let bytes = evidence.read_all()?;
-    if digest_hex(&bytes) != expected.evidence_store_sha256
-        || bytes.len() as u64 != expected.evidence_store_size
-    {
-        return Err(StoreError::Integrity(format!(
-            "evidence store identity mismatch for {}",
-            expected.run_id.as_str()
-        )));
-    }
+    let bytes = validate_evidence_store_identity(&evidence, expected)?;
     after_evidence_read()?;
     read_evidence_store(&bytes)?;
     evidence.validate_path(
@@ -443,7 +435,6 @@ fn validate_directory_with_hooks(
         true,
         "run evidence store",
     )?;
-    drop(evidence);
     directory.validate_path(
         directory_path,
         EntryKind::Directory,
@@ -454,6 +445,14 @@ fn validate_directory_with_hooks(
     before_final_inventory()?;
     validate_directory_inventory(directory, expected)?;
     after_final_inventory()?;
+    evidence.validate_path(
+        &evidence_path,
+        EntryKind::RegularFile,
+        EntryAccess::ReadOnly,
+        true,
+        "run evidence store",
+    )?;
+    validate_evidence_store_identity(&evidence, expected)?;
     directory.validate_path(
         directory_path,
         EntryKind::Directory,
@@ -462,6 +461,22 @@ fn validate_directory_with_hooks(
         "run directory",
     )?;
     validate_directory_inventory(directory, expected)
+}
+
+fn validate_evidence_store_identity(
+    evidence: &HeldEntry,
+    expected: &RunCatalogRecord,
+) -> Result<Vec<u8>, StoreError> {
+    let bytes = evidence.read_all()?;
+    if digest_hex(&bytes) != expected.evidence_store_sha256
+        || bytes.len() as u64 != expected.evidence_store_size
+    {
+        return Err(StoreError::Integrity(format!(
+            "evidence store identity mismatch for {}",
+            expected.run_id.as_str()
+        )));
+    }
+    Ok(bytes)
 }
 
 fn validate_directory_inventory(

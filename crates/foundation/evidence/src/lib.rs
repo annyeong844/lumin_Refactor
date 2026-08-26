@@ -491,6 +491,21 @@ pub fn validate_run_evidence_identities(
                 .iter()
                 .map(|record| record.evidence_id.as_str()),
         )?;
+        for record in &finding.evidence {
+            let expected = EvidenceId::for_source_span(
+                &record.kind,
+                &record.source_id,
+                record.span.start,
+                record.span.end,
+                &record.payload_sha256,
+            );
+            if record.evidence_id != expected {
+                return Err(RunEvidenceIdentityError::DerivedIdentityMismatch {
+                    collection: "finding evidence",
+                    identity: record.evidence_id.as_str().to_owned(),
+                });
+            }
+        }
         require_unique(
             "finding relations",
             finding
@@ -751,6 +766,67 @@ mod tests {
             validate_run_evidence_identities(&evidence),
             Err(RunEvidenceIdentityError::DerivedIdentityMismatch {
                 collection: "finding relations",
+                ..
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_finding_evidence_requires_the_owner_derived_identity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = RepoPath::from_portable("src/evidence.ts")?;
+        let source_id = LogicalSourceId::from_path(&path);
+        let finding_id = FindingId::for_export(
+            DEAD_EXPORT_RULE_ID,
+            &source_id,
+            SymbolNamespace::Value,
+            "evidence",
+        );
+        let evidence = RunEvidence {
+            schema_version: RUN_EVIDENCE_SCHEMA_VERSION.to_owned(),
+            capabilities: vec![CapabilityRecord {
+                capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
+                state: CapabilityState::Complete,
+            }],
+            resolution_profiles: Vec::new(),
+            source_classifications: Vec::new(),
+            source_contexts: Vec::new(),
+            source_observations: Vec::new(),
+            dependency_owners: Vec::new(),
+            resolutions: Vec::new(),
+            metrics: AnalysisMetrics::default(),
+            findings: vec![FindingRecord {
+                finding_id,
+                rule_id: DEAD_EXPORT_RULE_ID.to_owned(),
+                owner_capability: DEAD_CODE_CAPABILITY_ID.to_owned(),
+                severity: Severity::Warning,
+                confidence: Confidence::Grounded,
+                disposition: FindingDisposition::ReviewCandidate,
+                claim: "evidence identity fixture".to_owned(),
+                source_id: source_id.clone(),
+                path: RepoPathProjection::from(&path),
+                span: SourceSpan { start: 0, end: 1 },
+                exported_name: "evidence".to_owned(),
+                namespace: SymbolNamespace::Value,
+                nested_collections_available: true,
+                evidence: vec![EvidenceRecord {
+                    evidence_id: EvidenceId::from_string("evidence_forged".to_owned()),
+                    kind: "definition".to_owned(),
+                    source_id,
+                    path: RepoPathProjection::from(&path),
+                    span: SourceSpan { start: 0, end: 1 },
+                    payload_sha256: "payload-sha256".to_owned(),
+                }],
+                relations: Vec::new(),
+            }],
+            limitations: Vec::new(),
+        };
+
+        assert!(matches!(
+            validate_run_evidence_identities(&evidence),
+            Err(RunEvidenceIdentityError::DerivedIdentityMismatch {
+                collection: "finding evidence",
                 ..
             })
         ));

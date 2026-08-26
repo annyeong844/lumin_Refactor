@@ -190,6 +190,7 @@ pub(crate) fn migration_pointer_ids(
             "pending latest pointer during lifecycle migration",
         )?;
         validate_document_at(state_dir, guard, &pending, read_run, has_active_lease)?;
+        validate_pending_successor(state_dir, guard, latest.as_ref(), &pending)?;
     }
     Ok(latest.map_or((None, None), |latest| {
         (
@@ -197,6 +198,37 @@ pub(crate) fn migration_pointer_ids(
             latest.latest_completed.map(|pointer| pointer.run_id),
         )
     }))
+}
+
+fn validate_pending_successor(
+    state_dir: &std::path::Path,
+    guard: &NamespaceGuard,
+    current: Option<&LatestPointer>,
+    pending: &LatestPointer,
+) -> Result<(), StoreError> {
+    let candidate = pending.latest_attempt.as_ref().ok_or_else(|| {
+        StoreError::Integrity("pending latest pointer omitted its publication attempt".to_owned())
+    })?;
+    let envelope = read_attempt_at(state_dir, guard, &candidate.attempt_id)?;
+    if envelope.sequence != candidate.sequence || envelope.state != candidate.status {
+        return Err(StoreError::Integrity(
+            "pending latest pointer is not the exact next publication".to_owned(),
+        ));
+    }
+    let completed_run = (envelope.state == AttemptStatus::Completed)
+        .then_some(envelope.run_id.as_ref())
+        .flatten();
+    let expected = merge(
+        current.cloned().unwrap_or_default(),
+        candidate.clone(),
+        completed_run,
+    )?;
+    if !expected.changed || expected.pointer != *pending {
+        return Err(StoreError::Integrity(
+            "pending latest pointer is not the exact next publication".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn reconcile_migration_pointer_index(
