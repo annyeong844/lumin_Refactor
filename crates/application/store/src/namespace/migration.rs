@@ -313,6 +313,7 @@ pub(super) fn migrate_with_hook(
 ) -> Result<StoreGeneration, StoreError> {
     guard.validate_bound_entries()?;
     if let Some(journal) = read_journal(guard)? {
+        reject_unbound_migration_artifacts(guard, &journal)?;
         return recover_journal(guard, journal, hook);
     }
     reject_orphan_migration_artifacts(guard)?;
