@@ -246,6 +246,67 @@ fn public_migration_recovers_after_latest_replace_before_index_sync()
     Ok(())
 }
 
+#[cfg(feature = "publication-test-crash")]
+#[test]
+fn public_migration_accepts_the_exact_catalog_before_latest_frontier()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    assert_status(&run(root.path(), &["audit", "--jobs", "1"])?, 0);
+    fs::write(
+        root.path().join("src/lib.ts"),
+        "export const catalogBeforeLatestRecovery = 2;\n",
+    )?;
+    let crashed = run_with_env(
+        root.path(),
+        &["audit", "--jobs", "1"],
+        &[(PUBLICATION_CRASH_POINT, "after-latest-temp")],
+    )?;
+    assert_status(&crashed, PUBLICATION_CRASH_EXIT_CODE);
+
+    let latest =
+        serde_json::from_slice::<Value>(&fs::read(root.path().join(".lumin/latest.json"))?)?;
+    assert_eq!(
+        latest
+            .pointer("/latestAttempt/sequence")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        latest
+            .pointer("/latestAttempt/status")
+            .and_then(Value::as_str),
+        Some("running")
+    );
+    assert_eq!(
+        latest
+            .pointer("/latestCompleted/runId")
+            .and_then(Value::as_str),
+        Some("run_0000000000000001")
+    );
+    assert!(root.path().join(".lumin/latest.json.pending").is_file());
+
+    assert_status(&run(root.path(), &["store", "test-downgrade-v12"])?, 0);
+    let migrated = run(root.path(), &["store", "migrate", "--format", "json"])?;
+    assert_status(&migrated, 0);
+    assert!(migrated.stderr.is_empty());
+    assert_eq!(migrated.stdout, READY);
+
+    let overview = run(root.path(), &["overview"])?;
+    assert_status(&overview, 0);
+    let overview = serde_json::from_str::<Value>(&overview.stdout)?;
+    assert_eq!(
+        overview.pointer("/scope/id").and_then(Value::as_str),
+        Some("run_0000000000000002")
+    );
+    assert_eq!(
+        overview
+            .pointer("/latestAttempt/status")
+            .and_then(Value::as_str),
+        Some("completed")
+    );
+    Ok(())
+}
+
 #[test]
 fn public_migration_recovers_a_post_exchange_output_failure_without_replacement()
 -> Result<(), Box<dyn std::error::Error>> {

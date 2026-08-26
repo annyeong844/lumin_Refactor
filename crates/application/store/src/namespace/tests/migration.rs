@@ -562,6 +562,29 @@ fn migration_reconciles_latest_replace_before_pointer_index_sync()
 }
 
 #[test]
+fn migration_rejects_latest_pointers_regressed_behind_completed_history()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let mut first_attempt = store.begin_attempt()?;
+    let first = store.publish_run(&mut first_attempt, &evidence(), |_| Ok(()))?;
+    let first_latest = fs::read(root.path().join(".lumin/latest.json"))?;
+
+    let mut second_attempt = store.begin_attempt()?;
+    store.publish_run(&mut second_attempt, &evidence(), |_| Ok(()))?;
+    fs::write(root.path().join(".lumin/latest.json"), first_latest)?;
+    set_latest_pointer_index_for_test(&store, &first.attempt_id, &first.run_id)?;
+    make_prior_store(&store, root.path())?;
+
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("regresses behind authenticated attempt history")
+    ));
+    Ok(())
+}
+
+#[test]
 fn migration_validates_the_complete_latest_pointer_document()
 -> Result<(), Box<dyn std::error::Error>> {
     for field in [
@@ -2145,6 +2168,27 @@ fn clear_latest_pointer_index_for_test(store: &RepositoryStore) -> Result<(), St
                     )));
                 }
             }
+        }
+        guard.commit(write)
+    })
+}
+
+fn set_latest_pointer_index_for_test(
+    store: &RepositoryStore,
+    attempt_id: &AttemptId,
+    run_id: &lumin_model::RunId,
+) -> Result<(), StoreError> {
+    store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        {
+            let mut pointers = write.open_table(POINTERS).map_err(crate::backend_error)?;
+            pointers
+                .insert("latest-attempt", attempt_id.as_str().as_bytes())
+                .map_err(crate::backend_error)?;
+            pointers
+                .insert("latest-completed", run_id.as_str().as_bytes())
+                .map_err(crate::backend_error)?;
         }
         guard.commit(write)
     })

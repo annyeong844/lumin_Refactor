@@ -24,7 +24,8 @@ use crate::gate::{
     transition_key,
 };
 use crate::retention::{
-    RETENTION_OPERATIONS, RETENTION_PLANS, RUN_PINS, records::StoredRetentionPlan,
+    RETENTION_OPERATIONS, RETENTION_PLANS, RUN_PINS, pin_request_digest,
+    records::StoredRetentionPlan,
 };
 use crate::{
     EVIDENCE, GateBaselineDraft, ObservationFinalization, PreWriteFinish, PreWriteStart,
@@ -556,6 +557,62 @@ fn migration_requires_every_committed_pin_to_have_its_row() -> Result<(), Box<dy
         Err(StoreError::Integrity(message))
             if message.contains("has no matching durable pin row")
     ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_noncanonical_run_pin_reasons() -> Result<(), Box<dyn std::error::Error>> {
+    for reason in ["", " padded reason "] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        let mut attempt = store.begin_attempt()?;
+        let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+        let operation_id = OperationId::from_string(format!(
+            "migration-pin-reason-{}",
+            if reason.is_empty() { "empty" } else { "padded" }
+        ));
+        let pin = store.pin_run(&published.run_id, &operation_id, "canonical reason")?;
+
+        let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+        let write = database.begin_write()?;
+        {
+            let mut table = write.open_table(RUN_PINS)?;
+            let bytes = table
+                .get(pin.pin_id.as_str())?
+                .ok_or("run pin row is missing")?
+                .value()
+                .to_vec();
+            let mut stored = serde_json::from_slice::<lumin_evidence::RunPinRecord>(&bytes)?;
+            stored.reason = reason.to_owned();
+            let changed = serde_json::to_vec(&stored)?;
+            table.insert(pin.pin_id.as_str(), changed.as_slice())?;
+        }
+        {
+            let mut table = write.open_table(RETENTION_OPERATIONS)?;
+            let bytes = table
+                .get(operation_id.as_str())?
+                .ok_or("run pin operation is missing")?
+                .value()
+                .to_vec();
+            let mut operation = serde_json::from_slice::<RetentionOperationRecord>(&bytes)?;
+            operation.request_digest = pin_request_digest(&published.run_id, reason);
+            let RetentionOperationResult::PinCreated { pin } = &mut operation.result else {
+                return Err("run pin operation has the wrong result".into());
+            };
+            pin.reason = reason.to_owned();
+            let changed = serde_json::to_vec(&operation)?;
+            table.insert(operation_id.as_str(), changed.as_slice())?;
+        }
+        write.commit()?;
+        drop(database);
+        make_prior_store(&store, root.path())?;
+
+        assert!(matches!(
+            store.migrate_lifecycle_store(),
+            Err(StoreError::Integrity(message))
+                if message.contains("has a noncanonical reason")
+        ));
+    }
     Ok(())
 }
 

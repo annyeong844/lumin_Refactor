@@ -15,6 +15,11 @@ pub(super) fn validate_pins(
     operations: &BTreeMap<&str, RetentionOperationRecord>,
     plans: &BTreeMap<&str, StoredRetentionPlan>,
 ) -> Result<(), StoreError> {
+    for operation in operations.values() {
+        if let RetentionOperationResult::PinCreated { pin } = &operation.result {
+            validate_reason(pin)?;
+        }
+    }
     let mut pins = BTreeMap::new();
     for (key, bytes) in &snapshot.run_pins {
         let pin = parse_record::<RunPinRecord>("run-pins", key, bytes)?;
@@ -23,12 +28,23 @@ pub(super) fn validate_pins(
                 "run pin key {key} disagrees with its record"
             )));
         }
+        validate_reason(&pin)?;
         validate_creation(key, &pin, operations)?;
         validate_removal(snapshot, key, &pin, operations)?;
         pins.insert(key.as_str(), pin);
     }
     let pruned_pins = reconstruct_pruned_pins(&pins, operations, plans)?;
     validate_operation_rows(&pins, &pruned_pins, operations)
+}
+
+fn validate_reason(pin: &RunPinRecord) -> Result<(), StoreError> {
+    if pin.reason.is_empty() || pin.reason.trim() != pin.reason {
+        return Err(StoreError::Integrity(format!(
+            "run pin {} has a noncanonical reason",
+            pin.pin_id.as_str()
+        )));
+    }
+    Ok(())
 }
 
 fn validate_operation_rows(

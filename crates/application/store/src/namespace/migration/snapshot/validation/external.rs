@@ -40,7 +40,6 @@ pub(super) fn validate_external_references(
     merge_retention_attempts(guard, &mut attempts, &moved_payloads.attempts)?;
     validate_retention_runs(&attempts, &moved_payloads.runs)?;
     validate_run_children(snapshot, guard)?;
-    validate_latest_pointers(snapshot, guard, &attempts)?;
     for (key, bytes) in &snapshot.run_catalog {
         validate_run(
             key,
@@ -50,6 +49,7 @@ pub(super) fn validate_external_references(
             moved_payloads.runs.get(key).map(|payload| &payload.path),
         )?;
     }
+    validate_latest_pointers(snapshot, guard, &attempts)?;
     guard.validate_bound_entries()
 }
 
@@ -690,24 +690,80 @@ fn validate_latest_pointers(
         ));
     }
 
-    let Some(attempt_id) = snapshot.pointers.get("latest-attempt") else {
-        return Ok(());
-    };
-    let attempt_id = std::str::from_utf8(attempt_id).map_err(|error| {
-        StoreError::Integrity(format!("latest-attempt pointer is not UTF-8: {error}"))
-    })?;
-    let sequence = canonical_sequence_id(attempt_id, "attempt_", "latest attempt")?;
-    let envelope = attempts
-        .get(attempt_id)
-        .and_then(Option::as_ref)
-        .ok_or_else(|| {
-            StoreError::Integrity(
-                "latest-attempt pointer references a missing complete envelope".to_owned(),
-            )
-        })?;
-    if envelope.attempt_id.as_str() != attempt_id || envelope.sequence != sequence {
+    if let Some(attempt_id) = document_attempt.as_ref() {
+        let sequence = canonical_sequence_id(attempt_id.as_str(), "attempt_", "latest attempt")?;
+        let envelope = attempts
+            .get(attempt_id.as_str())
+            .and_then(Option::as_ref)
+            .ok_or_else(|| {
+                StoreError::Integrity(
+                    "latest-attempt pointer references a missing complete envelope".to_owned(),
+                )
+            })?;
+        if envelope.attempt_id != *attempt_id || envelope.sequence != sequence {
+            return Err(StoreError::Integrity(
+                "latest-attempt pointer disagrees with its envelope".to_owned(),
+            ));
+        }
+    }
+    validate_latest_frontier(
+        snapshot,
+        attempts,
+        document_attempt.as_ref(),
+        document_completed.as_ref(),
+    )
+}
+
+fn validate_latest_frontier(
+    snapshot: &LogicalStoreSnapshot,
+    attempts: &BTreeMap<String, Option<AttemptEnvelope>>,
+    latest_attempt: Option<&lumin_model::AttemptId>,
+    latest_completed: Option<&lumin_model::RunId>,
+) -> Result<(), StoreError> {
+    let latest_attempt_sequence = latest_attempt
+        .map(|attempt_id| canonical_sequence_id(attempt_id.as_str(), "attempt_", "latest attempt"))
+        .transpose()?
+        .unwrap_or_default();
+    let mut newer_attempt = None;
+    for envelope in attempts.values().filter_map(Option::as_ref) {
+        if envelope.sequence <= latest_attempt_sequence {
+            continue;
+        }
+        if newer_attempt.replace(&envelope.attempt_id).is_some() {
+            return Err(StoreError::Integrity(
+                "durable latestAttempt regresses behind authenticated attempt history".to_owned(),
+            ));
+        }
+    }
+    if let Some(attempt_id) = newer_attempt
+        && !crate::publication::migration_has_active_lease(&snapshot.attempt_leases, attempt_id)?
+    {
         return Err(StoreError::Integrity(
-            "latest-attempt pointer disagrees with its envelope".to_owned(),
+            "durable latestAttempt regresses behind authenticated attempt history".to_owned(),
+        ));
+    }
+
+    let latest_completed_sequence = latest_completed
+        .map(|run_id| canonical_sequence_id(run_id.as_str(), "run_", "latest completed run"))
+        .transpose()?
+        .unwrap_or_default();
+    let mut newer_run_owner = None;
+    for (key, bytes) in &snapshot.run_catalog {
+        let record = parse_record::<RunCatalogRecord>("run-catalog", key, bytes)?;
+        if record.sequence <= latest_completed_sequence {
+            continue;
+        }
+        if newer_run_owner.replace(record.attempt_id).is_some() {
+            return Err(StoreError::Integrity(
+                "durable latestCompleted regresses behind authenticated run history".to_owned(),
+            ));
+        }
+    }
+    if let Some(attempt_id) = newer_run_owner
+        && !crate::publication::migration_has_active_lease(&snapshot.attempt_leases, &attempt_id)?
+    {
+        return Err(StoreError::Integrity(
+            "durable latestCompleted regresses behind authenticated run history".to_owned(),
         ));
     }
     Ok(())
