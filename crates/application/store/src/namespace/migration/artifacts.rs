@@ -81,7 +81,7 @@ struct MigrationPredecessor {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase", tag = "kind")]
+#[serde(rename_all = "camelCase", tag = "kind", deny_unknown_fields)]
 pub(super) enum MigrationBindingEvent {
     ObservedCanonicalSource { binding: MigrationArtifactBinding },
     PendingPublication { binding: MigrationArtifactBinding },
@@ -403,6 +403,13 @@ pub(super) fn append_revision(
     events: Vec<MigrationBindingEvent>,
     hook: &mut impl FnMut(MigrationCrashPoint) -> Result<(), StoreError>,
 ) -> Result<MigrationJournal, StoreError> {
+    validate_revision_event_bundle(
+        journal.phase,
+        phase,
+        &events,
+        &journal.source,
+        &journal.targets,
+    )?;
     let revision = u64::try_from(journal.entries.len())
         .map_err(|_| StoreError::Integrity("migration revision overflow".to_owned()))?;
     let name = revision_name(revision);
@@ -866,6 +873,13 @@ fn fold_journal(
                 "migration journal phase regressed".to_owned(),
             ));
         }
+        validate_revision_event_bundle(
+            last_phase,
+            entry.intent.phase,
+            &entry.intent.events,
+            &source,
+            &targets,
+        )?;
         for event in &entry.intent.events {
             if let MigrationBindingEvent::PendingPublication { binding } = event {
                 validate_binding_names(binding, authorization.authorization_sequence)?;
@@ -901,6 +915,74 @@ fn fold_journal(
         targets,
         entries,
     })
+}
+
+fn validate_revision_event_bundle(
+    previous_phase: MigrationPhase,
+    phase: MigrationPhase,
+    events: &[MigrationBindingEvent],
+    source: &FoldedBinding,
+    targets: &BTreeMap<String, FoldedBinding>,
+) -> Result<(), StoreError> {
+    let current_target_id = targets
+        .values()
+        .find(|target| target.state != MigrationBindingState::Superseded)
+        .map(|target| target.binding.binding_id.as_str());
+    let valid = match (previous_phase, phase, events) {
+        (
+            MigrationPhase::ObservedSource,
+            MigrationPhase::TargetPending,
+            [MigrationBindingEvent::PendingPublication { .. }],
+        ) => true,
+        (
+            MigrationPhase::TargetPending,
+            MigrationPhase::TargetPending,
+            [
+                MigrationBindingEvent::SupersededUnpublished { binding_id },
+                MigrationBindingEvent::PendingPublication { .. },
+            ],
+        ) => current_target_id == Some(binding_id.as_str()),
+        (
+            MigrationPhase::TargetPending,
+            MigrationPhase::TargetPublished,
+            [MigrationBindingEvent::Published { binding_id }],
+        ) => current_target_id == Some(binding_id.as_str()),
+        (
+            MigrationPhase::TargetPublished,
+            MigrationPhase::Exchanged,
+            [
+                MigrationBindingEvent::Exchanged {
+                    binding_id: source_id,
+                },
+                MigrationBindingEvent::Exchanged {
+                    binding_id: target_id,
+                },
+            ],
+        ) => {
+            source_id == &source.binding.binding_id && current_target_id == Some(target_id.as_str())
+        }
+        (
+            MigrationPhase::Exchanged,
+            MigrationPhase::Terminal,
+            [
+                MigrationBindingEvent::RetainedImmutable {
+                    binding_id: source_id,
+                },
+                MigrationBindingEvent::CanonicalMutable {
+                    binding_id: target_id,
+                },
+            ],
+        ) => {
+            source_id == &source.binding.binding_id && current_target_id == Some(target_id.as_str())
+        }
+        _ => false,
+    };
+    if !valid {
+        return Err(StoreError::Integrity(
+            "migration journal revision has an invalid phase event bundle".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn apply_event(
@@ -1306,6 +1388,142 @@ fn is_sha256(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn binding_events_reject_unknown_members() -> Result<(), StoreError> {
+        let mut value = serde_json::to_value(MigrationBindingEvent::Published {
+            binding_id: "target-binding".to_owned(),
+        })
+        .map_err(serialization_error)?;
+        value
+            .as_object_mut()
+            .ok_or_else(|| {
+                StoreError::Integrity("event did not serialize as an object".to_owned())
+            })?
+            .insert("opaque".to_owned(), serde_json::Value::Bool(true));
+
+        assert!(serde_json::from_value::<MigrationBindingEvent>(value).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn journal_revisions_require_one_exact_phase_event_bundle() -> Result<(), StoreError> {
+        let digest = "0".repeat(64);
+        let source_binding = source_binding(
+            PhysicalFileIdentity::Unix {
+                device: 7,
+                inode: 10,
+            },
+            "lifecycle.store.migration-source".to_owned(),
+            StoreGeneration::INITIAL,
+            digest.clone(),
+            digest.clone(),
+        )?;
+        let target_generation = StoreGeneration::INITIAL
+            .checked_next()
+            .ok_or_else(|| StoreError::Integrity("test target generation overflowed".to_owned()))?;
+        let target_binding = target_binding(
+            PhysicalFileIdentity::Unix {
+                device: 7,
+                inode: 11,
+            },
+            1,
+            "lifecycle.store.migration-target".to_owned(),
+            target_generation,
+            digest.clone(),
+            digest,
+        )?;
+        let mut source = FoldedBinding {
+            binding: source_binding.clone(),
+            state: MigrationBindingState::Observed,
+        };
+        let mut targets = BTreeMap::new();
+        let mut ids = BTreeSet::from([source_binding.binding_id.clone()]);
+
+        let pending = vec![MigrationBindingEvent::PendingPublication {
+            binding: target_binding.clone(),
+        }];
+        validate_revision_event_bundle(
+            MigrationPhase::ObservedSource,
+            MigrationPhase::TargetPending,
+            &pending,
+            &source,
+            &targets,
+        )?;
+        for event in &pending {
+            apply_event(event, &mut source, &mut targets, &mut ids)?;
+        }
+
+        let published = vec![MigrationBindingEvent::Published {
+            binding_id: target_binding.binding_id.clone(),
+        }];
+        validate_revision_event_bundle(
+            MigrationPhase::TargetPending,
+            MigrationPhase::TargetPublished,
+            &published,
+            &source,
+            &targets,
+        )?;
+        for event in &published {
+            apply_event(event, &mut source, &mut targets, &mut ids)?;
+        }
+
+        let exchanged = vec![
+            MigrationBindingEvent::Exchanged {
+                binding_id: source_binding.binding_id.clone(),
+            },
+            MigrationBindingEvent::Exchanged {
+                binding_id: target_binding.binding_id.clone(),
+            },
+        ];
+        validate_revision_event_bundle(
+            MigrationPhase::TargetPublished,
+            MigrationPhase::Exchanged,
+            &exchanged,
+            &source,
+            &targets,
+        )?;
+        for event in &exchanged {
+            apply_event(event, &mut source, &mut targets, &mut ids)?;
+        }
+
+        let terminal = vec![
+            MigrationBindingEvent::RetainedImmutable {
+                binding_id: source_binding.binding_id.clone(),
+            },
+            MigrationBindingEvent::CanonicalMutable {
+                binding_id: target_binding.binding_id.clone(),
+            },
+        ];
+        validate_revision_event_bundle(
+            MigrationPhase::Exchanged,
+            MigrationPhase::Terminal,
+            &terminal,
+            &source,
+            &targets,
+        )?;
+
+        let combined = pending
+            .into_iter()
+            .chain(published)
+            .chain(exchanged)
+            .chain(terminal)
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            validate_revision_event_bundle(
+                MigrationPhase::ObservedSource,
+                MigrationPhase::Terminal,
+                &combined,
+                &FoldedBinding {
+                    binding: source_binding,
+                    state: MigrationBindingState::Observed,
+                },
+                &BTreeMap::new(),
+            ),
+            Err(StoreError::Integrity(message)) if message.contains("phase event bundle")
+        ));
+        Ok(())
+    }
 
     #[test]
     fn artifact_binding_names_are_owned_by_the_authorized_migration() -> Result<(), StoreError> {

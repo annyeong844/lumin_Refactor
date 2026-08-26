@@ -210,6 +210,12 @@ impl RepositoryStore {
                         operation_id.as_str()
                     ))
                 })?;
+            if sequence == u64::MAX {
+                return Err(StoreError::Integrity(format!(
+                    "cache cleanup delivery sequence exhausted: {}",
+                    operation_id.as_str()
+                )));
+            }
             operation.greatest_allocated_delivery_sequence = sequence;
             write_record(
                 &write,
