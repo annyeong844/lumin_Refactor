@@ -560,6 +560,50 @@ fn migration_requires_every_committed_pin_to_have_its_row() -> Result<(), Box<dy
 }
 
 #[test]
+fn migration_accepts_retention_owned_pruned_pin_history() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let mut first_attempt = store.begin_attempt()?;
+    let first = store.publish_run(&mut first_attempt, &evidence(), |_| Ok(()))?;
+    let mut latest_attempt = store.begin_attempt()?;
+    store.publish_run(&mut latest_attempt, &evidence(), |_| Ok(()))?;
+    let pin = store.pin_run(
+        &first.run_id,
+        &OperationId::from_string("migration-pruned-pin-create".to_owned()),
+        "migration pruned pin history",
+    )?;
+    store.unpin_run(
+        &pin.pin_id,
+        &OperationId::from_string("migration-pruned-pin-remove".to_owned()),
+    )?;
+    let plan_id =
+        prepared_plan_id(store.prepare_retention_plan(&crate::RetentionPlanRequest {
+            scope: RetentionPlanScope::Runs {
+                before_unix_millis: u64::MAX,
+            },
+            operation_id: OperationId::from_string("migration-pruned-pin-plan".to_owned()),
+        })?)?;
+    store.confirm_retention_plan(
+        &plan_id,
+        &OperationId::from_string("migration-pruned-pin-confirm".to_owned()),
+    )?;
+    assert!(matches!(
+        store.lookup_run_pin(&pin.pin_id)?,
+        lumin_evidence::RecordLookup::Pruned(_)
+    ));
+    make_prior_store(&store, root.path())?;
+
+    store.migrate_lifecycle_store()?;
+
+    assert!(matches!(
+        store.lookup_run_pin(&pin.pin_id)?,
+        lumin_evidence::RecordLookup::Pruned(_)
+    ));
+    Ok(())
+}
+
+#[test]
 fn migration_validates_every_direct_run_child_and_its_allocator_floor()
 -> Result<(), Box<dyn std::error::Error>> {
     for case in ["non-directory", "allocator-floor"] {

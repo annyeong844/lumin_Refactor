@@ -27,7 +27,7 @@ pub(super) fn validate_retention(
     let plans = read_plans(snapshot)?;
     let operations = read_operations(snapshot, gate_operations, &plans)?;
     validate_plan_operations(&plans, &operations)?;
-    pins::validate_pins(snapshot, &operations)?;
+    pins::validate_pins(snapshot, &operations, &plans)?;
     tombstones::validate_tombstones(snapshot, &plans)
 }
 
