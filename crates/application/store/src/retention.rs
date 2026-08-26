@@ -34,10 +34,16 @@ pub(crate) const RUN_PINS: TableDefinition<&str, &[u8]> = TableDefinition::new("
 
 pub const RETENTION_PLAN_ITEMS_ORDERING: &str = "retention-plan-items.v1";
 
+#[derive(Default)]
+pub(crate) struct MigrationPayloadPaths {
+    pub(crate) attempts: std::collections::BTreeMap<String, std::path::PathBuf>,
+    pub(crate) runs: std::collections::BTreeMap<String, std::path::PathBuf>,
+}
+
 pub(crate) fn validate_migration_payloads(
     guard: &NamespaceGuard,
     plan: &records::StoredRetentionPlan,
-) -> Result<std::collections::BTreeMap<String, std::path::PathBuf>, StoreError> {
+) -> Result<MigrationPayloadPaths, StoreError> {
     confirmation::payload::validate_migration_state(guard, plan)
 }
 

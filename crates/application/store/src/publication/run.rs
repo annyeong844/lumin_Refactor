@@ -334,7 +334,7 @@ pub(super) fn validate_published(
     Ok(record)
 }
 
-fn validate_directory(
+pub(crate) fn validate_directory(
     directory_path: &Path,
     directory: &HeldEntry,
     expected: &RunCatalogRecord,

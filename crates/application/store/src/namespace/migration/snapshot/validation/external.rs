@@ -7,11 +7,11 @@ use lumin_evidence::{
     GateOperationStatus, GateRecord, OperationRecord, SemanticReadReservationBinding, WriteLease,
     WriteLeaseKind,
 };
-use lumin_model::decode_native_path_component;
+use lumin_model::{AttemptStatus, decode_native_path_component};
 use serde::de::DeserializeOwned;
 
 use crate::retention::records::StoredRetentionPlan;
-use crate::{AttemptEnvelope, RunCatalogRecord, StoreError, digest_hex, io_error};
+use crate::{AttemptEnvelope, RunCatalogRecord, StoreError, io_error};
 
 use super::super::super::super::platform::{EntryAccess, EntryKind, HeldEntry};
 use super::super::super::super::{
@@ -35,13 +35,43 @@ pub(super) fn validate_external_references(
     validate_pending_pre_write_leases(snapshot, guard)?;
     validate_pending_semantic_read_bindings(snapshot, guard)?;
     validate_active_gate_write_prefixes(snapshot, guard)?;
-    let attempts = validate_attempt_directories(snapshot, guard)?;
+    let mut attempts = validate_attempt_directories(snapshot, guard)?;
+    let moved_payloads = validate_retention_payloads(snapshot, guard)?;
+    merge_retention_attempts(guard, &mut attempts, &moved_payloads.attempts)?;
     validate_latest_pointers(snapshot, guard, &attempts)?;
-    let moved_runs = validate_retention_payloads(snapshot, guard)?;
     for (key, bytes) in &snapshot.run_catalog {
-        validate_run(key, bytes, guard, moved_runs.get(key))?;
+        validate_run(key, bytes, guard, &attempts, moved_payloads.runs.get(key))?;
     }
     guard.validate_bound_entries()
+}
+
+fn merge_retention_attempts(
+    guard: &NamespaceGuard,
+    attempts: &mut BTreeMap<String, Option<AttemptEnvelope>>,
+    retention_attempts: &BTreeMap<String, PathBuf>,
+) -> Result<(), StoreError> {
+    for (attempt_id, path) in retention_attempts {
+        let sequence = canonical_sequence_id(attempt_id, "attempt_", "retention attempt")?;
+        let envelope = read_attempt_envelope(
+            guard,
+            &path.join("attempt.json"),
+            attempt_id,
+            sequence,
+            "retention attempt envelope",
+        )?;
+        match attempts.get(attempt_id) {
+            Some(Some(existing)) if existing == &envelope => {}
+            Some(_) => {
+                return Err(StoreError::Integrity(format!(
+                    "retention attempt {attempt_id} disagrees with its canonical envelope"
+                )));
+            }
+            None => {
+                attempts.insert(attempt_id.clone(), Some(envelope));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_attempt_directories(
@@ -632,6 +662,7 @@ fn validate_run(
     key: &str,
     bytes: &[u8],
     guard: &NamespaceGuard,
+    attempts: &BTreeMap<String, Option<AttemptEnvelope>>,
     moved_path: Option<&PathBuf>,
 ) -> Result<(), StoreError> {
     let record = parse_record::<RunCatalogRecord>("run-catalog", key, bytes)?;
@@ -643,6 +674,18 @@ fn validate_run(
             "run catalog entry {key} has incoherent sequence identities"
         )));
     }
+    let attempt = attempts
+        .get(record.attempt_id.as_str())
+        .and_then(Option::as_ref);
+    if attempt.is_none_or(|attempt| {
+        attempt.state != AttemptStatus::Completed
+            || attempt.sequence != record.sequence
+            || attempt.run_id.as_ref() != Some(&record.run_id)
+    }) {
+        return Err(StoreError::Integrity(format!(
+            "run catalog entry {key} is not owned by its completed attempt"
+        )));
+    }
 
     let canonical_run_dir = guard
         .state
@@ -651,42 +694,14 @@ fn validate_run(
         .join(record.run_id.as_str());
     let run_dir = moved_path.unwrap_or(&canonical_run_dir);
     let held_dir = open_state_entry(guard, run_dir, EntryKind::Directory, false, "run directory")?;
-    let envelope =
-        read_state_json::<RunCatalogRecord>(guard, &run_dir.join("run.json"), "run envelope")?;
-    if envelope.run_id != record.run_id
-        || envelope.attempt_id != record.attempt_id
-        || envelope.sequence != record.sequence
-        || envelope.evidence_store_sha256 != record.evidence_store_sha256
-        || envelope.evidence_store_size != record.evidence_store_size
-    {
-        return Err(StoreError::Integrity(format!(
-            "run catalog entry {key} disagrees with its durable run envelope"
-        )));
-    }
-    let evidence_path = run_dir.join("evidence.store");
-    let evidence = read_state_file(guard, &evidence_path, "run evidence store")?;
-    held_dir.validate_path(
-        run_dir,
-        EntryKind::Directory,
-        EntryAccess::ReadOnly,
-        false,
-        "run directory",
-    )?;
-    if evidence.len() as u64 != record.evidence_store_size
-        || digest_hex(&evidence) != record.evidence_store_sha256
-    {
-        return Err(StoreError::Integrity(format!(
-            "run catalog entry {key} disagrees with its evidence store"
-        )));
-    }
-    Ok(())
+    crate::publication::validate_run_directory(run_dir, &held_dir, &record)
 }
 
 fn validate_retention_payloads(
     snapshot: &LogicalStoreSnapshot,
     guard: &NamespaceGuard,
-) -> Result<BTreeMap<String, PathBuf>, StoreError> {
-    let mut moved_runs = BTreeMap::new();
+) -> Result<crate::retention::MigrationPayloadPaths, StoreError> {
+    let mut payloads = crate::retention::MigrationPayloadPaths::default();
     for (key, bytes) in &snapshot.retention_plans {
         let plan = parse_record::<StoredRetentionPlan>("retention-plans", key, bytes)?;
         if &plan.record.repository_id != guard.repository_id() {
@@ -697,9 +712,11 @@ fn validate_retention_payloads(
         if plan.progress.is_none() {
             continue;
         }
-        moved_runs.extend(crate::retention::validate_migration_payloads(guard, &plan)?);
+        let validated = crate::retention::validate_migration_payloads(guard, &plan)?;
+        payloads.attempts.extend(validated.attempts);
+        payloads.runs.extend(validated.runs);
     }
-    Ok(moved_runs)
+    Ok(payloads)
 }
 
 fn canonical_sequence_id(value: &str, prefix: &str, label: &str) -> Result<u64, StoreError> {

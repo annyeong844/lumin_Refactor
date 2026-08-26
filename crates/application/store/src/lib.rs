@@ -19,7 +19,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use lumin_evidence::RunEvidence;
+use lumin_evidence::{RUN_EVIDENCE_SCHEMA_VERSION, RunEvidence};
 use lumin_model::{
     AttemptId, PhysicalFileIdentity, RepositoryBinding, RepositoryId, RunId,
     append_length_prefixed, digest_hex,
@@ -35,7 +35,7 @@ pub(crate) const ATTEMPT_LEASES: TableDefinition<&str, &[u8]> =
     TableDefinition::new("attempt-leases");
 pub(crate) const RUN_CATALOG: TableDefinition<&str, &[u8]> = TableDefinition::new("run-catalog");
 pub(crate) const POINTERS: TableDefinition<&str, &[u8]> = TableDefinition::new("pointers");
-const EVIDENCE: TableDefinition<&str, &[u8]> = TableDefinition::new("evidence");
+pub(crate) const EVIDENCE: TableDefinition<&str, &[u8]> = TableDefinition::new("evidence");
 const MAX_RUN_CATALOG_PAGE_SIZE: usize = 100;
 
 pub fn evidence_payload_sha256(evidence: &RunEvidence) -> Result<String, StoreError> {
@@ -547,7 +547,15 @@ fn read_evidence_store(path: &Path) -> Result<RunEvidence, StoreError> {
         .get("run")
         .map_err(backend_error)?
         .ok_or_else(|| StoreError::Integrity("run evidence row is missing".to_owned()))?;
-    serde_json::from_slice(value.value()).map_err(serialization_error)
+    let evidence: RunEvidence =
+        serde_json::from_slice(value.value()).map_err(serialization_error)?;
+    if evidence.schema_version != RUN_EVIDENCE_SCHEMA_VERSION {
+        return Err(StoreError::IncompatibleStateSchema(format!(
+            "run evidence uses unsupported schema {}; expected {RUN_EVIDENCE_SCHEMA_VERSION}",
+            evidence.schema_version
+        )));
+    }
+    Ok(evidence)
 }
 
 #[cfg(test)]

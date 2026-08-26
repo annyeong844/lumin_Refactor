@@ -1,11 +1,11 @@
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use lumin_evidence::{RetentionItemKind, RetentionPlanState};
 
 use crate::StoreError;
 use crate::namespace::records::ManagedStateParentKind;
 use crate::namespace::{EntryAccess, EntryKind, HeldEntry, NamespaceGuard};
+use crate::retention::MigrationPayloadPaths;
 
 use super::super::super::records::StoredRetentionPlan;
 use super::{trash, validate_payload_content};
@@ -13,7 +13,7 @@ use super::{trash, validate_payload_content};
 pub(super) fn validate(
     guard: &NamespaceGuard,
     plan: &StoredRetentionPlan,
-) -> Result<BTreeMap<String, PathBuf>, StoreError> {
+) -> Result<MigrationPayloadPaths, StoreError> {
     let progress = plan.progress.as_ref().ok_or_else(|| {
         StoreError::Integrity("non-prepared retention plan has no progress".to_owned())
     })?;
@@ -21,7 +21,7 @@ pub(super) fn validate(
     let trash_path =
         guard.managed_child_path(ManagedStateParentKind::Trash, plan.record.plan_id.as_str())?;
     let bound_trash = bound_trash_if_present(guard, plan, &trash_path)?;
-    let mut moved_runs = BTreeMap::new();
+    let mut payloads = MigrationPayloadPaths::default();
     for movement in &progress.moves {
         let source = guard.managed_child_path(movement.source_parent, &movement.source_child)?;
         let destination = trash_path.join(&movement.trash_child);
@@ -54,15 +54,25 @@ pub(super) fn validate(
                 false,
                 "retention migration payload",
             )?;
-            if movement.kind == RetentionItemKind::Run {
-                moved_runs.insert(movement.record_id.clone(), path.to_path_buf());
+            match movement.kind {
+                RetentionItemKind::Attempt => {
+                    payloads
+                        .attempts
+                        .insert(movement.record_id.clone(), path.to_path_buf());
+                }
+                RetentionItemKind::Run => {
+                    payloads
+                        .runs
+                        .insert(movement.record_id.clone(), path.to_path_buf());
+                }
+                _ => {}
             }
         }
         if let Some(bound) = &bound_trash {
             bound.validate(plan, progress)?;
         }
     }
-    Ok(moved_runs)
+    Ok(payloads)
 }
 
 fn bound_trash_if_present(

@@ -240,9 +240,49 @@ fn validate_platform_contract(
         &["store", "migrate", "--format", "json"],
         "current-store migration retry",
     )?;
+    validate_corrupt_migration_anchor(binary, fixture_binary, &repository)?;
 
     validate_absent_store(binary, &scratch.join("absent"))?;
     validate_reserved_path(binary, &scratch.join("reserved"))?;
+    Ok(())
+}
+
+fn validate_corrupt_migration_anchor(
+    binary: &Path,
+    fixture_binary: &Path,
+    root: &Path,
+) -> Result<(), String> {
+    let corrupted = expect_success(
+        run_binary(fixture_binary, root, &["store", "test-corrupt-v13-anchor"]),
+        "corrupt migrated provenance anchor",
+    )?;
+    if !corrupted.stdout.is_empty() {
+        return Err("migration-anchor fixture wrote stdout".to_owned());
+    }
+
+    for (label, arguments) in [
+        (
+            "overview with corrupted migration anchor",
+            &["overview", "--format", "json"][..],
+        ),
+        (
+            "migration retry with corrupted migration anchor",
+            &["store", "migrate", "--format", "json"][..],
+        ),
+    ] {
+        let output = run_binary(binary, root, arguments)?;
+        expect_status(&output, Some(1), label)?;
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if !output.stdout.is_empty()
+            || !stderr.starts_with("lumin: state namespace integrity failure: ")
+        {
+            return Err(format!(
+                "{label} did not hard-stop on the corrupted anchor; stdout={} stderr={}",
+                String::from_utf8_lossy(&output.stdout),
+                stderr
+            ));
+        }
+    }
     Ok(())
 }
 

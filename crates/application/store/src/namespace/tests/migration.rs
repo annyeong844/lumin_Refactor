@@ -17,16 +17,16 @@ use lumin_evidence::{
     pre_write_request_digest, seal_analysis_snapshot,
 };
 use lumin_model::{
-    CacheEvictionAuthorizationSetId, CapabilityState, GateId, ObservationBinding, OperationId,
-    PhysicalFileIdentity, RepoPath, SealedGateObservation, UnsealedObservationReason,
+    AttemptStatus, CacheEvictionAuthorizationSetId, CapabilityState, GateId, ObservationBinding,
+    OperationId, PhysicalFileIdentity, RepoPath, SealedGateObservation, UnsealedObservationReason,
 };
 use redb::{Database, ReadableTable, TableDefinition};
 
 use crate::{
-    ATTEMPT_LEASES, GateBaselineDraft, ObservationFinalization, POINTERS, PostWriteFinish,
-    PostWriteStart, PreWriteFinish, PreWriteStart, PriorCacheCleanupDeliveryStatusForTest,
-    RepositoryStore, RetentionPlanRequest, SEQUENCES, SemanticReadReservation, StoreError,
-    StoreGeneration,
+    ATTEMPT_LEASES, AttemptEnvelope, GateBaselineDraft, ObservationFinalization, POINTERS,
+    PostWriteFinish, PostWriteStart, PreWriteFinish, PreWriteStart,
+    PriorCacheCleanupDeliveryStatusForTest, RepositoryStore, RetentionPlanRequest, SEQUENCES,
+    SemanticReadReservation, StoreError, StoreGeneration,
 };
 
 use super::super::migration::{MigrationCrashPoint, migrate_with_hook};
@@ -403,6 +403,46 @@ fn migration_validates_every_retained_attempt_envelope() -> Result<(), Box<dyn s
                 Err(StoreError::Integrity(_))
             ),
             "migration accepted {mutation} corruption in a non-latest attempt"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn migration_requires_every_live_run_to_have_a_completed_attempt_owner()
+-> Result<(), Box<dyn std::error::Error>> {
+    for mutation in ["missing", "failed"] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        let mut first = store.begin_attempt()?;
+        let first_id = first.attempt_id().clone();
+        store.publish_run(&mut first, &evidence(), |_| Ok(()))?;
+        let mut second = store.begin_attempt()?;
+        store.publish_run(&mut second, &evidence(), |_| Ok(()))?;
+
+        let attempt_dir = root.path().join(".lumin/attempts").join(first_id.as_str());
+        if mutation == "missing" {
+            fs::remove_dir_all(&attempt_dir)?;
+        } else {
+            let path = attempt_dir.join("attempt.json");
+            let mut envelope = serde_json::from_slice::<AttemptEnvelope>(&fs::read(&path)?)?;
+            envelope.state = AttemptStatus::Failed;
+            envelope.run_id = None;
+            envelope.failure = Some("injected failed owner".to_owned());
+            let mut bytes = serde_json::to_vec_pretty(&envelope)?;
+            bytes.push(b'\n');
+            fs::write(path, bytes)?;
+        }
+        make_prior_store(&store, root.path())?;
+
+        let result = store.migrate_lifecycle_store();
+        assert!(
+            matches!(
+                &result,
+                Err(StoreError::Integrity(message))
+                    if message.contains("is not owned by its completed attempt")
+            ),
+            "migration accepted a live run with a {mutation} attempt owner: {result:?}"
         );
     }
     Ok(())

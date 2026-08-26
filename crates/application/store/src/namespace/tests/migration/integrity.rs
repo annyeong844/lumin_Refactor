@@ -15,7 +15,7 @@ use lumin_model::{
     AnalysisInputId, AttemptId, CapabilityState, DeltaFactFamily, DeltaKey,
     GateDeltaClassification, GateDeltaRecord, ObservationBinding, OperationId,
     PhysicalFileIdentity, RepoPath, ResolutionProfile, RunId, SealedGateObservation,
-    UnsealedObservationReason,
+    UnsealedObservationReason, digest_hex,
 };
 use redb::{Database, ReadableDatabase, ReadableTable, WriteTransaction};
 
@@ -25,16 +25,16 @@ use crate::gate::{
 };
 use crate::retention::{RETENTION_OPERATIONS, RETENTION_PLANS, records::StoredRetentionPlan};
 use crate::{
-    GateBaselineDraft, ObservationFinalization, PreWriteFinish, PreWriteStart, RUN_CATALOG,
-    RepositoryStore, RunCatalogRecord, SEQUENCES, StoreError,
+    EVIDENCE, GateBaselineDraft, ObservationFinalization, PreWriteFinish, PreWriteStart,
+    RUN_CATALOG, RepositoryStore, RunCatalogRecord, SEQUENCES, StoreError,
 };
 
 use super::super::open_store as open_ordinary_store;
 use super::{
     append_non_authorizing_close_for_migration, append_unsealed_close_for_migration,
-    close_active_gate_for_migration, evidence, observed_lease, open_active_gate_for,
-    open_active_gate_for_with_protected_inputs, options, path, pre_write_digest,
-    rejected_test_observation, semantic_input,
+    close_active_gate_for_migration, evidence, make_prior_store, observed_lease,
+    open_active_gate_for, open_active_gate_for_with_protected_inputs, options, path,
+    pre_write_digest, rejected_test_observation, semantic_input,
 };
 
 mod receipts;
@@ -433,6 +433,94 @@ fn migration_rejects_hard_linked_run_evidence() -> Result<(), Box<dyn std::error
         store.migrate_lifecycle_store(),
         Err(StoreError::Integrity(_))
     ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_untyped_or_unsupported_run_evidence() -> Result<(), Box<dyn std::error::Error>>
+{
+    for mutation in ["container", "row", "schema"] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        let mut attempt = store.begin_attempt()?;
+        let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+        let evidence_path = root
+            .path()
+            .join(".lumin/runs")
+            .join(published.run_id.as_str())
+            .join("evidence.store");
+
+        match mutation {
+            "container" => fs::write(&evidence_path, b"not-a-redb-container")?,
+            "row" | "schema" => {
+                let database = Database::open(&evidence_path)?;
+                let write = database.begin_write()?;
+                {
+                    let mut table = write.open_table(EVIDENCE)?;
+                    if mutation == "row" {
+                        table.insert("run", b"{".as_slice())?;
+                    } else {
+                        let mut changed = evidence();
+                        changed.schema_version = "lumin-evidence.foreign".to_owned();
+                        let bytes = serde_json::to_vec(&changed)?;
+                        table.insert("run", bytes.as_slice())?;
+                    }
+                }
+                write.commit()?;
+                drop(database);
+            }
+            _ => unreachable!(),
+        }
+
+        rewrite_run_evidence_identity(root.path(), &published.run_id)?;
+        make_prior_store(&store, root.path())?;
+        let result = store.migrate_lifecycle_store();
+        let rejected = match mutation {
+            "container" => matches!(result, Err(StoreError::Backend(_))),
+            "row" => matches!(result, Err(StoreError::Serialization(_))),
+            "schema" => matches!(
+                result,
+                Err(StoreError::IncompatibleStateSchema(message))
+                    if message.contains("run evidence uses unsupported schema")
+            ),
+            _ => unreachable!(),
+        };
+        assert!(
+            rejected,
+            "migration accepted {mutation} evidence corruption"
+        );
+    }
+    Ok(())
+}
+
+fn rewrite_run_evidence_identity(
+    root: &std::path::Path,
+    run_id: &RunId,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let run_dir = root.join(".lumin/runs").join(run_id.as_str());
+    let evidence = fs::read(run_dir.join("evidence.store"))?;
+    let database = Database::open(root.join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    let record = {
+        let mut table = write.open_table(RUN_CATALOG)?;
+        let bytes = table
+            .get(run_id.as_str())?
+            .ok_or("run catalog entry is missing")?
+            .value()
+            .to_vec();
+        let mut record = serde_json::from_slice::<RunCatalogRecord>(&bytes)?;
+        record.evidence_store_sha256 = digest_hex(&evidence);
+        record.evidence_store_size = evidence.len() as u64;
+        let changed = serde_json::to_vec(&record)?;
+        table.insert(run_id.as_str(), changed.as_slice())?;
+        record
+    };
+    write.commit()?;
+    drop(database);
+
+    let mut envelope = serde_json::to_vec_pretty(&record)?;
+    envelope.push(b'\n');
+    fs::write(run_dir.join("run.json"), envelope)?;
     Ok(())
 }
 
