@@ -345,6 +345,8 @@ fn validate_legacy_cleanup_operation(
                 && operation.validated_count == operation.authorization_keys.len() as u64
         }
     };
+    let interruption_count_valid = operation.status == CacheCleanupOperationStatus::Committed
+        || operation.interruption_count < u64::MAX;
     if operation.schema_version != "lumin-cache-cleanup-operation.v1"
         || operation.operation_id.as_str() != key
         || operation.request_digest.is_empty()
@@ -357,6 +359,7 @@ fn validate_legacy_cleanup_operation(
         || operation.validated_count > operation.authorization_keys.len() as u64
         || !plan_valid
         || !state_valid
+        || !interruption_count_valid
     {
         return Err(StoreError::IncompatibleStateSchema(format!(
             "private v1 cache cleanup operation {key} is incoherent"

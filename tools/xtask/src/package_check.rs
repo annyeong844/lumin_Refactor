@@ -174,6 +174,10 @@ fn validate_help_output(bytes: &[u8]) -> Result<(), String> {
     for required in [
         "Lumin agent workflow",
         "lumin operation show <operation-id> --format json",
+        "lumin cache clean --operation-id <operation-id> --format json",
+        "lumin.cache-cleanup-operation.v2",
+        "status, result, and lastDeliveryStatus",
+        "not-attempted, unknown, succeeded, or failed",
         "lumin store migrate --format json",
         MIGRATION_RESPONSE,
         "Never read or modify .lumin.",

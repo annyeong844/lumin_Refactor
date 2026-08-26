@@ -55,6 +55,7 @@ const MIGRATION_DEATH_STAGES: &[&str] = &[
     "after-target-parent-flush",
     "after-target-publication",
     "before-exchange",
+    "after-exchange-input-open",
     #[cfg(windows)]
     "after-source-retirement",
     "after-replace",
@@ -581,6 +582,39 @@ fn public_migration_hard_link_race_never_disposes_a_published_object()
     let recovered = run(root.path(), &["store", "migrate"])?;
     assert_status(&recovered, 0);
     assert_eq!(recovered.stdout, READY);
+    Ok(())
+}
+
+#[test]
+fn public_migration_rechecks_hard_links_after_movement_handles_open()
+-> Result<(), Box<dyn std::error::Error>> {
+    for binding in ["source", "target"] {
+        let root = prior_fixture()?;
+        let barrier = LifecycleMigrationBarrier::new("after-exchange-input-open")?;
+        let mut migration = barrier.spawn(root.path())?;
+        let permit = barrier.accept(&mut migration)?;
+        let state = root.path().join(".lumin");
+        let protected = if binding == "source" {
+            state.join("lifecycle.store")
+        } else {
+            pending_target_path(&state)?
+        };
+        let foreign_link = root.path().join(format!("foreign-{binding}-link"));
+        fs::hard_link(&protected, &foreign_link)?;
+        permit.release()?;
+
+        let rejected = migration.finish()?;
+        assert_status(&rejected, 1);
+        assert!(rejected.stdout.is_empty());
+        assert!(foreign_link.is_file());
+        assert!(state.join("lifecycle.store").is_file());
+        assert!(state.join("lifecycle-migration.json").is_file());
+
+        fs::remove_file(&foreign_link)?;
+        let recovered = run(root.path(), &["store", "migrate"])?;
+        assert_status(&recovered, 0);
+        assert_eq!(recovered.stdout, READY);
+    }
     Ok(())
 }
 

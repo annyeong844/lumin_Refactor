@@ -16,6 +16,22 @@ fn help_agent_owns_the_recovery_workflow_without_creating_state()
             .stdout
             .contains("lumin operation show <operation-id> --format json")
     );
+    assert!(
+        output
+            .stdout
+            .contains("lumin cache clean --operation-id <operation-id> --format json")
+    );
+    assert!(output.stdout.contains("lumin.cache-cleanup-operation.v2"));
+    assert!(
+        output
+            .stdout
+            .contains("status, result, and lastDeliveryStatus")
+    );
+    assert!(
+        output
+            .stdout
+            .contains("not-attempted, unknown, succeeded, or failed")
+    );
     assert!(output.stdout.contains("lumin store migrate --format json"));
     assert!(output.stdout.contains(
         "{\"schemaVersion\":\"lumin.lifecycle-store-migration.v1\",\"storeSchema\":\"lumin-lifecycle-store-header.v13\",\"status\":\"ready\"}",

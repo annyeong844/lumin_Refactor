@@ -25,6 +25,14 @@ Write gate
   Use a new operation ID for abandon, pin, unpin, prune-plan creation,
   prune confirmation, and cache cleanup as well.
 
+Cache cleanup
+  lumin cache clean --operation-id <operation-id> --format json
+  Recovery through operation show returns a lumin.cache-cleanup-operation.v2
+  object. Inspect its status, result, and lastDeliveryStatus. Delivery status is
+  not-attempted, unknown, succeeded, or failed; unknown means the greatest
+  allocated delivery attempt has no durable completion, so recover with the
+  same operation ID rather than starting another cleanup.
+
 Delivery recovery
   If a mutating command may have committed without delivering its result, do
   not invent a new operation ID. Run:

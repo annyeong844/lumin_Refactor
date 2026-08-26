@@ -70,6 +70,7 @@ pub(super) enum MigrationCrashPoint {
     TargetParentFlushed,
     TargetPublished,
     BeforeExchange,
+    ExchangeInputsOpened,
     #[cfg(windows)]
     SourceRetired,
     CanonicalReplaced,
@@ -123,6 +124,7 @@ impl MigrationCrashPoint {
             Self::TargetParentFlushed => "after-target-parent-flush",
             Self::TargetPublished => "after-target-publication",
             Self::BeforeExchange => "before-exchange",
+            Self::ExchangeInputsOpened => "after-exchange-input-open",
             #[cfg(windows)]
             Self::SourceRetired => "after-source-retirement",
             Self::CanonicalReplaced => "after-replace",
@@ -713,19 +715,20 @@ fn exchange_or_recover(
             &target.pre_exchange_name,
             "migration target before exchange",
         )?;
+        hook(MigrationCrashPoint::ExchangeInputsOpened)?;
         revalidate_journal(guard, journal)?;
         canonical.validate_path(
             &guard.state.state_dir.join("lifecycle.store"),
             EntryKind::RegularFile,
             EntryAccess::Move,
-            false,
+            true,
             "migration exchange canonical entry",
         )?;
         private.validate_path(
             &guard.state.state_dir.join(&target.pre_exchange_name),
             EntryKind::RegularFile,
             EntryAccess::Move,
-            false,
+            true,
             "migration exchange private entry",
         )?;
         exchange_entries(
@@ -792,19 +795,20 @@ fn exchange_or_recover(
                 &target.pre_exchange_name,
                 "migration target before exchange",
             )?;
+            hook(MigrationCrashPoint::ExchangeInputsOpened)?;
             revalidate_journal(guard, journal)?;
             canonical.validate_path(
                 &canonical_path,
                 EntryKind::RegularFile,
                 EntryAccess::Move,
-                false,
+                true,
                 "migration exchange canonical entry",
             )?;
             target_entry.validate_path(
                 &target_path,
                 EntryKind::RegularFile,
                 EntryAccess::Move,
-                false,
+                true,
                 "migration target before exchange",
             )?;
             move_entry_noreplace(
@@ -849,19 +853,20 @@ fn exchange_or_recover(
             &target.pre_exchange_name,
             "migration target before canonical move",
         )?;
+        hook(MigrationCrashPoint::ExchangeInputsOpened)?;
         revalidate_journal(guard, journal)?;
         source_entry.validate_path(
             &source_path,
             EntryKind::RegularFile,
             EntryAccess::Move,
-            false,
+            true,
             "retired migration source",
         )?;
         target_entry.validate_path(
             &target_path,
             EntryKind::RegularFile,
             EntryAccess::Move,
-            false,
+            true,
             "migration target before canonical move",
         )?;
         move_entry_noreplace(
@@ -991,24 +996,34 @@ fn validate_terminal(
     }
     current.snapshot.validate_external_references(guard)?;
     hook(MigrationCrashPoint::TerminalSourceValidated)?;
+    revalidate_retained_source(guard, &source, source_binding)?;
+    let current = revalidate_current_canonical(guard, &current)?;
+    revalidate_journal(guard, journal)?;
+    current.snapshot.validate_external_references(guard)?;
+    revalidate_retained_source(guard, &source, source_binding)?;
+    let current = revalidate_current_canonical(guard, &current)?;
+    revalidate_journal(guard, journal)?;
+    Ok(current)
+}
+
+fn revalidate_retained_source(
+    guard: &NamespaceGuard,
+    source: &HeldEntry,
+    binding: &MigrationArtifactBinding,
+) -> Result<(), StoreError> {
     source.validate_path(
-        &guard
-            .state
-            .state_dir
-            .join(&source_binding.post_exchange_name),
+        &guard.state.state_dir.join(&binding.post_exchange_name),
         EntryKind::RegularFile,
         EntryAccess::ReadWrite,
         true,
         "retained migration source",
     )?;
-    if file_sha256(&source)? != source_binding.byte_sha256 {
+    if file_sha256(source)? != binding.byte_sha256 {
         return Err(StoreError::Integrity(
             "retained migration source payload changed during terminal validation".to_owned(),
         ));
     }
-    let current = revalidate_current_canonical(guard, &current)?;
-    revalidate_journal(guard, journal)?;
-    Ok(current)
+    Ok(())
 }
 
 fn validate_nonterminal_envelope(

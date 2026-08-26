@@ -67,6 +67,7 @@ const CRASH_POINTS: &[MigrationCrashPoint] = &[
     MigrationCrashPoint::TargetParentFlushed,
     MigrationCrashPoint::TargetPublished,
     MigrationCrashPoint::BeforeExchange,
+    MigrationCrashPoint::ExchangeInputsOpened,
     #[cfg(windows)]
     MigrationCrashPoint::SourceRetired,
     MigrationCrashPoint::CanonicalReplaced,
@@ -728,6 +729,65 @@ fn migration_rejects_an_unfinished_cleanup_with_a_forged_request_digest()
 }
 
 #[test]
+fn migration_rejects_an_unfinished_cleanup_with_an_exhausted_interruption_count()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("migration-pending-cleanup-exhausted".to_owned());
+    let session = store.begin_operation(&operation_id)?;
+    let request_digest =
+        lumin_evidence::cache_cleanup_request_digest(&store.namespace.binding.global.repository_id);
+    let operation = CacheCleanupOperationRecord {
+        schema_version: "lumin-cache-cleanup-operation.v2".to_owned(),
+        repository_id: store.namespace.binding.global.repository_id.clone(),
+        operation_id: operation_id.clone(),
+        request_digest,
+        status: CacheCleanupOperationStatus::Pending,
+        interruption_count: u64::MAX,
+        invocation_id: "0".repeat(32),
+        initial_authorization_set_id: CacheEvictionAuthorizationSetId::for_canonical_rows(&[]),
+        initial_authorization_count: 0,
+        plan_initialized: false,
+        authorization_keys: Vec::new(),
+        validated_count: 0,
+        execution_lease: Some(CacheCleanupExecutionLease {
+            execution_attempt_id: "migration-pending-cleanup-exhausted-attempt".to_owned(),
+            liveness: session.liveness().clone(),
+        }),
+        recovery_reservation: None,
+        result: None,
+        greatest_allocated_delivery_sequence: 0,
+        greatest_completed_delivery_sequence: None,
+        delivery_completions: Vec::new(),
+    };
+    store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        crate::gate::records::write_record(
+            &write,
+            crate::cache::CACHE_CLEANUP_OPERATIONS,
+            operation_id.as_str(),
+            &operation,
+        )?;
+        guard.commit(write)
+    })?;
+    store.rewrite_cache_cleanup_operation_as_prior_for_test(
+        &operation_id,
+        PriorCacheCleanupDeliveryStatusForTest::NotAttempted,
+    )?;
+    make_prior_store(&store, root.path())?;
+
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::IncompatibleStateSchema(message))
+            if message.contains("private v1 cache cleanup operation")
+                && message.contains("incoherent")
+    ));
+    drop(session);
+    Ok(())
+}
+
+#[test]
 fn migration_authenticates_pending_cleanup_initial_authorization_provenance()
 -> Result<(), Box<dyn std::error::Error>> {
     for corrupt_identity in [true, false] {
@@ -872,6 +932,35 @@ fn terminal_validation_reopens_the_target_after_external_reference_validation()
 }
 
 #[test]
+fn terminal_validation_rechecks_external_state_after_the_exact_barrier()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    make_prior_store(&store, root.path())?;
+    let injected = root.path().join(".lumin/attempts/attempt_0000000000000001");
+    let mut reached = false;
+    let result = store.namespace.with_migration_lock(|guard| {
+        migrate_with_hook(guard, &mut |point| {
+            if point == MigrationCrashPoint::TerminalSourceValidated && !reached {
+                fs::create_dir(&injected).map_err(crate::io_error)?;
+                reached = true;
+            }
+            Ok(())
+        })
+    });
+    assert!(reached, "migration skipped the terminal validation barrier");
+    assert!(
+        matches!(result, Err(StoreError::Integrity(_))),
+        "migration accepted external state injected after validation: {result:?}"
+    );
+    assert!(injected.is_dir(), "migration removed unauthenticated state");
+
+    fs::remove_dir(&injected)?;
+    assert_eq!(store.migrate_lifecycle_store()?, next_generation()?);
+    Ok(())
+}
+
+#[test]
 fn exchange_revalidates_every_bound_input_after_external_reference_validation()
 -> Result<(), Box<dyn std::error::Error>> {
     for mutation in ["journal", "source", "target"] {
@@ -948,6 +1037,49 @@ fn exchange_revalidates_every_bound_input_after_external_reference_validation()
             target_identity.as_ref(),
             "{mutation} mutation changed durable exchange placement"
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn exchange_rechecks_link_counts_after_movement_handles_open()
+-> Result<(), Box<dyn std::error::Error>> {
+    for binding in ["source", "target"] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        make_prior_store(&store, root.path())?;
+        let state = root.path().join(".lumin");
+        let foreign_link = root.path().join(format!("foreign-{binding}-link"));
+        let mut reached = false;
+        let result = store.namespace.with_migration_lock(|guard| {
+            migrate_with_hook(guard, &mut |point| {
+                if point == MigrationCrashPoint::ExchangeInputsOpened && !reached {
+                    let protected = if binding == "source" {
+                        state.join("lifecycle.store")
+                    } else {
+                        pending_target_path(&state)
+                            .map_err(|error| StoreError::Integrity(error.to_string()))?
+                    };
+                    fs::hard_link(protected, &foreign_link).map_err(crate::io_error)?;
+                    reached = true;
+                }
+                Ok(())
+            })
+        });
+        assert!(reached, "migration skipped the exchange-input barrier");
+        assert!(
+            matches!(
+                &result,
+                Err(StoreError::Integrity(message))
+                    if message.contains("exactly one physical link")
+            ),
+            "migration moved a multiply linked {binding}: {result:?}"
+        );
+        assert!(foreign_link.is_file());
+        assert!(state.join("lifecycle.store").is_file());
+
+        fs::remove_file(&foreign_link)?;
+        assert_eq!(store.migrate_lifecycle_store()?, next_generation()?);
     }
     Ok(())
 }
@@ -1524,6 +1656,7 @@ fn crash_point_label(point: MigrationCrashPoint) -> &'static str {
         MigrationCrashPoint::TargetParentFlushed => "after-target-parent-flush",
         MigrationCrashPoint::TargetPublished => "after-target-publication",
         MigrationCrashPoint::BeforeExchange => "before-exchange",
+        MigrationCrashPoint::ExchangeInputsOpened => "after-exchange-input-open",
         #[cfg(windows)]
         MigrationCrashPoint::SourceRetired => "after-source-retirement",
         MigrationCrashPoint::CanonicalReplaced => "after-replace",
@@ -1564,6 +1697,7 @@ fn crash_point(label: &str) -> Result<MigrationCrashPoint, Box<dyn std::error::E
         "after-target-parent-flush" => Ok(MigrationCrashPoint::TargetParentFlushed),
         "after-target-publication" => Ok(MigrationCrashPoint::TargetPublished),
         "before-exchange" => Ok(MigrationCrashPoint::BeforeExchange),
+        "after-exchange-input-open" => Ok(MigrationCrashPoint::ExchangeInputsOpened),
         #[cfg(windows)]
         "after-source-retirement" => Ok(MigrationCrashPoint::SourceRetired),
         "after-replace" => Ok(MigrationCrashPoint::CanonicalReplaced),
