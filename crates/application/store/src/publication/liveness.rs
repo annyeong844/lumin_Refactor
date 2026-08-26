@@ -117,6 +117,12 @@ pub(super) fn validate_migration_snapshot(
     records::validate_migration_snapshot(rows)
 }
 
+pub(super) fn migration_lock_names(
+    rows: &std::collections::BTreeMap<String, Vec<u8>>,
+) -> Result<std::collections::BTreeSet<String>, StoreError> {
+    records::migration_lock_names(rows)
+}
+
 pub(super) fn reconcile_migration_allocations(
     rows: &mut std::collections::BTreeMap<String, Vec<u8>>,
     guard: &NamespaceGuard,

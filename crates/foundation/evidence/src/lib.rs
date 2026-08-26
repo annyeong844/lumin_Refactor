@@ -405,6 +405,10 @@ pub enum RunEvidenceIdentityError {
         collection: &'static str,
         identity: String,
     },
+    DerivedIdentityMismatch {
+        collection: &'static str,
+        identity: String,
+    },
 }
 
 impl fmt::Display for RunEvidenceIdentityError {
@@ -420,6 +424,13 @@ impl fmt::Display for RunEvidenceIdentityError {
             } => write!(
                 formatter,
                 "source identity disagrees with its path in {collection}: {identity}"
+            ),
+            Self::DerivedIdentityMismatch {
+                collection,
+                identity,
+            } => write!(
+                formatter,
+                "derived identity disagrees with its semantic owner in {collection}: {identity}"
             ),
         }
     }
@@ -487,6 +498,20 @@ pub fn validate_run_evidence_identities(
                 .iter()
                 .map(|record| record.relation_id.as_str()),
         )?;
+        for relation in &finding.relations {
+            let expected = finding_relation_id(
+                &finding.finding_id,
+                &relation.kind,
+                &relation.target_finding_id,
+                &relation.grounding_evidence_id,
+            );
+            if relation.relation_id != expected {
+                return Err(RunEvidenceIdentityError::DerivedIdentityMismatch {
+                    collection: "finding relations",
+                    identity: relation.relation_id.as_str().to_owned(),
+                });
+            }
+        }
     }
     Ok(())
 }
@@ -659,6 +684,73 @@ mod tests {
             validate_run_evidence_identities(&evidence),
             Err(RunEvidenceIdentityError::SourceIdentityMismatch {
                 collection: "source contexts",
+                ..
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_relations_require_the_owner_derived_identity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = RepoPath::from_portable("src/relation.ts")?;
+        let source_id = LogicalSourceId::from_path(&path);
+        let finding_id = FindingId::for_export(
+            DEAD_EXPORT_RULE_ID,
+            &source_id,
+            SymbolNamespace::Value,
+            "source",
+        );
+        let target_finding_id = FindingId::for_export(
+            DEAD_EXPORT_RULE_ID,
+            &source_id,
+            SymbolNamespace::Value,
+            "target",
+        );
+        let evidence_id =
+            EvidenceId::for_source_span("definition", &source_id, 0, 1, "payload-sha256");
+        let evidence = RunEvidence {
+            schema_version: RUN_EVIDENCE_SCHEMA_VERSION.to_owned(),
+            capabilities: vec![CapabilityRecord {
+                capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
+                state: CapabilityState::Complete,
+            }],
+            resolution_profiles: Vec::new(),
+            source_classifications: Vec::new(),
+            source_contexts: Vec::new(),
+            source_observations: Vec::new(),
+            dependency_owners: Vec::new(),
+            resolutions: Vec::new(),
+            metrics: AnalysisMetrics::default(),
+            findings: vec![FindingRecord {
+                finding_id,
+                rule_id: DEAD_EXPORT_RULE_ID.to_owned(),
+                owner_capability: DEAD_CODE_CAPABILITY_ID.to_owned(),
+                severity: Severity::Warning,
+                confidence: Confidence::Grounded,
+                disposition: FindingDisposition::ReviewCandidate,
+                claim: "relation identity fixture".to_owned(),
+                source_id,
+                path: RepoPathProjection::from(&path),
+                span: SourceSpan { start: 0, end: 1 },
+                exported_name: "source".to_owned(),
+                namespace: SymbolNamespace::Value,
+                nested_collections_available: true,
+                evidence: Vec::new(),
+                relations: vec![FindingRelationRecord {
+                    relation_id: FindingRelationId::from_string("relation_forged".to_owned()),
+                    kind: "related".to_owned(),
+                    target_finding_id,
+                    grounding_evidence_id: evidence_id,
+                }],
+            }],
+            limitations: Vec::new(),
+        };
+
+        assert!(matches!(
+            validate_run_evidence_identities(&evidence),
+            Err(RunEvidenceIdentityError::DerivedIdentityMismatch {
+                collection: "finding relations",
                 ..
             })
         ));

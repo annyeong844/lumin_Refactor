@@ -599,7 +599,7 @@ fn run_evidence_decode_stays_bound_to_the_hashed_held_bytes()
     let held_dir = HeldEntry::open(
         &run_dir,
         EntryKind::Directory,
-        EntryAccess::ReadOnly,
+        EntryAccess::Move,
         false,
         "test run directory",
     )?;
@@ -618,6 +618,139 @@ fn run_evidence_decode_stays_bound_to_the_hashed_held_bytes()
         Err(StoreError::Integrity(message))
             if message.contains("duplicate identity in capabilities")
     ));
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn run_inventory_rechecks_the_held_directory_after_the_exact_barrier()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let mut attempt = store.begin_attempt()?;
+    let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+    let run_dir = root
+        .path()
+        .join(".lumin/runs")
+        .join(published.run_id.as_str());
+    let moved_run_dir = root.path().join(".lumin/runs/held-run-directory");
+
+    let expected =
+        serde_json::from_slice::<RunCatalogRecord>(&fs::read(run_dir.join("run.json"))?)?;
+    let held_dir = HeldEntry::open(
+        &run_dir,
+        EntryKind::Directory,
+        EntryAccess::ReadOnly,
+        false,
+        "test run directory",
+    )?;
+    let run_dir_before = run_dir.clone();
+    let run_dir_after = run_dir.clone();
+    let result = crate::publication::validate_directory_with_inventory_hooks(
+        &run_dir,
+        &held_dir,
+        &expected,
+        || {
+            fs::write(
+                run_dir_before.join("unowned-payload"),
+                b"unowned run payload",
+            )
+            .map_err(crate::io_error)?;
+            fs::rename(&run_dir_before, &moved_run_dir).map_err(crate::io_error)?;
+            fs::create_dir(&run_dir_before).map_err(crate::io_error)?;
+            fs::write(run_dir_before.join("evidence.store"), b"substitute")
+                .map_err(crate::io_error)?;
+            fs::write(run_dir_before.join("run.json"), b"substitute").map_err(crate::io_error)
+        },
+        || {
+            fs::remove_dir_all(&run_dir_after).map_err(crate::io_error)?;
+            fs::rename(&moved_run_dir, &run_dir_after).map_err(crate::io_error)
+        },
+    );
+    if moved_run_dir.is_dir() {
+        fs::remove_dir_all(&run_dir)?;
+        fs::rename(&moved_run_dir, &run_dir)?;
+    }
+    assert!(
+        matches!(
+            result,
+            Err(StoreError::Integrity(ref message))
+                if message.contains("run directory contains an unknown entry")
+        ),
+        "unexpected validation result: {result:?}"
+    );
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn run_inventory_rechecks_the_windows_directory_handle_after_the_exact_barrier()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let mut attempt = store.begin_attempt()?;
+    let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+    let run_dir = root
+        .path()
+        .join(".lumin/runs")
+        .join(published.run_id.as_str());
+    let expected =
+        serde_json::from_slice::<RunCatalogRecord>(&fs::read(run_dir.join("run.json"))?)?;
+    let held_dir = HeldEntry::open(
+        &run_dir,
+        EntryKind::Directory,
+        EntryAccess::ReadOnly,
+        false,
+        "test run directory",
+    )?;
+    let unowned = run_dir.join("unowned-payload");
+
+    let result = crate::publication::validate_directory_with_inventory_hooks(
+        &run_dir,
+        &held_dir,
+        &expected,
+        || fs::write(&unowned, b"unowned run payload").map_err(crate::io_error),
+        || Ok(()),
+    );
+    assert!(
+        matches!(
+            result,
+            Err(StoreError::Integrity(ref message))
+                if message.contains("run directory contains an unknown entry")
+        ),
+        "unexpected validation result: {result:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_unowned_top_level_state_entries() -> Result<(), Box<dyn std::error::Error>> {
+    for (name, expected) in [
+        ("opaque", "state namespace contains an unowned entry"),
+        (
+            ".lumin-unpublished-00000000-0000000000000001",
+            "state namespace contains an unowned entry",
+        ),
+        (
+            "operation-liveness-0000000000000000000000000000000000000000000000000000000000000000.lock",
+            "operation liveness lock name disagrees with its owner",
+        ),
+    ] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        let foreign = root.path().join(".lumin").join(name);
+        fs::write(&foreign, b"foreign state")?;
+        make_prior_store(&store, root.path())?;
+
+        assert!(
+            matches!(
+                store.migrate_lifecycle_store(),
+                Err(StoreError::Integrity(message)) if message.contains(expected)
+            ),
+            "migration accepted unowned state entry {name}"
+        );
+        assert_eq!(fs::read(foreign)?, b"foreign state");
+    }
     Ok(())
 }
 

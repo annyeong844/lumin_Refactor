@@ -31,6 +31,7 @@ use integrity::{read_validated_gate, validate_loaded_gate_catalog, validate_stor
 pub use liveness::OperationSession;
 pub(crate) use liveness::{
     validate_migration_liveness_lease, validate_migration_operation_liveness,
+    validate_migration_operation_lock_inventory,
 };
 pub(crate) use receipts::{operation_retention_identity, validation_receipt_for_operation};
 use receipts::{

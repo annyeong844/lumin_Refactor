@@ -10,8 +10,8 @@ Read before acting
 Audit and query
   lumin audit --format json
   lumin overview --format json
-  lumin findings --run <run-id> --format json
-  lumin explain --run <run-id> --finding <finding-id> --format json
+  lumin findings --run <run-id> --area dead-code --format json
+  lumin explain --run <run-id> <finding-id> --format json
   Retain concrete run, finding, gate, plan, pin, and operation IDs returned by
   the binary. Follow nextCursor until truncated is false when exhaustive output
   is required.

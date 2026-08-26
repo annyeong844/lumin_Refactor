@@ -50,7 +50,57 @@ pub(super) fn validate_external_references(
         )?;
     }
     validate_latest_pointers(snapshot, guard, &attempts)?;
+    validate_state_namespace_inventory(snapshot, guard)?;
     guard.validate_bound_entries()
+}
+
+fn validate_state_namespace_inventory(
+    snapshot: &LogicalStoreSnapshot,
+    guard: &NamespaceGuard,
+) -> Result<(), StoreError> {
+    let fixed = BTreeSet::from([
+        "attempts".to_owned(),
+        "cache".to_owned(),
+        "latest.json".to_owned(),
+        "latest.json.pending".to_owned(),
+        "lifecycle.lock".to_owned(),
+        "lifecycle.store".to_owned(),
+        "repository.json".to_owned(),
+        "runs".to_owned(),
+        "trash".to_owned(),
+    ]);
+    let attempt_locks = crate::publication::migration_attempt_lock_names(&snapshot.attempt_leases)?;
+
+    for native_name in guard.state_directory.directory_names("state namespace")? {
+        if super::super::super::super::validate_active_unpublished_name(
+            &guard.state.state_dir,
+            &guard.state_directory,
+            &native_name,
+        )? {
+            continue;
+        }
+        let name = native_name.into_string().map_err(|_| {
+            StoreError::Integrity("state namespace contains a non-UTF-8 entry".to_owned())
+        })?;
+        // The migration entrypoint has already folded the journal and rejected
+        // every unbound reserved-name artifact before any snapshot reaches this
+        // validator. Keep those proven names visible while closing the rest of
+        // the state namespace.
+        let migration_owned = name == "lifecycle-migration.json"
+            || name.starts_with("lifecycle-migration.revision-")
+            || name.starts_with("lifecycle.store.migration-");
+        if fixed.contains(&name)
+            || attempt_locks.contains(&name)
+            || migration_owned
+            || crate::gate::validate_migration_operation_lock_inventory(guard, &name)?
+        {
+            continue;
+        }
+        return Err(StoreError::Integrity(format!(
+            "state namespace contains an unowned entry: {name}"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_run_children(

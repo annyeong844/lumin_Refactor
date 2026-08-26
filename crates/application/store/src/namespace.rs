@@ -10,6 +10,7 @@ mod store_header;
 mod tests;
 
 use std::fs;
+use std::ops::Deref;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
@@ -23,22 +24,44 @@ pub use migration::MigrationIntent;
 use platform::repository_root_physical_identity;
 pub(crate) use platform::{
     EntryAccess, EntryKind, HeldEntry, move_entry_noreplace, publish_file_atomic,
-    replace_file_atomic, same_volume_and_mount,
+    replace_file_atomic, same_volume_and_mount, validate_active_unpublished_name,
 };
 use records::*;
 use store_header::*;
 
+pub(super) enum MigrationDatabase {
+    Direct(redb::Database),
+    Detached {
+        database: redb::Database,
+        _unpublished: platform::UnpublishedFile,
+    },
+}
+
+impl Deref for MigrationDatabase {
+    type Target = redb::Database;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Direct(database) | Self::Detached { database, .. } => database,
+        }
+    }
+}
+
 fn detached_database(
     guard: &NamespaceGuard,
     entry: &HeldEntry,
-) -> Result<redb::Database, StoreError> {
+) -> Result<MigrationDatabase, StoreError> {
     let bytes = entry.read_all()?;
-    let detached =
+    let unpublished =
         platform::UnpublishedFile::create(&guard.state.state_dir, &guard.state_directory)?;
-    detached.entry().replace_contents(&bytes)?;
-    redb::Database::builder()
-        .create_file(detached.entry().file().try_clone().map_err(io_error)?)
-        .map_err(crate::backend_error)
+    unpublished.entry().replace_contents(&bytes)?;
+    let database = redb::Database::builder()
+        .create_file(unpublished.entry().file().try_clone().map_err(io_error)?)
+        .map_err(crate::backend_error)?;
+    Ok(MigrationDatabase::Detached {
+        database,
+        _unpublished: unpublished,
+    })
 }
 
 #[derive(Clone, Debug)]

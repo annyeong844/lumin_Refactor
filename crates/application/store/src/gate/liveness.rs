@@ -271,6 +271,66 @@ pub(crate) fn validate_migration_liveness_lease(
     validate_migration_operation_lock_contents(&file, operation_id)
 }
 
+pub(crate) fn validate_migration_operation_lock_inventory(
+    guard: &namespace::NamespaceGuard,
+    name: &str,
+) -> Result<bool, StoreError> {
+    let Some(digest) = name
+        .strip_prefix("operation-liveness-")
+        .and_then(|digest| digest.strip_suffix(".lock"))
+    else {
+        return Ok(false);
+    };
+    if digest.len() != 64
+        || !digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Ok(false);
+    }
+    let file = guard.open_state_file(name, "operation liveness lock inventory")?;
+    guard.validate_state_file(&file, name, "operation liveness lock inventory")?;
+
+    #[cfg(windows)]
+    match FileExt::try_lock_shared(file.file()) {
+        Ok(()) => {
+            let validated = validate_operation_lock_inventory_contents(&file, name);
+            let unlocked = FileExt::unlock(file.file()).map_err(io_error);
+            validated?;
+            unlocked?;
+        }
+        // A live OperationSession can precede its first durable operation row
+        // or outlive result commit through transport. The canonical name plus
+        // its contended owner lock is the only readable inventory proof on
+        // Windows; unlocked files are checked against their self-binding.
+        Err(error) if namespace::lock_contended(&error) => return Ok(true),
+        Err(error) => return Err(io_error(error)),
+    }
+    #[cfg(not(windows))]
+    validate_operation_lock_inventory_contents(&file, name)?;
+
+    Ok(true)
+}
+
+fn validate_operation_lock_inventory_contents(
+    file: &namespace::HeldEntry,
+    name: &str,
+) -> Result<(), StoreError> {
+    let operation_id = std::str::from_utf8(&file.read_all()?)
+        .map_err(|error| {
+            StoreError::Integrity(format!(
+                "operation liveness lock contains a non-UTF-8 owner: {error}"
+            ))
+        })?
+        .to_owned();
+    if operation_lock_name(&OperationId::from_string(operation_id)) != name {
+        return Err(StoreError::Integrity(
+            "operation liveness lock name disagrees with its owner".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(not(windows))]
 fn validate_migration_operation_lock_contents(
     file: &namespace::HeldEntry,

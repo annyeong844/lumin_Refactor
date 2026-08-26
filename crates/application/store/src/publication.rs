@@ -21,11 +21,13 @@ pub(crate) use latest::{
     migration_pointer_ids, reconcile_migration_pointer_index, validate_attempt_envelope,
 };
 pub use liveness::AttemptSession;
-#[cfg(test)]
-pub(crate) use run::validate_directory_with_evidence_read_hook;
 pub(crate) use run::{
     read_validated_directory as read_validated_run_directory,
     validate_directory as validate_run_directory,
+};
+#[cfg(test)]
+pub(crate) use run::{
+    validate_directory_with_evidence_read_hook, validate_directory_with_inventory_hooks,
 };
 
 pub type AttemptState = AttemptStatus;
@@ -103,6 +105,12 @@ pub(crate) fn validate_migration_attempt_leases(
     rows: &std::collections::BTreeMap<String, Vec<u8>>,
 ) -> Result<(), StoreError> {
     liveness::validate_migration_snapshot(rows)
+}
+
+pub(crate) fn migration_attempt_lock_names(
+    rows: &std::collections::BTreeMap<String, Vec<u8>>,
+) -> Result<std::collections::BTreeSet<String>, StoreError> {
+    liveness::migration_lock_names(rows)
 }
 
 pub(crate) fn reconcile_migration_attempt_allocations(

@@ -1,7 +1,8 @@
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 use lumin_model::{PhysicalFileIdentity, RepositoryRootPhysicalIdentity};
 
@@ -139,6 +140,10 @@ impl HeldEntry {
         Ok(bytes)
     }
 
+    pub(crate) fn directory_names(&self, label: &str) -> Result<Vec<OsString>, StoreError> {
+        directory_names_from_handle(&self.file, label)
+    }
+
     pub(crate) fn replace_contents(&self, bytes: &[u8]) -> Result<(), StoreError> {
         self.file.set_len(0).map_err(io_error)?;
         let mut writer = self.file();
@@ -171,14 +176,157 @@ impl HeldEntry {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn directory_names_from_handle(file: &File, label: &str) -> Result<Vec<OsString>, StoreError> {
+    use std::os::fd::AsRawFd;
+
+    let descriptor_path = format!("/proc/self/fd/{}", file.as_raw_fd());
+    let mut names = std::fs::read_dir(descriptor_path)
+        .map_err(|error| StoreError::Integrity(format!("cannot enumerate {label}: {error}")))?
+        .map(|entry| {
+            entry.map(|entry| entry.file_name()).map_err(|error| {
+                StoreError::Integrity(format!("cannot enumerate {label}: {error}"))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    names.sort();
+    Ok(names)
+}
+
+#[cfg(windows)]
+#[allow(
+    unsafe_code,
+    reason = "Windows handle-owned directory enumeration requires GetFileInformationByHandleEx"
+)]
+fn directory_names_from_handle(file: &File, label: &str) -> Result<Vec<OsString>, StoreError> {
+    use std::mem::{offset_of, size_of};
+    use std::os::windows::ffi::OsStringExt;
+    use std::os::windows::io::AsRawHandle;
+
+    use windows_sys::Win32::Foundation::{ERROR_NO_MORE_FILES, HANDLE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ID_BOTH_DIR_INFO, FileIdBothDirectoryInfo, FileIdBothDirectoryRestartInfo,
+        GetFileInformationByHandleEx,
+    };
+
+    const BUFFER_SIZE: usize = 64 * 1024;
+    let buffer_size = u32::try_from(BUFFER_SIZE)
+        .map_err(|_| StoreError::Integrity("directory inventory buffer exceeds u32".to_owned()))?;
+    let mut names = Vec::new();
+    let mut restart = true;
+    loop {
+        let mut buffer = vec![0_u8; BUFFER_SIZE];
+        let class = if restart {
+            FileIdBothDirectoryRestartInfo
+        } else {
+            FileIdBothDirectoryInfo
+        };
+        // SAFETY: `file` owns a live directory handle, and `buffer` is a
+        // writable allocation whose exact byte length is passed to Windows.
+        let succeeded = unsafe {
+            GetFileInformationByHandleEx(
+                file.as_raw_handle() as HANDLE,
+                class,
+                buffer.as_mut_ptr().cast(),
+                buffer_size,
+            )
+        };
+        if succeeded == 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() == Some(ERROR_NO_MORE_FILES as i32) {
+                break;
+            }
+            return Err(StoreError::Integrity(format!(
+                "cannot enumerate {label}: {error}"
+            )));
+        }
+        restart = false;
+
+        let mut offset = 0_usize;
+        loop {
+            let header_end = offset
+                .checked_add(size_of::<FILE_ID_BOTH_DIR_INFO>())
+                .ok_or_else(|| {
+                    StoreError::Integrity(format!("{label} directory inventory overflow"))
+                })?;
+            if header_end > buffer.len() {
+                return Err(StoreError::Integrity(format!(
+                    "{label} returned a truncated directory inventory"
+                )));
+            }
+            // SAFETY: the complete fixed header is within `buffer`; Windows
+            // does not promise Rust alignment, so the header is read unaligned.
+            let information = unsafe {
+                std::ptr::read_unaligned(
+                    buffer.as_ptr().add(offset).cast::<FILE_ID_BOTH_DIR_INFO>(),
+                )
+            };
+            let name_length = usize::try_from(information.FileNameLength).map_err(|_| {
+                StoreError::Integrity(format!("{label} directory name length overflow"))
+            })?;
+            if name_length % size_of::<u16>() != 0 {
+                return Err(StoreError::Integrity(format!(
+                    "{label} returned a malformed directory name"
+                )));
+            }
+            let name_start = offset
+                .checked_add(offset_of!(FILE_ID_BOTH_DIR_INFO, FileName))
+                .ok_or_else(|| {
+                    StoreError::Integrity(format!("{label} directory name offset overflow"))
+                })?;
+            let name_end = name_start.checked_add(name_length).ok_or_else(|| {
+                StoreError::Integrity(format!("{label} directory name length overflow"))
+            })?;
+            if name_end > buffer.len() {
+                return Err(StoreError::Integrity(format!(
+                    "{label} returned a truncated directory name"
+                )));
+            }
+            let wide = buffer[name_start..name_end]
+                .chunks_exact(size_of::<u16>())
+                .map(|bytes| u16::from_ne_bytes([bytes[0], bytes[1]]))
+                .collect::<Vec<_>>();
+            let name = OsString::from_wide(&wide);
+            if name != OsStr::new(".") && name != OsStr::new("..") {
+                names.push(name);
+            }
+
+            if information.NextEntryOffset == 0 {
+                break;
+            }
+            offset = offset
+                .checked_add(information.NextEntryOffset as usize)
+                .ok_or_else(|| {
+                    StoreError::Integrity(format!("{label} directory inventory offset overflow"))
+                })?;
+            if offset >= buffer.len() {
+                return Err(StoreError::Integrity(format!(
+                    "{label} returned an invalid directory inventory offset"
+                )));
+            }
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+fn directory_names_from_handle(_file: &File, _label: &str) -> Result<Vec<OsString>, StoreError> {
+    Err(StoreError::Integrity(
+        "handle-owned directory inventory supports Windows and Linux".to_owned(),
+    ))
+}
+
 #[derive(Debug)]
 pub(crate) struct UnpublishedFile {
     entry: HeldEntry,
+    parent_path: PathBuf,
+    namespace_name: Option<OsString>,
 }
 
 impl UnpublishedFile {
     pub(crate) fn create(parent_path: &Path, parent: &HeldEntry) -> Result<Self, StoreError> {
-        let file = create_unpublished_file_platform(parent_path)?;
+        let (file, namespace_name) = create_unpublished_file_platform(parent_path)?;
         let entry = HeldEntry::from_file(
             file,
             EntryKind::RegularFile,
@@ -190,7 +338,14 @@ impl UnpublishedFile {
                 "unpublished state artifact crossed its bound volume or mount".to_owned(),
             ));
         }
-        Ok(Self { entry })
+        if let Some(name) = namespace_name.as_ref() {
+            register_active_unpublished(parent_path, name, entry.identity())?;
+        }
+        Ok(Self {
+            entry,
+            parent_path: parent_path.to_owned(),
+            namespace_name,
+        })
     }
 
     pub(crate) fn entry(&self) -> &HeldEntry {
@@ -232,13 +387,95 @@ impl UnpublishedFile {
     }
 }
 
+impl Drop for UnpublishedFile {
+    fn drop(&mut self) {
+        if let Some(name) = self.namespace_name.as_ref() {
+            unregister_active_unpublished(&self.parent_path, name, self.entry.identity());
+        }
+    }
+}
+
+type ActiveUnpublishedRegistry =
+    std::collections::BTreeMap<(PathBuf, OsString), PhysicalFileIdentity>;
+
+fn active_unpublished_registry() -> &'static Mutex<ActiveUnpublishedRegistry> {
+    static REGISTRY: OnceLock<Mutex<ActiveUnpublishedRegistry>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(ActiveUnpublishedRegistry::new()))
+}
+
+fn register_active_unpublished(
+    parent_path: &Path,
+    name: &OsStr,
+    identity: &PhysicalFileIdentity,
+) -> Result<(), StoreError> {
+    let mut registry = active_unpublished_registry()
+        .lock()
+        .map_err(|_| StoreError::Integrity("active unpublished registry is poisoned".to_owned()))?;
+    let key = (parent_path.to_owned(), name.to_owned());
+    if registry.contains_key(&key) {
+        return Err(StoreError::Integrity(
+            "active unpublished state name was registered twice".to_owned(),
+        ));
+    }
+    registry.insert(key, identity.clone());
+    Ok(())
+}
+
+fn unregister_active_unpublished(
+    parent_path: &Path,
+    name: &OsStr,
+    identity: &PhysicalFileIdentity,
+) {
+    let Ok(mut registry) = active_unpublished_registry().lock() else {
+        return;
+    };
+    let key = (parent_path.to_owned(), name.to_owned());
+    if registry.get(&key) == Some(identity) {
+        registry.remove(&key);
+    }
+}
+
+pub(crate) fn validate_active_unpublished_name(
+    parent_path: &Path,
+    parent: &HeldEntry,
+    name: &OsStr,
+) -> Result<bool, StoreError> {
+    let expected = active_unpublished_registry()
+        .lock()
+        .map_err(|_| StoreError::Integrity("active unpublished registry is poisoned".to_owned()))?
+        .get(&(parent_path.to_owned(), name.to_owned()))
+        .cloned();
+    let Some(expected) = expected else {
+        return Ok(false);
+    };
+    let entry = HeldEntry::open(
+        &parent_path.join(name),
+        EntryKind::RegularFile,
+        EntryAccess::ReadOnly,
+        true,
+        "active unpublished state artifact",
+    )?;
+    if entry.identity() != &expected || !same_volume_and_mount(&entry, parent) {
+        return Err(StoreError::Integrity(
+            "active unpublished state artifact changed physical identity".to_owned(),
+        ));
+    }
+    Ok(true)
+}
+
 #[cfg(not(windows))]
-fn create_unpublished_file_platform(parent_path: &Path) -> Result<File, StoreError> {
-    tempfile::tempfile_in(parent_path).map_err(io_error)
+fn create_unpublished_file_platform(
+    parent_path: &Path,
+) -> Result<(File, Option<OsString>), StoreError> {
+    tempfile::tempfile_in(parent_path)
+        .map(|file| (file, None))
+        .map_err(io_error)
 }
 
 #[cfg(windows)]
-fn create_unpublished_file_platform(parent_path: &Path) -> Result<File, StoreError> {
+fn create_unpublished_file_platform(
+    parent_path: &Path,
+) -> Result<(File, Option<OsString>), StoreError> {
     use std::os::windows::fs::OpenOptionsExt;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -260,9 +497,9 @@ fn create_unpublished_file_platform(parent_path: &Path) -> Result<File, StoreErr
             .write(true)
             .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
             .custom_flags(FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE)
-            .open(parent_path.join(name))
+            .open(parent_path.join(&name))
         {
-            Ok(file) => return Ok(file),
+            Ok(file) => return Ok((file, Some(OsString::from(name)))),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(io_error(error)),
         }

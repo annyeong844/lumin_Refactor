@@ -349,7 +349,14 @@ pub(crate) fn validate_directory(
     directory: &HeldEntry,
     expected: &RunCatalogRecord,
 ) -> Result<(), StoreError> {
-    validate_directory_with_hook(directory_path, directory, expected, || Ok(()))
+    validate_directory_with_hooks(
+        directory_path,
+        directory,
+        expected,
+        || Ok(()),
+        || Ok(()),
+        || Ok(()),
+    )
 }
 
 #[cfg(test)]
@@ -359,16 +366,43 @@ pub(crate) fn validate_directory_with_evidence_read_hook(
     expected: &RunCatalogRecord,
     after_evidence_read: impl FnOnce() -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
-    validate_directory_with_hook(directory_path, directory, expected, after_evidence_read)
+    validate_directory_with_hooks(
+        directory_path,
+        directory,
+        expected,
+        after_evidence_read,
+        || Ok(()),
+        || Ok(()),
+    )
 }
 
-fn validate_directory_with_hook(
+#[cfg(test)]
+pub(crate) fn validate_directory_with_inventory_hooks(
+    directory_path: &Path,
+    directory: &HeldEntry,
+    expected: &RunCatalogRecord,
+    before_final_inventory: impl FnOnce() -> Result<(), StoreError>,
+    after_final_inventory: impl FnOnce() -> Result<(), StoreError>,
+) -> Result<(), StoreError> {
+    validate_directory_with_hooks(
+        directory_path,
+        directory,
+        expected,
+        || Ok(()),
+        before_final_inventory,
+        after_final_inventory,
+    )
+}
+
+fn validate_directory_with_hooks(
     directory_path: &Path,
     directory: &HeldEntry,
     expected: &RunCatalogRecord,
     after_evidence_read: impl FnOnce() -> Result<(), StoreError>,
+    before_final_inventory: impl FnOnce() -> Result<(), StoreError>,
+    after_final_inventory: impl FnOnce() -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
-    validate_directory_inventory(directory_path, expected)?;
+    validate_directory_inventory(directory, expected)?;
     let observed: RunCatalogRecord =
         files::read_json(&directory_path.join("run.json"), directory, "run envelope")?;
     if observed.attempt_id != expected.attempt_id
@@ -409,25 +443,32 @@ fn validate_directory_with_hook(
         true,
         "run evidence store",
     )?;
-    validate_directory_inventory(directory_path, expected)?;
+    drop(evidence);
     directory.validate_path(
         directory_path,
         EntryKind::Directory,
         EntryAccess::ReadOnly,
         false,
         "run directory",
-    )
+    )?;
+    before_final_inventory()?;
+    validate_directory_inventory(directory, expected)?;
+    after_final_inventory()?;
+    directory.validate_path(
+        directory_path,
+        EntryKind::Directory,
+        EntryAccess::ReadOnly,
+        false,
+        "run directory",
+    )?;
+    validate_directory_inventory(directory, expected)
 }
 
 fn validate_directory_inventory(
-    directory_path: &Path,
+    directory: &HeldEntry,
     expected: &RunCatalogRecord,
 ) -> Result<(), StoreError> {
-    let mut names = Vec::new();
-    for entry in fs::read_dir(directory_path).map_err(io_error)? {
-        names.push(entry.map_err(io_error)?.file_name());
-    }
-    names.sort();
+    let names = directory.directory_names("run directory")?;
     if names
         != [
             std::ffi::OsString::from("evidence.store"),

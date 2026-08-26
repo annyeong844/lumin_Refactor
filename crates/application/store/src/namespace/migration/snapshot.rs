@@ -21,7 +21,7 @@ use super::super::store_header::{
     MigrationProvenanceAnchor, initialize_store_with_anchor, verify_prior_store_header,
     verify_store_header_anchor, verify_validation_receipt_set_read,
 };
-use super::super::{NamespaceGuard, detached_database, require_state_volume};
+use super::super::{MigrationDatabase, NamespaceGuard, detached_database, require_state_volume};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(super) struct LogicalStoreSnapshot {
@@ -43,7 +43,7 @@ pub(super) struct LogicalStoreSnapshot {
 
 pub(super) struct LegacyStore {
     pub(super) entry: HeldEntry,
-    pub(super) database: Database,
+    pub(super) database: MigrationDatabase,
     pub(super) generation: StoreGeneration,
     pub(super) snapshot: LogicalStoreSnapshot,
 }
@@ -133,7 +133,7 @@ fn open_legacy_writable_at(
     )?;
     Ok(LegacyStore {
         entry,
-        database,
+        database: MigrationDatabase::Direct(database),
         generation,
         snapshot,
     })

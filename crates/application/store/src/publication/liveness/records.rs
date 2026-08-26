@@ -259,6 +259,17 @@ pub(super) fn validate_migration_snapshot(
     Ok(())
 }
 
+pub(super) fn migration_lock_names(
+    rows: &std::collections::BTreeMap<String, Vec<u8>>,
+) -> Result<std::collections::BTreeSet<String>, StoreError> {
+    rows.iter()
+        .map(|(key, bytes)| {
+            let attempt_id = AttemptId::from_string(key.clone());
+            parse_record(bytes, Some(&attempt_id)).map(|lease| lease.lock_name)
+        })
+        .collect()
+}
+
 pub(super) fn validate_migration_attempt_links(
     rows: &std::collections::BTreeMap<String, Vec<u8>>,
     attempts: &std::collections::BTreeMap<String, Option<AttemptEnvelope>>,
