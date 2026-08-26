@@ -3014,6 +3014,16 @@ fn validate_pending_pre_write_write_domain(operation: &OperationRecord) -> Resul
 
 fn validate_interrupted_operation_state(operation: &OperationRecord) -> Result<(), StoreError> {
     validate_unfinished_interruption_capacity(operation)?;
+    if matches!(
+        operation.kind,
+        GateOperationKind::PreWrite | GateOperationKind::PostWrite
+    ) && operation.interruption_count == 0
+    {
+        return Err(StoreError::Integrity(format!(
+            "interrupted operation {} has a zero interruption count",
+            operation.operation_id.as_str()
+        )));
+    }
     if operation.operation_liveness.is_some()
         || !operation.leased_write_set.is_empty()
         || !operation.semantic_read_reservations.is_empty()

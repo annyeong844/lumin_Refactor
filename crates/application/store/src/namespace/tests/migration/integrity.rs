@@ -2,14 +2,14 @@ use std::fs;
 
 use lumin_evidence::{
     ActualWriteSet, GateBaselineObservationInput, GateCloseObservationInput, GateDecision,
-    GateLifecycle, GateObservationBinding, GateOperationStatus, GateRecord, GateSignal,
-    OperationLivenessLease, OperationRecord, PathPrefixIdentity, PreWriteFinalValidationEvidence,
-    RepoPathProjection, RetentionMutationResult, RetentionOperationRecord,
-    RetentionOperationResult, RetentionPlanScope, UnsealedGateObservationInputs,
-    WorktreeTransition, WriteLease, WriteLeaseKind, derive_gate_baseline_observation_id,
-    derive_gate_close_observation_id, derive_protected_semantic_inputs,
-    derive_unsealed_gate_observation_binding, gate_abandon_request_digest,
-    post_write_request_digest, seal_analysis_snapshot,
+    GateLifecycle, GateObservationBinding, GateOperationKind, GateOperationStatus, GateRecord,
+    GateSignal, OperationLivenessLease, OperationRecord, PathPrefixIdentity,
+    PreWriteFinalValidationEvidence, RepoPathProjection, RetentionMutationResult,
+    RetentionOperationRecord, RetentionOperationResult, RetentionPlanScope,
+    UnsealedGateObservationInputs, WorktreeTransition, WriteLease, WriteLeaseKind,
+    derive_gate_baseline_observation_id, derive_gate_close_observation_id,
+    derive_protected_semantic_inputs, derive_unsealed_gate_observation_binding,
+    gate_abandon_request_digest, post_write_request_digest, seal_analysis_snapshot,
 };
 use lumin_model::{
     AnalysisInputId, AttemptId, CapabilityState, DeltaFactFamily, DeltaKey,
@@ -2678,6 +2678,7 @@ fn migration_requires_every_durable_revision_to_have_a_committed_result()
                     operation.leased_write_set.clear();
                     operation.semantic_read_reservations.clear();
                     operation.semantic_read_reservation_bindings.clear();
+                    operation.interruption_count = 1;
                     operation.operation_liveness = None;
                 }
                 GateOperationStatus::Committed => unreachable!(),
@@ -3602,7 +3603,10 @@ fn migration_rejects_invalid_unfinished_operation_liveness()
                         .lock_physical_identity = Some(different_physical_identity(identity));
                 }
                 "contents" => {}
-                "interrupted" => operation.status = GateOperationStatus::Interrupted,
+                "interrupted" => {
+                    operation.status = GateOperationStatus::Interrupted;
+                    operation.interruption_count = 1;
+                }
                 "reservations" => operation.semantic_read_reservations.push(source.clone()),
                 _ => return Err("unknown liveness corruption".into()),
             }
@@ -5054,6 +5058,77 @@ fn migration_rejects_unfinished_post_write_against_a_terminal_gate()
         Err(StoreError::Integrity(message))
             if message.contains("cannot resume against its target gate revision")
     ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_zero_count_interrupted_gate_operations()
+-> Result<(), Box<dyn std::error::Error>> {
+    for kind in [GateOperationKind::PreWrite, GateOperationKind::PostWrite] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        let gate_id = open_active_gate_for(
+            &store,
+            &format!("op-zero-interruption-{kind:?}-open"),
+            &format!("src/zero-interruption-{kind:?}.ts"),
+        )?;
+        if kind == GateOperationKind::PostWrite {
+            append_non_authorizing_close_for_migration(&store, &gate_id, Vec::new())?;
+        }
+        let gate = store.load_gate(&gate_id)?;
+        let source_operation_id = if kind == GateOperationKind::PreWrite {
+            &gate.revisions[0].operation_id
+        } else {
+            &gate
+                .revisions
+                .last()
+                .ok_or("zero-interruption gate omitted its close revision")?
+                .operation_id
+        };
+        let operation_id = OperationId::from_string(format!("op-zero-interruption-{kind:?}"));
+
+        let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+        let write = database.begin_write()?;
+        {
+            let mut table = write.open_table(OPERATIONS)?;
+            let bytes = table
+                .get(source_operation_id.as_str())?
+                .ok_or("zero-interruption source operation is missing")?
+                .value()
+                .to_vec();
+            let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+            operation.operation_id = operation_id.clone();
+            operation.status = GateOperationStatus::Interrupted;
+            operation.leased_write_set.clear();
+            operation.semantic_read_reservations.clear();
+            operation.semantic_read_reservation_bindings.clear();
+            operation.interruption_count = 0;
+            operation.operation_liveness = None;
+            operation.pre_write_admission_evidence = None;
+            operation.pre_write_final_validation = None;
+            operation.post_write_final_validation = None;
+            operation.result = None;
+            if kind == GateOperationKind::PreWrite {
+                operation.gate_id =
+                    lumin_model::GateId::from_string("gate_0000000000000002".to_owned());
+            }
+            let changed = serde_json::to_vec(&operation)?;
+            table.insert(operation_id.as_str(), changed.as_slice())?;
+        }
+        if kind == GateOperationKind::PreWrite {
+            let mut table = write.open_table(SEQUENCES)?;
+            table.insert("gate", 2)?;
+        }
+        write.commit()?;
+        drop(database);
+        make_prior_store(&store, root.path())?;
+
+        assert!(matches!(
+            store.migrate_lifecycle_store(),
+            Err(StoreError::Integrity(message))
+                if message.contains("has a zero interruption count")
+        ));
+    }
     Ok(())
 }
 
