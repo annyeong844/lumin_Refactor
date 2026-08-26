@@ -983,8 +983,10 @@ fn validate_active_gate_catalog(
         .get(ACTIVE_GATE_CATALOG_SEQUENCE_KEY)
         .copied()
         .unwrap_or(0);
+    let retained_mutation_floor = retained_active_gate_mutation_floor(snapshot, gates)?;
     crate::gate::validate_active_gate_catalog_history(
         observed,
+        retained_mutation_floor,
         gates.iter().map(|(key, gate)| (*key, gate)),
         |operation_id| {
             operations
@@ -992,6 +994,95 @@ fn validate_active_gate_catalog(
                 .map(|operation| operation.kind)
         },
     )
+}
+
+fn retained_active_gate_mutation_floor(
+    snapshot: &LogicalStoreSnapshot,
+    gates: &BTreeMap<&str, GateRecord>,
+) -> Result<u64, StoreError> {
+    let mut retained_gates = BTreeSet::<String>::new();
+    let mut retained_revisions = BTreeMap::<String, BTreeSet<u64>>::new();
+    for_each_retained_item(snapshot, |kind, record_id, owning_sequence| {
+        match kind {
+            RetentionItemKind::Gate => {
+                let sequence = canonical_allocated_sequence(
+                    record_id,
+                    "gate_",
+                    "retained active-catalog gate",
+                )?;
+                if sequence != owning_sequence {
+                    return Err(StoreError::Integrity(
+                        "retained active-catalog gate ID disagrees with its owning sequence"
+                            .to_owned(),
+                    ));
+                }
+                if !gates.contains_key(record_id) {
+                    retained_gates.insert(record_id.to_owned());
+                }
+            }
+            RetentionItemKind::GateRevision => {
+                let Some(owner_and_revision) = record_id.strip_prefix("gate:") else {
+                    return Err(StoreError::Integrity(
+                        "retained gate revision has a noncanonical owner".to_owned(),
+                    ));
+                };
+                let Some((gate_id, revision_text)) = owner_and_revision.rsplit_once("/revision:")
+                else {
+                    return Err(StoreError::Integrity(
+                        "retained gate revision has a noncanonical ID".to_owned(),
+                    ));
+                };
+                let gate_sequence =
+                    canonical_allocated_sequence(gate_id, "gate_", "retained gate revision owner")?;
+                if gate_sequence != owning_sequence {
+                    return Err(StoreError::Integrity(
+                        "retained gate revision owner disagrees with its owning sequence"
+                            .to_owned(),
+                    ));
+                }
+                let revision = revision_text.parse::<u64>().map_err(|error| {
+                    StoreError::Integrity(format!(
+                        "retained gate revision sequence is malformed: {error}"
+                    ))
+                })?;
+                if revision.to_string() != revision_text {
+                    return Err(StoreError::Integrity(
+                        "retained gate revision sequence is noncanonical".to_owned(),
+                    ));
+                }
+                if !gates.contains_key(gate_id) {
+                    retained_revisions
+                        .entry(gate_id.to_owned())
+                        .or_default()
+                        .insert(revision);
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    })?;
+
+    let mut minimum = 0_u64;
+    for gate_id in retained_gates {
+        let revisions = retained_revisions.get(&gate_id).ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "retained gate {gate_id} omitted its revision history"
+            ))
+        })?;
+        if !revisions.contains(&0) {
+            return Err(StoreError::Integrity(format!(
+                "retained gate {gate_id} omitted its opening revision"
+            )));
+        }
+        if revisions.iter().any(|revision| *revision > 0) {
+            minimum = minimum.checked_add(2).ok_or_else(|| {
+                StoreError::Integrity(
+                    "retained active-gate catalog mutation history overflowed".to_owned(),
+                )
+            })?;
+        }
+    }
+    Ok(minimum)
 }
 
 fn validate_gate_history(

@@ -1076,10 +1076,11 @@ pub(crate) fn validate_operation_shape(
     let counts_valid = operation.validated_count <= operation.authorized_count();
     let plan_valid = operation.plan_initialized
         || (operation.authorization_keys.is_empty() && operation.validated_count == 0);
-    let delivery_sequences_valid = operation
-        .delivery_completions
-        .windows(2)
-        .all(|pair| pair[0].sequence < pair[1].sequence)
+    let delivery_sequences_valid = operation.greatest_allocated_delivery_sequence != u64::MAX
+        && operation
+            .delivery_completions
+            .windows(2)
+            .all(|pair| pair[0].sequence < pair[1].sequence)
         && operation.delivery_completions.iter().all(|completion| {
             completion.sequence > 0
                 && completion.sequence <= operation.greatest_allocated_delivery_sequence

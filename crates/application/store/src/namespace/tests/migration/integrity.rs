@@ -1859,6 +1859,66 @@ fn migration_rejects_a_regressed_active_gate_catalog_sequence()
 }
 
 #[test]
+fn migration_rejects_an_active_gate_catalog_below_pruned_gate_history()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    open_active_gate_for(
+        &store,
+        "op-pruned-catalog-anchor",
+        "src/pruned-catalog-anchor.ts",
+    )?;
+    let retired_gate = open_active_gate_for(
+        &store,
+        "op-pruned-catalog-retired",
+        "src/pruned-catalog-retired.ts",
+    )?;
+    open_active_gate_for(
+        &store,
+        "op-pruned-catalog-later",
+        "src/pruned-catalog-later.ts",
+    )?;
+    abandon_gate_for_migration(
+        &store,
+        &OperationId::from_string("op-pruned-catalog-abandon".to_owned()),
+        &retired_gate,
+        0,
+        "pruned active-catalog history fixture",
+    )?;
+    assert_eq!(store.list_active_gates(None, 100)?.revision, 4);
+
+    let plan_id =
+        prepared_plan_id(store.prepare_retention_plan(&crate::RetentionPlanRequest {
+            scope: RetentionPlanScope::Gates {
+                terminal_before_unix_millis: u64::MAX,
+            },
+            operation_id: OperationId::from_string("pruned-catalog-plan".to_owned()),
+        })?)?;
+    store.confirm_retention_plan(
+        &plan_id,
+        &OperationId::from_string("pruned-catalog-confirm".to_owned()),
+    )?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(SEQUENCES)?;
+        table.insert(ACTIVE_GATE_CATALOG_SEQUENCE_KEY, 3)?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("active-gate catalog sequence regressed")
+    ));
+    Ok(())
+}
+
+#[test]
 fn migration_rejects_a_gate_sequence_below_retained_allocations()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;

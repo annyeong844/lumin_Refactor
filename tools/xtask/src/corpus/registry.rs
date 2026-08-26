@@ -103,6 +103,9 @@ static INV_LIFECYCLE_MIGRATION_CRASH: &[CorpusInvocation] = &[
     inv!("lifecycle_store_migration", "public_migration_recovers_every_durable_process_death_boundary", LifecycleCrash),
     inv!("lifecycle_store_migration", "public_migration_rejects_live_binding_substitution_without_disposition", LifecycleCrash),
     inv!("lifecycle_store_migration", "public_migration_hard_link_race_never_disposes_a_published_object", LifecycleCrash),
+    inv!("lifecycle_store_migration", "public_migration_rechecks_hard_links_after_movement_handles_open", LifecycleCrash),
+    #[cfg(windows)]
+    inv!("lifecycle_store_migration", "public_migration_revalidates_the_target_after_source_retirement", LifecycleCrash),
 ];
 #[rustfmt::skip]
 static INV_RET_LATEST: &[CorpusInvocation] = &[

@@ -129,6 +129,42 @@ fn delivery_ledger_orders_attempts_before_transport_and_ignores_late_lower_compl
 }
 
 #[test]
+fn exhausted_delivery_sequence_is_rejected_before_retry() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("cache-clean-exhausted-delivery".to_owned());
+    let request_digest = digest(&store)?;
+    store.clean_cache_payloads(&operation_id, &request_digest)?;
+
+    store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        let mut operation = read_record::<CacheCleanupOperationRecord>(
+            &write,
+            CACHE_CLEANUP_OPERATIONS,
+            operation_id.as_str(),
+        )?
+        .ok_or_else(|| StoreError::OperationNotFound(operation_id.as_str().to_owned()))?;
+        operation.greatest_allocated_delivery_sequence = u64::MAX;
+        write_record(
+            &write,
+            CACHE_CLEANUP_OPERATIONS,
+            operation_id.as_str(),
+            &operation,
+        )?;
+        guard.commit(write)
+    })?;
+
+    assert!(matches!(
+        store.load_cache_cleanup_operation(&operation_id),
+        Err(StoreError::Integrity(message))
+            if message.contains("cache cleanup operation record is incoherent")
+    ));
+    Ok(())
+}
+
+#[test]
 fn invalid_payload_prevents_authorization_and_movement() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     let store = open_store(root.path())?;
