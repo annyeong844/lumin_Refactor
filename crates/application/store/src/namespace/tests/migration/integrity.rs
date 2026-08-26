@@ -17,7 +17,7 @@ use lumin_model::{
     PhysicalFileIdentity, RepoPath, ResolutionProfile, RunId, SealedGateObservation,
     UnsealedObservationReason, digest_hex,
 };
-use redb::{Database, ReadableDatabase, ReadableTable, WriteTransaction};
+use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition, WriteTransaction};
 
 use crate::gate::{
     GATES, OPERATIONS, TRANSITIONS, VALIDATION_RECEIPTS, records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY,
@@ -442,7 +442,15 @@ fn migration_rejects_hard_linked_run_evidence() -> Result<(), Box<dyn std::error
 #[test]
 fn migration_rejects_untyped_or_unsupported_run_evidence() -> Result<(), Box<dyn std::error::Error>>
 {
-    for mutation in ["container", "row", "schema"] {
+    for mutation in [
+        "container",
+        "row",
+        "schema",
+        "extra-row",
+        "extra-table",
+        "opaque-top-level",
+        "opaque-nested",
+    ] {
         let root = tempfile::tempdir()?;
         let store = open_store(root.path())?;
         let mut attempt = store.begin_attempt()?;
@@ -455,18 +463,47 @@ fn migration_rejects_untyped_or_unsupported_run_evidence() -> Result<(), Box<dyn
 
         match mutation {
             "container" => fs::write(&evidence_path, b"not-a-redb-container")?,
-            "row" | "schema" => {
+            "row" | "schema" | "extra-row" | "extra-table" | "opaque-top-level"
+            | "opaque-nested" => {
                 let database = Database::open(&evidence_path)?;
                 let write = database.begin_write()?;
-                {
+                if mutation == "extra-table" {
+                    let foreign = TableDefinition::<&str, &[u8]>::new("foreign-evidence");
+                    let mut table = write.open_table(foreign)?;
+                    table.insert("opaque", b"opaque".as_slice())?;
+                } else {
                     let mut table = write.open_table(EVIDENCE)?;
-                    if mutation == "row" {
-                        table.insert("run", b"{".as_slice())?;
-                    } else {
-                        let mut changed = evidence();
-                        changed.schema_version = "lumin-evidence.foreign".to_owned();
-                        let bytes = serde_json::to_vec(&changed)?;
-                        table.insert("run", bytes.as_slice())?;
+                    match mutation {
+                        "row" => {
+                            table.insert("run", b"{".as_slice())?;
+                        }
+                        "schema" => {
+                            let mut changed = evidence();
+                            changed.schema_version = "lumin-evidence.foreign".to_owned();
+                            let bytes = serde_json::to_vec(&changed)?;
+                            table.insert("run", bytes.as_slice())?;
+                        }
+                        "extra-row" => {
+                            table.insert("opaque", b"opaque".as_slice())?;
+                        }
+                        "opaque-top-level" | "opaque-nested" => {
+                            let mut changed = serde_json::to_value(evidence())?;
+                            let target = if mutation == "opaque-top-level" {
+                                changed
+                                    .as_object_mut()
+                                    .ok_or("run evidence is not an object")?
+                            } else {
+                                changed
+                                    .pointer_mut("/capabilities/0")
+                                    .and_then(serde_json::Value::as_object_mut)
+                                    .ok_or("run capability is not an object")?
+                            };
+                            target
+                                .insert("opaqueControl".to_owned(), serde_json::Value::Bool(true));
+                            let bytes = serde_json::to_vec(&changed)?;
+                            table.insert("run", bytes.as_slice())?;
+                        }
+                        _ => unreachable!(),
                     }
                 }
                 write.commit()?;
@@ -486,6 +523,9 @@ fn migration_rejects_untyped_or_unsupported_run_evidence() -> Result<(), Box<dyn
                 Err(StoreError::IncompatibleStateSchema(message))
                     if message.contains("run evidence uses unsupported schema")
             ),
+            "extra-row" | "extra-table" | "opaque-top-level" | "opaque-nested" => {
+                matches!(result, Err(StoreError::Integrity(_)))
+            }
             _ => unreachable!(),
         };
         assert!(

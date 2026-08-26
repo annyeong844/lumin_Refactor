@@ -15,6 +15,7 @@ pub use namespace::MigrationIntent;
 pub use publication::{AttemptEnvelope, AttemptSession, AttemptState, LatestRunSnapshot};
 pub use retention::{RETENTION_PLAN_ITEMS_ORDERING, RetentionPlanRequest};
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -26,8 +27,9 @@ use lumin_model::{
 };
 use redb::{
     Database, ReadOnlyDatabase, ReadableDatabase, ReadableTable, TableDefinition, TableError,
+    TableHandle,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 
 pub(crate) const SEQUENCES: TableDefinition<&str, u64> = TableDefinition::new("sequences");
@@ -44,6 +46,74 @@ pub fn evidence_payload_sha256(evidence: &RunEvidence) -> Result<String, StoreEr
     append_length_prefixed(&mut framed, b"lumin-run-evidence-payload.v1");
     append_length_prefixed(&mut framed, &encoded);
     Ok(digest_hex(&framed))
+}
+
+pub(crate) fn decode_closed_json<T>(bytes: &[u8]) -> Result<T, String>
+where
+    T: DeserializeOwned + Serialize,
+{
+    let decoded = serde_json::from_slice::<T>(bytes).map_err(|error| error.to_string())?;
+    validate_closed_json_projection(bytes, &decoded)?;
+    Ok(decoded)
+}
+
+fn validate_closed_json_projection<T: Serialize>(bytes: &[u8], decoded: &T) -> Result<(), String> {
+    let source =
+        serde_json::from_slice::<serde_json::Value>(bytes).map_err(|error| error.to_string())?;
+    let projected = serde_json::to_value(decoded).map_err(|error| error.to_string())?;
+    if let Some(path) = first_unsupported_json_path(&source, &projected, "") {
+        return Err(format!(
+            "contains unsupported JSON member or shape at {path}"
+        ));
+    }
+    Ok(())
+}
+
+fn first_unsupported_json_path(
+    source: &serde_json::Value,
+    projected: &serde_json::Value,
+    path: &str,
+) -> Option<String> {
+    match (source, projected) {
+        (serde_json::Value::Object(source), serde_json::Value::Object(projected)) => {
+            source.iter().find_map(|(key, value)| {
+                let child_path = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{path}.{key}")
+                };
+                projected
+                    .get(key)
+                    .map_or(Some(child_path.clone()), |projected| {
+                        first_unsupported_json_path(value, projected, &child_path)
+                    })
+            })
+        }
+        (serde_json::Value::Array(source), serde_json::Value::Array(projected)) => {
+            if source.len() != projected.len() {
+                return Some(if path.is_empty() {
+                    "$".to_owned()
+                } else {
+                    path.to_owned()
+                });
+            }
+            source
+                .iter()
+                .zip(projected)
+                .enumerate()
+                .find_map(|(index, (source, projected))| {
+                    first_unsupported_json_path(source, projected, &format!("{path}[{index}]"))
+                })
+        }
+        (serde_json::Value::Object(_) | serde_json::Value::Array(_), _) => {
+            Some(if path.is_empty() {
+                "$".to_owned()
+            } else {
+                path.to_owned()
+            })
+        }
+        _ => None,
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -552,13 +622,44 @@ fn read_evidence_store(path: &Path) -> Result<RunEvidence, StoreError> {
     // Writable redb opens may update container metadata and invalidate the published byte hash.
     let database = ReadOnlyDatabase::open(path).map_err(backend_error)?;
     let read = database.begin_read().map_err(backend_error)?;
+    let observed_tables = read
+        .list_tables()
+        .map_err(backend_error)?
+        .map(|table| table.name().to_owned())
+        .collect::<BTreeSet<_>>();
+    let expected_tables = BTreeSet::from(["evidence".to_owned()]);
+    if observed_tables != expected_tables {
+        return Err(StoreError::Integrity(format!(
+            "evidence store contains unsupported table inventory: {}",
+            observed_tables.into_iter().collect::<Vec<_>>().join(", ")
+        )));
+    }
+    if read
+        .list_multimap_tables()
+        .map_err(backend_error)?
+        .next()
+        .is_some()
+    {
+        return Err(StoreError::Integrity(
+            "evidence store contains unsupported multimap tables".to_owned(),
+        ));
+    }
     let table = read.open_table(EVIDENCE).map_err(backend_error)?;
-    let value = table
-        .get("run")
+    let mut rows = table.iter().map_err(backend_error)?;
+    let (key, value) = rows
+        .next()
+        .transpose()
         .map_err(backend_error)?
         .ok_or_else(|| StoreError::Integrity("run evidence row is missing".to_owned()))?;
-    let evidence: RunEvidence =
-        serde_json::from_slice(value.value()).map_err(serialization_error)?;
+    if key.value() != "run" || rows.next().transpose().map_err(backend_error)?.is_some() {
+        return Err(StoreError::Integrity(
+            "evidence store must contain exactly the run evidence row".to_owned(),
+        ));
+    }
+    let bytes = value.value().to_vec();
+    let evidence: RunEvidence = serde_json::from_slice(&bytes).map_err(serialization_error)?;
+    validate_closed_json_projection(&bytes, &evidence)
+        .map_err(|error| StoreError::Integrity(format!("run evidence row {error}")))?;
     if evidence.schema_version != RUN_EVIDENCE_SCHEMA_VERSION {
         return Err(StoreError::IncompatibleStateSchema(format!(
             "run evidence uses unsupported schema {}; expected {RUN_EVIDENCE_SCHEMA_VERSION}",

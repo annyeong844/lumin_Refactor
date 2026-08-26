@@ -10,7 +10,7 @@ use lumin_evidence::{
 };
 use lumin_model::{CacheEvictionAuthorizationSetId, OperationId, RepositoryId};
 use redb::{Database, ReadableDatabase};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
 
 use crate::{RunCatalogRecord, StoreError, StoreGeneration, backend_error, io_error};
 
@@ -259,7 +259,7 @@ impl LogicalStoreSnapshot {
                     run_id.as_str()
                 ))
             })?;
-            decode_closed_json::<RunCatalogRecord>(bytes).map_err(|error| {
+            crate::decode_closed_json::<RunCatalogRecord>(bytes).map_err(|error| {
                 StoreError::Integrity(format!(
                     "run catalog record {} is malformed: {error}",
                     run_id.as_str()
@@ -277,13 +277,12 @@ impl LogicalStoreSnapshot {
             &mut has_active_lease,
         )?;
         for (key, bytes) in &mut self.cache_cleanup_operations {
-            let legacy = decode_closed_json::<LegacyCacheCleanupOperationRecord>(bytes).map_err(
-                |error| {
+            let legacy = crate::decode_closed_json::<LegacyCacheCleanupOperationRecord>(bytes)
+                .map_err(|error| {
                     StoreError::IncompatibleStateSchema(format!(
                         "private v1 cache cleanup operation {key} is malformed: {error}"
                     ))
-                },
-            )?;
+                })?;
             let current = transform_legacy_cleanup_operation(key, legacy)?;
             *bytes = serde_json::to_vec(&current).map_err(crate::serialization_error)?;
         }
@@ -313,69 +312,6 @@ impl LogicalStoreSnapshot {
         lumin_model::append_length_prefixed(&mut framed, &anchor);
         lumin_model::append_length_prefixed(&mut framed, logical.as_bytes());
         Ok(crate::digest_hex(&framed))
-    }
-}
-
-fn decode_closed_json<T>(bytes: &[u8]) -> Result<T, String>
-where
-    T: DeserializeOwned + Serialize,
-{
-    let source =
-        serde_json::from_slice::<serde_json::Value>(bytes).map_err(|error| error.to_string())?;
-    let decoded = serde_json::from_slice::<T>(bytes).map_err(|error| error.to_string())?;
-    let projected = serde_json::to_value(&decoded).map_err(|error| error.to_string())?;
-    if let Some(path) = first_unsupported_json_path(&source, &projected, "") {
-        return Err(format!(
-            "contains unsupported JSON member or shape at {path}"
-        ));
-    }
-    Ok(decoded)
-}
-
-fn first_unsupported_json_path(
-    source: &serde_json::Value,
-    projected: &serde_json::Value,
-    path: &str,
-) -> Option<String> {
-    match (source, projected) {
-        (serde_json::Value::Object(source), serde_json::Value::Object(projected)) => {
-            source.iter().find_map(|(key, value)| {
-                let child_path = if path.is_empty() {
-                    key.clone()
-                } else {
-                    format!("{path}.{key}")
-                };
-                projected
-                    .get(key)
-                    .map_or(Some(child_path.clone()), |projected| {
-                        first_unsupported_json_path(value, projected, &child_path)
-                    })
-            })
-        }
-        (serde_json::Value::Array(source), serde_json::Value::Array(projected)) => {
-            if source.len() != projected.len() {
-                return Some(if path.is_empty() {
-                    "$".to_owned()
-                } else {
-                    path.to_owned()
-                });
-            }
-            source
-                .iter()
-                .zip(projected)
-                .enumerate()
-                .find_map(|(index, (source, projected))| {
-                    first_unsupported_json_path(source, projected, &format!("{path}[{index}]"))
-                })
-        }
-        (serde_json::Value::Object(_) | serde_json::Value::Array(_), _) => {
-            Some(if path.is_empty() {
-                "$".to_owned()
-            } else {
-                path.to_owned()
-            })
-        }
-        _ => None,
     }
 }
 
@@ -563,10 +499,11 @@ mod tests {
 
     #[test]
     fn closed_json_rejects_nested_unknown_members_but_allows_absent_defaults() {
-        let accepted = decode_closed_json::<ClosedRecordFixture>(br#"{"nested":{"value":1}}"#);
+        let accepted =
+            crate::decode_closed_json::<ClosedRecordFixture>(br#"{"nested":{"value":1}}"#);
         assert!(accepted.is_ok());
 
-        let rejected = decode_closed_json::<ClosedRecordFixture>(
+        let rejected = crate::decode_closed_json::<ClosedRecordFixture>(
             br#"{"nested":{"value":1,"opaqueControl":true}}"#,
         );
         assert!(matches!(

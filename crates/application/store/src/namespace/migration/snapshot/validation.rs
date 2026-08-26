@@ -30,7 +30,7 @@ use crate::retention::records::{StoredRetentionPlan, StoredTombstone};
 use crate::{RunCatalogRecord, StoreError};
 
 use super::super::super::NamespaceGuard;
-use super::{LogicalStoreSnapshot, decode_closed_json};
+use super::LogicalStoreSnapshot;
 
 pub(super) fn validate_external_references(
     snapshot: &LogicalStoreSnapshot,
@@ -114,14 +114,34 @@ fn validate_attempt_allocator_sequence(snapshot: &LogicalStoreSnapshot) -> Resul
             "latest attempt",
         )?);
     }
-    maximum = maximum.max(retained_allocator_floor(
-        snapshot,
-        RetentionItemKind::Attempt,
-        "attempt_",
-        "retained attempt",
-        true,
-    )?);
+    maximum = maximum.max(retained_attempt_allocator_floor(snapshot)?);
     validate_allocator_sequence(snapshot, "attempt", maximum)
+}
+
+fn retained_attempt_allocator_floor(snapshot: &LogicalStoreSnapshot) -> Result<u64, StoreError> {
+    let mut attempts = BTreeSet::new();
+    let mut runs = BTreeSet::new();
+    for_each_retained_item(snapshot, |kind, record_id, owning_sequence| {
+        let (prefix, label, retained) = match kind {
+            RetentionItemKind::Attempt => ("attempt_", "retained attempt", &mut attempts),
+            RetentionItemKind::Run => ("run_", "retained run", &mut runs),
+            _ => return Ok(()),
+        };
+        let sequence = canonical_allocated_sequence(record_id, prefix, label)?;
+        if sequence != owning_sequence {
+            return Err(StoreError::Integrity(format!(
+                "{label} ID disagrees with its retention owning sequence"
+            )));
+        }
+        retained.insert(sequence);
+        Ok(())
+    })?;
+    if let Some(sequence) = runs.difference(&attempts).next() {
+        return Err(StoreError::Integrity(format!(
+            "retained run sequence {sequence} omitted its paired attempt"
+        )));
+    }
+    Ok(attempts.iter().chain(&runs).copied().max().unwrap_or(0))
 }
 
 fn validate_retention_allocator_sequences(
@@ -3176,7 +3196,7 @@ fn parse_record<T: DeserializeOwned + Serialize>(
     key: &str,
     bytes: &[u8],
 ) -> Result<T, StoreError> {
-    decode_closed_json(bytes).map_err(|error| {
+    crate::decode_closed_json(bytes).map_err(|error| {
         StoreError::Integrity(format!("{table} record {key} is malformed: {error}"))
     })
 }
@@ -3305,6 +3325,30 @@ mod tests {
             retained_active_gate_mutation_floor(&snapshot, &gates),
             Err(StoreError::Integrity(message))
                 if message.contains("omitted its gate item")
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn retained_runs_require_their_attempt_history() -> Result<(), Box<dyn std::error::Error>> {
+        let mut snapshot = empty_snapshot();
+        snapshot.sequences.insert("attempt".to_owned(), 10);
+        let plan = stored_retention_plan(vec![RetentionPlanItem {
+            kind: RetentionItemKind::Run,
+            owning_sequence: 10,
+            record_id: "run_000000000000000a".to_owned(),
+            identity_sha256: "identity".to_owned(),
+            byte_count: 1,
+        }]);
+        snapshot.retention_plans.insert(
+            plan.record.plan_id.as_str().to_owned(),
+            serde_json::to_vec(&plan)?,
+        );
+
+        assert!(matches!(
+            validate_attempt_allocator_sequence(&snapshot),
+            Err(StoreError::Integrity(message))
+                if message.contains("omitted its paired attempt")
         ));
         Ok(())
     }
