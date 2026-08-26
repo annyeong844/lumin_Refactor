@@ -573,10 +573,8 @@ fn migration_accepts_retention_owned_pruned_pin_history() -> Result<(), Box<dyn 
         &OperationId::from_string("migration-pruned-pin-create".to_owned()),
         "migration pruned pin history",
     )?;
-    store.unpin_run(
-        &pin.pin_id,
-        &OperationId::from_string("migration-pruned-pin-remove".to_owned()),
-    )?;
+    let unpin_operation_id = OperationId::from_string("migration-pruned-pin-remove".to_owned());
+    let removed = store.unpin_run(&pin.pin_id, &unpin_operation_id)?;
     let plan_id =
         prepared_plan_id(store.prepare_retention_plan(&crate::RetentionPlanRequest {
             scope: RetentionPlanScope::Runs {
@@ -600,6 +598,7 @@ fn migration_accepts_retention_owned_pruned_pin_history() -> Result<(), Box<dyn 
         store.lookup_run_pin(&pin.pin_id)?,
         lumin_evidence::RecordLookup::Pruned(_)
     ));
+    assert_eq!(store.unpin_run(&pin.pin_id, &unpin_operation_id)?, removed);
     Ok(())
 }
 

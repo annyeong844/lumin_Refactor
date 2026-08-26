@@ -211,7 +211,8 @@ fn inactive_pin_lookup_reports_the_retention_tombstone() -> Result<(), Box<dyn s
         &operation("pin-before-retention"),
         "temporary investigation",
     )?;
-    store.unpin_run(&pin.pin_id, &operation("unpin-before-retention"))?;
+    let unpin_operation_id = operation("unpin-before-retention");
+    let removed = store.unpin_run(&pin.pin_id, &unpin_operation_id)?;
     let plan = prepare_plan(&store, "plan-inactive-pin")?;
     let confirm_id = operation("confirm-inactive-pin");
     store.with_exclusive_lock(|guard| {
@@ -231,6 +232,51 @@ fn inactive_pin_lookup_reports_the_retention_tombstone() -> Result<(), Box<dyn s
     assert!(matches!(
         store.lookup_run_pin(&pin.pin_id)?,
         RecordLookup::Pruned(tombstone) if tombstone.plan_id == plan.plan_id
+    ));
+    assert_eq!(store.unpin_run(&pin.pin_id, &unpin_operation_id)?, removed);
+    Ok(())
+}
+
+#[test]
+fn pruned_pin_retry_rejects_duplicate_removal_history() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::TempDir::new()?;
+    let store = open_store(root.path())?;
+    let first = publish(&store)?;
+    let _latest = publish(&store)?;
+    let pin = store.pin_run(
+        &first.run_id,
+        &operation("pin-before-duplicate-unpin"),
+        "temporary investigation",
+    )?;
+    let unpin_operation_id = operation("unpin-before-duplicate-unpin");
+    store.unpin_run(&pin.pin_id, &unpin_operation_id)?;
+    let plan = prepare_plan(&store, "plan-duplicate-unpin")?;
+    store.confirm_retention_plan(&plan.plan_id, &operation("confirm-duplicate-unpin"))?;
+    store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        let duplicate_operation_id = operation("duplicate-unpin-history");
+        records::write_retention_operation(
+            &write,
+            &RetentionOperationRecord {
+                schema_version: records::OPERATION_SCHEMA.to_owned(),
+                operation_id: duplicate_operation_id,
+                kind: RetentionOperationKind::RunUnpin,
+                request_digest: unpin_request_digest(&pin.pin_id),
+                status: RetentionOperationStatus::Committed,
+                plan_id: None,
+                result: RetentionOperationResult::PinRemoved {
+                    pin_id: pin.pin_id.clone(),
+                    run_id: pin.run_id.clone(),
+                },
+            },
+        )?;
+        guard.commit(write)
+    })?;
+
+    assert!(matches!(
+        store.unpin_run(&pin.pin_id, &unpin_operation_id),
+        Err(StoreError::Integrity(message)) if message.contains("incoherent removal history")
     ));
     Ok(())
 }

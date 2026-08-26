@@ -8,12 +8,12 @@ use redb::ReadableTable;
 use crate::gate::records::{read_record, write_record};
 use crate::{RUN_CATALOG, RepositoryStore, StoreError, backend_error, unix_millis};
 
-use super::RUN_PINS;
 use super::planning::reject_gate_operation_collision;
 use super::records::{
-    OPERATION_SCHEMA, ensure_result_matches, next_sequence, read_retention_operation,
-    write_retention_operation,
+    OPERATION_SCHEMA, ensure_committed_pruned_result_matches_plan, ensure_result_matches,
+    next_sequence, read_retention_operation, write_retention_operation,
 };
+use super::{RETENTION_OPERATIONS, RUN_PINS};
 
 pub(super) fn create(
     store: &RepositoryStore,
@@ -80,13 +80,10 @@ pub(super) fn remove(
                 &request_digest,
             )?;
             let run_id = pin_removed_result(operation, pin_id)?;
-            return load_pin(&write, pin_id)?.ok_or_else(|| {
-                StoreError::Integrity(format!(
-                    "committed unpin references missing pin {} for run {}",
-                    pin_id.as_str(),
-                    run_id.as_str()
-                ))
-            });
+            return match load_pin(&write, pin_id)? {
+                Some(pin) => Ok(pin),
+                None => reconstruct_pruned_pin(&write, pin_id, &run_id, operation_id),
+            };
         }
         reject_gate_operation_collision(&write, operation_id)?;
         let mut pin = load_pin(&write, pin_id)?
@@ -172,6 +169,130 @@ fn load_pin(
     pin_id: &PinId,
 ) -> Result<Option<RunPinRecord>, StoreError> {
     read_record(write, RUN_PINS, pin_id.as_str())
+}
+
+fn reconstruct_pruned_pin(
+    write: &redb::WriteTransaction,
+    pin_id: &PinId,
+    run_id: &RunId,
+    removal_operation_id: &OperationId,
+) -> Result<RunPinRecord, StoreError> {
+    let Some((_tombstone, owner)) = super::records::read_validated_tombstone_with_owner(
+        write,
+        RetentionItemKind::PinOrReference,
+        pin_id.as_str(),
+    )?
+    else {
+        return Err(StoreError::Integrity(format!(
+            "committed unpin references missing pin {} for run {}",
+            pin_id.as_str(),
+            run_id.as_str()
+        )));
+    };
+    if owner.record.state != RetentionPlanState::Pruned {
+        return Err(StoreError::Integrity(format!(
+            "committed unpin references non-pruned pin tombstone {}",
+            pin_id.as_str()
+        )));
+    }
+    let confirmation_id = owner
+        .record
+        .confirmation_operation_id
+        .as_ref()
+        .ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "pruned pin tombstone {} has no confirmation operation",
+                pin_id.as_str()
+            ))
+        })?;
+    let confirmation = read_retention_operation(write, confirmation_id)?.ok_or_else(|| {
+        StoreError::Integrity(format!(
+            "pruned pin tombstone {} has no committed confirmation",
+            pin_id.as_str()
+        ))
+    })?;
+    ensure_committed_pruned_result_matches_plan(&owner, &confirmation)?;
+    let item = owner
+        .record
+        .items
+        .iter()
+        .find(|item| {
+            item.kind == RetentionItemKind::PinOrReference && item.record_id == pin_id.as_str()
+        })
+        .ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "pruned pin tombstone {} has no owner item",
+                pin_id.as_str()
+            ))
+        })?;
+    let operations = super::planning::read_raw_records::<RetentionOperationRecord>(
+        write,
+        RETENTION_OPERATIONS,
+        "retention-operations",
+    )?;
+    let mut created_pin = None;
+    let mut removal_seen = false;
+    for (key, (operation, _)) in operations {
+        match &operation.result {
+            RetentionOperationResult::PinCreated { pin } if pin.pin_id == *pin_id => {
+                super::records::validate_retention_operation(&operation)?;
+                if key != operation.operation_id.as_str()
+                    || pin.schema_version != "lumin-run-pin.v1"
+                    || pin.run_id != *run_id
+                    || operation.request_digest != pin_request_digest(&pin.run_id, &pin.reason)
+                    || created_pin.is_some()
+                {
+                    return Err(StoreError::Integrity(format!(
+                        "pruned run pin {} has incoherent creation history",
+                        pin_id.as_str()
+                    )));
+                }
+                created_pin = Some(pin.clone());
+            }
+            RetentionOperationResult::PinRemoved {
+                pin_id: result_pin_id,
+                run_id: result_run_id,
+            } if result_pin_id == pin_id => {
+                super::records::validate_retention_operation(&operation)?;
+                if key != operation.operation_id.as_str()
+                    || operation.operation_id != *removal_operation_id
+                    || result_run_id != run_id
+                    || operation.request_digest != unpin_request_digest(pin_id)
+                    || removal_seen
+                {
+                    return Err(StoreError::Integrity(format!(
+                        "pruned run pin {} has incoherent removal history",
+                        pin_id.as_str()
+                    )));
+                }
+                removal_seen = true;
+            }
+            _ => {}
+        }
+    }
+    if !removal_seen {
+        return Err(StoreError::Integrity(format!(
+            "pruned run pin {} has no removal operation",
+            pin_id.as_str()
+        )));
+    }
+    let mut pin = created_pin.ok_or_else(|| {
+        StoreError::Integrity(format!(
+            "pruned run pin {} has no creation operation",
+            pin_id.as_str()
+        ))
+    })?;
+    pin.removed_operation_id = Some(removal_operation_id.clone());
+    let bytes = serde_json::to_vec(&pin).map_err(crate::serialization_error)?;
+    let byte_count = u64::try_from(bytes.len())
+        .map_err(|_| StoreError::Integrity("run pin byte count overflow".to_owned()))?;
+    if item.identity_sha256 != digest_hex(&bytes) || item.byte_count != byte_count {
+        return Err(StoreError::Integrity(format!(
+            "pruned run pin {} disagrees with its retained identity",
+            pin_id.as_str()
+        )));
+    }
+    Ok(pin)
 }
 
 fn pin_created_result(operation: RetentionOperationRecord) -> Result<RunPinRecord, StoreError> {
