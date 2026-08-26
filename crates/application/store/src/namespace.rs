@@ -644,7 +644,7 @@ impl NamespaceGuard {
         require_state_volume(entry, &self.state_directory, label)
     }
 
-    fn direct_state_file_path(&self, name: &str) -> Result<PathBuf, StoreError> {
+    pub(super) fn direct_state_file_path(&self, name: &str) -> Result<PathBuf, StoreError> {
         let mut components = Path::new(name).components();
         if !matches!(components.next(), Some(Component::Normal(_))) || components.next().is_some() {
             return Err(StoreError::Integrity(

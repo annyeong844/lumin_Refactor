@@ -41,6 +41,7 @@ pub(super) fn validate_external_references(
 pub(super) fn validate_referential_closure(
     snapshot: &LogicalStoreSnapshot,
 ) -> Result<(), StoreError> {
+    validate_sequence_key_set(snapshot)?;
     let (transitions, transition_sequences) = read_transitions(snapshot)?;
     let validation_receipts = read_validation_receipts(snapshot)?;
     let operations = read_operations(snapshot)?;
@@ -61,6 +62,27 @@ pub(super) fn validate_referential_closure(
     validate_retention_allocator_sequences(snapshot)?;
     retention::validate_retention(snapshot, &operations)?;
     validate_pointers(snapshot)
+}
+
+fn validate_sequence_key_set(snapshot: &LogicalStoreSnapshot) -> Result<(), StoreError> {
+    for key in snapshot.sequences.keys() {
+        if !matches!(
+            key.as_str(),
+            "active-gate-catalog"
+                | "attempt"
+                | "gate"
+                | "retention-catalog"
+                | "retention-plan"
+                | "run-catalog"
+                | "run-pin"
+                | "transition"
+        ) {
+            return Err(StoreError::Integrity(format!(
+                "sequence table contains an unsupported allocator key: {key}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_attempt_allocator_sequence(snapshot: &LogicalStoreSnapshot) -> Result<(), StoreError> {

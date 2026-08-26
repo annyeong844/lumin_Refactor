@@ -717,19 +717,19 @@ fn exchange_or_recover(
         )?;
         hook(MigrationCrashPoint::ExchangeInputsOpened)?;
         revalidate_journal(guard, journal)?;
-        canonical.validate_path(
-            &guard.state.state_dir.join("lifecycle.store"),
-            EntryKind::RegularFile,
-            EntryAccess::Move,
-            true,
-            "migration exchange canonical entry",
+        revalidate_binding_for_move(
+            guard,
+            &canonical,
+            source,
+            "lifecycle.store",
+            "migration source before exchange",
         )?;
-        private.validate_path(
-            &guard.state.state_dir.join(&target.pre_exchange_name),
-            EntryKind::RegularFile,
-            EntryAccess::Move,
-            true,
-            "migration exchange private entry",
+        revalidate_binding_for_move(
+            guard,
+            &private,
+            target,
+            &target.pre_exchange_name,
+            "migration target before exchange",
         )?;
         exchange_entries(
             &guard.state_directory,
@@ -797,18 +797,18 @@ fn exchange_or_recover(
             )?;
             hook(MigrationCrashPoint::ExchangeInputsOpened)?;
             revalidate_journal(guard, journal)?;
-            canonical.validate_path(
-                &canonical_path,
-                EntryKind::RegularFile,
-                EntryAccess::Move,
-                true,
-                "migration exchange canonical entry",
+            revalidate_binding_for_move(
+                guard,
+                &canonical,
+                source,
+                "lifecycle.store",
+                "migration source before exchange",
             )?;
-            target_entry.validate_path(
-                &target_path,
-                EntryKind::RegularFile,
-                EntryAccess::Move,
-                true,
+            revalidate_binding_for_move(
+                guard,
+                &target_entry,
+                target,
+                &target.pre_exchange_name,
                 "migration target before exchange",
             )?;
             move_entry_noreplace(
@@ -820,6 +820,21 @@ fn exchange_or_recover(
             )?;
             guard.state_directory.sync_directory()?;
             hook(MigrationCrashPoint::SourceRetired)?;
+            revalidate_journal(guard, journal)?;
+            revalidate_binding_for_move(
+                guard,
+                &canonical,
+                source,
+                &source.post_exchange_name,
+                "retired migration source",
+            )?;
+            revalidate_binding_for_move(
+                guard,
+                &target_entry,
+                target,
+                &target.pre_exchange_name,
+                "migration target before canonical move",
+            )?;
             move_entry_noreplace(
                 &guard.state_directory,
                 OsStr::new(&target.pre_exchange_name),
@@ -855,18 +870,18 @@ fn exchange_or_recover(
         )?;
         hook(MigrationCrashPoint::ExchangeInputsOpened)?;
         revalidate_journal(guard, journal)?;
-        source_entry.validate_path(
-            &source_path,
-            EntryKind::RegularFile,
-            EntryAccess::Move,
-            true,
+        revalidate_binding_for_move(
+            guard,
+            &source_entry,
+            source,
+            &source.post_exchange_name,
             "retired migration source",
         )?;
-        target_entry.validate_path(
-            &target_path,
-            EntryKind::RegularFile,
-            EntryAccess::Move,
-            true,
+        revalidate_binding_for_move(
+            guard,
+            &target_entry,
+            target,
+            &target.pre_exchange_name,
             "migration target before canonical move",
         )?;
         move_entry_noreplace(
@@ -1442,24 +1457,50 @@ fn open_binding_for_move(
         true,
         label,
     )?;
-    require_state_volume(&entry, &guard.state_directory, label)?;
-    if entry.identity() != &binding.physical_identity || file_sha256(&entry)? != binding.byte_sha256
+    revalidate_binding_for_move(guard, &entry, binding, name, label)?;
+    Ok(entry)
+}
+
+fn revalidate_binding_for_move(
+    guard: &NamespaceGuard,
+    entry: &HeldEntry,
+    binding: &MigrationArtifactBinding,
+    name: &str,
+    label: &str,
+) -> Result<(), StoreError> {
+    entry.validate_path(
+        &guard.state.state_dir.join(name),
+        EntryKind::RegularFile,
+        EntryAccess::Move,
+        true,
+        label,
+    )?;
+    require_state_volume(entry, &guard.state_directory, label)?;
+    if entry.identity() != &binding.physical_identity || file_sha256(entry)? != binding.byte_sha256
     {
         return Err(StoreError::Integrity(format!(
             "{label} changed before handle-bound movement"
         )));
     }
-    Ok(entry)
+    Ok(())
+}
+
+fn migration_artifact_name(name: &OsStr) -> Result<Option<&str>, StoreError> {
+    let name = name.to_str().ok_or_else(|| {
+        StoreError::Integrity(
+            "state namespace contains a non-UTF-8 entry during migration artifact validation"
+                .to_owned(),
+        )
+    })?;
+    Ok(name
+        .starts_with("lifecycle.store.migration-")
+        .then_some(name))
 }
 
 fn reject_orphan_migration_artifacts(guard: &NamespaceGuard) -> Result<(), StoreError> {
     for item in fs::read_dir(&guard.state.state_dir).map_err(io_error)? {
         let item = item.map_err(io_error)?;
-        if item
-            .file_name()
-            .to_str()
-            .is_some_and(|name| name.starts_with("lifecycle.store.migration-"))
-        {
+        if migration_artifact_name(&item.file_name())?.is_some() {
             return Err(StoreError::Integrity(
                 "private lifecycle migration artifact exists without a journal".to_owned(),
             ));
@@ -1488,10 +1529,11 @@ fn reject_unbound_migration_artifacts(
     }
     for item in fs::read_dir(&guard.state.state_dir).map_err(io_error)? {
         let item = item.map_err(io_error)?;
-        let Some(name) = item.file_name().to_str().map(str::to_owned) else {
+        let native_name = item.file_name();
+        let Some(name) = migration_artifact_name(&native_name)? else {
             continue;
         };
-        if name.starts_with("lifecycle.store.migration-") && !allowed.contains(name.as_str()) {
+        if !allowed.contains(name) {
             return Err(StoreError::Integrity(format!(
                 "unbound lifecycle migration artifact is present: {name}"
             )));

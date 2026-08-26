@@ -3,7 +3,7 @@ use lumin_model::{AttemptId, AttemptStatus, PhysicalFileIdentity};
 use redb::{ReadableTable, TableError};
 use serde::{Deserialize, Serialize};
 
-use crate::namespace::{HeldEntry, NamespaceGuard, lock_contended};
+use crate::namespace::{HeldEntry, NamespaceGuard, entry_exists, lock_contended};
 use crate::{
     ATTEMPT_LEASES, SEQUENCES, StoreError, StoreGeneration, backend_error, io_error,
     serialization_error,
@@ -343,13 +343,21 @@ pub(super) fn validate_snapshot_locks(
     for (key, bytes) in rows {
         let attempt_id = AttemptId::from_string(key.clone());
         let lease = parse_record(bytes, Some(&attempt_id))?;
-        if lease.state != AttemptLeaseState::Active {
+        if lease.state == AttemptLeaseState::Allocating {
+            continue;
+        }
+        if lease.state == AttemptLeaseState::Releasing
+            && !entry_exists(&guard.direct_state_file_path(&lease.lock_name)?)?
+        {
             continue;
         }
         let lock = guard.open_state_file(&lease.lock_name, "attempt process-liveness lock")?;
         validate_lock_identity(guard, &lock, &lease)?;
         match lock.file().try_lock_exclusive() {
             Ok(()) => validate_lock(guard, &lock, &lease)?,
+            Err(error) if lease.state == AttemptLeaseState::Releasing => {
+                return Err(io_error(error));
+            }
             Err(error) if lock_contended(&error) => {
                 // Windows mandatory range locking prevents a second handle from reading or
                 // changing bytes. On advisory-lock platforms the bytes remain readable.

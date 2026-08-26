@@ -618,6 +618,44 @@ fn public_migration_rechecks_hard_links_after_movement_handles_open()
     Ok(())
 }
 
+#[cfg(windows)]
+#[test]
+fn public_migration_revalidates_the_target_after_source_retirement()
+-> Result<(), Box<dyn std::error::Error>> {
+    for mutation in ["payload", "link"] {
+        let root = prior_fixture()?;
+        let barrier = LifecycleMigrationBarrier::new("after-source-retirement")?;
+        let mut migration = barrier.spawn(root.path())?;
+        let permit = barrier.accept(&mut migration)?;
+        let state = root.path().join(".lumin");
+        let target = pending_target_path(&state)?;
+        let original = fs::read(&target)?;
+        let foreign_link = root.path().join("foreign-post-retirement-target-link");
+        match mutation {
+            "payload" => fs::write(&target, b"changed after source retirement")?,
+            "link" => fs::hard_link(&target, &foreign_link)?,
+            _ => unreachable!(),
+        }
+        permit.release()?;
+
+        let rejected = migration.finish()?;
+        assert_status(&rejected, 1);
+        assert!(rejected.stdout.is_empty());
+        assert!(!state.join("lifecycle.store").exists());
+        assert!(target.is_file());
+
+        match mutation {
+            "payload" => fs::write(&target, original)?,
+            "link" => fs::remove_file(&foreign_link)?,
+            _ => unreachable!(),
+        }
+        let recovered = run(root.path(), &["store", "migrate"])?;
+        assert_status(&recovered, 0);
+        assert_eq!(recovered.stdout, READY);
+    }
+    Ok(())
+}
+
 #[test]
 fn public_migration_recovers_every_durable_process_death_boundary()
 -> Result<(), Box<dyn std::error::Error>> {

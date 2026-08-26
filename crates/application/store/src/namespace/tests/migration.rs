@@ -23,9 +23,10 @@ use lumin_model::{
 use redb::{Database, ReadableTable, TableDefinition};
 
 use crate::{
-    GateBaselineDraft, ObservationFinalization, POINTERS, PostWriteFinish, PostWriteStart,
-    PreWriteFinish, PreWriteStart, PriorCacheCleanupDeliveryStatusForTest, RepositoryStore,
-    RetentionPlanRequest, SEQUENCES, SemanticReadReservation, StoreError, StoreGeneration,
+    ATTEMPT_LEASES, GateBaselineDraft, ObservationFinalization, POINTERS, PostWriteFinish,
+    PostWriteStart, PreWriteFinish, PreWriteStart, PriorCacheCleanupDeliveryStatusForTest,
+    RepositoryStore, RetentionPlanRequest, SEQUENCES, SemanticReadReservation, StoreError,
+    StoreGeneration,
 };
 
 use super::super::migration::{MigrationCrashPoint, migrate_with_hook};
@@ -430,6 +431,21 @@ fn migration_rejects_retention_plan_allocator_below_a_retained_plan()
 }
 
 #[test]
+fn migration_rejects_unknown_sequence_allocator_rows() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    set_sequence_for_test(&store, "foreign-allocator", 1)?;
+    make_prior_store(&store, root.path())?;
+
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("unsupported allocator key: foreign-allocator")
+    ));
+    Ok(())
+}
+
+#[test]
 fn migration_rejects_run_pin_allocator_below_a_retained_pin()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
@@ -575,6 +591,74 @@ fn migration_rejects_non_utf8_migration_artifact_names() -> Result<(), Box<dyn s
         store.migrate_lifecycle_store(),
         Err(StoreError::Integrity(message)) if message.contains("non-UTF-8 migration journal")
     ));
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn migration_rejects_non_utf8_private_artifacts_with_or_without_a_journal()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    for journal in [false, true] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        make_prior_store(&store, root.path())?;
+        if journal {
+            inject_crash(&store, MigrationCrashPoint::IntentPublished)?;
+        }
+        let mut name = b"lifecycle.store.migration-".to_vec();
+        name.push(0xff);
+        let artifact = root.path().join(".lumin").join(OsString::from_vec(name));
+        fs::write(&artifact, b"foreign")?;
+
+        assert!(matches!(
+            store.migrate_lifecycle_store(),
+            Err(StoreError::Integrity(message))
+                if message.contains("non-UTF-8 entry during migration artifact validation")
+        ));
+        assert_eq!(fs::read(artifact)?, b"foreign");
+    }
+    Ok(())
+}
+
+#[test]
+fn migration_authenticates_present_releasing_attempt_locks_and_allows_absence()
+-> Result<(), Box<dyn std::error::Error>> {
+    for mode in ["present", "absent", "corrupt", "linked"] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        let attempt = store.begin_attempt()?;
+        let attempt_id = attempt.attempt_id().clone();
+        drop(attempt);
+        let lock_name = mark_attempt_releasing_for_test(&store, root.path(), attempt_id.as_str())?;
+        let lock_path = root.path().join(".lumin").join(lock_name);
+        make_prior_store(&store, root.path())?;
+
+        let foreign_link = root.path().join("foreign-releasing-lock-link");
+        match mode {
+            "present" => {}
+            "absent" => fs::remove_file(&lock_path)?,
+            "corrupt" => fs::write(&lock_path, b"{}")?,
+            "linked" => fs::hard_link(&lock_path, &foreign_link)?,
+            _ => unreachable!(),
+        }
+
+        let result = store.migrate_lifecycle_store();
+        if matches!(mode, "present" | "absent") {
+            assert_eq!(result?, next_generation()?);
+        } else {
+            assert!(
+                matches!(result, Err(StoreError::Integrity(_))),
+                "migration accepted a {mode} releasing lock"
+            );
+            assert!(lock_path.is_file());
+            if mode == "linked" {
+                assert!(foreign_link.is_file());
+            }
+        }
+    }
     Ok(())
 }
 
@@ -1718,6 +1802,81 @@ fn set_sequence_for_test(store: &RepositoryStore, key: &str, value: u64) -> Resu
         }
         guard.commit(write)
     })
+}
+
+fn mark_attempt_releasing_for_test(
+    store: &RepositoryStore,
+    root: &std::path::Path,
+    attempt_id: &str,
+) -> Result<String, StoreError> {
+    let lock_name = store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        let lock_name = {
+            let mut leases = write
+                .open_table(ATTEMPT_LEASES)
+                .map_err(crate::backend_error)?;
+            let bytes = leases
+                .get(attempt_id)
+                .map_err(crate::backend_error)?
+                .map(|value| value.value().to_vec())
+                .ok_or_else(|| {
+                    StoreError::Integrity(format!("test attempt lease is missing: {attempt_id}"))
+                })?;
+            let value = serde_json::from_slice::<serde_json::Value>(&bytes)
+                .map_err(crate::serialization_error)?;
+            let lock_name = value["lockName"]
+                .as_str()
+                .ok_or_else(|| StoreError::Integrity("test lease omitted lockName".to_owned()))?
+                .to_owned();
+            let text = std::str::from_utf8(&bytes).map_err(|error| {
+                StoreError::Integrity(format!("test lease is not UTF-8: {error}"))
+            })?;
+            let releasing = text.replacen("\"state\":\"active\"", "\"state\":\"releasing\"", 1);
+            if releasing == text {
+                return Err(StoreError::Integrity(
+                    "test attempt lease was not active".to_owned(),
+                ));
+            }
+            leases
+                .insert(attempt_id, releasing.as_bytes())
+                .map_err(crate::backend_error)?;
+            lock_name
+        };
+        guard.commit(write)?;
+        Ok(lock_name)
+    })?;
+
+    let attempt_path = root
+        .join(".lumin/attempts")
+        .join(attempt_id)
+        .join("attempt.json");
+    let mut envelope = serde_json::from_slice::<serde_json::Value>(
+        &fs::read(&attempt_path).map_err(crate::io_error)?,
+    )
+    .map_err(crate::serialization_error)?;
+    envelope["state"] = "interrupted".into();
+    envelope["finishedUnixMillis"] = envelope["startedUnixMillis"].clone();
+    envelope["failure"] = "test interruption before releasing cleanup".into();
+    write_pretty_json_for_test(&attempt_path, &envelope)?;
+
+    let latest_path = root.join(".lumin/latest.json");
+    let mut latest = serde_json::from_slice::<serde_json::Value>(
+        &fs::read(&latest_path).map_err(crate::io_error)?,
+    )
+    .map_err(crate::serialization_error)?;
+    latest["latestAttempt"]["status"] = "interrupted".into();
+    write_pretty_json_for_test(&latest_path, &latest)?;
+    Ok(lock_name)
+}
+
+fn write_pretty_json_for_test(
+    path: &std::path::Path,
+    value: &serde_json::Value,
+) -> Result<(), StoreError> {
+    let mut bytes = serde_json::to_vec_pretty(value).map_err(crate::serialization_error)?;
+    bytes.push(b'\n');
+    fs::write(path, bytes).map_err(crate::io_error)
 }
 
 fn set_store_sequence_at_path(
