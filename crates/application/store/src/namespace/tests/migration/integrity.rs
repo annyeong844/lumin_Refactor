@@ -662,21 +662,22 @@ fn migration_accepts_retention_owned_pruned_pin_history() -> Result<(), Box<dyn 
 #[test]
 fn migration_validates_every_direct_run_child_and_its_allocator_floor()
 -> Result<(), Box<dyn std::error::Error>> {
-    for case in ["non-directory", "allocator-floor"] {
+    for case in ["non-directory", "allocator-floor", "staging-floor"] {
         let root = tempfile::tempdir()?;
         let store = open_store(root.path())?;
         let runs = root.path().join(".lumin/runs");
-        if case == "non-directory" {
-            fs::write(runs.join("foreign-run-child"), b"foreign")?;
-        } else {
-            fs::create_dir(runs.join("run_000000000000000a"))?;
+        match case {
+            "non-directory" => fs::write(runs.join("foreign-run-child"), b"foreign")?,
+            "allocator-floor" => fs::create_dir(runs.join("run_000000000000000a"))?,
+            "staging-floor" => fs::create_dir(runs.join(".run_000000000000000a.staging"))?,
+            _ => unreachable!(),
         }
         make_prior_store(&store, root.path())?;
 
         let result = store.migrate_lifecycle_store();
         let rejected = match case {
             "non-directory" => matches!(result, Err(StoreError::Integrity(_))),
-            "allocator-floor" => matches!(
+            "allocator-floor" | "staging-floor" => matches!(
                 result,
                 Err(StoreError::Integrity(message))
                     if message.contains("attempt sequence regressed below retained allocation")

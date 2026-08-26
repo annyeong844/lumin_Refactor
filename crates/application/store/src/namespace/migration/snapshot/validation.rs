@@ -1062,6 +1062,15 @@ fn retained_active_gate_mutation_floor(
         Ok(())
     })?;
 
+    if let Some(gate_id) = retained_revisions
+        .keys()
+        .find(|gate_id| !retained_gates.contains(gate_id.as_str()))
+    {
+        return Err(StoreError::Integrity(format!(
+            "retained gate revision owner {gate_id} omitted its gate item"
+        )));
+    }
+
     let mut minimum = 0_u64;
     for gate_id in retained_gates {
         let revisions = retained_revisions.get(&gate_id).ok_or_else(|| {
@@ -3200,12 +3209,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn allocator_floors_include_retention_plans_and_tombstones()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let mut snapshot = empty_snapshot();
-        snapshot.sequences.insert("attempt".to_owned(), 7);
-        let plan = StoredRetentionPlan {
+    fn stored_retention_plan(items: Vec<RetentionPlanItem>) -> StoredRetentionPlan {
+        StoredRetentionPlan {
             record: lumin_evidence::RetentionPlanRecord {
                 schema_version: "lumin-retention-plan.v1".to_owned(),
                 repository_id: lumin_model::RepositoryId::from_string("repository".to_owned()),
@@ -3219,13 +3224,7 @@ mod tests {
                 created_unix_millis: 0,
                 catalog_revision: 1,
                 state: RetentionPlanState::Prepared,
-                items: vec![RetentionPlanItem {
-                    kind: RetentionItemKind::Attempt,
-                    owning_sequence: 8,
-                    record_id: "attempt_0000000000000008".to_owned(),
-                    identity_sha256: "identity".to_owned(),
-                    byte_count: 1,
-                }],
+                items,
                 exclusions: Vec::new(),
                 confirmation_operation_id: None,
                 recoverable_state: None,
@@ -3234,7 +3233,21 @@ mod tests {
             },
             trash_nonce: "nonce".to_owned(),
             progress: None,
-        };
+        }
+    }
+
+    #[test]
+    fn allocator_floors_include_retention_plans_and_tombstones()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut snapshot = empty_snapshot();
+        snapshot.sequences.insert("attempt".to_owned(), 7);
+        let plan = stored_retention_plan(vec![RetentionPlanItem {
+            kind: RetentionItemKind::Attempt,
+            owning_sequence: 8,
+            record_id: "attempt_0000000000000008".to_owned(),
+            identity_sha256: "identity".to_owned(),
+            byte_count: 1,
+        }]);
         snapshot.retention_plans.insert(
             plan.record.plan_id.as_str().to_owned(),
             serde_json::to_vec(&plan)?,
@@ -3267,6 +3280,31 @@ mod tests {
             validate_attempt_allocator_sequence(&snapshot),
             Err(StoreError::Integrity(message))
                 if message.contains("minimum 9")
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn retained_gate_revisions_require_a_retained_gate_item()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut snapshot = empty_snapshot();
+        let plan = stored_retention_plan(vec![RetentionPlanItem {
+            kind: RetentionItemKind::GateRevision,
+            owning_sequence: 1,
+            record_id: "gate:gate_0000000000000001/revision:0".to_owned(),
+            identity_sha256: "identity".to_owned(),
+            byte_count: 1,
+        }]);
+        snapshot.retention_plans.insert(
+            plan.record.plan_id.as_str().to_owned(),
+            serde_json::to_vec(&plan)?,
+        );
+
+        let gates = BTreeMap::new();
+        assert!(matches!(
+            retained_active_gate_mutation_floor(&snapshot, &gates),
+            Err(StoreError::Integrity(message))
+                if message.contains("omitted its gate item")
         ));
         Ok(())
     }

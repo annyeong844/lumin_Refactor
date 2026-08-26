@@ -72,11 +72,15 @@ fn validate_run_children(
 
     let mut maximum_sequence = 0_u64;
     for name in names {
-        if name.starts_with("run_") {
+        let allocated_run_id = name
+            .strip_prefix('.')
+            .and_then(|name| name.strip_suffix(".staging"))
+            .unwrap_or(&name);
+        if allocated_run_id.starts_with("run_") {
             maximum_sequence = maximum_sequence.max(canonical_sequence_id(
-                &name,
+                allocated_run_id,
                 "run_",
-                "retained run directory",
+                "retained run or staging directory",
             )?);
         }
         if snapshot.run_catalog.contains_key(&name) {
