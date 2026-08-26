@@ -409,6 +409,10 @@ pub enum RunEvidenceIdentityError {
         collection: &'static str,
         identity: String,
     },
+    MissingReference {
+        collection: &'static str,
+        identity: String,
+    },
 }
 
 impl fmt::Display for RunEvidenceIdentityError {
@@ -431,6 +435,13 @@ impl fmt::Display for RunEvidenceIdentityError {
             } => write!(
                 formatter,
                 "derived identity disagrees with its semantic owner in {collection}: {identity}"
+            ),
+            Self::MissingReference {
+                collection,
+                identity,
+            } => write!(
+                formatter,
+                "referenced identity is absent from {collection}: {identity}"
             ),
         }
     }
@@ -484,6 +495,25 @@ pub fn validate_run_evidence_identities(
             .map(|record| record.finding_id.as_str()),
     )?;
     for finding in &evidence.findings {
+        let expected = FindingId::for_export(
+            &finding.rule_id,
+            &finding.source_id,
+            finding.namespace,
+            &finding.exported_name,
+        );
+        if finding.finding_id != expected {
+            return Err(RunEvidenceIdentityError::DerivedIdentityMismatch {
+                collection: "findings",
+                identity: finding.finding_id.as_str().to_owned(),
+            });
+        }
+    }
+    let finding_ids = evidence
+        .findings
+        .iter()
+        .map(|record| record.finding_id.as_str())
+        .collect::<BTreeSet<_>>();
+    for finding in &evidence.findings {
         require_unique(
             "finding evidence",
             finding
@@ -506,6 +536,11 @@ pub fn validate_run_evidence_identities(
                 });
             }
         }
+        let finding_evidence_ids = finding
+            .evidence
+            .iter()
+            .map(|record| record.evidence_id.as_str())
+            .collect::<BTreeSet<_>>();
         require_unique(
             "finding relations",
             finding
@@ -524,6 +559,18 @@ pub fn validate_run_evidence_identities(
                 return Err(RunEvidenceIdentityError::DerivedIdentityMismatch {
                     collection: "finding relations",
                     identity: relation.relation_id.as_str().to_owned(),
+                });
+            }
+            if !finding_ids.contains(relation.target_finding_id.as_str()) {
+                return Err(RunEvidenceIdentityError::MissingReference {
+                    collection: "finding relation targets",
+                    identity: relation.target_finding_id.as_str().to_owned(),
+                });
+            }
+            if !finding_evidence_ids.contains(relation.grounding_evidence_id.as_str()) {
+                return Err(RunEvidenceIdentityError::MissingReference {
+                    collection: "finding relation grounding evidence",
+                    identity: relation.grounding_evidence_id.as_str().to_owned(),
                 });
             }
         }
@@ -625,6 +672,66 @@ mod tests {
 
     use super::*;
 
+    fn finding_fixture(path: &RepoPath, exported_name: &str) -> FindingRecord {
+        let source_id = LogicalSourceId::from_path(path);
+        let span = SourceSpan { start: 0, end: 1 };
+        let payload_sha256 = format!("{exported_name}-payload");
+        FindingRecord {
+            finding_id: FindingId::for_export(
+                DEAD_EXPORT_RULE_ID,
+                &source_id,
+                SymbolNamespace::Value,
+                exported_name,
+            ),
+            rule_id: DEAD_EXPORT_RULE_ID.to_owned(),
+            owner_capability: DEAD_CODE_CAPABILITY_ID.to_owned(),
+            severity: Severity::Warning,
+            confidence: Confidence::Grounded,
+            disposition: FindingDisposition::ReviewCandidate,
+            claim: format!("{exported_name} fixture"),
+            source_id: source_id.clone(),
+            path: RepoPathProjection::from(path),
+            span: span.clone(),
+            exported_name: exported_name.to_owned(),
+            namespace: SymbolNamespace::Value,
+            nested_collections_available: true,
+            evidence: vec![EvidenceRecord {
+                evidence_id: EvidenceId::for_source_span(
+                    "definition",
+                    &source_id,
+                    span.start,
+                    span.end,
+                    &payload_sha256,
+                ),
+                kind: "definition".to_owned(),
+                source_id,
+                path: RepoPathProjection::from(path),
+                span,
+                payload_sha256,
+            }],
+            relations: Vec::new(),
+        }
+    }
+
+    fn run_evidence_fixture(findings: Vec<FindingRecord>) -> RunEvidence {
+        RunEvidence {
+            schema_version: RUN_EVIDENCE_SCHEMA_VERSION.to_owned(),
+            capabilities: vec![CapabilityRecord {
+                capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
+                state: CapabilityState::Complete,
+            }],
+            resolution_profiles: Vec::new(),
+            source_classifications: Vec::new(),
+            source_contexts: Vec::new(),
+            source_observations: Vec::new(),
+            dependency_owners: Vec::new(),
+            resolutions: Vec::new(),
+            metrics: AnalysisMetrics::default(),
+            findings,
+            limitations: Vec::new(),
+        }
+    }
+
     #[test]
     fn dependency_ownership_only_limitations_do_not_degrade_dead_code() {
         let dependency_only = vec![
@@ -699,6 +806,67 @@ mod tests {
             validate_run_evidence_identities(&evidence),
             Err(RunEvidenceIdentityError::SourceIdentityMismatch {
                 collection: "source contexts",
+                ..
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_findings_require_the_owner_derived_identity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = RepoPath::from_portable("src/finding.ts")?;
+        let mut finding = finding_fixture(&path, "forged");
+        finding.finding_id = FindingId::from_string("finding_forged".to_owned());
+        let evidence = run_evidence_fixture(vec![finding]);
+
+        assert!(matches!(
+            validate_run_evidence_identities(&evidence),
+            Err(RunEvidenceIdentityError::DerivedIdentityMismatch {
+                collection: "findings",
+                ..
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_relations_require_existing_target_and_grounding_evidence()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = RepoPath::from_portable("src/relation-endpoints.ts")?;
+        let mut source = finding_fixture(&path, "source");
+        let target = finding_fixture(&path, "target");
+        let grounding_evidence_id = source.evidence[0].evidence_id.clone();
+        source.relations.push(FindingRelationRecord {
+            relation_id: finding_relation_id(
+                &source.finding_id,
+                "related",
+                &target.finding_id,
+                &grounding_evidence_id,
+            ),
+            kind: "related".to_owned(),
+            target_finding_id: target.finding_id.clone(),
+            grounding_evidence_id,
+        });
+        let canonical = run_evidence_fixture(vec![source, target]);
+        validate_run_evidence_identities(&canonical)?;
+
+        let mut missing_target = canonical.clone();
+        missing_target.findings.pop();
+        assert!(matches!(
+            validate_run_evidence_identities(&missing_target),
+            Err(RunEvidenceIdentityError::MissingReference {
+                collection: "finding relation targets",
+                ..
+            })
+        ));
+
+        let mut missing_grounding = canonical;
+        missing_grounding.findings[0].evidence.clear();
+        assert!(matches!(
+            validate_run_evidence_identities(&missing_grounding),
+            Err(RunEvidenceIdentityError::MissingReference {
+                collection: "finding relation grounding evidence",
                 ..
             })
         ));

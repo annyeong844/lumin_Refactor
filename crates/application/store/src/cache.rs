@@ -416,14 +416,11 @@ impl RepositoryStore {
                     .execution_attempt_id;
                 operation.status = CacheCleanupOperationStatus::Interrupted;
                 operation.interruption_count =
-                    operation.interruption_count.checked_add(1).ok_or_else(|| {
-                        StoreError::Integrity(
-                            "cache cleanup interruption count overflow".to_owned(),
-                        )
-                    })?;
+                    next_cleanup_interruption_count(operation.interruption_count)?;
                 operation.recovery_reservation = Some(CacheCleanupRecoveryReservation {
                     interrupted_execution_attempt_id: interrupted_attempt,
                 });
+                validate_operation_shape(&operation)?;
                 write_record(
                     &write,
                     CACHE_CLEANUP_OPERATIONS,
@@ -1070,6 +1067,18 @@ fn validate_operation_identity(
     Ok(())
 }
 
+fn next_cleanup_interruption_count(current: u64) -> Result<u64, StoreError> {
+    let next = current.checked_add(1).ok_or_else(|| {
+        StoreError::Integrity("cache cleanup interruption count overflow".to_owned())
+    })?;
+    if next == u64::MAX {
+        return Err(StoreError::Integrity(
+            "cache cleanup interruption count exhausted".to_owned(),
+        ));
+    }
+    Ok(next)
+}
+
 pub(crate) fn validate_operation_shape(
     operation: &CacheCleanupOperationRecord,
 ) -> Result<(), StoreError> {
@@ -1082,6 +1091,13 @@ pub(crate) fn validate_operation_shape(
     let counts_valid = operation.validated_count <= operation.authorized_count();
     let plan_valid = operation.plan_initialized
         || (operation.authorization_keys.is_empty() && operation.validated_count == 0);
+    let interruption_count_valid = match operation.status {
+        CacheCleanupOperationStatus::Pending => operation.interruption_count < u64::MAX,
+        CacheCleanupOperationStatus::Interrupted => {
+            (1..u64::MAX).contains(&operation.interruption_count)
+        }
+        CacheCleanupOperationStatus::Committed => true,
+    };
     let delivery_sequences_valid = operation.greatest_allocated_delivery_sequence != u64::MAX
         && operation
             .delivery_completions
@@ -1133,6 +1149,7 @@ pub(crate) fn validate_operation_shape(
         || !unique
         || !counts_valid
         || !plan_valid
+        || !interruption_count_valid
         || !delivery_sequences_valid
         || !state_valid
     {

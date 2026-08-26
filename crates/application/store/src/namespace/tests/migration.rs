@@ -940,6 +940,24 @@ fn migration_rejects_an_unfinished_cleanup_with_an_exhausted_interruption_count(
         greatest_completed_delivery_sequence: None,
         delivery_completions: Vec::new(),
     };
+    let legacy = serde_json::json!({
+        "schemaVersion": "lumin-cache-cleanup-operation.v1",
+        "repositoryId": operation.repository_id,
+        "operationId": operation.operation_id,
+        "requestDigest": operation.request_digest,
+        "status": operation.status,
+        "interruptionCount": operation.interruption_count,
+        "invocationId": operation.invocation_id,
+        "initialAuthorizationSetId": operation.initial_authorization_set_id,
+        "initialAuthorizationCount": operation.initial_authorization_count,
+        "planInitialized": operation.plan_initialized,
+        "authorizationKeys": operation.authorization_keys,
+        "validatedCount": operation.validated_count,
+        "executionLease": operation.execution_lease,
+        "recoveryReservation": operation.recovery_reservation,
+        "result": operation.result,
+        "lastDeliveryStatus": "not-attempted",
+    });
     store.with_exclusive_lock(|guard| {
         let database = guard.open_database()?;
         let write = database.begin_write()?;
@@ -947,14 +965,10 @@ fn migration_rejects_an_unfinished_cleanup_with_an_exhausted_interruption_count(
             &write,
             crate::cache::CACHE_CLEANUP_OPERATIONS,
             operation_id.as_str(),
-            &operation,
+            &legacy,
         )?;
         guard.commit(write)
     })?;
-    store.rewrite_cache_cleanup_operation_as_prior_for_test(
-        &operation_id,
-        PriorCacheCleanupDeliveryStatusForTest::NotAttempted,
-    )?;
     make_prior_store(&store, root.path())?;
 
     assert!(matches!(

@@ -2,8 +2,9 @@ use std::fs;
 use std::path::Path;
 
 use lumin_evidence::{
-    CacheCleanupDeliveryOutcome, CacheCleanupDeliveryStatus, CacheCleanupOperationStatus,
-    LifecycleOperationRecord,
+    CacheCleanupDeliveryOutcome, CacheCleanupDeliveryStatus, CacheCleanupExecutionLease,
+    CacheCleanupOperationStatus, CacheCleanupRecoveryReservation, LifecycleOperationRecord,
+    OperationLivenessLease,
 };
 use lumin_model::OperationId;
 
@@ -202,6 +203,51 @@ fn delivery_allocation_refuses_the_maximum_sequence_without_committing_it()
             .greatest_allocated_delivery_sequence,
         u64::MAX - 1
     );
+    Ok(())
+}
+
+#[test]
+fn unfinished_cleanup_rejects_exhausted_interruption_counts()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("cache-clean-interruption-ceiling".to_owned());
+    let request_digest = digest(&store)?;
+    store.clean_cache_payloads(&operation_id, &request_digest)?;
+
+    let mut interrupted = store.load_cache_cleanup_operation(&operation_id)?;
+    interrupted.status = CacheCleanupOperationStatus::Interrupted;
+    interrupted.interruption_count = u64::MAX;
+    interrupted.result = None;
+    interrupted.recovery_reservation = Some(CacheCleanupRecoveryReservation {
+        interrupted_execution_attempt_id: "interrupted-attempt".to_owned(),
+    });
+    assert!(matches!(
+        validate_operation_shape(&interrupted),
+        Err(StoreError::Integrity(message))
+            if message.contains("cache cleanup operation record is incoherent")
+    ));
+
+    let mut pending = interrupted;
+    pending.status = CacheCleanupOperationStatus::Pending;
+    pending.recovery_reservation = None;
+    pending.execution_lease = Some(CacheCleanupExecutionLease {
+        execution_attempt_id: "00000000000000000000000000000001".to_owned(),
+        liveness: OperationLivenessLease {
+            lease_nonce: "00000000000000000000000000000002".to_owned(),
+            owner_process_id: 1,
+            lock_physical_identity: None,
+        },
+    });
+    assert!(matches!(
+        validate_operation_shape(&pending),
+        Err(StoreError::Integrity(message))
+            if message.contains("cache cleanup operation record is incoherent")
+    ));
+    assert!(matches!(
+        next_cleanup_interruption_count(u64::MAX - 1),
+        Err(StoreError::Integrity(message)) if message.contains("count exhausted")
+    ));
     Ok(())
 }
 
