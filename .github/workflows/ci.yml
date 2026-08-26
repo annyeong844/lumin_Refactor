@@ -648,6 +648,12 @@ jobs:
         shell: pwsh
         run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo build -p lumin-cli --features lifecycle-test-fault --locked'
 
+      - name: Stage packaged skill adapters
+        shell: pwsh
+        env:
+          LUMIN_PACKAGE_ROOT: ${{ runner.temp }}/lumin-package
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- package-check stage-skills'
+
       - name: Probe packaged binary without runtime build tools
         shell: pwsh
         env:
@@ -660,6 +666,7 @@ jobs:
         env:
           LUMIN_PACKAGE_BINARY: ${{ runner.temp }}/lumin-target/${{ matrix.binary_path }}
           LUMIN_PACKAGE_FIXTURE_BINARY: ${{ runner.temp }}/lumin-target/${{ matrix.fixture_binary_path }}
+          LUMIN_PACKAGE_ROOT: ${{ runner.temp }}/lumin-package
         run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- package-check skills'
 
   required:

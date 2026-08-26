@@ -1,9 +1,29 @@
-use super::skills::{CODEX_SKILL, MIGRATION_WORKFLOW, validate_adapter, validate_skill_sources};
+use super::skills::{
+    CODEX_SKILL, MIGRATION_WORKFLOW, stage_skill_sources, validate_adapter, validate_skill_sources,
+};
 
 #[test]
 fn repository_skills_share_one_thin_contract() -> Result<(), String> {
     let workspace = crate::metadata::find_workspace_root().map_err(|error| error.to_string())?;
     validate_skill_sources(&workspace)
+}
+
+#[test]
+fn staged_skill_package_is_a_separate_exact_copy() -> Result<(), String> {
+    let workspace = crate::metadata::find_workspace_root().map_err(|error| error.to_string())?;
+    let scratch = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let package_root = scratch.path().join("package");
+    stage_skill_sources(&workspace, &package_root)?;
+    validate_skill_sources(&package_root)?;
+    assert_ne!(
+        package_root
+            .canonicalize()
+            .map_err(|error| error.to_string())?,
+        workspace
+            .canonicalize()
+            .map_err(|error| error.to_string())?
+    );
+    Ok(())
 }
 
 #[test]

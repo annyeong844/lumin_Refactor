@@ -70,8 +70,11 @@ const CRASH_POINTS: &[MigrationCrashPoint] = &[
     MigrationCrashPoint::TargetPublished,
     MigrationCrashPoint::BeforeExchange,
     MigrationCrashPoint::ExchangeInputsOpened,
+    MigrationCrashPoint::ExchangeExternalReferencesValidated,
     #[cfg(windows)]
     MigrationCrashPoint::SourceRetired,
+    #[cfg(windows)]
+    MigrationCrashPoint::CanonicalMoveExternalReferencesValidated,
     MigrationCrashPoint::CanonicalReplaced,
     MigrationCrashPoint::ParentFlushed,
     MigrationCrashPoint::IntentRemoved,
@@ -1104,6 +1107,31 @@ fn migration_recovers_incomplete_attempt_allocations_before_transform()
 }
 
 #[test]
+fn migration_rejects_multiple_incomplete_attempt_allocations_before_recovery()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let (first, _) =
+        crate::publication::reserve_migration_attempt_allocation_for_test(&store, None)?;
+    let (second, _) =
+        crate::publication::reserve_migration_attempt_allocation_for_test(&store, None)?;
+    make_prior_store(&store, root.path())?;
+
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("multiple incomplete attempt allocations")
+    ));
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let read = database.begin_read()?;
+    let table = read.open_table(ATTEMPT_LEASES)?;
+    assert!(table.get(first.as_str())?.is_some());
+    assert!(table.get(second.as_str())?.is_some());
+    Ok(())
+}
+
+#[test]
 fn terminal_validation_reopens_the_target_after_external_reference_validation()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
@@ -1182,7 +1210,7 @@ fn exchange_revalidates_every_bound_input_after_external_reference_validation()
         let mut target_identity = None;
         let result = store.namespace.with_migration_lock(|guard| {
             migrate_with_hook(guard, &mut |point| {
-                if point == MigrationCrashPoint::BeforeExchange && !reached {
+                if point == MigrationCrashPoint::ExchangeExternalReferencesValidated && !reached {
                     let target = pending_target_path(&state)
                         .map_err(|error| StoreError::Integrity(error.to_string()))?;
                     let entry = HeldEntry::open(
@@ -1927,8 +1955,15 @@ fn crash_point_label(point: MigrationCrashPoint) -> &'static str {
         MigrationCrashPoint::TargetPublished => "after-target-publication",
         MigrationCrashPoint::BeforeExchange => "before-exchange",
         MigrationCrashPoint::ExchangeInputsOpened => "after-exchange-input-open",
+        MigrationCrashPoint::ExchangeExternalReferencesValidated => {
+            "after-exchange-external-validation"
+        }
         #[cfg(windows)]
         MigrationCrashPoint::SourceRetired => "after-source-retirement",
+        #[cfg(windows)]
+        MigrationCrashPoint::CanonicalMoveExternalReferencesValidated => {
+            "after-canonical-move-external-validation"
+        }
         MigrationCrashPoint::CanonicalReplaced => "after-replace",
         MigrationCrashPoint::ParentFlushed => "after-parent-flush",
         MigrationCrashPoint::IntentRemoved => "after-intent-removal",
@@ -1968,8 +2003,15 @@ fn crash_point(label: &str) -> Result<MigrationCrashPoint, Box<dyn std::error::E
         "after-target-publication" => Ok(MigrationCrashPoint::TargetPublished),
         "before-exchange" => Ok(MigrationCrashPoint::BeforeExchange),
         "after-exchange-input-open" => Ok(MigrationCrashPoint::ExchangeInputsOpened),
+        "after-exchange-external-validation" => {
+            Ok(MigrationCrashPoint::ExchangeExternalReferencesValidated)
+        }
         #[cfg(windows)]
         "after-source-retirement" => Ok(MigrationCrashPoint::SourceRetired),
+        #[cfg(windows)]
+        "after-canonical-move-external-validation" => {
+            Ok(MigrationCrashPoint::CanonicalMoveExternalReferencesValidated)
+        }
         "after-replace" => Ok(MigrationCrashPoint::CanonicalReplaced),
         "after-parent-flush" => Ok(MigrationCrashPoint::ParentFlushed),
         "after-intent-removal" => Ok(MigrationCrashPoint::IntentRemoved),

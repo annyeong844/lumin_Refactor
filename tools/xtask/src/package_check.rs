@@ -19,10 +19,13 @@ const MIGRATION_REQUIRED_DIAGNOSTIC: &str =
 
 pub(crate) fn run(arguments: &[String]) -> ExitCode {
     let result = match arguments {
+        [target] if target == "stage-skills" => skills::stage(),
         [target] if target == "skills" => skills::check(),
         [target] if target == "windows-x64" || target == "linux-x64" => platform::check(target),
         _ => {
-            eprintln!("[TOOL ERROR] usage: lumin-xtask package-check windows-x64|linux-x64|skills");
+            eprintln!(
+                "[TOOL ERROR] usage: lumin-xtask package-check windows-x64|linux-x64|stage-skills|skills"
+            );
             return ExitCode::from(2);
         }
     };

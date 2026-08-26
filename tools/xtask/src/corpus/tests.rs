@@ -283,6 +283,42 @@ fn parallel_execution_preserves_registry_order_after_overtake() -> Result<(), St
 }
 
 #[test]
+fn fault_enabled_invocations_are_isolated_from_parallel_neighbors() -> Result<(), String> {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Barrier};
+
+    let ordinary_barrier = Arc::new(Barrier::new(2));
+    let active = AtomicUsize::new(0);
+    let isolated_active = AtomicBool::new(false);
+    let observed = run_parallel_ordered_with_isolation(
+        5,
+        3,
+        |index| index == 2,
+        |index| {
+            let prior = active.fetch_add(1, Ordering::SeqCst);
+            if index == 2 {
+                assert_eq!(prior, 0, "isolated work overlapped an earlier partition");
+                assert!(!isolated_active.swap(true, Ordering::SeqCst));
+            } else {
+                assert!(!isolated_active.load(Ordering::SeqCst));
+            }
+            if index < 2 {
+                ordinary_barrier.wait();
+            }
+            if index == 2 {
+                isolated_active.store(false, Ordering::SeqCst);
+            }
+            active.fetch_sub(1, Ordering::SeqCst);
+            Ok(index)
+        },
+    )?;
+    assert_eq!(observed, [0, 1, 2, 3, 4]);
+    assert_eq!(active.load(Ordering::SeqCst), 0);
+    assert!(!isolated_active.load(Ordering::SeqCst));
+    Ok(())
+}
+
+#[test]
 fn unknown_fmt() {
     assert!(parse_args(&["--format".into(), "yaml".into()]).is_err());
 }

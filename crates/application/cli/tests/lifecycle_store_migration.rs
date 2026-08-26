@@ -56,8 +56,11 @@ const MIGRATION_DEATH_STAGES: &[&str] = &[
     "after-target-publication",
     "before-exchange",
     "after-exchange-input-open",
+    "after-exchange-external-validation",
     #[cfg(windows)]
     "after-source-retirement",
+    #[cfg(windows)]
+    "after-canonical-move-external-validation",
     "after-replace",
     "after-parent-flush",
     "after-intent-removal",
@@ -590,7 +593,7 @@ fn public_migration_rechecks_hard_links_after_movement_handles_open()
 -> Result<(), Box<dyn std::error::Error>> {
     for binding in ["source", "target"] {
         let root = prior_fixture()?;
-        let barrier = LifecycleMigrationBarrier::new("after-exchange-input-open")?;
+        let barrier = LifecycleMigrationBarrier::new("after-exchange-external-validation")?;
         let mut migration = barrier.spawn(root.path())?;
         let permit = barrier.accept(&mut migration)?;
         let state = root.path().join(".lumin");
@@ -624,7 +627,7 @@ fn public_migration_revalidates_the_target_after_source_retirement()
 -> Result<(), Box<dyn std::error::Error>> {
     for mutation in ["payload", "link"] {
         let root = prior_fixture()?;
-        let barrier = LifecycleMigrationBarrier::new("after-source-retirement")?;
+        let barrier = LifecycleMigrationBarrier::new("after-canonical-move-external-validation")?;
         let mut migration = barrier.spawn(root.path())?;
         let permit = barrier.accept(&mut migration)?;
         let state = root.path().join(".lumin");

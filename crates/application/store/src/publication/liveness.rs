@@ -121,16 +121,26 @@ pub(super) fn reconcile_migration_allocations(
     rows: &mut std::collections::BTreeMap<String, Vec<u8>>,
     guard: &NamespaceGuard,
 ) -> Result<(), StoreError> {
-    let mut recovered = Vec::new();
+    let mut lock_names = std::collections::BTreeSet::new();
+    let mut allocation = None;
     for (key, bytes) in rows.iter() {
         let attempt_id = AttemptId::from_string(key.clone());
         let lease = records::parse_record(bytes, Some(&attempt_id))?;
-        if lease.state == AttemptLeaseState::Allocating {
-            recovery::recover_allocation_artifact(guard, &lease)?;
-            recovered.push(key.clone());
+        if !lock_names.insert(lease.lock_name.clone()) {
+            return Err(StoreError::Integrity(
+                "attempt leases share one process-liveness lock".to_owned(),
+            ));
+        }
+        if lease.state == AttemptLeaseState::Allocating
+            && allocation.replace((key.clone(), lease)).is_some()
+        {
+            return Err(StoreError::Integrity(
+                "lifecycle migration found multiple incomplete attempt allocations".to_owned(),
+            ));
         }
     }
-    for key in recovered {
+    if let Some((key, allocation)) = allocation {
+        recovery::recover_allocation_artifact(guard, &allocation)?;
         rows.remove(&key);
     }
     Ok(())

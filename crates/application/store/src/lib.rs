@@ -93,7 +93,7 @@ pub struct PublishedRun {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RunCatalogRecord {
     pub attempt_id: AttemptId,
     pub run_id: RunId,

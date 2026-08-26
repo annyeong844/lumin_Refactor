@@ -1,6 +1,6 @@
 use std::ffi::OsString;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::{
     downgrade_store_as_prior, expect_migration_ready, expect_migration_required, expect_string,
@@ -18,20 +18,85 @@ pub(super) const MIGRATION_WORKFLOW: &str = concat!(
     "  4. Retry the preserved original public command with the same arguments.\n",
 );
 const MIGRATION_ARGUMENTS: &[&str] = &["store", "migrate", "--format", "json"];
+const PACKAGE_ROOT_ENVIRONMENT: &str = "LUMIN_PACKAGE_ROOT";
+
+pub(super) fn stage() -> Result<(), String> {
+    let workspace = crate::metadata::find_workspace_root().map_err(|error| error.to_string())?;
+    let package_root = configured_package_root()?;
+    if !package_root.is_absolute() {
+        return Err("staged package root must be absolute".to_owned());
+    }
+    let canonical_workspace = workspace
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve workspace root: {error}"))?;
+    if package_root.starts_with(&canonical_workspace) {
+        return Err("staged skill package must be outside the checkout workspace".to_owned());
+    }
+    stage_skill_sources(&workspace, &package_root)
+}
 
 pub(super) fn check() -> Result<(), String> {
     let workspace = crate::metadata::find_workspace_root().map_err(|error| error.to_string())?;
-    validate_skill_sources(&workspace)?;
+    let package_root = locate_package_root(&workspace)?;
+    validate_skill_sources(&package_root)?;
     let binary = locate_binary(&workspace)?;
     let fixture_binary = locate_fixture_binary()?;
     validate_binary_agent_contract(&binary)?;
-    validate_packaged_adapter_migration_workflows(&workspace, &binary, &fixture_binary)?;
+    validate_packaged_adapter_migration_workflows(&package_root, &binary, &fixture_binary)?;
     Ok(())
 }
 
-pub(super) fn validate_skill_sources(workspace: &Path) -> Result<(), String> {
-    let codex = read_skill(workspace, CODEX_SKILL)?;
-    let claude = read_skill(workspace, CLAUDE_SKILL)?;
+fn configured_package_root() -> Result<PathBuf, String> {
+    std::env::var_os(PACKAGE_ROOT_ENVIRONMENT)
+        .map(PathBuf::from)
+        .ok_or_else(|| format!("a staged package root is required; set {PACKAGE_ROOT_ENVIRONMENT}"))
+}
+
+fn locate_package_root(workspace: &Path) -> Result<PathBuf, String> {
+    let configured = configured_package_root()?;
+    let package_root = configured.canonicalize().map_err(|error| {
+        format!(
+            "cannot open staged package root {}: {error}",
+            configured.display()
+        )
+    })?;
+    let workspace = workspace
+        .canonicalize()
+        .map_err(|error| format!("cannot resolve workspace root: {error}"))?;
+    if package_root.starts_with(&workspace) {
+        return Err("staged skill package must be outside the checkout workspace".to_owned());
+    }
+    Ok(package_root)
+}
+
+pub(super) fn stage_skill_sources(workspace: &Path, package_root: &Path) -> Result<(), String> {
+    validate_skill_sources(workspace)?;
+    if package_root.exists() {
+        return Err(format!(
+            "staged package root already exists: {}",
+            package_root.display()
+        ));
+    }
+    for relative in ["skills/codex", "skills/claude-code"] {
+        let destination = package_root.join(relative);
+        fs::create_dir_all(&destination).map_err(|error| {
+            format!(
+                "cannot create staged skill directory {}: {error}",
+                destination.display()
+            )
+        })?;
+        fs::copy(
+            workspace.join(relative).join("SKILL.md"),
+            destination.join("SKILL.md"),
+        )
+        .map_err(|error| format!("cannot stage {relative}/SKILL.md: {error}"))?;
+    }
+    validate_skill_sources(package_root)
+}
+
+pub(super) fn validate_skill_sources(package_root: &Path) -> Result<(), String> {
+    let codex = read_skill(package_root, CODEX_SKILL)?;
+    let claude = read_skill(package_root, CLAUDE_SKILL)?;
     validate_adapter(CODEX_SKILL, &codex)?;
     validate_adapter(CLAUDE_SKILL, &claude)?;
     if codex != claude {
@@ -39,13 +104,13 @@ pub(super) fn validate_skill_sources(workspace: &Path) -> Result<(), String> {
             "Codex and Claude Code skills diverge from the shared behavior contract".into(),
         );
     }
-    validate_skill_directory(workspace, "skills/codex")?;
-    validate_skill_directory(workspace, "skills/claude-code")?;
+    validate_skill_directory(package_root, "skills/codex")?;
+    validate_skill_directory(package_root, "skills/claude-code")?;
     Ok(())
 }
 
-fn read_skill(workspace: &Path, relative: &str) -> Result<String, String> {
-    fs::read_to_string(workspace.join(relative))
+fn read_skill(package_root: &Path, relative: &str) -> Result<String, String> {
+    fs::read_to_string(package_root.join(relative))
         .map_err(|error| format!("cannot read {relative}: {error}"))
 }
 
@@ -92,8 +157,8 @@ pub(super) fn validate_adapter(relative: &str, source: &str) -> Result<(), Strin
     Ok(())
 }
 
-fn validate_skill_directory(workspace: &Path, relative: &str) -> Result<(), String> {
-    let directory = workspace.join(relative);
+fn validate_skill_directory(package_root: &Path, relative: &str) -> Result<(), String> {
+    let directory = package_root.join(relative);
     let mut entries = fs::read_dir(&directory)
         .map_err(|error| format!("cannot inspect {relative}: {error}"))?
         .map(|entry| entry.map(|entry| entry.file_name()))
@@ -126,7 +191,7 @@ fn validate_binary_agent_contract(binary: &Path) -> Result<(), String> {
 }
 
 fn validate_packaged_adapter_migration_workflows(
-    workspace: &Path,
+    package_root: &Path,
     binary: &Path,
     fixture_binary: &Path,
 ) -> Result<(), String> {
@@ -136,7 +201,7 @@ fn validate_packaged_adapter_migration_workflows(
     let result = [(CODEX_SKILL, "codex"), (CLAUDE_SKILL, "claude-code")]
         .into_iter()
         .try_for_each(|(relative, name)| {
-            let source = read_skill(workspace, relative)?;
+            let source = read_skill(package_root, relative)?;
             validate_adapter(relative, &source)?;
             execute_adapter_migration_workflow(
                 relative,

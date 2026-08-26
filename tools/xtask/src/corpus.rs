@@ -71,6 +71,10 @@ impl FeatureSet {
                 | Self::PublicationAndRetentionCrash
         )
     }
+
+    fn requires_process_isolation(self) -> bool {
+        self != Self::None
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -829,6 +833,35 @@ where
         .collect()
 }
 
+fn run_parallel_ordered_with_isolation<T, F, I>(
+    item_count: usize,
+    jobs: usize,
+    isolated: I,
+    work: F,
+) -> Result<Vec<T>, String>
+where
+    T: Send,
+    F: Fn(usize) -> Result<T, String> + Sync,
+    I: Fn(usize) -> bool,
+{
+    let mut ordered = Vec::with_capacity(item_count);
+    let mut start = 0;
+    while start < item_count {
+        if isolated(start) {
+            ordered.push(work(start)?);
+            start += 1;
+            continue;
+        }
+        let end = (start + 1..item_count)
+            .find(|index| isolated(*index))
+            .unwrap_or(item_count);
+        let batch = run_parallel_ordered(end - start, jobs, |offset| work(start + offset))?;
+        ordered.extend(batch);
+        start = end;
+    }
+    Ok(ordered)
+}
+
 fn execute_rows(
     workspace: &Path,
     selected: &[&'static RegistryRow],
@@ -856,9 +889,17 @@ fn execute_rows(
         row_ranges.push(start..tasks.len());
     }
 
-    let invocation_executions = run_parallel_ordered(tasks.len(), row_jobs, |index| {
-        Ok(execute_invocation(workspace, &tasks[index], mode))
-    })?;
+    let invocation_executions = run_parallel_ordered_with_isolation(
+        tasks.len(),
+        row_jobs,
+        |index| {
+            tasks[index]
+                .invocation
+                .features
+                .requires_process_isolation()
+        },
+        |index| Ok(execute_invocation(workspace, &tasks[index], mode)),
+    )?;
 
     let mut rows = Vec::with_capacity(selected.len());
     for (row, range) in selected.iter().zip(row_ranges) {

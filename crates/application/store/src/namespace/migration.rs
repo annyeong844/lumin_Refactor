@@ -72,8 +72,11 @@ pub(super) enum MigrationCrashPoint {
     TargetPublished,
     BeforeExchange,
     ExchangeInputsOpened,
+    ExchangeExternalReferencesValidated,
     #[cfg(windows)]
     SourceRetired,
+    #[cfg(windows)]
+    CanonicalMoveExternalReferencesValidated,
     CanonicalReplaced,
     ParentFlushed,
     IntentRemoved,
@@ -126,8 +129,13 @@ impl MigrationCrashPoint {
             Self::TargetPublished => "after-target-publication",
             Self::BeforeExchange => "before-exchange",
             Self::ExchangeInputsOpened => "after-exchange-input-open",
+            Self::ExchangeExternalReferencesValidated => "after-exchange-external-validation",
             #[cfg(windows)]
             Self::SourceRetired => "after-source-retirement",
+            #[cfg(windows)]
+            Self::CanonicalMoveExternalReferencesValidated => {
+                "after-canonical-move-external-validation"
+            }
             Self::CanonicalReplaced => "after-replace",
             Self::ParentFlushed => "after-parent-flush",
             Self::IntentRemoved => "after-intent-removal",
@@ -720,6 +728,8 @@ fn exchange_or_recover(
             "migration target before exchange",
         )?;
         hook(MigrationCrashPoint::ExchangeInputsOpened)?;
+        transformed.validate_external_references(guard)?;
+        hook(MigrationCrashPoint::ExchangeExternalReferencesValidated)?;
         revalidate_journal(guard, journal)?;
         revalidate_binding_for_move(
             guard,
@@ -735,7 +745,6 @@ fn exchange_or_recover(
             &target.pre_exchange_name,
             "migration target before exchange",
         )?;
-        transformed.validate_external_references(guard)?;
         exchange_entries(
             &guard.state_directory,
             OsStr::new("lifecycle.store"),
@@ -802,6 +811,8 @@ fn exchange_or_recover(
                 "migration target before exchange",
             )?;
             hook(MigrationCrashPoint::ExchangeInputsOpened)?;
+            transformed.validate_external_references(guard)?;
+            hook(MigrationCrashPoint::ExchangeExternalReferencesValidated)?;
             revalidate_journal(guard, journal)?;
             revalidate_binding_for_move(
                 guard,
@@ -817,7 +828,6 @@ fn exchange_or_recover(
                 &target.pre_exchange_name,
                 "migration target before exchange",
             )?;
-            transformed.validate_external_references(guard)?;
             move_entry_noreplace(
                 &guard.state_directory,
                 OsStr::new("lifecycle.store"),
@@ -827,6 +837,8 @@ fn exchange_or_recover(
             )?;
             guard.state_directory.sync_directory()?;
             hook(MigrationCrashPoint::SourceRetired)?;
+            transformed.validate_external_references(guard)?;
+            hook(MigrationCrashPoint::CanonicalMoveExternalReferencesValidated)?;
             revalidate_journal(guard, journal)?;
             revalidate_binding_for_move(
                 guard,
@@ -842,7 +854,6 @@ fn exchange_or_recover(
                 &target.pre_exchange_name,
                 "migration target before canonical move",
             )?;
-            transformed.validate_external_references(guard)?;
             move_entry_noreplace(
                 &guard.state_directory,
                 OsStr::new(&target.pre_exchange_name),
@@ -877,6 +888,8 @@ fn exchange_or_recover(
             "migration target before canonical move",
         )?;
         hook(MigrationCrashPoint::ExchangeInputsOpened)?;
+        transformed.validate_external_references(guard)?;
+        hook(MigrationCrashPoint::CanonicalMoveExternalReferencesValidated)?;
         revalidate_journal(guard, journal)?;
         revalidate_binding_for_move(
             guard,
@@ -892,7 +905,6 @@ fn exchange_or_recover(
             &target.pre_exchange_name,
             "migration target before canonical move",
         )?;
-        transformed.validate_external_references(guard)?;
         move_entry_noreplace(
             &guard.state_directory,
             OsStr::new(&target.pre_exchange_name),

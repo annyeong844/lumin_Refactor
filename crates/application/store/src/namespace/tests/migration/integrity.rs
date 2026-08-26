@@ -655,6 +655,33 @@ fn migration_rejects_extra_children_in_catalog_owned_runs() -> Result<(), Box<dy
     Ok(())
 }
 
+#[test]
+fn migration_rejects_opaque_members_in_run_envelopes() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let mut attempt = store.begin_attempt()?;
+    let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+    make_prior_store(&store, root.path())?;
+
+    let envelope = root
+        .path()
+        .join(".lumin/runs")
+        .join(published.run_id.as_str())
+        .join("run.json");
+    let mut value = serde_json::from_slice::<serde_json::Value>(&fs::read(&envelope)?)?;
+    value
+        .as_object_mut()
+        .ok_or("run envelope is not an object")?
+        .insert("opaque".to_owned(), serde_json::Value::Bool(true));
+    fs::write(&envelope, serde_json::to_vec_pretty(&value)?)?;
+
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Serialization(message)) if message.contains("unknown field `opaque`")
+    ));
+    Ok(())
+}
+
 fn rewrite_run_evidence_identity(
     root: &std::path::Path,
     run_id: &RunId,
