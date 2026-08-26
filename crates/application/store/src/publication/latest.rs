@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use lumin_model::{AttemptId, AttemptStatus, RunId};
 use redb::TableError;
 use serde::{Deserialize, Serialize};
@@ -195,6 +197,40 @@ pub(crate) fn migration_pointer_ids(
             latest.latest_completed.map(|pointer| pointer.run_id),
         )
     }))
+}
+
+pub(crate) fn reconcile_migration_pointer_index(
+    state_dir: &std::path::Path,
+    guard: &NamespaceGuard,
+    pointers: &mut BTreeMap<String, Vec<u8>>,
+    read_run: &mut impl FnMut(&RunId) -> Result<crate::RunCatalogRecord, StoreError>,
+    has_active_lease: &mut impl FnMut(&AttemptId) -> Result<bool, StoreError>,
+) -> Result<(), StoreError> {
+    let (latest_attempt, latest_completed) =
+        migration_pointer_ids(state_dir, guard, read_run, has_active_lease)?;
+    match latest_attempt {
+        Some(attempt_id) => {
+            pointers.insert(
+                "latest-attempt".to_owned(),
+                attempt_id.as_str().as_bytes().to_vec(),
+            );
+        }
+        None => {
+            pointers.remove("latest-attempt");
+        }
+    }
+    match latest_completed {
+        Some(run_id) => {
+            pointers.insert(
+                "latest-completed".to_owned(),
+                run_id.as_str().as_bytes().to_vec(),
+            );
+        }
+        None => {
+            pointers.remove("latest-completed");
+        }
+    }
+    Ok(())
 }
 
 fn read_document_path(

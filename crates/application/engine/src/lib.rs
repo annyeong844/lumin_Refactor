@@ -938,8 +938,10 @@ pub fn migrate_lifecycle_store(root: &Path) -> Result<(), EngineError> {
 #[cfg(feature = "lifecycle-migration-test-fault")]
 pub fn rewrite_lifecycle_store_as_prior_for_test(root: &Path) -> Result<(), EngineError> {
     let admission = lumin_inventory::repository_admission(root)?;
-    RepositoryStore::open(&admission.canonical_root, &admission.binding)?
-        .rewrite_current_store_header_as_prior_for_test()?;
+    RepositoryStore::rewrite_existing_lifecycle_store_header_as_prior_for_test(
+        &admission.canonical_root,
+        &admission.binding,
+    )?;
     Ok(())
 }
 

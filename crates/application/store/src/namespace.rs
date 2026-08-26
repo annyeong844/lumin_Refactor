@@ -78,10 +78,12 @@ struct HeldCacheEvictionParent {
 impl NamespaceState {
     #[cfg(any(test, feature = "lifecycle-migration-test-fault"))]
     pub(crate) fn rewrite_current_store_header_as_prior_for_test(&self) -> Result<(), StoreError> {
-        store_header::rewrite_current_store_header_as_prior_for_test(
-            &self.state_dir.join("lifecycle.store"),
-            &self.binding,
-        )
+        self.with_migration_lock(|_| {
+            store_header::rewrite_current_store_header_as_prior_for_test(
+                &self.state_dir.join("lifecycle.store"),
+                &self.binding,
+            )
+        })
     }
 
     #[cfg(feature = "lifecycle-migration-test-fault")]

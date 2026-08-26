@@ -12,7 +12,7 @@ use lumin_model::{CacheEvictionAuthorizationSetId, OperationId, RepositoryId};
 use redb::{Database, ReadableDatabase};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::{StoreError, StoreGeneration, backend_error, io_error};
+use crate::{RunCatalogRecord, StoreError, StoreGeneration, backend_error, io_error};
 
 use self::tables::{read_legacy_snapshot, read_snapshot, write_snapshot};
 use self::validation::validate_referential_closure;
@@ -250,6 +250,32 @@ impl LogicalStoreSnapshot {
             guard,
         )?;
         crate::publication::validate_migration_attempt_leases(&self.attempt_leases)?;
+        let run_catalog = &self.run_catalog;
+        let attempt_leases = &self.attempt_leases;
+        let mut read_run = |run_id: &lumin_model::RunId| {
+            let bytes = run_catalog.get(run_id.as_str()).ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "latest-completed pointer references missing run {}",
+                    run_id.as_str()
+                ))
+            })?;
+            decode_closed_json::<RunCatalogRecord>(bytes).map_err(|error| {
+                StoreError::Integrity(format!(
+                    "run catalog record {} is malformed: {error}",
+                    run_id.as_str()
+                ))
+            })
+        };
+        let mut has_active_lease = |attempt_id: &lumin_model::AttemptId| {
+            crate::publication::migration_has_active_lease(attempt_leases, attempt_id)
+        };
+        crate::publication::reconcile_migration_pointer_index(
+            &guard.state.state_dir,
+            guard,
+            &mut self.pointers,
+            &mut read_run,
+            &mut has_active_lease,
+        )?;
         for (key, bytes) in &mut self.cache_cleanup_operations {
             let legacy = decode_closed_json::<LegacyCacheCleanupOperationRecord>(bytes).map_err(
                 |error| {

@@ -100,6 +100,7 @@ static INV_LIFECYCLE_MIGRATION_CRASH: &[CorpusInvocation] = &[
     inv!("lifecycle_store_migration", "public_migration_rejects_a_self_consistent_root_without_v12_authority", LifecycleCrash),
     inv!("lifecycle_store_migration", "public_migration_recovers_a_post_exchange_output_failure_without_replacement", LifecycleCrash),
     inv!("lifecycle_store_migration", "public_migration_rejects_an_old_generation_late_publication", LifecycleCrash),
+    inv!("lifecycle_store_migration", "public_migration_recovers_after_latest_replace_before_index_sync", LifecycleAndPublicationCrash),
     inv!("lifecycle_store_migration", "public_migration_recovers_every_durable_process_death_boundary", LifecycleCrash),
     inv!("lifecycle_store_migration", "public_migration_rejects_live_binding_substitution_without_disposition", LifecycleCrash),
     inv!("lifecycle_store_migration", "public_migration_hard_link_race_never_disposes_a_published_object", LifecycleCrash),

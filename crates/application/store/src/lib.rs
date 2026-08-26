@@ -60,6 +60,16 @@ impl RepositoryStore {
     }
 
     #[cfg(feature = "lifecycle-migration-test-fault")]
+    pub fn rewrite_existing_lifecycle_store_header_as_prior_for_test(
+        root: &Path,
+        binding: &RepositoryBinding,
+    ) -> Result<(), StoreError> {
+        let namespace = namespace::NamespaceState::open_for_migration(root, binding)?
+            .ok_or(StoreError::LifecycleStoreNotInitialized)?;
+        namespace.rewrite_current_store_header_as_prior_for_test()
+    }
+
+    #[cfg(feature = "lifecycle-migration-test-fault")]
     pub fn corrupt_migration_anchor_for_test(&self) -> Result<(), StoreError> {
         self.namespace.corrupt_migration_anchor_for_test()
     }

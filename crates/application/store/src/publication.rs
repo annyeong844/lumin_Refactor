@@ -17,7 +17,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{RepositoryStore, RunCatalogRecord, StoreError};
 
-pub(crate) use latest::{migration_pointer_ids, validate_attempt_envelope};
+pub(crate) use latest::{
+    migration_pointer_ids, reconcile_migration_pointer_index, validate_attempt_envelope,
+};
 pub use liveness::AttemptSession;
 pub(crate) use run::{
     read_validated_directory as read_validated_run_directory,

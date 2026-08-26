@@ -71,6 +71,10 @@ const CACHE_CLEANUP_INTERRUPTED_BARRIER: &str = "LUMIN_TEST_CACHE_CLEANUP_INTERR
 const DELIVERY_FAILURE_ENV: &str = "LUMIN_TEST_FAIL_RESULT_DELIVERY";
 const MIGRATION_DELIVERY: &str = "lifecycle-store-migration";
 const PUBLICATION_PREPARED_BARRIER: &str = "LUMIN_TEST_PUBLICATION_PREPARED_BARRIER";
+#[cfg(feature = "publication-test-crash")]
+const PUBLICATION_CRASH_POINT: &str = "LUMIN_TEST_PUBLICATION_CRASH_POINT";
+#[cfg(feature = "publication-test-crash")]
+const PUBLICATION_CRASH_EXIT_CODE: i32 = 95;
 
 #[test]
 fn public_migration_refuses_absent_state_and_is_a_native_v13_noop()
@@ -173,6 +177,72 @@ fn public_v12_route_migrates_once_and_retries_without_mutation()
     assert!(retry.stderr.is_empty());
     assert_eq!(retry.stdout, migrated.stdout);
     assert_tree_eq(tree_snapshot(&state)?, before_retry);
+    Ok(())
+}
+
+#[cfg(feature = "publication-test-crash")]
+#[test]
+fn public_migration_recovers_after_latest_replace_before_index_sync()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    assert_status(&run(root.path(), &["audit", "--jobs", "1"])?, 0);
+    fs::write(
+        root.path().join("src/lib.ts"),
+        "export const latestReplaceRecovery = 2;\n",
+    )?;
+    let crashed = run_with_env(
+        root.path(),
+        &["audit", "--jobs", "1"],
+        &[(PUBLICATION_CRASH_POINT, "after-latest-replace")],
+    )?;
+    assert_status(&crashed, PUBLICATION_CRASH_EXIT_CODE);
+
+    let latest =
+        serde_json::from_slice::<Value>(&fs::read(root.path().join(".lumin/latest.json"))?)?;
+    assert_eq!(
+        latest
+            .pointer("/latestAttempt/sequence")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        latest
+            .pointer("/latestAttempt/status")
+            .and_then(Value::as_str),
+        Some("completed")
+    );
+    assert_eq!(
+        latest
+            .pointer("/latestCompleted/runId")
+            .and_then(Value::as_str),
+        Some("run_0000000000000002")
+    );
+
+    assert_status(&run(root.path(), &["store", "test-downgrade-v12"])?, 0);
+    let migrated = run(root.path(), &["store", "migrate", "--format", "json"])?;
+    assert_status(&migrated, 0);
+    assert!(migrated.stderr.is_empty());
+    assert_eq!(migrated.stdout, READY);
+
+    let overview = run(root.path(), &["overview"])?;
+    assert_status(&overview, 0);
+    let overview = serde_json::from_str::<Value>(&overview.stdout)?;
+    assert_eq!(
+        overview.pointer("/scope/id").and_then(Value::as_str),
+        Some("run_0000000000000002")
+    );
+    assert_eq!(
+        overview
+            .pointer("/latestAttempt/sequence")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        overview
+            .pointer("/latestAttempt/status")
+            .and_then(Value::as_str),
+        Some("completed")
+    );
     Ok(())
 }
 

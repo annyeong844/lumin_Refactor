@@ -535,22 +535,29 @@ fn migration_rejects_retention_catalog_below_a_retained_plan_revision()
 }
 
 #[test]
-fn migration_requires_pointer_table_to_match_the_durable_latest_document()
+fn migration_reconciles_latest_replace_before_pointer_index_sync()
 -> Result<(), Box<dyn std::error::Error>> {
-    for pointer in ["latest-attempt", "latest-completed"] {
-        let root = tempfile::tempdir()?;
-        let store = open_store(root.path())?;
-        let mut attempt = store.begin_attempt()?;
-        store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
-        remove_pointer_for_test(&store, pointer)?;
-        make_prior_store(&store, root.path())?;
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let mut attempt = store.begin_attempt()?;
+    let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+    clear_latest_pointer_index_for_test(&store)?;
+    make_prior_store(&store, root.path())?;
 
-        assert!(matches!(
-            store.migrate_lifecycle_store(),
-            Err(StoreError::Integrity(message))
-                if message.contains("pointer table disagrees with durable latest document")
-        ));
-    }
+    store.migrate_lifecycle_store()?;
+    assert_eq!(store.latest_run_id()?, Some(published.run_id.clone()));
+    let latest = store.latest_snapshot()?;
+    assert_eq!(
+        latest
+            .latest_attempt
+            .as_ref()
+            .map(|attempt| &attempt.attempt_id),
+        Some(&published.attempt_id)
+    );
+    assert_eq!(
+        latest.completed.as_ref().map(|(record, _)| &record.run_id),
+        Some(&published.run_id)
+    );
     Ok(())
 }
 
@@ -2121,20 +2128,22 @@ fn set_store_sequence_at_path(
     write.commit().map_err(crate::backend_error)
 }
 
-fn remove_pointer_for_test(store: &RepositoryStore, key: &str) -> Result<(), StoreError> {
+fn clear_latest_pointer_index_for_test(store: &RepositoryStore) -> Result<(), StoreError> {
     store.with_exclusive_lock(|guard| {
         let database = guard.open_database()?;
         let write = database.begin_write()?;
         {
             let mut pointers = write.open_table(POINTERS).map_err(crate::backend_error)?;
-            if pointers
-                .remove(key)
-                .map_err(crate::backend_error)?
-                .is_none()
-            {
-                return Err(StoreError::Integrity(format!(
-                    "test pointer {key} is missing"
-                )));
+            for key in ["latest-attempt", "latest-completed"] {
+                if pointers
+                    .remove(key)
+                    .map_err(crate::backend_error)?
+                    .is_none()
+                {
+                    return Err(StoreError::Integrity(format!(
+                        "test pointer {key} is missing"
+                    )));
+                }
             }
         }
         guard.commit(write)
