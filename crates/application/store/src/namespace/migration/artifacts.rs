@@ -132,7 +132,7 @@ pub(super) enum MigrationBindingState {
     Canonical,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct FoldedBinding {
     pub(super) binding: MigrationArtifactBinding,
     pub(super) state: MigrationBindingState,
@@ -489,6 +489,37 @@ fn write_candidate(
 
 pub(super) fn read_journal(guard: &NamespaceGuard) -> Result<Option<MigrationJournal>, StoreError> {
     read_journal_with_after_fold(guard, &mut || Ok(()))
+}
+
+pub(super) fn revalidate_journal(
+    guard: &NamespaceGuard,
+    expected: &MigrationJournal,
+) -> Result<MigrationJournal, StoreError> {
+    let observed = read_journal(guard)?.ok_or_else(|| {
+        StoreError::Integrity("migration journal disappeared during validation".to_owned())
+    })?;
+    let entries_match = observed.entries.len() == expected.entries.len()
+        && observed
+            .entries
+            .iter()
+            .zip(&expected.entries)
+            .all(|(observed, expected)| {
+                observed.name == expected.name
+                    && observed.entry.identity() == expected.entry.identity()
+                    && observed.payload_sha256 == expected.payload_sha256
+                    && observed.intent == expected.intent
+            });
+    if observed.root_authorization != expected.root_authorization
+        || observed.phase != expected.phase
+        || observed.source != expected.source
+        || observed.targets != expected.targets
+        || !entries_match
+    {
+        return Err(StoreError::Integrity(
+            "migration journal changed during validation".to_owned(),
+        ));
+    }
+    Ok(observed)
 }
 
 #[cfg(test)]

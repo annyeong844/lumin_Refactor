@@ -654,6 +654,117 @@ fn terminal_validation_reopens_the_target_after_external_reference_validation()
 }
 
 #[test]
+fn exchange_revalidates_every_bound_input_after_external_reference_validation()
+-> Result<(), Box<dyn std::error::Error>> {
+    for mutation in ["journal", "source", "target"] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        make_prior_store(&store, root.path())?;
+        let state = root.path().join(".lumin");
+        let canonical_path = state.join("lifecycle.store");
+        let canonical = HeldEntry::open(
+            &canonical_path,
+            EntryKind::RegularFile,
+            EntryAccess::ReadOnly,
+            true,
+            "migration source before final exchange validation",
+        )?;
+        let source_identity = canonical.identity().clone();
+        drop(canonical);
+
+        let mut reached = false;
+        let mut target_path = None;
+        let mut target_identity = None;
+        let result = store.namespace.with_migration_lock(|guard| {
+            migrate_with_hook(guard, &mut |point| {
+                if point == MigrationCrashPoint::BeforeExchange && !reached {
+                    let target = pending_target_path(&state)
+                        .map_err(|error| StoreError::Integrity(error.to_string()))?;
+                    let entry = HeldEntry::open(
+                        &target,
+                        EntryKind::RegularFile,
+                        EntryAccess::ReadOnly,
+                        true,
+                        "migration target at final exchange validation barrier",
+                    )?;
+                    target_identity = Some(entry.identity().clone());
+                    drop(entry);
+                    match mutation {
+                        "journal" => fs::write(journal_head_path(&state)?, b"{}\n")
+                            .map_err(crate::io_error)?,
+                        "source" => set_store_sequence_at_path(&canonical_path, "gate", 1)?,
+                        "target" => set_store_sequence_at_path(&target, "gate", 1)?,
+                        _ => unreachable!(),
+                    }
+                    target_path = Some(target);
+                    reached = true;
+                }
+                Ok(())
+            })
+        });
+        assert!(reached, "migration skipped the final exchange barrier");
+        assert!(
+            matches!(result, Err(StoreError::Integrity(_))),
+            "unexpected {mutation} mutation result: {result:?}"
+        );
+
+        let canonical = HeldEntry::open(
+            &canonical_path,
+            EntryKind::RegularFile,
+            EntryAccess::ReadOnly,
+            true,
+            "migration source after rejected exchange",
+        )?;
+        assert_eq!(canonical.identity(), &source_identity);
+        let target = HeldEntry::open(
+            target_path
+                .as_deref()
+                .ok_or("exchange barrier omitted target path")?,
+            EntryKind::RegularFile,
+            EntryAccess::ReadOnly,
+            true,
+            "migration target after rejected exchange",
+        )?;
+        assert_eq!(
+            Some(target.identity()),
+            target_identity.as_ref(),
+            "{mutation} mutation changed durable exchange placement"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn terminal_validation_rereads_the_journal_after_external_reference_validation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    make_prior_store(&store, root.path())?;
+    let state = root.path().join(".lumin");
+    let canonical = state.join("lifecycle.store");
+    let mut reached = false;
+    let mut canonical_before = None;
+    let result = store.namespace.with_migration_lock(|guard| {
+        migrate_with_hook(guard, &mut |point| {
+            if point == MigrationCrashPoint::TerminalSourceValidated && !reached {
+                canonical_before = Some(fs::read(&canonical).map_err(crate::io_error)?);
+                fs::write(journal_head_path(&state)?, b"{}\n").map_err(crate::io_error)?;
+                reached = true;
+            }
+            Ok(())
+        })
+    });
+    assert!(reached, "migration skipped the terminal validation barrier");
+    assert!(matches!(result, Err(StoreError::Integrity(_))));
+    assert_eq!(
+        fs::read(&canonical)?,
+        canonical_before.ok_or("terminal barrier omitted canonical target")?
+    );
+    assert_terminal_migration_paths(root.path())?;
+    Ok(())
+}
+
+#[test]
 fn migration_rejects_extra_store_header_rows() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     let store = open_store(root.path())?;
@@ -1130,6 +1241,23 @@ fn pending_target_path(
         }
     }
     Err("pending migration target binding was not journaled".into())
+}
+
+fn journal_head_path(state: &std::path::Path) -> Result<std::path::PathBuf, StoreError> {
+    let mut entries = fs::read_dir(state)
+        .map_err(crate::io_error)?
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name == "lifecycle-migration.json" || name.starts_with("lifecycle-migration.revision-")
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by_key(fs::DirEntry::file_name);
+    entries
+        .pop()
+        .map(|entry| entry.path())
+        .ok_or_else(|| StoreError::Integrity("migration journal is missing".to_owned()))
 }
 
 fn run_death_fixture(

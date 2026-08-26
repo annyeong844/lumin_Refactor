@@ -21,8 +21,8 @@ use self::artifacts::{
     MigrationArtifactBinding, MigrationBindingEvent, MigrationBindingState, MigrationJournal,
     MigrationPhase, MigrationRootAuthorization, append_revision, append_root_authorization,
     file_sha256, next_authorization_sequence, publish_root, read_journal, read_root_authorizations,
-    root_core_sha256, source_binding, source_retirement_name, target_binding, target_name,
-    validate_binding_at, validate_root_authority,
+    revalidate_journal, root_core_sha256, source_binding, source_retirement_name, target_binding,
+    target_name, validate_binding_at, validate_root_authority,
 };
 use self::snapshot::{
     CurrentStore, LegacyStore, create_unpublished_target, open_current_canonical, open_legacy_at,
@@ -637,7 +637,7 @@ fn exchange_store(
     let source = journal.source.binding.clone();
     let target = journal.target()?.binding.clone();
     validate_exchange_names(&source, &target)?;
-    exchange_or_recover(guard, &source, &target, hook)?;
+    exchange_or_recover(guard, &journal, hook)?;
     validate_binding_at(
         guard,
         &source,
@@ -674,10 +674,11 @@ fn exchange_store(
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn exchange_or_recover(
     guard: &NamespaceGuard,
-    source: &MigrationArtifactBinding,
-    target: &MigrationArtifactBinding,
+    journal: &MigrationJournal,
     hook: &mut impl FnMut(MigrationCrashPoint) -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
+    let source = &journal.source.binding;
+    let target = &journal.target()?.binding;
     let canonical = HeldEntry::open(
         &guard.state.state_dir.join("lifecycle.store"),
         EntryKind::RegularFile,
@@ -697,7 +698,22 @@ fn exchange_or_recover(
     let after = canonical.identity() == &target.physical_identity
         && private.identity() == &source.physical_identity;
     if before {
+        drop(canonical);
+        drop(private);
         hook(MigrationCrashPoint::BeforeExchange)?;
+        let canonical = open_binding_for_move(
+            guard,
+            source,
+            "lifecycle.store",
+            "migration source before exchange",
+        )?;
+        let private = open_binding_for_move(
+            guard,
+            target,
+            &target.pre_exchange_name,
+            "migration target before exchange",
+        )?;
+        revalidate_journal(guard, journal)?;
         canonical.validate_path(
             &guard.state.state_dir.join("lifecycle.store"),
             EntryKind::RegularFile,
@@ -730,10 +746,11 @@ fn exchange_or_recover(
 #[cfg(windows)]
 fn exchange_or_recover(
     guard: &NamespaceGuard,
-    source: &MigrationArtifactBinding,
-    target: &MigrationArtifactBinding,
+    journal: &MigrationJournal,
     hook: &mut impl FnMut(MigrationCrashPoint) -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
+    let source = &journal.source.binding;
+    let target = &journal.target()?.binding;
     let canonical_path = guard.state.state_dir.join("lifecycle.store");
     let source_path = guard.state.state_dir.join(&source.post_exchange_name);
     let target_path = guard.state.state_dir.join(&target.pre_exchange_name);
@@ -755,13 +772,27 @@ fn exchange_or_recover(
                     "Windows migration source-retirement placement is incoherent".to_owned(),
                 ));
             }
+            drop(canonical);
+            hook(MigrationCrashPoint::BeforeExchange)?;
+            if entry_exists(&source_path)? || !entry_exists(&target_path)? {
+                return Err(StoreError::Integrity(
+                    "Windows migration source-retirement placement changed before exchange"
+                        .to_owned(),
+                ));
+            }
+            let canonical = open_binding_for_move(
+                guard,
+                source,
+                "lifecycle.store",
+                "migration source before exchange",
+            )?;
             let target_entry = open_binding_for_move(
                 guard,
                 target,
                 &target.pre_exchange_name,
                 "migration target before exchange",
             )?;
-            hook(MigrationCrashPoint::BeforeExchange)?;
+            revalidate_journal(guard, journal)?;
             canonical.validate_path(
                 &canonical_path,
                 EntryKind::RegularFile,
@@ -806,17 +837,31 @@ fn exchange_or_recover(
                 "canonical-absent migration exchange omitted a bound object".to_owned(),
             ));
         }
-        validate_binding_at(
+        let source_entry = open_binding_for_move(
             guard,
             source,
             &source.post_exchange_name,
-            true,
             "retired migration source",
         )?;
         let target_entry = open_binding_for_move(
             guard,
             target,
             &target.pre_exchange_name,
+            "migration target before canonical move",
+        )?;
+        revalidate_journal(guard, journal)?;
+        source_entry.validate_path(
+            &source_path,
+            EntryKind::RegularFile,
+            EntryAccess::Move,
+            false,
+            "retired migration source",
+        )?;
+        target_entry.validate_path(
+            &target_path,
+            EntryKind::RegularFile,
+            EntryAccess::Move,
+            false,
             "migration target before canonical move",
         )?;
         move_entry_noreplace(
@@ -833,8 +878,7 @@ fn exchange_or_recover(
 #[cfg(not(any(all(target_os = "linux", target_arch = "x86_64"), windows)))]
 fn exchange_or_recover(
     _guard: &NamespaceGuard,
-    _source: &MigrationArtifactBinding,
-    _target: &MigrationArtifactBinding,
+    _journal: &MigrationJournal,
     _hook: &mut impl FnMut(MigrationCrashPoint) -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
     Err(StoreError::Integrity(
@@ -962,7 +1006,9 @@ fn validate_terminal(
             "retained migration source payload changed during terminal validation".to_owned(),
         ));
     }
-    revalidate_current_canonical(guard, &current)
+    let current = revalidate_current_canonical(guard, &current)?;
+    revalidate_journal(guard, journal)?;
+    Ok(current)
 }
 
 fn validate_nonterminal_envelope(
@@ -1368,7 +1414,6 @@ fn validate_exchange_names(
     Ok(())
 }
 
-#[cfg(windows)]
 fn open_binding_for_move(
     guard: &NamespaceGuard,
     binding: &MigrationArtifactBinding,

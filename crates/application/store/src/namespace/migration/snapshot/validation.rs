@@ -2354,7 +2354,10 @@ fn validate_run_catalog(snapshot: &LogicalStoreSnapshot) -> Result<(), StoreErro
             )));
         }
     }
-    Ok(())
+    let retained_insertions = u64::try_from(snapshot.run_catalog.len()).map_err(|_| {
+        StoreError::Integrity("run-catalog retained insertion count overflow".to_owned())
+    })?;
+    validate_allocator_sequence(snapshot, "run-catalog", retained_insertions)
 }
 
 fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreError> {

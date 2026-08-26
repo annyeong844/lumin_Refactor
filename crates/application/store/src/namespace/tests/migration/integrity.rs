@@ -1889,6 +1889,58 @@ fn migration_rejects_a_gate_sequence_below_retained_allocations()
 }
 
 #[test]
+fn migration_rejects_a_run_catalog_sequence_below_retained_insertions()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    for _ in 0..2 {
+        let mut attempt = store.begin_attempt()?;
+        store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+    }
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(SEQUENCES)?;
+        table.insert("run-catalog", 1)?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("run-catalog sequence regressed below retained allocation")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_an_exhausted_run_catalog_sequence() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    drop(open_store(root.path())?);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(SEQUENCES)?;
+        table.insert("run-catalog", u64::MAX)?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("run-catalog sequence is exhausted")
+    ));
+    Ok(())
+}
+
+#[test]
 fn migration_rejects_unfinished_pre_write_gate_id_collisions()
 -> Result<(), Box<dyn std::error::Error>> {
     for collision in ["retained-gate", "unfinished-opening"] {
