@@ -15,8 +15,9 @@ use std::fmt;
 use lumin_model::{
     BuildIdentity, CapabilityState, EvidenceId, FindingDisposition, FindingId, FindingRelationId,
     GateId, Limitation, LogicalSourceId, PayloadSnapshotId, PhysicalFileIdentity, RepoPath,
-    RepositoryId, ResolvedSourceUse, RunId, SelectedResolutionProfile, SourceKind,
-    SourceRoleClassification, SourceSpan, SymbolNamespace, append_length_prefixed, digest_hex,
+    RepositoryId, ResolutionOutcome, ResolvedSourceUse, RunId, SelectedResolutionProfile,
+    SourceKind, SourceRoleClassification, SourceSpan, SymbolNamespace, append_length_prefixed,
+    digest_hex,
 };
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
@@ -506,6 +507,11 @@ pub fn validate_run_evidence_identities(
             .iter()
             .map(|record| record.source_id.as_str()),
     )?;
+    let source_ids = evidence
+        .source_observations
+        .iter()
+        .map(|record| record.source_id.as_str())
+        .collect::<BTreeSet<_>>();
     require_unique(
         "resolution profiles",
         evidence
@@ -513,6 +519,22 @@ pub fn validate_run_evidence_identities(
             .iter()
             .map(|record| record.source_id.as_str()),
     )?;
+    for resolution in &evidence.resolutions {
+        if !source_ids.contains(resolution.source_use.importer.as_str()) {
+            return Err(RunEvidenceIdentityError::MissingReference {
+                collection: "resolution importers",
+                identity: resolution.source_use.importer.as_str().to_owned(),
+            });
+        }
+        if let ResolutionOutcome::Internal { target } = &resolution.outcome
+            && !source_ids.contains(target.as_str())
+        {
+            return Err(RunEvidenceIdentityError::MissingReference {
+                collection: "internal resolution targets",
+                identity: target.as_str().to_owned(),
+            });
+        }
+    }
     validate_analysis_metrics(evidence)?;
     require_unique(
         "findings",
@@ -522,6 +544,13 @@ pub fn validate_run_evidence_identities(
             .map(|record| record.finding_id.as_str()),
     )?;
     for finding in &evidence.findings {
+        if !finding.nested_collections_available
+            && (!finding.evidence.is_empty() || !finding.relations.is_empty())
+        {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "finding nested-collection availability",
+            });
+        }
         require_source_binding(
             "findings",
             finding.finding_id.as_str(),
@@ -555,6 +584,12 @@ pub fn validate_run_evidence_identities(
                 .map(|record| record.evidence_id.as_str()),
         )?;
         for record in &finding.evidence {
+            require_source_binding(
+                "finding evidence",
+                record.evidence_id.as_str(),
+                &record.source_id,
+                &record.path,
+            )?;
             let expected = EvidenceId::for_source_span(
                 &record.kind,
                 &record.source_id,
@@ -764,7 +799,10 @@ pub fn sort_findings(findings: &mut [FindingRecord]) {
 
 #[cfg(test)]
 mod tests {
-    use lumin_model::{FindingDisposition, SymbolNamespace};
+    use lumin_model::{
+        FindingDisposition, ImportKind, ModuleRequestKind, ResolutionOutcome, ResolvedSourceUse,
+        SourceUseFact, SymbolNamespace,
+    };
 
     use super::*;
 
@@ -942,6 +980,119 @@ mod tests {
             validate_run_evidence_identities(&evidence),
             Err(RunEvidenceIdentityError::SourceIdentityMismatch {
                 collection: "findings",
+                ..
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_finding_evidence_requires_its_source_path_identity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let owner_path = RepoPath::from_portable("src/owner.ts")?;
+        let forged_path = RepoPath::from_portable("src/forged.ts")?;
+        let mut finding = finding_fixture(&owner_path, "misplaced-evidence");
+        finding
+            .evidence
+            .first_mut()
+            .ok_or("finding fixture omitted evidence")?
+            .path = RepoPathProjection::from(&forged_path);
+        let evidence = run_evidence_fixture(vec![finding]);
+
+        assert!(matches!(
+            validate_run_evidence_identities(&evidence),
+            Err(RunEvidenceIdentityError::SourceIdentityMismatch {
+                collection: "finding evidence",
+                ..
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_nested_collections_require_an_available_projection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = RepoPath::from_portable("src/nested.ts")?;
+        let mut finding = finding_fixture(&path, "nested");
+        finding.nested_collections_available = false;
+        let evidence = run_evidence_fixture(vec![finding]);
+
+        assert!(matches!(
+            validate_run_evidence_identities(&evidence),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "finding nested-collection availability"
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_internal_resolutions_reference_the_source_inventory()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let importer_path = RepoPath::from_portable("src/importer.ts")?;
+        let target_path = RepoPath::from_portable("src/target.ts")?;
+        let missing_path = RepoPath::from_portable("src/missing.ts")?;
+        let importer = LogicalSourceId::from_path(&importer_path);
+        let target = LogicalSourceId::from_path(&target_path);
+        let missing = LogicalSourceId::from_path(&missing_path);
+        let mut evidence = run_evidence_fixture(Vec::new());
+        evidence.source_observations = vec![
+            SourceObservationRecord {
+                source_id: importer.clone(),
+                physical_identity: PhysicalFileIdentity::Unix {
+                    device: 1,
+                    inode: 1,
+                },
+                payload_snapshot_id: PayloadSnapshotId::from_string("importer-payload".to_owned()),
+            },
+            SourceObservationRecord {
+                source_id: target.clone(),
+                physical_identity: PhysicalFileIdentity::Unix {
+                    device: 1,
+                    inode: 2,
+                },
+                payload_snapshot_id: PayloadSnapshotId::from_string("target-payload".to_owned()),
+            },
+        ];
+        evidence.metrics = AnalysisMetrics {
+            logical_source_count: 2,
+            physical_source_count: 2,
+            payload_snapshot_count: 2,
+            js_parse_product_count: 0,
+        };
+        evidence.resolutions = vec![ResolvedSourceUse {
+            source_use: SourceUseFact {
+                importer: importer.clone(),
+                specifier: "./target".to_owned(),
+                imported_name: Some("target".to_owned()),
+                local_name: Some("target".to_owned()),
+                namespace: SymbolNamespace::Value,
+                kind: ImportKind::Named,
+                request_kind: ModuleRequestKind::StaticImport,
+                span: SourceSpan { start: 0, end: 1 },
+            },
+            outcome: ResolutionOutcome::Internal {
+                target: target.clone(),
+            },
+        }];
+        validate_run_evidence_identities(&evidence)?;
+
+        let mut missing_importer = evidence.clone();
+        missing_importer.resolutions[0].source_use.importer = missing.clone();
+        assert!(matches!(
+            validate_run_evidence_identities(&missing_importer),
+            Err(RunEvidenceIdentityError::MissingReference {
+                collection: "resolution importers",
+                ..
+            })
+        ));
+
+        let mut missing_target = evidence;
+        missing_target.resolutions[0].outcome = ResolutionOutcome::Internal { target: missing };
+        assert!(matches!(
+            validate_run_evidence_identities(&missing_target),
+            Err(RunEvidenceIdentityError::MissingReference {
+                collection: "internal resolution targets",
                 ..
             })
         ));

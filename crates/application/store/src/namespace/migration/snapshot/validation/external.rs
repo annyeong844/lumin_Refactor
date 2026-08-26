@@ -11,7 +11,7 @@ use lumin_model::{AttemptStatus, decode_native_path_component};
 use serde::de::DeserializeOwned;
 
 use crate::retention::{MigrationRunPayload, records::StoredRetentionPlan};
-use crate::{AttemptEnvelope, RunCatalogRecord, StoreError, io_error};
+use crate::{AttemptEnvelope, RunCatalogRecord, StoreError};
 
 use super::super::super::super::platform::{EntryAccess, EntryKind, HeldEntry};
 use super::super::super::super::{
@@ -190,18 +190,8 @@ fn validate_attempt_directories(
     guard: &NamespaceGuard,
 ) -> Result<BTreeMap<String, Option<AttemptEnvelope>>, StoreError> {
     let attempts_path = guard.managed_parent_path(ManagedStateParentKind::Attempts);
-    let mut names = Vec::new();
-    for entry in fs::read_dir(&attempts_path).map_err(io_error)? {
-        let entry = entry.map_err(io_error)?;
-        let name = entry
-            .file_name()
-            .into_string()
-            .map_err(|_| StoreError::Integrity("attempt directory name is not UTF-8".to_owned()))?;
-        if name != "namespace.anchor" {
-            names.push(name);
-        }
-    }
-    names.sort();
+    let attempts_parent = guard.managed_parent_entry(ManagedStateParentKind::Attempts)?;
+    let names = validate_attempt_parent_inventory(attempts_parent)?;
 
     let mut attempts = BTreeMap::new();
     let mut pending_attempts = BTreeSet::new();
@@ -262,6 +252,22 @@ fn validate_attempt_directories(
     )?;
     super::validate_allocator_sequence(snapshot, "attempt", maximum_sequence)?;
     Ok(attempts)
+}
+
+fn validate_attempt_parent_inventory(
+    attempts_parent: &HeldEntry,
+) -> Result<Vec<String>, StoreError> {
+    let mut names = Vec::new();
+    for native_name in attempts_parent.directory_names("attempts directory")? {
+        let name = native_name
+            .into_string()
+            .map_err(|_| StoreError::Integrity("attempt directory name is not UTF-8".to_owned()))?;
+        if name != "namespace.anchor" {
+            names.push(name);
+        }
+    }
+    names.sort();
+    Ok(names)
 }
 
 fn validate_attempt_directory_inventory(
@@ -1018,6 +1024,41 @@ mod tests {
             result,
             Err(StoreError::Integrity(message)) if message.contains("unowned-payload")
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn attempt_parent_inventory_reads_the_held_parent_across_a_namespace_swap()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let attempts_dir = root.path().join("attempts");
+        let moved_dir = root.path().join("held-attempts-directory");
+        fs::create_dir(&attempts_dir)?;
+        fs::write(attempts_dir.join("namespace.anchor"), b"anchor")?;
+        fs::create_dir(attempts_dir.join("attempt_000000000000000a"))?;
+        let held_dir = HeldEntry::open(
+            &attempts_dir,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            "test attempts directory",
+        )?;
+
+        fs::rename(&attempts_dir, &moved_dir)?;
+        fs::create_dir(&attempts_dir)?;
+        fs::write(attempts_dir.join("namespace.anchor"), b"anchor")?;
+        let names = validate_attempt_parent_inventory(&held_dir)?;
+        fs::remove_dir_all(&attempts_dir)?;
+        fs::rename(&moved_dir, &attempts_dir)?;
+        held_dir.validate_path(
+            &attempts_dir,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            "test attempts directory",
+        )?;
+
+        assert_eq!(names, ["attempt_000000000000000a"]);
         Ok(())
     }
 
