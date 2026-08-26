@@ -10,7 +10,7 @@ use lumin_evidence::{
 use lumin_model::{AttemptStatus, decode_native_path_component};
 use serde::de::DeserializeOwned;
 
-use crate::retention::records::StoredRetentionPlan;
+use crate::retention::{MigrationRunPayload, records::StoredRetentionPlan};
 use crate::{AttemptEnvelope, RunCatalogRecord, StoreError, io_error};
 
 use super::super::super::super::platform::{EntryAccess, EntryKind, HeldEntry};
@@ -38,9 +38,16 @@ pub(super) fn validate_external_references(
     let mut attempts = validate_attempt_directories(snapshot, guard)?;
     let moved_payloads = validate_retention_payloads(snapshot, guard)?;
     merge_retention_attempts(guard, &mut attempts, &moved_payloads.attempts)?;
+    validate_retention_runs(&attempts, &moved_payloads.runs)?;
     validate_latest_pointers(snapshot, guard, &attempts)?;
     for (key, bytes) in &snapshot.run_catalog {
-        validate_run(key, bytes, guard, &attempts, moved_payloads.runs.get(key))?;
+        validate_run(
+            key,
+            bytes,
+            guard,
+            &attempts,
+            moved_payloads.runs.get(key).map(|payload| &payload.path),
+        )?;
     }
     guard.validate_bound_entries()
 }
@@ -666,10 +673,40 @@ fn validate_run(
     moved_path: Option<&PathBuf>,
 ) -> Result<(), StoreError> {
     let record = parse_record::<RunCatalogRecord>("run-catalog", key, bytes)?;
+    validate_run_record(key, &record, attempts)?;
+
+    let canonical_run_dir = guard
+        .state
+        .state_dir
+        .join("runs")
+        .join(record.run_id.as_str());
+    let run_dir = moved_path.unwrap_or(&canonical_run_dir);
+    let held_dir = open_state_entry(guard, run_dir, EntryKind::Directory, false, "run directory")?;
+    crate::publication::validate_run_directory(run_dir, &held_dir, &record)
+}
+
+fn validate_retention_runs(
+    attempts: &BTreeMap<String, Option<AttemptEnvelope>>,
+    runs: &BTreeMap<String, MigrationRunPayload>,
+) -> Result<(), StoreError> {
+    for (key, payload) in runs {
+        validate_run_record(key, &payload.record, attempts)?;
+    }
+    Ok(())
+}
+
+fn validate_run_record(
+    key: &str,
+    record: &RunCatalogRecord,
+    attempts: &BTreeMap<String, Option<AttemptEnvelope>>,
+) -> Result<(), StoreError> {
     let run_sequence = canonical_sequence_id(record.run_id.as_str(), "run_", "run")?;
     let attempt_sequence =
         canonical_sequence_id(record.attempt_id.as_str(), "attempt_", "run attempt")?;
-    if run_sequence != record.sequence || attempt_sequence != record.sequence {
+    if key != record.run_id.as_str()
+        || run_sequence != record.sequence
+        || attempt_sequence != record.sequence
+    {
         return Err(StoreError::Integrity(format!(
             "run catalog entry {key} has incoherent sequence identities"
         )));
@@ -686,15 +723,7 @@ fn validate_run(
             "run catalog entry {key} is not owned by its completed attempt"
         )));
     }
-
-    let canonical_run_dir = guard
-        .state
-        .state_dir
-        .join("runs")
-        .join(record.run_id.as_str());
-    let run_dir = moved_path.unwrap_or(&canonical_run_dir);
-    let held_dir = open_state_entry(guard, run_dir, EntryKind::Directory, false, "run directory")?;
-    crate::publication::validate_run_directory(run_dir, &held_dir, &record)
+    Ok(())
 }
 
 fn validate_retention_payloads(

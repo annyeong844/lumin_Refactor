@@ -5,7 +5,8 @@ use lumin_evidence::{RetentionItemKind, RetentionPlanState};
 use crate::StoreError;
 use crate::namespace::records::ManagedStateParentKind;
 use crate::namespace::{EntryAccess, EntryKind, HeldEntry, NamespaceGuard};
-use crate::retention::MigrationPayloadPaths;
+use crate::retention::{MigrationPayloadPaths, MigrationRunPayload};
+use crate::{RunCatalogRecord, serialization_error};
 
 use super::super::super::records::StoredRetentionPlan;
 use super::{trash, validate_payload_content};
@@ -47,6 +48,16 @@ pub(super) fn validate(
                 "retention migration payload",
             )?;
             validate_payload_content(path, movement, &plan.record.items)?;
+            let run_payload = if movement.kind == RetentionItemKind::Run {
+                Some(authenticated_run_payload(
+                    path,
+                    &held,
+                    movement,
+                    &plan.record.items,
+                )?)
+            } else {
+                None
+            };
             held.validate_path(
                 path,
                 EntryKind::Directory,
@@ -61,9 +72,15 @@ pub(super) fn validate(
                         .insert(movement.record_id.clone(), path.to_path_buf());
                 }
                 RetentionItemKind::Run => {
-                    payloads
-                        .runs
-                        .insert(movement.record_id.clone(), path.to_path_buf());
+                    payloads.runs.insert(
+                        movement.record_id.clone(),
+                        run_payload.ok_or_else(|| {
+                            StoreError::Integrity(format!(
+                                "retention run {} omitted its authenticated payload",
+                                movement.record_id
+                            ))
+                        })?,
+                    );
                 }
                 _ => {}
             }
@@ -73,6 +90,36 @@ pub(super) fn validate(
         }
     }
     Ok(payloads)
+}
+
+fn authenticated_run_payload(
+    path: &Path,
+    held: &HeldEntry,
+    movement: &super::super::super::records::RetentionPayloadMove,
+    items: &[lumin_evidence::RetentionPlanItem],
+) -> Result<MigrationRunPayload, StoreError> {
+    let record: RunCatalogRecord = crate::publication::read_validated_run_directory(path, held)?;
+    if record.run_id.as_str() != movement.record_id {
+        return Err(StoreError::Integrity(format!(
+            "retention run {} disagrees with its directory envelope",
+            movement.record_id
+        )));
+    }
+    let item = items
+        .iter()
+        .find(|item| item.kind == RetentionItemKind::Run && item.record_id == movement.record_id)
+        .ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "retention run {} has no plan item",
+                movement.record_id
+            ))
+        })?;
+    let canonical = serde_json::to_vec(&record).map_err(serialization_error)?;
+    super::require_payload_hash(&canonical, item, "run catalog record")?;
+    Ok(MigrationRunPayload {
+        path: path.to_path_buf(),
+        record,
+    })
 }
 
 fn bound_trash_if_present(

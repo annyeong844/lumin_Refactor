@@ -74,6 +74,46 @@ fn migration_preserves_inflight_pruning_state() -> Result<(), Box<dyn std::error
 }
 
 #[test]
+fn migration_rejects_malformed_pruned_run_payload() -> Result<(), Box<dyn std::error::Error>> {
+    let root = TempDir::new()?;
+    let store = open_store(root.path())?;
+    let (run_id, plan_id, confirm_id) = admit_run_pruning(&store, "malformed-moved-run")?;
+    let run_path = store.with_exclusive_lock(|guard| {
+        let plan = confirmation::commit_pruned_without_reclaim(guard, &plan_id, &confirm_id)?;
+        let progress = plan.progress.as_ref().ok_or_else(|| {
+            StoreError::Integrity("pruned retention plan has no progress".to_owned())
+        })?;
+        let movement = progress
+            .moves
+            .iter()
+            .find(|movement| {
+                movement.kind == RetentionItemKind::Run && movement.record_id == run_id.as_str()
+            })
+            .ok_or_else(|| {
+                StoreError::Integrity("pruned retention plan has no run move".to_owned())
+            })?;
+        Ok(guard
+            .managed_child_path(
+                crate::namespace::records::ManagedStateParentKind::Trash,
+                plan_id.as_str(),
+            )?
+            .join(&movement.trash_child))
+    })?;
+    assert!(matches!(
+        store.lookup_run(&run_id)?,
+        RecordLookup::Pruned(_)
+    ));
+    std::fs::write(run_path.join("run.json"), b"{}")?;
+    store.rewrite_current_store_header_as_prior_for_test()?;
+
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Serialization(message)) if message.contains("missing field")
+    ));
+    Ok(())
+}
+
+#[test]
 fn reclaim_retries_after_payload_removal_completed_before_store_mark()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = TempDir::new()?;

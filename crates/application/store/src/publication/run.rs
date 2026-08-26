@@ -334,6 +334,16 @@ pub(super) fn validate_published(
     Ok(record)
 }
 
+pub(crate) fn read_validated_directory(
+    directory_path: &Path,
+    directory: &HeldEntry,
+) -> Result<RunCatalogRecord, StoreError> {
+    let record: RunCatalogRecord =
+        files::read_json(&directory_path.join("run.json"), directory, "run envelope")?;
+    validate_directory(directory_path, directory, &record)?;
+    Ok(record)
+}
+
 pub(crate) fn validate_directory(
     directory_path: &Path,
     directory: &HeldEntry,

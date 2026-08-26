@@ -34,10 +34,15 @@ pub(crate) const RUN_PINS: TableDefinition<&str, &[u8]> = TableDefinition::new("
 
 pub const RETENTION_PLAN_ITEMS_ORDERING: &str = "retention-plan-items.v1";
 
+pub(crate) struct MigrationRunPayload {
+    pub(crate) path: std::path::PathBuf,
+    pub(crate) record: crate::RunCatalogRecord,
+}
+
 #[derive(Default)]
 pub(crate) struct MigrationPayloadPaths {
     pub(crate) attempts: std::collections::BTreeMap<String, std::path::PathBuf>,
-    pub(crate) runs: std::collections::BTreeMap<String, std::path::PathBuf>,
+    pub(crate) runs: std::collections::BTreeMap<String, MigrationRunPayload>,
 }
 
 pub(crate) fn validate_migration_payloads(

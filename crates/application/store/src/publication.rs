@@ -19,7 +19,10 @@ use crate::{RepositoryStore, RunCatalogRecord, StoreError};
 
 pub(crate) use latest::{migration_pointer_ids, validate_attempt_envelope};
 pub use liveness::AttemptSession;
-pub(crate) use run::validate_directory as validate_run_directory;
+pub(crate) use run::{
+    read_validated_directory as read_validated_run_directory,
+    validate_directory as validate_run_directory,
+};
 
 pub type AttemptState = AttemptStatus;
 
