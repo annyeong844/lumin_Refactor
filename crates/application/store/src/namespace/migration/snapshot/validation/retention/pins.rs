@@ -10,6 +10,7 @@ pub(super) fn validate_pins(
     snapshot: &LogicalStoreSnapshot,
     operations: &BTreeMap<&str, RetentionOperationRecord>,
 ) -> Result<(), StoreError> {
+    let mut pins = BTreeMap::new();
     for (key, bytes) in &snapshot.run_pins {
         let pin = parse_record::<RunPinRecord>("run-pins", key, bytes)?;
         if pin.schema_version != "lumin-run-pin.v1" || pin.pin_id.as_str() != key {
@@ -19,6 +20,43 @@ pub(super) fn validate_pins(
         }
         validate_creation(key, &pin, operations)?;
         validate_removal(snapshot, key, &pin, operations)?;
+        pins.insert(key.as_str(), pin);
+    }
+    validate_operation_rows(&pins, operations)
+}
+
+fn validate_operation_rows(
+    pins: &BTreeMap<&str, RunPinRecord>,
+    operations: &BTreeMap<&str, RetentionOperationRecord>,
+) -> Result<(), StoreError> {
+    for operation in operations.values() {
+        let matches = match &operation.result {
+            RetentionOperationResult::PinCreated { pin } => {
+                pins.get(pin.pin_id.as_str()).is_some_and(|stored| {
+                    pin.created_operation_id == operation.operation_id
+                        && pin.removed_operation_id.is_none()
+                        && stored.schema_version == pin.schema_version
+                        && stored.pin_id == pin.pin_id
+                        && stored.run_id == pin.run_id
+                        && stored.reason == pin.reason
+                        && stored.created_unix_millis == pin.created_unix_millis
+                        && stored.created_operation_id == operation.operation_id
+                })
+            }
+            RetentionOperationResult::PinRemoved { pin_id, run_id } => {
+                pins.get(pin_id.as_str()).is_some_and(|stored| {
+                    stored.run_id == *run_id
+                        && stored.removed_operation_id.as_ref() == Some(&operation.operation_id)
+                })
+            }
+            RetentionOperationResult::Retention { .. } => true,
+        };
+        if !matches {
+            return Err(StoreError::Integrity(format!(
+                "retention operation {} has no matching durable pin row",
+                operation.operation_id.as_str()
+            )));
+        }
     }
     Ok(())
 }

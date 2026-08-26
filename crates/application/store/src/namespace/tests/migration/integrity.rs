@@ -23,7 +23,9 @@ use crate::gate::{
     GATES, OPERATIONS, TRANSITIONS, VALIDATION_RECEIPTS, records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY,
     transition_key,
 };
-use crate::retention::{RETENTION_OPERATIONS, RETENTION_PLANS, records::StoredRetentionPlan};
+use crate::retention::{
+    RETENTION_OPERATIONS, RETENTION_PLANS, RUN_PINS, records::StoredRetentionPlan,
+};
 use crate::{
     EVIDENCE, GateBaselineDraft, ObservationFinalization, PreWriteFinish, PreWriteStart,
     RUN_CATALOG, RepositoryStore, RunCatalogRecord, SEQUENCES, StoreError,
@@ -489,6 +491,99 @@ fn migration_rejects_untyped_or_unsupported_run_evidence() -> Result<(), Box<dyn
             rejected,
             "migration accepted {mutation} evidence corruption"
         );
+    }
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_unknown_private_record_members() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let mut attempt = store.begin_attempt()?;
+    let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(RUN_CATALOG)?;
+        let bytes = table
+            .get(published.run_id.as_str())?
+            .ok_or("run catalog entry is missing")?
+            .value()
+            .to_vec();
+        let mut record = serde_json::from_slice::<serde_json::Value>(&bytes)?;
+        record
+            .as_object_mut()
+            .ok_or("run catalog entry is not an object")?
+            .insert("opaqueMigrationControl".to_owned(), true.into());
+        let changed = serde_json::to_vec(&record)?;
+        table.insert(published.run_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+    make_prior_store(&store, root.path())?;
+
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("opaqueMigrationControl")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_requires_every_committed_pin_to_have_its_row() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let mut attempt = store.begin_attempt()?;
+    let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+    let operation_id = OperationId::from_string("migration-pin-row-owner".to_owned());
+    let pin = store.pin_run(&published.run_id, &operation_id, "migration pin row")?;
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(RUN_PINS)?;
+        table.remove(pin.pin_id.as_str())?;
+    }
+    write.commit()?;
+    drop(database);
+    make_prior_store(&store, root.path())?;
+
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("has no matching durable pin row")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_validates_every_direct_run_child_and_its_allocator_floor()
+-> Result<(), Box<dyn std::error::Error>> {
+    for case in ["non-directory", "allocator-floor"] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        let runs = root.path().join(".lumin/runs");
+        if case == "non-directory" {
+            fs::write(runs.join("foreign-run-child"), b"foreign")?;
+        } else {
+            fs::create_dir(runs.join("run_000000000000000a"))?;
+        }
+        make_prior_store(&store, root.path())?;
+
+        let result = store.migrate_lifecycle_store();
+        let rejected = match case {
+            "non-directory" => matches!(result, Err(StoreError::Integrity(_))),
+            "allocator-floor" => matches!(
+                result,
+                Err(StoreError::Integrity(message))
+                    if message.contains("attempt sequence regressed below retained allocation")
+            ),
+            _ => unreachable!(),
+        };
+        assert!(rejected, "migration accepted {case} run child");
     }
     Ok(())
 }

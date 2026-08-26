@@ -21,7 +21,7 @@ use lumin_evidence::{
     seal_analysis_snapshot,
 };
 use lumin_model::{ObservationBinding, RepoPath, SealedGateObservation};
-use serde::de::DeserializeOwned;
+use serde::{Serialize, de::DeserializeOwned};
 
 use crate::gate::{
     records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY, transition_key, validate_reservation_binding_set,
@@ -30,7 +30,7 @@ use crate::retention::records::{StoredRetentionPlan, StoredTombstone};
 use crate::{RunCatalogRecord, StoreError};
 
 use super::super::super::NamespaceGuard;
-use super::LogicalStoreSnapshot;
+use super::{LogicalStoreSnapshot, decode_closed_json};
 
 pub(super) fn validate_external_references(
     snapshot: &LogicalStoreSnapshot,
@@ -3152,12 +3152,12 @@ fn validate_pointers(snapshot: &LogicalStoreSnapshot) -> Result<(), StoreError> 
     Ok(())
 }
 
-fn parse_record<T: DeserializeOwned>(
+fn parse_record<T: DeserializeOwned + Serialize>(
     table: &str,
     key: &str,
     bytes: &[u8],
 ) -> Result<T, StoreError> {
-    serde_json::from_slice(bytes).map_err(|error| {
+    decode_closed_json(bytes).map_err(|error| {
         StoreError::Integrity(format!("{table} record {key} is malformed: {error}"))
     })
 }

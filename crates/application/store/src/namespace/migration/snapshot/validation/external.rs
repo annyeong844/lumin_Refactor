@@ -39,6 +39,7 @@ pub(super) fn validate_external_references(
     let moved_payloads = validate_retention_payloads(snapshot, guard)?;
     merge_retention_attempts(guard, &mut attempts, &moved_payloads.attempts)?;
     validate_retention_runs(&attempts, &moved_payloads.runs)?;
+    validate_run_children(snapshot, guard)?;
     validate_latest_pointers(snapshot, guard, &attempts)?;
     for (key, bytes) in &snapshot.run_catalog {
         validate_run(
@@ -50,6 +51,53 @@ pub(super) fn validate_external_references(
         )?;
     }
     guard.validate_bound_entries()
+}
+
+fn validate_run_children(
+    snapshot: &LogicalStoreSnapshot,
+    guard: &NamespaceGuard,
+) -> Result<(), StoreError> {
+    let runs_path = guard.managed_parent_path(ManagedStateParentKind::Runs);
+    let mut names = Vec::new();
+    for entry in fs::read_dir(&runs_path).map_err(io_error)? {
+        let entry = entry.map_err(io_error)?;
+        let name = entry.file_name().into_string().map_err(|_| {
+            StoreError::Integrity("runs contains a non-UTF-8 child name".to_owned())
+        })?;
+        if name != "namespace.anchor" {
+            names.push(name);
+        }
+    }
+    names.sort();
+
+    let mut maximum_sequence = 0_u64;
+    for name in names {
+        if name.starts_with("run_") {
+            maximum_sequence = maximum_sequence.max(canonical_sequence_id(
+                &name,
+                "run_",
+                "retained run directory",
+            )?);
+        }
+        if snapshot.run_catalog.contains_key(&name) {
+            continue;
+        }
+        let path = runs_path.join(&name);
+        let held = guard.open_managed_child_directory(
+            ManagedStateParentKind::Runs,
+            &name,
+            "orphan run directory",
+        )?;
+        crate::retention::validate_migration_orphan_payload(&path)?;
+        held.validate_path(
+            &path,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            "orphan run directory",
+        )?;
+    }
+    super::validate_allocator_sequence(snapshot, "attempt", maximum_sequence)
 }
 
 fn merge_retention_attempts(

@@ -52,6 +52,10 @@ pub(crate) fn validate_migration_payloads(
     confirmation::payload::validate_migration_state(guard, plan)
 }
 
+pub(crate) fn validate_migration_orphan_payload(path: &std::path::Path) -> Result<(), StoreError> {
+    planning::orphan_payload_identity(path).map(|_| ())
+}
+
 pub(crate) fn ensure_publication_target_available(
     guard: &NamespaceGuard,
     attempt_id: &AttemptId,
