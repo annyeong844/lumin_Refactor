@@ -23,6 +23,13 @@ use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 pub const DEAD_EXPORT_RULE_ID: &str = "dead-code/zero-exact-fan-in.v1";
 pub const DEAD_CODE_CAPABILITY_ID: &str = "dead-code.v1";
 pub const DEPENDENCY_OWNERSHIP_CAPABILITY_ID: &str = "inventory/dependency-ownership.v1";
+pub const RUN_EVIDENCE_CAPABILITY_IDS: [&str; 5] = [
+    DEAD_CODE_CAPABILITY_ID,
+    DEPENDENCY_OWNERSHIP_CAPABILITY_ID,
+    "sfc/astro.v1",
+    "sfc/svelte.v1",
+    "sfc/vue.v1",
+];
 pub const FINDINGS_ORDERING_ID: &str = "findings.v1";
 pub const EVIDENCE_ORDERING_ID: &str = "evidence.v1";
 pub const RELATIONS_ORDERING_ID: &str = "relations.v1";
@@ -413,6 +420,14 @@ pub enum RunEvidenceIdentityError {
         collection: &'static str,
         identity: String,
     },
+    InventoryMismatch {
+        collection: &'static str,
+    },
+    MetricMismatch {
+        metric: &'static str,
+        expected: usize,
+        observed: usize,
+    },
 }
 
 impl fmt::Display for RunEvidenceIdentityError {
@@ -442,6 +457,17 @@ impl fmt::Display for RunEvidenceIdentityError {
             } => write!(
                 formatter,
                 "referenced identity is absent from {collection}: {identity}"
+            ),
+            Self::InventoryMismatch { collection } => {
+                write!(formatter, "persisted inventory disagrees with {collection}")
+            }
+            Self::MetricMismatch {
+                metric,
+                expected,
+                observed,
+            } => write!(
+                formatter,
+                "persisted analysis metric {metric} is {observed}, expected {expected}"
             ),
         }
     }
@@ -487,6 +513,7 @@ pub fn validate_run_evidence_identities(
             .iter()
             .map(|record| record.source_id.as_str()),
     )?;
+    validate_analysis_metrics(evidence)?;
     require_unique(
         "findings",
         evidence
@@ -495,6 +522,12 @@ pub fn validate_run_evidence_identities(
             .map(|record| record.finding_id.as_str()),
     )?;
     for finding in &evidence.findings {
+        require_source_binding(
+            "findings",
+            finding.finding_id.as_str(),
+            &finding.source_id,
+            &finding.path,
+        )?;
         let expected = FindingId::for_export(
             &finding.rule_id,
             &finding.source_id,
@@ -575,6 +608,76 @@ pub fn validate_run_evidence_identities(
             }
         }
     }
+    let observed_capability_ids = evidence
+        .capabilities
+        .iter()
+        .map(|record| record.capability_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let expected_capability_ids = RUN_EVIDENCE_CAPABILITY_IDS
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    if observed_capability_ids != expected_capability_ids {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "the compiled capability registry",
+        });
+    }
+    Ok(())
+}
+
+fn validate_analysis_metrics(evidence: &RunEvidence) -> Result<(), RunEvidenceIdentityError> {
+    let expected = [
+        (
+            "logicalSourceCount",
+            evidence.source_observations.len(),
+            evidence.metrics.logical_source_count,
+        ),
+        (
+            "physicalSourceCount",
+            evidence
+                .source_observations
+                .iter()
+                .map(|record| &record.physical_identity)
+                .collect::<BTreeSet<_>>()
+                .len(),
+            evidence.metrics.physical_source_count,
+        ),
+        (
+            "payloadSnapshotCount",
+            evidence
+                .source_observations
+                .iter()
+                .map(|record| &record.payload_snapshot_id)
+                .collect::<BTreeSet<_>>()
+                .len(),
+            evidence.metrics.payload_snapshot_count,
+        ),
+    ];
+    for (metric, expected, observed) in expected {
+        if observed != expected {
+            return Err(RunEvidenceIdentityError::MetricMismatch {
+                metric,
+                expected,
+                observed,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn require_source_binding(
+    collection: &'static str,
+    identity: &str,
+    source_id: &LogicalSourceId,
+    path: &RepoPathProjection,
+) -> Result<(), RunEvidenceIdentityError> {
+    let projected = RepoPath::from_canonical_bytes(&path.canonical)
+        .map(|path| LogicalSourceId::from_path(&path));
+    if !projected.is_ok_and(|projected| projected == *source_id) {
+        return Err(RunEvidenceIdentityError::SourceIdentityMismatch {
+            collection,
+            identity: identity.to_owned(),
+        });
+    }
     Ok(())
 }
 
@@ -601,14 +704,7 @@ fn require_source_records<'a>(
     let mut source_ids = BTreeSet::new();
     let mut paths = BTreeSet::new();
     for (identity, source_id, path) in records {
-        let projected = RepoPath::from_canonical_bytes(&path.canonical)
-            .map(|path| LogicalSourceId::from_path(&path));
-        if !projected.is_ok_and(|projected| projected == *source_id) {
-            return Err(RunEvidenceIdentityError::SourceIdentityMismatch {
-                collection,
-                identity: identity.to_owned(),
-            });
-        }
+        require_source_binding(collection, identity, source_id, path)?;
         if !source_ids.insert(identity) || !paths.insert(path.canonical.as_slice()) {
             return Err(RunEvidenceIdentityError::Duplicate {
                 collection,
@@ -716,10 +812,13 @@ mod tests {
     fn run_evidence_fixture(findings: Vec<FindingRecord>) -> RunEvidence {
         RunEvidence {
             schema_version: RUN_EVIDENCE_SCHEMA_VERSION.to_owned(),
-            capabilities: vec![CapabilityRecord {
-                capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
-                state: CapabilityState::Complete,
-            }],
+            capabilities: RUN_EVIDENCE_CAPABILITY_IDS
+                .into_iter()
+                .map(|capability_id| CapabilityRecord {
+                    capability_id: capability_id.to_owned(),
+                    state: CapabilityState::Complete,
+                })
+                .collect(),
             resolution_profiles: Vec::new(),
             source_classifications: Vec::new(),
             source_contexts: Vec::new(),
@@ -827,6 +926,119 @@ mod tests {
                 ..
             })
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_findings_require_their_source_path_identity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let owner_path = RepoPath::from_portable("src/owner.ts")?;
+        let forged_path = RepoPath::from_portable("src/forged.ts")?;
+        let mut finding = finding_fixture(&owner_path, "misplaced");
+        finding.path = RepoPathProjection::from(&forged_path);
+        let evidence = run_evidence_fixture(vec![finding]);
+
+        assert!(matches!(
+            validate_run_evidence_identities(&evidence),
+            Err(RunEvidenceIdentityError::SourceIdentityMismatch {
+                collection: "findings",
+                ..
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_capabilities_match_the_complete_compiled_inventory() {
+        let canonical = run_evidence_fixture(Vec::new());
+        assert!(validate_run_evidence_identities(&canonical).is_ok());
+
+        let mut missing = canonical.clone();
+        missing.capabilities.pop();
+        assert!(matches!(
+            validate_run_evidence_identities(&missing),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "the compiled capability registry"
+            })
+        ));
+
+        let mut opaque = canonical;
+        opaque.capabilities.push(CapabilityRecord {
+            capability_id: "opaque.v1".to_owned(),
+            state: CapabilityState::Complete,
+        });
+        assert!(matches!(
+            validate_run_evidence_identities(&opaque),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "the compiled capability registry"
+            })
+        ));
+    }
+
+    #[test]
+    fn persisted_metrics_are_derived_from_source_observations()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let paths = [
+            RepoPath::from_portable("src/one.ts")?,
+            RepoPath::from_portable("src/two.ts")?,
+            RepoPath::from_portable("src/three.ts")?,
+        ];
+        let physical_one = PhysicalFileIdentity::Unix {
+            device: 1,
+            inode: 1,
+        };
+        let physical_two = PhysicalFileIdentity::Unix {
+            device: 1,
+            inode: 2,
+        };
+        let payload_one = PayloadSnapshotId::from_string("payload-one".to_owned());
+        let payload_two = PayloadSnapshotId::from_string("payload-two".to_owned());
+        let mut evidence = run_evidence_fixture(Vec::new());
+        evidence.source_observations = vec![
+            SourceObservationRecord {
+                source_id: LogicalSourceId::from_path(&paths[0]),
+                physical_identity: physical_one.clone(),
+                payload_snapshot_id: payload_one.clone(),
+            },
+            SourceObservationRecord {
+                source_id: LogicalSourceId::from_path(&paths[1]),
+                physical_identity: physical_one,
+                payload_snapshot_id: payload_one,
+            },
+            SourceObservationRecord {
+                source_id: LogicalSourceId::from_path(&paths[2]),
+                physical_identity: physical_two,
+                payload_snapshot_id: payload_two,
+            },
+        ];
+        evidence.metrics = AnalysisMetrics {
+            logical_source_count: 3,
+            physical_source_count: 2,
+            payload_snapshot_count: 2,
+            js_parse_product_count: 7,
+        };
+        validate_run_evidence_identities(&evidence)?;
+
+        for metric in [
+            "logicalSourceCount",
+            "physicalSourceCount",
+            "payloadSnapshotCount",
+        ] {
+            let mut forged = evidence.clone();
+            match metric {
+                "logicalSourceCount" => forged.metrics.logical_source_count += 1,
+                "physicalSourceCount" => forged.metrics.physical_source_count += 1,
+                "payloadSnapshotCount" => forged.metrics.payload_snapshot_count += 1,
+                _ => unreachable!(),
+            }
+            assert!(matches!(
+                validate_run_evidence_identities(&forged),
+                Err(RunEvidenceIdentityError::MetricMismatch {
+                    metric: observed,
+                    ..
+                }) if observed == metric
+            ));
+        }
         Ok(())
     }
 

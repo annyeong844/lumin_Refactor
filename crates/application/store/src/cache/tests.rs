@@ -230,6 +230,7 @@ fn unfinished_cleanup_rejects_exhausted_interruption_counts()
 
     let mut pending = interrupted;
     pending.status = CacheCleanupOperationStatus::Pending;
+    pending.interruption_count = u64::MAX - 1;
     pending.recovery_reservation = None;
     pending.execution_lease = Some(CacheCleanupExecutionLease {
         execution_attempt_id: "00000000000000000000000000000001".to_owned(),

@@ -105,17 +105,8 @@ fn validate_run_children(
     guard: &NamespaceGuard,
 ) -> Result<(), StoreError> {
     let runs_path = guard.managed_parent_path(ManagedStateParentKind::Runs);
-    let mut names = Vec::new();
-    for entry in fs::read_dir(&runs_path).map_err(io_error)? {
-        let entry = entry.map_err(io_error)?;
-        let name = entry.file_name().into_string().map_err(|_| {
-            StoreError::Integrity("runs contains a non-UTF-8 child name".to_owned())
-        })?;
-        if name != "namespace.anchor" {
-            names.push(name);
-        }
-    }
-    names.sort();
+    let runs_parent = guard.managed_parent_entry(ManagedStateParentKind::Runs)?;
+    let names = validate_run_parent_inventory(runs_parent)?;
 
     let mut maximum_sequence = 0_u64;
     for name in names {
@@ -149,6 +140,20 @@ fn validate_run_children(
         )?;
     }
     super::validate_allocator_sequence(snapshot, "attempt", maximum_sequence)
+}
+
+fn validate_run_parent_inventory(runs_parent: &HeldEntry) -> Result<Vec<String>, StoreError> {
+    let mut names = Vec::new();
+    for native_name in runs_parent.directory_names("runs directory")? {
+        let name = native_name.into_string().map_err(|_| {
+            StoreError::Integrity("runs contains a non-UTF-8 child name".to_owned())
+        })?;
+        if name != "namespace.anchor" {
+            names.push(name);
+        }
+    }
+    names.sort();
+    Ok(names)
 }
 
 fn merge_retention_attempts(
@@ -1013,6 +1018,41 @@ mod tests {
             result,
             Err(StoreError::Integrity(message)) if message.contains("unowned-payload")
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn run_inventory_reads_the_held_parent_across_a_namespace_swap()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let runs_dir = root.path().join("runs");
+        let moved_dir = root.path().join("held-runs-directory");
+        fs::create_dir(&runs_dir)?;
+        fs::write(runs_dir.join("namespace.anchor"), b"anchor")?;
+        fs::create_dir(runs_dir.join("unowned-run"))?;
+        let held_dir = HeldEntry::open(
+            &runs_dir,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            "test runs directory",
+        )?;
+
+        fs::rename(&runs_dir, &moved_dir)?;
+        fs::create_dir(&runs_dir)?;
+        fs::write(runs_dir.join("namespace.anchor"), b"anchor")?;
+        let names = validate_run_parent_inventory(&held_dir)?;
+        fs::remove_dir_all(&runs_dir)?;
+        fs::rename(&moved_dir, &runs_dir)?;
+        held_dir.validate_path(
+            &runs_dir,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            "test runs directory",
+        )?;
+
+        assert_eq!(names, ["unowned-run"]);
         Ok(())
     }
 }

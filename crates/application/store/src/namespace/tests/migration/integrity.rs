@@ -448,6 +448,9 @@ fn migration_rejects_untyped_or_unsupported_run_evidence() -> Result<(), Box<dyn
         "row",
         "schema",
         "duplicate-capability",
+        "missing-capability",
+        "opaque-capability",
+        "metrics",
         "extra-row",
         "extra-table",
         "opaque-top-level",
@@ -468,6 +471,9 @@ fn migration_rejects_untyped_or_unsupported_run_evidence() -> Result<(), Box<dyn
             "row"
             | "schema"
             | "duplicate-capability"
+            | "missing-capability"
+            | "opaque-capability"
+            | "metrics"
             | "extra-row"
             | "extra-table"
             | "opaque-top-level"
@@ -499,6 +505,27 @@ fn migration_rejects_untyped_or_unsupported_run_evidence() -> Result<(), Box<dyn
                                     .ok_or("run evidence omitted its capability")?
                                     .clone(),
                             );
+                            let bytes = serde_json::to_vec(&changed)?;
+                            table.insert("run", bytes.as_slice())?;
+                        }
+                        "missing-capability" => {
+                            let mut changed = evidence();
+                            changed.capabilities.pop();
+                            let bytes = serde_json::to_vec(&changed)?;
+                            table.insert("run", bytes.as_slice())?;
+                        }
+                        "opaque-capability" => {
+                            let mut changed = evidence();
+                            changed.capabilities.push(lumin_evidence::CapabilityRecord {
+                                capability_id: "opaque.v1".to_owned(),
+                                state: CapabilityState::Complete,
+                            });
+                            let bytes = serde_json::to_vec(&changed)?;
+                            table.insert("run", bytes.as_slice())?;
+                        }
+                        "metrics" => {
+                            let mut changed = evidence();
+                            changed.metrics.logical_source_count = 1;
                             let bytes = serde_json::to_vec(&changed)?;
                             table.insert("run", bytes.as_slice())?;
                         }
@@ -546,6 +573,16 @@ fn migration_rejects_untyped_or_unsupported_run_evidence() -> Result<(), Box<dyn
                 result,
                 Err(StoreError::Integrity(message))
                     if message.contains("duplicate identity in capabilities")
+            ),
+            "missing-capability" | "opaque-capability" => matches!(
+                result,
+                Err(StoreError::Integrity(message))
+                    if message.contains("persisted inventory disagrees")
+            ),
+            "metrics" => matches!(
+                result,
+                Err(StoreError::Integrity(message))
+                    if message.contains("persisted analysis metric logicalSourceCount")
             ),
             "extra-row" | "extra-table" | "opaque-top-level" | "opaque-nested" => {
                 matches!(result, Err(StoreError::Integrity(_)))

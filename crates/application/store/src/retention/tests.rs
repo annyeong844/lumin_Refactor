@@ -3,9 +3,9 @@ mod gates;
 mod pins;
 
 use lumin_evidence::{
-    CapabilityRecord, RUN_EVIDENCE_SCHEMA_VERSION, RecordLookup, RetentionExclusionReason,
-    RetentionItemKind, RetentionMutationResult, RetentionPlanScope, RetentionPlanState,
-    RunEvidence,
+    CapabilityRecord, RUN_EVIDENCE_CAPABILITY_IDS, RUN_EVIDENCE_SCHEMA_VERSION, RecordLookup,
+    RetentionExclusionReason, RetentionItemKind, RetentionMutationResult, RetentionPlanScope,
+    RetentionPlanState, RunEvidence,
 };
 use lumin_model::{CapabilityState, OperationId, RetentionPlanId, RunId};
 use tempfile::TempDir;
@@ -355,10 +355,13 @@ fn publish(store: &crate::RepositoryStore) -> Result<crate::PublishedRun, crate:
 fn evidence() -> RunEvidence {
     RunEvidence {
         schema_version: RUN_EVIDENCE_SCHEMA_VERSION.to_owned(),
-        capabilities: vec![CapabilityRecord {
-            capability_id: "dead-code.v1".to_owned(),
-            state: CapabilityState::Complete,
-        }],
+        capabilities: RUN_EVIDENCE_CAPABILITY_IDS
+            .into_iter()
+            .map(|capability_id| CapabilityRecord {
+                capability_id: capability_id.to_owned(),
+                state: CapabilityState::Complete,
+            })
+            .collect(),
         resolution_profiles: Vec::new(),
         source_classifications: Vec::new(),
         source_contexts: Vec::new(),

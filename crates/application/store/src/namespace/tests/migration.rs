@@ -5,16 +5,16 @@ use std::fs;
 use lumin_evidence::{
     ActualWriteSet, CacheCleanupExecutionLease, CacheCleanupOperationRecord,
     CacheCleanupOperationStatus, CacheEvictionAuthorization, CapabilityRecord,
-    DEAD_CODE_CAPABILITY_ID, DeclaredPathUnsupportedReason, GateAnalysisOptions,
-    GateBaselineObservationInput, GateCloseObservationInput, GateObservationBinding, GateSignal,
-    PathPrefixIdentity, PostWriteFinalValidationEvidence, PreWriteDeclaredPathInspection,
-    PreWriteFinalValidationEvidence, RepoPathProjection, RetentionPlanScope, RunEvidence,
-    SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, SemanticInputRecord, SemanticInputState,
-    SemanticReadReservationBinding, UnsealedGateObservationInputs, WriteLease, WriteLeaseKind,
-    apply_worktree_transition, derive_gate_baseline_observation_id,
-    derive_gate_close_observation_id, derive_protected_semantic_inputs,
-    derive_unsealed_gate_observation_binding, gate_policy, post_write_request_digest,
-    pre_write_request_digest, seal_analysis_snapshot,
+    DeclaredPathUnsupportedReason, GateAnalysisOptions, GateBaselineObservationInput,
+    GateCloseObservationInput, GateObservationBinding, GateSignal, PathPrefixIdentity,
+    PostWriteFinalValidationEvidence, PreWriteDeclaredPathInspection,
+    PreWriteFinalValidationEvidence, RUN_EVIDENCE_CAPABILITY_IDS, RepoPathProjection,
+    RetentionPlanScope, RunEvidence, SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID,
+    SemanticInputRecord, SemanticInputState, SemanticReadReservationBinding,
+    UnsealedGateObservationInputs, WriteLease, WriteLeaseKind, apply_worktree_transition,
+    derive_gate_baseline_observation_id, derive_gate_close_observation_id,
+    derive_protected_semantic_inputs, derive_unsealed_gate_observation_binding, gate_policy,
+    post_write_request_digest, pre_write_request_digest, seal_analysis_snapshot,
 };
 use lumin_model::{
     AttemptId, AttemptStatus, CacheEvictionAuthorizationSetId, CapabilityState, GateId,
@@ -2309,10 +2309,13 @@ fn next_generation() -> Result<StoreGeneration, Box<dyn std::error::Error>> {
 fn evidence() -> RunEvidence {
     RunEvidence {
         schema_version: "lumin-evidence.v1".to_owned(),
-        capabilities: vec![CapabilityRecord {
-            capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
-            state: CapabilityState::Complete,
-        }],
+        capabilities: RUN_EVIDENCE_CAPABILITY_IDS
+            .into_iter()
+            .map(|capability_id| CapabilityRecord {
+                capability_id: capability_id.to_owned(),
+                state: CapabilityState::Complete,
+            })
+            .collect(),
         resolution_profiles: Vec::new(),
         source_classifications: Vec::new(),
         source_contexts: Vec::new(),

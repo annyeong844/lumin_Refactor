@@ -486,6 +486,7 @@ impl RepositoryStore {
                 operation.status = CacheCleanupOperationStatus::Pending;
                 operation.execution_lease = Some(new_execution_lease(session)?);
                 operation.recovery_reservation = None;
+                validate_operation_shape(&operation)?;
                 (operation, true)
             } else {
                 let existing = validate_authenticated_quarantine(guard, &write)?;
@@ -1092,7 +1093,7 @@ pub(crate) fn validate_operation_shape(
     let plan_valid = operation.plan_initialized
         || (operation.authorization_keys.is_empty() && operation.validated_count == 0);
     let interruption_count_valid = match operation.status {
-        CacheCleanupOperationStatus::Pending => operation.interruption_count < u64::MAX,
+        CacheCleanupOperationStatus::Pending => operation.interruption_count < u64::MAX - 1,
         CacheCleanupOperationStatus::Interrupted => {
             (1..u64::MAX).contains(&operation.interruption_count)
         }
