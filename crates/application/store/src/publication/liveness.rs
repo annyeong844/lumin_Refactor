@@ -117,6 +117,14 @@ pub(super) fn validate_migration_snapshot(
     records::validate_migration_snapshot(rows)
 }
 
+pub(super) fn validate_migration_attempt_links(
+    rows: &std::collections::BTreeMap<String, Vec<u8>>,
+    attempts: &std::collections::BTreeMap<String, Option<AttemptEnvelope>>,
+    pending_attempts: &std::collections::BTreeSet<String>,
+) -> Result<(), StoreError> {
+    records::validate_migration_attempt_links(rows, attempts, pending_attempts)
+}
+
 pub(super) fn validate_snapshot_locks(
     rows: &std::collections::BTreeMap<String, Vec<u8>>,
     guard: &NamespaceGuard,

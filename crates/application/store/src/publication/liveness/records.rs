@@ -1,5 +1,5 @@
 use fs2::FileExt;
-use lumin_model::{AttemptId, PhysicalFileIdentity};
+use lumin_model::{AttemptId, AttemptStatus, PhysicalFileIdentity};
 use redb::{ReadableTable, TableError};
 use serde::{Deserialize, Serialize};
 
@@ -8,6 +8,8 @@ use crate::{
     ATTEMPT_LEASES, SEQUENCES, StoreError, StoreGeneration, backend_error, io_error,
     serialization_error,
 };
+
+use super::super::AttemptEnvelope;
 
 const LEASE_SCHEMA: &str = "lumin-attempt-lease.v1";
 const LOCK_SCHEMA: &str = "lumin-attempt-lock.v1";
@@ -251,6 +253,70 @@ pub(super) fn validate_migration_snapshot(
             return Err(StoreError::Integrity(format!(
                 "lifecycle migration cannot copy an incomplete attempt allocation: {}",
                 attempt_id.as_str()
+            )));
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn validate_migration_attempt_links(
+    rows: &std::collections::BTreeMap<String, Vec<u8>>,
+    attempts: &std::collections::BTreeMap<String, Option<AttemptEnvelope>>,
+    pending_attempts: &std::collections::BTreeSet<String>,
+) -> Result<(), StoreError> {
+    let mut leases = std::collections::BTreeMap::new();
+    for (key, bytes) in rows {
+        let attempt_id = AttemptId::from_string(key.clone());
+        leases.insert(key.as_str(), parse_record(bytes, Some(&attempt_id))?);
+    }
+
+    for (attempt_id, envelope) in attempts {
+        let lease = leases.get(attempt_id.as_str());
+        match (envelope.as_ref(), lease) {
+            (Some(envelope), Some(lease)) => {
+                if envelope.attempt_id != lease.attempt_id || envelope.sequence != lease.sequence {
+                    return Err(StoreError::Integrity(format!(
+                        "retained attempt envelope disagrees with its lease: {attempt_id}"
+                    )));
+                }
+                if envelope.state == AttemptStatus::Running
+                    && lease.state != AttemptLeaseState::Active
+                {
+                    return Err(StoreError::Integrity(format!(
+                        "running retained attempt has no active lease: {attempt_id}"
+                    )));
+                }
+            }
+            (Some(envelope), None) if envelope.state == AttemptStatus::Running => {
+                return Err(StoreError::Integrity(format!(
+                    "running retained attempt has no active lease: {attempt_id}"
+                )));
+            }
+            (None, Some(lease)) if lease.state == AttemptLeaseState::Active => {}
+            (None, _) => {
+                return Err(StoreError::Integrity(format!(
+                    "retained attempt directory has no recoverable envelope: {attempt_id}"
+                )));
+            }
+            (Some(_), None) => {}
+        }
+    }
+
+    for attempt_id in pending_attempts {
+        if leases
+            .get(attempt_id.as_str())
+            .is_none_or(|lease| lease.state != AttemptLeaseState::Active)
+        {
+            return Err(StoreError::Integrity(format!(
+                "retained pending attempt envelope has no active lease: {attempt_id}"
+            )));
+        }
+    }
+
+    for (attempt_id, lease) in leases {
+        if lease.state == AttemptLeaseState::Releasing && !attempts.contains_key(attempt_id) {
+            return Err(StoreError::Integrity(format!(
+                "releasing attempt omitted its retained directory: {attempt_id}"
             )));
         }
     }

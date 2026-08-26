@@ -31,6 +31,13 @@ pub(super) fn validate_cache(
             )));
         }
         crate::cache::validate_operation_shape(&operation)?;
+        let expected_digest =
+            lumin_evidence::cache_cleanup_request_digest(&operation.repository_id);
+        if operation.request_digest != expected_digest {
+            return Err(StoreError::Integrity(format!(
+                "cache cleanup operation {key} has an unauthenticated request digest"
+            )));
+        }
         operations.insert(key.as_str(), operation);
     }
 

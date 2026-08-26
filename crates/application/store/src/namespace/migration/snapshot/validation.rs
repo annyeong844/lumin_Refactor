@@ -55,11 +55,42 @@ pub(super) fn validate_referential_closure(
     validate_transition_gate_refs(&transitions, &gates)?;
     validate_validation_receipts(snapshot, &gates, &operations, &validation_receipts)?;
     crate::publication::validate_attempt_leases(&snapshot.attempt_leases)?;
+    validate_attempt_allocator_sequence(snapshot)?;
     validate_run_catalog(snapshot)?;
     cache::validate_cache(snapshot, &operations)?;
     validate_retention_allocator_sequences(snapshot)?;
     retention::validate_retention(snapshot, &operations)?;
     validate_pointers(snapshot)
+}
+
+fn validate_attempt_allocator_sequence(snapshot: &LogicalStoreSnapshot) -> Result<(), StoreError> {
+    let mut maximum = 0_u64;
+    for attempt_id in snapshot.attempt_leases.keys() {
+        maximum = maximum.max(canonical_allocated_sequence(
+            attempt_id,
+            "attempt_",
+            "attempt lease",
+        )?);
+    }
+    for (key, bytes) in &snapshot.run_catalog {
+        let record = parse_record::<RunCatalogRecord>("run-catalog", key, bytes)?;
+        maximum = maximum.max(canonical_allocated_sequence(
+            record.attempt_id.as_str(),
+            "attempt_",
+            "run attempt",
+        )?);
+    }
+    if let Some(bytes) = snapshot.pointers.get("latest-attempt") {
+        let attempt_id = std::str::from_utf8(bytes).map_err(|error| {
+            StoreError::Integrity(format!("latest-attempt pointer is not UTF-8: {error}"))
+        })?;
+        maximum = maximum.max(canonical_allocated_sequence(
+            attempt_id,
+            "attempt_",
+            "latest attempt",
+        )?);
+    }
+    validate_allocator_sequence(snapshot, "attempt", maximum)
 }
 
 fn validate_retention_allocator_sequences(

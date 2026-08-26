@@ -336,6 +336,74 @@ fn migration_rejects_changed_attempt_liveness_lock_before_copy()
 }
 
 #[test]
+fn migration_rejects_attempt_allocator_regression_and_exhaustion()
+-> Result<(), Box<dyn std::error::Error>> {
+    for (observed, expected) in [
+        (0, "attempt sequence regressed below retained allocation"),
+        (u64::MAX, "attempt sequence is exhausted"),
+    ] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        let mut attempt = store.begin_attempt()?;
+        store.fail_attempt(&mut attempt, "retained allocator owner")?;
+        set_sequence_for_test(&store, "attempt", observed)?;
+        make_prior_store(&store, root.path())?;
+
+        assert!(matches!(
+            store.migrate_lifecycle_store(),
+            Err(StoreError::Integrity(message)) if message.contains(expected)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn migration_validates_every_retained_attempt_envelope() -> Result<(), Box<dyn std::error::Error>> {
+    for mutation in ["schema", "owner", "pending"] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        let mut first = store.begin_attempt()?;
+        let first_id = first.attempt_id().clone();
+        store.fail_attempt(&mut first, "older retained attempt")?;
+        let mut second = store.begin_attempt()?;
+        let second_id = second.attempt_id().clone();
+        store.fail_attempt(&mut second, "latest retained attempt")?;
+        make_prior_store(&store, root.path())?;
+
+        let path = root
+            .path()
+            .join(".lumin/attempts")
+            .join(first_id.as_str())
+            .join("attempt.json");
+        if mutation == "pending" {
+            fs::copy(&path, path.with_extension("json.pending"))?;
+        } else {
+            let mut envelope = serde_json::from_slice::<serde_json::Value>(&fs::read(&path)?)?;
+            match mutation {
+                "schema" => envelope["schemaVersion"] = "lumin-attempt.foreign".into(),
+                "owner" => {
+                    envelope["attemptId"] = second_id.as_str().into();
+                    envelope["sequence"] = 2_u64.into();
+                }
+                _ => unreachable!(),
+            }
+            let mut bytes = serde_json::to_vec_pretty(&envelope)?;
+            bytes.push(b'\n');
+            fs::write(path, bytes)?;
+        }
+
+        assert!(
+            matches!(
+                store.migrate_lifecycle_store(),
+                Err(StoreError::Integrity(_))
+            ),
+            "migration accepted {mutation} corruption in a non-latest attempt"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn migration_rejects_retention_plan_allocator_below_a_retained_plan()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
@@ -458,6 +526,8 @@ fn migration_rejects_a_pending_cleanup_with_a_forged_liveness_identity()
     let store = open_store(root.path())?;
     let operation_id = OperationId::from_string("migration-pending-cleanup-liveness".to_owned());
     let session = store.begin_operation(&operation_id)?;
+    let request_digest =
+        lumin_evidence::cache_cleanup_request_digest(&store.namespace.binding.global.repository_id);
     let mut liveness = session.liveness().clone();
     liveness.lock_physical_identity = liveness
         .lock_physical_identity
@@ -467,7 +537,7 @@ fn migration_rejects_a_pending_cleanup_with_a_forged_liveness_identity()
         schema_version: "lumin-cache-cleanup-operation.v2".to_owned(),
         repository_id: store.namespace.binding.global.repository_id.clone(),
         operation_id: operation_id.clone(),
-        request_digest: "migration-pending-cleanup-request".to_owned(),
+        request_digest,
         status: CacheCleanupOperationStatus::Pending,
         interruption_count: 0,
         invocation_id: "0".repeat(32),
@@ -513,6 +583,64 @@ fn migration_rejects_a_pending_cleanup_with_a_forged_liveness_identity()
 }
 
 #[test]
+fn migration_rejects_an_unfinished_cleanup_with_a_forged_request_digest()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("migration-pending-cleanup-digest".to_owned());
+    let session = store.begin_operation(&operation_id)?;
+    let canonical =
+        lumin_evidence::cache_cleanup_request_digest(&store.namespace.binding.global.repository_id);
+    let operation = CacheCleanupOperationRecord {
+        schema_version: "lumin-cache-cleanup-operation.v2".to_owned(),
+        repository_id: store.namespace.binding.global.repository_id.clone(),
+        operation_id: operation_id.clone(),
+        request_digest: format!("{canonical}-forged"),
+        status: CacheCleanupOperationStatus::Pending,
+        interruption_count: 0,
+        invocation_id: "0".repeat(32),
+        initial_authorization_set_id: CacheEvictionAuthorizationSetId::for_canonical_rows(&[]),
+        initial_authorization_count: 0,
+        plan_initialized: false,
+        authorization_keys: Vec::new(),
+        validated_count: 0,
+        execution_lease: Some(CacheCleanupExecutionLease {
+            execution_attempt_id: "migration-pending-cleanup-digest-attempt".to_owned(),
+            liveness: session.liveness().clone(),
+        }),
+        recovery_reservation: None,
+        result: None,
+        greatest_allocated_delivery_sequence: 0,
+        greatest_completed_delivery_sequence: None,
+        delivery_completions: Vec::new(),
+    };
+    store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        crate::gate::records::write_record(
+            &write,
+            crate::cache::CACHE_CLEANUP_OPERATIONS,
+            operation_id.as_str(),
+            &operation,
+        )?;
+        guard.commit(write)
+    })?;
+    store.rewrite_cache_cleanup_operation_as_prior_for_test(
+        &operation_id,
+        PriorCacheCleanupDeliveryStatusForTest::NotAttempted,
+    )?;
+    make_prior_store(&store, root.path())?;
+
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("has an unauthenticated request digest")
+    ));
+    drop(session);
+    Ok(())
+}
+
+#[test]
 fn migration_authenticates_pending_cleanup_initial_authorization_provenance()
 -> Result<(), Box<dyn std::error::Error>> {
     for corrupt_identity in [true, false] {
@@ -521,7 +649,10 @@ fn migration_authenticates_pending_cleanup_initial_authorization_provenance()
         fs::write(root.path().join(".lumin/cache/prior.bin"), b"prior")?;
         let prior_operation =
             OperationId::from_string(format!("migration-prior-cleanup-{corrupt_identity}"));
-        store.clean_cache_payloads(&prior_operation, "migration-prior-cleanup-request")?;
+        let request_digest = lumin_evidence::cache_cleanup_request_digest(
+            &store.namespace.binding.global.repository_id,
+        );
+        store.clean_cache_payloads(&prior_operation, &request_digest)?;
         let initial_rows = store.with_exclusive_lock(|guard| {
             let database = guard.open_database()?;
             let write = database.begin_write()?;
@@ -550,7 +681,7 @@ fn migration_authenticates_pending_cleanup_initial_authorization_provenance()
             schema_version: "lumin-cache-cleanup-operation.v2".to_owned(),
             repository_id: store.namespace.binding.global.repository_id.clone(),
             operation_id: operation_id.clone(),
-            request_digest: "migration-pending-cleanup-request".to_owned(),
+            request_digest: request_digest.clone(),
             status: CacheCleanupOperationStatus::Pending,
             interruption_count: 0,
             invocation_id: "1".repeat(32),

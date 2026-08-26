@@ -1,9 +1,19 @@
 use lumin_model::{
     CacheEvictionAuthorizationSetId, OperationId, PhysicalFileIdentity, RepositoryId,
+    append_length_prefixed, digest_hex,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::OperationLivenessLease;
+
+pub fn cache_cleanup_request_digest(repository_id: &RepositoryId) -> String {
+    let mut framed = Vec::new();
+    append_length_prefixed(&mut framed, b"lumin-cache-clean-request.v2");
+    append_length_prefixed(&mut framed, repository_id.as_str().as_bytes());
+    append_length_prefixed(&mut framed, b"cache-clean");
+    append_length_prefixed(&mut framed, b"lumin.cache-cleanup.v2");
+    digest_hex(&framed)
+}
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

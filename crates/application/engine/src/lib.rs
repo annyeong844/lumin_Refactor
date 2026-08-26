@@ -41,7 +41,7 @@ use lumin_evidence::{
     DEPENDENCY_OWNERSHIP_CAPABILITY_ID, DependencyOwnerRecord, EntrySelectionRecord,
     PathPrefixIdentity, RepoPathProjection, RunEvidence, ScanInvocationTier, SemanticInputRecord,
     SemanticInputState, SourceClassificationRecord, SourceContextRecord, SourceObservationRecord,
-    dead_code_capability_state, seal_analysis_snapshot,
+    cache_cleanup_request_digest, dead_code_capability_state, seal_analysis_snapshot,
 };
 use lumin_inventory::{
     InventoryError, InventoryRequest, InventorySnapshot, RepositoryAdmission, SemanticPolicyState,
@@ -50,7 +50,7 @@ use lumin_inventory::{
 use lumin_model::{
     AttemptId, AttemptStatus, CapabilityState, ConfigObservation, FileFacts, Limitation,
     OperationId, RepositoryRootIdentity, ResolutionProfile, RoleOverride, RunId, SfcDialect,
-    append_length_prefixed, digest_hex,
+    digest_hex,
 };
 use lumin_resolve::{ConfigDemand, ResolverError, ResolverOutput};
 use lumin_store::{PublishedRun, RepositoryStore, RunCatalogRecord, StoreError};
@@ -1013,15 +1013,6 @@ pub fn record_cache_cleanup_delivery(
         .store
         .record_cache_cleanup_delivery(operation_id, request_digest, sequence, outcome)
         .map_err(Into::into)
-}
-
-fn cache_cleanup_request_digest(repository_id: &lumin_model::RepositoryId) -> String {
-    let mut framed = Vec::new();
-    append_length_prefixed(&mut framed, b"lumin-cache-clean-request.v2");
-    append_length_prefixed(&mut framed, repository_id.as_str().as_bytes());
-    append_length_prefixed(&mut framed, b"cache-clean");
-    append_length_prefixed(&mut framed, b"lumin.cache-cleanup.v2");
-    digest_hex(&framed)
 }
 
 pub fn load_run(

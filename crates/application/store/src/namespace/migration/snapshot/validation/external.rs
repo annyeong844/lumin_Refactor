@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -11,10 +11,12 @@ use lumin_model::decode_native_path_component;
 use serde::de::DeserializeOwned;
 
 use crate::retention::records::StoredRetentionPlan;
-use crate::{AttemptEnvelope, RunCatalogRecord, StoreError, digest_hex};
+use crate::{AttemptEnvelope, RunCatalogRecord, StoreError, digest_hex, io_error};
 
 use super::super::super::super::platform::{EntryAccess, EntryKind, HeldEntry};
-use super::super::super::super::{NamespaceGuard, require_state_volume};
+use super::super::super::super::{
+    NamespaceGuard, records::ManagedStateParentKind, require_state_volume,
+};
 use super::super::LogicalStoreSnapshot;
 use super::parse_record;
 
@@ -33,12 +35,124 @@ pub(super) fn validate_external_references(
     validate_pending_pre_write_leases(snapshot, guard)?;
     validate_pending_semantic_read_bindings(snapshot, guard)?;
     validate_active_gate_write_prefixes(snapshot, guard)?;
-    validate_latest_pointers(snapshot, guard)?;
+    let attempts = validate_attempt_directories(snapshot, guard)?;
+    validate_latest_pointers(snapshot, guard, &attempts)?;
     let moved_runs = validate_retention_payloads(snapshot, guard)?;
     for (key, bytes) in &snapshot.run_catalog {
         validate_run(key, bytes, guard, moved_runs.get(key))?;
     }
     guard.validate_bound_entries()
+}
+
+fn validate_attempt_directories(
+    snapshot: &LogicalStoreSnapshot,
+    guard: &NamespaceGuard,
+) -> Result<BTreeMap<String, Option<AttemptEnvelope>>, StoreError> {
+    let attempts_path = guard.managed_parent_path(ManagedStateParentKind::Attempts);
+    let mut names = Vec::new();
+    for entry in fs::read_dir(&attempts_path).map_err(io_error)? {
+        let entry = entry.map_err(io_error)?;
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| StoreError::Integrity("attempt directory name is not UTF-8".to_owned()))?;
+        if name != "namespace.anchor" {
+            names.push(name);
+        }
+    }
+    names.sort();
+
+    let mut attempts = BTreeMap::new();
+    let mut pending_attempts = BTreeSet::new();
+    let mut maximum_sequence = 0_u64;
+    for attempt_id in names {
+        let sequence = canonical_sequence_id(&attempt_id, "attempt_", "retained attempt")?;
+        maximum_sequence = maximum_sequence.max(sequence);
+        let attempt_dir = attempts_path.join(&attempt_id);
+        let held_dir = guard.open_managed_child_directory(
+            ManagedStateParentKind::Attempts,
+            &attempt_id,
+            "retained attempt directory",
+        )?;
+
+        let mut contents = Vec::new();
+        for entry in fs::read_dir(&attempt_dir).map_err(io_error)? {
+            let entry = entry.map_err(io_error)?;
+            let name = entry.file_name().into_string().map_err(|_| {
+                StoreError::Integrity(format!(
+                    "retained attempt {attempt_id} contains a non-UTF-8 entry"
+                ))
+            })?;
+            if name != "attempt.json" && name != "attempt.json.pending" {
+                return Err(StoreError::Integrity(format!(
+                    "retained attempt {attempt_id} contains an unknown entry {name}"
+                )));
+            }
+            contents.push(name);
+        }
+        contents.sort();
+
+        let envelope = if contents
+            .binary_search_by(|name| name.as_str().cmp("attempt.json"))
+            .is_ok()
+        {
+            Some(read_attempt_envelope(
+                guard,
+                &attempt_dir.join("attempt.json"),
+                &attempt_id,
+                sequence,
+                "retained attempt envelope",
+            )?)
+        } else {
+            None
+        };
+        if contents
+            .binary_search_by(|name| name.as_str().cmp("attempt.json.pending"))
+            .is_ok()
+        {
+            read_attempt_envelope(
+                guard,
+                &attempt_dir.join("attempt.json.pending"),
+                &attempt_id,
+                sequence,
+                "retained pending attempt envelope",
+            )?;
+            pending_attempts.insert(attempt_id.clone());
+        }
+        held_dir.validate_path(
+            &attempt_dir,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            "retained attempt directory",
+        )?;
+        attempts.insert(attempt_id, envelope);
+    }
+
+    crate::publication::validate_migration_attempt_links(
+        &snapshot.attempt_leases,
+        &attempts,
+        &pending_attempts,
+    )?;
+    super::validate_allocator_sequence(snapshot, "attempt", maximum_sequence)?;
+    Ok(attempts)
+}
+
+fn read_attempt_envelope(
+    guard: &NamespaceGuard,
+    path: &Path,
+    expected_id: &str,
+    expected_sequence: u64,
+    label: &str,
+) -> Result<AttemptEnvelope, StoreError> {
+    let envelope = read_state_json::<AttemptEnvelope>(guard, path, label)?;
+    crate::publication::validate_attempt_envelope(&envelope)?;
+    if envelope.attempt_id.as_str() != expected_id || envelope.sequence != expected_sequence {
+        return Err(StoreError::Integrity(format!(
+            "{label} disagrees with its directory"
+        )));
+    }
+    Ok(envelope)
 }
 
 fn validate_pending_semantic_read_bindings(
@@ -441,6 +555,7 @@ fn validate_active_gate_write_prefixes(
 fn validate_latest_pointers(
     snapshot: &LogicalStoreSnapshot,
     guard: &NamespaceGuard,
+    attempts: &BTreeMap<String, Option<AttemptEnvelope>>,
 ) -> Result<(), StoreError> {
     let table_attempt = snapshot
         .pointers
@@ -483,27 +598,14 @@ fn validate_latest_pointers(
         StoreError::Integrity(format!("latest-attempt pointer is not UTF-8: {error}"))
     })?;
     let sequence = canonical_sequence_id(attempt_id, "attempt_", "latest attempt")?;
-    let attempt_dir = guard.state.state_dir.join("attempts").join(attempt_id);
-    let held_dir = open_state_entry(
-        guard,
-        &attempt_dir,
-        EntryKind::Directory,
-        false,
-        "latest attempt directory",
-    )?;
-    let envelope: AttemptEnvelope = read_state_json(
-        guard,
-        &attempt_dir.join("attempt.json"),
-        "latest attempt envelope",
-    )?;
-    crate::publication::validate_attempt_envelope(&envelope)?;
-    held_dir.validate_path(
-        &attempt_dir,
-        EntryKind::Directory,
-        EntryAccess::ReadOnly,
-        false,
-        "latest attempt directory",
-    )?;
+    let envelope = attempts
+        .get(attempt_id)
+        .and_then(Option::as_ref)
+        .ok_or_else(|| {
+            StoreError::Integrity(
+                "latest-attempt pointer references a missing complete envelope".to_owned(),
+            )
+        })?;
     if envelope.attempt_id.as_str() != attempt_id || envelope.sequence != sequence {
         return Err(StoreError::Integrity(
             "latest-attempt pointer disagrees with its envelope".to_owned(),

@@ -90,6 +90,14 @@ pub(crate) fn validate_migration_attempt_leases(
     liveness::validate_migration_snapshot(rows)
 }
 
+pub(crate) fn validate_migration_attempt_links(
+    rows: &std::collections::BTreeMap<String, Vec<u8>>,
+    attempts: &std::collections::BTreeMap<String, Option<AttemptEnvelope>>,
+    pending_attempts: &std::collections::BTreeSet<String>,
+) -> Result<(), StoreError> {
+    liveness::validate_migration_attempt_links(rows, attempts, pending_attempts)
+}
+
 pub(crate) fn validate_attempt_lease_locks(
     rows: &std::collections::BTreeMap<String, Vec<u8>>,
     guard: &crate::namespace::NamespaceGuard,
