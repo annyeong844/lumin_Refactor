@@ -26,8 +26,8 @@ use lumin_model::{
     append_length_prefixed, digest_hex,
 };
 use redb::{
-    Database, ReadOnlyDatabase, ReadableDatabase, ReadableTable, TableDefinition, TableError,
-    TableHandle,
+    Database, ReadableDatabase, ReadableTable, StorageBackend, TableDefinition, TableError,
+    TableHandle, backends::InMemoryBackend,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
@@ -600,7 +600,7 @@ fn read_live_run(
             run_id.as_str()
         )));
     }
-    Ok((record, read_evidence_store(&path)?))
+    Ok((record, read_evidence_store(&bytes)?))
 }
 
 fn write_evidence_store(path: &Path, evidence: &RunEvidence) -> Result<(), StoreError> {
@@ -618,9 +618,20 @@ fn write_evidence_store(path: &Path, evidence: &RunEvidence) -> Result<(), Store
     Ok(())
 }
 
-fn read_evidence_store(path: &Path) -> Result<RunEvidence, StoreError> {
-    // Writable redb opens may update container metadata and invalidate the published byte hash.
-    let database = ReadOnlyDatabase::open(path).map_err(backend_error)?;
+fn read_evidence_store(bytes: &[u8]) -> Result<RunEvidence, StoreError> {
+    let backend = InMemoryBackend::new();
+    let length = u64::try_from(bytes.len())
+        .map_err(|_| StoreError::Integrity("evidence store byte count overflow".to_owned()))?;
+    backend.set_len(length).map_err(io_error)?;
+    backend.write(0, bytes).map_err(io_error)?;
+    // Decode the exact bytes already bound to the run envelope. A writable
+    // redb open may update its private backend metadata, so the isolated
+    // in-memory copy also keeps the published container immutable.
+    let mut builder = Database::builder();
+    builder.set_repair_callback(|session| session.abort());
+    let database = builder
+        .create_with_backend(backend)
+        .map_err(backend_error)?;
     let read = database.begin_read().map_err(backend_error)?;
     let observed_tables = read
         .list_tables()
@@ -666,6 +677,9 @@ fn read_evidence_store(path: &Path) -> Result<RunEvidence, StoreError> {
             evidence.schema_version
         )));
     }
+    lumin_evidence::validate_run_evidence_identities(&evidence).map_err(|error| {
+        StoreError::Integrity(format!("run evidence identity validation failed: {error}"))
+    })?;
     Ok(evidence)
 }
 

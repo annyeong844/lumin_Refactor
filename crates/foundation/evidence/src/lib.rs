@@ -9,7 +9,8 @@ pub use gate::*;
 pub use retention::*;
 pub use transition::*;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 
 use lumin_model::{
     BuildIdentity, CapabilityState, EvidenceId, FindingDisposition, FindingId, FindingRelationId,
@@ -394,6 +395,143 @@ impl RunEvidence {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RunEvidenceIdentityError {
+    Duplicate {
+        collection: &'static str,
+        identity: String,
+    },
+    SourceIdentityMismatch {
+        collection: &'static str,
+        identity: String,
+    },
+}
+
+impl fmt::Display for RunEvidenceIdentityError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Duplicate {
+                collection,
+                identity,
+            } => write!(formatter, "duplicate identity in {collection}: {identity}"),
+            Self::SourceIdentityMismatch {
+                collection,
+                identity,
+            } => write!(
+                formatter,
+                "source identity disagrees with its path in {collection}: {identity}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RunEvidenceIdentityError {}
+
+pub fn validate_run_evidence_identities(
+    evidence: &RunEvidence,
+) -> Result<(), RunEvidenceIdentityError> {
+    require_unique(
+        "capabilities",
+        evidence
+            .capabilities
+            .iter()
+            .map(|record| record.capability_id.as_str()),
+    )?;
+    require_source_records(
+        "source classifications",
+        evidence
+            .source_classifications
+            .iter()
+            .map(|record| (record.source_id.as_str(), &record.source_id, &record.path)),
+    )?;
+    require_source_records(
+        "source contexts",
+        evidence
+            .source_contexts
+            .iter()
+            .map(|record| (record.source_id.as_str(), &record.source_id, &record.path)),
+    )?;
+    require_unique(
+        "source observations",
+        evidence
+            .source_observations
+            .iter()
+            .map(|record| record.source_id.as_str()),
+    )?;
+    require_unique(
+        "resolution profiles",
+        evidence
+            .resolution_profiles
+            .iter()
+            .map(|record| record.source_id.as_str()),
+    )?;
+    require_unique(
+        "findings",
+        evidence
+            .findings
+            .iter()
+            .map(|record| record.finding_id.as_str()),
+    )?;
+    for finding in &evidence.findings {
+        require_unique(
+            "finding evidence",
+            finding
+                .evidence
+                .iter()
+                .map(|record| record.evidence_id.as_str()),
+        )?;
+        require_unique(
+            "finding relations",
+            finding
+                .relations
+                .iter()
+                .map(|record| record.relation_id.as_str()),
+        )?;
+    }
+    Ok(())
+}
+
+fn require_unique<'a>(
+    collection: &'static str,
+    identities: impl IntoIterator<Item = &'a str>,
+) -> Result<(), RunEvidenceIdentityError> {
+    let mut observed = BTreeSet::new();
+    for identity in identities {
+        if !observed.insert(identity) {
+            return Err(RunEvidenceIdentityError::Duplicate {
+                collection,
+                identity: identity.to_owned(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn require_source_records<'a>(
+    collection: &'static str,
+    records: impl IntoIterator<Item = (&'a str, &'a LogicalSourceId, &'a RepoPathProjection)>,
+) -> Result<(), RunEvidenceIdentityError> {
+    let mut source_ids = BTreeSet::new();
+    let mut paths = BTreeSet::new();
+    for (identity, source_id, path) in records {
+        let projected = RepoPath::from_canonical_bytes(&path.canonical)
+            .map(|path| LogicalSourceId::from_path(&path));
+        if !projected.is_ok_and(|projected| projected == *source_id) {
+            return Err(RunEvidenceIdentityError::SourceIdentityMismatch {
+                collection,
+                identity: identity.to_owned(),
+            });
+        }
+        if !source_ids.insert(identity) || !paths.insert(path.canonical.as_slice()) {
+            return Err(RunEvidenceIdentityError::Duplicate {
+                collection,
+                identity: identity.to_owned(),
+            });
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SemanticRunEvidence<'a> {
@@ -472,6 +610,59 @@ mod tests {
             }]),
             CapabilityState::Incomplete
         );
+    }
+
+    #[test]
+    fn persisted_run_evidence_requires_unique_owned_identities()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut evidence = RunEvidence {
+            schema_version: RUN_EVIDENCE_SCHEMA_VERSION.to_owned(),
+            capabilities: vec![
+                CapabilityRecord {
+                    capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
+                    state: CapabilityState::Complete,
+                },
+                CapabilityRecord {
+                    capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
+                    state: CapabilityState::Incomplete,
+                },
+            ],
+            resolution_profiles: Vec::new(),
+            source_classifications: Vec::new(),
+            source_contexts: Vec::new(),
+            source_observations: Vec::new(),
+            dependency_owners: Vec::new(),
+            resolutions: Vec::new(),
+            metrics: AnalysisMetrics::default(),
+            findings: Vec::new(),
+            limitations: Vec::new(),
+        };
+        assert!(matches!(
+            validate_run_evidence_identities(&evidence),
+            Err(RunEvidenceIdentityError::Duplicate {
+                collection: "capabilities",
+                ..
+            })
+        ));
+
+        evidence.capabilities.truncate(1);
+        let path = RepoPath::from_portable("src/a.ts")?;
+        let other = RepoPath::from_portable("src/b.ts")?;
+        evidence.source_contexts.push(SourceContextRecord {
+            source_id: LogicalSourceId::from_path(&other),
+            path: RepoPathProjection::from(&path),
+            kind: SourceKind::TypeScript,
+            package_root: None,
+            configuration_paths: Vec::new(),
+        });
+        assert!(matches!(
+            validate_run_evidence_identities(&evidence),
+            Err(RunEvidenceIdentityError::SourceIdentityMismatch {
+                collection: "source contexts",
+                ..
+            })
+        ));
+        Ok(())
     }
 
     #[test]

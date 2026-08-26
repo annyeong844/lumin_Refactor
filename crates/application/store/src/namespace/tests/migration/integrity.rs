@@ -23,6 +23,7 @@ use crate::gate::{
     GATES, OPERATIONS, TRANSITIONS, VALIDATION_RECEIPTS, records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY,
     transition_key,
 };
+use crate::namespace::platform::{EntryAccess, EntryKind, HeldEntry};
 use crate::retention::{
     RETENTION_OPERATIONS, RETENTION_PLANS, RUN_PINS, pin_request_digest,
     records::StoredRetentionPlan,
@@ -446,6 +447,7 @@ fn migration_rejects_untyped_or_unsupported_run_evidence() -> Result<(), Box<dyn
         "container",
         "row",
         "schema",
+        "duplicate-capability",
         "extra-row",
         "extra-table",
         "opaque-top-level",
@@ -463,7 +465,12 @@ fn migration_rejects_untyped_or_unsupported_run_evidence() -> Result<(), Box<dyn
 
         match mutation {
             "container" => fs::write(&evidence_path, b"not-a-redb-container")?,
-            "row" | "schema" | "extra-row" | "extra-table" | "opaque-top-level"
+            "row"
+            | "schema"
+            | "duplicate-capability"
+            | "extra-row"
+            | "extra-table"
+            | "opaque-top-level"
             | "opaque-nested" => {
                 let database = Database::open(&evidence_path)?;
                 let write = database.begin_write()?;
@@ -480,6 +487,18 @@ fn migration_rejects_untyped_or_unsupported_run_evidence() -> Result<(), Box<dyn
                         "schema" => {
                             let mut changed = evidence();
                             changed.schema_version = "lumin-evidence.foreign".to_owned();
+                            let bytes = serde_json::to_vec(&changed)?;
+                            table.insert("run", bytes.as_slice())?;
+                        }
+                        "duplicate-capability" => {
+                            let mut changed = evidence();
+                            changed.capabilities.push(
+                                changed
+                                    .capabilities
+                                    .first()
+                                    .ok_or("run evidence omitted its capability")?
+                                    .clone(),
+                            );
                             let bytes = serde_json::to_vec(&changed)?;
                             table.insert("run", bytes.as_slice())?;
                         }
@@ -523,6 +542,11 @@ fn migration_rejects_untyped_or_unsupported_run_evidence() -> Result<(), Box<dyn
                 Err(StoreError::IncompatibleStateSchema(message))
                     if message.contains("run evidence uses unsupported schema")
             ),
+            "duplicate-capability" => matches!(
+                result,
+                Err(StoreError::Integrity(message))
+                    if message.contains("duplicate identity in capabilities")
+            ),
             "extra-row" | "extra-table" | "opaque-top-level" | "opaque-nested" => {
                 matches!(result, Err(StoreError::Integrity(_)))
             }
@@ -533,6 +557,67 @@ fn migration_rejects_untyped_or_unsupported_run_evidence() -> Result<(), Box<dyn
             "migration accepted {mutation} evidence corruption"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn run_evidence_decode_stays_bound_to_the_hashed_held_bytes()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let mut attempt = store.begin_attempt()?;
+    let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+    let run_dir = root
+        .path()
+        .join(".lumin/runs")
+        .join(published.run_id.as_str());
+    let evidence_path = run_dir.join("evidence.store");
+    let replacement = root.path().join("valid-replacement-evidence.store");
+    fs::copy(&evidence_path, &replacement)?;
+
+    let database = Database::open(&evidence_path)?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(EVIDENCE)?;
+        let mut changed = evidence();
+        changed.capabilities.push(
+            changed
+                .capabilities
+                .first()
+                .ok_or("run evidence omitted its capability")?
+                .clone(),
+        );
+        let bytes = serde_json::to_vec(&changed)?;
+        table.insert("run", bytes.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+    rewrite_run_evidence_identity(root.path(), &published.run_id)?;
+
+    let expected =
+        serde_json::from_slice::<RunCatalogRecord>(&fs::read(run_dir.join("run.json"))?)?;
+    let held_dir = HeldEntry::open(
+        &run_dir,
+        EntryKind::Directory,
+        EntryAccess::ReadOnly,
+        false,
+        "test run directory",
+    )?;
+    let result = crate::publication::validate_directory_with_evidence_read_hook(
+        &run_dir,
+        &held_dir,
+        &expected,
+        || {
+            fs::copy(&replacement, &evidence_path)
+                .map(|_| ())
+                .map_err(crate::io_error)
+        },
+    );
+    assert!(matches!(
+        result,
+        Err(StoreError::Integrity(message))
+            if message.contains("duplicate identity in capabilities")
+    ));
     Ok(())
 }
 

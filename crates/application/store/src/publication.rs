@@ -21,6 +21,8 @@ pub(crate) use latest::{
     migration_pointer_ids, reconcile_migration_pointer_index, validate_attempt_envelope,
 };
 pub use liveness::AttemptSession;
+#[cfg(test)]
+pub(crate) use run::validate_directory_with_evidence_read_hook;
 pub(crate) use run::{
     read_validated_directory as read_validated_run_directory,
     validate_directory as validate_run_directory,

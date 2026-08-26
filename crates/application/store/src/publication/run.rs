@@ -349,6 +349,25 @@ pub(crate) fn validate_directory(
     directory: &HeldEntry,
     expected: &RunCatalogRecord,
 ) -> Result<(), StoreError> {
+    validate_directory_with_hook(directory_path, directory, expected, || Ok(()))
+}
+
+#[cfg(test)]
+pub(crate) fn validate_directory_with_evidence_read_hook(
+    directory_path: &Path,
+    directory: &HeldEntry,
+    expected: &RunCatalogRecord,
+    after_evidence_read: impl FnOnce() -> Result<(), StoreError>,
+) -> Result<(), StoreError> {
+    validate_directory_with_hook(directory_path, directory, expected, after_evidence_read)
+}
+
+fn validate_directory_with_hook(
+    directory_path: &Path,
+    directory: &HeldEntry,
+    expected: &RunCatalogRecord,
+    after_evidence_read: impl FnOnce() -> Result<(), StoreError>,
+) -> Result<(), StoreError> {
     validate_directory_inventory(directory_path, expected)?;
     let observed: RunCatalogRecord =
         files::read_json(&directory_path.join("run.json"), directory, "run envelope")?;
@@ -381,7 +400,8 @@ pub(crate) fn validate_directory(
             expected.run_id.as_str()
         )));
     }
-    read_evidence_store(&evidence_path)?;
+    after_evidence_read()?;
+    read_evidence_store(&bytes)?;
     evidence.validate_path(
         &evidence_path,
         EntryKind::RegularFile,
