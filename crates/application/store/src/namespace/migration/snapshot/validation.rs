@@ -1074,12 +1074,20 @@ fn retained_active_gate_mutation_floor(
                 "retained gate {gate_id} omitted its opening revision"
             )));
         }
-        if revisions.iter().any(|revision| *revision > 0) {
-            minimum = minimum.checked_add(2).ok_or_else(|| {
-                StoreError::Integrity(
-                    "retained active-gate catalog mutation history overflowed".to_owned(),
-                )
-            })?;
+        match (revisions.len(), revisions.last().copied()) {
+            (1, Some(0)) => {}
+            (2, Some(1)) => {
+                minimum = minimum.checked_add(2).ok_or_else(|| {
+                    StoreError::Integrity(
+                        "retained active-gate catalog mutation history overflowed".to_owned(),
+                    )
+                })?;
+            }
+            _ => {
+                return Err(StoreError::IncompatibleStateSchema(format!(
+                    "retained gate {gate_id} has intermediate revisions whose active-gate catalog mutations cannot be reconstructed"
+                )));
+            }
         }
     }
     Ok(minimum)

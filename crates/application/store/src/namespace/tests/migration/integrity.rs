@@ -1919,6 +1919,52 @@ fn migration_rejects_an_active_gate_catalog_below_pruned_gate_history()
 }
 
 #[test]
+fn migration_rejects_pruned_intermediate_protected_read_history()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let retired_gate = open_active_gate_for(
+        &store,
+        "op-pruned-protected-history",
+        "src/pruned-protected-history.ts",
+    )?;
+    append_non_authorizing_close_for_migration(
+        &store,
+        &retired_gate,
+        vec![semantic_input("config/pruned-protected-history.json")?],
+    )?;
+    abandon_gate_for_migration(
+        &store,
+        &OperationId::from_string("op-pruned-protected-history-abandon".to_owned()),
+        &retired_gate,
+        1,
+        "pruned protected-read history fixture",
+    )?;
+    assert_eq!(store.list_active_gates(None, 100)?.revision, 3);
+
+    let plan_id =
+        prepared_plan_id(store.prepare_retention_plan(&crate::RetentionPlanRequest {
+            scope: RetentionPlanScope::Gates {
+                terminal_before_unix_millis: u64::MAX,
+            },
+            operation_id: OperationId::from_string("pruned-protected-history-plan".to_owned()),
+        })?)?;
+    store.confirm_retention_plan(
+        &plan_id,
+        &OperationId::from_string("pruned-protected-history-confirm".to_owned()),
+    )?;
+    drop(store);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::IncompatibleStateSchema(message))
+            if message.contains("intermediate revisions whose active-gate catalog mutations cannot be reconstructed")
+    ));
+    Ok(())
+}
+
+#[test]
 fn migration_rejects_a_gate_sequence_below_retained_allocations()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
