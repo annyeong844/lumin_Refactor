@@ -75,7 +75,6 @@ pub(super) fn wait(
         ));
     }
     let mut stream = TcpStream::connect_timeout(&address, BARRIER_TIMEOUT)?;
-    stream.set_read_timeout(Some(BARRIER_TIMEOUT))?;
     stream.set_write_timeout(Some(BARRIER_TIMEOUT))?;
     writeln!(
         stream,

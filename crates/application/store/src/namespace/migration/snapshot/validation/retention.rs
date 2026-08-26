@@ -14,6 +14,9 @@ use crate::retention::records::{
     StoredRetentionPlan, ensure_committed_pruned_result_matches_plan, validate_plan,
     validate_retention_operation,
 };
+use crate::retention::{
+    confirm_request_digest, pin_request_digest, plan_request_digest, unpin_request_digest,
+};
 
 use super::{LogicalStoreSnapshot, parse_record};
 
@@ -75,15 +78,22 @@ fn validate_operation_plan_binding(
     plans: &BTreeMap<&str, StoredRetentionPlan>,
 ) -> Result<(), StoreError> {
     validate_retention_operation(operation)?;
-    let Some(plan_id) = &operation.plan_id else {
+    let plan = operation
+        .plan_id
+        .as_ref()
+        .map(|plan_id| {
+            plans.get(plan_id.as_str()).ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "retention operation {} references a missing plan",
+                    operation.operation_id.as_str()
+                ))
+            })
+        })
+        .transpose()?;
+    validate_operation_request_digest(operation, plan)?;
+    let Some(plan) = plan else {
         return Ok(());
     };
-    let plan = plans.get(plan_id.as_str()).ok_or_else(|| {
-        StoreError::Integrity(format!(
-            "retention operation {} references a missing plan",
-            operation.operation_id.as_str()
-        ))
-    })?;
     let expected_kind = match &operation.result {
         RetentionOperationResult::Retention {
             result:
@@ -111,6 +121,45 @@ fn validate_operation_plan_binding(
     if operation.kind != expected_kind {
         return Err(StoreError::Integrity(format!(
             "retention operation {} disagrees with its plan scope",
+            operation.operation_id.as_str()
+        )));
+    }
+    Ok(())
+}
+
+fn validate_operation_request_digest(
+    operation: &RetentionOperationRecord,
+    plan: Option<&StoredRetentionPlan>,
+) -> Result<(), StoreError> {
+    let expected = match (&operation.kind, &operation.result, plan) {
+        (RetentionOperationKind::RunPin, RetentionOperationResult::PinCreated { pin }, None) => {
+            pin_request_digest(&pin.run_id, &pin.reason)
+        }
+        (
+            RetentionOperationKind::RunUnpin,
+            RetentionOperationResult::PinRemoved { pin_id, .. },
+            None,
+        ) => unpin_request_digest(pin_id),
+        (
+            RetentionOperationKind::RunPrunePlan | RetentionOperationKind::GatePrunePlan,
+            RetentionOperationResult::Retention { .. },
+            Some(plan),
+        ) => plan_request_digest(&plan.record.scope)?,
+        (
+            RetentionOperationKind::RunPruneConfirm | RetentionOperationKind::GatePruneConfirm,
+            RetentionOperationResult::Retention { .. },
+            Some(plan),
+        ) => confirm_request_digest(&plan.record.plan_id),
+        _ => {
+            return Err(StoreError::Integrity(format!(
+                "retention operation {} cannot reconstruct its authenticated request",
+                operation.operation_id.as_str()
+            )));
+        }
+    };
+    if operation.request_digest != expected {
+        return Err(StoreError::Integrity(format!(
+            "retention operation {} disagrees with its authenticated request",
             operation.operation_id.as_str()
         )));
     }

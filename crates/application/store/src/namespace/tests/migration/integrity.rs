@@ -1918,6 +1918,138 @@ fn migration_rejects_a_run_catalog_sequence_below_retained_insertions()
 }
 
 #[test]
+fn migration_rejects_a_run_catalog_sequence_below_retained_pruning_history()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    for _ in 0..3 {
+        let mut attempt = store.begin_attempt()?;
+        store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+    }
+    let plan_id =
+        prepared_plan_id(store.prepare_retention_plan(&crate::RetentionPlanRequest {
+            scope: RetentionPlanScope::Runs {
+                before_unix_millis: u64::MAX,
+            },
+            operation_id: OperationId::from_string("run-catalog-history-plan".to_owned()),
+        })?)?;
+    store.confirm_retention_plan(
+        &plan_id,
+        &OperationId::from_string("run-catalog-history-confirm".to_owned()),
+    )?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(SEQUENCES)?;
+        table.insert("run-catalog", 3)?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("run-catalog sequence regressed below retained allocation")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_authenticates_every_retention_operation_request_digest()
+-> Result<(), Box<dyn std::error::Error>> {
+    for operation_kind in [
+        "pin",
+        "unpin",
+        "run-plan",
+        "run-confirm",
+        "gate-plan",
+        "gate-confirm",
+    ] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        let operation_id = match operation_kind {
+            "pin" | "unpin" => {
+                let mut attempt = store.begin_attempt()?;
+                let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+                let pin_operation =
+                    OperationId::from_string(format!("retention-digest-{operation_kind}-pin"));
+                let pin = store.pin_run(&published.run_id, &pin_operation, "migration digest")?;
+                if operation_kind == "pin" {
+                    pin_operation
+                } else {
+                    let unpin_operation =
+                        OperationId::from_string("retention-digest-unpin".to_owned());
+                    store.unpin_run(&pin.pin_id, &unpin_operation)?;
+                    unpin_operation
+                }
+            }
+            "run-plan" | "run-confirm" | "gate-plan" | "gate-confirm" => {
+                let is_run = operation_kind.starts_with("run-");
+                let scope = if is_run {
+                    RetentionPlanScope::Runs {
+                        before_unix_millis: 0,
+                    }
+                } else {
+                    RetentionPlanScope::Gates {
+                        terminal_before_unix_millis: 0,
+                    }
+                };
+                let plan_operation =
+                    OperationId::from_string(format!("retention-digest-{operation_kind}-plan"));
+                let plan_id = prepared_plan_id(store.prepare_retention_plan(
+                    &crate::RetentionPlanRequest {
+                        scope,
+                        operation_id: plan_operation.clone(),
+                    },
+                )?)?;
+                if operation_kind.ends_with("plan") {
+                    plan_operation
+                } else {
+                    let confirm_operation = OperationId::from_string(format!(
+                        "retention-digest-{operation_kind}-confirm"
+                    ));
+                    store.confirm_retention_plan(&plan_id, &confirm_operation)?;
+                    confirm_operation
+                }
+            }
+            _ => unreachable!(),
+        };
+        drop(store);
+
+        let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+        let write = database.begin_write()?;
+        {
+            let mut table = write.open_table(RETENTION_OPERATIONS)?;
+            let bytes = table
+                .get(operation_id.as_str())?
+                .ok_or("retention operation is missing")?
+                .value()
+                .to_vec();
+            let mut operation = serde_json::from_slice::<RetentionOperationRecord>(&bytes)?;
+            operation.request_digest = "forged-request-digest".to_owned();
+            let changed = serde_json::to_vec(&operation)?;
+            table.insert(operation_id.as_str(), changed.as_slice())?;
+        }
+        write.commit()?;
+        drop(database);
+
+        let store = open_store(root.path())?;
+        assert!(
+            matches!(
+                store.migrate_lifecycle_store(),
+                Err(StoreError::Integrity(message))
+                    if message.contains("disagrees with its authenticated request")
+            ),
+            "migration accepted a forged {operation_kind} request digest"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn migration_rejects_an_exhausted_run_catalog_sequence() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     drop(open_store(root.path())?);

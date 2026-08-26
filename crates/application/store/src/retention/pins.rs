@@ -197,7 +197,7 @@ fn pin_removed_result(
     }
 }
 
-fn pin_request_digest(run_id: &RunId, reason: &str) -> String {
+pub(crate) fn pin_request_digest(run_id: &RunId, reason: &str) -> String {
     let mut bytes = Vec::new();
     append_length_prefixed(&mut bytes, b"lumin-run-pin-request.v1");
     append_length_prefixed(&mut bytes, run_id.as_str().as_bytes());
@@ -205,7 +205,7 @@ fn pin_request_digest(run_id: &RunId, reason: &str) -> String {
     digest_hex(&bytes)
 }
 
-fn unpin_request_digest(pin_id: &PinId) -> String {
+pub(crate) fn unpin_request_digest(pin_id: &PinId) -> String {
     let mut bytes = Vec::new();
     append_length_prefixed(&mut bytes, b"lumin-run-unpin-request.v1");
     append_length_prefixed(&mut bytes, pin_id.as_str().as_bytes());

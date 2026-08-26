@@ -5,6 +5,9 @@ mod pins;
 mod planning;
 pub(crate) mod records;
 
+pub(crate) use pins::{pin_request_digest, unpin_request_digest};
+pub(crate) use planning::{confirm_request_digest, plan_request_digest};
+
 #[cfg(all(feature = "retention-test-crash", not(debug_assertions)))]
 compile_error!("retention-test-crash is restricted to debug test builds");
 

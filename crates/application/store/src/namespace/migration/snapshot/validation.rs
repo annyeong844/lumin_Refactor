@@ -10,7 +10,9 @@ use lumin_evidence::{
     GateCloseObservationInput, GateDecision, GateLifecycle, GateOperationKind, GateOperationStatus,
     GateRecord, GateRevision, GateSignal, GateValidationReceipt, OperationRecord,
     PhysicalAliasClosureRecord, PreWriteAdmissionConflictOwner, PreWriteAdmissionEvidence,
-    RUN_EVIDENCE_SCHEMA_VERSION, SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, WorktreeTransition,
+    RUN_EVIDENCE_SCHEMA_VERSION, RetentionItemKind, RetentionOperationKind,
+    RetentionOperationRecord, RetentionOperationResult, RetentionOperationStatus,
+    RetentionPlanState, SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, WorktreeTransition,
     WriteLeaseKind, apply_worktree_transition_for_domain, derive_gate_baseline_observation_id,
     derive_gate_close_observation_id, derive_post_write_final_validation_signals,
     derive_pre_write_admission_signals, derive_pre_write_final_validation_signals,
@@ -24,7 +26,7 @@ use serde::de::DeserializeOwned;
 use crate::gate::{
     records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY, transition_key, validate_reservation_binding_set,
 };
-use crate::retention::records::StoredRetentionPlan;
+use crate::retention::records::{StoredRetentionPlan, StoredTombstone};
 use crate::{RunCatalogRecord, StoreError};
 
 use super::super::super::NamespaceGuard;
@@ -112,6 +114,13 @@ fn validate_attempt_allocator_sequence(snapshot: &LogicalStoreSnapshot) -> Resul
             "latest attempt",
         )?);
     }
+    maximum = maximum.max(retained_allocator_floor(
+        snapshot,
+        RetentionItemKind::Attempt,
+        "attempt_",
+        "retained attempt",
+        true,
+    )?);
     validate_allocator_sequence(snapshot, "attempt", maximum)
 }
 
@@ -127,13 +136,20 @@ fn validate_retention_allocator_sequences(
         })?;
     validate_allocator_sequence(snapshot, "retention-plan", maximum_plan)?;
 
-    let maximum_pin = snapshot
+    let mut maximum_pin = snapshot
         .run_pins
         .keys()
         .map(|id| canonical_allocated_sequence(id, "pin_", "run pin"))
         .try_fold(0_u64, |maximum, sequence| {
             sequence.map(|sequence| maximum.max(sequence))
         })?;
+    maximum_pin = maximum_pin.max(retained_allocator_floor(
+        snapshot,
+        RetentionItemKind::PinOrReference,
+        "pin_",
+        "retained run pin",
+        false,
+    )?);
     validate_allocator_sequence(snapshot, "run-pin", maximum_pin)?;
 
     let maximum_catalog_revision = snapshot
@@ -146,7 +162,90 @@ fn validate_retention_allocator_sequences(
         .try_fold(0_u64, |maximum, revision| {
             revision.map(|revision| maximum.max(revision))
         })?;
-    validate_allocator_sequence(snapshot, "retention-catalog", maximum_catalog_revision)
+    let retained_catalog_mutations =
+        snapshot
+            .retention_operations
+            .iter()
+            .try_fold(0_u64, |count, (key, bytes)| {
+                let operation =
+                    parse_record::<RetentionOperationRecord>("retention-operations", key, bytes)?;
+                let advances_catalog = matches!(
+                    operation.kind,
+                    RetentionOperationKind::RunPin
+                        | RetentionOperationKind::RunUnpin
+                        | RetentionOperationKind::RunPrunePlan
+                        | RetentionOperationKind::GatePrunePlan
+                ) || matches!(
+                    (&operation.kind, operation.status, &operation.result),
+                    (
+                        RetentionOperationKind::RunPruneConfirm
+                            | RetentionOperationKind::GatePruneConfirm,
+                        RetentionOperationStatus::Committed,
+                        RetentionOperationResult::Retention {
+                            result: lumin_evidence::RetentionMutationResult::Pruned { .. }
+                        }
+                    )
+                );
+                if advances_catalog {
+                    count.checked_add(1).ok_or_else(|| {
+                        StoreError::Integrity(
+                            "retention-catalog retained mutation count overflow".to_owned(),
+                        )
+                    })
+                } else {
+                    Ok(count)
+                }
+            })?;
+    validate_allocator_sequence(
+        snapshot,
+        "retention-catalog",
+        maximum_catalog_revision.max(retained_catalog_mutations),
+    )
+}
+
+fn for_each_retained_item(
+    snapshot: &LogicalStoreSnapshot,
+    mut visit: impl FnMut(RetentionItemKind, &str, u64) -> Result<(), StoreError>,
+) -> Result<(), StoreError> {
+    for (key, bytes) in &snapshot.retention_plans {
+        let plan = parse_record::<StoredRetentionPlan>("retention-plans", key, bytes)?;
+        for item in &plan.record.items {
+            visit(item.kind, &item.record_id, item.owning_sequence)?;
+        }
+    }
+    for (key, bytes) in &snapshot.retention_tombstones {
+        let tombstone = parse_record::<StoredTombstone>("retention-tombstones", key, bytes)?;
+        visit(
+            tombstone.envelope.record_kind,
+            &tombstone.envelope.record_id,
+            tombstone.owning_sequence,
+        )?;
+    }
+    Ok(())
+}
+
+fn retained_allocator_floor(
+    snapshot: &LogicalStoreSnapshot,
+    expected_kind: RetentionItemKind,
+    prefix: &str,
+    label: &str,
+    require_owning_sequence: bool,
+) -> Result<u64, StoreError> {
+    let mut maximum = 0_u64;
+    for_each_retained_item(snapshot, |kind, record_id, owning_sequence| {
+        if kind != expected_kind {
+            return Ok(());
+        }
+        let sequence = canonical_allocated_sequence(record_id, prefix, label)?;
+        if require_owning_sequence && sequence != owning_sequence {
+            return Err(StoreError::Integrity(format!(
+                "{label} ID disagrees with its retention owning sequence"
+            )));
+        }
+        maximum = maximum.max(sequence);
+        Ok(())
+    })?;
+    Ok(maximum)
 }
 
 fn validate_allocator_sequence(
@@ -208,7 +307,14 @@ fn validate_gate_id_sequence(
         )
         .try_fold(0_u64, |maximum, sequence| {
             sequence.map(|sequence| maximum.max(sequence))
-        })?;
+        })?
+        .max(retained_allocator_floor(
+            snapshot,
+            RetentionItemKind::Gate,
+            "gate_",
+            "retained gate",
+            true,
+        )?);
     if observed == u64::MAX {
         return Err(StoreError::Integrity(
             "gate sequence is exhausted and cannot allocate another gate".to_owned(),
@@ -852,6 +958,13 @@ fn validate_transition_catalog_sequence(
     for operation in operations.values() {
         minimum = minimum.max(operation.transition_sequence);
     }
+    minimum = minimum.max(retained_allocator_floor(
+        snapshot,
+        RetentionItemKind::Transition,
+        "transition_",
+        "retained transition",
+        true,
+    )?);
     if observed < minimum {
         return Err(StoreError::Integrity(format!(
             "transition sequence regressed below durable transition history: observed {observed}, minimum {minimum}"
@@ -2399,6 +2512,11 @@ fn reconstruct_transition_before(
 }
 
 fn validate_run_catalog(snapshot: &LogicalStoreSnapshot) -> Result<(), StoreError> {
+    let mut historical_run_ids = snapshot
+        .run_catalog
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
     for (key, bytes) in &snapshot.run_catalog {
         let record = parse_record::<RunCatalogRecord>("run-catalog", key, bytes)?;
         if record.run_id.as_str() != key {
@@ -2407,10 +2525,43 @@ fn validate_run_catalog(snapshot: &LogicalStoreSnapshot) -> Result<(), StoreErro
             )));
         }
     }
-    let retained_insertions = u64::try_from(snapshot.run_catalog.len()).map_err(|_| {
+    for_each_retained_item(snapshot, |kind, record_id, _| {
+        if kind == RetentionItemKind::Run {
+            historical_run_ids.insert(record_id.to_owned());
+        }
+        Ok(())
+    })?;
+    let retained_insertions = u64::try_from(historical_run_ids.len()).map_err(|_| {
         StoreError::Integrity("run-catalog retained insertion count overflow".to_owned())
     })?;
-    validate_allocator_sequence(snapshot, "run-catalog", retained_insertions)
+    let retained_pruning_revisions =
+        snapshot
+            .retention_plans
+            .iter()
+            .try_fold(0_u64, |count, (key, bytes)| {
+                let plan = parse_record::<StoredRetentionPlan>("retention-plans", key, bytes)?;
+                let advances_catalog = plan.record.state != RetentionPlanState::Prepared
+                    && plan
+                        .record
+                        .items
+                        .iter()
+                        .any(|item| item.kind == RetentionItemKind::Run);
+                if advances_catalog {
+                    count.checked_add(1).ok_or_else(|| {
+                        StoreError::Integrity(
+                            "run-catalog retained pruning revision count overflow".to_owned(),
+                        )
+                    })
+                } else {
+                    Ok(count)
+                }
+            })?;
+    let minimum = retained_insertions
+        .checked_add(retained_pruning_revisions)
+        .ok_or_else(|| {
+            StoreError::Integrity("run-catalog retained revision count overflow".to_owned())
+        })?;
+    validate_allocator_sequence(snapshot, "run-catalog", minimum)
 }
 
 fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreError> {
@@ -2916,9 +3067,100 @@ fn parse_record<T: DeserializeOwned>(
 mod tests {
     use super::*;
     use lumin_evidence::{
-        GateAnalysisOptions, SemanticInputRecord, SemanticInputState, WriteLease,
+        GateAnalysisOptions, RetentionPlanItem, RetentionTombstoneEnvelope, SemanticInputRecord,
+        SemanticInputState, WriteLease,
     };
-    use lumin_model::{GateId, PhysicalFileIdentity};
+    use lumin_model::{GateId, PhysicalFileIdentity, RetentionPlanId};
+
+    fn empty_snapshot() -> LogicalStoreSnapshot {
+        LogicalStoreSnapshot {
+            sequences: BTreeMap::new(),
+            attempt_leases: BTreeMap::new(),
+            run_catalog: BTreeMap::new(),
+            pointers: BTreeMap::new(),
+            gates: BTreeMap::new(),
+            operations: BTreeMap::new(),
+            validation_receipts: BTreeMap::new(),
+            transitions: BTreeMap::new(),
+            retention_plans: BTreeMap::new(),
+            retention_operations: BTreeMap::new(),
+            retention_tombstones: BTreeMap::new(),
+            run_pins: BTreeMap::new(),
+            cache_cleanup_operations: BTreeMap::new(),
+            cache_eviction_authorizations: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn allocator_floors_include_retention_plans_and_tombstones()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut snapshot = empty_snapshot();
+        snapshot.sequences.insert("attempt".to_owned(), 7);
+        let plan = StoredRetentionPlan {
+            record: lumin_evidence::RetentionPlanRecord {
+                schema_version: "lumin-retention-plan.v1".to_owned(),
+                repository_id: lumin_model::RepositoryId::from_string("repository".to_owned()),
+                plan_id: RetentionPlanId::from_string("retention_plan_0000000000000001".to_owned()),
+                content_identity: lumin_model::RetentionContentIdentity::from_string(
+                    "content".to_owned(),
+                ),
+                scope: lumin_evidence::RetentionPlanScope::Runs {
+                    before_unix_millis: 0,
+                },
+                created_unix_millis: 0,
+                catalog_revision: 1,
+                state: RetentionPlanState::Prepared,
+                items: vec![RetentionPlanItem {
+                    kind: RetentionItemKind::Attempt,
+                    owning_sequence: 8,
+                    record_id: "attempt_0000000000000008".to_owned(),
+                    identity_sha256: "identity".to_owned(),
+                    byte_count: 1,
+                }],
+                exclusions: Vec::new(),
+                confirmation_operation_id: None,
+                recoverable_state: None,
+                tombstone_identity: None,
+                physical_reclamation_pending: false,
+            },
+            trash_nonce: "nonce".to_owned(),
+            progress: None,
+        };
+        snapshot.retention_plans.insert(
+            plan.record.plan_id.as_str().to_owned(),
+            serde_json::to_vec(&plan)?,
+        );
+        assert!(matches!(
+            validate_attempt_allocator_sequence(&snapshot),
+            Err(StoreError::Integrity(message))
+                if message.contains("minimum 8")
+        ));
+
+        snapshot.retention_plans.clear();
+        let tombstone = StoredTombstone {
+            schema_version: "lumin-retention-tombstone.v1".to_owned(),
+            envelope: RetentionTombstoneEnvelope {
+                record_kind: RetentionItemKind::Attempt,
+                record_id: "attempt_0000000000000009".to_owned(),
+                plan_id: RetentionPlanId::from_string("retention_plan_0000000000000001".to_owned()),
+                recoverable_state: None,
+                tombstone_identity: None,
+                physical_reclamation_pending: false,
+            },
+            identity_sha256: "identity".to_owned(),
+            owning_sequence: 9,
+        };
+        snapshot.retention_tombstones.insert(
+            "0:attempt_0000000000000009".to_owned(),
+            serde_json::to_vec(&tombstone)?,
+        );
+        assert!(matches!(
+            validate_attempt_allocator_sequence(&snapshot),
+            Err(StoreError::Integrity(message))
+                if message.contains("minimum 9")
+        ));
+        Ok(())
+    }
 
     fn active_gate(
         id: &str,

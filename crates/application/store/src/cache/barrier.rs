@@ -128,9 +128,6 @@ fn barrier_address(environment: &str) -> Result<Option<SocketAddr>, StoreError> 
 fn connect(address: SocketAddr) -> Result<TcpStream, StoreError> {
     let stream = TcpStream::connect(address).map_err(io_error)?;
     stream
-        .set_read_timeout(Some(BARRIER_TIMEOUT))
-        .map_err(io_error)?;
-    stream
         .set_write_timeout(Some(BARRIER_TIMEOUT))
         .map_err(io_error)?;
     Ok(stream)
