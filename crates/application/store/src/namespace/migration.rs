@@ -25,8 +25,9 @@ use self::artifacts::{
     target_name, validate_binding_at, validate_root_authority,
 };
 use self::snapshot::{
-    CurrentStore, LegacyStore, create_unpublished_target, open_current_canonical, open_legacy_at,
-    open_legacy_canonical, open_legacy_entry, read_current_entry,
+    CurrentStore, LegacyStore, LogicalStoreSnapshot, create_unpublished_target,
+    open_current_canonical, open_legacy_at, open_legacy_canonical, open_legacy_entry,
+    read_current_entry,
 };
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 use super::platform::exchange_entries;
@@ -634,14 +635,14 @@ fn exchange_store(
     hook: &mut impl FnMut(MigrationCrashPoint) -> Result<(), StoreError>,
 ) -> Result<MigrationJournal, StoreError> {
     validate_target_published_envelope(guard, &journal)?;
-    open_exchange_source(guard, &journal)?
+    let transformed = open_exchange_source(guard, &journal)?
         .snapshot
-        .transformed_from_v12(guard)?
-        .validate_external_references(guard)?;
+        .transformed_from_v12(guard)?;
+    transformed.validate_external_references(guard)?;
     let source = journal.source.binding.clone();
     let target = journal.target()?.binding.clone();
     validate_exchange_names(&source, &target)?;
-    exchange_or_recover(guard, &journal, hook)?;
+    exchange_or_recover(guard, &journal, &transformed, hook)?;
     validate_binding_at(
         guard,
         &source,
@@ -679,6 +680,7 @@ fn exchange_store(
 fn exchange_or_recover(
     guard: &NamespaceGuard,
     journal: &MigrationJournal,
+    transformed: &LogicalStoreSnapshot,
     hook: &mut impl FnMut(MigrationCrashPoint) -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
     let source = &journal.source.binding;
@@ -733,6 +735,7 @@ fn exchange_or_recover(
             &target.pre_exchange_name,
             "migration target before exchange",
         )?;
+        transformed.validate_external_references(guard)?;
         exchange_entries(
             &guard.state_directory,
             OsStr::new("lifecycle.store"),
@@ -752,6 +755,7 @@ fn exchange_or_recover(
 fn exchange_or_recover(
     guard: &NamespaceGuard,
     journal: &MigrationJournal,
+    transformed: &LogicalStoreSnapshot,
     hook: &mut impl FnMut(MigrationCrashPoint) -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
     let source = &journal.source.binding;
@@ -813,6 +817,7 @@ fn exchange_or_recover(
                 &target.pre_exchange_name,
                 "migration target before exchange",
             )?;
+            transformed.validate_external_references(guard)?;
             move_entry_noreplace(
                 &guard.state_directory,
                 OsStr::new("lifecycle.store"),
@@ -837,6 +842,7 @@ fn exchange_or_recover(
                 &target.pre_exchange_name,
                 "migration target before canonical move",
             )?;
+            transformed.validate_external_references(guard)?;
             move_entry_noreplace(
                 &guard.state_directory,
                 OsStr::new(&target.pre_exchange_name),
@@ -886,6 +892,7 @@ fn exchange_or_recover(
             &target.pre_exchange_name,
             "migration target before canonical move",
         )?;
+        transformed.validate_external_references(guard)?;
         move_entry_noreplace(
             &guard.state_directory,
             OsStr::new(&target.pre_exchange_name),
@@ -901,6 +908,7 @@ fn exchange_or_recover(
 fn exchange_or_recover(
     _guard: &NamespaceGuard,
     _journal: &MigrationJournal,
+    _transformed: &LogicalStoreSnapshot,
     _hook: &mut impl FnMut(MigrationCrashPoint) -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
     Err(StoreError::Integrity(

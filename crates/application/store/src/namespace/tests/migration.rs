@@ -1283,6 +1283,78 @@ fn exchange_rechecks_link_counts_after_movement_handles_open()
 }
 
 #[test]
+fn exchange_rechecks_pending_write_leases_after_movement_handles_open()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let pending_path = root.path().join("src/pending.ts");
+    fs::create_dir_all(
+        pending_path
+            .parent()
+            .ok_or("pending path omitted its parent")?,
+    )?;
+    fs::write(&pending_path, b"export const pending = true;\n")?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("op-exchange-pending-write".to_owned());
+    let session = store.begin_operation(&operation_id)?;
+    let source_path = RepoPath::from_portable("src/pending.ts")?;
+    let source = RepoPathProjection::from(&source_path);
+    let source_lease = observed_lease(root.path(), &source_path)?;
+    let analysis_options = options();
+    let request_digest = pre_write_digest(std::slice::from_ref(&source), &analysis_options);
+    assert!(matches!(
+        session.reserve_pre_write(
+            &request_digest,
+            std::slice::from_ref(&source),
+            std::slice::from_ref(&source_lease),
+            &analysis_options,
+            rejected_test_observation,
+        )?,
+        PreWriteStart::Analyze { .. }
+    ));
+    make_prior_store(&store, root.path())?;
+
+    let canonical_path = root.path().join(".lumin/lifecycle.store");
+    let canonical = HeldEntry::open(
+        &canonical_path,
+        EntryKind::RegularFile,
+        EntryAccess::ReadOnly,
+        true,
+        "migration source before pending-lease exchange barrier",
+    )?;
+    let source_identity = canonical.identity().clone();
+    drop(canonical);
+
+    let replacement = root.path().join("src/pending-replacement.ts");
+    fs::write(&replacement, b"export const pending = false;\n")?;
+    let mut reached = false;
+    let result = store.namespace.with_migration_lock(|guard| {
+        migrate_with_hook(guard, &mut |point| {
+            if point == MigrationCrashPoint::ExchangeInputsOpened && !reached {
+                fs::remove_file(&pending_path).map_err(crate::io_error)?;
+                fs::rename(&replacement, &pending_path).map_err(crate::io_error)?;
+                reached = true;
+            }
+            Ok(())
+        })
+    });
+    assert!(reached, "migration skipped the exchange-input barrier");
+    assert!(
+        matches!(result, Err(StoreError::Integrity(_))),
+        "migration exchanged a store after its pending lease changed: {result:?}"
+    );
+
+    let canonical = HeldEntry::open(
+        &canonical_path,
+        EntryKind::RegularFile,
+        EntryAccess::ReadOnly,
+        true,
+        "migration source after rejected pending-lease exchange",
+    )?;
+    assert_eq!(canonical.identity(), &source_identity);
+    Ok(())
+}
+
+#[test]
 fn terminal_validation_rereads_the_journal_after_external_reference_validation()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
