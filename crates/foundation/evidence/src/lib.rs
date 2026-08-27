@@ -1406,6 +1406,11 @@ pub fn validate_migration_run_evidence_tier(
     invocation: &ScanInvocationTier,
     entry_selections: &[EntrySelectionRecord],
 ) -> Result<(), RunEvidenceIdentityError> {
+    if !invocation.includes.is_empty() || !invocation.excludes.is_empty() {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "authenticated legacy scan-scope patterns",
+        });
+    }
     if invocation
         .role_overrides
         .iter()
@@ -1433,21 +1438,17 @@ pub fn validate_migration_run_evidence_tier(
         });
     }
     if evidence
-        .source_contexts
-        .iter()
-        .any(|context| context.package_root.is_some())
-    {
-        return Err(RunEvidenceIdentityError::InventoryMismatch {
-            collection: "authenticated legacy package-manifest inventory",
-        });
-    }
-    if evidence
         .resolutions
         .iter()
         .any(|resolution| matches!(&resolution.outcome, ResolutionOutcome::Internal { .. }))
     {
         return Err(RunEvidenceIdentityError::InventoryMismatch {
             collection: "authenticated legacy internal resolutions",
+        });
+    }
+    if !evidence.source_contexts.is_empty() {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "authenticated legacy package-manifest inventory",
         });
     }
     Ok(())
@@ -2914,6 +2915,24 @@ mod tests {
                 })
             ));
         }
+        let empty_evidence = run_evidence_fixture(Vec::new());
+        for invocation in [
+            ScanInvocationTier {
+                includes: vec!["src/**".to_owned()],
+                ..ScanInvocationTier::default()
+            },
+            ScanInvocationTier {
+                excludes: vec!["vendor/**".to_owned()],
+                ..ScanInvocationTier::default()
+            },
+        ] {
+            assert!(matches!(
+                validate_migration_run_evidence_tier(&empty_evidence, &invocation, &[]),
+                Err(RunEvidenceIdentityError::InventoryMismatch {
+                    collection: "authenticated legacy scan-scope patterns"
+                })
+            ));
+        }
 
         assert!(matches!(
             validate_run_evidence_tier(&evidence, &ScanInvocationTier::default(), &[]),
@@ -3530,7 +3549,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_gate_package_manifest_inventory_fails_closed()
+    fn legacy_gate_package_manifest_inventory_fails_closed_even_when_erased()
     -> Result<(), Box<dyn std::error::Error>> {
         let path = RepoPath::from_portable("packages/a/src/main.ts")?;
         let package_root = RepoPath::from_portable("packages/a")?;
@@ -3542,9 +3561,16 @@ mod tests {
                 RepoPathProjection::from(&path),
             )],
         );
-        evidence.source_contexts[0].package_root = Some(RepoPathProjection::from(&package_root));
         validate_run_evidence_identities(&evidence)?;
         validate_migration_run_evidence(&evidence)?;
+        assert!(matches!(
+            validate_migration_run_evidence_tier(&evidence, &ScanInvocationTier::default(), &[]),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "authenticated legacy package-manifest inventory"
+            })
+        ));
+        evidence.source_contexts[0].package_root = Some(RepoPathProjection::from(&package_root));
+        validate_run_evidence_identities(&evidence)?;
         assert!(matches!(
             validate_migration_run_evidence_tier(&evidence, &ScanInvocationTier::default(), &[]),
             Err(RunEvidenceIdentityError::InventoryMismatch {
