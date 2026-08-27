@@ -334,11 +334,101 @@ pub(super) fn validate_published(
     Ok(record)
 }
 
-fn validate_directory(
+pub(crate) fn read_validated_directory(
+    directory_path: &Path,
+    directory: &HeldEntry,
+) -> Result<RunCatalogRecord, StoreError> {
+    let record: RunCatalogRecord =
+        files::read_json(&directory_path.join("run.json"), directory, "run envelope")?;
+    validate_directory(directory_path, directory, &record)?;
+    Ok(record)
+}
+
+pub(crate) fn validate_directory(
     directory_path: &Path,
     directory: &HeldEntry,
     expected: &RunCatalogRecord,
 ) -> Result<(), StoreError> {
+    validate_directory_with_hooks_and_evidence(
+        directory_path,
+        directory,
+        expected,
+        || Ok(()),
+        || Ok(()),
+        || Ok(()),
+        |_| Ok(()),
+    )
+}
+
+pub(crate) fn validate_directory_for_migration(
+    directory_path: &Path,
+    directory: &HeldEntry,
+    expected: &RunCatalogRecord,
+) -> Result<(), StoreError> {
+    validate_directory_with_hooks_and_evidence(
+        directory_path,
+        directory,
+        expected,
+        || Ok(()),
+        || Ok(()),
+        || Ok(()),
+        |evidence| {
+            lumin_evidence::validate_migration_run_evidence(evidence).map_err(|error| {
+                StoreError::Integrity(format!(
+                    "legacy run evidence cannot be authenticated for migration: {error}"
+                ))
+            })
+        },
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn validate_directory_with_evidence_read_hook(
+    directory_path: &Path,
+    directory: &HeldEntry,
+    expected: &RunCatalogRecord,
+    after_evidence_read: impl FnOnce() -> Result<(), StoreError>,
+) -> Result<(), StoreError> {
+    validate_directory_with_hooks_and_evidence(
+        directory_path,
+        directory,
+        expected,
+        after_evidence_read,
+        || Ok(()),
+        || Ok(()),
+        |_| Ok(()),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn validate_directory_with_inventory_hooks(
+    directory_path: &Path,
+    directory: &HeldEntry,
+    expected: &RunCatalogRecord,
+    before_final_inventory: impl FnOnce() -> Result<(), StoreError>,
+    after_final_inventory: impl FnOnce() -> Result<(), StoreError>,
+) -> Result<(), StoreError> {
+    validate_directory_with_hooks_and_evidence(
+        directory_path,
+        directory,
+        expected,
+        || Ok(()),
+        before_final_inventory,
+        after_final_inventory,
+        |_| Ok(()),
+    )
+}
+
+fn validate_directory_with_hooks_and_evidence(
+    directory_path: &Path,
+    directory: &HeldEntry,
+    expected: &RunCatalogRecord,
+    after_evidence_read: impl FnOnce() -> Result<(), StoreError>,
+    before_final_inventory: impl FnOnce() -> Result<(), StoreError>,
+    after_final_inventory: impl FnOnce() -> Result<(), StoreError>,
+    validate_evidence: impl FnOnce(&RunEvidence) -> Result<(), StoreError>,
+) -> Result<(), StoreError> {
+    validate_directory_inventory(directory, expected)?;
     let observed: RunCatalogRecord =
         files::read_json(&directory_path.join("run.json"), directory, "run envelope")?;
     if observed.attempt_id != expected.attempt_id
@@ -361,6 +451,49 @@ fn validate_directory(
         "run evidence store",
     )?;
     files::require_parent_volume(&evidence, directory, "run evidence store")?;
+    let bytes = validate_evidence_store_identity(&evidence, expected)?;
+    after_evidence_read()?;
+    let run_evidence = read_evidence_store(&bytes)?;
+    validate_evidence(&run_evidence)?;
+    evidence.validate_path(
+        &evidence_path,
+        EntryKind::RegularFile,
+        EntryAccess::ReadOnly,
+        true,
+        "run evidence store",
+    )?;
+    directory.validate_path(
+        directory_path,
+        EntryKind::Directory,
+        EntryAccess::ReadOnly,
+        false,
+        "run directory",
+    )?;
+    before_final_inventory()?;
+    validate_directory_inventory(directory, expected)?;
+    after_final_inventory()?;
+    evidence.validate_path(
+        &evidence_path,
+        EntryKind::RegularFile,
+        EntryAccess::ReadOnly,
+        true,
+        "run evidence store",
+    )?;
+    validate_evidence_store_identity(&evidence, expected)?;
+    directory.validate_path(
+        directory_path,
+        EntryKind::Directory,
+        EntryAccess::ReadOnly,
+        false,
+        "run directory",
+    )?;
+    validate_directory_inventory(directory, expected)
+}
+
+fn validate_evidence_store_identity(
+    evidence: &HeldEntry,
+    expected: &RunCatalogRecord,
+) -> Result<Vec<u8>, StoreError> {
     let bytes = evidence.read_all()?;
     if digest_hex(&bytes) != expected.evidence_store_sha256
         || bytes.len() as u64 != expected.evidence_store_size
@@ -370,14 +503,26 @@ fn validate_directory(
             expected.run_id.as_str()
         )));
     }
-    read_evidence_store(&evidence_path)?;
-    evidence.validate_path(
-        &evidence_path,
-        EntryKind::RegularFile,
-        EntryAccess::ReadOnly,
-        true,
-        "run evidence store",
-    )
+    Ok(bytes)
+}
+
+fn validate_directory_inventory(
+    directory: &HeldEntry,
+    expected: &RunCatalogRecord,
+) -> Result<(), StoreError> {
+    let names = directory.directory_names("run directory")?;
+    if names
+        != [
+            std::ffi::OsString::from("evidence.store"),
+            std::ffi::OsString::from("run.json"),
+        ]
+    {
+        return Err(StoreError::Integrity(format!(
+            "run directory contains an unknown entry: {}",
+            expected.run_id.as_str()
+        )));
+    }
+    Ok(())
 }
 
 fn run_path(store: &RepositoryStore, run_id: &RunId) -> PathBuf {

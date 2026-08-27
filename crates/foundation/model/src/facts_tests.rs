@@ -1,7 +1,15 @@
 use crate::{
     SOURCE_CLASSIFICATION_RULE_VERSION, SourceClassificationRole, SourceRoleClassification,
-    SourceRoleConfigurationSource, SourceRoleReason, SourceRoles, validate_scan_pattern,
+    SourceRoleConfigurationSource, SourceRoleReason, SourceRoles, external_package_name,
+    validate_scan_pattern,
 };
+
+#[test]
+fn external_package_names_use_the_owner_projection() {
+    assert_eq!(external_package_name("react/jsx-runtime"), "react");
+    assert_eq!(external_package_name("@scope/pkg/subpath"), "@scope/pkg");
+    assert_eq!(external_package_name("#internal"), "#internal");
+}
 
 #[test]
 fn scan_pattern_validation_matches_the_inventory_admission_grammar() {

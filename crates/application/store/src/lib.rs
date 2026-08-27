@@ -15,19 +15,21 @@ pub use namespace::MigrationIntent;
 pub use publication::{AttemptEnvelope, AttemptSession, AttemptState, LatestRunSnapshot};
 pub use retention::{RETENTION_PLAN_ITEMS_ORDERING, RetentionPlanRequest};
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use lumin_evidence::RunEvidence;
+use lumin_evidence::{RUN_EVIDENCE_SCHEMA_VERSION, RunEvidence};
 use lumin_model::{
     AttemptId, PhysicalFileIdentity, RepositoryBinding, RepositoryId, RunId,
     append_length_prefixed, digest_hex,
 };
 use redb::{
-    Database, ReadOnlyDatabase, ReadableDatabase, ReadableTable, TableDefinition, TableError,
+    Database, ReadableDatabase, ReadableTable, StorageBackend, TableDefinition, TableError,
+    TableHandle, backends::InMemoryBackend,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use thiserror::Error;
 
 pub(crate) const SEQUENCES: TableDefinition<&str, u64> = TableDefinition::new("sequences");
@@ -35,7 +37,7 @@ pub(crate) const ATTEMPT_LEASES: TableDefinition<&str, &[u8]> =
     TableDefinition::new("attempt-leases");
 pub(crate) const RUN_CATALOG: TableDefinition<&str, &[u8]> = TableDefinition::new("run-catalog");
 pub(crate) const POINTERS: TableDefinition<&str, &[u8]> = TableDefinition::new("pointers");
-const EVIDENCE: TableDefinition<&str, &[u8]> = TableDefinition::new("evidence");
+pub(crate) const EVIDENCE: TableDefinition<&str, &[u8]> = TableDefinition::new("evidence");
 const MAX_RUN_CATALOG_PAGE_SIZE: usize = 100;
 
 pub fn evidence_payload_sha256(evidence: &RunEvidence) -> Result<String, StoreError> {
@@ -46,10 +48,120 @@ pub fn evidence_payload_sha256(evidence: &RunEvidence) -> Result<String, StoreEr
     Ok(digest_hex(&framed))
 }
 
+pub(crate) fn decode_closed_json<T>(bytes: &[u8]) -> Result<T, String>
+where
+    T: DeserializeOwned + Serialize,
+{
+    let decoded = serde_json::from_slice::<T>(bytes).map_err(|error| error.to_string())?;
+    validate_closed_json_projection(bytes, &decoded)?;
+    Ok(decoded)
+}
+
+fn validate_closed_json_projection<T: Serialize>(bytes: &[u8], decoded: &T) -> Result<(), String> {
+    let source =
+        serde_json::from_slice::<serde_json::Value>(bytes).map_err(|error| error.to_string())?;
+    let projected = serde_json::to_value(decoded).map_err(|error| error.to_string())?;
+    if let Some(path) = first_unsupported_json_path(&source, &projected, "") {
+        return Err(format!(
+            "contains unsupported JSON member or shape at {path}"
+        ));
+    }
+    Ok(())
+}
+
+fn first_unsupported_json_path(
+    source: &serde_json::Value,
+    projected: &serde_json::Value,
+    path: &str,
+) -> Option<String> {
+    match (source, projected) {
+        (serde_json::Value::Object(source), serde_json::Value::Object(projected)) => {
+            source.iter().find_map(|(key, value)| {
+                let child_path = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{path}.{key}")
+                };
+                projected
+                    .get(key)
+                    .map_or(Some(child_path.clone()), |projected| {
+                        first_unsupported_json_path(value, projected, &child_path)
+                    })
+            })
+        }
+        (serde_json::Value::Array(source), serde_json::Value::Array(projected)) => {
+            if source.len() != projected.len() {
+                return Some(if path.is_empty() {
+                    "$".to_owned()
+                } else {
+                    path.to_owned()
+                });
+            }
+            source
+                .iter()
+                .zip(projected)
+                .enumerate()
+                .find_map(|(index, (source, projected))| {
+                    first_unsupported_json_path(source, projected, &format!("{path}[{index}]"))
+                })
+        }
+        (serde_json::Value::Object(_) | serde_json::Value::Array(_), _) => {
+            Some(if path.is_empty() {
+                "$".to_owned()
+            } else {
+                path.to_owned()
+            })
+        }
+        _ => None,
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct RepositoryStore {
     state_dir: PathBuf,
     namespace: namespace::NamespaceState,
+}
+
+#[cfg(any(test, feature = "lifecycle-migration-test-fault"))]
+impl RepositoryStore {
+    pub fn rewrite_current_store_header_as_prior_for_test(&self) -> Result<(), StoreError> {
+        self.namespace
+            .rewrite_current_store_header_as_prior_for_test()
+    }
+
+    #[cfg(feature = "lifecycle-migration-test-fault")]
+    pub fn rewrite_existing_lifecycle_store_header_as_prior_for_test(
+        root: &Path,
+        binding: &RepositoryBinding,
+    ) -> Result<(), StoreError> {
+        let namespace = namespace::NamespaceState::open_for_migration(root, binding)?
+            .ok_or(StoreError::LifecycleStoreNotInitialized)?;
+        namespace.rewrite_current_store_header_as_prior_for_test()
+    }
+
+    #[cfg(feature = "lifecycle-migration-test-fault")]
+    pub fn corrupt_migration_anchor_for_test(&self) -> Result<(), StoreError> {
+        self.namespace.corrupt_migration_anchor_for_test()
+    }
+
+    #[cfg(feature = "lifecycle-migration-test-fault")]
+    pub fn remove_bound_root_authorization_for_test(
+        root: &Path,
+        binding: &RepositoryBinding,
+    ) -> Result<(), StoreError> {
+        let namespace = namespace::NamespaceState::open_for_migration(root, binding)?
+            .ok_or(StoreError::LifecycleStoreNotInitialized)?;
+        namespace.remove_bound_root_authorization_for_test()
+    }
+}
+
+#[cfg(any(test, feature = "lifecycle-migration-test-fault"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PriorCacheCleanupDeliveryStatusForTest {
+    NotAttempted,
+    Succeeded,
+    Failed,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -61,7 +173,7 @@ pub struct PublishedRun {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RunCatalogRecord {
     pub attempt_id: AttemptId,
     pub run_id: RunId,
@@ -161,6 +273,10 @@ pub enum StoreError {
     },
     #[error("completed lifecycle migration still has private payloads to clean")]
     LifecycleMigrationCleanupPending,
+    #[error("lifecycle store migration requires 'lumin store migrate'")]
+    LifecycleMigrationRequired,
+    #[error("lifecycle store is not initialized")]
+    LifecycleStoreNotInitialized,
 }
 
 impl RepositoryStore {
@@ -267,6 +383,26 @@ impl RepositoryStore {
 
     pub fn migrate_lifecycle_store(&self) -> Result<StoreGeneration, StoreError> {
         self.namespace.migrate_lifecycle_store()
+    }
+
+    pub fn migrate_existing_lifecycle_store(
+        root: &Path,
+        binding: &RepositoryBinding,
+    ) -> Result<StoreGeneration, StoreError> {
+        let namespace = namespace::NamespaceState::open_for_migration(root, binding)?
+            .ok_or(StoreError::LifecycleStoreNotInitialized)?;
+        namespace.migrate_lifecycle_store()
+    }
+
+    #[cfg(feature = "lifecycle-migration-test-fault")]
+    pub fn corrupt_migrating_cleanup_operation_for_test(
+        root: &Path,
+        binding: &RepositoryBinding,
+        operation_id: &lumin_model::OperationId,
+    ) -> Result<(), StoreError> {
+        let namespace = namespace::NamespaceState::open_for_migration(root, binding)?
+            .ok_or(StoreError::LifecycleStoreNotInitialized)?;
+        namespace.corrupt_migrating_cleanup_operation_for_test(operation_id)
     }
 
     fn with_exclusive_lock<T>(
@@ -464,7 +600,7 @@ fn read_live_run(
             run_id.as_str()
         )));
     }
-    Ok((record, read_evidence_store(&path)?))
+    Ok((record, read_evidence_store(&bytes)?))
 }
 
 fn write_evidence_store(path: &Path, evidence: &RunEvidence) -> Result<(), StoreError> {
@@ -482,16 +618,69 @@ fn write_evidence_store(path: &Path, evidence: &RunEvidence) -> Result<(), Store
     Ok(())
 }
 
-fn read_evidence_store(path: &Path) -> Result<RunEvidence, StoreError> {
-    // Writable redb opens may update container metadata and invalidate the published byte hash.
-    let database = ReadOnlyDatabase::open(path).map_err(backend_error)?;
+fn read_evidence_store(bytes: &[u8]) -> Result<RunEvidence, StoreError> {
+    let backend = InMemoryBackend::new();
+    let length = u64::try_from(bytes.len())
+        .map_err(|_| StoreError::Integrity("evidence store byte count overflow".to_owned()))?;
+    backend.set_len(length).map_err(io_error)?;
+    backend.write(0, bytes).map_err(io_error)?;
+    // Decode the exact bytes already bound to the run envelope. A writable
+    // redb open may update its private backend metadata, so the isolated
+    // in-memory copy also keeps the published container immutable.
+    let mut builder = Database::builder();
+    builder.set_repair_callback(|session| session.abort());
+    let database = builder
+        .create_with_backend(backend)
+        .map_err(backend_error)?;
     let read = database.begin_read().map_err(backend_error)?;
+    let observed_tables = read
+        .list_tables()
+        .map_err(backend_error)?
+        .map(|table| table.name().to_owned())
+        .collect::<BTreeSet<_>>();
+    let expected_tables = BTreeSet::from(["evidence".to_owned()]);
+    if observed_tables != expected_tables {
+        return Err(StoreError::Integrity(format!(
+            "evidence store contains unsupported table inventory: {}",
+            observed_tables.into_iter().collect::<Vec<_>>().join(", ")
+        )));
+    }
+    if read
+        .list_multimap_tables()
+        .map_err(backend_error)?
+        .next()
+        .is_some()
+    {
+        return Err(StoreError::Integrity(
+            "evidence store contains unsupported multimap tables".to_owned(),
+        ));
+    }
     let table = read.open_table(EVIDENCE).map_err(backend_error)?;
-    let value = table
-        .get("run")
+    let mut rows = table.iter().map_err(backend_error)?;
+    let (key, value) = rows
+        .next()
+        .transpose()
         .map_err(backend_error)?
         .ok_or_else(|| StoreError::Integrity("run evidence row is missing".to_owned()))?;
-    serde_json::from_slice(value.value()).map_err(serialization_error)
+    if key.value() != "run" || rows.next().transpose().map_err(backend_error)?.is_some() {
+        return Err(StoreError::Integrity(
+            "evidence store must contain exactly the run evidence row".to_owned(),
+        ));
+    }
+    let bytes = value.value().to_vec();
+    let evidence: RunEvidence = serde_json::from_slice(&bytes).map_err(serialization_error)?;
+    validate_closed_json_projection(&bytes, &evidence)
+        .map_err(|error| StoreError::Integrity(format!("run evidence row {error}")))?;
+    if evidence.schema_version != RUN_EVIDENCE_SCHEMA_VERSION {
+        return Err(StoreError::IncompatibleStateSchema(format!(
+            "run evidence uses unsupported schema {}; expected {RUN_EVIDENCE_SCHEMA_VERSION}",
+            evidence.schema_version
+        )));
+    }
+    lumin_evidence::validate_run_evidence_identities(&evidence).map_err(|error| {
+        StoreError::Integrity(format!("run evidence identity validation failed: {error}"))
+    })?;
+    Ok(evidence)
 }
 
 #[cfg(test)]

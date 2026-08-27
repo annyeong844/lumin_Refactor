@@ -91,6 +91,10 @@ const CRASH_CORPUS_CASES: &[(&str, &str)] = &[
         "publication-retention-race",
         "foundation --store-crash --row publication-retention-race",
     ),
+    (
+        "lifecycle-store-migration",
+        "foundation --store-crash --row lifecycle-store-migration",
+    ),
 ];
 
 #[derive(Debug, Default)]
@@ -350,6 +354,7 @@ fn is_reviewed_run_command(line: &str) -> bool {
         "rustup toolchain install 1.96.0 --profile minimal --component rustfmt --no-self-update",
         "rustup toolchain install 1.96.0 --profile minimal --no-self-update",
         "rustup toolchain install 1.96.0 --profile minimal --component clippy,rustfmt --no-self-update",
+        "rustup target add x86_64-unknown-linux-musl --toolchain 1.96.0",
         "$cargo = rustup which --toolchain 1.96.0 cargo",
         "$clippy = rustup which --toolchain 1.96.0 cargo-clippy",
         "$python = & \"$env:SETUP_PYTHON\" -I -S -c \"import pathlib,sys; print(pathlib.Path(sys.executable).resolve(strict=True))\"",
@@ -831,9 +836,9 @@ fn validate_corpus_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<Str
         .iter()
         .filter(|line| line.starts_with("- os:"))
         .count()
-        != 21
+        != 23
     {
-        violations.push("corpus job must contain exactly 21 reviewed partitions".to_owned());
+        violations.push("corpus job must contain exactly 23 reviewed partitions".to_owned());
     }
     if lines.iter().any(|line| {
         *line == "exclude:"

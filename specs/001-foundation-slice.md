@@ -450,9 +450,10 @@ physical identity, and payload digest. No predecessor is replaced or removed. De
 any successor boundary leaves exactly the previous contiguous chain or that chain plus
 one complete successor; no `.pending`, partial canonical file, gap, or fork is admissible.
 `MigrationArtifactBinding` records the opened canonical v12 source and held v13 target's
-roles, pre/post-exchange names, generations, schemas, complete byte/logical SHA-256 values,
-physical identities, and publication-time one-link states. The target binding is durable
-before its private name is visible. The closed event fold is
+roles, contiguous publication attempts, pre/post-exchange names, generations, schemas,
+complete byte/logical SHA-256 values, physical identities, and publication-time one-link
+states. The target attempt is authenticated independently of physical identity reuse, and
+the target binding is durable before its private name is visible. The closed event fold is
 `ObservedCanonicalSource -> Exchanged -> RetainedImmutable` for the source and
 `PendingPublication -> Published -> Exchanged -> CanonicalMutable` for a target; only a
 pending target whose handle is proven dead and name proven absent may become

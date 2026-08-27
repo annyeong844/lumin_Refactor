@@ -216,8 +216,8 @@ fn ci_row_shards_balance_declared_work_deterministically() {
             "unbalanced {mode} invocation loads: {loads:?}",
         );
         let expected = match mode {
-            CorpusMode::Standard => vec![37, 37, 37, 36],
-            CorpusMode::Determinism => vec![64, 21, 21, 21, 21, 21, 21, 20],
+            CorpusMode::Standard => vec![39, 39, 39, 39],
+            CorpusMode::Determinism => vec![64, 23, 22, 22, 22, 22, 22, 22],
             CorpusMode::StoreCrash => unreachable!("CI does not shard store-crash rows"),
         };
         assert_eq!(loads, expected, "{mode} shard assignment changed");
@@ -279,6 +279,42 @@ fn parallel_execution_preserves_registry_order_after_overtake() -> Result<(), St
         assert_eq!(ordered, [0, 1, 2]);
         Ok::<(), String>(())
     })?;
+    Ok(())
+}
+
+#[test]
+fn fault_enabled_invocations_are_isolated_from_parallel_neighbors() -> Result<(), String> {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Barrier};
+
+    let ordinary_barrier = Arc::new(Barrier::new(2));
+    let active = AtomicUsize::new(0);
+    let isolated_active = AtomicBool::new(false);
+    let observed = run_parallel_ordered_with_isolation(
+        5,
+        3,
+        |index| index == 2,
+        |index| {
+            let prior = active.fetch_add(1, Ordering::SeqCst);
+            if index == 2 {
+                assert_eq!(prior, 0, "isolated work overlapped an earlier partition");
+                assert!(!isolated_active.swap(true, Ordering::SeqCst));
+            } else {
+                assert!(!isolated_active.load(Ordering::SeqCst));
+            }
+            if index < 2 {
+                ordinary_barrier.wait();
+            }
+            if index == 2 {
+                isolated_active.store(false, Ordering::SeqCst);
+            }
+            active.fetch_sub(1, Ordering::SeqCst);
+            Ok(index)
+        },
+    )?;
+    assert_eq!(observed, [0, 1, 2, 3, 4]);
+    assert_eq!(active.load(Ordering::SeqCst), 0);
+    assert!(!isolated_active.load(Ordering::SeqCst));
     Ok(())
 }
 
@@ -377,7 +413,7 @@ fn every_mapped_standard_row_has_a_paired_determinism_invocation() {
         .iter()
         .filter(|row| row.is_mapped(CorpusMode::Determinism))
         .count();
-    assert_eq!(standard, 72);
+    assert_eq!(standard, 74);
     assert_eq!(determinism, standard);
 }
 

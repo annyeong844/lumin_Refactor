@@ -291,6 +291,7 @@ fn validate_active_gate_catalog_floor(
 ) -> Result<(), StoreError> {
     validate_active_gate_catalog_history(
         observed,
+        0,
         gates.iter().map(|(key, gate)| (key.as_str(), gate)),
         |operation_id| {
             operations
@@ -302,6 +303,7 @@ fn validate_active_gate_catalog_floor(
 
 pub(crate) fn validate_active_gate_catalog_history<'a>(
     observed: u64,
+    retained_mutation_floor: u64,
     gates: impl IntoIterator<Item = (&'a str, &'a GateRecord)>,
     operation_kind: impl Fn(&OperationId) -> Option<GateOperationKind>,
 ) -> Result<(), StoreError> {
@@ -312,7 +314,7 @@ pub(crate) fn validate_active_gate_catalog_history<'a>(
         ));
     }
     let mut minimum = 0_u64;
-    let mut retained_mutation_count = 0_u64;
+    let mut retained_mutation_count = retained_mutation_floor;
     for (key, gate) in gates {
         let mut gate_minimum = 0_u64;
         let mut preceding_catalog_revision = None;

@@ -9,6 +9,7 @@ publish.workspace = true
 [features]
 cache-cleanup-test-fault = ["lumin-store/cache-cleanup-test-fault"]
 gate-test-fault = []
+lifecycle-migration-test-fault = ["lumin-store/lifecycle-migration-test-fault"]
 publication-test-crash = ["lumin-store/publication-test-crash"]
 retention-test-crash = ["lumin-store/retention-test-crash"]
 

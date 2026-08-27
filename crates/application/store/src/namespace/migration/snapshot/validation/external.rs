@@ -1,25 +1,30 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use lumin_evidence::{
-    GateLifecycle, GateOperationKind, GateOperationStatus, GateRecord, OperationRecord,
-    SemanticReadReservationBinding, WriteLease, WriteLeaseKind,
+    CacheCleanupOperationRecord, CacheCleanupOperationStatus, GateLifecycle, GateOperationKind,
+    GateOperationStatus, GateRecord, OperationRecord, SemanticReadReservationBinding, WriteLease,
+    WriteLeaseKind,
 };
-use lumin_model::decode_native_path_component;
+use lumin_model::{AttemptStatus, decode_native_path_component};
 use serde::de::DeserializeOwned;
 
-use crate::retention::records::StoredRetentionPlan;
-use crate::{AttemptEnvelope, RunCatalogRecord, StoreError, digest_hex};
+use crate::retention::{MigrationRunPayload, records::StoredRetentionPlan};
+use crate::{AttemptEnvelope, RunCatalogRecord, StoreError};
 
 use super::super::super::super::platform::{EntryAccess, EntryKind, HeldEntry};
-use super::super::super::super::{NamespaceGuard, require_state_volume};
+use super::super::super::super::{
+    NamespaceGuard, records::ManagedStateParentKind, require_state_volume,
+};
 use super::super::LogicalStoreSnapshot;
 use super::parse_record;
 
 pub(super) fn validate_external_references(
     snapshot: &LogicalStoreSnapshot,
     guard: &NamespaceGuard,
+    authenticate_legacy_evidence: bool,
+    allow_registered_operation_locks: bool,
 ) -> Result<(), StoreError> {
     guard.validate_bound_entries()?;
     crate::cache::validate_external_snapshot(
@@ -27,16 +32,316 @@ pub(super) fn validate_external_references(
         &snapshot.cache_cleanup_operations,
         &snapshot.cache_eviction_authorizations,
     )?;
+    validate_pending_cleanup_liveness(snapshot, guard)?;
     validate_pending_operation_liveness(snapshot, guard)?;
     validate_pending_pre_write_leases(snapshot, guard)?;
     validate_pending_semantic_read_bindings(snapshot, guard)?;
     validate_active_gate_write_prefixes(snapshot, guard)?;
-    validate_latest_attempt(snapshot, guard)?;
-    let moved_runs = validate_retention_payloads(snapshot, guard)?;
+    let mut attempts = validate_attempt_directories(snapshot, guard)?;
+    let moved_payloads = validate_retention_payloads(snapshot, guard)?;
+    merge_retention_attempts(guard, &mut attempts, &moved_payloads.attempts)?;
+    validate_retention_runs(&attempts, &moved_payloads.runs)?;
+    validate_run_children(snapshot, guard)?;
     for (key, bytes) in &snapshot.run_catalog {
-        validate_run(key, bytes, guard, moved_runs.get(key))?;
+        validate_run(
+            key,
+            bytes,
+            guard,
+            &attempts,
+            moved_payloads.runs.get(key).map(|payload| &payload.path),
+            authenticate_legacy_evidence,
+        )?;
     }
+    validate_latest_pointers(snapshot, guard, &attempts)?;
+    validate_state_namespace_inventory(snapshot, guard, allow_registered_operation_locks)?;
     guard.validate_bound_entries()
+}
+
+fn validate_state_namespace_inventory(
+    snapshot: &LogicalStoreSnapshot,
+    guard: &NamespaceGuard,
+    allow_registered_operation_locks: bool,
+) -> Result<(), StoreError> {
+    let fixed = BTreeSet::from([
+        "attempts".to_owned(),
+        "cache".to_owned(),
+        "latest.json".to_owned(),
+        "latest.json.pending".to_owned(),
+        "lifecycle.lock".to_owned(),
+        "lifecycle.store".to_owned(),
+        "repository.json".to_owned(),
+        "runs".to_owned(),
+        "trash".to_owned(),
+    ]);
+    let attempt_locks = crate::publication::migration_attempt_lock_names(&snapshot.attempt_leases)?;
+    let operation_locks = snapshot
+        .operations
+        .iter()
+        .map(|(key, bytes)| {
+            parse_record::<OperationRecord>("operations", key, bytes).map(|operation| {
+                (
+                    crate::gate::migration_operation_lock_name(&operation.operation_id),
+                    operation,
+                )
+            })
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let migration_owned = super::super::super::artifacts::read_journal(guard)?
+        .map(|journal| journal.owned_namespace_names())
+        .transpose()?
+        .unwrap_or_default();
+
+    for native_name in guard.state_directory.directory_names("state namespace")? {
+        if super::super::super::super::validate_active_unpublished_name(
+            &guard.state.state_dir,
+            &guard.state_directory,
+            &native_name,
+        )? {
+            continue;
+        }
+        let name = native_name.into_string().map_err(|_| {
+            StoreError::Integrity("state namespace contains a non-UTF-8 entry".to_owned())
+        })?;
+        let row_backed_operation_lock = if let Some(operation) = operation_locks.get(&name) {
+            if operation.status == GateOperationStatus::Pending {
+                crate::gate::validate_migration_operation_liveness(guard, operation)?;
+            } else if !crate::gate::validate_migration_registered_operation_lock_inventory(
+                guard, &name,
+            )? {
+                return Err(StoreError::Integrity(format!(
+                    "operation row references a noncanonical liveness lock: {name}"
+                )));
+            }
+            true
+        } else {
+            false
+        };
+        if fixed.contains(&name)
+            || attempt_locks.contains(&name)
+            || row_backed_operation_lock
+            || migration_owned.contains(&name)
+            || if allow_registered_operation_locks {
+                crate::gate::validate_migration_registered_operation_lock_inventory(guard, &name)?
+            } else {
+                crate::gate::validate_migration_operation_lock_inventory(guard, &name)?
+            }
+        {
+            continue;
+        }
+        return Err(StoreError::Integrity(format!(
+            "state namespace contains an unowned entry: {name}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_run_children(
+    snapshot: &LogicalStoreSnapshot,
+    guard: &NamespaceGuard,
+) -> Result<(), StoreError> {
+    let runs_path = guard.managed_parent_path(ManagedStateParentKind::Runs);
+    let runs_parent = guard.managed_parent_entry(ManagedStateParentKind::Runs)?;
+    let names = validate_run_parent_inventory(runs_parent)?;
+
+    let mut maximum_sequence = 0_u64;
+    for name in names {
+        let allocated_run_id = name
+            .strip_prefix('.')
+            .and_then(|name| name.strip_suffix(".staging"))
+            .unwrap_or(&name);
+        if allocated_run_id.starts_with("run_") {
+            maximum_sequence = maximum_sequence.max(canonical_sequence_id(
+                allocated_run_id,
+                "run_",
+                "retained run or staging directory",
+            )?);
+        }
+        if snapshot.run_catalog.contains_key(&name) {
+            continue;
+        }
+        let path = runs_path.join(&name);
+        let held = guard.open_managed_child_directory(
+            ManagedStateParentKind::Runs,
+            &name,
+            "orphan run directory",
+        )?;
+        crate::retention::validate_migration_orphan_payload(&path)?;
+        held.validate_path(
+            &path,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            "orphan run directory",
+        )?;
+    }
+    super::validate_allocator_sequence(snapshot, "attempt", maximum_sequence)
+}
+
+fn validate_run_parent_inventory(runs_parent: &HeldEntry) -> Result<Vec<String>, StoreError> {
+    let mut names = Vec::new();
+    for native_name in runs_parent.directory_names("runs directory")? {
+        let name = native_name.into_string().map_err(|_| {
+            StoreError::Integrity("runs contains a non-UTF-8 child name".to_owned())
+        })?;
+        if name != "namespace.anchor" {
+            names.push(name);
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
+fn merge_retention_attempts(
+    guard: &NamespaceGuard,
+    attempts: &mut BTreeMap<String, Option<AttemptEnvelope>>,
+    retention_attempts: &BTreeMap<String, PathBuf>,
+) -> Result<(), StoreError> {
+    for (attempt_id, path) in retention_attempts {
+        let sequence = canonical_sequence_id(attempt_id, "attempt_", "retention attempt")?;
+        let envelope = read_attempt_envelope(
+            guard,
+            &path.join("attempt.json"),
+            attempt_id,
+            sequence,
+            "retention attempt envelope",
+        )?;
+        match attempts.get(attempt_id) {
+            Some(Some(existing)) if existing == &envelope => {}
+            Some(_) => {
+                return Err(StoreError::Integrity(format!(
+                    "retention attempt {attempt_id} disagrees with its canonical envelope"
+                )));
+            }
+            None => {
+                attempts.insert(attempt_id.clone(), Some(envelope));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_attempt_directories(
+    snapshot: &LogicalStoreSnapshot,
+    guard: &NamespaceGuard,
+) -> Result<BTreeMap<String, Option<AttemptEnvelope>>, StoreError> {
+    let attempts_path = guard.managed_parent_path(ManagedStateParentKind::Attempts);
+    let attempts_parent = guard.managed_parent_entry(ManagedStateParentKind::Attempts)?;
+    let names = validate_attempt_parent_inventory(attempts_parent)?;
+
+    let mut attempts = BTreeMap::new();
+    let mut pending_attempts = BTreeSet::new();
+    let mut maximum_sequence = 0_u64;
+    for attempt_id in names {
+        let sequence = canonical_sequence_id(&attempt_id, "attempt_", "retained attempt")?;
+        maximum_sequence = maximum_sequence.max(sequence);
+        let attempt_dir = attempts_path.join(&attempt_id);
+        let held_dir = guard.open_managed_child_directory(
+            ManagedStateParentKind::Attempts,
+            &attempt_id,
+            "retained attempt directory",
+        )?;
+
+        let contents = validate_attempt_directory_inventory(&held_dir, &attempt_id)?;
+
+        let envelope = if contents
+            .binary_search_by(|name| name.as_str().cmp("attempt.json"))
+            .is_ok()
+        {
+            Some(read_attempt_envelope(
+                guard,
+                &attempt_dir.join("attempt.json"),
+                &attempt_id,
+                sequence,
+                "retained attempt envelope",
+            )?)
+        } else {
+            None
+        };
+        if contents
+            .binary_search_by(|name| name.as_str().cmp("attempt.json.pending"))
+            .is_ok()
+        {
+            read_attempt_envelope(
+                guard,
+                &attempt_dir.join("attempt.json.pending"),
+                &attempt_id,
+                sequence,
+                "retained pending attempt envelope",
+            )?;
+            pending_attempts.insert(attempt_id.clone());
+        }
+        held_dir.validate_path(
+            &attempt_dir,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            "retained attempt directory",
+        )?;
+        attempts.insert(attempt_id, envelope);
+    }
+
+    crate::publication::validate_migration_attempt_links(
+        &snapshot.attempt_leases,
+        &attempts,
+        &pending_attempts,
+    )?;
+    super::validate_allocator_sequence(snapshot, "attempt", maximum_sequence)?;
+    Ok(attempts)
+}
+
+fn validate_attempt_parent_inventory(
+    attempts_parent: &HeldEntry,
+) -> Result<Vec<String>, StoreError> {
+    let mut names = Vec::new();
+    for native_name in attempts_parent.directory_names("attempts directory")? {
+        let name = native_name
+            .into_string()
+            .map_err(|_| StoreError::Integrity("attempt directory name is not UTF-8".to_owned()))?;
+        if name != "namespace.anchor" {
+            names.push(name);
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
+fn validate_attempt_directory_inventory(
+    held_dir: &HeldEntry,
+    attempt_id: &str,
+) -> Result<Vec<String>, StoreError> {
+    let mut contents = Vec::new();
+    for native_name in held_dir.directory_names("retained attempt directory")? {
+        let name = native_name.into_string().map_err(|_| {
+            StoreError::Integrity(format!(
+                "retained attempt {attempt_id} contains a non-UTF-8 entry"
+            ))
+        })?;
+        if name != "attempt.json" && name != "attempt.json.pending" {
+            return Err(StoreError::Integrity(format!(
+                "retained attempt {attempt_id} contains an unknown entry {name}"
+            )));
+        }
+        contents.push(name);
+    }
+    contents.sort();
+    Ok(contents)
+}
+
+fn read_attempt_envelope(
+    guard: &NamespaceGuard,
+    path: &Path,
+    expected_id: &str,
+    expected_sequence: u64,
+    label: &str,
+) -> Result<AttemptEnvelope, StoreError> {
+    let envelope = read_state_json::<AttemptEnvelope>(guard, path, label)?;
+    crate::publication::validate_attempt_envelope(&envelope)?;
+    if envelope.attempt_id.as_str() != expected_id || envelope.sequence != expected_sequence {
+        return Err(StoreError::Integrity(format!(
+            "{label} disagrees with its directory"
+        )));
+    }
+    Ok(envelope)
 }
 
 fn validate_pending_semantic_read_bindings(
@@ -354,6 +659,30 @@ fn validate_pending_operation_liveness(
     Ok(())
 }
 
+fn validate_pending_cleanup_liveness(
+    snapshot: &LogicalStoreSnapshot,
+    guard: &NamespaceGuard,
+) -> Result<(), StoreError> {
+    for (key, bytes) in &snapshot.cache_cleanup_operations {
+        let operation =
+            parse_record::<CacheCleanupOperationRecord>("cache-cleanup-operations", key, bytes)?;
+        if operation.status != CacheCleanupOperationStatus::Pending {
+            continue;
+        }
+        let liveness = &operation
+            .execution_lease
+            .as_ref()
+            .ok_or_else(|| {
+                StoreError::Integrity(format!(
+                    "pending cache cleanup {key} omitted its execution lease"
+                ))
+            })?
+            .liveness;
+        crate::gate::validate_migration_liveness_lease(guard, &operation.operation_id, liveness)?;
+    }
+    Ok(())
+}
+
 fn validate_active_gate_write_prefixes(
     snapshot: &LogicalStoreSnapshot,
     guard: &NamespaceGuard,
@@ -412,40 +741,133 @@ fn validate_active_gate_write_prefixes(
     Ok(())
 }
 
-fn validate_latest_attempt(
+fn validate_latest_pointers(
     snapshot: &LogicalStoreSnapshot,
     guard: &NamespaceGuard,
+    attempts: &BTreeMap<String, Option<AttemptEnvelope>>,
 ) -> Result<(), StoreError> {
-    let Some(attempt_id) = snapshot.pointers.get("latest-attempt") else {
-        return Ok(());
+    let table_attempt = snapshot
+        .pointers
+        .get("latest-attempt")
+        .map(|bytes| {
+            std::str::from_utf8(bytes)
+                .map(str::to_owned)
+                .map_err(|error| {
+                    StoreError::Integrity(format!("latest-attempt pointer is not UTF-8: {error}"))
+                })
+        })
+        .transpose()?;
+    let table_completed = snapshot
+        .pointers
+        .get("latest-completed")
+        .map(|bytes| {
+            std::str::from_utf8(bytes)
+                .map(str::to_owned)
+                .map_err(|error| {
+                    StoreError::Integrity(format!("latest-completed pointer is not UTF-8: {error}"))
+                })
+        })
+        .transpose()?;
+    let mut read_run = |run_id: &lumin_model::RunId| {
+        let bytes = snapshot.run_catalog.get(run_id.as_str()).ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "latest-completed pointer references missing run {}",
+                run_id.as_str()
+            ))
+        })?;
+        parse_record::<RunCatalogRecord>("run-catalog", run_id.as_str(), bytes)
     };
-    let attempt_id = std::str::from_utf8(attempt_id).map_err(|error| {
-        StoreError::Integrity(format!("latest-attempt pointer is not UTF-8: {error}"))
-    })?;
-    let sequence = canonical_sequence_id(attempt_id, "attempt_", "latest attempt")?;
-    let attempt_dir = guard.state.state_dir.join("attempts").join(attempt_id);
-    let held_dir = open_state_entry(
+    let mut has_active_lease = |attempt_id: &lumin_model::AttemptId| {
+        crate::publication::migration_has_active_lease(&snapshot.attempt_leases, attempt_id)
+    };
+    let (document_attempt, document_completed) = crate::publication::migration_pointer_ids(
+        &guard.state.state_dir,
         guard,
-        &attempt_dir,
-        EntryKind::Directory,
-        false,
-        "latest attempt directory",
+        &mut read_run,
+        &mut has_active_lease,
     )?;
-    let envelope: AttemptEnvelope = read_state_json(
-        guard,
-        &attempt_dir.join("attempt.json"),
-        "latest attempt envelope",
-    )?;
-    held_dir.validate_path(
-        &attempt_dir,
-        EntryKind::Directory,
-        EntryAccess::ReadOnly,
-        false,
-        "latest attempt directory",
-    )?;
-    if envelope.attempt_id.as_str() != attempt_id || envelope.sequence != sequence {
+    if table_attempt.as_deref() != document_attempt.as_ref().map(|id| id.as_str())
+        || table_completed.as_deref() != document_completed.as_ref().map(|id| id.as_str())
+    {
         return Err(StoreError::Integrity(
-            "latest-attempt pointer disagrees with its envelope".to_owned(),
+            "lifecycle-store pointer table disagrees with durable latest document".to_owned(),
+        ));
+    }
+
+    if let Some(attempt_id) = document_attempt.as_ref() {
+        let sequence = canonical_sequence_id(attempt_id.as_str(), "attempt_", "latest attempt")?;
+        let envelope = attempts
+            .get(attempt_id.as_str())
+            .and_then(Option::as_ref)
+            .ok_or_else(|| {
+                StoreError::Integrity(
+                    "latest-attempt pointer references a missing complete envelope".to_owned(),
+                )
+            })?;
+        if envelope.attempt_id != *attempt_id || envelope.sequence != sequence {
+            return Err(StoreError::Integrity(
+                "latest-attempt pointer disagrees with its envelope".to_owned(),
+            ));
+        }
+    }
+    validate_latest_frontier(
+        snapshot,
+        attempts,
+        document_attempt.as_ref(),
+        document_completed.as_ref(),
+    )
+}
+
+fn validate_latest_frontier(
+    snapshot: &LogicalStoreSnapshot,
+    attempts: &BTreeMap<String, Option<AttemptEnvelope>>,
+    latest_attempt: Option<&lumin_model::AttemptId>,
+    latest_completed: Option<&lumin_model::RunId>,
+) -> Result<(), StoreError> {
+    let latest_attempt_sequence = latest_attempt
+        .map(|attempt_id| canonical_sequence_id(attempt_id.as_str(), "attempt_", "latest attempt"))
+        .transpose()?
+        .unwrap_or_default();
+    let mut newer_attempt = None;
+    for envelope in attempts.values().filter_map(Option::as_ref) {
+        if envelope.sequence <= latest_attempt_sequence {
+            continue;
+        }
+        if newer_attempt.replace(&envelope.attempt_id).is_some() {
+            return Err(StoreError::Integrity(
+                "durable latestAttempt regresses behind authenticated attempt history".to_owned(),
+            ));
+        }
+    }
+    if let Some(attempt_id) = newer_attempt
+        && !crate::publication::migration_has_active_lease(&snapshot.attempt_leases, attempt_id)?
+    {
+        return Err(StoreError::Integrity(
+            "durable latestAttempt regresses behind authenticated attempt history".to_owned(),
+        ));
+    }
+
+    let latest_completed_sequence = latest_completed
+        .map(|run_id| canonical_sequence_id(run_id.as_str(), "run_", "latest completed run"))
+        .transpose()?
+        .unwrap_or_default();
+    let mut newer_run_owner = None;
+    for (key, bytes) in &snapshot.run_catalog {
+        let record = parse_record::<RunCatalogRecord>("run-catalog", key, bytes)?;
+        if record.sequence <= latest_completed_sequence {
+            continue;
+        }
+        if newer_run_owner.replace(record.attempt_id).is_some() {
+            return Err(StoreError::Integrity(
+                "durable latestCompleted regresses behind authenticated run history".to_owned(),
+            ));
+        }
+    }
+    if let Some(attempt_id) = newer_run_owner
+        && !crate::publication::migration_has_active_lease(&snapshot.attempt_leases, &attempt_id)?
+    {
+        return Err(StoreError::Integrity(
+            "durable latestCompleted regresses behind authenticated run history".to_owned(),
         ));
     }
     Ok(())
@@ -455,17 +877,12 @@ fn validate_run(
     key: &str,
     bytes: &[u8],
     guard: &NamespaceGuard,
+    attempts: &BTreeMap<String, Option<AttemptEnvelope>>,
     moved_path: Option<&PathBuf>,
+    authenticate_legacy_evidence: bool,
 ) -> Result<(), StoreError> {
     let record = parse_record::<RunCatalogRecord>("run-catalog", key, bytes)?;
-    let run_sequence = canonical_sequence_id(record.run_id.as_str(), "run_", "run")?;
-    let attempt_sequence =
-        canonical_sequence_id(record.attempt_id.as_str(), "attempt_", "run attempt")?;
-    if run_sequence != record.sequence || attempt_sequence != record.sequence {
-        return Err(StoreError::Integrity(format!(
-            "run catalog entry {key} has incoherent sequence identities"
-        )));
-    }
+    validate_run_record(key, &record, attempts)?;
 
     let canonical_run_dir = guard
         .state
@@ -474,32 +891,49 @@ fn validate_run(
         .join(record.run_id.as_str());
     let run_dir = moved_path.unwrap_or(&canonical_run_dir);
     let held_dir = open_state_entry(guard, run_dir, EntryKind::Directory, false, "run directory")?;
-    let envelope =
-        read_state_json::<RunCatalogRecord>(guard, &run_dir.join("run.json"), "run envelope")?;
-    if envelope.run_id != record.run_id
-        || envelope.attempt_id != record.attempt_id
-        || envelope.sequence != record.sequence
-        || envelope.evidence_store_sha256 != record.evidence_store_sha256
-        || envelope.evidence_store_size != record.evidence_store_size
+    if authenticate_legacy_evidence {
+        crate::publication::validate_run_directory_for_migration(run_dir, &held_dir, &record)
+    } else {
+        crate::publication::validate_run_directory(run_dir, &held_dir, &record)
+    }
+}
+
+fn validate_retention_runs(
+    attempts: &BTreeMap<String, Option<AttemptEnvelope>>,
+    runs: &BTreeMap<String, MigrationRunPayload>,
+) -> Result<(), StoreError> {
+    for (key, payload) in runs {
+        validate_run_record(key, &payload.record, attempts)?;
+    }
+    Ok(())
+}
+
+fn validate_run_record(
+    key: &str,
+    record: &RunCatalogRecord,
+    attempts: &BTreeMap<String, Option<AttemptEnvelope>>,
+) -> Result<(), StoreError> {
+    let run_sequence = canonical_sequence_id(record.run_id.as_str(), "run_", "run")?;
+    let attempt_sequence =
+        canonical_sequence_id(record.attempt_id.as_str(), "attempt_", "run attempt")?;
+    if key != record.run_id.as_str()
+        || run_sequence != record.sequence
+        || attempt_sequence != record.sequence
     {
         return Err(StoreError::Integrity(format!(
-            "run catalog entry {key} disagrees with its durable run envelope"
+            "run catalog entry {key} has incoherent sequence identities"
         )));
     }
-    let evidence_path = run_dir.join("evidence.store");
-    let evidence = read_state_file(guard, &evidence_path, "run evidence store")?;
-    held_dir.validate_path(
-        run_dir,
-        EntryKind::Directory,
-        EntryAccess::ReadOnly,
-        false,
-        "run directory",
-    )?;
-    if evidence.len() as u64 != record.evidence_store_size
-        || digest_hex(&evidence) != record.evidence_store_sha256
-    {
+    let attempt = attempts
+        .get(record.attempt_id.as_str())
+        .and_then(Option::as_ref);
+    if attempt.is_none_or(|attempt| {
+        attempt.state != AttemptStatus::Completed
+            || attempt.sequence != record.sequence
+            || attempt.run_id.as_ref() != Some(&record.run_id)
+    }) {
         return Err(StoreError::Integrity(format!(
-            "run catalog entry {key} disagrees with its evidence store"
+            "run catalog entry {key} is not owned by its completed attempt"
         )));
     }
     Ok(())
@@ -508,16 +942,23 @@ fn validate_run(
 fn validate_retention_payloads(
     snapshot: &LogicalStoreSnapshot,
     guard: &NamespaceGuard,
-) -> Result<BTreeMap<String, PathBuf>, StoreError> {
-    let mut moved_runs = BTreeMap::new();
+) -> Result<crate::retention::MigrationPayloadPaths, StoreError> {
+    let mut payloads = crate::retention::MigrationPayloadPaths::default();
     for (key, bytes) in &snapshot.retention_plans {
         let plan = parse_record::<StoredRetentionPlan>("retention-plans", key, bytes)?;
+        if &plan.record.repository_id != guard.repository_id() {
+            return Err(StoreError::Integrity(format!(
+                "retention plan {key} changed repository ownership"
+            )));
+        }
         if plan.progress.is_none() {
             continue;
         }
-        moved_runs.extend(crate::retention::validate_migration_payloads(guard, &plan)?);
+        let validated = crate::retention::validate_migration_payloads(guard, &plan)?;
+        payloads.attempts.extend(validated.attempts);
+        payloads.runs.extend(validated.runs);
     }
-    Ok(moved_runs)
+    Ok(payloads)
 }
 
 fn canonical_sequence_id(value: &str, prefix: &str, label: &str) -> Result<u64, StoreError> {
@@ -581,4 +1022,118 @@ fn open_state_entry(
     let entry = HeldEntry::open(path, kind, EntryAccess::ReadOnly, one_link, label)?;
     require_state_volume(&entry, &guard.state_directory, label)?;
     Ok(entry)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn attempt_inventory_reads_the_held_directory_across_a_namespace_swap()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let attempt_id = "attempt_0000000000000001";
+        let attempt_dir = root.path().join(attempt_id);
+        let moved_dir = root.path().join("held-attempt-directory");
+        fs::create_dir(&attempt_dir)?;
+        fs::write(attempt_dir.join("attempt.json"), b"{}")?;
+        fs::write(attempt_dir.join("unowned-payload"), b"unowned")?;
+        let held_dir = HeldEntry::open(
+            &attempt_dir,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            "test attempt directory",
+        )?;
+
+        fs::rename(&attempt_dir, &moved_dir)?;
+        fs::create_dir(&attempt_dir)?;
+        fs::write(attempt_dir.join("attempt.json"), b"{}")?;
+        let result = validate_attempt_directory_inventory(&held_dir, attempt_id);
+        fs::remove_dir_all(&attempt_dir)?;
+        fs::rename(&moved_dir, &attempt_dir)?;
+        held_dir.validate_path(
+            &attempt_dir,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            "test attempt directory",
+        )?;
+
+        assert!(matches!(
+            result,
+            Err(StoreError::Integrity(message)) if message.contains("unowned-payload")
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn attempt_parent_inventory_reads_the_held_parent_across_a_namespace_swap()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let attempts_dir = root.path().join("attempts");
+        let moved_dir = root.path().join("held-attempts-directory");
+        fs::create_dir(&attempts_dir)?;
+        fs::write(attempts_dir.join("namespace.anchor"), b"anchor")?;
+        fs::create_dir(attempts_dir.join("attempt_000000000000000a"))?;
+        let held_dir = HeldEntry::open(
+            &attempts_dir,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            "test attempts directory",
+        )?;
+
+        fs::rename(&attempts_dir, &moved_dir)?;
+        fs::create_dir(&attempts_dir)?;
+        fs::write(attempts_dir.join("namespace.anchor"), b"anchor")?;
+        let names = validate_attempt_parent_inventory(&held_dir)?;
+        fs::remove_dir_all(&attempts_dir)?;
+        fs::rename(&moved_dir, &attempts_dir)?;
+        held_dir.validate_path(
+            &attempts_dir,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            "test attempts directory",
+        )?;
+
+        assert_eq!(names, ["attempt_000000000000000a"]);
+        Ok(())
+    }
+
+    #[test]
+    fn run_inventory_reads_the_held_parent_across_a_namespace_swap()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let runs_dir = root.path().join("runs");
+        let moved_dir = root.path().join("held-runs-directory");
+        fs::create_dir(&runs_dir)?;
+        fs::write(runs_dir.join("namespace.anchor"), b"anchor")?;
+        fs::create_dir(runs_dir.join("unowned-run"))?;
+        let held_dir = HeldEntry::open(
+            &runs_dir,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            "test runs directory",
+        )?;
+
+        fs::rename(&runs_dir, &moved_dir)?;
+        fs::create_dir(&runs_dir)?;
+        fs::write(runs_dir.join("namespace.anchor"), b"anchor")?;
+        let names = validate_run_parent_inventory(&held_dir)?;
+        fs::remove_dir_all(&runs_dir)?;
+        fs::rename(&moved_dir, &runs_dir)?;
+        held_dir.validate_path(
+            &runs_dir,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            "test runs directory",
+        )?;
+
+        assert_eq!(names, ["unowned-run"]);
+        Ok(())
+    }
 }

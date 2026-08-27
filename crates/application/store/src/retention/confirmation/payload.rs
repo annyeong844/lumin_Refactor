@@ -171,7 +171,7 @@ pub(super) fn reclaim(
 pub(in crate::retention) fn validate_migration_state(
     guard: &NamespaceGuard,
     plan: &StoredRetentionPlan,
-) -> Result<std::collections::BTreeMap<String, std::path::PathBuf>, StoreError> {
+) -> Result<crate::retention::MigrationPayloadPaths, StoreError> {
     migration::validate(guard, plan)
 }
 

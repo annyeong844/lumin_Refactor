@@ -807,8 +807,8 @@ fn migration_authenticates_sealed_evidence_payloads_with_the_receipt()
             .ok_or("active gate omitted its baseline")?
             .snapshot
             .evidence
-            .metrics
-            .logical_source_count += 1;
+            .capabilities
+            .swap(0, 1);
         let binding = reconstructed_baseline_binding(&gate)?;
         let ObservationBinding::Sealed {
             observation: SealedGateObservation::Baseline { observation_id },

@@ -17,7 +17,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::{RepositoryStore, RunCatalogRecord, StoreError};
 
+pub(crate) use latest::{
+    migration_pointer_ids, reconcile_migration_pointer_index, validate_attempt_envelope,
+};
 pub use liveness::AttemptSession;
+pub(crate) use run::{
+    read_validated_directory as read_validated_run_directory,
+    validate_directory as validate_run_directory,
+    validate_directory_for_migration as validate_run_directory_for_migration,
+};
+#[cfg(test)]
+pub(crate) use run::{
+    validate_directory_with_evidence_read_hook, validate_directory_with_inventory_hooks,
+};
 
 pub type AttemptState = AttemptStatus;
 
@@ -77,10 +89,52 @@ pub(super) fn latest_run_id(store: &RepositoryStore) -> Result<Option<RunId>, St
     latest::completed_run_id(store)
 }
 
+pub(crate) fn migration_has_active_lease(
+    rows: &std::collections::BTreeMap<String, Vec<u8>>,
+    attempt_id: &AttemptId,
+) -> Result<bool, StoreError> {
+    liveness::migration_has_active_lease(rows, attempt_id)
+}
+
 pub(crate) fn validate_attempt_leases(
     rows: &std::collections::BTreeMap<String, Vec<u8>>,
 ) -> Result<(), StoreError> {
     liveness::validate_snapshot(rows)
+}
+
+pub(crate) fn validate_migration_attempt_leases(
+    rows: &std::collections::BTreeMap<String, Vec<u8>>,
+) -> Result<(), StoreError> {
+    liveness::validate_migration_snapshot(rows)
+}
+
+pub(crate) fn migration_attempt_lock_names(
+    rows: &std::collections::BTreeMap<String, Vec<u8>>,
+) -> Result<std::collections::BTreeSet<String>, StoreError> {
+    liveness::migration_lock_names(rows)
+}
+
+pub(crate) fn reconcile_migration_attempt_allocations(
+    rows: &mut std::collections::BTreeMap<String, Vec<u8>>,
+    guard: &crate::namespace::NamespaceGuard,
+) -> Result<(), StoreError> {
+    liveness::reconcile_migration_allocations(rows, guard)
+}
+
+#[cfg(test)]
+pub(crate) fn reserve_migration_attempt_allocation_for_test(
+    store: &RepositoryStore,
+    lock_binding: Option<bool>,
+) -> Result<(AttemptId, String), StoreError> {
+    liveness::reserve_migration_allocation_for_test(store, lock_binding)
+}
+
+pub(crate) fn validate_migration_attempt_links(
+    rows: &std::collections::BTreeMap<String, Vec<u8>>,
+    attempts: &std::collections::BTreeMap<String, Option<AttemptEnvelope>>,
+    pending_attempts: &std::collections::BTreeSet<String>,
+) -> Result<(), StoreError> {
+    liveness::validate_migration_attempt_links(rows, attempts, pending_attempts)
 }
 
 pub(crate) fn validate_attempt_lease_locks(

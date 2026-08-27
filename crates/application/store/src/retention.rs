@@ -5,6 +5,9 @@ mod pins;
 mod planning;
 pub(crate) mod records;
 
+pub(crate) use pins::{pin_request_digest, unpin_request_digest};
+pub(crate) use planning::{confirm_request_digest, plan_request_digest};
+
 #[cfg(all(feature = "retention-test-crash", not(debug_assertions)))]
 compile_error!("retention-test-crash is restricted to debug test builds");
 
@@ -31,11 +34,26 @@ pub(crate) const RUN_PINS: TableDefinition<&str, &[u8]> = TableDefinition::new("
 
 pub const RETENTION_PLAN_ITEMS_ORDERING: &str = "retention-plan-items.v1";
 
+pub(crate) struct MigrationRunPayload {
+    pub(crate) path: std::path::PathBuf,
+    pub(crate) record: crate::RunCatalogRecord,
+}
+
+#[derive(Default)]
+pub(crate) struct MigrationPayloadPaths {
+    pub(crate) attempts: std::collections::BTreeMap<String, std::path::PathBuf>,
+    pub(crate) runs: std::collections::BTreeMap<String, MigrationRunPayload>,
+}
+
 pub(crate) fn validate_migration_payloads(
     guard: &NamespaceGuard,
     plan: &records::StoredRetentionPlan,
-) -> Result<std::collections::BTreeMap<String, std::path::PathBuf>, StoreError> {
+) -> Result<MigrationPayloadPaths, StoreError> {
     confirmation::payload::validate_migration_state(guard, plan)
+}
+
+pub(crate) fn validate_migration_orphan_payload(path: &std::path::Path) -> Result<(), StoreError> {
+    planning::orphan_payload_identity(path).map(|_| ())
 }
 
 pub(crate) fn ensure_publication_target_available(

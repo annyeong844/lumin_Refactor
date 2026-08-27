@@ -10,6 +10,11 @@ fn old_generation_attempt_cannot_publish_a_terminal_mutation()
     let mut attempt = store.begin_attempt()?;
     assert_eq!(attempt.generation(), StoreGeneration::INITIAL);
 
+    super::super::store_header::rewrite_current_store_header_as_prior_for_test(
+        &root.path().join(".lumin/lifecycle.store"),
+        &store.namespace.binding,
+    )?;
+
     let observed = store.migrate_lifecycle_store()?;
     assert!(matches!(
         store.fail_attempt(&mut attempt, "must remain running"),

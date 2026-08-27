@@ -1,5 +1,7 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 
 use fs2::FileExt;
 use lumin_evidence::{GateOperationStatus, OperationLivenessLease, OperationRecord};
@@ -18,8 +20,17 @@ pub struct OperationSession<'store> {
     pub(super) operation_id: OperationId,
     pub(super) liveness: OperationLivenessLease,
     generation: StoreGeneration,
+    _registration: OperationLockRegistration,
     lock_file: namespace::HeldEntry,
 }
+
+struct OperationLockRegistration {
+    name: String,
+    identity: PhysicalFileIdentity,
+}
+
+static ACTIVE_OPERATION_LOCKS: OnceLock<Mutex<BTreeSet<(String, PhysicalFileIdentity)>>> =
+    OnceLock::new();
 
 impl RepositoryStore {
     pub fn begin_operation(
@@ -35,6 +46,10 @@ impl RepositoryStore {
             Err(error) => return Err(io_error(error)),
         }
         validate_operation_lock_file(&lock_file, &lock_path, operation_id)?;
+        let registration = OperationLockRegistration::register(
+            operation_lock_name(operation_id),
+            lock_file.identity().clone(),
+        )?;
         self.recover_interrupted_operations(Some((operation_id, &lock_file)))?;
         let generation = self.current_store_generation()?;
         Ok(OperationSession {
@@ -46,6 +61,7 @@ impl RepositoryStore {
                 lock_physical_identity: Some(lock_file.identity().clone()),
             },
             generation,
+            _registration: registration,
             lock_file,
         })
     }
@@ -245,26 +261,152 @@ pub(crate) fn validate_migration_operation_liveness(
     if operation.status != GateOperationStatus::Pending {
         return Ok(());
     }
-    let expected_identity = operation
-        .operation_liveness
-        .as_ref()
-        .and_then(|liveness| liveness.lock_physical_identity.as_ref())
-        .ok_or_else(|| {
-            StoreError::Integrity(format!(
-                "pending operation omitted its lock identity binding: {}",
-                operation.operation_id.as_str()
-            ))
-        })?;
-    let lock_name = operation_lock_name(&operation.operation_id);
+    let liveness = operation.operation_liveness.as_ref().ok_or_else(|| {
+        StoreError::Integrity(format!(
+            "pending operation omitted its liveness binding: {}",
+            operation.operation_id.as_str()
+        ))
+    })?;
+    validate_migration_liveness_lease(guard, &operation.operation_id, liveness)
+}
+
+pub(crate) fn validate_migration_liveness_lease(
+    guard: &namespace::NamespaceGuard,
+    operation_id: &OperationId,
+    liveness: &OperationLivenessLease,
+) -> Result<(), StoreError> {
+    let expected_identity = liveness.lock_physical_identity.as_ref().ok_or_else(|| {
+        StoreError::Integrity(format!(
+            "pending operation omitted its lock identity binding: {}",
+            operation_id.as_str()
+        ))
+    })?;
+    let lock_name = operation_lock_name(operation_id);
     let file = guard.open_state_file(&lock_name, "operation liveness lock")?;
-    validate_operation_lock_identity(
-        guard,
-        &file,
-        &lock_name,
-        &operation.operation_id,
-        expected_identity,
-    )?;
-    validate_migration_operation_lock_contents(&file, &operation.operation_id)
+    validate_operation_lock_identity(guard, &file, &lock_name, operation_id, expected_identity)?;
+    validate_migration_operation_lock_contents(&file, operation_id)
+}
+
+pub(crate) fn validate_migration_operation_lock_inventory(
+    guard: &namespace::NamespaceGuard,
+    name: &str,
+) -> Result<bool, StoreError> {
+    validate_migration_operation_lock_inventory_with_registration(guard, name, false)
+}
+
+pub(crate) fn validate_migration_registered_operation_lock_inventory(
+    guard: &namespace::NamespaceGuard,
+    name: &str,
+) -> Result<bool, StoreError> {
+    validate_migration_operation_lock_inventory_with_registration(guard, name, true)
+}
+
+fn validate_migration_operation_lock_inventory_with_registration(
+    guard: &namespace::NamespaceGuard,
+    name: &str,
+    _allow_registered_session: bool,
+) -> Result<bool, StoreError> {
+    let Some(digest) = name
+        .strip_prefix("operation-liveness-")
+        .and_then(|digest| digest.strip_suffix(".lock"))
+    else {
+        return Ok(false);
+    };
+    if digest.len() != 64
+        || !digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Ok(false);
+    }
+    let file = guard.open_state_file(name, "operation liveness lock inventory")?;
+    guard.validate_state_file(&file, name, "operation liveness lock inventory")?;
+
+    #[cfg(windows)]
+    match FileExt::try_lock_exclusive(file.file()) {
+        Ok(()) => {
+            let validated = validate_operation_lock_inventory_contents(&file, name);
+            let unlocked = FileExt::unlock(file.file()).map_err(io_error);
+            validated?;
+            unlocked?;
+        }
+        // A contended lock that has no durable operation row cannot expose its
+        // self-binding through a second Windows handle. Migration must wait
+        // rather than treating the attacker-controlled filename as authority.
+        Err(error) if namespace::lock_contended(&error) => {
+            if _allow_registered_session
+                && registered_operation_lock_matches(name, file.identity())?
+            {
+                return Ok(true);
+            }
+            return Err(StoreError::Integrity(format!(
+                "contended operation liveness lock cannot be authenticated during migration: {name}"
+            )));
+        }
+        Err(error) => return Err(io_error(error)),
+    }
+    #[cfg(not(windows))]
+    validate_operation_lock_inventory_contents(&file, name)?;
+
+    Ok(true)
+}
+
+impl OperationLockRegistration {
+    fn register(name: String, identity: PhysicalFileIdentity) -> Result<Self, StoreError> {
+        let locks = ACTIVE_OPERATION_LOCKS.get_or_init(|| Mutex::new(BTreeSet::new()));
+        let mut locks = locks
+            .lock()
+            .map_err(|_| StoreError::Integrity("operation lock registry is poisoned".to_owned()))?;
+        if !locks.insert((name.clone(), identity.clone())) {
+            return Err(StoreError::Integrity(format!(
+                "operation lock is registered more than once: {name}"
+            )));
+        }
+        Ok(Self { name, identity })
+    }
+}
+
+impl Drop for OperationLockRegistration {
+    fn drop(&mut self) {
+        if let Some(locks) = ACTIVE_OPERATION_LOCKS.get()
+            && let Ok(mut locks) = locks.lock()
+        {
+            locks.remove(&(self.name.clone(), self.identity.clone()));
+        }
+    }
+}
+
+#[cfg(windows)]
+fn registered_operation_lock_matches(
+    name: &str,
+    identity: &PhysicalFileIdentity,
+) -> Result<bool, StoreError> {
+    let Some(locks) = ACTIVE_OPERATION_LOCKS.get() else {
+        return Ok(false);
+    };
+    let locks = locks
+        .lock()
+        .map_err(|_| StoreError::Integrity("operation lock registry is poisoned".to_owned()))?;
+    Ok(locks.contains(&(name.to_owned(), identity.clone())))
+}
+
+fn validate_operation_lock_inventory_contents(
+    file: &namespace::HeldEntry,
+    name: &str,
+) -> Result<(), StoreError> {
+    let operation_id = std::str::from_utf8(&file.read_all()?)
+        .map_err(|error| {
+            StoreError::Integrity(format!(
+                "operation liveness lock contains a non-UTF-8 owner: {error}"
+            ))
+        })?
+        .to_owned();
+    if operation_lock_name(&OperationId::from_string(operation_id)) != name {
+        return Err(StoreError::Integrity(
+            "operation liveness lock name disagrees with its owner".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(not(windows))]
@@ -300,6 +442,10 @@ fn operation_lock_name(operation_id: &OperationId) -> String {
         "operation-liveness-{}.lock",
         digest_hex(operation_id.as_str().as_bytes())
     )
+}
+
+pub(crate) fn migration_operation_lock_name(operation_id: &OperationId) -> String {
+    operation_lock_name(operation_id)
 }
 
 fn operation_lock_path(state_dir: &std::path::Path, operation_id: &OperationId) -> PathBuf {

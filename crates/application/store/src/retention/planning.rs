@@ -154,7 +154,7 @@ fn exclude_retention_owned_items(
     Ok(())
 }
 
-pub(super) fn plan_request_digest(scope: &RetentionPlanScope) -> Result<String, StoreError> {
+pub(crate) fn plan_request_digest(scope: &RetentionPlanScope) -> Result<String, StoreError> {
     let mut bytes = Vec::new();
     append_length_prefixed(&mut bytes, b"lumin-retention-plan-request.v1");
     let scope = serde_json::to_vec(scope).map_err(crate::serialization_error)?;
@@ -162,7 +162,7 @@ pub(super) fn plan_request_digest(scope: &RetentionPlanScope) -> Result<String, 
     Ok(digest_hex(&bytes))
 }
 
-pub(super) fn confirm_request_digest(plan_id: &RetentionPlanId) -> String {
+pub(crate) fn confirm_request_digest(plan_id: &RetentionPlanId) -> String {
     let mut bytes = Vec::new();
     append_length_prefixed(&mut bytes, b"lumin-retention-confirm-request.v1");
     append_length_prefixed(&mut bytes, plan_id.as_str().as_bytes());

@@ -29,6 +29,7 @@ const MAX_ROW_SHARDS: usize = 16;
 pub enum FeatureSet {
     None,
     LifecycleFault,
+    LifecycleCrash,
     PublicationCrash,
     RetentionCrash,
     LifecycleAndPublicationCrash,
@@ -38,7 +39,7 @@ impl FeatureSet {
     pub fn cargo_features(self) -> &'static [&'static str] {
         match self {
             Self::None => &[],
-            Self::LifecycleFault => &["lifecycle-test-fault"],
+            Self::LifecycleFault | Self::LifecycleCrash => &["lifecycle-test-fault"],
             Self::PublicationCrash => &["publication-test-crash"],
             Self::RetentionCrash => &["retention-test-crash"],
             Self::LifecycleAndPublicationCrash => {
@@ -53,6 +54,7 @@ impl FeatureSet {
         match self {
             Self::None => "none",
             Self::LifecycleFault => "lf",
+            Self::LifecycleCrash => "lc",
             Self::PublicationCrash => "pc",
             Self::RetentionCrash => "rc",
             Self::LifecycleAndPublicationCrash => "lfpc",
@@ -62,11 +64,16 @@ impl FeatureSet {
     pub fn is_crash(self) -> bool {
         matches!(
             self,
-            Self::PublicationCrash
+            Self::LifecycleCrash
+                | Self::PublicationCrash
                 | Self::RetentionCrash
                 | Self::LifecycleAndPublicationCrash
                 | Self::PublicationAndRetentionCrash
         )
+    }
+
+    fn requires_process_isolation(self) -> bool {
+        self != Self::None
     }
 }
 
@@ -468,7 +475,18 @@ fn target_dir(ws: &Path, mode: CorpusMode, feat: FeatureSet) -> PathBuf {
         CorpusMode::Determinism => "d",
         CorpusMode::StoreCrash => "c",
     };
-    ws.join("target").join("xc").join(m).join(feat.dir_key())
+    let root = env::var_os("CARGO_TARGET_DIR").map_or_else(
+        || ws.join("target"),
+        |configured| {
+            let configured = PathBuf::from(configured);
+            if configured.is_absolute() {
+                configured
+            } else {
+                ws.join(configured)
+            }
+        },
+    );
+    root.join("xc").join(m).join(feat.dir_key())
 }
 
 struct InvResult {
@@ -815,6 +833,35 @@ where
         .collect()
 }
 
+fn run_parallel_ordered_with_isolation<T, F, I>(
+    item_count: usize,
+    jobs: usize,
+    isolated: I,
+    work: F,
+) -> Result<Vec<T>, String>
+where
+    T: Send,
+    F: Fn(usize) -> Result<T, String> + Sync,
+    I: Fn(usize) -> bool,
+{
+    let mut ordered = Vec::with_capacity(item_count);
+    let mut start = 0;
+    while start < item_count {
+        if isolated(start) {
+            ordered.push(work(start)?);
+            start += 1;
+            continue;
+        }
+        let end = (start + 1..item_count)
+            .find(|index| isolated(*index))
+            .unwrap_or(item_count);
+        let batch = run_parallel_ordered(end - start, jobs, |offset| work(start + offset))?;
+        ordered.extend(batch);
+        start = end;
+    }
+    Ok(ordered)
+}
+
 fn execute_rows(
     workspace: &Path,
     selected: &[&'static RegistryRow],
@@ -842,9 +889,17 @@ fn execute_rows(
         row_ranges.push(start..tasks.len());
     }
 
-    let invocation_executions = run_parallel_ordered(tasks.len(), row_jobs, |index| {
-        Ok(execute_invocation(workspace, &tasks[index], mode))
-    })?;
+    let invocation_executions = run_parallel_ordered_with_isolation(
+        tasks.len(),
+        row_jobs,
+        |index| {
+            tasks[index]
+                .invocation
+                .features
+                .requires_process_isolation()
+        },
+        |index| Ok(execute_invocation(workspace, &tasks[index], mode)),
+    )?;
 
     let mut rows = Vec::with_capacity(selected.len());
     for (row, range) in selected.iter().zip(row_ranges) {

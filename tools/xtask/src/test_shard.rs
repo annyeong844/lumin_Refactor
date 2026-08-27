@@ -13,6 +13,7 @@ const STORE_LIB_TEST_MODULES: &[&str] = &["cache", "gate", "namespace", "retenti
 const FEATURE_GATED_TARGETS: &[&str] = &[
     "cache_cleanup_publication_race",
     "lifecycle_operation_idempotency",
+    "lifecycle_store_migration",
     "publication_concurrency",
     "publication_faults",
     "publication_retention_race",

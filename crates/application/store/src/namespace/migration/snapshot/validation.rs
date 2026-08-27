@@ -10,20 +10,24 @@ use lumin_evidence::{
     GateCloseObservationInput, GateDecision, GateLifecycle, GateOperationKind, GateOperationStatus,
     GateRecord, GateRevision, GateSignal, GateValidationReceipt, OperationRecord,
     PhysicalAliasClosureRecord, PreWriteAdmissionConflictOwner, PreWriteAdmissionEvidence,
-    RUN_EVIDENCE_SCHEMA_VERSION, SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, WorktreeTransition,
+    RUN_EVIDENCE_SCHEMA_VERSION, RetentionItemKind, RetentionOperationKind,
+    RetentionOperationRecord, RetentionOperationResult, RetentionOperationStatus,
+    RetentionPlanState, SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, WorktreeTransition,
     WriteLeaseKind, apply_worktree_transition_for_domain, derive_gate_baseline_observation_id,
     derive_gate_close_observation_id, derive_post_write_final_validation_signals,
     derive_pre_write_admission_signals, derive_pre_write_final_validation_signals,
     derive_protected_semantic_inputs, derive_unsealed_gate_observation_binding,
     gate_abandon_request_digest, gate_policy, post_write_request_digest, pre_write_request_digest,
-    seal_analysis_snapshot,
+    seal_analysis_snapshot, validate_migration_run_evidence, validate_migration_run_evidence_tier,
+    validate_run_evidence_identities, validate_run_evidence_inputs, validate_run_evidence_tier,
 };
 use lumin_model::{ObservationBinding, RepoPath, SealedGateObservation};
-use serde::de::DeserializeOwned;
+use serde::{Serialize, de::DeserializeOwned};
 
 use crate::gate::{
     records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY, transition_key, validate_reservation_binding_set,
 };
+use crate::retention::records::{StoredRetentionPlan, StoredTombstone};
 use crate::{RunCatalogRecord, StoreError};
 
 use super::super::super::NamespaceGuard;
@@ -33,17 +37,65 @@ pub(super) fn validate_external_references(
     snapshot: &LogicalStoreSnapshot,
     guard: &NamespaceGuard,
 ) -> Result<(), StoreError> {
-    external::validate_external_references(snapshot, guard)?;
+    validate_external_references_with_mode(snapshot, guard, false, false)
+}
+
+pub(super) fn validate_external_references_for_ordinary_admission(
+    snapshot: &LogicalStoreSnapshot,
+    guard: &NamespaceGuard,
+) -> Result<(), StoreError> {
+    validate_external_references_with_mode(snapshot, guard, false, true)
+}
+
+pub(super) fn validate_legacy_external_references(
+    snapshot: &LogicalStoreSnapshot,
+    guard: &NamespaceGuard,
+) -> Result<(), StoreError> {
+    validate_external_references_with_mode(snapshot, guard, true, false)
+}
+
+fn validate_external_references_with_mode(
+    snapshot: &LogicalStoreSnapshot,
+    guard: &NamespaceGuard,
+    authenticate_legacy_evidence: bool,
+    allow_registered_operation_locks: bool,
+) -> Result<(), StoreError> {
+    external::validate_external_references(
+        snapshot,
+        guard,
+        authenticate_legacy_evidence,
+        allow_registered_operation_locks,
+    )?;
     crate::publication::validate_attempt_lease_locks(&snapshot.attempt_leases, guard)
 }
 
 pub(super) fn validate_referential_closure(
     snapshot: &LogicalStoreSnapshot,
 ) -> Result<(), StoreError> {
+    validate_referential_closure_with_mode(snapshot, false)
+}
+
+pub(super) fn validate_legacy_referential_closure(
+    snapshot: &LogicalStoreSnapshot,
+) -> Result<(), StoreError> {
+    validate_referential_closure_with_mode(snapshot, true)
+}
+
+fn validate_referential_closure_with_mode(
+    snapshot: &LogicalStoreSnapshot,
+    authenticate_legacy_evidence: bool,
+) -> Result<(), StoreError> {
+    validate_sequence_key_set(snapshot)?;
     let (transitions, transition_sequences) = read_transitions(snapshot)?;
     let validation_receipts = read_validation_receipts(snapshot)?;
     let operations = read_operations(snapshot)?;
-    let gates = read_gates(snapshot, &operations, &transitions, &transition_sequences)?;
+    let gates = read_gates(
+        snapshot,
+        &operations,
+        &transitions,
+        &transition_sequences,
+        authenticate_legacy_evidence,
+    )?;
     validate_pre_write_admissions(snapshot, &operations, &gates)?;
     validate_active_gate_conflicts(&gates)?;
     validate_baseline_transition_boundaries(&transitions, &gates)?;
@@ -54,10 +106,257 @@ pub(super) fn validate_referential_closure(
     validate_transition_gate_refs(&transitions, &gates)?;
     validate_validation_receipts(snapshot, &gates, &operations, &validation_receipts)?;
     crate::publication::validate_attempt_leases(&snapshot.attempt_leases)?;
+    validate_attempt_allocator_sequence(snapshot)?;
     validate_run_catalog(snapshot)?;
     cache::validate_cache(snapshot, &operations)?;
+    validate_retention_allocator_sequences(snapshot)?;
     retention::validate_retention(snapshot, &operations)?;
     validate_pointers(snapshot)
+}
+
+fn validate_sequence_key_set(snapshot: &LogicalStoreSnapshot) -> Result<(), StoreError> {
+    for key in snapshot.sequences.keys() {
+        if !matches!(
+            key.as_str(),
+            "active-gate-catalog"
+                | "attempt"
+                | "gate"
+                | "retention-catalog"
+                | "retention-plan"
+                | "run-catalog"
+                | "run-pin"
+                | "transition"
+        ) {
+            return Err(StoreError::Integrity(format!(
+                "sequence table contains an unsupported allocator key: {key}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_attempt_allocator_sequence(snapshot: &LogicalStoreSnapshot) -> Result<(), StoreError> {
+    let mut maximum = 0_u64;
+    for attempt_id in snapshot.attempt_leases.keys() {
+        maximum = maximum.max(canonical_allocated_sequence(
+            attempt_id,
+            "attempt_",
+            "attempt lease",
+        )?);
+    }
+    for (key, bytes) in &snapshot.run_catalog {
+        let record = parse_record::<RunCatalogRecord>("run-catalog", key, bytes)?;
+        maximum = maximum.max(canonical_allocated_sequence(
+            record.attempt_id.as_str(),
+            "attempt_",
+            "run attempt",
+        )?);
+    }
+    if let Some(bytes) = snapshot.pointers.get("latest-attempt") {
+        let attempt_id = std::str::from_utf8(bytes).map_err(|error| {
+            StoreError::Integrity(format!("latest-attempt pointer is not UTF-8: {error}"))
+        })?;
+        maximum = maximum.max(canonical_allocated_sequence(
+            attempt_id,
+            "attempt_",
+            "latest attempt",
+        )?);
+    }
+    maximum = maximum.max(retained_attempt_allocator_floor(snapshot)?);
+    validate_allocator_sequence(snapshot, "attempt", maximum)
+}
+
+fn retained_attempt_allocator_floor(snapshot: &LogicalStoreSnapshot) -> Result<u64, StoreError> {
+    let mut attempts = BTreeSet::new();
+    let mut runs = BTreeSet::new();
+    for_each_retained_item(snapshot, |kind, record_id, owning_sequence| {
+        let (prefix, label, retained) = match kind {
+            RetentionItemKind::Attempt => ("attempt_", "retained attempt", &mut attempts),
+            RetentionItemKind::Run => ("run_", "retained run", &mut runs),
+            _ => return Ok(()),
+        };
+        let sequence = canonical_allocated_sequence(record_id, prefix, label)?;
+        if sequence != owning_sequence {
+            return Err(StoreError::Integrity(format!(
+                "{label} ID disagrees with its retention owning sequence"
+            )));
+        }
+        retained.insert(sequence);
+        Ok(())
+    })?;
+    if let Some(sequence) = runs.difference(&attempts).next() {
+        return Err(StoreError::Integrity(format!(
+            "retained run sequence {sequence} omitted its paired attempt"
+        )));
+    }
+    Ok(attempts.iter().chain(&runs).copied().max().unwrap_or(0))
+}
+
+fn validate_retention_allocator_sequences(
+    snapshot: &LogicalStoreSnapshot,
+) -> Result<(), StoreError> {
+    let maximum_plan = snapshot
+        .retention_plans
+        .keys()
+        .map(|id| canonical_allocated_sequence(id, "retention_plan_", "retention plan"))
+        .try_fold(0_u64, |maximum, sequence| {
+            sequence.map(|sequence| maximum.max(sequence))
+        })?;
+    validate_allocator_sequence(snapshot, "retention-plan", maximum_plan)?;
+
+    let mut maximum_pin = snapshot
+        .run_pins
+        .keys()
+        .map(|id| canonical_allocated_sequence(id, "pin_", "run pin"))
+        .try_fold(0_u64, |maximum, sequence| {
+            sequence.map(|sequence| maximum.max(sequence))
+        })?;
+    maximum_pin = maximum_pin.max(retained_allocator_floor(
+        snapshot,
+        RetentionItemKind::PinOrReference,
+        "pin_",
+        "retained run pin",
+        false,
+    )?);
+    validate_allocator_sequence(snapshot, "run-pin", maximum_pin)?;
+
+    let maximum_catalog_revision = snapshot
+        .retention_plans
+        .iter()
+        .map(|(key, bytes)| {
+            parse_record::<StoredRetentionPlan>("retention-plans", key, bytes)
+                .map(|plan| plan.record.catalog_revision)
+        })
+        .try_fold(0_u64, |maximum, revision| {
+            revision.map(|revision| maximum.max(revision))
+        })?;
+    let retained_catalog_mutations =
+        snapshot
+            .retention_operations
+            .iter()
+            .try_fold(0_u64, |count, (key, bytes)| {
+                let operation =
+                    parse_record::<RetentionOperationRecord>("retention-operations", key, bytes)?;
+                let advances_catalog = matches!(
+                    operation.kind,
+                    RetentionOperationKind::RunPin
+                        | RetentionOperationKind::RunUnpin
+                        | RetentionOperationKind::RunPrunePlan
+                        | RetentionOperationKind::GatePrunePlan
+                ) || matches!(
+                    (&operation.kind, operation.status, &operation.result),
+                    (
+                        RetentionOperationKind::RunPruneConfirm
+                            | RetentionOperationKind::GatePruneConfirm,
+                        RetentionOperationStatus::Committed,
+                        RetentionOperationResult::Retention {
+                            result: lumin_evidence::RetentionMutationResult::Pruned { .. }
+                        }
+                    )
+                );
+                if advances_catalog {
+                    count.checked_add(1).ok_or_else(|| {
+                        StoreError::Integrity(
+                            "retention-catalog retained mutation count overflow".to_owned(),
+                        )
+                    })
+                } else {
+                    Ok(count)
+                }
+            })?;
+    validate_allocator_sequence(
+        snapshot,
+        "retention-catalog",
+        maximum_catalog_revision.max(retained_catalog_mutations),
+    )
+}
+
+fn for_each_retained_item(
+    snapshot: &LogicalStoreSnapshot,
+    mut visit: impl FnMut(RetentionItemKind, &str, u64) -> Result<(), StoreError>,
+) -> Result<(), StoreError> {
+    for (key, bytes) in &snapshot.retention_plans {
+        let plan = parse_record::<StoredRetentionPlan>("retention-plans", key, bytes)?;
+        for item in &plan.record.items {
+            visit(item.kind, &item.record_id, item.owning_sequence)?;
+        }
+    }
+    for (key, bytes) in &snapshot.retention_tombstones {
+        let tombstone = parse_record::<StoredTombstone>("retention-tombstones", key, bytes)?;
+        visit(
+            tombstone.envelope.record_kind,
+            &tombstone.envelope.record_id,
+            tombstone.owning_sequence,
+        )?;
+    }
+    Ok(())
+}
+
+fn retained_allocator_floor(
+    snapshot: &LogicalStoreSnapshot,
+    expected_kind: RetentionItemKind,
+    prefix: &str,
+    label: &str,
+    require_owning_sequence: bool,
+) -> Result<u64, StoreError> {
+    let mut maximum = 0_u64;
+    for_each_retained_item(snapshot, |kind, record_id, owning_sequence| {
+        if kind != expected_kind {
+            return Ok(());
+        }
+        let sequence = canonical_allocated_sequence(record_id, prefix, label)?;
+        if require_owning_sequence && sequence != owning_sequence {
+            return Err(StoreError::Integrity(format!(
+                "{label} ID disagrees with its retention owning sequence"
+            )));
+        }
+        maximum = maximum.max(sequence);
+        Ok(())
+    })?;
+    Ok(maximum)
+}
+
+fn validate_allocator_sequence(
+    snapshot: &LogicalStoreSnapshot,
+    key: &str,
+    minimum: u64,
+) -> Result<(), StoreError> {
+    let observed = snapshot.sequences.get(key).copied().unwrap_or(0);
+    if observed == u64::MAX {
+        return Err(StoreError::Integrity(format!(
+            "{key} sequence is exhausted and cannot allocate another record"
+        )));
+    }
+    if observed < minimum {
+        return Err(StoreError::Integrity(format!(
+            "{key} sequence regressed below retained allocation: observed {observed}, minimum {minimum}"
+        )));
+    }
+    Ok(())
+}
+
+fn canonical_allocated_sequence(value: &str, prefix: &str, label: &str) -> Result<u64, StoreError> {
+    let suffix = value.strip_prefix(prefix).ok_or_else(|| {
+        StoreError::Integrity(format!("{label} ID is outside its canonical grammar"))
+    })?;
+    if suffix.len() != 16
+        || !suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(StoreError::Integrity(format!(
+            "{label} ID is outside its canonical grammar"
+        )));
+    }
+    let sequence = u64::from_str_radix(suffix, 16).map_err(|error| {
+        StoreError::Integrity(format!("{label} ID sequence is malformed: {error}"))
+    })?;
+    if sequence == 0 {
+        return Err(StoreError::Integrity(format!(
+            "{label} ID sequence must be nonzero"
+        )));
+    }
+    Ok(sequence)
 }
 
 fn validate_gate_id_sequence(
@@ -76,7 +375,14 @@ fn validate_gate_id_sequence(
         )
         .try_fold(0_u64, |maximum, sequence| {
             sequence.map(|sequence| maximum.max(sequence))
-        })?;
+        })?
+        .max(retained_allocator_floor(
+            snapshot,
+            RetentionItemKind::Gate,
+            "gate_",
+            "retained gate",
+            true,
+        )?);
     if observed == u64::MAX {
         return Err(StoreError::Integrity(
             "gate sequence is exhausted and cannot allocate another gate".to_owned(),
@@ -266,6 +572,7 @@ fn read_gates<'a>(
     operations: &BTreeMap<&str, OperationRecord>,
     transitions: &BTreeMap<u64, WorktreeTransition>,
     transition_sequences: &BTreeSet<u64>,
+    authenticate_legacy_evidence: bool,
 ) -> Result<BTreeMap<&'a str, GateRecord>, StoreError> {
     let mut gates = BTreeMap::new();
     for (key, bytes) in &snapshot.gates {
@@ -275,7 +582,14 @@ fn read_gates<'a>(
                 "gate key {key} disagrees with its record"
             )));
         }
-        validate_gate_history(key, &gate, operations, transitions, transition_sequences)?;
+        validate_gate_history(
+            key,
+            &gate,
+            operations,
+            transitions,
+            transition_sequences,
+            authenticate_legacy_evidence,
+        )?;
         gates.insert(key.as_str(), gate);
     }
     Ok(gates)
@@ -720,6 +1034,13 @@ fn validate_transition_catalog_sequence(
     for operation in operations.values() {
         minimum = minimum.max(operation.transition_sequence);
     }
+    minimum = minimum.max(retained_allocator_floor(
+        snapshot,
+        RetentionItemKind::Transition,
+        "transition_",
+        "retained transition",
+        true,
+    )?);
     if observed < minimum {
         return Err(StoreError::Integrity(format!(
             "transition sequence regressed below durable transition history: observed {observed}, minimum {minimum}"
@@ -738,8 +1059,10 @@ fn validate_active_gate_catalog(
         .get(ACTIVE_GATE_CATALOG_SEQUENCE_KEY)
         .copied()
         .unwrap_or(0);
+    let retained_mutation_floor = retained_active_gate_mutation_floor(snapshot, gates)?;
     crate::gate::validate_active_gate_catalog_history(
         observed,
+        retained_mutation_floor,
         gates.iter().map(|(key, gate)| (*key, gate)),
         |operation_id| {
             operations
@@ -749,12 +1072,119 @@ fn validate_active_gate_catalog(
     )
 }
 
+fn retained_active_gate_mutation_floor(
+    snapshot: &LogicalStoreSnapshot,
+    gates: &BTreeMap<&str, GateRecord>,
+) -> Result<u64, StoreError> {
+    let mut retained_gates = BTreeSet::<String>::new();
+    let mut retained_revisions = BTreeMap::<String, BTreeSet<u64>>::new();
+    for_each_retained_item(snapshot, |kind, record_id, owning_sequence| {
+        match kind {
+            RetentionItemKind::Gate => {
+                let sequence = canonical_allocated_sequence(
+                    record_id,
+                    "gate_",
+                    "retained active-catalog gate",
+                )?;
+                if sequence != owning_sequence {
+                    return Err(StoreError::Integrity(
+                        "retained active-catalog gate ID disagrees with its owning sequence"
+                            .to_owned(),
+                    ));
+                }
+                if !gates.contains_key(record_id) {
+                    retained_gates.insert(record_id.to_owned());
+                }
+            }
+            RetentionItemKind::GateRevision => {
+                let Some(owner_and_revision) = record_id.strip_prefix("gate:") else {
+                    return Err(StoreError::Integrity(
+                        "retained gate revision has a noncanonical owner".to_owned(),
+                    ));
+                };
+                let Some((gate_id, revision_text)) = owner_and_revision.rsplit_once("/revision:")
+                else {
+                    return Err(StoreError::Integrity(
+                        "retained gate revision has a noncanonical ID".to_owned(),
+                    ));
+                };
+                let gate_sequence =
+                    canonical_allocated_sequence(gate_id, "gate_", "retained gate revision owner")?;
+                if gate_sequence != owning_sequence {
+                    return Err(StoreError::Integrity(
+                        "retained gate revision owner disagrees with its owning sequence"
+                            .to_owned(),
+                    ));
+                }
+                let revision = revision_text.parse::<u64>().map_err(|error| {
+                    StoreError::Integrity(format!(
+                        "retained gate revision sequence is malformed: {error}"
+                    ))
+                })?;
+                if revision.to_string() != revision_text {
+                    return Err(StoreError::Integrity(
+                        "retained gate revision sequence is noncanonical".to_owned(),
+                    ));
+                }
+                if !gates.contains_key(gate_id) {
+                    retained_revisions
+                        .entry(gate_id.to_owned())
+                        .or_default()
+                        .insert(revision);
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    })?;
+
+    if let Some(gate_id) = retained_revisions
+        .keys()
+        .find(|gate_id| !retained_gates.contains(gate_id.as_str()))
+    {
+        return Err(StoreError::Integrity(format!(
+            "retained gate revision owner {gate_id} omitted its gate item"
+        )));
+    }
+
+    let mut minimum = 0_u64;
+    for gate_id in retained_gates {
+        let revisions = retained_revisions.get(&gate_id).ok_or_else(|| {
+            StoreError::Integrity(format!(
+                "retained gate {gate_id} omitted its revision history"
+            ))
+        })?;
+        if !revisions.contains(&0) {
+            return Err(StoreError::Integrity(format!(
+                "retained gate {gate_id} omitted its opening revision"
+            )));
+        }
+        match (revisions.len(), revisions.last().copied()) {
+            (1, Some(0)) => {}
+            (2, Some(1)) => {
+                minimum = minimum.checked_add(2).ok_or_else(|| {
+                    StoreError::Integrity(
+                        "retained active-gate catalog mutation history overflowed".to_owned(),
+                    )
+                })?;
+            }
+            _ => {
+                return Err(StoreError::IncompatibleStateSchema(format!(
+                    "retained gate {gate_id} has intermediate revisions whose active-gate catalog mutations cannot be reconstructed"
+                )));
+            }
+        }
+    }
+    Ok(minimum)
+}
+
 fn validate_gate_history(
     key: &str,
     gate: &GateRecord,
     operations: &BTreeMap<&str, OperationRecord>,
     transitions: &BTreeMap<u64, WorktreeTransition>,
     transition_sequences: &BTreeSet<u64>,
+    authenticate_legacy_evidence: bool,
 ) -> Result<(), StoreError> {
     if gate.schema_version != GATE_RECORD_SCHEMA_VERSION {
         return Err(StoreError::IncompatibleStateSchema(format!(
@@ -868,7 +1298,13 @@ fn validate_gate_history(
             )));
         }
     }
-    validate_gate_observations(key, gate, operations, transitions)?;
+    validate_gate_observations(
+        key,
+        gate,
+        operations,
+        transitions,
+        authenticate_legacy_evidence,
+    )?;
     Ok(())
 }
 
@@ -877,6 +1313,7 @@ fn validate_gate_observations(
     gate: &GateRecord,
     operations: &BTreeMap<&str, OperationRecord>,
     transitions: &BTreeMap<u64, WorktreeTransition>,
+    authenticate_legacy_evidence: bool,
 ) -> Result<(), StoreError> {
     let opening = gate
         .revisions
@@ -979,9 +1416,24 @@ fn validate_gate_observations(
                         "gate {key} analysis invocation disagrees with its sealed baseline"
                     )));
                 }
-                let evidence_payload_sha256 =
-                    validate_analysis_snapshot(key, "baseline", &baseline.snapshot)?;
+                let evidence_payload_sha256 = validate_analysis_snapshot(
+                    key,
+                    "baseline",
+                    &baseline.snapshot,
+                    authenticate_legacy_evidence,
+                )?;
                 validate_baseline_write_domain(key, gate, baseline)?;
+                if authenticate_legacy_evidence
+                    && gate.lifecycle == GateLifecycle::Active
+                    && baseline
+                        .leased_write_set
+                        .iter()
+                        .any(|lease| lease.kind == WriteLeaseKind::NewFile)
+                {
+                    return Err(StoreError::Integrity(format!(
+                        "active legacy gate {key} contains a new-file lease whose original path intent cannot be independently authenticated"
+                    )));
+                }
                 if baseline.protected_semantic_inputs
                     != derive_protected_semantic_inputs(
                         &baseline.snapshot,
@@ -1256,6 +1708,7 @@ fn validate_gate_observations(
                 key,
                 &format!("close revision {}", revision.revision),
                 snapshot,
+                authenticate_legacy_evidence,
             )?;
             if snapshot.scan_invocation != gate.analysis_options.scan_invocation {
                 return Err(StoreError::Integrity(format!(
@@ -1919,7 +2372,8 @@ fn validate_close_alias_closures(
 fn is_strict_close_snapshot_signal(signal: &GateSignal) -> bool {
     matches!(
         signal,
-        GateSignal::RequiredEvidenceIncomplete { .. }
+        GateSignal::PreExistingAdverseFacts { .. }
+            | GateSignal::RequiredEvidenceIncomplete { .. }
             | GateSignal::RequiredOwnerUnavailable { .. }
             | GateSignal::AdverseFactIntroduced { .. }
             | GateSignal::AdverseFactRegressed { .. }
@@ -1935,12 +2389,52 @@ fn validate_analysis_snapshot(
     gate_key: &str,
     role: &str,
     snapshot: &AnalysisSnapshot,
+    authenticate_legacy_evidence: bool,
 ) -> Result<String, StoreError> {
     if snapshot.evidence.schema_version != RUN_EVIDENCE_SCHEMA_VERSION {
         return Err(StoreError::IncompatibleStateSchema(format!(
             "gate {gate_key} {role} uses unsupported evidence schema {}; expected {RUN_EVIDENCE_SCHEMA_VERSION}",
             snapshot.evidence.schema_version
         )));
+    }
+    validate_run_evidence_identities(&snapshot.evidence).map_err(|error| {
+        StoreError::Integrity(format!(
+            "gate {gate_key} {role} contains invalid run evidence: {error}"
+        ))
+    })?;
+    if authenticate_legacy_evidence {
+        validate_migration_run_evidence(&snapshot.evidence).map_err(|error| {
+            StoreError::Integrity(format!(
+                "gate {gate_key} {role} contains unauthenticated migration evidence: {error}"
+            ))
+        })?;
+    }
+    validate_run_evidence_inputs(&snapshot.evidence, &snapshot.inputs).map_err(|error| {
+        StoreError::Integrity(format!(
+            "gate {gate_key} {role} evidence disagrees with its semantic inputs: {error}"
+        ))
+    })?;
+    validate_run_evidence_tier(
+        &snapshot.evidence,
+        &snapshot.scan_invocation,
+        &snapshot.entry_selections,
+    )
+    .map_err(|error| {
+        StoreError::Integrity(format!(
+            "gate {gate_key} {role} evidence disagrees with its scan tier: {error}"
+        ))
+    })?;
+    if authenticate_legacy_evidence {
+        validate_migration_run_evidence_tier(
+            &snapshot.evidence,
+            &snapshot.scan_invocation,
+            &snapshot.entry_selections,
+        )
+        .map_err(|error| {
+            StoreError::Integrity(format!(
+                "gate {gate_key} {role} contains unauthenticated migration tier evidence: {error}"
+            ))
+        })?;
     }
     let mut input_paths = BTreeSet::new();
     if snapshot
@@ -2266,6 +2760,11 @@ fn reconstruct_transition_before(
 }
 
 fn validate_run_catalog(snapshot: &LogicalStoreSnapshot) -> Result<(), StoreError> {
+    let mut historical_run_ids = snapshot
+        .run_catalog
+        .keys()
+        .cloned()
+        .collect::<BTreeSet<_>>();
     for (key, bytes) in &snapshot.run_catalog {
         let record = parse_record::<RunCatalogRecord>("run-catalog", key, bytes)?;
         if record.run_id.as_str() != key {
@@ -2274,7 +2773,43 @@ fn validate_run_catalog(snapshot: &LogicalStoreSnapshot) -> Result<(), StoreErro
             )));
         }
     }
-    Ok(())
+    for_each_retained_item(snapshot, |kind, record_id, _| {
+        if kind == RetentionItemKind::Run {
+            historical_run_ids.insert(record_id.to_owned());
+        }
+        Ok(())
+    })?;
+    let retained_insertions = u64::try_from(historical_run_ids.len()).map_err(|_| {
+        StoreError::Integrity("run-catalog retained insertion count overflow".to_owned())
+    })?;
+    let retained_pruning_revisions =
+        snapshot
+            .retention_plans
+            .iter()
+            .try_fold(0_u64, |count, (key, bytes)| {
+                let plan = parse_record::<StoredRetentionPlan>("retention-plans", key, bytes)?;
+                let advances_catalog = plan.record.state != RetentionPlanState::Prepared
+                    && plan
+                        .record
+                        .items
+                        .iter()
+                        .any(|item| item.kind == RetentionItemKind::Run);
+                if advances_catalog {
+                    count.checked_add(1).ok_or_else(|| {
+                        StoreError::Integrity(
+                            "run-catalog retained pruning revision count overflow".to_owned(),
+                        )
+                    })
+                } else {
+                    Ok(count)
+                }
+            })?;
+    let minimum = retained_insertions
+        .checked_add(retained_pruning_revisions)
+        .ok_or_else(|| {
+            StoreError::Integrity("run-catalog retained revision count overflow".to_owned())
+        })?;
+    validate_allocator_sequence(snapshot, "run-catalog", minimum)
 }
 
 fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreError> {
@@ -2628,6 +3163,16 @@ fn validate_pending_pre_write_write_domain(operation: &OperationRecord) -> Resul
 
 fn validate_interrupted_operation_state(operation: &OperationRecord) -> Result<(), StoreError> {
     validate_unfinished_interruption_capacity(operation)?;
+    if matches!(
+        operation.kind,
+        GateOperationKind::PreWrite | GateOperationKind::PostWrite
+    ) && operation.interruption_count == 0
+    {
+        return Err(StoreError::Integrity(format!(
+            "interrupted operation {} has a zero interruption count",
+            operation.operation_id.as_str()
+        )));
+    }
     if operation.operation_liveness.is_some()
         || !operation.leased_write_set.is_empty()
         || !operation.semantic_read_reservations.is_empty()
@@ -2766,12 +3311,12 @@ fn validate_pointers(snapshot: &LogicalStoreSnapshot) -> Result<(), StoreError> 
     Ok(())
 }
 
-fn parse_record<T: DeserializeOwned>(
+fn parse_record<T: DeserializeOwned + Serialize>(
     table: &str,
     key: &str,
     bytes: &[u8],
 ) -> Result<T, StoreError> {
-    serde_json::from_slice(bytes).map_err(|error| {
+    crate::decode_closed_json(bytes).map_err(|error| {
         StoreError::Integrity(format!("{table} record {key} is malformed: {error}"))
     })
 }
@@ -2780,9 +3325,153 @@ fn parse_record<T: DeserializeOwned>(
 mod tests {
     use super::*;
     use lumin_evidence::{
-        GateAnalysisOptions, SemanticInputRecord, SemanticInputState, WriteLease,
+        GateAnalysisOptions, RetentionPlanItem, RetentionTombstoneEnvelope, SemanticInputRecord,
+        SemanticInputState, WriteLease,
     };
-    use lumin_model::{GateId, PhysicalFileIdentity};
+    use lumin_model::{GateId, PhysicalFileIdentity, RetentionPlanId};
+
+    fn empty_snapshot() -> LogicalStoreSnapshot {
+        LogicalStoreSnapshot {
+            sequences: BTreeMap::new(),
+            attempt_leases: BTreeMap::new(),
+            run_catalog: BTreeMap::new(),
+            pointers: BTreeMap::new(),
+            gates: BTreeMap::new(),
+            operations: BTreeMap::new(),
+            validation_receipts: BTreeMap::new(),
+            transitions: BTreeMap::new(),
+            retention_plans: BTreeMap::new(),
+            retention_operations: BTreeMap::new(),
+            retention_tombstones: BTreeMap::new(),
+            run_pins: BTreeMap::new(),
+            cache_cleanup_operations: BTreeMap::new(),
+            cache_eviction_authorizations: BTreeMap::new(),
+        }
+    }
+
+    fn stored_retention_plan(items: Vec<RetentionPlanItem>) -> StoredRetentionPlan {
+        StoredRetentionPlan {
+            record: lumin_evidence::RetentionPlanRecord {
+                schema_version: "lumin-retention-plan.v1".to_owned(),
+                repository_id: lumin_model::RepositoryId::from_string("repository".to_owned()),
+                plan_id: RetentionPlanId::from_string("retention_plan_0000000000000001".to_owned()),
+                content_identity: lumin_model::RetentionContentIdentity::from_string(
+                    "content".to_owned(),
+                ),
+                scope: lumin_evidence::RetentionPlanScope::Runs {
+                    before_unix_millis: 0,
+                },
+                created_unix_millis: 0,
+                catalog_revision: 1,
+                state: RetentionPlanState::Prepared,
+                items,
+                exclusions: Vec::new(),
+                confirmation_operation_id: None,
+                recoverable_state: None,
+                tombstone_identity: None,
+                physical_reclamation_pending: false,
+            },
+            trash_nonce: "nonce".to_owned(),
+            progress: None,
+        }
+    }
+
+    #[test]
+    fn allocator_floors_include_retention_plans_and_tombstones()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut snapshot = empty_snapshot();
+        snapshot.sequences.insert("attempt".to_owned(), 7);
+        let plan = stored_retention_plan(vec![RetentionPlanItem {
+            kind: RetentionItemKind::Attempt,
+            owning_sequence: 8,
+            record_id: "attempt_0000000000000008".to_owned(),
+            identity_sha256: "identity".to_owned(),
+            byte_count: 1,
+        }]);
+        snapshot.retention_plans.insert(
+            plan.record.plan_id.as_str().to_owned(),
+            serde_json::to_vec(&plan)?,
+        );
+        assert!(matches!(
+            validate_attempt_allocator_sequence(&snapshot),
+            Err(StoreError::Integrity(message))
+                if message.contains("minimum 8")
+        ));
+
+        snapshot.retention_plans.clear();
+        let tombstone = StoredTombstone {
+            schema_version: "lumin-retention-tombstone.v1".to_owned(),
+            envelope: RetentionTombstoneEnvelope {
+                record_kind: RetentionItemKind::Attempt,
+                record_id: "attempt_0000000000000009".to_owned(),
+                plan_id: RetentionPlanId::from_string("retention_plan_0000000000000001".to_owned()),
+                recoverable_state: None,
+                tombstone_identity: None,
+                physical_reclamation_pending: false,
+            },
+            identity_sha256: "identity".to_owned(),
+            owning_sequence: 9,
+        };
+        snapshot.retention_tombstones.insert(
+            "0:attempt_0000000000000009".to_owned(),
+            serde_json::to_vec(&tombstone)?,
+        );
+        assert!(matches!(
+            validate_attempt_allocator_sequence(&snapshot),
+            Err(StoreError::Integrity(message))
+                if message.contains("minimum 9")
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn retained_gate_revisions_require_a_retained_gate_item()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut snapshot = empty_snapshot();
+        let plan = stored_retention_plan(vec![RetentionPlanItem {
+            kind: RetentionItemKind::GateRevision,
+            owning_sequence: 1,
+            record_id: "gate:gate_0000000000000001/revision:0".to_owned(),
+            identity_sha256: "identity".to_owned(),
+            byte_count: 1,
+        }]);
+        snapshot.retention_plans.insert(
+            plan.record.plan_id.as_str().to_owned(),
+            serde_json::to_vec(&plan)?,
+        );
+
+        let gates = BTreeMap::new();
+        assert!(matches!(
+            retained_active_gate_mutation_floor(&snapshot, &gates),
+            Err(StoreError::Integrity(message))
+                if message.contains("omitted its gate item")
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn retained_runs_require_their_attempt_history() -> Result<(), Box<dyn std::error::Error>> {
+        let mut snapshot = empty_snapshot();
+        snapshot.sequences.insert("attempt".to_owned(), 10);
+        let plan = stored_retention_plan(vec![RetentionPlanItem {
+            kind: RetentionItemKind::Run,
+            owning_sequence: 10,
+            record_id: "run_000000000000000a".to_owned(),
+            identity_sha256: "identity".to_owned(),
+            byte_count: 1,
+        }]);
+        snapshot.retention_plans.insert(
+            plan.record.plan_id.as_str().to_owned(),
+            serde_json::to_vec(&plan)?,
+        );
+
+        assert!(matches!(
+            validate_attempt_allocator_sequence(&snapshot),
+            Err(StoreError::Integrity(message))
+                if message.contains("omitted its paired attempt")
+        ));
+        Ok(())
+    }
 
     fn active_gate(
         id: &str,

@@ -1,13 +1,15 @@
 use fs2::FileExt;
-use lumin_model::{AttemptId, PhysicalFileIdentity};
+use lumin_model::{AttemptId, AttemptStatus, PhysicalFileIdentity};
 use redb::{ReadableTable, TableError};
 use serde::{Deserialize, Serialize};
 
-use crate::namespace::{HeldEntry, NamespaceGuard, lock_contended};
+use crate::namespace::{HeldEntry, NamespaceGuard, entry_exists, lock_contended};
 use crate::{
     ATTEMPT_LEASES, SEQUENCES, StoreError, StoreGeneration, backend_error, io_error,
     serialization_error,
 };
+
+use super::super::AttemptEnvelope;
 
 const LEASE_SCHEMA: &str = "lumin-attempt-lease.v1";
 const LOCK_SCHEMA: &str = "lumin-attempt-lock.v1";
@@ -236,6 +238,16 @@ pub(super) fn validate_snapshot(
 ) -> Result<(), StoreError> {
     for (key, bytes) in rows {
         let attempt_id = AttemptId::from_string(key.clone());
+        parse_record(bytes, Some(&attempt_id))?;
+    }
+    Ok(())
+}
+
+pub(super) fn validate_migration_snapshot(
+    rows: &std::collections::BTreeMap<String, Vec<u8>>,
+) -> Result<(), StoreError> {
+    for (key, bytes) in rows {
+        let attempt_id = AttemptId::from_string(key.clone());
         let lease = parse_record(bytes, Some(&attempt_id))?;
         if lease.state == AttemptLeaseState::Allocating {
             return Err(StoreError::Integrity(format!(
@@ -247,6 +259,94 @@ pub(super) fn validate_snapshot(
     Ok(())
 }
 
+pub(super) fn migration_lock_names(
+    rows: &std::collections::BTreeMap<String, Vec<u8>>,
+) -> Result<std::collections::BTreeSet<String>, StoreError> {
+    rows.iter()
+        .map(|(key, bytes)| {
+            let attempt_id = AttemptId::from_string(key.clone());
+            parse_record(bytes, Some(&attempt_id)).map(|lease| lease.lock_name)
+        })
+        .collect()
+}
+
+pub(super) fn validate_migration_attempt_links(
+    rows: &std::collections::BTreeMap<String, Vec<u8>>,
+    attempts: &std::collections::BTreeMap<String, Option<AttemptEnvelope>>,
+    pending_attempts: &std::collections::BTreeSet<String>,
+) -> Result<(), StoreError> {
+    let mut leases = std::collections::BTreeMap::new();
+    for (key, bytes) in rows {
+        let attempt_id = AttemptId::from_string(key.clone());
+        leases.insert(key.as_str(), parse_record(bytes, Some(&attempt_id))?);
+    }
+
+    for (attempt_id, envelope) in attempts {
+        let lease = leases.get(attempt_id.as_str());
+        match (envelope.as_ref(), lease) {
+            (Some(envelope), Some(lease)) => {
+                if envelope.attempt_id != lease.attempt_id || envelope.sequence != lease.sequence {
+                    return Err(StoreError::Integrity(format!(
+                        "retained attempt envelope disagrees with its lease: {attempt_id}"
+                    )));
+                }
+                if envelope.state == AttemptStatus::Running
+                    && lease.state != AttemptLeaseState::Active
+                {
+                    return Err(StoreError::Integrity(format!(
+                        "running retained attempt has no active lease: {attempt_id}"
+                    )));
+                }
+            }
+            (Some(envelope), None) if envelope.state == AttemptStatus::Running => {
+                return Err(StoreError::Integrity(format!(
+                    "running retained attempt has no active lease: {attempt_id}"
+                )));
+            }
+            (None, Some(lease)) if lease.state == AttemptLeaseState::Active => {}
+            (None, _) => {
+                return Err(StoreError::Integrity(format!(
+                    "retained attempt directory has no recoverable envelope: {attempt_id}"
+                )));
+            }
+            (Some(_), None) => {}
+        }
+    }
+
+    for attempt_id in pending_attempts {
+        if leases
+            .get(attempt_id.as_str())
+            .is_none_or(|lease| lease.state != AttemptLeaseState::Active)
+        {
+            return Err(StoreError::Integrity(format!(
+                "retained pending attempt envelope has no active lease: {attempt_id}"
+            )));
+        }
+    }
+
+    for (attempt_id, lease) in leases {
+        if lease.state == AttemptLeaseState::Releasing && !attempts.contains_key(attempt_id) {
+            return Err(StoreError::Integrity(format!(
+                "releasing attempt omitted its retained directory: {attempt_id}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn migration_has_active_lease(
+    rows: &std::collections::BTreeMap<String, Vec<u8>>,
+    attempt_id: &AttemptId,
+) -> Result<bool, StoreError> {
+    rows.get(attempt_id.as_str())
+        .map(|bytes| {
+            parse_record(bytes, Some(attempt_id))
+                .map(|lease| lease.state == AttemptLeaseState::Active)
+        })
+        .transpose()
+        .map(Option::unwrap_or_default)
+}
+
 pub(super) fn validate_snapshot_locks(
     rows: &std::collections::BTreeMap<String, Vec<u8>>,
     guard: &NamespaceGuard,
@@ -254,13 +354,21 @@ pub(super) fn validate_snapshot_locks(
     for (key, bytes) in rows {
         let attempt_id = AttemptId::from_string(key.clone());
         let lease = parse_record(bytes, Some(&attempt_id))?;
-        if lease.state != AttemptLeaseState::Active {
+        if lease.state == AttemptLeaseState::Allocating {
+            continue;
+        }
+        if lease.state == AttemptLeaseState::Releasing
+            && !entry_exists(&guard.direct_state_file_path(&lease.lock_name)?)?
+        {
             continue;
         }
         let lock = guard.open_state_file(&lease.lock_name, "attempt process-liveness lock")?;
         validate_lock_identity(guard, &lock, &lease)?;
         match lock.file().try_lock_exclusive() {
             Ok(()) => validate_lock(guard, &lock, &lease)?,
+            Err(error) if lease.state == AttemptLeaseState::Releasing => {
+                return Err(io_error(error));
+            }
             Err(error) if lock_contended(&error) => {
                 // Windows mandatory range locking prevents a second handle from reading or
                 // changing bytes. On advisory-lock platforms the bytes remain readable.
@@ -346,6 +454,18 @@ pub(super) fn validate_allocating_lock(
     validate_lock(guard, file, &bound)
 }
 
+#[cfg(test)]
+pub(super) fn bind_allocating_lock_for_test(
+    file: &HeldEntry,
+    allocation: &AttemptLeaseRecord,
+) -> Result<(), StoreError> {
+    let mut bound = allocation.clone();
+    bound.lock_physical_identity = Some(file.identity().clone());
+    bound.state = AttemptLeaseState::Active;
+    validate_record(&bound)?;
+    file.replace_contents(&lock_bytes(&bound)?)
+}
+
 pub(super) fn remove(
     guard: &NamespaceGuard,
     expected: &AttemptLeaseRecord,
@@ -408,7 +528,7 @@ pub(super) fn validate_lock_identity(
     Ok(())
 }
 
-fn parse_record(
+pub(super) fn parse_record(
     bytes: &[u8],
     expected_id: Option<&AttemptId>,
 ) -> Result<AttemptLeaseRecord, StoreError> {

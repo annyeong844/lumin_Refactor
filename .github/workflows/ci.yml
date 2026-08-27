@@ -279,6 +279,10 @@ jobs:
         shell: pwsh
         run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy -p lumin-cli --test lifecycle_operation_idempotency --features lifecycle-test-fault --locked -- -D warnings'
 
+      - name: Lint lifecycle migration corpus
+        shell: pwsh
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy -p lumin-cli --test lifecycle_store_migration --features lifecycle-test-fault,publication-test-crash --locked -- -D warnings'
+
       - name: Lint publication crash corpus
         shell: pwsh
         run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo clippy -p lumin-cli --test publication_faults --features publication-test-crash --locked -- -D warnings'
@@ -492,6 +496,12 @@ jobs:
           - os: windows-2022
             name: publication-retention-race
             arguments: foundation --store-crash --row publication-retention-race
+          - os: ubuntu-24.04
+            name: lifecycle-store-migration
+            arguments: foundation --store-crash --row lifecycle-store-migration
+          - os: windows-2022
+            name: lifecycle-store-migration
+            arguments: foundation --store-crash --row lifecycle-store-migration
     runs-on: ${{ matrix.os }}
     steps:
       - name: Initialize isolated Cargo paths
@@ -577,15 +587,23 @@ jobs:
         run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo test --workspace --doc --locked'
 
   release:
-    name: ${{ matrix.os }} release
+    name: ${{ matrix.package_target }} package
     needs: policy
     if: ${{ needs.policy.outputs.run_full == 'true' }}
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-24.04
-          - windows-2022
+        include:
+          - os: ubuntu-24.04
+            package_target: linux-x64
+            build_arguments: --target x86_64-unknown-linux-musl
+            binary_path: x86_64-unknown-linux-musl/release/lumin
+            fixture_binary_path: debug/lumin
+          - os: windows-2022
+            package_target: windows-x64
+            build_arguments: ""
+            binary_path: release/lumin.exe
+            fixture_binary_path: debug/lumin.exe
     runs-on: ${{ matrix.os }}
     steps:
       - name: Initialize isolated Cargo paths
@@ -607,6 +625,11 @@ jobs:
         shell: pwsh
         run: rustup toolchain install 1.96.0 --profile minimal --no-self-update
 
+      - name: Install exact Linux musl target
+        if: ${{ matrix.package_target == 'linux-x64' }}
+        shell: pwsh
+        run: rustup target add x86_64-unknown-linux-musl --toolchain 1.96.0
+
       - name: Record trusted tools
         shell: pwsh
         env:
@@ -621,7 +644,34 @@ jobs:
 
       - name: Build release binary
         shell: pwsh
-        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo build -p lumin-cli --release --locked'
+        env:
+          LUMIN_BUILD_REVISION: ${{ github.sha }}
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo build -p lumin-cli --release --locked ${{ matrix.build_arguments }}'
+
+      - name: Build lifecycle migration fixture binary
+        shell: pwsh
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo build -p lumin-cli --features lifecycle-test-fault --locked'
+
+      - name: Stage packaged skill adapters
+        shell: pwsh
+        env:
+          LUMIN_PACKAGE_ROOT: ${{ runner.temp }}/lumin-package
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- package-check stage-skills'
+
+      - name: Probe packaged binary without runtime build tools
+        shell: pwsh
+        env:
+          LUMIN_PACKAGE_BINARY: ${{ runner.temp }}/lumin-target/${{ matrix.binary_path }}
+          LUMIN_PACKAGE_FIXTURE_BINARY: ${{ runner.temp }}/lumin-target/${{ matrix.fixture_binary_path }}
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- package-check ${{ matrix.package_target }}'
+
+      - name: Probe packaged skills
+        shell: pwsh
+        env:
+          LUMIN_PACKAGE_BINARY: ${{ runner.temp }}/lumin-target/${{ matrix.binary_path }}
+          LUMIN_PACKAGE_FIXTURE_BINARY: ${{ runner.temp }}/lumin-target/${{ matrix.fixture_binary_path }}
+          LUMIN_PACKAGE_ROOT: ${{ runner.temp }}/lumin-package
+        run: '& "$env:PINNED_PYTHON" -I -S tools/xtask/bootstrap/source_provenance.py -- cargo run --locked -p lumin-xtask -- package-check skills'
 
   required:
     name: Required

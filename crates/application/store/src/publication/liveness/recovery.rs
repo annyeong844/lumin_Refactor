@@ -19,7 +19,7 @@ pub(super) fn recover_under_guard(
     remove_unreferenced_liveness_locks(store, guard, &leases)?;
     for lease in leases {
         if lease.state == AttemptLeaseState::Allocating {
-            recover_allocation(store, guard, &lease)?;
+            recover_allocation(guard, &lease)?;
             continue;
         }
         if lease.state == AttemptLeaseState::Releasing {
@@ -43,14 +43,21 @@ pub(super) fn recover_under_guard(
     Ok(())
 }
 
-fn recover_allocation(
-    store: &RepositoryStore,
+pub(super) fn recover_allocation(
     guard: &NamespaceGuard,
     allocation: &AttemptLeaseRecord,
 ) -> Result<(), StoreError> {
-    let path = store.state_dir.join(&allocation.lock_name);
+    recover_allocation_artifact(guard, allocation)?;
+    records::remove(guard, allocation)
+}
+
+pub(super) fn recover_allocation_artifact(
+    guard: &NamespaceGuard,
+    allocation: &AttemptLeaseRecord,
+) -> Result<(), StoreError> {
+    let path = guard.direct_state_file_path(&allocation.lock_name)?;
     if !entry_exists(&path)? {
-        return records::remove(guard, allocation);
+        return Ok(());
     }
 
     let lock = guard.open_state_file(
@@ -68,8 +75,7 @@ fn recover_allocation(
     )?;
     drop(lock);
     fs::remove_file(path).map_err(io_error)?;
-    guard.state_directory_entry().sync_directory()?;
-    records::remove(guard, allocation)
+    guard.state_directory_entry().sync_directory()
 }
 
 fn remove_unreferenced_liveness_locks(

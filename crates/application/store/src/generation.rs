@@ -21,14 +21,6 @@ impl StoreGeneration {
             .and_then(NonZeroU64::new)
             .map(Self)
     }
-
-    pub(crate) fn checked_previous(self) -> Option<Self> {
-        self.0
-            .get()
-            .checked_sub(1)
-            .and_then(NonZeroU64::new)
-            .map(Self)
-    }
 }
 
 impl fmt::Display for StoreGeneration {

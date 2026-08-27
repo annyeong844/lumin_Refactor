@@ -2,42 +2,66 @@ use std::fs;
 
 use lumin_evidence::{
     ActualWriteSet, GateBaselineObservationInput, GateCloseObservationInput, GateDecision,
-    GateLifecycle, GateObservationBinding, GateOperationStatus, GateRecord, GateSignal,
-    OperationLivenessLease, OperationRecord, PathPrefixIdentity, PreWriteFinalValidationEvidence,
-    RepoPathProjection, RetentionMutationResult, RetentionOperationRecord,
-    RetentionOperationResult, RetentionPlanScope, UnsealedGateObservationInputs,
-    WorktreeTransition, WriteLease, WriteLeaseKind, derive_gate_baseline_observation_id,
-    derive_gate_close_observation_id, derive_protected_semantic_inputs,
-    derive_unsealed_gate_observation_binding, gate_abandon_request_digest,
-    post_write_request_digest, seal_analysis_snapshot,
+    GateLifecycle, GateObservationBinding, GateOperationKind, GateOperationStatus, GateRecord,
+    GateSignal, OperationLivenessLease, OperationRecord, PathPrefixIdentity,
+    PreWriteFinalValidationEvidence, RepoPathProjection, RetentionMutationResult,
+    RetentionOperationRecord, RetentionOperationResult, RetentionPlanScope,
+    UnsealedGateObservationInputs, WorktreeTransition, WriteLease, WriteLeaseKind,
+    derive_gate_baseline_observation_id, derive_gate_close_observation_id,
+    derive_protected_semantic_inputs, derive_unsealed_gate_observation_binding,
+    gate_abandon_request_digest, post_write_request_digest, seal_analysis_snapshot,
 };
 use lumin_model::{
     AnalysisInputId, AttemptId, CapabilityState, DeltaFactFamily, DeltaKey,
     GateDeltaClassification, GateDeltaRecord, ObservationBinding, OperationId,
-    PhysicalFileIdentity, RepoPath, ResolutionProfile, RunId, SealedGateObservation,
-    UnsealedObservationReason,
+    PhysicalFileIdentity, RepoPath, ResolutionProfile, ResolutionProfileSource, RunId,
+    SealedGateObservation, UnsealedObservationReason, digest_hex,
 };
-use redb::{Database, ReadableTable, WriteTransaction};
+use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition, WriteTransaction};
 
 use crate::gate::{
     GATES, OPERATIONS, TRANSITIONS, VALIDATION_RECEIPTS, records::ACTIVE_GATE_CATALOG_SEQUENCE_KEY,
     transition_key,
 };
-use crate::retention::RETENTION_OPERATIONS;
+use crate::namespace::platform::{EntryAccess, EntryKind, HeldEntry};
+use crate::retention::{
+    RETENTION_OPERATIONS, RETENTION_PLANS, RUN_PINS, pin_request_digest,
+    records::StoredRetentionPlan,
+};
 use crate::{
-    GateBaselineDraft, ObservationFinalization, PreWriteFinish, PreWriteStart, RUN_CATALOG,
-    RunCatalogRecord, SEQUENCES, StoreError,
+    EVIDENCE, GateBaselineDraft, ObservationFinalization, PreWriteFinish, PreWriteStart,
+    RUN_CATALOG, RepositoryStore, RunCatalogRecord, SEQUENCES, StoreError,
 };
 
-use super::super::open_store;
+use super::super::open_store as open_ordinary_store;
 use super::{
     append_non_authorizing_close_for_migration, append_unsealed_close_for_migration,
-    close_active_gate_for_migration, current_generation, evidence, observed_lease,
+    close_active_gate_for_migration, evidence, make_prior_store, observed_lease,
     open_active_gate_for, open_active_gate_for_with_protected_inputs, options, path,
     pre_write_digest, rejected_test_observation, semantic_input,
 };
 
 mod receipts;
+
+fn open_store(root: &std::path::Path) -> Result<RepositoryStore, StoreError> {
+    match open_ordinary_store(root) {
+        Ok(store) => Ok(store),
+        Err(_) => {
+            let admission = lumin_inventory::repository_admission(root)
+                .map_err(|error| StoreError::Integrity(error.to_string()))?;
+            let namespace = crate::namespace::NamespaceState::open_for_migration(
+                &admission.canonical_root,
+                &admission.binding,
+            )?
+            .ok_or(StoreError::LifecycleStoreNotInitialized)?;
+            let state_dir = namespace.state_dir().to_path_buf();
+            Ok(RepositoryStore {
+                state_dir,
+                namespace,
+            })
+        }
+    }
+}
 
 fn reseal_validation_receipt_set(
     write: &WriteTransaction,
@@ -321,20 +345,20 @@ fn migration_authenticates_the_baseline_transition_boundary_against_catalog_epoc
 }
 
 #[test]
-fn unpublished_intent_bytes_are_discarded_before_reopen() -> Result<(), Box<dyn std::error::Error>>
-{
+fn named_unpublished_intent_bytes_are_preserved_as_foreign_state()
+-> Result<(), Box<dyn std::error::Error>> {
     for bytes in [b"".as_slice(), b"{\"fromGeneration\":1".as_slice()] {
         let root = tempfile::tempdir()?;
         drop(open_store(root.path())?);
         let pending = root.path().join(".lumin/lifecycle-migration.json.pending");
         fs::write(&pending, bytes)?;
 
-        let reopened = open_store(root.path())?;
-        assert_eq!(
-            current_generation(&reopened)?,
-            crate::StoreGeneration::INITIAL
-        );
-        assert!(!pending.exists());
+        assert!(matches!(
+            open_ordinary_store(root.path()),
+            Err(StoreError::Integrity(message))
+                if message.contains("noncanonical migration journal artifact")
+        ));
+        assert_eq!(fs::read(&pending)?, bytes);
         assert!(!root.path().join(".lumin/lifecycle-migration.json").exists());
     }
     Ok(())
@@ -347,7 +371,7 @@ fn malformed_published_intent_remains_a_hard_stop() -> Result<(), Box<dyn std::e
     fs::write(root.path().join(".lumin/lifecycle-migration.json"), b"")?;
 
     assert!(matches!(
-        open_store(root.path()),
+        open_ordinary_store(root.path()),
         Err(StoreError::Integrity(_))
     ));
     Ok(())
@@ -413,6 +437,673 @@ fn migration_rejects_hard_linked_run_evidence() -> Result<(), Box<dyn std::error
         store.migrate_lifecycle_store(),
         Err(StoreError::Integrity(_))
     ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_untyped_or_unsupported_run_evidence() -> Result<(), Box<dyn std::error::Error>>
+{
+    for mutation in [
+        "container",
+        "row",
+        "schema",
+        "duplicate-capability",
+        "missing-capability",
+        "opaque-capability",
+        "metrics",
+        "extra-row",
+        "extra-table",
+        "opaque-top-level",
+        "opaque-nested",
+    ] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        let mut attempt = store.begin_attempt()?;
+        let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+        let evidence_path = root
+            .path()
+            .join(".lumin/runs")
+            .join(published.run_id.as_str())
+            .join("evidence.store");
+
+        match mutation {
+            "container" => fs::write(&evidence_path, b"not-a-redb-container")?,
+            "row"
+            | "schema"
+            | "duplicate-capability"
+            | "missing-capability"
+            | "opaque-capability"
+            | "metrics"
+            | "extra-row"
+            | "extra-table"
+            | "opaque-top-level"
+            | "opaque-nested" => {
+                let database = Database::open(&evidence_path)?;
+                let write = database.begin_write()?;
+                if mutation == "extra-table" {
+                    let foreign = TableDefinition::<&str, &[u8]>::new("foreign-evidence");
+                    let mut table = write.open_table(foreign)?;
+                    table.insert("opaque", b"opaque".as_slice())?;
+                } else {
+                    let mut table = write.open_table(EVIDENCE)?;
+                    match mutation {
+                        "row" => {
+                            table.insert("run", b"{".as_slice())?;
+                        }
+                        "schema" => {
+                            let mut changed = evidence();
+                            changed.schema_version = "lumin-evidence.foreign".to_owned();
+                            let bytes = serde_json::to_vec(&changed)?;
+                            table.insert("run", bytes.as_slice())?;
+                        }
+                        "duplicate-capability" => {
+                            let mut changed = evidence();
+                            changed.capabilities.push(
+                                changed
+                                    .capabilities
+                                    .first()
+                                    .ok_or("run evidence omitted its capability")?
+                                    .clone(),
+                            );
+                            let bytes = serde_json::to_vec(&changed)?;
+                            table.insert("run", bytes.as_slice())?;
+                        }
+                        "missing-capability" => {
+                            let mut changed = evidence();
+                            changed.capabilities.pop();
+                            let bytes = serde_json::to_vec(&changed)?;
+                            table.insert("run", bytes.as_slice())?;
+                        }
+                        "opaque-capability" => {
+                            let mut changed = evidence();
+                            changed.capabilities.push(lumin_evidence::CapabilityRecord {
+                                capability_id: "opaque.v1".to_owned(),
+                                state: CapabilityState::Complete,
+                            });
+                            let bytes = serde_json::to_vec(&changed)?;
+                            table.insert("run", bytes.as_slice())?;
+                        }
+                        "metrics" => {
+                            let mut changed = evidence();
+                            changed.metrics.logical_source_count = 1;
+                            let bytes = serde_json::to_vec(&changed)?;
+                            table.insert("run", bytes.as_slice())?;
+                        }
+                        "extra-row" => {
+                            table.insert("opaque", b"opaque".as_slice())?;
+                        }
+                        "opaque-top-level" | "opaque-nested" => {
+                            let mut changed = serde_json::to_value(evidence())?;
+                            let target = if mutation == "opaque-top-level" {
+                                changed
+                                    .as_object_mut()
+                                    .ok_or("run evidence is not an object")?
+                            } else {
+                                changed
+                                    .pointer_mut("/capabilities/0")
+                                    .and_then(serde_json::Value::as_object_mut)
+                                    .ok_or("run capability is not an object")?
+                            };
+                            target
+                                .insert("opaqueControl".to_owned(), serde_json::Value::Bool(true));
+                            let bytes = serde_json::to_vec(&changed)?;
+                            table.insert("run", bytes.as_slice())?;
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                write.commit()?;
+                drop(database);
+            }
+            _ => unreachable!(),
+        }
+
+        rewrite_run_evidence_identity(root.path(), &published.run_id)?;
+        make_prior_store(&store, root.path())?;
+        let result = store.migrate_lifecycle_store();
+        let rejected = match mutation {
+            "container" => matches!(result, Err(StoreError::Backend(_))),
+            "row" => matches!(result, Err(StoreError::Serialization(_))),
+            "schema" => matches!(
+                result,
+                Err(StoreError::IncompatibleStateSchema(message))
+                    if message.contains("run evidence uses unsupported schema")
+            ),
+            "duplicate-capability" => matches!(
+                result,
+                Err(StoreError::Integrity(message))
+                    if message.contains("duplicate identity in capabilities")
+            ),
+            "missing-capability" | "opaque-capability" => matches!(
+                result,
+                Err(StoreError::Integrity(message))
+                    if message.contains("persisted inventory disagrees")
+            ),
+            "metrics" => matches!(
+                result,
+                Err(StoreError::Integrity(message))
+                    if message.contains("persisted analysis metric logicalSourceCount")
+            ),
+            "extra-row" | "extra-table" | "opaque-top-level" | "opaque-nested" => {
+                matches!(result, Err(StoreError::Integrity(_)))
+            }
+            _ => unreachable!(),
+        };
+        assert!(
+            rejected,
+            "migration accepted {mutation} evidence corruption"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn run_evidence_decode_stays_bound_to_the_hashed_held_bytes()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let mut attempt = store.begin_attempt()?;
+    let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+    let run_dir = root
+        .path()
+        .join(".lumin/runs")
+        .join(published.run_id.as_str());
+    let evidence_path = run_dir.join("evidence.store");
+    let replacement = root.path().join("valid-replacement-evidence.store");
+    fs::copy(&evidence_path, &replacement)?;
+
+    let database = Database::open(&evidence_path)?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(EVIDENCE)?;
+        let mut changed = evidence();
+        changed.capabilities.push(
+            changed
+                .capabilities
+                .first()
+                .ok_or("run evidence omitted its capability")?
+                .clone(),
+        );
+        let bytes = serde_json::to_vec(&changed)?;
+        table.insert("run", bytes.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+    rewrite_run_evidence_identity(root.path(), &published.run_id)?;
+
+    let expected =
+        serde_json::from_slice::<RunCatalogRecord>(&fs::read(run_dir.join("run.json"))?)?;
+    let held_dir = HeldEntry::open(
+        &run_dir,
+        EntryKind::Directory,
+        EntryAccess::Move,
+        false,
+        "test run directory",
+    )?;
+    let result = crate::publication::validate_directory_with_evidence_read_hook(
+        &run_dir,
+        &held_dir,
+        &expected,
+        || {
+            fs::copy(&replacement, &evidence_path)
+                .map(|_| ())
+                .map_err(crate::io_error)
+        },
+    );
+    assert!(matches!(
+        result,
+        Err(StoreError::Integrity(message))
+            if message.contains("duplicate identity in capabilities")
+    ));
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn run_inventory_rechecks_the_held_directory_after_the_exact_barrier()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let mut attempt = store.begin_attempt()?;
+    let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+    let run_dir = root
+        .path()
+        .join(".lumin/runs")
+        .join(published.run_id.as_str());
+    let moved_run_dir = root.path().join(".lumin/runs/held-run-directory");
+
+    let expected =
+        serde_json::from_slice::<RunCatalogRecord>(&fs::read(run_dir.join("run.json"))?)?;
+    let held_dir = HeldEntry::open(
+        &run_dir,
+        EntryKind::Directory,
+        EntryAccess::ReadOnly,
+        false,
+        "test run directory",
+    )?;
+    let run_dir_before = run_dir.clone();
+    let run_dir_after = run_dir.clone();
+    let result = crate::publication::validate_directory_with_inventory_hooks(
+        &run_dir,
+        &held_dir,
+        &expected,
+        || {
+            fs::write(
+                run_dir_before.join("unowned-payload"),
+                b"unowned run payload",
+            )
+            .map_err(crate::io_error)?;
+            fs::rename(&run_dir_before, &moved_run_dir).map_err(crate::io_error)?;
+            fs::create_dir(&run_dir_before).map_err(crate::io_error)?;
+            fs::write(run_dir_before.join("evidence.store"), b"substitute")
+                .map_err(crate::io_error)?;
+            fs::write(run_dir_before.join("run.json"), b"substitute").map_err(crate::io_error)
+        },
+        || {
+            fs::remove_dir_all(&run_dir_after).map_err(crate::io_error)?;
+            fs::rename(&moved_run_dir, &run_dir_after).map_err(crate::io_error)
+        },
+    );
+    if moved_run_dir.is_dir() {
+        fs::remove_dir_all(&run_dir)?;
+        fs::rename(&moved_run_dir, &run_dir)?;
+    }
+    assert!(
+        matches!(
+            result,
+            Err(StoreError::Integrity(ref message))
+                if message.contains("run directory contains an unknown entry")
+        ),
+        "unexpected validation result: {result:?}"
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn run_evidence_rechecks_the_held_bytes_after_the_final_inventory_barrier()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let mut attempt = store.begin_attempt()?;
+    let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+    let run_dir = root
+        .path()
+        .join(".lumin/runs")
+        .join(published.run_id.as_str());
+    let evidence_path = run_dir.join("evidence.store");
+    let expected =
+        serde_json::from_slice::<RunCatalogRecord>(&fs::read(run_dir.join("run.json"))?)?;
+    let held_dir = HeldEntry::open(
+        &run_dir,
+        EntryKind::Directory,
+        EntryAccess::ReadOnly,
+        false,
+        "test run directory",
+    )?;
+
+    let result = crate::publication::validate_directory_with_inventory_hooks(
+        &run_dir,
+        &held_dir,
+        &expected,
+        || Ok(()),
+        || fs::write(&evidence_path, b"changed after final inventory").map_err(crate::io_error),
+    );
+    assert!(
+        matches!(
+            result,
+            Err(StoreError::Integrity(ref message))
+                if message.contains("evidence store identity mismatch")
+        ),
+        "unexpected validation result: {result:?}"
+    );
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn run_inventory_rechecks_the_windows_directory_handle_after_the_exact_barrier()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let mut attempt = store.begin_attempt()?;
+    let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+    let run_dir = root
+        .path()
+        .join(".lumin/runs")
+        .join(published.run_id.as_str());
+    let expected =
+        serde_json::from_slice::<RunCatalogRecord>(&fs::read(run_dir.join("run.json"))?)?;
+    let held_dir = HeldEntry::open(
+        &run_dir,
+        EntryKind::Directory,
+        EntryAccess::ReadOnly,
+        false,
+        "test run directory",
+    )?;
+    let unowned = run_dir.join("unowned-payload");
+
+    let result = crate::publication::validate_directory_with_inventory_hooks(
+        &run_dir,
+        &held_dir,
+        &expected,
+        || fs::write(&unowned, b"unowned run payload").map_err(crate::io_error),
+        || Ok(()),
+    );
+    assert!(
+        matches!(
+            result,
+            Err(StoreError::Integrity(ref message))
+                if message.contains("run directory contains an unknown entry")
+        ),
+        "unexpected validation result: {result:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_unowned_top_level_state_entries() -> Result<(), Box<dyn std::error::Error>> {
+    for (name, expected) in [
+        ("opaque", "state namespace contains an unowned entry"),
+        (
+            ".lumin-unpublished-00000000-0000000000000001",
+            "state namespace contains an unowned entry",
+        ),
+        (
+            "operation-liveness-0000000000000000000000000000000000000000000000000000000000000000.lock",
+            "operation liveness lock name disagrees with its owner",
+        ),
+    ] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        let foreign = root.path().join(".lumin").join(name);
+        fs::write(&foreign, b"foreign state")?;
+        make_prior_store(&store, root.path())?;
+
+        assert!(
+            matches!(
+                store.migrate_lifecycle_store(),
+                Err(StoreError::Integrity(message)) if message.contains(expected)
+            ),
+            "migration accepted unowned state entry {name}"
+        );
+        assert_eq!(fs::read(foreign)?, b"foreign state");
+    }
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_unknown_private_record_members() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let mut attempt = store.begin_attempt()?;
+    let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(RUN_CATALOG)?;
+        let bytes = table
+            .get(published.run_id.as_str())?
+            .ok_or("run catalog entry is missing")?
+            .value()
+            .to_vec();
+        let mut record = serde_json::from_slice::<serde_json::Value>(&bytes)?;
+        record
+            .as_object_mut()
+            .ok_or("run catalog entry is not an object")?
+            .insert("opaqueMigrationControl".to_owned(), true.into());
+        let changed = serde_json::to_vec(&record)?;
+        table.insert(published.run_id.as_str(), changed.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+    make_prior_store(&store, root.path())?;
+
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("opaqueMigrationControl")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_requires_every_committed_pin_to_have_its_row() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let mut attempt = store.begin_attempt()?;
+    let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+    let operation_id = OperationId::from_string("migration-pin-row-owner".to_owned());
+    let pin = store.pin_run(&published.run_id, &operation_id, "migration pin row")?;
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(RUN_PINS)?;
+        table.remove(pin.pin_id.as_str())?;
+    }
+    write.commit()?;
+    drop(database);
+    make_prior_store(&store, root.path())?;
+
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("has no matching durable pin row")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_noncanonical_run_pin_reasons() -> Result<(), Box<dyn std::error::Error>> {
+    for reason in ["", " padded reason "] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        let mut attempt = store.begin_attempt()?;
+        let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+        let operation_id = OperationId::from_string(format!(
+            "migration-pin-reason-{}",
+            if reason.is_empty() { "empty" } else { "padded" }
+        ));
+        let pin = store.pin_run(&published.run_id, &operation_id, "canonical reason")?;
+
+        let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+        let write = database.begin_write()?;
+        {
+            let mut table = write.open_table(RUN_PINS)?;
+            let bytes = table
+                .get(pin.pin_id.as_str())?
+                .ok_or("run pin row is missing")?
+                .value()
+                .to_vec();
+            let mut stored = serde_json::from_slice::<lumin_evidence::RunPinRecord>(&bytes)?;
+            stored.reason = reason.to_owned();
+            let changed = serde_json::to_vec(&stored)?;
+            table.insert(pin.pin_id.as_str(), changed.as_slice())?;
+        }
+        {
+            let mut table = write.open_table(RETENTION_OPERATIONS)?;
+            let bytes = table
+                .get(operation_id.as_str())?
+                .ok_or("run pin operation is missing")?
+                .value()
+                .to_vec();
+            let mut operation = serde_json::from_slice::<RetentionOperationRecord>(&bytes)?;
+            operation.request_digest = pin_request_digest(&published.run_id, reason);
+            let RetentionOperationResult::PinCreated { pin } = &mut operation.result else {
+                return Err("run pin operation has the wrong result".into());
+            };
+            pin.reason = reason.to_owned();
+            let changed = serde_json::to_vec(&operation)?;
+            table.insert(operation_id.as_str(), changed.as_slice())?;
+        }
+        write.commit()?;
+        drop(database);
+        make_prior_store(&store, root.path())?;
+
+        assert!(matches!(
+            store.migrate_lifecycle_store(),
+            Err(StoreError::Integrity(message))
+                if message.contains("has a noncanonical reason")
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn migration_accepts_retention_owned_pruned_pin_history() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let mut first_attempt = store.begin_attempt()?;
+    let first = store.publish_run(&mut first_attempt, &evidence(), |_| Ok(()))?;
+    let mut latest_attempt = store.begin_attempt()?;
+    store.publish_run(&mut latest_attempt, &evidence(), |_| Ok(()))?;
+    let pin = store.pin_run(
+        &first.run_id,
+        &OperationId::from_string("migration-pruned-pin-create".to_owned()),
+        "migration pruned pin history",
+    )?;
+    let unpin_operation_id = OperationId::from_string("migration-pruned-pin-remove".to_owned());
+    let removed = store.unpin_run(&pin.pin_id, &unpin_operation_id)?;
+    let plan_id =
+        prepared_plan_id(store.prepare_retention_plan(&crate::RetentionPlanRequest {
+            scope: RetentionPlanScope::Runs {
+                before_unix_millis: u64::MAX,
+            },
+            operation_id: OperationId::from_string("migration-pruned-pin-plan".to_owned()),
+        })?)?;
+    store.confirm_retention_plan(
+        &plan_id,
+        &OperationId::from_string("migration-pruned-pin-confirm".to_owned()),
+    )?;
+    assert!(matches!(
+        store.lookup_run_pin(&pin.pin_id)?,
+        lumin_evidence::RecordLookup::Pruned(_)
+    ));
+    make_prior_store(&store, root.path())?;
+
+    store.migrate_lifecycle_store()?;
+
+    assert!(matches!(
+        store.lookup_run_pin(&pin.pin_id)?,
+        lumin_evidence::RecordLookup::Pruned(_)
+    ));
+    assert_eq!(store.unpin_run(&pin.pin_id, &unpin_operation_id)?, removed);
+    Ok(())
+}
+
+#[test]
+fn migration_validates_every_direct_run_child_and_its_allocator_floor()
+-> Result<(), Box<dyn std::error::Error>> {
+    for case in ["non-directory", "allocator-floor", "staging-floor"] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        let runs = root.path().join(".lumin/runs");
+        match case {
+            "non-directory" => fs::write(runs.join("foreign-run-child"), b"foreign")?,
+            "allocator-floor" => fs::create_dir(runs.join("run_000000000000000a"))?,
+            "staging-floor" => fs::create_dir(runs.join(".run_000000000000000a.staging"))?,
+            _ => unreachable!(),
+        }
+        make_prior_store(&store, root.path())?;
+
+        let result = store.migrate_lifecycle_store();
+        let rejected = match case {
+            "non-directory" => matches!(result, Err(StoreError::Integrity(_))),
+            "allocator-floor" | "staging-floor" => matches!(
+                result,
+                Err(StoreError::Integrity(message))
+                    if message.contains("attempt sequence regressed below retained allocation")
+            ),
+            _ => unreachable!(),
+        };
+        assert!(rejected, "migration accepted {case} run child");
+    }
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_extra_children_in_catalog_owned_runs() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let mut attempt = store.begin_attempt()?;
+    let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+    fs::write(
+        root.path()
+            .join(".lumin/runs")
+            .join(published.run_id.as_str())
+            .join("unowned-payload"),
+        b"not part of the sealed run",
+    )?;
+    make_prior_store(&store, root.path())?;
+
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("run directory contains an unknown entry")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_opaque_members_in_run_envelopes() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let mut attempt = store.begin_attempt()?;
+    let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+    make_prior_store(&store, root.path())?;
+
+    let envelope = root
+        .path()
+        .join(".lumin/runs")
+        .join(published.run_id.as_str())
+        .join("run.json");
+    let mut value = serde_json::from_slice::<serde_json::Value>(&fs::read(&envelope)?)?;
+    value
+        .as_object_mut()
+        .ok_or("run envelope is not an object")?
+        .insert("opaque".to_owned(), serde_json::Value::Bool(true));
+    fs::write(&envelope, serde_json::to_vec_pretty(&value)?)?;
+
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Serialization(message)) if message.contains("unknown field `opaque`")
+    ));
+    Ok(())
+}
+
+fn rewrite_run_evidence_identity(
+    root: &std::path::Path,
+    run_id: &RunId,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let run_dir = root.join(".lumin/runs").join(run_id.as_str());
+    let evidence = fs::read(run_dir.join("evidence.store"))?;
+    let database = Database::open(root.join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    let record = {
+        let mut table = write.open_table(RUN_CATALOG)?;
+        let bytes = table
+            .get(run_id.as_str())?
+            .ok_or("run catalog entry is missing")?
+            .value()
+            .to_vec();
+        let mut record = serde_json::from_slice::<RunCatalogRecord>(&bytes)?;
+        record.evidence_store_sha256 = digest_hex(&evidence);
+        record.evidence_store_size = evidence.len() as u64;
+        let changed = serde_json::to_vec(&record)?;
+        table.insert(run_id.as_str(), changed.as_slice())?;
+        record
+    };
+    write.commit()?;
+    drop(database);
+
+    let mut envelope = serde_json::to_vec_pretty(&record)?;
+    envelope.push(b'\n');
+    fs::write(run_dir.join("run.json"), envelope)?;
     Ok(())
 }
 
@@ -990,9 +1681,13 @@ fn migration_derives_baseline_protected_reads_from_the_sealed_snapshot()
 }
 
 #[test]
-fn migration_reconstructs_new_file_parent_and_prefix_bindings()
+fn migration_rejects_invalid_or_unauthenticated_active_new_file_leases()
 -> Result<(), Box<dyn std::error::Error>> {
-    for corruption in ["missing-prefix-chain", "changed-prefix-identity"] {
+    for corruption in [
+        "missing-prefix-chain",
+        "changed-prefix-identity",
+        "valid-but-unauthenticated",
+    ] {
         let root = tempfile::tempdir()?;
         let store = open_store(root.path())?;
         let operation_id = OperationId::from_string(format!("op-new-file-prefix-{corruption}"));
@@ -1024,23 +1719,29 @@ fn migration_reconstructs_new_file_parent_and_prefix_bindings()
                 .first()
                 .ok_or("new-file-prefix gate omitted its declared path")?
                 .clone();
-            let (nearest_existing_parent, prefix_identities) = match corruption {
-                "missing-prefix-chain" => (None, Vec::new()),
-                "changed-prefix-identity" => (
-                    Some(root_projection.clone()),
-                    vec![PathPrefixIdentity {
+            let lease = match corruption {
+                "missing-prefix-chain" => WriteLease {
+                    path: declared,
+                    kind: WriteLeaseKind::NewFile,
+                    physical_identity: None,
+                    nearest_existing_parent: None,
+                    prefix_identities: Vec::new(),
+                },
+                "changed-prefix-identity" => WriteLease {
+                    path: declared,
+                    kind: WriteLeaseKind::NewFile,
+                    physical_identity: None,
+                    nearest_existing_parent: Some(root_projection.clone()),
+                    prefix_identities: vec![PathPrefixIdentity {
                         path: root_projection.clone(),
                         physical_identity: wrong_root_identity.clone(),
                     }],
-                ),
+                },
+                "valid-but-unauthenticated" => {
+                    let path = RepoPath::from_canonical_bytes(&declared.canonical)?;
+                    observed_lease(root.path(), &path)?
+                }
                 _ => unreachable!(),
-            };
-            let lease = WriteLease {
-                path: declared,
-                kind: WriteLeaseKind::NewFile,
-                physical_identity: None,
-                nearest_existing_parent,
-                prefix_identities,
             };
             gate.leased_write_set = vec![lease.clone()];
             gate.baseline
@@ -1103,14 +1804,21 @@ fn migration_reconstructs_new_file_parent_and_prefix_bindings()
 
         let expected = match corruption {
             "missing-prefix-chain" => "omitted its nearest existing parent",
-            "changed-prefix-identity" => "prefix identity changed",
+            "changed-prefix-identity" | "valid-but-unauthenticated" => {
+                "original path intent cannot be independently authenticated"
+            }
             _ => unreachable!(),
         };
         let store = open_store(root.path())?;
-        assert!(matches!(
-            store.migrate_lifecycle_store(),
-            Err(StoreError::Integrity(message)) if message.contains(expected)
-        ));
+        make_prior_store(&store, root.path())?;
+        let migration = store.migrate_lifecycle_store();
+        assert!(
+            matches!(
+                &migration,
+                Err(StoreError::Integrity(message)) if message.contains(expected)
+            ),
+            "unexpected {corruption} migration result: {migration:?}"
+        );
     }
     Ok(())
 }
@@ -1599,8 +2307,8 @@ fn migration_authenticates_every_complete_gate_evidence_payload()
         assert!(matches!(
             store.migrate_lifecycle_store(),
             Err(StoreError::Integrity(message))
-                if message.contains("observation")
-                    && message.contains("cannot be reconstructed")
+                if message.contains("invalid run evidence")
+                    && message.contains("logicalSourceCount")
         ));
     }
     Ok(())
@@ -1839,6 +2547,112 @@ fn migration_rejects_a_regressed_active_gate_catalog_sequence()
 }
 
 #[test]
+fn migration_rejects_an_active_gate_catalog_below_pruned_gate_history()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    open_active_gate_for(
+        &store,
+        "op-pruned-catalog-anchor",
+        "src/pruned-catalog-anchor.ts",
+    )?;
+    let retired_gate = open_active_gate_for(
+        &store,
+        "op-pruned-catalog-retired",
+        "src/pruned-catalog-retired.ts",
+    )?;
+    open_active_gate_for(
+        &store,
+        "op-pruned-catalog-later",
+        "src/pruned-catalog-later.ts",
+    )?;
+    abandon_gate_for_migration(
+        &store,
+        &OperationId::from_string("op-pruned-catalog-abandon".to_owned()),
+        &retired_gate,
+        0,
+        "pruned active-catalog history fixture",
+    )?;
+    assert_eq!(store.list_active_gates(None, 100)?.revision, 4);
+
+    let plan_id =
+        prepared_plan_id(store.prepare_retention_plan(&crate::RetentionPlanRequest {
+            scope: RetentionPlanScope::Gates {
+                terminal_before_unix_millis: u64::MAX,
+            },
+            operation_id: OperationId::from_string("pruned-catalog-plan".to_owned()),
+        })?)?;
+    store.confirm_retention_plan(
+        &plan_id,
+        &OperationId::from_string("pruned-catalog-confirm".to_owned()),
+    )?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(SEQUENCES)?;
+        table.insert(ACTIVE_GATE_CATALOG_SEQUENCE_KEY, 3)?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("active-gate catalog sequence regressed")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_pruned_intermediate_protected_read_history()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let retired_gate = open_active_gate_for(
+        &store,
+        "op-pruned-protected-history",
+        "src/pruned-protected-history.ts",
+    )?;
+    append_non_authorizing_close_for_migration(
+        &store,
+        &retired_gate,
+        vec![semantic_input("config/pruned-protected-history.json")?],
+    )?;
+    abandon_gate_for_migration(
+        &store,
+        &OperationId::from_string("op-pruned-protected-history-abandon".to_owned()),
+        &retired_gate,
+        1,
+        "pruned protected-read history fixture",
+    )?;
+    assert_eq!(store.list_active_gates(None, 100)?.revision, 3);
+
+    let plan_id =
+        prepared_plan_id(store.prepare_retention_plan(&crate::RetentionPlanRequest {
+            scope: RetentionPlanScope::Gates {
+                terminal_before_unix_millis: u64::MAX,
+            },
+            operation_id: OperationId::from_string("pruned-protected-history-plan".to_owned()),
+        })?)?;
+    store.confirm_retention_plan(
+        &plan_id,
+        &OperationId::from_string("pruned-protected-history-confirm".to_owned()),
+    )?;
+    drop(store);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::IncompatibleStateSchema(message))
+            if message.contains("intermediate revisions whose active-gate catalog mutations cannot be reconstructed")
+    ));
+    Ok(())
+}
+
+#[test]
 fn migration_rejects_a_gate_sequence_below_retained_allocations()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
@@ -1864,6 +2678,190 @@ fn migration_rejects_a_gate_sequence_below_retained_allocations()
         store.migrate_lifecycle_store(),
         Err(StoreError::Integrity(message))
             if message.contains("gate sequence regressed below retained gate allocation")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_a_run_catalog_sequence_below_retained_insertions()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    for _ in 0..2 {
+        let mut attempt = store.begin_attempt()?;
+        store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+    }
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(SEQUENCES)?;
+        table.insert("run-catalog", 1)?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("run-catalog sequence regressed below retained allocation")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_a_run_catalog_sequence_below_retained_pruning_history()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    for _ in 0..3 {
+        let mut attempt = store.begin_attempt()?;
+        store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+    }
+    let plan_id =
+        prepared_plan_id(store.prepare_retention_plan(&crate::RetentionPlanRequest {
+            scope: RetentionPlanScope::Runs {
+                before_unix_millis: u64::MAX,
+            },
+            operation_id: OperationId::from_string("run-catalog-history-plan".to_owned()),
+        })?)?;
+    store.confirm_retention_plan(
+        &plan_id,
+        &OperationId::from_string("run-catalog-history-confirm".to_owned()),
+    )?;
+    drop(store);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(SEQUENCES)?;
+        table.insert("run-catalog", 3)?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("run-catalog sequence regressed below retained allocation")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_authenticates_every_retention_operation_request_digest()
+-> Result<(), Box<dyn std::error::Error>> {
+    for operation_kind in [
+        "pin",
+        "unpin",
+        "run-plan",
+        "run-confirm",
+        "gate-plan",
+        "gate-confirm",
+    ] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        let operation_id = match operation_kind {
+            "pin" | "unpin" => {
+                let mut attempt = store.begin_attempt()?;
+                let published = store.publish_run(&mut attempt, &evidence(), |_| Ok(()))?;
+                let pin_operation =
+                    OperationId::from_string(format!("retention-digest-{operation_kind}-pin"));
+                let pin = store.pin_run(&published.run_id, &pin_operation, "migration digest")?;
+                if operation_kind == "pin" {
+                    pin_operation
+                } else {
+                    let unpin_operation =
+                        OperationId::from_string("retention-digest-unpin".to_owned());
+                    store.unpin_run(&pin.pin_id, &unpin_operation)?;
+                    unpin_operation
+                }
+            }
+            "run-plan" | "run-confirm" | "gate-plan" | "gate-confirm" => {
+                let is_run = operation_kind.starts_with("run-");
+                let scope = if is_run {
+                    RetentionPlanScope::Runs {
+                        before_unix_millis: 0,
+                    }
+                } else {
+                    RetentionPlanScope::Gates {
+                        terminal_before_unix_millis: 0,
+                    }
+                };
+                let plan_operation =
+                    OperationId::from_string(format!("retention-digest-{operation_kind}-plan"));
+                let plan_id = prepared_plan_id(store.prepare_retention_plan(
+                    &crate::RetentionPlanRequest {
+                        scope,
+                        operation_id: plan_operation.clone(),
+                    },
+                )?)?;
+                if operation_kind.ends_with("plan") {
+                    plan_operation
+                } else {
+                    let confirm_operation = OperationId::from_string(format!(
+                        "retention-digest-{operation_kind}-confirm"
+                    ));
+                    store.confirm_retention_plan(&plan_id, &confirm_operation)?;
+                    confirm_operation
+                }
+            }
+            _ => unreachable!(),
+        };
+        drop(store);
+
+        let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+        let write = database.begin_write()?;
+        {
+            let mut table = write.open_table(RETENTION_OPERATIONS)?;
+            let bytes = table
+                .get(operation_id.as_str())?
+                .ok_or("retention operation is missing")?
+                .value()
+                .to_vec();
+            let mut operation = serde_json::from_slice::<RetentionOperationRecord>(&bytes)?;
+            operation.request_digest = "forged-request-digest".to_owned();
+            let changed = serde_json::to_vec(&operation)?;
+            table.insert(operation_id.as_str(), changed.as_slice())?;
+        }
+        write.commit()?;
+        drop(database);
+
+        let store = open_store(root.path())?;
+        assert!(
+            matches!(
+                store.migrate_lifecycle_store(),
+                Err(StoreError::Integrity(message))
+                    if message.contains("disagrees with its authenticated request")
+            ),
+            "migration accepted a forged {operation_kind} request digest"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_an_exhausted_run_catalog_sequence() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    drop(open_store(root.path())?);
+
+    let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(SEQUENCES)?;
+        table.insert("run-catalog", u64::MAX)?;
+    }
+    write.commit()?;
+    drop(database);
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("run-catalog sequence is exhausted")
     ));
     Ok(())
 }
@@ -2034,6 +3032,7 @@ fn migration_requires_every_durable_revision_to_have_a_committed_result()
                     operation.leased_write_set.clear();
                     operation.semantic_read_reservations.clear();
                     operation.semantic_read_reservation_bindings.clear();
+                    operation.interruption_count = 1;
                     operation.operation_liveness = None;
                 }
                 GateOperationStatus::Committed => unreachable!(),
@@ -2293,9 +3292,14 @@ fn migration_binds_a_sealed_close_to_the_opening_invocation()
             .ok_or("close-invocation snapshot is missing")?;
         let mut invocation = snapshot.scan_invocation.clone();
         invocation.resolution_profile = Some(ResolutionProfile::Node16);
+        let mut evidence = snapshot.evidence.clone();
+        for profile in &mut evidence.resolution_profiles {
+            profile.profile = ResolutionProfile::Node16;
+            profile.source = ResolutionProfileSource::Invocation;
+        }
         revision.snapshot = Some(seal_analysis_snapshot(
             snapshot.inputs.clone(),
-            snapshot.evidence.clone(),
+            evidence,
             invocation,
             snapshot.entry_selections.clone(),
         ));
@@ -2517,10 +3521,20 @@ fn migration_recomputes_opening_signals_from_the_sealed_snapshot()
             .ok_or("opening-policy gate omitted its baseline")?;
         let mut evidence = baseline.snapshot.evidence.clone();
         evidence
+            .limitations
+            .push(lumin_model::Limitation::SourcePayloadUnavailable {
+                path: "src/opening-policy.ts".to_owned(),
+                detail: "fixture payload is unavailable".to_owned(),
+            });
+        evidence
+            .limitations
+            .sort_by(lumin_model::Limitation::canonical_cmp);
+        let dead_code_state = lumin_evidence::dead_code_capability_state(&evidence.limitations);
+        evidence
             .capabilities
             .first_mut()
             .ok_or("opening-policy evidence omitted its capability")?
-            .state = CapabilityState::Failed;
+            .state = dead_code_state;
         baseline.snapshot = seal_analysis_snapshot(
             baseline.snapshot.inputs.clone(),
             evidence,
@@ -2958,7 +3972,10 @@ fn migration_rejects_invalid_unfinished_operation_liveness()
                         .lock_physical_identity = Some(different_physical_identity(identity));
                 }
                 "contents" => {}
-                "interrupted" => operation.status = GateOperationStatus::Interrupted,
+                "interrupted" => {
+                    operation.status = GateOperationStatus::Interrupted;
+                    operation.interruption_count = 1;
+                }
                 "reservations" => operation.semantic_read_reservations.push(source.clone()),
                 _ => return Err("unknown liveness corruption".into()),
             }
@@ -2989,6 +4006,34 @@ fn migration_rejects_invalid_unfinished_operation_liveness()
             Err(StoreError::Integrity(message)) if message.contains(expected)
         ));
     }
+    Ok(())
+}
+
+#[test]
+fn migration_authenticates_completed_operation_lock_contents()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("op-completed-lock-authentication".to_owned());
+    open_active_gate_for(
+        &store,
+        operation_id.as_str(),
+        "src/completed-lock-authentication.ts",
+    )?;
+    drop(store);
+
+    let lock_name = crate::gate::migration_operation_lock_name(&operation_id);
+    fs::write(
+        root.path().join(".lumin").join(lock_name),
+        b"forged-completed-operation",
+    )?;
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("operation liveness lock name disagrees with its owner")
+    ));
     Ok(())
 }
 
@@ -4414,6 +5459,77 @@ fn migration_rejects_unfinished_post_write_against_a_terminal_gate()
 }
 
 #[test]
+fn migration_rejects_zero_count_interrupted_gate_operations()
+-> Result<(), Box<dyn std::error::Error>> {
+    for kind in [GateOperationKind::PreWrite, GateOperationKind::PostWrite] {
+        let root = tempfile::tempdir()?;
+        let store = open_store(root.path())?;
+        let gate_id = open_active_gate_for(
+            &store,
+            &format!("op-zero-interruption-{kind:?}-open"),
+            &format!("src/zero-interruption-{kind:?}.ts"),
+        )?;
+        if kind == GateOperationKind::PostWrite {
+            append_non_authorizing_close_for_migration(&store, &gate_id, Vec::new())?;
+        }
+        let gate = store.load_gate(&gate_id)?;
+        let source_operation_id = if kind == GateOperationKind::PreWrite {
+            &gate.revisions[0].operation_id
+        } else {
+            &gate
+                .revisions
+                .last()
+                .ok_or("zero-interruption gate omitted its close revision")?
+                .operation_id
+        };
+        let operation_id = OperationId::from_string(format!("op-zero-interruption-{kind:?}"));
+
+        let database = Database::open(root.path().join(".lumin/lifecycle.store"))?;
+        let write = database.begin_write()?;
+        {
+            let mut table = write.open_table(OPERATIONS)?;
+            let bytes = table
+                .get(source_operation_id.as_str())?
+                .ok_or("zero-interruption source operation is missing")?
+                .value()
+                .to_vec();
+            let mut operation = serde_json::from_slice::<OperationRecord>(&bytes)?;
+            operation.operation_id = operation_id.clone();
+            operation.status = GateOperationStatus::Interrupted;
+            operation.leased_write_set.clear();
+            operation.semantic_read_reservations.clear();
+            operation.semantic_read_reservation_bindings.clear();
+            operation.interruption_count = 0;
+            operation.operation_liveness = None;
+            operation.pre_write_admission_evidence = None;
+            operation.pre_write_final_validation = None;
+            operation.post_write_final_validation = None;
+            operation.result = None;
+            if kind == GateOperationKind::PreWrite {
+                operation.gate_id =
+                    lumin_model::GateId::from_string("gate_0000000000000002".to_owned());
+            }
+            let changed = serde_json::to_vec(&operation)?;
+            table.insert(operation_id.as_str(), changed.as_slice())?;
+        }
+        if kind == GateOperationKind::PreWrite {
+            let mut table = write.open_table(SEQUENCES)?;
+            table.insert("gate", 2)?;
+        }
+        write.commit()?;
+        drop(database);
+        make_prior_store(&store, root.path())?;
+
+        assert!(matches!(
+            store.migrate_lifecycle_store(),
+            Err(StoreError::Integrity(message))
+                if message.contains("has a zero interruption count")
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn migration_preserves_interrupted_post_write_retargeting() -> Result<(), Box<dyn std::error::Error>>
 {
     let root = tempfile::tempdir()?;
@@ -4623,6 +5739,87 @@ fn migration_rejects_retention_result_owned_by_another_plan()
     assert!(matches!(
         store.migrate_lifecycle_store(),
         Err(StoreError::Integrity(message)) if message.contains("incoherent kind, status, plan, or result")
+    ));
+    Ok(())
+}
+
+#[test]
+fn migration_rejects_prepared_retention_plan_owned_by_another_repository()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("retention-plan-foreign-owner".to_owned());
+    let result = store.prepare_retention_plan(&crate::RetentionPlanRequest {
+        scope: RetentionPlanScope::Runs {
+            before_unix_millis: u64::MAX,
+        },
+        operation_id: operation_id.clone(),
+    })?;
+    let plan_id = prepared_plan_id(result)?;
+    let namespace_binding = store.namespace.binding.clone();
+    let repository_id = namespace_binding.global.repository_id.clone();
+    drop(store);
+
+    let foreign_root = tempfile::tempdir()?;
+    let foreign_store = open_store(foreign_root.path())?;
+    let foreign_result = foreign_store.prepare_retention_plan(&crate::RetentionPlanRequest {
+        scope: RetentionPlanScope::Runs {
+            before_unix_millis: u64::MAX,
+        },
+        operation_id: operation_id.clone(),
+    })?;
+    let foreign_plan_id = prepared_plan_id(foreign_result)?;
+    assert_eq!(foreign_plan_id, plan_id);
+    assert_ne!(
+        foreign_store.namespace.binding.global.repository_id,
+        repository_id
+    );
+    drop(foreign_store);
+
+    let (foreign_plan, foreign_operation) = {
+        let database = Database::open(foreign_root.path().join(".lumin/lifecycle.store"))?;
+        let read = database.begin_read()?;
+        let plans = read.open_table(RETENTION_PLANS)?;
+        let plan = plans
+            .get(plan_id.as_str())?
+            .ok_or("foreign prepared retention plan is missing")?
+            .value()
+            .to_vec();
+        drop(plans);
+        let operations = read.open_table(RETENTION_OPERATIONS)?;
+        let operation = operations
+            .get(operation_id.as_str())?
+            .ok_or("foreign retention plan operation is missing")?
+            .value()
+            .to_vec();
+        (plan, operation)
+    };
+    let foreign_plan_record = serde_json::from_slice::<StoredRetentionPlan>(&foreign_plan)?;
+    assert_ne!(foreign_plan_record.record.repository_id, repository_id);
+
+    let store_path = root.path().join(".lumin/lifecycle.store");
+    let database = Database::open(&store_path)?;
+    let write = database.begin_write()?;
+    {
+        let mut table = write.open_table(RETENTION_PLANS)?;
+        table.insert(plan_id.as_str(), foreign_plan.as_slice())?;
+    };
+    {
+        let mut table = write.open_table(RETENTION_OPERATIONS)?;
+        table.insert(operation_id.as_str(), foreign_operation.as_slice())?;
+    }
+    write.commit()?;
+    drop(database);
+
+    crate::namespace::store_header::rewrite_current_store_header_as_prior_for_test(
+        &store_path,
+        &namespace_binding,
+    )?;
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("changed repository ownership")
     ));
     Ok(())
 }

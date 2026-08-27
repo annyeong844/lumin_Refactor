@@ -8,6 +8,7 @@ mod corpus;
 mod generated_tables;
 mod limitation_registry;
 mod metadata;
+mod package_check;
 mod path_codec;
 mod path_owner;
 mod source_policy;
@@ -20,6 +21,7 @@ fn main() -> ExitCode {
     match args.first().map(|s| s.as_str()) {
         Some("architecture-check") => architecture::run(),
         Some("corpus") => corpus::run(&args[1..]),
+        Some("package-check") => package_check::run(&args[1..]),
         Some("ci-test-shard") => test_shard::run(&args[1..]),
         Some("generated-tables") if args.get(1).map(String::as_str) == Some("--write") => {
             let workspace_root = match metadata::find_workspace_root() {
@@ -68,6 +70,7 @@ fn main() -> ExitCode {
                  architecture-check\n  \
                  generated-tables --write\n  \
                  path-codec --write\n  \
+                 package-check windows-x64|linux-x64|skills\n  \
                  ci-test-shard --suite cli-integration|store-lib --index N --count N [--jobs N]\n  \
                  corpus foundation [--determinism|--store-crash] [--mapped-only|--row ID] [--row-jobs N] [--row-shard-index N --row-shard-count N] [--format human|json]"
             );

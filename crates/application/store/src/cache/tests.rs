@@ -1,8 +1,12 @@
 use std::fs;
 use std::path::Path;
 
-use lumin_evidence::{CacheCleanupOperationStatus, LifecycleOperationRecord};
-use lumin_model::{OperationId, append_length_prefixed, digest_hex};
+use lumin_evidence::{
+    CacheCleanupDeliveryOutcome, CacheCleanupDeliveryStatus, CacheCleanupExecutionLease,
+    CacheCleanupOperationStatus, CacheCleanupRecoveryReservation, LifecycleOperationRecord,
+    OperationLivenessLease,
+};
+use lumin_model::OperationId;
 
 use super::*;
 
@@ -16,11 +20,7 @@ fn open_store(root: &Path) -> Result<RepositoryStore, Box<dyn std::error::Error>
 
 fn digest(store: &RepositoryStore) -> Result<String, StoreError> {
     let repository_id = store.repository_id()?;
-    let mut framed = Vec::new();
-    append_length_prefixed(&mut framed, b"lumin-cache-clean-request.v2");
-    append_length_prefixed(&mut framed, repository_id.as_str().as_bytes());
-    append_length_prefixed(&mut framed, b"cache-clean");
-    Ok(digest_hex(&framed))
+    Ok(lumin_evidence::cache_cleanup_request_digest(&repository_id))
 }
 
 #[test]
@@ -54,6 +54,200 @@ fn cleanup_quarantines_payloads_and_replays_one_committed_result()
     assert!(matches!(
         store.load_lifecycle_operation(&operation_id)?,
         LifecycleOperationRecord::CacheCleanup(_)
+    ));
+    Ok(())
+}
+
+#[test]
+fn delivery_ledger_orders_attempts_before_transport_and_ignores_late_lower_completion()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("cache-clean-delivery-ledger".to_owned());
+    let request_digest = digest(&store)?;
+    store.clean_cache_payloads(&operation_id, &request_digest)?;
+
+    let committed = store.load_cache_cleanup_operation(&operation_id)?;
+    assert_eq!(
+        committed.last_delivery_status(),
+        CacheCleanupDeliveryStatus::NotAttempted
+    );
+
+    let lower = store.allocate_cache_cleanup_delivery(&operation_id, &request_digest)?;
+    let greater = store.allocate_cache_cleanup_delivery(&operation_id, &request_digest)?;
+    assert_eq!((lower, greater), (1, 2));
+    assert_eq!(
+        store
+            .load_cache_cleanup_operation(&operation_id)?
+            .last_delivery_status(),
+        CacheCleanupDeliveryStatus::Unknown
+    );
+
+    store.record_cache_cleanup_delivery(
+        &operation_id,
+        &request_digest,
+        greater,
+        CacheCleanupDeliveryOutcome::Succeeded,
+    )?;
+    let before_late = store.load_cache_cleanup_operation(&operation_id)?;
+    assert_eq!(
+        before_late.last_delivery_status(),
+        CacheCleanupDeliveryStatus::Succeeded
+    );
+    assert_eq!(before_late.greatest_completed_delivery_sequence, Some(2));
+
+    store.record_cache_cleanup_delivery(
+        &operation_id,
+        &request_digest,
+        lower,
+        CacheCleanupDeliveryOutcome::Failed,
+    )?;
+    let after_late = store.load_cache_cleanup_operation(&operation_id)?;
+    assert_eq!(
+        after_late.last_delivery_status(),
+        CacheCleanupDeliveryStatus::Succeeded
+    );
+    assert_eq!(after_late.greatest_allocated_delivery_sequence, 2);
+    assert_eq!(after_late.greatest_completed_delivery_sequence, Some(2));
+    assert_eq!(after_late.delivery_completions.len(), 2);
+
+    store.record_cache_cleanup_delivery(
+        &operation_id,
+        &request_digest,
+        lower,
+        CacheCleanupDeliveryOutcome::Failed,
+    )?;
+    assert!(matches!(
+        store.record_cache_cleanup_delivery(
+            &operation_id,
+            &request_digest,
+            lower,
+            CacheCleanupDeliveryOutcome::Succeeded,
+        ),
+        Err(StoreError::Integrity(message)) if message.contains("changed outcome")
+    ));
+    Ok(())
+}
+
+#[test]
+fn exhausted_delivery_sequence_is_rejected_before_retry() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("cache-clean-exhausted-delivery".to_owned());
+    let request_digest = digest(&store)?;
+    store.clean_cache_payloads(&operation_id, &request_digest)?;
+
+    store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        let mut operation = read_record::<CacheCleanupOperationRecord>(
+            &write,
+            CACHE_CLEANUP_OPERATIONS,
+            operation_id.as_str(),
+        )?
+        .ok_or_else(|| StoreError::OperationNotFound(operation_id.as_str().to_owned()))?;
+        operation.greatest_allocated_delivery_sequence = u64::MAX;
+        write_record(
+            &write,
+            CACHE_CLEANUP_OPERATIONS,
+            operation_id.as_str(),
+            &operation,
+        )?;
+        guard.commit(write)
+    })?;
+
+    assert!(matches!(
+        store.load_cache_cleanup_operation(&operation_id),
+        Err(StoreError::Integrity(message))
+            if message.contains("cache cleanup operation record is incoherent")
+    ));
+    Ok(())
+}
+
+#[test]
+fn delivery_allocation_refuses_the_maximum_sequence_without_committing_it()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("cache-clean-delivery-ceiling".to_owned());
+    let request_digest = digest(&store)?;
+    store.clean_cache_payloads(&operation_id, &request_digest)?;
+
+    store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        let mut operation = read_record::<CacheCleanupOperationRecord>(
+            &write,
+            CACHE_CLEANUP_OPERATIONS,
+            operation_id.as_str(),
+        )?
+        .ok_or_else(|| StoreError::OperationNotFound(operation_id.as_str().to_owned()))?;
+        operation.greatest_allocated_delivery_sequence = u64::MAX - 1;
+        write_record(
+            &write,
+            CACHE_CLEANUP_OPERATIONS,
+            operation_id.as_str(),
+            &operation,
+        )?;
+        guard.commit(write)
+    })?;
+
+    assert!(matches!(
+        store.allocate_cache_cleanup_delivery(&operation_id, &request_digest),
+        Err(StoreError::Integrity(message)) if message.contains("sequence exhausted")
+    ));
+    assert_eq!(
+        store
+            .load_cache_cleanup_operation(&operation_id)?
+            .greatest_allocated_delivery_sequence,
+        u64::MAX - 1
+    );
+    Ok(())
+}
+
+#[test]
+fn unfinished_cleanup_rejects_exhausted_interruption_counts()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("cache-clean-interruption-ceiling".to_owned());
+    let request_digest = digest(&store)?;
+    store.clean_cache_payloads(&operation_id, &request_digest)?;
+
+    let mut interrupted = store.load_cache_cleanup_operation(&operation_id)?;
+    interrupted.status = CacheCleanupOperationStatus::Interrupted;
+    interrupted.interruption_count = u64::MAX;
+    interrupted.result = None;
+    interrupted.recovery_reservation = Some(CacheCleanupRecoveryReservation {
+        interrupted_execution_attempt_id: "interrupted-attempt".to_owned(),
+    });
+    assert!(matches!(
+        validate_operation_shape(&interrupted),
+        Err(StoreError::Integrity(message))
+            if message.contains("cache cleanup operation record is incoherent")
+    ));
+
+    let mut pending = interrupted;
+    pending.status = CacheCleanupOperationStatus::Pending;
+    pending.interruption_count = u64::MAX - 1;
+    pending.recovery_reservation = None;
+    pending.execution_lease = Some(CacheCleanupExecutionLease {
+        execution_attempt_id: "00000000000000000000000000000001".to_owned(),
+        liveness: OperationLivenessLease {
+            lease_nonce: "00000000000000000000000000000002".to_owned(),
+            owner_process_id: 1,
+            lock_physical_identity: None,
+        },
+    });
+    assert!(matches!(
+        validate_operation_shape(&pending),
+        Err(StoreError::Integrity(message))
+            if message.contains("cache cleanup operation record is incoherent")
+    ));
+    assert!(matches!(
+        next_cleanup_interruption_count(u64::MAX - 1),
+        Err(StoreError::Integrity(message)) if message.contains("count exhausted")
     ));
     Ok(())
 }
@@ -133,12 +327,19 @@ fn lifecycle_migration_preserves_cleanup_authorizations_and_result()
     let operation_id = OperationId::from_string("cache-clean-migration".to_owned());
     let request_digest = digest(&store)?;
     let result = store.clean_cache_payloads(&operation_id, &request_digest)?;
+    rewrite_cleanup_operation_as_v1(&store, &operation_id)?;
+    store.rewrite_current_store_header_as_prior_for_test()?;
 
     store.migrate_lifecycle_store()?;
 
+    let migrated = store.load_cache_cleanup_operation(&operation_id)?;
+    assert_eq!(migrated.result, Some(result.clone()));
+    assert_eq!(migrated.greatest_allocated_delivery_sequence, 1);
+    assert_eq!(migrated.greatest_completed_delivery_sequence, None);
+    assert!(migrated.delivery_completions.is_empty());
     assert_eq!(
-        store.load_cache_cleanup_operation(&operation_id)?.result,
-        Some(result.clone())
+        migrated.last_delivery_status(),
+        CacheCleanupDeliveryStatus::Unknown
     );
     assert_eq!(
         store.clean_cache_payloads(&operation_id, &request_digest)?,
@@ -149,4 +350,53 @@ fn lifecycle_migration_preserves_cleanup_authorizations_and_result()
         2
     );
     Ok(())
+}
+
+fn rewrite_cleanup_operation_as_v1(
+    store: &RepositoryStore,
+    operation_id: &OperationId,
+) -> Result<(), StoreError> {
+    store.with_exclusive_lock(|guard| {
+        let database = guard.open_database()?;
+        let write = database.begin_write()?;
+        let operation = read_record::<lumin_evidence::CacheCleanupOperationRecord>(
+            &write,
+            CACHE_CLEANUP_OPERATIONS,
+            operation_id.as_str(),
+        )?
+        .ok_or_else(|| StoreError::OperationNotFound(operation_id.as_str().to_owned()))?;
+        if operation.greatest_allocated_delivery_sequence != 0
+            || operation.greatest_completed_delivery_sequence.is_some()
+            || !operation.delivery_completions.is_empty()
+        {
+            return Err(StoreError::Integrity(
+                "legacy cleanup fixture already has delivery-v2 evidence".to_owned(),
+            ));
+        }
+        let legacy = serde_json::json!({
+            "schemaVersion": "lumin-cache-cleanup-operation.v1",
+            "repositoryId": operation.repository_id,
+            "operationId": operation.operation_id,
+            "requestDigest": operation.request_digest,
+            "status": operation.status,
+            "interruptionCount": operation.interruption_count,
+            "invocationId": operation.invocation_id,
+            "initialAuthorizationSetId": operation.initial_authorization_set_id,
+            "initialAuthorizationCount": operation.initial_authorization_count,
+            "planInitialized": operation.plan_initialized,
+            "authorizationKeys": operation.authorization_keys,
+            "validatedCount": operation.validated_count,
+            "executionLease": operation.execution_lease,
+            "recoveryReservation": operation.recovery_reservation,
+            "result": operation.result,
+            "lastDeliveryStatus": "not-attempted"
+        });
+        write_record(
+            &write,
+            CACHE_CLEANUP_OPERATIONS,
+            operation_id.as_str(),
+            &legacy,
+        )?;
+        guard.commit(write)
+    })
 }

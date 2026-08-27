@@ -2,11 +2,16 @@
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Write};
 
+#[cfg(feature = "lifecycle-test-fault")]
+mod delivery_barrier;
+
 #[cfg(all(feature = "lifecycle-test-fault", not(debug_assertions)))]
 compile_error!("lifecycle-test-fault is restricted to debug test builds");
 
 #[cfg(feature = "lifecycle-test-fault")]
 const DELIVERY_FAILURE_ENV: &str = "LUMIN_TEST_FAIL_RESULT_DELIVERY";
+#[cfg(feature = "lifecycle-test-fault")]
+const LIFECYCLE_STORE_MIGRATION_DELIVERY: &str = "lifecycle-store-migration";
 
 fn main() {
     let exit_code = run();
@@ -27,38 +32,62 @@ fn run() -> i32 {
     #[cfg(feature = "lifecycle-test-fault")]
     let fail_result_delivery = delivery_failure_requested(&arguments);
     let output = lumin_cli::execute(&root, arguments);
+    let delivery_sequence = match allocate_mutation_delivery(&root, &output) {
+        Ok(sequence) => sequence,
+        Err(error) => {
+            write_diagnostic(&format!("lumin: {error}"));
+            return 1;
+        }
+    };
+    #[cfg(feature = "lifecycle-test-fault")]
+    if let Err(error) = wait_cache_cleanup_delivery_barrier(
+        &output,
+        delivery_sequence,
+        delivery_barrier::Stage::Allocation,
+    ) {
+        write_diagnostic(&format!(
+            "lumin: cache cleanup delivery barrier failed: {error}"
+        ));
+        return 1;
+    }
     #[cfg(feature = "lifecycle-test-fault")]
     if fail_result_delivery && !output.stdout.is_empty() {
-        let _ = record_mutation_delivery(
+        let _ = complete_mutation_delivery(
             &root,
             &output,
-            lumin_engine::CacheCleanupDeliveryStatus::Failed,
+            delivery_sequence,
+            lumin_engine::CacheCleanupDeliveryOutcome::Failed,
         );
         write_diagnostic("lumin: injected result delivery failure after commit");
         return 1;
     }
     let stdout = io::stdout();
     let stderr = io::stderr();
-    emit_command_output(Some(&root), &output, &mut stdout.lock(), &mut stderr.lock())
+    emit_command_output(
+        Some(&root),
+        &output,
+        delivery_sequence,
+        &mut stdout.lock(),
+        &mut stderr.lock(),
+    )
 }
 
 fn emit_command_output(
     root: Option<&std::path::Path>,
     output: &lumin_cli::CommandOutput,
+    delivery_sequence: Option<u64>,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> i32 {
     if !output.stdout.is_empty()
-        && let Err(error) = stdout
-            .write_all(output.stdout.as_bytes())
-            .and_then(|()| stdout.write_all(b"\n"))
-            .and_then(|()| stdout.flush())
+        && let Err(error) = write_stdout(output, delivery_sequence, stdout)
     {
         if let Some(root) = root {
-            let _ = record_mutation_delivery(
+            let _ = complete_mutation_delivery(
                 root,
                 output,
-                lumin_engine::CacheCleanupDeliveryStatus::Failed,
+                delivery_sequence,
+                lumin_engine::CacheCleanupDeliveryOutcome::Failed,
             );
         }
         if error.kind() != io::ErrorKind::BrokenPipe {
@@ -81,10 +110,11 @@ fn emit_command_output(
         }
     }
     if let Some(root) = root
-        && let Err(error) = record_mutation_delivery(
+        && let Err(error) = complete_mutation_delivery(
             root,
             output,
-            lumin_engine::CacheCleanupDeliveryStatus::Succeeded,
+            delivery_sequence,
+            lumin_engine::CacheCleanupDeliveryOutcome::Succeeded,
         )
     {
         let _ = writeln!(stderr, "lumin: {error}");
@@ -94,19 +124,127 @@ fn emit_command_output(
     output.exit_code
 }
 
-fn record_mutation_delivery(
+fn write_stdout(
+    output: &lumin_cli::CommandOutput,
+    delivery_sequence: Option<u64>,
+    stdout: &mut dyn Write,
+) -> Result<(), std::io::Error> {
+    write_stdout_payload(output, delivery_sequence, stdout)?;
+    stdout.write_all(b"\n")?;
+    stdout.flush()?;
+    #[cfg(feature = "lifecycle-test-fault")]
+    wait_cache_cleanup_delivery_barrier(
+        output,
+        delivery_sequence,
+        delivery_barrier::Stage::CompleteStdout,
+    )?;
+    Ok(())
+}
+
+#[cfg(feature = "lifecycle-test-fault")]
+fn write_stdout_payload(
+    output: &lumin_cli::CommandOutput,
+    delivery_sequence: Option<u64>,
+    stdout: &mut dyn Write,
+) -> Result<(), std::io::Error> {
+    let bytes = output.stdout.as_bytes();
+    if cache_cleanup_delivery_identity(output, delivery_sequence).is_some()
+        && delivery_barrier::selected(delivery_barrier::Stage::PartialStdout)?
+    {
+        let split = bytes.len().div_ceil(2);
+        stdout.write_all(&bytes[..split])?;
+        stdout.flush()?;
+        wait_cache_cleanup_delivery_barrier(
+            output,
+            delivery_sequence,
+            delivery_barrier::Stage::PartialStdout,
+        )?;
+        stdout.write_all(&bytes[split..])?;
+    } else {
+        stdout.write_all(bytes)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(feature = "lifecycle-test-fault"))]
+fn write_stdout_payload(
+    output: &lumin_cli::CommandOutput,
+    _delivery_sequence: Option<u64>,
+    stdout: &mut dyn Write,
+) -> Result<(), std::io::Error> {
+    stdout.write_all(output.stdout.as_bytes())
+}
+
+#[cfg(feature = "lifecycle-test-fault")]
+fn cache_cleanup_delivery_identity(
+    output: &lumin_cli::CommandOutput,
+    delivery_sequence: Option<u64>,
+) -> Option<(&lumin_model::OperationId, u64)> {
+    match (&output.mutation_delivery, delivery_sequence) {
+        (
+            Some(lumin_cli::MutationDeliveryRecord::CacheCleanup { operation_id, .. }),
+            Some(sequence),
+        ) => Some((operation_id, sequence)),
+        _ => None,
+    }
+}
+
+#[cfg(feature = "lifecycle-test-fault")]
+fn wait_cache_cleanup_delivery_barrier(
+    output: &lumin_cli::CommandOutput,
+    delivery_sequence: Option<u64>,
+    stage: delivery_barrier::Stage,
+) -> Result<(), std::io::Error> {
+    let Some((operation_id, sequence)) = cache_cleanup_delivery_identity(output, delivery_sequence)
+    else {
+        return Ok(());
+    };
+    delivery_barrier::wait(stage, operation_id, sequence)
+}
+
+fn allocate_mutation_delivery(
     root: &std::path::Path,
     output: &lumin_cli::CommandOutput,
-    status: lumin_engine::CacheCleanupDeliveryStatus,
+) -> Result<Option<u64>, lumin_engine::EngineError> {
+    match &output.mutation_delivery {
+        Some(lumin_cli::MutationDeliveryRecord::CacheCleanup {
+            operation_id,
+            request_digest,
+        }) => lumin_engine::allocate_cache_cleanup_delivery(root, operation_id, request_digest)
+            .map(Some),
+        Some(lumin_cli::MutationDeliveryRecord::LifecycleStoreMigration) => Ok(None),
+        None => Ok(None),
+    }
+}
+
+fn complete_mutation_delivery(
+    root: &std::path::Path,
+    output: &lumin_cli::CommandOutput,
+    delivery_sequence: Option<u64>,
+    outcome: lumin_engine::CacheCleanupDeliveryOutcome,
 ) -> Result<(), lumin_engine::EngineError> {
     match &output.mutation_delivery {
         Some(lumin_cli::MutationDeliveryRecord::CacheCleanup {
             operation_id,
             request_digest,
-        }) => {
-            lumin_engine::record_cache_cleanup_delivery(root, operation_id, request_digest, status)
+        }) => lumin_engine::record_cache_cleanup_delivery(
+            root,
+            operation_id,
+            request_digest,
+            delivery_sequence
+                .ok_or(lumin_engine::EngineError::CacheCleanupDeliverySequenceMissing)?,
+            outcome,
+        ),
+        Some(lumin_cli::MutationDeliveryRecord::LifecycleStoreMigration)
+            if delivery_sequence.is_none() =>
+        {
+            Ok(())
         }
-        None => Ok(()),
+        Some(lumin_cli::MutationDeliveryRecord::LifecycleStoreMigration) => {
+            Err(lumin_engine::EngineError::UnexpectedMutationDeliverySequence)
+        }
+        None if delivery_sequence.is_none() => Ok(()),
+        None => Err(lumin_engine::EngineError::UnexpectedMutationDeliverySequence),
     }
 }
 
@@ -122,6 +260,16 @@ fn delivery_failure_requested(arguments: &[OsString]) -> bool {
     let Some(selected_operation_id) = std::env::var_os(DELIVERY_FAILURE_ENV) else {
         return false;
     };
+    if selected_operation_id == OsStr::new(LIFECYCLE_STORE_MIGRATION_DELIVERY)
+        && arguments
+            .first()
+            .is_some_and(|argument| argument == "store")
+        && arguments
+            .get(1)
+            .is_some_and(|argument| argument == "migrate")
+    {
+        return true;
+    }
     arguments.windows(2).any(|pair| {
         pair[0].as_os_str() == OsStr::new("--operation-id")
             && pair[1].as_os_str() == selected_operation_id.as_os_str()
@@ -157,7 +305,7 @@ mod tests {
         let mut stderr = Vec::new();
 
         assert_eq!(
-            emit_command_output(None, &output, &mut stdout, &mut stderr),
+            emit_command_output(None, &output, None, &mut stdout, &mut stderr),
             0
         );
         assert!(stderr.is_empty());
@@ -176,7 +324,7 @@ mod tests {
         let mut stderr = Vec::new();
 
         assert_eq!(
-            emit_command_output(None, &output, &mut stdout, &mut stderr),
+            emit_command_output(None, &output, None, &mut stdout, &mut stderr),
             1
         );
         assert!(stderr.is_empty());
@@ -195,7 +343,7 @@ mod tests {
         let mut stderr = Vec::new();
 
         assert_eq!(
-            emit_command_output(None, &output, &mut stdout, &mut stderr),
+            emit_command_output(None, &output, None, &mut stdout, &mut stderr),
             1
         );
         assert!(
@@ -222,7 +370,7 @@ mod tests {
         let mut stderr = Vec::new();
 
         assert_eq!(
-            emit_command_output(None, &output, &mut stdout, &mut stderr),
+            emit_command_output(None, &output, None, &mut stdout, &mut stderr),
             1
         );
         assert_eq!(stderr, b"lumin: cannot write stdout\n");
@@ -241,7 +389,7 @@ mod tests {
         let mut stderr = Vec::new();
 
         assert_eq!(
-            emit_command_output(None, &output, &mut stdout, &mut stderr),
+            emit_command_output(None, &output, None, &mut stdout, &mut stderr),
             5
         );
         assert_eq!(stdout, b"{\"status\":\"stale\"}\n");

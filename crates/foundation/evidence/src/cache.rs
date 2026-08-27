@@ -1,9 +1,19 @@
 use lumin_model::{
     CacheEvictionAuthorizationSetId, OperationId, PhysicalFileIdentity, RepositoryId,
+    append_length_prefixed, digest_hex,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::OperationLivenessLease;
+
+pub fn cache_cleanup_request_digest(repository_id: &RepositoryId) -> String {
+    let mut framed = Vec::new();
+    append_length_prefixed(&mut framed, b"lumin-cache-clean-request.v2");
+    append_length_prefixed(&mut framed, repository_id.as_str().as_bytes());
+    append_length_prefixed(&mut framed, b"cache-clean");
+    append_length_prefixed(&mut framed, b"lumin.cache-cleanup.v2");
+    digest_hex(&framed)
+}
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -76,8 +86,23 @@ pub enum CacheCleanupOperationStatus {
 #[serde(rename_all = "kebab-case")]
 pub enum CacheCleanupDeliveryStatus {
     NotAttempted,
+    Unknown,
     Succeeded,
     Failed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CacheCleanupDeliveryOutcome {
+    Succeeded,
+    Failed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CacheCleanupDeliveryCompletion {
+    pub sequence: u64,
+    pub outcome: CacheCleanupDeliveryOutcome,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -118,11 +143,30 @@ pub struct CacheCleanupOperationRecord {
     pub execution_lease: Option<CacheCleanupExecutionLease>,
     pub recovery_reservation: Option<CacheCleanupRecoveryReservation>,
     pub result: Option<CacheCleanupResult>,
-    pub last_delivery_status: CacheCleanupDeliveryStatus,
+    pub greatest_allocated_delivery_sequence: u64,
+    pub greatest_completed_delivery_sequence: Option<u64>,
+    pub delivery_completions: Vec<CacheCleanupDeliveryCompletion>,
 }
 
 impl CacheCleanupOperationRecord {
     pub fn authorized_count(&self) -> u64 {
         self.authorization_keys.len() as u64
+    }
+
+    pub fn last_delivery_status(&self) -> CacheCleanupDeliveryStatus {
+        if self.greatest_allocated_delivery_sequence == 0 {
+            return CacheCleanupDeliveryStatus::NotAttempted;
+        }
+        self.delivery_completions
+            .binary_search_by_key(&self.greatest_allocated_delivery_sequence, |completion| {
+                completion.sequence
+            })
+            .ok()
+            .map_or(CacheCleanupDeliveryStatus::Unknown, |index| {
+                match self.delivery_completions[index].outcome {
+                    CacheCleanupDeliveryOutcome::Succeeded => CacheCleanupDeliveryStatus::Succeeded,
+                    CacheCleanupDeliveryOutcome::Failed => CacheCleanupDeliveryStatus::Failed,
+                }
+            })
     }
 }

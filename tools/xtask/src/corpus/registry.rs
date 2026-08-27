@@ -82,6 +82,32 @@ static INV_IDEMP: &[CorpusInvocation] = &[
     inv!("lifecycle_operation_idempotency", "gate::gate_mutations_recover_post_commit_delivery_failure_without_duplication", LifecycleFault),
     inv!("lifecycle_operation_idempotency", "gate_retention::gate_retention_mutations_recover_post_commit_delivery_failure_without_duplication", LifecycleFault),
     inv!("lifecycle_operation_idempotency", "run_retention::retention_mutations_recover_post_commit_delivery_failure_without_duplication", LifecycleFault),
+    inv!("lifecycle_operation_idempotency", "cache_cleanup::cleanup_retry_exposes_one_read_only_interrupted_barrier_before_reattachment", LifecycleFault),
+    inv!("lifecycle_operation_idempotency", "cache_cleanup::cache_cleanup_recovers_every_durable_boundary_with_the_same_operation_id", LifecycleFault),
+    inv!("lifecycle_operation_idempotency", "cache_cleanup::cleanup_delivery_death_after_allocation_or_stdout_remains_unknown_until_retry", LifecycleFault),
+    inv!("lifecycle_operation_idempotency", "cache_cleanup::concurrent_cleanup_deliveries_obey_allocation_order_in_both_completion_orders", LifecycleFault),
+];
+#[rustfmt::skip]
+static INV_LIFECYCLE_MIGRATION: &[CorpusInvocation] = &[
+    inv!("lifecycle_store_migration", "public_migration_refuses_absent_state_and_is_a_native_v13_noop", LifecycleFault),
+    inv!("lifecycle_store_migration", "public_v12_route_migrates_once_and_retries_without_mutation", LifecycleFault),
+];
+#[rustfmt::skip]
+static INV_LIFECYCLE_MIGRATION_CRASH: &[CorpusInvocation] = &[
+    inv!("lifecycle_store_migration", "public_migration_maps_exact_legacy_cleanup_delivery_states_fail_closed", LifecycleCrash),
+    inv!("lifecycle_store_migration", "public_migration_routes_corrupt_bound_payload_only_to_migration_and_rejects_orphans", LifecycleCrash),
+    inv!("lifecycle_store_migration", "public_migration_authenticates_the_terminal_target_anchor", LifecycleCrash),
+    inv!("lifecycle_store_migration", "public_migration_rejects_a_self_consistent_root_without_v12_authority", LifecycleCrash),
+    inv!("lifecycle_store_migration", "public_migration_recovers_a_post_exchange_output_failure_without_replacement", LifecycleCrash),
+    inv!("lifecycle_store_migration", "public_migration_rejects_an_old_generation_late_publication", LifecycleCrash),
+    inv!("lifecycle_store_migration", "public_migration_recovers_after_latest_replace_before_index_sync", LifecycleAndPublicationCrash),
+    inv!("lifecycle_store_migration", "public_migration_accepts_the_exact_catalog_before_latest_frontier", LifecycleAndPublicationCrash),
+    inv!("lifecycle_store_migration", "public_migration_recovers_every_durable_process_death_boundary", LifecycleCrash),
+    inv!("lifecycle_store_migration", "public_migration_rejects_live_binding_substitution_without_disposition", LifecycleCrash),
+    inv!("lifecycle_store_migration", "public_migration_hard_link_race_never_disposes_a_published_object", LifecycleCrash),
+    inv!("lifecycle_store_migration", "public_migration_rechecks_hard_links_after_movement_handles_open", LifecycleCrash),
+    #[cfg(windows)]
+    inv!("lifecycle_store_migration", "public_migration_revalidates_the_target_after_source_retirement", LifecycleCrash),
 ];
 #[rustfmt::skip]
 static INV_RET_LATEST: &[CorpusInvocation] = &[
@@ -241,6 +267,16 @@ macro_rules! row_sdc {
             standard: Some($inv),
             determinism: Some($inv),
             store_crash: Some(&[]),
+            required_checks: &[],
+            determinism_shard_weight: 0,
+        }
+    };
+    ($id:expr, $inv:expr, $crash:expr) => {
+        RegistryRow {
+            id: $id,
+            standard: Some($inv),
+            determinism: Some($inv),
+            store_crash: Some($crash),
             required_checks: &[],
             determinism_shard_weight: 0,
         }
@@ -412,7 +448,11 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd_arch!("capability-availability-authority"),
     row_sd!("gate-unsealed-observation"),
     row_sd!("gate-analysis-input-reconciliation"),
-    row_sd!("gate-final-observation"),
+    row_sd!("gate-final-observation", &[
+        inv!("write_gate", "final_observation_rechecks_current_domain_before_sealing"),
+        inv!("write_gate", "protected_input_drift_is_stale"),
+        inv!("write_gate", "planned_semantic_config_write_is_recaptured_and_attributed"),
+    ]),
     row_sd_arch!("gate-lifecycle-effects", INV_GATE_EFFECTS),
     row_sd!("gate-immutable-opening-delta"),
     row_sd!("lifecycle-operation-idempotency", INV_IDEMP),
@@ -444,5 +484,5 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("retention-independent-pins", INV_RET_PINS),
     row_sd!("retention-active-transition-reference", &[inv!("write_gate", "transition_retention::disjoint_gates_reconcile_a_terminal_transition_on_retry")]),
     row_c!("retention-crash-protocol", INV_RET_CRASH),
-    row_sdc!("lifecycle-store-migration"),
+    row_sdc!("lifecycle-store-migration", INV_LIFECYCLE_MIGRATION, INV_LIFECYCLE_MIGRATION_CRASH),
 ];

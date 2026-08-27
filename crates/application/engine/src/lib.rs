@@ -17,8 +17,8 @@ pub use gate_query::{
     query_run_source_classification, query_run_source_envelope,
 };
 pub use lumin_evidence::{
-    CacheCleanupDeliveryStatus, CacheCleanupResult, GateDecision, GateOperationResult,
-    RecordLookup, RetentionMutationResult, RetentionPlanScope,
+    CacheCleanupDeliveryOutcome, CacheCleanupDeliveryStatus, CacheCleanupResult, GateDecision,
+    GateOperationResult, RecordLookup, RetentionMutationResult, RetentionPlanScope,
 };
 pub use lumin_store::RunCatalogCursor;
 pub use retention::{
@@ -41,7 +41,8 @@ use lumin_evidence::{
     DEPENDENCY_OWNERSHIP_CAPABILITY_ID, DependencyOwnerRecord, EntrySelectionRecord,
     PathPrefixIdentity, RepoPathProjection, RunEvidence, ScanInvocationTier, SemanticInputRecord,
     SemanticInputState, SourceClassificationRecord, SourceContextRecord, SourceObservationRecord,
-    dead_code_capability_state, seal_analysis_snapshot,
+    cache_cleanup_request_digest, dead_code_capability_state,
+    dependency_ownership_capability_state, seal_analysis_snapshot,
 };
 use lumin_inventory::{
     InventoryError, InventoryRequest, InventorySnapshot, RepositoryAdmission, SemanticPolicyState,
@@ -50,7 +51,7 @@ use lumin_inventory::{
 use lumin_model::{
     AttemptId, AttemptStatus, CapabilityState, ConfigObservation, FileFacts, Limitation,
     OperationId, RepositoryRootIdentity, ResolutionProfile, RoleOverride, RunId, SfcDialect,
-    append_length_prefixed, digest_hex,
+    digest_hex,
 };
 use lumin_resolve::{ConfigDemand, ResolverError, ResolverOutput};
 use lumin_store::{PublishedRun, RepositoryStore, RunCatalogRecord, StoreError};
@@ -126,6 +127,10 @@ pub enum EngineError {
     ResolverDemandStalled(String),
     #[error("analysis extraction is unavailable after resolution completed")]
     ExtractionUnavailable,
+    #[error("cache cleanup transport omitted its allocated delivery sequence")]
+    CacheCleanupDeliverySequenceMissing,
+    #[error("read-only transport retained a mutation delivery sequence")]
+    UnexpectedMutationDeliverySequence,
     #[error("JS extraction omitted the requested module-format product: {0}")]
     ExtractionProductMissing(String),
     #[error("resolution discovered profile-sensitive inputs after extraction: {0}")]
@@ -596,7 +601,7 @@ impl RepositoryAnalysisSession {
             },
             CapabilityRecord {
                 capability_id: DEPENDENCY_OWNERSHIP_CAPABILITY_ID.to_owned(),
-                state: dependency_ownership_state(&limitations),
+                state: dependency_ownership_capability_state(&limitations),
             },
         ];
         capabilities.extend(sfc_capability_records(&extraction.sfc_states));
@@ -862,23 +867,6 @@ fn sfc_capability_records(states: &BTreeMap<SfcDialect, CapabilityState>) -> Vec
         .collect()
 }
 
-// The architecture check must inspect Limitation variants outside macro token streams.
-#[allow(clippy::match_like_matches_macro)]
-fn dependency_ownership_state(limitations: &[Limitation]) -> CapabilityState {
-    if limitations.iter().any(|limitation| match limitation {
-        Limitation::PackageMetadataUnobservable { .. }
-        | Limitation::PackageIdentityUnsupported { .. }
-        | Limitation::DependencyOwnerAmbiguous { .. }
-        | Limitation::WorkspaceOwnershipUnsupported { .. }
-        | Limitation::PnpmDependencySemanticsUnsupported { .. } => true,
-        _ => false,
-    }) {
-        CapabilityState::Incomplete
-    } else {
-        CapabilityState::Complete
-    }
-}
-
 fn collect_limitations(
     inventory_limitations: &mut Vec<Limitation>,
     facts: &[FileFacts],
@@ -909,25 +897,108 @@ pub fn clean_cache(request: &CleanCacheRequest) -> Result<CacheCleanupResult, En
         .map_err(Into::into)
 }
 
+#[cfg(feature = "cache-cleanup-test-fault")]
+pub fn write_active_cache_payload_for_test(
+    root: &Path,
+    name: &str,
+    payload: &[u8],
+) -> Result<(), EngineError> {
+    let context = open_repository_context(root)?;
+    context
+        .store
+        .write_active_cache_payload_for_test(name, payload)
+        .map_err(Into::into)
+}
+
+pub fn migrate_lifecycle_store(root: &Path) -> Result<(), EngineError> {
+    let admission = lumin_inventory::repository_admission(root)?;
+    RepositoryStore::migrate_existing_lifecycle_store(
+        &admission.canonical_root,
+        &admission.binding,
+    )?;
+    Ok(())
+}
+
+#[cfg(feature = "lifecycle-migration-test-fault")]
+pub fn rewrite_lifecycle_store_as_prior_for_test(root: &Path) -> Result<(), EngineError> {
+    let admission = lumin_inventory::repository_admission(root)?;
+    RepositoryStore::rewrite_existing_lifecycle_store_header_as_prior_for_test(
+        &admission.canonical_root,
+        &admission.binding,
+    )?;
+    Ok(())
+}
+
+#[cfg(feature = "lifecycle-migration-test-fault")]
+pub use lumin_store::PriorCacheCleanupDeliveryStatusForTest;
+
+#[cfg(feature = "lifecycle-migration-test-fault")]
+pub fn rewrite_lifecycle_store_with_cleanup_as_prior_for_test(
+    root: &Path,
+    operation_id: &OperationId,
+    last_delivery_status: PriorCacheCleanupDeliveryStatusForTest,
+) -> Result<(), EngineError> {
+    let admission = lumin_inventory::repository_admission(root)?;
+    let store = RepositoryStore::open(&admission.canonical_root, &admission.binding)?;
+    store.rewrite_cache_cleanup_operation_as_prior_for_test(operation_id, last_delivery_status)?;
+    store.rewrite_current_store_header_as_prior_for_test()?;
+    Ok(())
+}
+
+#[cfg(feature = "lifecycle-migration-test-fault")]
+pub fn corrupt_migrating_cleanup_operation_for_test(
+    root: &Path,
+    operation_id: &OperationId,
+) -> Result<(), EngineError> {
+    let admission = lumin_inventory::repository_admission(root)?;
+    RepositoryStore::corrupt_migrating_cleanup_operation_for_test(
+        &admission.canonical_root,
+        &admission.binding,
+        operation_id,
+    )?;
+    Ok(())
+}
+
+#[cfg(feature = "lifecycle-migration-test-fault")]
+pub fn corrupt_migration_anchor_for_test(root: &Path) -> Result<(), EngineError> {
+    let admission = lumin_inventory::repository_admission(root)?;
+    RepositoryStore::open(&admission.canonical_root, &admission.binding)?
+        .corrupt_migration_anchor_for_test()?;
+    Ok(())
+}
+
+#[cfg(feature = "lifecycle-migration-test-fault")]
+pub fn remove_bound_root_authorization_for_test(root: &Path) -> Result<(), EngineError> {
+    let admission = lumin_inventory::repository_admission(root)?;
+    RepositoryStore::remove_bound_root_authorization_for_test(
+        &admission.canonical_root,
+        &admission.binding,
+    )?;
+    Ok(())
+}
+
+pub fn allocate_cache_cleanup_delivery(
+    root: &Path,
+    operation_id: &OperationId,
+    request_digest: &str,
+) -> Result<u64, EngineError> {
+    open_repository_context(root)?
+        .store
+        .allocate_cache_cleanup_delivery(operation_id, request_digest)
+        .map_err(Into::into)
+}
+
 pub fn record_cache_cleanup_delivery(
     root: &Path,
     operation_id: &OperationId,
     request_digest: &str,
-    delivery: CacheCleanupDeliveryStatus,
+    sequence: u64,
+    outcome: CacheCleanupDeliveryOutcome,
 ) -> Result<(), EngineError> {
     open_repository_context(root)?
         .store
-        .record_cache_cleanup_delivery(operation_id, request_digest, delivery)
+        .record_cache_cleanup_delivery(operation_id, request_digest, sequence, outcome)
         .map_err(Into::into)
-}
-
-fn cache_cleanup_request_digest(repository_id: &lumin_model::RepositoryId) -> String {
-    let mut framed = Vec::new();
-    append_length_prefixed(&mut framed, b"lumin-cache-clean-request.v2");
-    append_length_prefixed(&mut framed, repository_id.as_str().as_bytes());
-    append_length_prefixed(&mut framed, b"cache-clean");
-    append_length_prefixed(&mut framed, b"lumin.cache-cleanup.v2");
-    digest_hex(&framed)
 }
 
 pub fn load_run(
