@@ -1406,19 +1406,47 @@ pub fn validate_migration_run_evidence_tier(
     invocation: &ScanInvocationTier,
     entry_selections: &[EntrySelectionRecord],
 ) -> Result<(), RunEvidenceIdentityError> {
+    if let Some(expected) = invocation.resolution_profile
+        && !evidence.resolution_profiles.iter().any(|profile| {
+            profile.profile == expected && profile.source == ResolutionProfileSource::Invocation
+        })
+    {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "authenticated legacy resolution-profile override",
+        });
+    }
     if !invocation.includes.is_empty() || !invocation.excludes.is_empty() {
         return Err(RunEvidenceIdentityError::InventoryMismatch {
             collection: "authenticated legacy scan-scope patterns",
         });
     }
-    if invocation
-        .role_overrides
-        .iter()
-        .any(|rule| literal_invocation_pattern(&rule.pattern).is_none())
-    {
-        return Err(RunEvidenceIdentityError::InventoryMismatch {
-            collection: "authenticated legacy role patterns",
+    for rule in &invocation.role_overrides {
+        let Some(pattern) = literal_invocation_pattern(&rule.pattern) else {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "authenticated legacy role patterns",
+            });
+        };
+        let path = RepoPath::from_portable(pattern).map_err(|_| {
+            RunEvidenceIdentityError::InventoryMismatch {
+                collection: "authenticated legacy role patterns",
+            }
+        })?;
+        let expected_role = SourceClassificationRole::from(rule.role);
+        let expected_reason = explicit_role_reason(rule.role);
+        let authenticated = evidence.source_classifications.iter().any(|record| {
+            record.path.canonical == path.canonical_bytes()
+                && record.classifications.iter().any(|classification| {
+                    classification.role == expected_role
+                        && classification.reason == expected_reason
+                        && classification.configuration_source
+                            == SourceRoleConfigurationSource::Invocation
+                })
         });
+        if !authenticated {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "authenticated legacy role patterns",
+            });
+        }
     }
     if entry_selections
         .iter()
@@ -3575,6 +3603,39 @@ mod tests {
             validate_migration_run_evidence_tier(&evidence, &ScanInvocationTier::default(), &[]),
             Err(RunEvidenceIdentityError::InventoryMismatch {
                 collection: "authenticated legacy package-manifest inventory"
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_source_free_tier_rejects_unproven_profile_and_role_overrides()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let evidence = run_evidence_fixture(Vec::new());
+        let profile_override = ScanInvocationTier {
+            resolution_profile: Some(ResolutionProfile::Node16),
+            ..ScanInvocationTier::default()
+        };
+        validate_run_evidence_tier(&evidence, &profile_override, &[])?;
+        assert!(matches!(
+            validate_migration_run_evidence_tier(&evidence, &profile_override, &[]),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "authenticated legacy resolution-profile override"
+            })
+        ));
+
+        let role_override = ScanInvocationTier {
+            role_overrides: vec![lumin_model::RoleOverride {
+                pattern: "src/future.ts".to_owned(),
+                role: ScanRole::Generated,
+            }],
+            ..ScanInvocationTier::default()
+        };
+        validate_run_evidence_tier(&evidence, &role_override, &[])?;
+        assert!(matches!(
+            validate_migration_run_evidence_tier(&evidence, &role_override, &[]),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "authenticated legacy role patterns"
             })
         ));
         Ok(())

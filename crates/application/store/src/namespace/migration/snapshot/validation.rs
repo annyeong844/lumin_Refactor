@@ -1423,6 +1423,17 @@ fn validate_gate_observations(
                     authenticate_legacy_evidence,
                 )?;
                 validate_baseline_write_domain(key, gate, baseline)?;
+                if authenticate_legacy_evidence
+                    && gate.lifecycle == GateLifecycle::Active
+                    && baseline
+                        .leased_write_set
+                        .iter()
+                        .any(|lease| lease.kind == WriteLeaseKind::NewFile)
+                {
+                    return Err(StoreError::Integrity(format!(
+                        "active legacy gate {key} contains a new-file lease whose original path intent cannot be independently authenticated"
+                    )));
+                }
                 if baseline.protected_semantic_inputs
                     != derive_protected_semantic_inputs(
                         &baseline.snapshot,

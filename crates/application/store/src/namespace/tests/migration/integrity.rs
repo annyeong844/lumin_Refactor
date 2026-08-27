@@ -1681,9 +1681,13 @@ fn migration_derives_baseline_protected_reads_from_the_sealed_snapshot()
 }
 
 #[test]
-fn migration_reconstructs_new_file_parent_and_prefix_bindings()
+fn migration_rejects_invalid_or_unauthenticated_active_new_file_leases()
 -> Result<(), Box<dyn std::error::Error>> {
-    for corruption in ["missing-prefix-chain", "changed-prefix-identity"] {
+    for corruption in [
+        "missing-prefix-chain",
+        "changed-prefix-identity",
+        "valid-but-unauthenticated",
+    ] {
         let root = tempfile::tempdir()?;
         let store = open_store(root.path())?;
         let operation_id = OperationId::from_string(format!("op-new-file-prefix-{corruption}"));
@@ -1715,23 +1719,29 @@ fn migration_reconstructs_new_file_parent_and_prefix_bindings()
                 .first()
                 .ok_or("new-file-prefix gate omitted its declared path")?
                 .clone();
-            let (nearest_existing_parent, prefix_identities) = match corruption {
-                "missing-prefix-chain" => (None, Vec::new()),
-                "changed-prefix-identity" => (
-                    Some(root_projection.clone()),
-                    vec![PathPrefixIdentity {
+            let lease = match corruption {
+                "missing-prefix-chain" => WriteLease {
+                    path: declared,
+                    kind: WriteLeaseKind::NewFile,
+                    physical_identity: None,
+                    nearest_existing_parent: None,
+                    prefix_identities: Vec::new(),
+                },
+                "changed-prefix-identity" => WriteLease {
+                    path: declared,
+                    kind: WriteLeaseKind::NewFile,
+                    physical_identity: None,
+                    nearest_existing_parent: Some(root_projection.clone()),
+                    prefix_identities: vec![PathPrefixIdentity {
                         path: root_projection.clone(),
                         physical_identity: wrong_root_identity.clone(),
                     }],
-                ),
+                },
+                "valid-but-unauthenticated" => {
+                    let path = RepoPath::from_canonical_bytes(&declared.canonical)?;
+                    observed_lease(root.path(), &path)?
+                }
                 _ => unreachable!(),
-            };
-            let lease = WriteLease {
-                path: declared,
-                kind: WriteLeaseKind::NewFile,
-                physical_identity: None,
-                nearest_existing_parent,
-                prefix_identities,
             };
             gate.leased_write_set = vec![lease.clone()];
             gate.baseline
@@ -1794,14 +1804,21 @@ fn migration_reconstructs_new_file_parent_and_prefix_bindings()
 
         let expected = match corruption {
             "missing-prefix-chain" => "omitted its nearest existing parent",
-            "changed-prefix-identity" => "prefix identity changed",
+            "changed-prefix-identity" | "valid-but-unauthenticated" => {
+                "original path intent cannot be independently authenticated"
+            }
             _ => unreachable!(),
         };
         let store = open_store(root.path())?;
-        assert!(matches!(
-            store.migrate_lifecycle_store(),
-            Err(StoreError::Integrity(message)) if message.contains(expected)
-        ));
+        make_prior_store(&store, root.path())?;
+        let migration = store.migrate_lifecycle_store();
+        assert!(
+            matches!(
+                &migration,
+                Err(StoreError::Integrity(message)) if message.contains(expected)
+            ),
+            "unexpected {corruption} migration result: {migration:?}"
+        );
     }
     Ok(())
 }
