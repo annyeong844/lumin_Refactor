@@ -576,23 +576,26 @@ pub fn validate_run_evidence_identities(
             &owner.consumer,
             &owner.consumer_path,
         )?;
-        if !source_ids.contains(owner.consumer.as_str()) {
-            return Err(RunEvidenceIdentityError::MissingReference {
-                collection: "dependency-owner consumers",
-                identity: owner.consumer.as_str().to_owned(),
-            });
-        }
-        let manifest_root = RepoPath::from_canonical_bytes(&owner.manifest_path.canonical)
-            .ok()
-            .and_then(|path| path.parent())
+        let manifest_path = RepoPath::from_canonical_bytes(&owner.manifest_path.canonical).ok();
+        let manifest_root = manifest_path
+            .as_ref()
+            .and_then(RepoPath::parent)
             .map(|path| RepoPathProjection::from(&path));
-        let consumer_root = evidence
+        let consumer_context = evidence
             .source_contexts
             .iter()
-            .find(|context| context.source_id == owner.consumer)
-            .and_then(|context| context.package_root.as_ref());
+            .find(|context| context.source_id == owner.consumer);
         if manifest_root.as_ref() != Some(&owner.package_root)
-            || consumer_root != Some(&owner.package_root)
+            || manifest_path
+                .as_ref()
+                .and_then(RepoPath::file_name_portable)
+                != Some("package.json")
+            || !owner
+                .consumer_path
+                .components
+                .starts_with(&owner.package_root.components)
+            || consumer_context
+                .is_some_and(|context| context.package_root.as_ref() != Some(&owner.package_root))
         {
             return Err(RunEvidenceIdentityError::InventoryMismatch {
                 collection: "dependency-owner package roots",
@@ -2120,14 +2123,18 @@ mod tests {
             })
         ));
 
-        let absent_path = RepoPath::from_portable("packages/b/src/main.ts")?;
+        let absent_path = RepoPath::from_portable("packages/a/scripts/install.ts")?;
         evidence.dependency_owners[0].consumer = LogicalSourceId::from_path(&absent_path);
         evidence.dependency_owners[0].consumer_path = RepoPathProjection::from(&absent_path);
+        validate_run_evidence_identities(&evidence)?;
+
+        let outside_path = RepoPath::from_portable("packages/b/src/main.ts")?;
+        evidence.dependency_owners[0].consumer = LogicalSourceId::from_path(&outside_path);
+        evidence.dependency_owners[0].consumer_path = RepoPathProjection::from(&outside_path);
         assert!(matches!(
             validate_run_evidence_identities(&evidence),
-            Err(RunEvidenceIdentityError::MissingReference {
-                collection: "dependency-owner consumers",
-                ..
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "dependency-owner package roots"
             })
         ));
         Ok(())
