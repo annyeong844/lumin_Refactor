@@ -75,10 +75,13 @@ fn validate_state_namespace_inventory(
         .iter()
         .map(|(key, bytes)| {
             parse_record::<OperationRecord>("operations", key, bytes).map(|operation| {
-                crate::gate::migration_operation_lock_name(&operation.operation_id)
+                (
+                    crate::gate::migration_operation_lock_name(&operation.operation_id),
+                    operation,
+                )
             })
         })
-        .collect::<Result<BTreeSet<_>, _>>()?;
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
     let migration_owned = super::super::super::artifacts::read_journal(guard)?
         .map(|journal| journal.owned_namespace_names())
         .transpose()?
@@ -95,9 +98,21 @@ fn validate_state_namespace_inventory(
         let name = native_name.into_string().map_err(|_| {
             StoreError::Integrity("state namespace contains a non-UTF-8 entry".to_owned())
         })?;
+        let row_backed_operation_lock = if let Some(operation) = operation_locks.get(&name) {
+            if operation.status == GateOperationStatus::Pending {
+                crate::gate::validate_migration_operation_liveness(guard, operation)?;
+            } else if !crate::gate::validate_migration_operation_lock_inventory(guard, &name)? {
+                return Err(StoreError::Integrity(format!(
+                    "operation row references a noncanonical liveness lock: {name}"
+                )));
+            }
+            true
+        } else {
+            false
+        };
         if fixed.contains(&name)
             || attempt_locks.contains(&name)
-            || operation_locks.contains(&name)
+            || row_backed_operation_lock
             || migration_owned.contains(&name)
             || crate::gate::validate_migration_operation_lock_inventory(guard, &name)?
         {
@@ -865,7 +880,7 @@ fn validate_run(
         .join(record.run_id.as_str());
     let run_dir = moved_path.unwrap_or(&canonical_run_dir);
     let held_dir = open_state_entry(guard, run_dir, EntryKind::Directory, false, "run directory")?;
-    crate::publication::validate_run_directory(run_dir, &held_dir, &record)
+    crate::publication::validate_run_directory_for_migration(run_dir, &held_dir, &record)
 }
 
 fn validate_retention_runs(

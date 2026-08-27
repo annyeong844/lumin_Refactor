@@ -9,6 +9,7 @@ use lumin_model::{
     PackageSurfaceDeclaration, PhysicalPathRedirect, RepoPath, RepositoryRootIdentity,
     ResolutionOutcome, ResolutionProfile, ResolvedSourceUse, SelectedResolutionProfile,
     SemanticConfigSnapshot, SourceSnapshot, SourceUseFact, SymbolNamespace, UnresolvedTargetScope,
+    external_package_name,
 };
 use thiserror::Error;
 
@@ -415,7 +416,7 @@ fn resolve_bare_specifier(
     ) {
         return (result.outcome, result.limitation, result.declaration);
     }
-    let bare_identity = package_name(specifier);
+    let bare_identity = external_package_name(specifier);
     (
         ResolutionOutcome::External {
             package: bare_identity,
@@ -693,21 +694,6 @@ fn has_supported_explicit_extension(file_name: &str) -> bool {
 fn has_unsupported_explicit_extension(path: &RepoPath) -> bool {
     path.file_name_portable()
         .is_some_and(|name| name.contains('.') && !has_supported_explicit_extension(name))
-}
-
-fn package_name(specifier: &str) -> String {
-    if let Some(scoped) = specifier.strip_prefix('@') {
-        let mut parts = scoped.split('/');
-        let scope = parts.next().unwrap_or_default();
-        let package = parts.next().unwrap_or_default();
-        if package.is_empty() {
-            format!("@{scope}")
-        } else {
-            format!("@{scope}/{package}")
-        }
-    } else {
-        specifier.split('/').next().unwrap_or(specifier).to_owned()
-    }
 }
 
 #[cfg(test)]

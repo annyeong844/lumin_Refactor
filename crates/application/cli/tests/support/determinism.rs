@@ -188,14 +188,18 @@ fn cache_cleanup_operation_evidence(
 }
 
 fn lifecycle_migration_evidence(stdout: &str) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
-    let response: Value = match serde_json::from_str(stdout) {
-        Ok(response) => response,
-        Err(_) => return Ok(Vec::new()),
-    };
+    let response: Value = serde_json::from_str(stdout).map_err(|error| {
+        std::io::Error::other(format!(
+            "successful lifecycle migration emitted malformed JSON: {error}"
+        ))
+    })?;
     if response.get("schemaVersion").and_then(Value::as_str)
         != Some("lumin.lifecycle-store-migration.v1")
     {
-        return Ok(Vec::new());
+        return Err(std::io::Error::other(
+            "successful lifecycle migration emitted an unsupported response schema",
+        )
+        .into());
     }
     Ok(vec![serde_json::json!({
         "schemaVersion": "lumin.lifecycle-store-migration-semantic.v1",

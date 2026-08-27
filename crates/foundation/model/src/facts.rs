@@ -700,6 +700,24 @@ pub struct ResolvedSourceUse {
     pub outcome: ResolutionOutcome,
 }
 
+pub fn external_package_name(specifier: &str) -> String {
+    if specifier.starts_with('#') {
+        return specifier.to_owned();
+    }
+    if let Some(scoped) = specifier.strip_prefix('@') {
+        let mut parts = scoped.split('/');
+        let scope = parts.next().unwrap_or_default();
+        let package = parts.next().unwrap_or_default();
+        if package.is_empty() {
+            format!("@{scope}")
+        } else {
+            format!("@{scope}/{package}")
+        }
+    } else {
+        specifier.split('/').next().unwrap_or(specifier).to_owned()
+    }
+}
+
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum UnresolvedTargetScope {

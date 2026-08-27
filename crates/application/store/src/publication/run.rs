@@ -349,13 +349,36 @@ pub(crate) fn validate_directory(
     directory: &HeldEntry,
     expected: &RunCatalogRecord,
 ) -> Result<(), StoreError> {
-    validate_directory_with_hooks(
+    validate_directory_with_hooks_and_evidence(
         directory_path,
         directory,
         expected,
         || Ok(()),
         || Ok(()),
         || Ok(()),
+        |_| Ok(()),
+    )
+}
+
+pub(crate) fn validate_directory_for_migration(
+    directory_path: &Path,
+    directory: &HeldEntry,
+    expected: &RunCatalogRecord,
+) -> Result<(), StoreError> {
+    validate_directory_with_hooks_and_evidence(
+        directory_path,
+        directory,
+        expected,
+        || Ok(()),
+        || Ok(()),
+        || Ok(()),
+        |evidence| {
+            lumin_evidence::validate_migration_run_evidence(evidence).map_err(|error| {
+                StoreError::Integrity(format!(
+                    "legacy run evidence cannot be authenticated for migration: {error}"
+                ))
+            })
+        },
     )
 }
 
@@ -366,13 +389,14 @@ pub(crate) fn validate_directory_with_evidence_read_hook(
     expected: &RunCatalogRecord,
     after_evidence_read: impl FnOnce() -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
-    validate_directory_with_hooks(
+    validate_directory_with_hooks_and_evidence(
         directory_path,
         directory,
         expected,
         after_evidence_read,
         || Ok(()),
         || Ok(()),
+        |_| Ok(()),
     )
 }
 
@@ -384,23 +408,25 @@ pub(crate) fn validate_directory_with_inventory_hooks(
     before_final_inventory: impl FnOnce() -> Result<(), StoreError>,
     after_final_inventory: impl FnOnce() -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
-    validate_directory_with_hooks(
+    validate_directory_with_hooks_and_evidence(
         directory_path,
         directory,
         expected,
         || Ok(()),
         before_final_inventory,
         after_final_inventory,
+        |_| Ok(()),
     )
 }
 
-fn validate_directory_with_hooks(
+fn validate_directory_with_hooks_and_evidence(
     directory_path: &Path,
     directory: &HeldEntry,
     expected: &RunCatalogRecord,
     after_evidence_read: impl FnOnce() -> Result<(), StoreError>,
     before_final_inventory: impl FnOnce() -> Result<(), StoreError>,
     after_final_inventory: impl FnOnce() -> Result<(), StoreError>,
+    validate_evidence: impl FnOnce(&RunEvidence) -> Result<(), StoreError>,
 ) -> Result<(), StoreError> {
     validate_directory_inventory(directory, expected)?;
     let observed: RunCatalogRecord =
@@ -427,7 +453,8 @@ fn validate_directory_with_hooks(
     files::require_parent_volume(&evidence, directory, "run evidence store")?;
     let bytes = validate_evidence_store_identity(&evidence, expected)?;
     after_evidence_read()?;
-    read_evidence_store(&bytes)?;
+    let run_evidence = read_evidence_store(&bytes)?;
+    validate_evidence(&run_evidence)?;
     evidence.validate_path(
         &evidence_path,
         EntryKind::RegularFile,

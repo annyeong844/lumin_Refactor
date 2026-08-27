@@ -13,11 +13,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use lumin_model::{
-    BuildIdentity, CapabilityState, EvidenceId, FindingDisposition, FindingId, FindingRelationId,
-    GateId, Limitation, LogicalSourceId, PayloadSnapshotId, PhysicalFileIdentity, RepoPath,
-    RepositoryId, ResolutionOutcome, ResolutionProfile, ResolutionProfileSource, ResolvedSourceUse,
-    ReviewOnlyReason, RunId, SelectedResolutionProfile, SourceKind, SourceRoleClassification,
-    SourceRoles, SourceSpan, SourceUnitId, SymbolNamespace, append_length_prefixed, digest_hex,
+    BuildIdentity, CapabilityState, EntrySource, EvidenceId, FindingDisposition, FindingId,
+    FindingRelationId, GateId, Limitation, LogicalSourceId, PayloadSnapshotId,
+    PhysicalFileIdentity, RepoPath, RepositoryId, ResolutionOutcome, ResolutionProfile,
+    ResolutionProfileSource, ResolvedSourceUse, ReviewOnlyReason, RunId, ScanRole,
+    SelectedResolutionProfile, SourceClassificationRole, SourceKind, SourceRoleClassification,
+    SourceRoleConfigurationSource, SourceRoles, SourceSpan, SourceUnitId, SymbolNamespace,
+    append_length_prefixed, digest_hex, external_package_name,
 };
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
@@ -694,6 +696,13 @@ pub fn validate_run_evidence_identities(
                 identity: target.as_str().to_owned(),
             });
         }
+        if let ResolutionOutcome::External { package } = &resolution.outcome
+            && package != &external_package_name(&resolution.source_use.specifier)
+        {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "external resolution package identities",
+            });
+        }
         if matches!(
             &resolution.outcome,
             ResolutionOutcome::NonSourceAsset { specifier }
@@ -977,6 +986,25 @@ pub fn validate_run_evidence_inputs(
         .iter()
         .map(|context| (context.source_id.as_str(), context))
         .collect::<BTreeMap<_, _>>();
+    let observed_source_paths = contexts
+        .values()
+        .map(|context| context.path.canonical.as_slice())
+        .collect::<BTreeSet<_>>();
+    let source_inputs = inputs
+        .iter()
+        .filter(|input| input.state == SemanticInputState::Source)
+        .collect::<Vec<_>>();
+    let source_input_paths = source_inputs
+        .iter()
+        .map(|input| input.path.canonical.as_slice())
+        .collect::<BTreeSet<_>>();
+    if source_input_paths.len() != source_inputs.len()
+        || source_input_paths != observed_source_paths
+    {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "source semantic-input inventory",
+        });
+    }
     for observation in &evidence.source_observations {
         let context = contexts
             .get(observation.source_id.as_str())
@@ -1001,6 +1029,23 @@ pub fn validate_run_evidence_inputs(
         {
             return Err(RunEvidenceIdentityError::InventoryMismatch {
                 collection: "source-observation semantic inputs",
+            });
+        }
+    }
+
+    for owner in &evidence.dependency_owners {
+        let input = inputs_by_path
+            .get(owner.manifest_path.canonical.as_slice())
+            .ok_or_else(|| RunEvidenceIdentityError::MissingReference {
+                collection: "dependency-owner manifest semantic inputs",
+                identity: owner.manifest_path.display.clone(),
+            })?;
+        if input.state != SemanticInputState::ConfigPresent
+            || !is_sha256_hex(&owner.manifest_payload_sha256)
+            || input.payload_sha256.as_deref() != Some(&owner.manifest_payload_sha256)
+        {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "dependency-owner manifest semantic inputs",
             });
         }
     }
@@ -1033,6 +1078,170 @@ pub fn validate_run_evidence_inputs(
         }
     }
     Ok(())
+}
+
+/// Validate facts whose producer inputs are retained only by a sealed gate snapshot.
+///
+/// Invocation role patterns use inventory-owned gitignore semantics. Migration can
+/// authenticate an already-materialized role without importing that owner only when
+/// the retained rule is the exact literal source path; broader patterns fail closed.
+pub fn validate_run_evidence_tier(
+    evidence: &RunEvidence,
+    invocation: &ScanInvocationTier,
+    entry_selections: &[EntrySelectionRecord],
+) -> Result<(), RunEvidenceIdentityError> {
+    let dependency_intents = invocation
+        .dependency_intents
+        .iter()
+        .map(|intent| (intent.path.canonical.as_slice(), intent.dependency.as_str()))
+        .collect::<BTreeSet<_>>();
+    if evidence.dependency_owners.iter().any(|owner| {
+        !dependency_intents.contains(&(
+            owner.consumer_path.canonical.as_slice(),
+            owner.dependency.as_str(),
+        ))
+    }) {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "dependency-owner invocation intents",
+        });
+    }
+
+    for record in &evidence.source_classifications {
+        for classification in &record.classifications {
+            if classification.configuration_source != SourceRoleConfigurationSource::Invocation {
+                continue;
+            }
+            let Some(role) = scan_role_for_classification(classification.role) else {
+                return Err(RunEvidenceIdentityError::InventoryMismatch {
+                    collection: "invocation source-role provenance",
+                });
+            };
+            if !invocation.role_overrides.iter().any(|rule| {
+                rule.role == role
+                    && literal_invocation_pattern(&rule.pattern)
+                        .is_some_and(|pattern| pattern == record.path.display)
+            }) {
+                return Err(RunEvidenceIdentityError::InventoryMismatch {
+                    collection: "invocation source-role provenance",
+                });
+            }
+        }
+    }
+
+    let invocation_entries = invocation
+        .entries
+        .iter()
+        .map(|entry| entry.canonical.as_slice())
+        .collect::<BTreeSet<_>>();
+    let selected_invocation_entries = entry_selections
+        .iter()
+        .filter(|entry| entry.source == EntrySource::Invocation)
+        .map(|entry| entry.path.canonical.as_slice())
+        .collect::<BTreeSet<_>>();
+    let selection_sources_valid = if invocation_entries.is_empty() {
+        entry_selections
+            .iter()
+            .all(|entry| entry.source == EntrySource::Configuration)
+    } else {
+        entry_selections
+            .iter()
+            .all(|entry| entry.source == EntrySource::Invocation)
+            && selected_invocation_entries == invocation_entries
+            && selected_invocation_entries.len() == entry_selections.len()
+    };
+    if !selection_sources_valid {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "scan-invocation entry selections",
+        });
+    }
+
+    let source_paths = evidence
+        .source_contexts
+        .iter()
+        .map(|context| context.path.canonical.as_slice())
+        .collect::<BTreeSet<_>>();
+    if entry_selections.iter().any(|entry| {
+        entry.unavailable_reason.is_none()
+            && !source_paths.contains(entry.path.canonical.as_slice())
+    }) {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "available entry selections",
+        });
+    }
+
+    let unavailable_selections = entry_selections
+        .iter()
+        .filter_map(|entry| {
+            entry
+                .unavailable_reason
+                .map(|reason| (entry.path.display.as_str(), entry.source, reason))
+        })
+        .collect::<BTreeSet<_>>();
+    let unavailable_limitations = evidence
+        .limitations
+        .iter()
+        .filter_map(|limitation| {
+            let Limitation::ExplicitEntryUnavailable {
+                path,
+                source,
+                unavailable_reason,
+            } = limitation
+            else {
+                return None;
+            };
+            Some((path.as_str(), *source, *unavailable_reason))
+        })
+        .collect::<BTreeSet<_>>();
+    if unavailable_selections != unavailable_limitations {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "unavailable entry selections",
+        });
+    }
+    Ok(())
+}
+
+/// Apply migration-only checks that cannot be imposed on native v13 reads.
+///
+/// v1 evidence does not retain SFC decompositions, so its embedded JavaScript
+/// parse-product count cannot be reconstructed for a mixed-source run. Such a
+/// legacy row is rejected instead of adopting an unauthenticated public metric.
+pub fn validate_migration_run_evidence(
+    evidence: &RunEvidence,
+) -> Result<(), RunEvidenceIdentityError> {
+    if evidence
+        .source_contexts
+        .iter()
+        .any(|context| !context.kind.is_js_family())
+    {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "authenticated mixed-source JS parse metrics",
+        });
+    }
+    Ok(())
+}
+
+fn scan_role_for_classification(role: SourceClassificationRole) -> Option<ScanRole> {
+    match role {
+        SourceClassificationRole::Test => Some(ScanRole::Test),
+        SourceClassificationRole::Production => Some(ScanRole::Production),
+        SourceClassificationRole::Generated => Some(ScanRole::Generated),
+        SourceClassificationRole::Vendor => Some(ScanRole::Vendor),
+        SourceClassificationRole::Authored => Some(ScanRole::Authored),
+        SourceClassificationRole::Declaration => None,
+    }
+}
+
+fn literal_invocation_pattern(pattern: &str) -> Option<&str> {
+    let pattern = pattern.strip_prefix('/').unwrap_or(pattern);
+    if pattern.is_empty()
+        || pattern.ends_with('/')
+        || pattern
+            .bytes()
+            .any(|byte| matches!(byte, b'*' | b'?' | b'[' | b']' | b'\\'))
+    {
+        return None;
+    }
+    Some(pattern)
 }
 
 fn validate_source_inventory(evidence: &RunEvidence) -> Result<(), RunEvidenceIdentityError> {
@@ -2127,6 +2336,22 @@ mod tests {
         evidence.dependency_owners[0].consumer = LogicalSourceId::from_path(&absent_path);
         evidence.dependency_owners[0].consumer_path = RepoPathProjection::from(&absent_path);
         validate_run_evidence_identities(&evidence)?;
+        let invocation = ScanInvocationTier {
+            dependency_intents: vec![DependencyIntentRecord {
+                path: RepoPathProjection::from(&absent_path),
+                dependency: "dep".to_owned(),
+            }],
+            ..ScanInvocationTier::default()
+        };
+        validate_run_evidence_tier(&evidence, &invocation, &[])?;
+        let mut wrong_dependency = invocation.clone();
+        wrong_dependency.dependency_intents[0].dependency = "other".to_owned();
+        assert!(matches!(
+            validate_run_evidence_tier(&evidence, &wrong_dependency, &[]),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "dependency-owner invocation intents"
+            })
+        ));
 
         let outside_path = RepoPath::from_portable("packages/b/src/main.ts")?;
         evidence.dependency_owners[0].consumer = LogicalSourceId::from_path(&outside_path);
@@ -2332,6 +2557,34 @@ mod tests {
                 configuration_source: SourceRoleConfigurationSource::Invocation,
             });
         validate_run_evidence_identities(&evidence)?;
+        let invocation = ScanInvocationTier {
+            role_overrides: vec![lumin_model::RoleOverride {
+                pattern: "src/owned.ts".to_owned(),
+                role: ScanRole::Test,
+            }],
+            ..ScanInvocationTier::default()
+        };
+        validate_run_evidence_tier(&evidence, &invocation, &[])?;
+
+        assert!(matches!(
+            validate_run_evidence_tier(&evidence, &ScanInvocationTier::default(), &[]),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "invocation source-role provenance"
+            })
+        ));
+        let unrelated_invocation = ScanInvocationTier {
+            role_overrides: vec![lumin_model::RoleOverride {
+                pattern: "src/other.ts".to_owned(),
+                role: ScanRole::Test,
+            }],
+            ..ScanInvocationTier::default()
+        };
+        assert!(matches!(
+            validate_run_evidence_tier(&evidence, &unrelated_invocation, &[]),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "invocation source-role provenance"
+            })
+        ));
 
         let mut forged_kind = evidence.clone();
         forged_kind.source_contexts[0].kind = SourceKind::JavaScript;
@@ -2355,6 +2608,62 @@ mod tests {
     }
 
     #[test]
+    fn sealed_entry_selections_match_the_invocation_and_unavailable_evidence()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source_path = RepoPath::from_portable("src/entry.ts")?;
+        let missing_path = RepoPath::from_portable("src/missing.ts")?;
+        let mut evidence = run_evidence_fixture(Vec::new());
+        populate_source_inventory(
+            &mut evidence,
+            [(
+                LogicalSourceId::from_path(&source_path),
+                RepoPathProjection::from(&source_path),
+            )],
+        );
+        evidence.limitations = vec![Limitation::ExplicitEntryUnavailable {
+            path: missing_path.display_escaped(),
+            source: EntrySource::Invocation,
+            unavailable_reason: lumin_model::EntryUnavailableReason::Missing,
+        }];
+        let invocation = ScanInvocationTier {
+            entries: vec![
+                RepoPathProjection::from(&source_path),
+                RepoPathProjection::from(&missing_path),
+            ],
+            ..ScanInvocationTier::default()
+        };
+        let selections = vec![
+            EntrySelectionRecord {
+                path: RepoPathProjection::from(&source_path),
+                source: EntrySource::Invocation,
+                unavailable_reason: None,
+            },
+            EntrySelectionRecord {
+                path: RepoPathProjection::from(&missing_path),
+                source: EntrySource::Invocation,
+                unavailable_reason: Some(lumin_model::EntryUnavailableReason::Missing),
+            },
+        ];
+        validate_run_evidence_tier(&evidence, &invocation, &selections)?;
+
+        assert!(matches!(
+            validate_run_evidence_tier(&evidence, &invocation, &selections[..1]),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "scan-invocation entry selections"
+            })
+        ));
+        let mut forged = selections;
+        forged[1].unavailable_reason = Some(lumin_model::EntryUnavailableReason::Excluded);
+        assert!(matches!(
+            validate_run_evidence_tier(&evidence, &invocation, &forged),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "unavailable entry selections"
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn persisted_profiles_and_resolution_specifiers_cover_their_sources()
     -> Result<(), Box<dyn std::error::Error>> {
         let path = RepoPath::from_portable("src/importer.ts")?;
@@ -2366,7 +2675,7 @@ mod tests {
         );
         evidence.resolutions.push(ResolvedSourceUse {
             source_use: SourceUseFact {
-                importer: source_id,
+                importer: source_id.clone(),
                 specifier: "./asset.css".to_owned(),
                 imported_name: None,
                 local_name: None,
@@ -2379,6 +2688,21 @@ mod tests {
                 specifier: "./asset.css".to_owned(),
             },
         });
+        evidence.resolutions.push(ResolvedSourceUse {
+            source_use: SourceUseFact {
+                importer: source_id,
+                specifier: "react/jsx-runtime".to_owned(),
+                imported_name: None,
+                local_name: None,
+                namespace: SymbolNamespace::Value,
+                kind: ImportKind::Named,
+                request_kind: ModuleRequestKind::StaticImport,
+                span: SourceSpan { start: 2, end: 3 },
+            },
+            outcome: ResolutionOutcome::External {
+                package: "react".to_owned(),
+            },
+        });
         validate_run_evidence_identities(&evidence)?;
 
         let mut missing_profile = evidence.clone();
@@ -2387,6 +2711,19 @@ mod tests {
             validate_run_evidence_identities(&missing_profile),
             Err(RunEvidenceIdentityError::InventoryMismatch {
                 collection: "resolution-profile coverage"
+            })
+        ));
+
+        let mut forged_external = evidence.clone();
+        let ResolutionOutcome::External { package } = &mut forged_external.resolutions[1].outcome
+        else {
+            unreachable!()
+        };
+        *package = "forged".to_owned();
+        assert!(matches!(
+            validate_run_evidence_identities(&forged_external),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "external resolution package identities"
             })
         ));
 
@@ -2507,6 +2844,16 @@ mod tests {
             [(source_id.clone(), RepoPathProjection::from(&source_path))],
         );
         evidence.source_contexts[0].package_root = Some(RepoPathProjection::from(&package_root));
+        let manifest_payload_sha256 = digest_hex(b"{}");
+        evidence.dependency_owners.push(DependencyOwnerRecord {
+            consumer: source_id.clone(),
+            consumer_path: RepoPathProjection::from(&source_path),
+            dependency: "dep".to_owned(),
+            package_root: RepoPathProjection::from(&package_root),
+            manifest_path: RepoPathProjection::from(&manifest_path),
+            manifest_payload_sha256: manifest_payload_sha256.clone(),
+            lockfile_path: None,
+        });
         validate_run_evidence_identities(&evidence)?;
         let observation = &evidence.source_observations[0];
         let payload_sha256 = digest_hex(source_path.canonical_bytes());
@@ -2522,13 +2869,21 @@ mod tests {
             SemanticInputRecord {
                 path: RepoPathProjection::from(&manifest_path),
                 state: SemanticInputState::ConfigPresent,
-                payload_sha256: Some(digest_hex(b"{}")),
+                payload_sha256: Some(manifest_payload_sha256),
                 physical_identity: None,
                 absence_parent: None,
                 physical_redirect_sha256: None,
             },
         ];
         validate_run_evidence_inputs(&evidence, &inputs)?;
+
+        let missing_inventory = run_evidence_fixture(Vec::new());
+        assert!(matches!(
+            validate_run_evidence_inputs(&missing_inventory, &inputs),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "source semantic-input inventory"
+            })
+        ));
 
         let mut forged_capture = inputs.clone();
         forged_capture[0].payload_sha256 = Some(digest_hex(b"forged"));
@@ -2539,7 +2894,7 @@ mod tests {
             })
         ));
 
-        let mut forged_root = evidence;
+        let mut forged_root = evidence.clone();
         forged_root.source_contexts[0].package_root = Some(RepoPathProjection::from(
             &RepoPath::from_portable("packages/a/src")?,
         ));
@@ -2547,6 +2902,15 @@ mod tests {
             validate_run_evidence_inputs(&forged_root, &inputs),
             Err(RunEvidenceIdentityError::InventoryMismatch {
                 collection: "source-context package roots"
+            })
+        ));
+
+        let mut forged_owner = evidence;
+        forged_owner.dependency_owners[0].manifest_payload_sha256 = digest_hex(b"forged");
+        assert!(matches!(
+            validate_run_evidence_inputs(&forged_owner, &inputs),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "dependency-owner manifest semantic inputs"
             })
         ));
         Ok(())
@@ -2692,6 +3056,27 @@ mod tests {
                 }) if observed == metric
             ));
         }
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_mixed_source_parse_metrics_fail_closed() -> Result<(), Box<dyn std::error::Error>> {
+        let path = RepoPath::from_portable("src/component.vue")?;
+        let mut evidence = run_evidence_fixture(Vec::new());
+        populate_source_inventory(
+            &mut evidence,
+            [(
+                LogicalSourceId::from_path(&path),
+                RepoPathProjection::from(&path),
+            )],
+        );
+        validate_run_evidence_identities(&evidence)?;
+        assert!(matches!(
+            validate_migration_run_evidence(&evidence),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "authenticated mixed-source JS parse metrics"
+            })
+        ));
         Ok(())
     }
 

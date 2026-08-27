@@ -23,7 +23,7 @@ pub(crate) use latest::{
 pub use liveness::AttemptSession;
 pub(crate) use run::{
     read_validated_directory as read_validated_run_directory,
-    validate_directory as validate_run_directory,
+    validate_directory_for_migration as validate_run_directory_for_migration,
 };
 #[cfg(test)]
 pub(crate) use run::{

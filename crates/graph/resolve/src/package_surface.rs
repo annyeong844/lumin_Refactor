@@ -601,7 +601,7 @@ pub(super) fn unresolved_no_target(specifier: &str) -> PackageResolution {
             specifier: specifier.to_owned(),
             candidates: Vec::new(),
             target_scope: Some(UnresolvedTargetScope::KnownNoTarget {
-                package: crate::package_name(specifier),
+                package: lumin_model::external_package_name(specifier),
             }),
         },
         limitation: None,

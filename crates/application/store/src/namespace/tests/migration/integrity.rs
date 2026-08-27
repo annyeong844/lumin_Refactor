@@ -3988,6 +3988,34 @@ fn migration_rejects_invalid_unfinished_operation_liveness()
 }
 
 #[test]
+fn migration_authenticates_completed_operation_lock_contents()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("op-completed-lock-authentication".to_owned());
+    open_active_gate_for(
+        &store,
+        operation_id.as_str(),
+        "src/completed-lock-authentication.ts",
+    )?;
+    drop(store);
+
+    let lock_name = crate::gate::migration_operation_lock_name(&operation_id);
+    fs::write(
+        root.path().join(".lumin").join(lock_name),
+        b"forged-completed-operation",
+    )?;
+
+    let store = open_store(root.path())?;
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(message))
+            if message.contains("operation liveness lock name disagrees with its owner")
+    ));
+    Ok(())
+}
+
+#[test]
 fn migration_rejects_unsupported_gate_evidence_schemas() -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
     let store = open_store(root.path())?;
