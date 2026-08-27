@@ -18,7 +18,7 @@ use lumin_evidence::{
     derive_pre_write_admission_signals, derive_pre_write_final_validation_signals,
     derive_protected_semantic_inputs, derive_unsealed_gate_observation_binding,
     gate_abandon_request_digest, gate_policy, post_write_request_digest, pre_write_request_digest,
-    seal_analysis_snapshot,
+    seal_analysis_snapshot, validate_run_evidence_identities, validate_run_evidence_inputs,
 };
 use lumin_model::{ObservationBinding, RepoPath, SealedGateObservation};
 use serde::{Serialize, de::DeserializeOwned};
@@ -2316,6 +2316,16 @@ fn validate_analysis_snapshot(
             snapshot.evidence.schema_version
         )));
     }
+    validate_run_evidence_identities(&snapshot.evidence).map_err(|error| {
+        StoreError::Integrity(format!(
+            "gate {gate_key} {role} contains invalid run evidence: {error}"
+        ))
+    })?;
+    validate_run_evidence_inputs(&snapshot.evidence, &snapshot.inputs).map_err(|error| {
+        StoreError::Integrity(format!(
+            "gate {gate_key} {role} evidence disagrees with its semantic inputs: {error}"
+        ))
+    })?;
     let mut input_paths = BTreeSet::new();
     if snapshot
         .inputs

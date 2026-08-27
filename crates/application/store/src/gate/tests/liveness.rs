@@ -163,11 +163,21 @@ fn old_generation_operation_reopens_before_any_late_mutation()
     let store = open_store(root.path())?;
     let operation_id = OperationId::from_string("op-generation-change".to_owned());
     let stale = store.begin_operation(&operation_id)?;
-    store.rewrite_current_store_header_as_prior_for_test()?;
-    let observed = store.migrate_lifecycle_store()?;
     let source = path("src/generation.ts")?;
     let request_digest = canonical_pre_write_digest(&source);
     let source_lease = current_lease(root.path(), &source)?;
+    assert!(matches!(
+        stale.reserve_pre_write(
+            &request_digest,
+            std::slice::from_ref(&source),
+            std::slice::from_ref(&source_lease),
+            &options(),
+            rejected_test_observation,
+        )?,
+        PreWriteStart::Analyze { .. }
+    ));
+    store.rewrite_current_store_header_as_prior_for_test()?;
+    let observed = store.migrate_lifecycle_store()?;
 
     assert!(matches!(
         stale.reserve_pre_write(
@@ -182,10 +192,10 @@ fn old_generation_operation_reopens_before_any_late_mutation()
             observed: actual,
         }) if expected == crate::StoreGeneration::INITIAL && actual == observed
     ));
-    assert!(matches!(
-        store.load_operation(&operation_id),
-        Err(StoreError::OperationNotFound(_))
-    ));
+    assert_eq!(
+        store.load_operation(&operation_id)?.status,
+        GateOperationStatus::Pending
+    );
 
     drop(stale);
     let reopened = store.begin_operation(&operation_id)?;
@@ -199,6 +209,26 @@ fn old_generation_operation_reopens_before_any_late_mutation()
         )?,
         PreWriteStart::Analyze { .. }
     ));
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn migration_rejects_an_unreferenced_contended_operation_lock()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("op-unreferenced-migration-lock".to_owned());
+    let session = store.begin_operation(&operation_id)?;
+    store.rewrite_current_store_header_as_prior_for_test()?;
+
+    assert!(matches!(
+        store.migrate_lifecycle_store(),
+        Err(StoreError::Integrity(detail))
+            if detail.contains("contended operation liveness lock cannot be authenticated")
+    ));
+    drop(session);
+    store.migrate_lifecycle_store()?;
     Ok(())
 }
 

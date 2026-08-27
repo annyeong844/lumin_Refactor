@@ -16,8 +16,8 @@ use lumin_model::{
     BuildIdentity, CapabilityState, EvidenceId, FindingDisposition, FindingId, FindingRelationId,
     GateId, Limitation, LogicalSourceId, PayloadSnapshotId, PhysicalFileIdentity, RepoPath,
     RepositoryId, ResolutionOutcome, ResolutionProfile, ResolutionProfileSource, ResolvedSourceUse,
-    RunId, SelectedResolutionProfile, SourceKind, SourceRoleClassification, SourceSpan,
-    SymbolNamespace, append_length_prefixed, digest_hex,
+    ReviewOnlyReason, RunId, SelectedResolutionProfile, SourceKind, SourceRoleClassification,
+    SourceRoles, SourceSpan, SourceUnitId, SymbolNamespace, append_length_prefixed, digest_hex,
 };
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
@@ -513,6 +513,7 @@ pub fn validate_run_evidence_identities(
             .iter()
             .map(|record| (record.source_id.as_str(), &record.source_id, &record.path)),
     )?;
+    validate_source_inventory(evidence)?;
     require_source_records(
         "source contexts",
         evidence
@@ -543,6 +544,11 @@ pub fn validate_run_evidence_identities(
         .iter()
         .map(|record| record.source_id.as_str())
         .collect::<BTreeSet<_>>();
+    let source_observations = evidence
+        .source_observations
+        .iter()
+        .map(|record| (record.source_id.as_str(), record))
+        .collect::<BTreeMap<_, _>>();
     let ordered_source_ids = evidence
         .source_observations
         .iter()
@@ -574,6 +580,22 @@ pub fn validate_run_evidence_identities(
             return Err(RunEvidenceIdentityError::MissingReference {
                 collection: "dependency-owner consumers",
                 identity: owner.consumer.as_str().to_owned(),
+            });
+        }
+        let manifest_root = RepoPath::from_canonical_bytes(&owner.manifest_path.canonical)
+            .ok()
+            .and_then(|path| path.parent())
+            .map(|path| RepoPathProjection::from(&path));
+        let consumer_root = evidence
+            .source_contexts
+            .iter()
+            .find(|context| context.source_id == owner.consumer)
+            .and_then(|context| context.package_root.as_ref());
+        if manifest_root.as_ref() != Some(&owner.package_root)
+            || consumer_root != Some(&owner.package_root)
+        {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "dependency-owner package roots",
             });
         }
     }
@@ -653,6 +675,7 @@ pub fn validate_run_evidence_identities(
             collection: "resolution-profile provenance",
         });
     }
+    validate_resolution_profile_coverage(evidence, &source_ids)?;
     for resolution in &evidence.resolutions {
         if !source_ids.contains(resolution.source_use.importer.as_str()) {
             return Err(RunEvidenceIdentityError::MissingReference {
@@ -668,7 +691,19 @@ pub fn validate_run_evidence_identities(
                 identity: target.as_str().to_owned(),
             });
         }
+        if matches!(
+            &resolution.outcome,
+            ResolutionOutcome::NonSourceAsset { specifier }
+                | ResolutionOutcome::Unresolved { specifier, .. }
+                | ResolutionOutcome::Unsupported { specifier, .. }
+                if specifier != &resolution.source_use.specifier
+        ) {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "resolution outcome specifiers",
+            });
+        }
     }
+    validate_limitations(evidence, &source_ids)?;
     validate_analysis_metrics(evidence)?;
     require_unique(
         "findings",
@@ -683,6 +718,29 @@ pub fn validate_run_evidence_identities(
         {
             return Err(RunEvidenceIdentityError::InventoryMismatch {
                 collection: "the compiled finding registry",
+            });
+        }
+        let expected_claims = [
+            format!(
+                "export `{}` has zero grounded exact fan-in",
+                finding.exported_name
+            ),
+            format!(
+                "export `{}` has zero production fan-in and is consumed only by test-like sources",
+                finding.exported_name
+            ),
+        ];
+        let classifications = evidence
+            .source_classifications
+            .iter()
+            .find(|record| record.source_id == finding.source_id)
+            .map(|record| record.classifications.clone())
+            .unwrap_or_default();
+        if !expected_claims.contains(&finding.claim)
+            || finding.disposition != finding_disposition(&classifications)
+        {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "rule-owned finding payloads",
             });
         }
         if !finding.nested_collections_available
@@ -744,6 +802,46 @@ pub fn validate_run_evidence_identities(
                     identity: record.evidence_id.as_str().to_owned(),
                 });
             }
+            let Some(observation) = source_observations.get(record.source_id.as_str()) else {
+                return Err(RunEvidenceIdentityError::MissingReference {
+                    collection: "finding evidence source observations",
+                    identity: record.source_id.as_str().to_owned(),
+                });
+            };
+            if !is_sha256_hex(&record.payload_sha256)
+                || observation.payload_snapshot_id
+                    != PayloadSnapshotId::for_capture(
+                        &observation.physical_identity,
+                        &record.payload_sha256,
+                    )
+            {
+                return Err(RunEvidenceIdentityError::InventoryMismatch {
+                    collection: "finding evidence captured payloads",
+                });
+            }
+        }
+        let definitions = finding
+            .evidence
+            .iter()
+            .filter(|record| record.kind == "definition")
+            .collect::<Vec<_>>();
+        if definitions.len() != 1
+            || definitions[0].source_id != finding.source_id
+            || definitions[0].path != finding.path
+            || definitions[0].span != finding.span
+        {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "finding definition evidence",
+            });
+        }
+        if finding
+            .evidence
+            .iter()
+            .any(|record| !matches!(record.kind.as_str(), "definition" | "test-only-reexport"))
+        {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "the compiled finding-evidence registry",
+            });
         }
         let finding_evidence_ids = finding
             .evidence
@@ -780,6 +878,24 @@ pub fn validate_run_evidence_identities(
                 return Err(RunEvidenceIdentityError::MissingReference {
                     collection: "finding relation grounding evidence",
                     identity: relation.grounding_evidence_id.as_str().to_owned(),
+                });
+            }
+            let grounding = finding
+                .evidence
+                .iter()
+                .find(|record| record.evidence_id == relation.grounding_evidence_id);
+            let target = evidence
+                .findings
+                .iter()
+                .find(|target| target.finding_id == relation.target_finding_id);
+            if relation.kind != "test-only-reexport"
+                || grounding.is_none_or(|record| {
+                    record.kind != "test-only-reexport"
+                        || target.is_none_or(|target| target.source_id != record.source_id)
+                })
+            {
+                return Err(RunEvidenceIdentityError::InventoryMismatch {
+                    collection: "finding relation semantics",
                 });
             }
         }
@@ -843,6 +959,332 @@ pub fn validate_run_evidence_identities(
         }
     }
     Ok(())
+}
+
+pub fn validate_run_evidence_inputs(
+    evidence: &RunEvidence,
+    inputs: &[SemanticInputRecord],
+) -> Result<(), RunEvidenceIdentityError> {
+    let inputs_by_path = inputs
+        .iter()
+        .map(|input| (input.path.canonical.as_slice(), input))
+        .collect::<BTreeMap<_, _>>();
+    let contexts = evidence
+        .source_contexts
+        .iter()
+        .map(|context| (context.source_id.as_str(), context))
+        .collect::<BTreeMap<_, _>>();
+    for observation in &evidence.source_observations {
+        let context = contexts
+            .get(observation.source_id.as_str())
+            .ok_or_else(|| RunEvidenceIdentityError::MissingReference {
+                collection: "source-observation contexts",
+                identity: observation.source_id.as_str().to_owned(),
+            })?;
+        let input = inputs_by_path
+            .get(context.path.canonical.as_slice())
+            .ok_or_else(|| RunEvidenceIdentityError::MissingReference {
+                collection: "source-observation semantic inputs",
+                identity: observation.source_id.as_str().to_owned(),
+            })?;
+        let expected = input
+            .payload_sha256
+            .as_deref()
+            .zip(input.physical_identity.as_ref())
+            .map(|(payload, physical)| PayloadSnapshotId::for_capture(physical, payload));
+        if input.state != SemanticInputState::Source
+            || input.physical_identity.as_ref() != Some(&observation.physical_identity)
+            || expected.as_ref() != Some(&observation.payload_snapshot_id)
+        {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "source-observation semantic inputs",
+            });
+        }
+    }
+
+    let package_roots = inputs
+        .iter()
+        .filter_map(|input| {
+            let path = RepoPath::from_canonical_bytes(&input.path.canonical).ok()?;
+            (input.state == SemanticInputState::ConfigPresent
+                && path.file_name_portable() == Some("package.json"))
+            .then(|| path.parent())
+            .flatten()
+        })
+        .collect::<Vec<_>>();
+    for context in &evidence.source_contexts {
+        let path = RepoPath::from_canonical_bytes(&context.path.canonical).map_err(|_| {
+            RunEvidenceIdentityError::InventoryMismatch {
+                collection: "source-context package roots",
+            }
+        })?;
+        let expected = package_roots
+            .iter()
+            .filter(|root| path.is_within(root))
+            .max_by_key(|root| root.components_len())
+            .map(RepoPathProjection::from);
+        if context.package_root != expected {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "source-context package roots",
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_source_inventory(evidence: &RunEvidence) -> Result<(), RunEvidenceIdentityError> {
+    for classification in &evidence.source_classifications {
+        let unique = classification
+            .classifications
+            .iter()
+            .collect::<BTreeSet<_>>();
+        if unique.len() != classification.classifications.len()
+            || classification
+                .classifications
+                .iter()
+                .any(|record| !record.is_owner_produced())
+        {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "source-role classifications",
+            });
+        }
+    }
+
+    let known_roots = evidence
+        .source_contexts
+        .iter()
+        .filter_map(|context| context.package_root.as_ref())
+        .map(|root| root.canonical.as_slice())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter_map(|root| RepoPath::from_canonical_bytes(root).ok())
+        .collect::<Vec<_>>();
+    for context in &evidence.source_contexts {
+        let path = RepoPath::from_canonical_bytes(&context.path.canonical).map_err(|_| {
+            RunEvidenceIdentityError::InventoryMismatch {
+                collection: "source-context paths",
+            }
+        })?;
+        if SourceKind::from_repo_path(&path) != Some(context.kind) {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "source-context kinds",
+            });
+        }
+        let expected_root = known_roots
+            .iter()
+            .filter(|root| path.is_within(root))
+            .max_by_key(|root| root.components_len())
+            .map(RepoPathProjection::from);
+        if context.package_root != expected_root {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "source package-root ownership",
+            });
+        }
+        let classifications = evidence
+            .source_classifications
+            .iter()
+            .find(|record| record.source_id == context.source_id)
+            .map(|record| record.classifications.as_slice())
+            .unwrap_or_default();
+        let declaration_count = classifications
+            .iter()
+            .filter(|record| record.role == lumin_model::SourceClassificationRole::Declaration)
+            .count();
+        if declaration_count != usize::from(context.kind.is_declaration()) {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "source declaration classifications",
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_resolution_profile_coverage(
+    evidence: &RunEvidence,
+    source_ids: &BTreeSet<&str>,
+) -> Result<(), RunEvidenceIdentityError> {
+    if evidence
+        .resolution_profiles
+        .windows(2)
+        .any(|pair| pair[0].source_id >= pair[1].source_id)
+    {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "resolution-profile ordering",
+        });
+    }
+    let profile_sources = evidence
+        .resolution_profiles
+        .iter()
+        .map(|profile| profile.source_id.as_str())
+        .collect::<BTreeSet<_>>();
+    for source_id in source_ids.difference(&profile_sources) {
+        let context = evidence
+            .source_contexts
+            .iter()
+            .find(|context| context.source_id.as_str() == *source_id)
+            .ok_or_else(|| RunEvidenceIdentityError::MissingReference {
+                collection: "resolution-profile source contexts",
+                identity: (*source_id).to_owned(),
+            })?;
+        let unsupported_profile = evidence.limitations.iter().any(|limitation| {
+            let Limitation::TsconfigSemanticsUnsupported { path, detail } = limitation else {
+                return false;
+            };
+            detail.starts_with("unsupported moduleResolution value ")
+                && context
+                    .configuration_paths
+                    .iter()
+                    .any(|configured| configured.display == *path)
+        });
+        if !unsupported_profile {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "resolution-profile coverage",
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_limitations(
+    evidence: &RunEvidence,
+    source_ids: &BTreeSet<&str>,
+) -> Result<(), RunEvidenceIdentityError> {
+    let mut canonical = evidence.limitations.clone();
+    canonical.sort_by(Limitation::canonical_cmp);
+    canonical.dedup();
+    if canonical != evidence.limitations {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "canonical limitation ordering",
+        });
+    }
+
+    let require_source = |collection: &'static str,
+                          source: &LogicalSourceId|
+     -> Result<(), RunEvidenceIdentityError> {
+        if source_ids.contains(source.as_str()) {
+            Ok(())
+        } else {
+            Err(RunEvidenceIdentityError::MissingReference {
+                collection,
+                identity: source.as_str().to_owned(),
+            })
+        }
+    };
+    for limitation in &evidence.limitations {
+        match limitation {
+            Limitation::JsRecoverableParseLocal { source_id, .. }
+            | Limitation::JsModuleUseUnknown { source_id, .. }
+            | Limitation::AliasShapeUnsupported { source_id, .. }
+            | Limitation::AbsoluteInternalSpecifierUnsupported { source_id, .. }
+            | Limitation::SfcDialectUnavailable { source_id, .. }
+            | Limitation::SfcDecompositionUnknown { source_id, .. }
+            | Limitation::VueTemplateOpaque { source_id, .. } => {
+                require_source("limitation sources", source_id)?;
+            }
+            Limitation::DynamicImportNonLiteral {
+                source_id,
+                source_unit,
+                candidates,
+                ..
+            } => {
+                require_source("limitation sources", source_id)?;
+                if matches!(source_unit, SourceUnitId::Logical(unit) if unit != source_id) {
+                    return Err(RunEvidenceIdentityError::InventoryMismatch {
+                        collection: "limitation source units",
+                    });
+                }
+                for candidate in candidates {
+                    require_source("limitation dynamic-import candidates", candidate)?;
+                }
+            }
+            Limitation::ImportMetaGlobUnsupported {
+                source_id,
+                source_unit,
+                candidates,
+                ..
+            } => {
+                require_source("limitation sources", source_id)?;
+                if matches!(source_unit.as_ref(), SourceUnitId::Logical(unit) if unit != source_id)
+                {
+                    return Err(RunEvidenceIdentityError::InventoryMismatch {
+                        collection: "limitation source units",
+                    });
+                }
+                for candidate in candidates {
+                    require_source("limitation import-meta-glob candidates", candidate)?;
+                }
+            }
+            Limitation::CommonJsComputedMember {
+                source_id, target, ..
+            } => {
+                require_source("limitation sources", source_id)?;
+                require_source("limitation CommonJS targets", target)?;
+            }
+            Limitation::InternalSpecifierUnresolved { importer, .. } => {
+                require_source("limitation importers", importer)?;
+            }
+            Limitation::PublicSurfaceUnsupported {
+                importer: Some(importer),
+                ..
+            } => {
+                require_source("limitation importers", importer)?;
+            }
+            Limitation::DependencyOwnerAmbiguous {
+                required_intent: Some(intent),
+                ..
+            } => {
+                require_source("limitation dependency-intent consumers", &intent.consumer)?;
+            }
+            Limitation::VueExternalScriptModeConflict {
+                source_id,
+                target_source_id,
+                ..
+            } => {
+                require_source("limitation sources", source_id)?;
+                require_source("limitation SFC external-script targets", target_source_id)?;
+            }
+            Limitation::SourcePayloadUnavailable { .. }
+            | Limitation::PackageImportsUnsupported { .. }
+            | Limitation::ImporterFormatUnsupported { .. }
+            | Limitation::PublicSurfaceUnsupported { importer: None, .. }
+            | Limitation::TsconfigSemanticsUnsupported { .. }
+            | Limitation::PackageIdentityUnsupported { .. }
+            | Limitation::PackageMetadataUnobservable { .. }
+            | Limitation::PackagePrivacyUnsupported { .. }
+            | Limitation::DependencyOwnerAmbiguous {
+                required_intent: None,
+                ..
+            }
+            | Limitation::WorkspaceOwnershipUnsupported { .. }
+            | Limitation::PnpmDependencySemanticsUnsupported { .. }
+            | Limitation::TsconfigPayloadUnavailable { .. }
+            | Limitation::ExplicitEntryUnavailable { .. } => {}
+        }
+    }
+    Ok(())
+}
+
+fn finding_disposition(classifications: &[SourceRoleClassification]) -> FindingDisposition {
+    let roles = SourceRoles::from_classifications(classifications.to_vec());
+    match (roles.is_generated(), roles.is_vendored()) {
+        (false, false) => FindingDisposition::ReviewCandidate,
+        (true, false) => FindingDisposition::ReviewOnly {
+            reason: ReviewOnlyReason::GeneratedSource,
+        },
+        (false, true) => FindingDisposition::ReviewOnly {
+            reason: ReviewOnlyReason::VendoredSource,
+        },
+        (true, true) => FindingDisposition::ReviewOnly {
+            reason: ReviewOnlyReason::GeneratedAndVendoredSource,
+        },
+    }
+}
+
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn validate_sfc_capability_states(evidence: &RunEvidence) -> Result<(), RunEvidenceIdentityError> {
@@ -965,7 +1407,7 @@ fn extraction_limitation_source_id(limitation: &Limitation) -> Option<&LogicalSo
 }
 
 fn validate_analysis_metrics(evidence: &RunEvidence) -> Result<(), RunEvidenceIdentityError> {
-    let expected = [
+    let mut expected = vec![
         (
             "logicalSourceCount",
             evidence.source_observations.len(),
@@ -992,6 +1434,27 @@ fn validate_analysis_metrics(evidence: &RunEvidence) -> Result<(), RunEvidenceId
             evidence.metrics.payload_snapshot_count,
         ),
     ];
+    let kinds = evidence
+        .source_contexts
+        .iter()
+        .map(|context| (context.source_id.as_str(), context.kind))
+        .collect::<BTreeMap<_, _>>();
+    if kinds.values().all(|kind| kind.is_js_family()) {
+        expected.push((
+            "jsParseProductCount",
+            evidence
+                .source_observations
+                .iter()
+                .filter_map(|record| {
+                    kinds
+                        .get(record.source_id.as_str())
+                        .map(|kind| (&record.payload_snapshot_id, *kind))
+                })
+                .collect::<BTreeSet<_>>()
+                .len(),
+            evidence.metrics.js_parse_product_count,
+        ));
+    }
     for (metric, expected, observed) in expected {
         if observed != expected {
             return Err(RunEvidenceIdentityError::MetricMismatch {
@@ -1106,7 +1569,8 @@ pub fn sort_findings(findings: &mut [FindingRecord]) {
 mod tests {
     use lumin_model::{
         FindingDisposition, ImportKind, ModuleRequestKind, ResolutionOutcome, ResolutionProfile,
-        ResolvedSourceUse, SourceUseFact, SymbolNamespace,
+        ResolvedSourceUse, ReviewOnlyReason, SourceClassificationRole,
+        SourceRoleConfigurationSource, SourceRoleReason, SourceUseFact, SymbolNamespace,
     };
 
     use super::*;
@@ -1114,7 +1578,7 @@ mod tests {
     fn finding_fixture(path: &RepoPath, exported_name: &str) -> FindingRecord {
         let source_id = LogicalSourceId::from_path(path);
         let span = SourceSpan { start: 0, end: 1 };
-        let payload_sha256 = format!("{exported_name}-payload");
+        let payload_sha256 = digest_hex(path.canonical_bytes());
         FindingRecord {
             finding_id: FindingId::for_export(
                 DEAD_EXPORT_RULE_ID,
@@ -1127,7 +1591,7 @@ mod tests {
             severity: Severity::Warning,
             confidence: Confidence::Grounded,
             disposition: FindingDisposition::ReviewCandidate,
-            claim: format!("{exported_name} fixture"),
+            claim: format!("export `{exported_name}` has zero grounded exact fan-in"),
             source_id: source_id.clone(),
             path: RepoPathProjection::from(path),
             span: span.clone(),
@@ -1149,6 +1613,25 @@ mod tests {
                 payload_sha256,
             }],
             relations: Vec::new(),
+        }
+    }
+
+    fn test_reexport_evidence(path: &RepoPath, start: u32, end: u32) -> EvidenceRecord {
+        let source_id = LogicalSourceId::from_path(path);
+        let payload_sha256 = digest_hex(path.canonical_bytes());
+        EvidenceRecord {
+            evidence_id: EvidenceId::for_source_span(
+                "test-only-reexport",
+                &source_id,
+                start,
+                end,
+                &payload_sha256,
+            ),
+            kind: "test-only-reexport".to_owned(),
+            source_id,
+            path: RepoPathProjection::from(path),
+            span: SourceSpan { start, end },
+            payload_sha256,
         }
     }
 
@@ -1202,25 +1685,48 @@ mod tests {
             .map(|(source_id, path)| SourceContextRecord {
                 source_id: source_id.clone(),
                 path: path.clone(),
-                kind: SourceKind::TypeScript,
+                kind: RepoPath::from_canonical_bytes(&path.canonical)
+                    .ok()
+                    .as_ref()
+                    .and_then(SourceKind::from_repo_path)
+                    .unwrap_or(SourceKind::TypeScript),
                 package_root: None,
                 configuration_paths: Vec::new(),
             })
             .collect();
-        evidence.source_observations = sources
+        evidence.resolution_profiles = sources
             .keys()
-            .map(|source_id| SourceObservationRecord {
+            .map(|source_id| SelectedResolutionProfile {
                 source_id: source_id.clone(),
-                physical_identity: PhysicalFileIdentity::Unix {
+                profile: ResolutionProfile::Bundler,
+                source: ResolutionProfileSource::ProductDefault,
+            })
+            .collect();
+        evidence.source_observations = sources
+            .iter()
+            .enumerate()
+            .map(|(index, (source_id, path))| {
+                let physical_identity = PhysicalFileIdentity::Unix {
                     device: 1,
-                    inode: 1,
-                },
-                payload_snapshot_id: PayloadSnapshotId::from_string("payload".to_owned()),
+                    inode: u64::try_from(index).unwrap_or(u64::MAX) + 1,
+                };
+                let payload_sha256 = RepoPath::from_canonical_bytes(&path.canonical)
+                    .map(|path| digest_hex(path.canonical_bytes()))
+                    .unwrap_or_else(|_| digest_hex(&path.canonical));
+                SourceObservationRecord {
+                    source_id: source_id.clone(),
+                    payload_snapshot_id: PayloadSnapshotId::for_capture(
+                        &physical_identity,
+                        &payload_sha256,
+                    ),
+                    physical_identity,
+                }
             })
             .collect();
         evidence.metrics.logical_source_count = sources.len();
-        evidence.metrics.physical_source_count = usize::from(!sources.is_empty());
-        evidence.metrics.payload_snapshot_count = usize::from(!sources.is_empty());
+        evidence.metrics.physical_source_count = sources.len();
+        evidence.metrics.payload_snapshot_count = sources.len();
+        evidence.metrics.js_parse_product_count = sources.len();
     }
 
     #[test]
@@ -1601,6 +2107,7 @@ mod tests {
             manifest_payload_sha256: "manifest".to_owned(),
             lockfile_path: None,
         });
+        evidence.source_contexts[0].package_root = Some(RepoPathProjection::from(&package_root));
         validate_run_evidence_identities(&evidence)?;
 
         evidence.dependency_owners[0].consumer =
@@ -1727,6 +2234,9 @@ mod tests {
                 source: ResolutionProfileSource::Invocation,
             },
         ];
+        evidence
+            .resolution_profiles
+            .sort_by(|left, right| left.source_id.cmp(&right.source_id));
         validate_run_evidence_identities(&evidence)?;
 
         let mut mixed_provenance = evidence.clone();
@@ -1788,7 +2298,248 @@ mod tests {
         assert!(matches!(
             validate_run_evidence_identities(&evidence),
             Err(RunEvidenceIdentityError::InventoryMismatch {
-                collection: "source package-root containment"
+                collection: "source package-root ownership"
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_source_inventory_uses_owner_kinds_and_role_shapes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = RepoPath::from_portable("src/owned.ts")?;
+        let mut evidence = run_evidence_fixture(Vec::new());
+        populate_source_inventory(
+            &mut evidence,
+            [(
+                LogicalSourceId::from_path(&path),
+                RepoPathProjection::from(&path),
+            )],
+        );
+        evidence.source_classifications[0]
+            .classifications
+            .push(SourceRoleClassification {
+                role: SourceClassificationRole::Test,
+                rule_version: lumin_model::SOURCE_CLASSIFICATION_RULE_VERSION.to_owned(),
+                reason: SourceRoleReason::ExplicitTestRole,
+                configuration_source: SourceRoleConfigurationSource::Invocation,
+            });
+        validate_run_evidence_identities(&evidence)?;
+
+        let mut forged_kind = evidence.clone();
+        forged_kind.source_contexts[0].kind = SourceKind::JavaScript;
+        assert!(matches!(
+            validate_run_evidence_identities(&forged_kind),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "source-context kinds"
+            })
+        ));
+
+        let mut forged_role = evidence;
+        forged_role.source_classifications[0].classifications[0].rule_version =
+            "source-classification.opaque".to_owned();
+        assert!(matches!(
+            validate_run_evidence_identities(&forged_role),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "source-role classifications"
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_profiles_and_resolution_specifiers_cover_their_sources()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = RepoPath::from_portable("src/importer.ts")?;
+        let source_id = LogicalSourceId::from_path(&path);
+        let mut evidence = run_evidence_fixture(Vec::new());
+        populate_source_inventory(
+            &mut evidence,
+            [(source_id.clone(), RepoPathProjection::from(&path))],
+        );
+        evidence.resolutions.push(ResolvedSourceUse {
+            source_use: SourceUseFact {
+                importer: source_id,
+                specifier: "./asset.css".to_owned(),
+                imported_name: None,
+                local_name: None,
+                namespace: SymbolNamespace::Value,
+                kind: ImportKind::SideEffect,
+                request_kind: ModuleRequestKind::StaticImport,
+                span: SourceSpan { start: 0, end: 1 },
+            },
+            outcome: ResolutionOutcome::NonSourceAsset {
+                specifier: "./asset.css".to_owned(),
+            },
+        });
+        validate_run_evidence_identities(&evidence)?;
+
+        let mut missing_profile = evidence.clone();
+        missing_profile.resolution_profiles.clear();
+        assert!(matches!(
+            validate_run_evidence_identities(&missing_profile),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "resolution-profile coverage"
+            })
+        ));
+
+        let mut forged_specifier = evidence;
+        let ResolutionOutcome::NonSourceAsset { specifier } =
+            &mut forged_specifier.resolutions[0].outcome
+        else {
+            unreachable!()
+        };
+        *specifier = "./forged.css".to_owned();
+        assert!(matches!(
+            validate_run_evidence_identities(&forged_specifier),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "resolution outcome specifiers"
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_limitations_are_canonical_and_reference_owned_sources()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = RepoPath::from_portable("src/limited.ts")?;
+        let source_id = LogicalSourceId::from_path(&path);
+        let mut evidence = run_evidence_fixture(Vec::new());
+        populate_source_inventory(
+            &mut evidence,
+            [(source_id.clone(), RepoPathProjection::from(&path))],
+        );
+        evidence.limitations = vec![
+            Limitation::JsRecoverableParseLocal {
+                source_id: source_id.clone(),
+                detail: "recoverable".to_owned(),
+            },
+            Limitation::JsModuleUseUnknown {
+                source_id,
+                detail: "unknown use".to_owned(),
+            },
+        ];
+        evidence.limitations.sort_by(Limitation::canonical_cmp);
+        capability_mut(&mut evidence, DEAD_CODE_CAPABILITY_ID)?.state = CapabilityState::Incomplete;
+        validate_run_evidence_identities(&evidence)?;
+
+        let mut reordered = evidence.clone();
+        reordered.limitations.reverse();
+        assert!(matches!(
+            validate_run_evidence_identities(&reordered),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "canonical limitation ordering"
+            })
+        ));
+
+        let mut dangling = evidence;
+        let Limitation::JsRecoverableParseLocal { source_id, .. } = &mut dangling.limitations[1]
+        else {
+            unreachable!()
+        };
+        *source_id = LogicalSourceId::from_path(&RepoPath::from_portable("src/missing.ts")?);
+        dangling.limitations.sort_by(Limitation::canonical_cmp);
+        assert!(matches!(
+            validate_run_evidence_identities(&dangling),
+            Err(RunEvidenceIdentityError::MissingReference {
+                collection: "limitation sources",
+                ..
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_findings_require_rule_owned_payloads_and_definition_evidence()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = RepoPath::from_portable("src/finding-payload.ts")?;
+        let evidence = run_evidence_fixture(vec![finding_fixture(&path, "owned")]);
+        validate_run_evidence_identities(&evidence)?;
+
+        let mut forged_claim = evidence.clone();
+        forged_claim.findings[0].claim = "forged claim".to_owned();
+        assert!(matches!(
+            validate_run_evidence_identities(&forged_claim),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "rule-owned finding payloads"
+            })
+        ));
+
+        let mut forged_disposition = evidence.clone();
+        forged_disposition.findings[0].disposition = FindingDisposition::ReviewOnly {
+            reason: ReviewOnlyReason::GeneratedSource,
+        };
+        assert!(matches!(
+            validate_run_evidence_identities(&forged_disposition),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "rule-owned finding payloads"
+            })
+        ));
+
+        let mut missing_definition = evidence;
+        missing_definition.findings[0].evidence.clear();
+        assert!(matches!(
+            validate_run_evidence_identities(&missing_definition),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "finding definition evidence"
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn gate_inputs_bind_source_captures_and_exact_package_roots()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source_path = RepoPath::from_portable("packages/a/src/main.ts")?;
+        let package_root = RepoPath::from_portable("packages/a")?;
+        let manifest_path = RepoPath::from_portable("packages/a/package.json")?;
+        let source_id = LogicalSourceId::from_path(&source_path);
+        let mut evidence = run_evidence_fixture(Vec::new());
+        populate_source_inventory(
+            &mut evidence,
+            [(source_id.clone(), RepoPathProjection::from(&source_path))],
+        );
+        evidence.source_contexts[0].package_root = Some(RepoPathProjection::from(&package_root));
+        validate_run_evidence_identities(&evidence)?;
+        let observation = &evidence.source_observations[0];
+        let payload_sha256 = digest_hex(source_path.canonical_bytes());
+        let inputs = vec![
+            SemanticInputRecord {
+                path: RepoPathProjection::from(&source_path),
+                state: SemanticInputState::Source,
+                payload_sha256: Some(payload_sha256),
+                physical_identity: Some(observation.physical_identity.clone()),
+                absence_parent: None,
+                physical_redirect_sha256: None,
+            },
+            SemanticInputRecord {
+                path: RepoPathProjection::from(&manifest_path),
+                state: SemanticInputState::ConfigPresent,
+                payload_sha256: Some(digest_hex(b"{}")),
+                physical_identity: None,
+                absence_parent: None,
+                physical_redirect_sha256: None,
+            },
+        ];
+        validate_run_evidence_inputs(&evidence, &inputs)?;
+
+        let mut forged_capture = inputs.clone();
+        forged_capture[0].payload_sha256 = Some(digest_hex(b"forged"));
+        assert!(matches!(
+            validate_run_evidence_inputs(&evidence, &forged_capture),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "source-observation semantic inputs"
+            })
+        ));
+
+        let mut forged_root = evidence;
+        forged_root.source_contexts[0].package_root = Some(RepoPathProjection::from(
+            &RepoPath::from_portable("packages/a/src")?,
+        ));
+        assert!(matches!(
+            validate_run_evidence_inputs(&forged_root, &inputs),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "source-context package roots"
             })
         ));
         Ok(())
@@ -1801,38 +2552,32 @@ mod tests {
         let mut source = finding_fixture(&path, "source");
         let target_a = finding_fixture(&path, "target-a");
         let target_b = finding_fixture(&path, "target-b");
-        let source_id = source.source_id.clone();
-        let second_evidence = EvidenceRecord {
-            evidence_id: EvidenceId::for_source_span("reference", &source_id, 2, 3, "second"),
-            kind: "reference".to_owned(),
-            source_id,
-            path: RepoPathProjection::from(&path),
-            span: SourceSpan { start: 2, end: 3 },
-            payload_sha256: "second".to_owned(),
-        };
+        let second_evidence = test_reexport_evidence(&path, 2, 3);
+        let third_evidence = test_reexport_evidence(&path, 4, 5);
         source.evidence.push(second_evidence);
+        source.evidence.push(third_evidence);
         source.relations = vec![
             FindingRelationRecord {
                 relation_id: finding_relation_id(
                     &source.finding_id,
-                    "beta",
+                    "test-only-reexport",
                     &target_b.finding_id,
                     &source.evidence[1].evidence_id,
                 ),
-                kind: "beta".to_owned(),
+                kind: "test-only-reexport".to_owned(),
                 target_finding_id: target_b.finding_id.clone(),
                 grounding_evidence_id: source.evidence[1].evidence_id.clone(),
             },
             FindingRelationRecord {
                 relation_id: finding_relation_id(
                     &source.finding_id,
-                    "alpha",
+                    "test-only-reexport",
                     &target_a.finding_id,
-                    &source.evidence[0].evidence_id,
+                    &source.evidence[2].evidence_id,
                 ),
-                kind: "alpha".to_owned(),
+                kind: "test-only-reexport".to_owned(),
                 target_finding_id: target_a.finding_id.clone(),
-                grounding_evidence_id: source.evidence[0].evidence_id.clone(),
+                grounding_evidence_id: source.evidence[2].evidence_id.clone(),
             },
         ];
         let mut findings = vec![target_b, source, target_a];
@@ -1914,7 +2659,7 @@ mod tests {
             logical_source_count: 3,
             physical_source_count: 2,
             payload_snapshot_count: 2,
-            js_parse_product_count: 7,
+            js_parse_product_count: 2,
         };
         validate_run_evidence_identities(&evidence)?;
 
@@ -1922,12 +2667,14 @@ mod tests {
             "logicalSourceCount",
             "physicalSourceCount",
             "payloadSnapshotCount",
+            "jsParseProductCount",
         ] {
             let mut forged = evidence.clone();
             match metric {
                 "logicalSourceCount" => forged.metrics.logical_source_count += 1,
                 "physicalSourceCount" => forged.metrics.physical_source_count += 1,
                 "payloadSnapshotCount" => forged.metrics.payload_snapshot_count += 1,
+                "jsParseProductCount" => forged.metrics.js_parse_product_count += 1,
                 _ => unreachable!(),
             }
             assert!(matches!(
@@ -1947,15 +2694,17 @@ mod tests {
         let path = RepoPath::from_portable("src/relation-endpoints.ts")?;
         let mut source = finding_fixture(&path, "source");
         let target = finding_fixture(&path, "target");
-        let grounding_evidence_id = source.evidence[0].evidence_id.clone();
+        let grounding = test_reexport_evidence(&path, 2, 3);
+        let grounding_evidence_id = grounding.evidence_id.clone();
+        source.evidence.push(grounding);
         source.relations.push(FindingRelationRecord {
             relation_id: finding_relation_id(
                 &source.finding_id,
-                "related",
+                "test-only-reexport",
                 &target.finding_id,
                 &grounding_evidence_id,
             ),
-            kind: "related".to_owned(),
+            kind: "test-only-reexport".to_owned(),
             target_finding_id: target.finding_id.clone(),
             grounding_evidence_id,
         });
@@ -1973,7 +2722,9 @@ mod tests {
         ));
 
         let mut missing_grounding = canonical;
-        missing_grounding.findings[0].evidence.clear();
+        missing_grounding.findings[0]
+            .evidence
+            .retain(|record| record.kind == "definition");
         assert!(matches!(
             validate_run_evidence_identities(&missing_grounding),
             Err(RunEvidenceIdentityError::MissingReference {
@@ -1988,58 +2739,17 @@ mod tests {
     fn persisted_relations_require_the_owner_derived_identity()
     -> Result<(), Box<dyn std::error::Error>> {
         let path = RepoPath::from_portable("src/relation.ts")?;
-        let source_id = LogicalSourceId::from_path(&path);
-        let finding_id = FindingId::for_export(
-            DEAD_EXPORT_RULE_ID,
-            &source_id,
-            SymbolNamespace::Value,
-            "source",
-        );
-        let target_finding_id = FindingId::for_export(
-            DEAD_EXPORT_RULE_ID,
-            &source_id,
-            SymbolNamespace::Value,
-            "target",
-        );
-        let evidence_id =
-            EvidenceId::for_source_span("definition", &source_id, 0, 1, "payload-sha256");
-        let evidence = RunEvidence {
-            schema_version: RUN_EVIDENCE_SCHEMA_VERSION.to_owned(),
-            capabilities: vec![CapabilityRecord {
-                capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
-                state: CapabilityState::Complete,
-            }],
-            resolution_profiles: Vec::new(),
-            source_classifications: Vec::new(),
-            source_contexts: Vec::new(),
-            source_observations: Vec::new(),
-            dependency_owners: Vec::new(),
-            resolutions: Vec::new(),
-            metrics: AnalysisMetrics::default(),
-            findings: vec![FindingRecord {
-                finding_id,
-                rule_id: DEAD_EXPORT_RULE_ID.to_owned(),
-                owner_capability: DEAD_CODE_CAPABILITY_ID.to_owned(),
-                severity: Severity::Warning,
-                confidence: Confidence::Grounded,
-                disposition: FindingDisposition::ReviewCandidate,
-                claim: "relation identity fixture".to_owned(),
-                source_id,
-                path: RepoPathProjection::from(&path),
-                span: SourceSpan { start: 0, end: 1 },
-                exported_name: "source".to_owned(),
-                namespace: SymbolNamespace::Value,
-                nested_collections_available: true,
-                evidence: Vec::new(),
-                relations: vec![FindingRelationRecord {
-                    relation_id: FindingRelationId::from_string("relation_forged".to_owned()),
-                    kind: "related".to_owned(),
-                    target_finding_id,
-                    grounding_evidence_id: evidence_id,
-                }],
-            }],
-            limitations: Vec::new(),
-        };
+        let mut source = finding_fixture(&path, "source");
+        let target = finding_fixture(&path, "target");
+        let grounding = test_reexport_evidence(&path, 2, 3);
+        source.relations.push(FindingRelationRecord {
+            relation_id: FindingRelationId::from_string("relation_forged".to_owned()),
+            kind: "test-only-reexport".to_owned(),
+            target_finding_id: target.finding_id.clone(),
+            grounding_evidence_id: grounding.evidence_id.clone(),
+        });
+        source.evidence.push(grounding);
+        let evidence = run_evidence_fixture(vec![source, target]);
 
         assert!(matches!(
             validate_run_evidence_identities(&evidence),
@@ -2055,52 +2765,9 @@ mod tests {
     fn persisted_finding_evidence_requires_the_owner_derived_identity()
     -> Result<(), Box<dyn std::error::Error>> {
         let path = RepoPath::from_portable("src/evidence.ts")?;
-        let source_id = LogicalSourceId::from_path(&path);
-        let finding_id = FindingId::for_export(
-            DEAD_EXPORT_RULE_ID,
-            &source_id,
-            SymbolNamespace::Value,
-            "evidence",
-        );
-        let evidence = RunEvidence {
-            schema_version: RUN_EVIDENCE_SCHEMA_VERSION.to_owned(),
-            capabilities: vec![CapabilityRecord {
-                capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
-                state: CapabilityState::Complete,
-            }],
-            resolution_profiles: Vec::new(),
-            source_classifications: Vec::new(),
-            source_contexts: Vec::new(),
-            source_observations: Vec::new(),
-            dependency_owners: Vec::new(),
-            resolutions: Vec::new(),
-            metrics: AnalysisMetrics::default(),
-            findings: vec![FindingRecord {
-                finding_id,
-                rule_id: DEAD_EXPORT_RULE_ID.to_owned(),
-                owner_capability: DEAD_CODE_CAPABILITY_ID.to_owned(),
-                severity: Severity::Warning,
-                confidence: Confidence::Grounded,
-                disposition: FindingDisposition::ReviewCandidate,
-                claim: "evidence identity fixture".to_owned(),
-                source_id: source_id.clone(),
-                path: RepoPathProjection::from(&path),
-                span: SourceSpan { start: 0, end: 1 },
-                exported_name: "evidence".to_owned(),
-                namespace: SymbolNamespace::Value,
-                nested_collections_available: true,
-                evidence: vec![EvidenceRecord {
-                    evidence_id: EvidenceId::from_string("evidence_forged".to_owned()),
-                    kind: "definition".to_owned(),
-                    source_id,
-                    path: RepoPathProjection::from(&path),
-                    span: SourceSpan { start: 0, end: 1 },
-                    payload_sha256: "payload-sha256".to_owned(),
-                }],
-                relations: Vec::new(),
-            }],
-            limitations: Vec::new(),
-        };
+        let mut finding = finding_fixture(&path, "evidence");
+        finding.evidence[0].evidence_id = EvidenceId::from_string("evidence_forged".to_owned());
+        let evidence = run_evidence_fixture(vec![finding]);
 
         assert!(matches!(
             validate_run_evidence_identities(&evidence),

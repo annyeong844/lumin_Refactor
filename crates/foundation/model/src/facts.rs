@@ -1,3 +1,5 @@
+use std::ffi::OsStr;
+use std::path::Path;
 use std::sync::Arc;
 
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
@@ -30,6 +32,40 @@ pub enum SourceKind {
 }
 
 impl SourceKind {
+    pub fn from_repo_path(path: &RepoPath) -> Option<Self> {
+        path.to_native_relative()
+            .ok()
+            .as_deref()
+            .and_then(Self::from_native_path)
+    }
+
+    pub fn from_native_path(path: &Path) -> Option<Self> {
+        let name = path.file_name()?;
+        if os_ends_with_ascii(name, ".d.mts") {
+            return Some(Self::DeclarationMts);
+        }
+        if os_ends_with_ascii(name, ".d.cts") {
+            return Some(Self::DeclarationCts);
+        }
+        if os_ends_with_ascii(name, ".d.ts") {
+            return Some(Self::DeclarationTs);
+        }
+        match path.extension().and_then(OsStr::to_str) {
+            Some("js") => Some(Self::JavaScript),
+            Some("jsx") => Some(Self::Jsx),
+            Some("mjs") => Some(Self::Mjs),
+            Some("cjs") => Some(Self::CommonJs),
+            Some("ts") => Some(Self::TypeScript),
+            Some("tsx") => Some(Self::Tsx),
+            Some("mts") => Some(Self::Mts),
+            Some("cts") => Some(Self::Cts),
+            Some("vue") => Some(Self::Vue),
+            Some("svelte") => Some(Self::Svelte),
+            Some("astro") => Some(Self::Astro),
+            _ => None,
+        }
+    }
+
     pub fn is_declaration(self) -> bool {
         matches!(
             self,
@@ -329,6 +365,69 @@ pub struct SourceRoleClassification {
     pub rule_version: String,
     pub reason: SourceRoleReason,
     pub configuration_source: SourceRoleConfigurationSource,
+}
+
+impl SourceRoleClassification {
+    pub fn is_owner_produced(&self) -> bool {
+        if self.rule_version != SOURCE_CLASSIFICATION_RULE_VERSION {
+            return false;
+        }
+        match (self.role, self.reason, self.configuration_source) {
+            (
+                SourceClassificationRole::Test,
+                SourceRoleReason::TestPathRule | SourceRoleReason::TestBasenameRule,
+                SourceRoleConfigurationSource::CompiledDefault,
+            )
+            | (
+                SourceClassificationRole::Generated,
+                SourceRoleReason::LeadingGeneratedComment,
+                SourceRoleConfigurationSource::CompiledDefault,
+            )
+            | (
+                SourceClassificationRole::Declaration,
+                SourceRoleReason::DeclarationExtension,
+                SourceRoleConfigurationSource::CompiledDefault,
+            ) => true,
+            (role, reason, source) => {
+                matches!(
+                    (role, reason),
+                    (
+                        SourceClassificationRole::Test,
+                        SourceRoleReason::ExplicitTestRole
+                    ) | (
+                        SourceClassificationRole::Production,
+                        SourceRoleReason::ExplicitProductionRole
+                    ) | (
+                        SourceClassificationRole::Generated,
+                        SourceRoleReason::ExplicitGeneratedRole
+                    ) | (
+                        SourceClassificationRole::Vendor,
+                        SourceRoleReason::ExplicitVendorRole
+                    ) | (
+                        SourceClassificationRole::Authored,
+                        SourceRoleReason::ExplicitAuthoredRole
+                    )
+                ) && matches!(
+                    source,
+                    SourceRoleConfigurationSource::Configuration
+                        | SourceRoleConfigurationSource::Invocation
+                )
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn os_ends_with_ascii(value: &OsStr, suffix: &str) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    value.as_bytes().ends_with(suffix.as_bytes())
+}
+
+#[cfg(windows)]
+fn os_ends_with_ascii(value: &OsStr, suffix: &str) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    let suffix = suffix.encode_utf16().collect::<Vec<_>>();
+    value.encode_wide().collect::<Vec<_>>().ends_with(&suffix)
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]

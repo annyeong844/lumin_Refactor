@@ -70,6 +70,15 @@ fn validate_state_namespace_inventory(
         "trash".to_owned(),
     ]);
     let attempt_locks = crate::publication::migration_attempt_lock_names(&snapshot.attempt_leases)?;
+    let operation_locks = snapshot
+        .operations
+        .iter()
+        .map(|(key, bytes)| {
+            parse_record::<OperationRecord>("operations", key, bytes).map(|operation| {
+                crate::gate::migration_operation_lock_name(&operation.operation_id)
+            })
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
     let migration_owned = super::super::super::artifacts::read_journal(guard)?
         .map(|journal| journal.owned_namespace_names())
         .transpose()?
@@ -88,6 +97,7 @@ fn validate_state_namespace_inventory(
         })?;
         if fixed.contains(&name)
             || attempt_locks.contains(&name)
+            || operation_locks.contains(&name)
             || migration_owned.contains(&name)
             || crate::gate::validate_migration_operation_lock_inventory(guard, &name)?
         {

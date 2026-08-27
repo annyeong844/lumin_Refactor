@@ -299,11 +299,14 @@ pub(crate) fn validate_migration_operation_lock_inventory(
             validated?;
             unlocked?;
         }
-        // A live OperationSession can precede its first durable operation row
-        // or outlive result commit through transport. The canonical name plus
-        // its contended owner lock is the only readable inventory proof on
-        // Windows; unlocked files are checked against their self-binding.
-        Err(error) if namespace::lock_contended(&error) => return Ok(true),
+        // A contended lock that has no durable operation row cannot expose its
+        // self-binding through a second Windows handle. Migration must wait
+        // rather than treating the attacker-controlled filename as authority.
+        Err(error) if namespace::lock_contended(&error) => {
+            return Err(StoreError::Integrity(format!(
+                "contended operation liveness lock cannot be authenticated during migration: {name}"
+            )));
+        }
         Err(error) => return Err(io_error(error)),
     }
     #[cfg(not(windows))]
@@ -364,6 +367,10 @@ fn operation_lock_name(operation_id: &OperationId) -> String {
         "operation-liveness-{}.lock",
         digest_hex(operation_id.as_str().as_bytes())
     )
+}
+
+pub(crate) fn migration_operation_lock_name(operation_id: &OperationId) -> String {
+    operation_lock_name(operation_id)
 }
 
 fn operation_lock_path(state_dir: &std::path::Path, operation_id: &OperationId) -> PathBuf {

@@ -467,7 +467,7 @@ fn classify_entry(
             EntryUnavailableReason::OutOfDomain,
         ));
     }
-    if source_kind(&relative).is_none() {
+    if SourceKind::from_native_path(&relative).is_none() {
         return Ok(EntryClassification::Unavailable(
             EntryUnavailableReason::OutOfDomain,
         ));
@@ -819,7 +819,7 @@ fn read_root_config(
 pub fn is_supported_source_path(path: &RepoPath) -> bool {
     native_relative(path)
         .ok()
-        .is_some_and(|native| source_kind(&native).is_some())
+        .is_some_and(|native| SourceKind::from_native_path(&native).is_some())
 }
 
 fn collect_repository_files(
@@ -1010,7 +1010,7 @@ impl CollectedFiles {
         if context.patterns.includes.is_empty() && context.ignore.is_ignored(relative, false) {
             return Ok(());
         }
-        let Some(kind) = source_kind(relative) else {
+        let Some(kind) = SourceKind::from_native_path(relative) else {
             return Ok(());
         };
         if reserved_state::semantic_input_resolves_into_reserved_state(context.root, &path)? {
@@ -1613,33 +1613,6 @@ fn is_hard_excluded(path: &Path) -> bool {
         return false;
     };
     name.to_str().is_some_and(is_hard_excluded_component)
-}
-
-fn source_kind(path: &Path) -> Option<SourceKind> {
-    let name = path.file_name()?;
-    if os_ends_with_ascii(name, ".d.mts") {
-        return Some(SourceKind::DeclarationMts);
-    }
-    if os_ends_with_ascii(name, ".d.cts") {
-        return Some(SourceKind::DeclarationCts);
-    }
-    if os_ends_with_ascii(name, ".d.ts") {
-        return Some(SourceKind::DeclarationTs);
-    }
-    match path.extension().and_then(OsStr::to_str) {
-        Some("js") => Some(SourceKind::JavaScript),
-        Some("jsx") => Some(SourceKind::Jsx),
-        Some("mjs") => Some(SourceKind::Mjs),
-        Some("cjs") => Some(SourceKind::CommonJs),
-        Some("ts") => Some(SourceKind::TypeScript),
-        Some("tsx") => Some(SourceKind::Tsx),
-        Some("mts") => Some(SourceKind::Mts),
-        Some("cts") => Some(SourceKind::Cts),
-        Some("vue") => Some(SourceKind::Vue),
-        Some("svelte") => Some(SourceKind::Svelte),
-        Some("astro") => Some(SourceKind::Astro),
-        _ => None,
-    }
 }
 
 #[cfg(unix)]

@@ -1,8 +1,8 @@
 use lumin_evidence::{
-    CapabilityRecord, DEAD_CODE_CAPABILITY_ID, GateBaselineObservationInput,
-    GateCloseObservationInput, PathPrefixIdentity, PostWriteFinalValidationEvidence,
-    PreWriteFinalValidationEvidence, RunEvidence, SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID,
-    SemanticInputState, UnsealedGateObservationInputs, WriteLeaseKind, apply_worktree_transition,
+    CapabilityRecord, GateBaselineObservationInput, GateCloseObservationInput, PathPrefixIdentity,
+    PostWriteFinalValidationEvidence, PreWriteFinalValidationEvidence, RUN_EVIDENCE_CAPABILITY_IDS,
+    RunEvidence, SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, SemanticInputState,
+    UnsealedGateObservationInputs, WriteLeaseKind, apply_worktree_transition,
     derive_gate_baseline_observation_id, derive_gate_close_observation_id,
     derive_protected_semantic_inputs, derive_unsealed_gate_observation_binding,
     seal_analysis_snapshot,
@@ -1248,10 +1248,17 @@ fn empty_snapshot() -> AnalysisSnapshot {
         Vec::new(),
         RunEvidence {
             schema_version: "lumin-evidence.v1".to_owned(),
-            capabilities: vec![CapabilityRecord {
-                capability_id: DEAD_CODE_CAPABILITY_ID.to_owned(),
-                state: CapabilityState::Complete,
-            }],
+            capabilities: RUN_EVIDENCE_CAPABILITY_IDS
+                .into_iter()
+                .map(|capability_id| CapabilityRecord {
+                    capability_id: capability_id.to_owned(),
+                    state: if matches!(capability_id, "sfc/svelte.v1" | "sfc/astro.v1") {
+                        CapabilityState::Unavailable
+                    } else {
+                        CapabilityState::Complete
+                    },
+                })
+                .collect(),
             resolution_profiles: Vec::new(),
             source_classifications: Vec::new(),
             source_contexts: Vec::new(),

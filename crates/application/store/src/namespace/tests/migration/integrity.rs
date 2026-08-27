@@ -2290,8 +2290,8 @@ fn migration_authenticates_every_complete_gate_evidence_payload()
         assert!(matches!(
             store.migrate_lifecycle_store(),
             Err(StoreError::Integrity(message))
-                if message.contains("observation")
-                    && message.contains("cannot be reconstructed")
+                if message.contains("invalid run evidence")
+                    && message.contains("logicalSourceCount")
         ));
     }
     Ok(())
@@ -3499,10 +3499,20 @@ fn migration_recomputes_opening_signals_from_the_sealed_snapshot()
             .ok_or("opening-policy gate omitted its baseline")?;
         let mut evidence = baseline.snapshot.evidence.clone();
         evidence
+            .limitations
+            .push(lumin_model::Limitation::SourcePayloadUnavailable {
+                path: "src/opening-policy.ts".to_owned(),
+                detail: "fixture payload is unavailable".to_owned(),
+            });
+        evidence
+            .limitations
+            .sort_by(lumin_model::Limitation::canonical_cmp);
+        let dead_code_state = lumin_evidence::dead_code_capability_state(&evidence.limitations);
+        evidence
             .capabilities
             .first_mut()
             .ok_or("opening-policy evidence omitted its capability")?
-            .state = CapabilityState::Failed;
+            .state = dead_code_state;
         baseline.snapshot = seal_analysis_snapshot(
             baseline.snapshot.inputs.clone(),
             evidence,

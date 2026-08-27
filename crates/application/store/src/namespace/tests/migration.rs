@@ -17,7 +17,7 @@ use lumin_evidence::{
     post_write_request_digest, pre_write_request_digest, seal_analysis_snapshot,
 };
 use lumin_model::{
-    AttemptId, AttemptStatus, CacheEvictionAuthorizationSetId, CapabilityState, GateId,
+    AttemptId, AttemptStatus, CacheEvictionAuthorizationSetId, CapabilityState, GateId, Limitation,
     ObservationBinding, OperationId, PhysicalFileIdentity, RepoPath, SealedGateObservation,
     UnsealedObservationReason,
 };
@@ -2510,10 +2510,20 @@ fn append_non_authorizing_close_for_migration(
         .ok_or("migration close omitted its baseline")?;
     let mut current_evidence = evidence();
     current_evidence
+        .limitations
+        .push(Limitation::SourcePayloadUnavailable {
+            path: "src/incomplete-close.ts".to_owned(),
+            detail: "fixture payload is unavailable".to_owned(),
+        });
+    current_evidence
+        .limitations
+        .sort_by(Limitation::canonical_cmp);
+    let dead_code_state = lumin_evidence::dead_code_capability_state(&current_evidence.limitations);
+    current_evidence
         .capabilities
         .first_mut()
         .ok_or("migration close evidence omitted its required capability")?
-        .state = CapabilityState::Failed;
+        .state = dead_code_state;
     let snapshot = seal_analysis_snapshot(
         protected_semantic_inputs.clone(),
         current_evidence,
