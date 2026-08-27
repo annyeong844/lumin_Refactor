@@ -2,14 +2,16 @@ use lumin_evidence::{
     CapabilityRecord, GateBaselineObservationInput, GateCloseObservationInput, PathPrefixIdentity,
     PostWriteFinalValidationEvidence, PreWriteFinalValidationEvidence, RUN_EVIDENCE_CAPABILITY_IDS,
     RunEvidence, SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, SemanticInputState,
+    SourceClassificationRecord, SourceContextRecord, SourceObservationRecord,
     UnsealedGateObservationInputs, WriteLeaseKind, apply_worktree_transition,
     derive_gate_baseline_observation_id, derive_gate_close_observation_id,
     derive_protected_semantic_inputs, derive_unsealed_gate_observation_binding,
     seal_analysis_snapshot,
 };
 use lumin_model::{
-    CapabilityState, GateBaselineObservationId, GateCloseObservationId, ObservationBinding,
-    RepoPath, SealedGateObservation, UnsealedObservationReason,
+    CapabilityState, GateBaselineObservationId, GateCloseObservationId, LogicalSourceId,
+    ObservationBinding, PayloadSnapshotId, RepoPath, ResolutionProfile, ResolutionProfileSource,
+    SealedGateObservation, SelectedResolutionProfile, SourceKind, UnsealedObservationReason,
 };
 
 use super::*;
@@ -1274,6 +1276,47 @@ fn empty_snapshot() -> AnalysisSnapshot {
     )
 }
 
+fn evidence_for_source(
+    path: &RepoPath,
+    lease: &WriteLease,
+    payload_sha256: &str,
+) -> Result<RunEvidence, Box<dyn std::error::Error>> {
+    let mut evidence = empty_snapshot().evidence;
+    let source_id = LogicalSourceId::from_path(path);
+    let projection = RepoPathProjection::from(path);
+    let physical_identity = lease
+        .physical_identity
+        .clone()
+        .ok_or("source fixture omitted its physical identity")?;
+    evidence.source_classifications = vec![SourceClassificationRecord {
+        source_id: source_id.clone(),
+        path: projection.clone(),
+        classifications: Vec::new(),
+    }];
+    evidence.source_contexts = vec![SourceContextRecord {
+        source_id: source_id.clone(),
+        path: projection,
+        kind: SourceKind::from_repo_path(path).ok_or("source fixture uses an unsupported kind")?,
+        package_root: None,
+        configuration_paths: Vec::new(),
+    }];
+    evidence.source_observations = vec![SourceObservationRecord {
+        source_id: source_id.clone(),
+        payload_snapshot_id: PayloadSnapshotId::for_capture(&physical_identity, payload_sha256),
+        physical_identity,
+    }];
+    evidence.resolution_profiles = vec![SelectedResolutionProfile {
+        source_id,
+        profile: ResolutionProfile::Bundler,
+        source: ResolutionProfileSource::ProductDefault,
+    }];
+    evidence.metrics.logical_source_count = 1;
+    evidence.metrics.physical_source_count = 1;
+    evidence.metrics.payload_snapshot_count = 1;
+    evidence.metrics.js_parse_product_count = 1;
+    Ok(evidence)
+}
+
 fn semantic_input(
     value: &str,
     payload: &str,
@@ -1315,6 +1358,7 @@ fn open_active_gate_with_protected_inputs(
     if !native_source.exists() {
         std::fs::write(&native_source, b"export const fixture = 1;\n")?;
     }
+    let source_bytes = std::fs::read(&native_source)?;
     let operation_id = OperationId::from_string(operation_id.to_owned());
     let session = store.begin_operation(&operation_id)?;
     let source_path = RepoPath::from_portable(source)?;
@@ -1341,17 +1385,21 @@ fn open_active_gate_with_protected_inputs(
     let source_input = SemanticInputRecord {
         path: source.clone(),
         state: SemanticInputState::Source,
-        payload_sha256: Some(lumin_model::digest_hex(b"export const fixture = 1;\n")),
+        payload_sha256: Some(lumin_model::digest_hex(&source_bytes)),
         physical_identity: source_lease.physical_identity.clone(),
         absence_parent: None,
         physical_redirect_sha256: None,
     };
+    let source_payload_sha256 = source_input
+        .payload_sha256
+        .as_deref()
+        .ok_or("source fixture omitted its payload digest")?;
+    let source_evidence = evidence_for_source(&source_path, &source_lease, source_payload_sha256)?;
     let mut snapshot_inputs = protected_semantic_inputs;
     snapshot_inputs.push(source_input);
-    let empty = empty_snapshot();
     let snapshot = seal_analysis_snapshot(
         snapshot_inputs,
-        empty.evidence,
+        source_evidence,
         analysis_options.scan_invocation.clone(),
         Vec::new(),
     );

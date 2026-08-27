@@ -32,6 +32,7 @@ pub use liveness::OperationSession;
 pub(crate) use liveness::{
     migration_operation_lock_name, validate_migration_liveness_lease,
     validate_migration_operation_liveness, validate_migration_operation_lock_inventory,
+    validate_migration_registered_operation_lock_inventory,
 };
 pub(crate) use receipts::{operation_retention_identity, validation_receipt_for_operation};
 use receipts::{

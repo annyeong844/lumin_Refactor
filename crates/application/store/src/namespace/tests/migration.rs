@@ -11,6 +11,7 @@ use lumin_evidence::{
     PreWriteFinalValidationEvidence, RUN_EVIDENCE_CAPABILITY_IDS, RepoPathProjection,
     RetentionPlanScope, RunEvidence, SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID,
     SemanticInputRecord, SemanticInputState, SemanticReadReservationBinding,
+    SourceClassificationRecord, SourceContextRecord, SourceObservationRecord,
     UnsealedGateObservationInputs, WriteLease, WriteLeaseKind, apply_worktree_transition,
     derive_gate_baseline_observation_id, derive_gate_close_observation_id,
     derive_protected_semantic_inputs, derive_unsealed_gate_observation_binding, gate_policy,
@@ -18,8 +19,9 @@ use lumin_evidence::{
 };
 use lumin_model::{
     AttemptId, AttemptStatus, CacheEvictionAuthorizationSetId, CapabilityState, GateId, Limitation,
-    ObservationBinding, OperationId, PhysicalFileIdentity, RepoPath, SealedGateObservation,
-    UnsealedObservationReason,
+    LogicalSourceId, ObservationBinding, OperationId, PayloadSnapshotId, PhysicalFileIdentity,
+    RepoPath, ResolutionProfile, ResolutionProfileSource, SealedGateObservation,
+    SelectedResolutionProfile, SourceKind, UnsealedObservationReason,
 };
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 
@@ -93,6 +95,11 @@ fn prior_store_migrates_once_and_retains_terminal_provenance()
 
     let migrated = store.migrate_lifecycle_store()?;
     assert_eq!(migrated, next_generation()?);
+    assert_eq!(store.migrate_lifecycle_store()?, migrated);
+    let operation_id = OperationId::from_string("op-native-after-migration".to_owned());
+    drop(store.begin_operation(&operation_id)?);
+    let mut attempt = store.begin_attempt()?;
+    store.publish_run(&mut attempt, &native_vue_evidence(root.path())?, |_| Ok(()))?;
     assert_eq!(store.migrate_lifecycle_store()?, migrated);
     assert!(
         root.path()
@@ -2332,6 +2339,53 @@ fn evidence() -> RunEvidence {
     }
 }
 
+fn native_vue_evidence(root: &std::path::Path) -> Result<RunEvidence, Box<dyn std::error::Error>> {
+    let source = RepoPath::from_portable("src/component.vue")?;
+    let native = root.join("src/component.vue");
+    fs::create_dir_all(native.parent().ok_or("Vue fixture omitted its parent")?)?;
+    fs::write(&native, b"<script>export const value = 1;</script>\n")?;
+    let lease = observed_lease(root, &source)?;
+    let physical_identity = lease
+        .physical_identity
+        .ok_or("Vue fixture omitted its physical identity")?;
+    let payload_sha256 = lumin_model::digest_hex(&fs::read(native)?);
+    let source_id = LogicalSourceId::from_path(&source);
+    let path = RepoPathProjection::from(&source);
+    let mut evidence = evidence();
+    evidence.source_classifications = vec![SourceClassificationRecord {
+        source_id: source_id.clone(),
+        path: path.clone(),
+        classifications: Vec::new(),
+    }];
+    evidence.source_contexts = vec![SourceContextRecord {
+        source_id: source_id.clone(),
+        path,
+        kind: SourceKind::Vue,
+        package_root: None,
+        configuration_paths: Vec::new(),
+    }];
+    evidence.source_observations = vec![SourceObservationRecord {
+        source_id: source_id.clone(),
+        payload_snapshot_id: PayloadSnapshotId::for_capture(&physical_identity, &payload_sha256),
+        physical_identity,
+    }];
+    evidence.resolution_profiles = vec![SelectedResolutionProfile {
+        source_id,
+        profile: ResolutionProfile::Bundler,
+        source: ResolutionProfileSource::ProductDefault,
+    }];
+    evidence.metrics.logical_source_count = 1;
+    evidence.metrics.physical_source_count = 1;
+    evidence.metrics.payload_snapshot_count = 1;
+    evidence
+        .capabilities
+        .iter_mut()
+        .find(|capability| capability.capability_id == "sfc/vue.v1")
+        .ok_or("Vue fixture omitted its capability")?
+        .state = CapabilityState::Complete;
+    Ok(evidence)
+}
+
 fn options() -> GateAnalysisOptions {
     GateAnalysisOptions {
         jobs: 1,
@@ -2508,7 +2562,7 @@ fn append_non_authorizing_close_for_migration(
         .baseline
         .as_ref()
         .ok_or("migration close omitted its baseline")?;
-    let mut current_evidence = evidence();
+    let mut current_evidence = baseline.snapshot.evidence.clone();
     current_evidence
         .limitations
         .push(Limitation::SourcePayloadUnavailable {
@@ -2524,11 +2578,22 @@ fn append_non_authorizing_close_for_migration(
         .first_mut()
         .ok_or("migration close evidence omitted its required capability")?
         .state = dead_code_state;
+    let mut current_inputs = baseline.snapshot.inputs.clone();
+    for input in &protected_semantic_inputs {
+        if let Some(current) = current_inputs
+            .iter_mut()
+            .find(|current| current.path.canonical == input.path.canonical)
+        {
+            *current = input.clone();
+        } else {
+            current_inputs.push(input.clone());
+        }
+    }
     let snapshot = seal_analysis_snapshot(
-        protected_semantic_inputs.clone(),
+        current_inputs,
         current_evidence,
-        Default::default(),
-        Vec::new(),
+        baseline.snapshot.scan_invocation.clone(),
+        baseline.snapshot.entry_selections.clone(),
     );
     let (signals, _, deltas) = gate_policy::closing_signals(
         &baseline.snapshot,
@@ -2637,7 +2702,7 @@ fn close_active_gate_for_migration(
     let mut current_inputs = reconciled_baseline.inputs.clone();
     current_inputs.push(SemanticInputRecord {
         path: source.clone(),
-        state: SemanticInputState::Source,
+        state: SemanticInputState::ConfigPresent,
         payload_sha256: Some(format!("payload-{}", gate_id.as_str())),
         physical_identity: None,
         absence_parent: None,

@@ -18,8 +18,8 @@ use lumin_evidence::{
     derive_pre_write_admission_signals, derive_pre_write_final_validation_signals,
     derive_protected_semantic_inputs, derive_unsealed_gate_observation_binding,
     gate_abandon_request_digest, gate_policy, post_write_request_digest, pre_write_request_digest,
-    seal_analysis_snapshot, validate_migration_run_evidence, validate_run_evidence_identities,
-    validate_run_evidence_inputs, validate_run_evidence_tier,
+    seal_analysis_snapshot, validate_migration_run_evidence, validate_migration_run_evidence_tier,
+    validate_run_evidence_identities, validate_run_evidence_inputs, validate_run_evidence_tier,
 };
 use lumin_model::{ObservationBinding, RepoPath, SealedGateObservation};
 use serde::{Serialize, de::DeserializeOwned};
@@ -37,22 +37,35 @@ pub(super) fn validate_external_references(
     snapshot: &LogicalStoreSnapshot,
     guard: &NamespaceGuard,
 ) -> Result<(), StoreError> {
-    validate_external_references_with_mode(snapshot, guard, false)
+    validate_external_references_with_mode(snapshot, guard, false, false)
+}
+
+pub(super) fn validate_external_references_for_ordinary_admission(
+    snapshot: &LogicalStoreSnapshot,
+    guard: &NamespaceGuard,
+) -> Result<(), StoreError> {
+    validate_external_references_with_mode(snapshot, guard, false, true)
 }
 
 pub(super) fn validate_legacy_external_references(
     snapshot: &LogicalStoreSnapshot,
     guard: &NamespaceGuard,
 ) -> Result<(), StoreError> {
-    validate_external_references_with_mode(snapshot, guard, true)
+    validate_external_references_with_mode(snapshot, guard, true, false)
 }
 
 fn validate_external_references_with_mode(
     snapshot: &LogicalStoreSnapshot,
     guard: &NamespaceGuard,
     authenticate_legacy_evidence: bool,
+    allow_registered_operation_locks: bool,
 ) -> Result<(), StoreError> {
-    external::validate_external_references(snapshot, guard, authenticate_legacy_evidence)?;
+    external::validate_external_references(
+        snapshot,
+        guard,
+        authenticate_legacy_evidence,
+        allow_registered_operation_locks,
+    )?;
     crate::publication::validate_attempt_lease_locks(&snapshot.attempt_leases, guard)
 }
 
@@ -2400,6 +2413,18 @@ fn validate_analysis_snapshot(
             "gate {gate_key} {role} evidence disagrees with its scan tier: {error}"
         ))
     })?;
+    if authenticate_legacy_evidence {
+        validate_migration_run_evidence_tier(
+            &snapshot.evidence,
+            &snapshot.scan_invocation,
+            &snapshot.entry_selections,
+        )
+        .map_err(|error| {
+            StoreError::Integrity(format!(
+                "gate {gate_key} {role} contains unauthenticated migration tier evidence: {error}"
+            ))
+        })?;
+    }
     let mut input_paths = BTreeSet::new();
     if snapshot
         .inputs

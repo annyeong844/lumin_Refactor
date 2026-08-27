@@ -241,6 +241,13 @@ impl LogicalStoreSnapshot {
         validation::validate_external_references(self, guard)
     }
 
+    pub(super) fn validate_external_references_for_ordinary_admission(
+        &self,
+        guard: &NamespaceGuard,
+    ) -> Result<(), StoreError> {
+        validation::validate_external_references_for_ordinary_admission(self, guard)
+    }
+
     pub(super) fn validate_legacy_external_references(
         &self,
         guard: &NamespaceGuard,

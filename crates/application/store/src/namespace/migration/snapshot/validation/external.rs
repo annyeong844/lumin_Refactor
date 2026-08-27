@@ -24,6 +24,7 @@ pub(super) fn validate_external_references(
     snapshot: &LogicalStoreSnapshot,
     guard: &NamespaceGuard,
     authenticate_legacy_evidence: bool,
+    allow_registered_operation_locks: bool,
 ) -> Result<(), StoreError> {
     guard.validate_bound_entries()?;
     crate::cache::validate_external_snapshot(
@@ -52,13 +53,14 @@ pub(super) fn validate_external_references(
         )?;
     }
     validate_latest_pointers(snapshot, guard, &attempts)?;
-    validate_state_namespace_inventory(snapshot, guard)?;
+    validate_state_namespace_inventory(snapshot, guard, allow_registered_operation_locks)?;
     guard.validate_bound_entries()
 }
 
 fn validate_state_namespace_inventory(
     snapshot: &LogicalStoreSnapshot,
     guard: &NamespaceGuard,
+    allow_registered_operation_locks: bool,
 ) -> Result<(), StoreError> {
     let fixed = BTreeSet::from([
         "attempts".to_owned(),
@@ -103,7 +105,9 @@ fn validate_state_namespace_inventory(
         let row_backed_operation_lock = if let Some(operation) = operation_locks.get(&name) {
             if operation.status == GateOperationStatus::Pending {
                 crate::gate::validate_migration_operation_liveness(guard, operation)?;
-            } else if !crate::gate::validate_migration_operation_lock_inventory(guard, &name)? {
+            } else if !crate::gate::validate_migration_registered_operation_lock_inventory(
+                guard, &name,
+            )? {
                 return Err(StoreError::Integrity(format!(
                     "operation row references a noncanonical liveness lock: {name}"
                 )));
@@ -116,7 +120,11 @@ fn validate_state_namespace_inventory(
             || attempt_locks.contains(&name)
             || row_backed_operation_lock
             || migration_owned.contains(&name)
-            || crate::gate::validate_migration_operation_lock_inventory(guard, &name)?
+            || if allow_registered_operation_locks {
+                crate::gate::validate_migration_registered_operation_lock_inventory(guard, &name)?
+            } else {
+                crate::gate::validate_migration_operation_lock_inventory(guard, &name)?
+            }
         {
             continue;
         }

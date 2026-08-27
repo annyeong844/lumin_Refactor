@@ -14,8 +14,8 @@ use lumin_evidence::{
 use lumin_model::{
     AnalysisInputId, AttemptId, CapabilityState, DeltaFactFamily, DeltaKey,
     GateDeltaClassification, GateDeltaRecord, ObservationBinding, OperationId,
-    PhysicalFileIdentity, RepoPath, ResolutionProfile, RunId, SealedGateObservation,
-    UnsealedObservationReason, digest_hex,
+    PhysicalFileIdentity, RepoPath, ResolutionProfile, ResolutionProfileSource, RunId,
+    SealedGateObservation, UnsealedObservationReason, digest_hex,
 };
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition, WriteTransaction};
 
@@ -3275,9 +3275,14 @@ fn migration_binds_a_sealed_close_to_the_opening_invocation()
             .ok_or("close-invocation snapshot is missing")?;
         let mut invocation = snapshot.scan_invocation.clone();
         invocation.resolution_profile = Some(ResolutionProfile::Node16);
+        let mut evidence = snapshot.evidence.clone();
+        for profile in &mut evidence.resolution_profiles {
+            profile.profile = ResolutionProfile::Node16;
+            profile.source = ResolutionProfileSource::Invocation;
+        }
         revision.snapshot = Some(seal_analysis_snapshot(
             snapshot.inputs.clone(),
-            snapshot.evidence.clone(),
+            evidence,
             invocation,
             snapshot.entry_selections.clone(),
         ));

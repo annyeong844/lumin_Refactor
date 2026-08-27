@@ -18,8 +18,8 @@ use lumin_model::{
     PhysicalFileIdentity, RepoPath, RepositoryId, ResolutionOutcome, ResolutionProfile,
     ResolutionProfileSource, ResolvedSourceUse, ReviewOnlyReason, RunId, ScanRole,
     SelectedResolutionProfile, SourceClassificationRole, SourceKind, SourceRoleClassification,
-    SourceRoleConfigurationSource, SourceRoles, SourceSpan, SourceUnitId, SymbolNamespace,
-    append_length_prefixed, digest_hex, external_package_name,
+    SourceRoleConfigurationSource, SourceRoleReason, SourceRoles, SourceSpan, SourceUnitId,
+    SymbolNamespace, append_length_prefixed, digest_hex, external_package_name,
 };
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
@@ -42,6 +42,14 @@ pub const RELATIONS_ORDERING_ID: &str = "relations.v1";
 pub const CAPABILITIES_ORDERING_ID: &str = "capabilities.v1";
 pub const FILE_FINDINGS_ORDERING_ID: &str = "file-findings.v1";
 pub const ACTIVE_GATES_ORDERING_ID: &str = "active-gates.v1";
+const LOCKFILE_NAMES: [&str; 6] = [
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "bun.lock",
+    "bun.lockb",
+];
 
 // The architecture check must inspect Limitation variants outside macro token streams.
 #[allow(clippy::match_like_matches_macro)]
@@ -697,7 +705,8 @@ pub fn validate_run_evidence_identities(
             });
         }
         if let ResolutionOutcome::External { package } = &resolution.outcome
-            && package != &external_package_name(&resolution.source_use.specifier)
+            && (!is_bare_specifier(&resolution.source_use.specifier)
+                || package != &external_package_name(&resolution.source_use.specifier))
         {
             return Err(RunEvidenceIdentityError::InventoryMismatch {
                 collection: "external resolution package identities",
@@ -1048,6 +1057,7 @@ pub fn validate_run_evidence_inputs(
                 collection: "dependency-owner manifest semantic inputs",
             });
         }
+        validate_dependency_owner_lockfile(owner, &inputs_by_path)?;
     }
 
     let package_roots = inputs
@@ -1076,6 +1086,92 @@ pub fn validate_run_evidence_inputs(
                 collection: "source-context package roots",
             });
         }
+        let mut canonical_configuration_paths = context.configuration_paths.clone();
+        canonical_configuration_paths.sort();
+        canonical_configuration_paths.dedup();
+        if canonical_configuration_paths != context.configuration_paths
+            || context.configuration_paths.iter().any(|path| {
+                inputs_by_path
+                    .get(path.canonical.as_slice())
+                    .is_none_or(|input| input.state == SemanticInputState::Source)
+            })
+        {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "source-context configuration semantic inputs",
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_dependency_owner_lockfile(
+    owner: &DependencyOwnerRecord,
+    inputs_by_path: &BTreeMap<&[u8], &SemanticInputRecord>,
+) -> Result<(), RunEvidenceIdentityError> {
+    let mut directory =
+        RepoPath::from_canonical_bytes(&owner.package_root.canonical).map_err(|_| {
+            RunEvidenceIdentityError::InventoryMismatch {
+                collection: "dependency-owner lockfile semantic inputs",
+            }
+        })?;
+    let mut expected = None;
+    let mut captured_directory = false;
+    loop {
+        let candidates = LOCKFILE_NAMES
+            .iter()
+            .map(|name| {
+                directory.join_portable(name).map_err(|_| {
+                    RunEvidenceIdentityError::InventoryMismatch {
+                        collection: "dependency-owner lockfile semantic inputs",
+                    }
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let observed = candidates
+            .iter()
+            .filter_map(|path| {
+                inputs_by_path
+                    .get(path.canonical_bytes())
+                    .map(|input| (path, *input))
+            })
+            .collect::<Vec<_>>();
+        if observed.is_empty() {
+            break;
+        }
+        if observed.len() != LOCKFILE_NAMES.len() {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "dependency-owner lockfile semantic inputs",
+            });
+        }
+        captured_directory = true;
+        let present = observed
+            .iter()
+            .filter_map(|(path, input)| match input.state {
+                SemanticInputState::ConfigPresent => Some(Ok(RepoPathProjection::from(*path))),
+                SemanticInputState::Missing => None,
+                _ => Some(Err(RunEvidenceIdentityError::InventoryMismatch {
+                    collection: "dependency-owner lockfile semantic inputs",
+                })),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if present.len() > 1 {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "dependency-owner lockfile semantic inputs",
+            });
+        }
+        if let Some(selected) = present.into_iter().next() {
+            expected = Some(selected);
+            break;
+        }
+        let Some(parent) = directory.parent() else {
+            break;
+        };
+        directory = parent;
+    }
+    if !captured_directory || owner.lockfile_path != expected {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "dependency-owner lockfile semantic inputs",
+        });
     }
     Ok(())
 }
@@ -1090,6 +1186,29 @@ pub fn validate_run_evidence_tier(
     invocation: &ScanInvocationTier,
     entry_selections: &[EntrySelectionRecord],
 ) -> Result<(), RunEvidenceIdentityError> {
+    match invocation.resolution_profile {
+        Some(expected) => {
+            if evidence.resolution_profiles.iter().any(|profile| {
+                profile.profile != expected || profile.source != ResolutionProfileSource::Invocation
+            }) {
+                return Err(RunEvidenceIdentityError::InventoryMismatch {
+                    collection: "scan-invocation resolution profiles",
+                });
+            }
+        }
+        None => {
+            if evidence
+                .resolution_profiles
+                .iter()
+                .any(|profile| profile.source == ResolutionProfileSource::Invocation)
+            {
+                return Err(RunEvidenceIdentityError::InventoryMismatch {
+                    collection: "scan-invocation resolution profiles",
+                });
+            }
+        }
+    }
+
     let dependency_intents = invocation
         .dependency_intents
         .iter()
@@ -1103,6 +1222,37 @@ pub fn validate_run_evidence_tier(
     }) {
         return Err(RunEvidenceIdentityError::InventoryMismatch {
             collection: "dependency-owner invocation intents",
+        });
+    }
+    let dependency_intent_identities = invocation
+        .dependency_intents
+        .iter()
+        .map(|intent| {
+            RepoPath::from_canonical_bytes(&intent.path.canonical)
+                .map(|path| {
+                    (
+                        LogicalSourceId::from_path(&path),
+                        intent.dependency.as_str(),
+                    )
+                })
+                .map_err(|_| RunEvidenceIdentityError::InventoryMismatch {
+                    collection: "dependency-owner invocation intents",
+                })
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    if evidence.limitations.iter().any(|limitation| {
+        let Limitation::DependencyOwnerAmbiguous {
+            required_intent: Some(intent),
+            ..
+        } = limitation
+        else {
+            return false;
+        };
+        !dependency_intent_identities
+            .contains(&(intent.consumer.clone(), intent.dependency.as_str()))
+    }) {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "limitation dependency invocation intents",
         });
     }
 
@@ -1119,12 +1269,40 @@ pub fn validate_run_evidence_tier(
             if !invocation.role_overrides.iter().any(|rule| {
                 rule.role == role
                     && literal_invocation_pattern(&rule.pattern)
-                        .is_some_and(|pattern| pattern == record.path.display)
+                        .is_none_or(|pattern| pattern == record.path.display)
             }) {
                 return Err(RunEvidenceIdentityError::InventoryMismatch {
                     collection: "invocation source-role provenance",
                 });
             }
+        }
+    }
+    for rule in &invocation.role_overrides {
+        let Some(pattern) = literal_invocation_pattern(&rule.pattern) else {
+            continue;
+        };
+        let path = RepoPath::from_portable(pattern).map_err(|_| {
+            RunEvidenceIdentityError::InventoryMismatch {
+                collection: "invocation source-role provenance",
+            }
+        })?;
+        let Some(record) = evidence
+            .source_classifications
+            .iter()
+            .find(|record| record.path.canonical == path.canonical_bytes())
+        else {
+            continue;
+        };
+        let expected_role = SourceClassificationRole::from(rule.role);
+        let expected_reason = explicit_role_reason(rule.role);
+        if !record.classifications.iter().any(|classification| {
+            classification.role == expected_role
+                && classification.reason == expected_reason
+                && classification.configuration_source == SourceRoleConfigurationSource::Invocation
+        }) {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "invocation source-role provenance",
+            });
         }
     }
 
@@ -1220,6 +1398,52 @@ pub fn validate_migration_run_evidence(
     Ok(())
 }
 
+/// Reject legacy gate-tier facts whose producer relationship was not retained by v12.
+/// Native v13 admission authenticates these facts through current owner receipts; the
+/// v12 migration must not infer them from mutually editable projections.
+pub fn validate_migration_run_evidence_tier(
+    evidence: &RunEvidence,
+    invocation: &ScanInvocationTier,
+    entry_selections: &[EntrySelectionRecord],
+) -> Result<(), RunEvidenceIdentityError> {
+    if invocation
+        .role_overrides
+        .iter()
+        .any(|rule| literal_invocation_pattern(&rule.pattern).is_none())
+    {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "authenticated legacy role patterns",
+        });
+    }
+    if entry_selections
+        .iter()
+        .any(|entry| entry.source == EntrySource::Configuration)
+    {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "authenticated legacy configuration entries",
+        });
+    }
+    if evidence
+        .source_contexts
+        .iter()
+        .any(|context| !context.configuration_paths.is_empty())
+    {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "authenticated legacy source configuration paths",
+        });
+    }
+    if evidence
+        .resolutions
+        .iter()
+        .any(|resolution| matches!(&resolution.outcome, ResolutionOutcome::Internal { .. }))
+    {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "authenticated legacy internal resolutions",
+        });
+    }
+    Ok(())
+}
+
 fn scan_role_for_classification(role: SourceClassificationRole) -> Option<ScanRole> {
     match role {
         SourceClassificationRole::Test => Some(ScanRole::Test),
@@ -1228,6 +1452,16 @@ fn scan_role_for_classification(role: SourceClassificationRole) -> Option<ScanRo
         SourceClassificationRole::Vendor => Some(ScanRole::Vendor),
         SourceClassificationRole::Authored => Some(ScanRole::Authored),
         SourceClassificationRole::Declaration => None,
+    }
+}
+
+fn explicit_role_reason(role: ScanRole) -> SourceRoleReason {
+    match role {
+        ScanRole::Test => SourceRoleReason::ExplicitTestRole,
+        ScanRole::Production => SourceRoleReason::ExplicitProductionRole,
+        ScanRole::Generated => SourceRoleReason::ExplicitGeneratedRole,
+        ScanRole::Vendor => SourceRoleReason::ExplicitVendorRole,
+        ScanRole::Authored => SourceRoleReason::ExplicitAuthoredRole,
     }
 }
 
@@ -1242,6 +1476,13 @@ fn literal_invocation_pattern(pattern: &str) -> Option<&str> {
         return None;
     }
     Some(pattern)
+}
+
+fn is_bare_specifier(specifier: &str) -> bool {
+    !specifier.starts_with('/')
+        && !specifier.starts_with('\\')
+        && !specifier.starts_with("./")
+        && !specifier.starts_with("../")
 }
 
 fn validate_source_inventory(evidence: &RunEvidence) -> Result<(), RunEvidenceIdentityError> {
@@ -1441,12 +1682,6 @@ fn validate_limitations(
             } => {
                 require_source("limitation importers", importer)?;
             }
-            Limitation::DependencyOwnerAmbiguous {
-                required_intent: Some(intent),
-                ..
-            } => {
-                require_source("limitation dependency-intent consumers", &intent.consumer)?;
-            }
             Limitation::VueExternalScriptModeConflict {
                 source_id,
                 target_source_id,
@@ -1463,10 +1698,7 @@ fn validate_limitations(
             | Limitation::PackageIdentityUnsupported { .. }
             | Limitation::PackageMetadataUnobservable { .. }
             | Limitation::PackagePrivacyUnsupported { .. }
-            | Limitation::DependencyOwnerAmbiguous {
-                required_intent: None,
-                ..
-            }
+            | Limitation::DependencyOwnerAmbiguous { .. }
             | Limitation::WorkspaceOwnershipUnsupported { .. }
             | Limitation::PnpmDependencySemanticsUnsupported { .. }
             | Limitation::TsconfigPayloadUnavailable { .. }
@@ -2130,6 +2362,12 @@ mod tests {
             },
         }];
         validate_run_evidence_identities(&evidence)?;
+        assert!(matches!(
+            validate_migration_run_evidence_tier(&evidence, &ScanInvocationTier::default(), &[]),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "authenticated legacy internal resolutions"
+            })
+        ));
 
         let mut missing_importer = evidence.clone();
         missing_importer.resolutions[0].source_use.importer = missing.clone();
@@ -2366,6 +2604,42 @@ mod tests {
     }
 
     #[test]
+    fn dependency_intent_limitations_bind_to_the_retained_tier()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let context = RepoPath::from_portable("packages/a")?;
+        let dependency = "dep";
+        let mut evidence = run_evidence_fixture(Vec::new());
+        evidence.limitations = vec![Limitation::DependencyOwnerAmbiguous {
+            path: context.display_escaped(),
+            package_scope: None,
+            required_intent: Some(Box::new(lumin_model::DependencyIntentIdentity {
+                consumer: LogicalSourceId::from_path(&context),
+                dependency: dependency.to_owned(),
+            })),
+            detail: "owner is ambiguous".to_owned(),
+        }];
+        capability_mut(&mut evidence, DEPENDENCY_OWNERSHIP_CAPABILITY_ID)?.state =
+            CapabilityState::Incomplete;
+        validate_run_evidence_identities(&evidence)?;
+
+        let invocation = ScanInvocationTier {
+            dependency_intents: vec![DependencyIntentRecord {
+                path: RepoPathProjection::from(&context),
+                dependency: dependency.to_owned(),
+            }],
+            ..ScanInvocationTier::default()
+        };
+        validate_run_evidence_tier(&evidence, &invocation, &[])?;
+        assert!(matches!(
+            validate_run_evidence_tier(&evidence, &ScanInvocationTier::default(), &[]),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "limitation dependency invocation intents"
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn persisted_source_indexes_exactly_cover_observed_sources()
     -> Result<(), Box<dyn std::error::Error>> {
         let path = RepoPath::from_portable("src/observed.ts")?;
@@ -2470,6 +2744,27 @@ mod tests {
             .resolution_profiles
             .sort_by(|left, right| left.source_id.cmp(&right.source_id));
         validate_run_evidence_identities(&evidence)?;
+        validate_run_evidence_tier(
+            &evidence,
+            &ScanInvocationTier {
+                resolution_profile: Some(ResolutionProfile::Node16),
+                ..ScanInvocationTier::default()
+            },
+            &[],
+        )?;
+        assert!(matches!(
+            validate_run_evidence_tier(
+                &evidence,
+                &ScanInvocationTier {
+                    resolution_profile: Some(ResolutionProfile::Bundler),
+                    ..ScanInvocationTier::default()
+                },
+                &[]
+            ),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "scan-invocation resolution profiles"
+            })
+        ));
 
         let mut mixed_provenance = evidence.clone();
         mixed_provenance.resolution_profiles[1].source = ResolutionProfileSource::ProductDefault;
@@ -2566,6 +2861,32 @@ mod tests {
         };
         validate_run_evidence_tier(&evidence, &invocation, &[])?;
 
+        let mut missing_literal_classification = evidence.clone();
+        missing_literal_classification.source_classifications[0]
+            .classifications
+            .clear();
+        assert!(matches!(
+            validate_run_evidence_tier(&missing_literal_classification, &invocation, &[]),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "invocation source-role provenance"
+            })
+        ));
+
+        let broad_invocation = ScanInvocationTier {
+            role_overrides: vec![lumin_model::RoleOverride {
+                pattern: "src/*.ts".to_owned(),
+                role: ScanRole::Test,
+            }],
+            ..ScanInvocationTier::default()
+        };
+        validate_run_evidence_tier(&evidence, &broad_invocation, &[])?;
+        assert!(matches!(
+            validate_migration_run_evidence_tier(&evidence, &broad_invocation, &[]),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "authenticated legacy role patterns"
+            })
+        ));
+
         assert!(matches!(
             validate_run_evidence_tier(&evidence, &ScanInvocationTier::default(), &[]),
             Err(RunEvidenceIdentityError::InventoryMismatch {
@@ -2660,6 +2981,29 @@ mod tests {
                 collection: "unavailable entry selections"
             })
         ));
+
+        let configured = vec![EntrySelectionRecord {
+            path: RepoPathProjection::from(&source_path),
+            source: EntrySource::Configuration,
+            unavailable_reason: None,
+        }];
+        let mut configured_evidence = evidence.clone();
+        configured_evidence.limitations.clear();
+        validate_run_evidence_tier(
+            &configured_evidence,
+            &ScanInvocationTier::default(),
+            &configured,
+        )?;
+        assert!(matches!(
+            validate_migration_run_evidence_tier(
+                &configured_evidence,
+                &ScanInvocationTier::default(),
+                &configured
+            ),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "authenticated legacy configuration entries"
+            })
+        ));
         Ok(())
     }
 
@@ -2722,6 +3066,17 @@ mod tests {
         *package = "forged".to_owned();
         assert!(matches!(
             validate_run_evidence_identities(&forged_external),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "external resolution package identities"
+            })
+        ));
+
+        let mut relative_external = evidence.clone();
+        relative_external.resolutions[0].outcome = ResolutionOutcome::External {
+            package: ".".to_owned(),
+        };
+        assert!(matches!(
+            validate_run_evidence_identities(&relative_external),
             Err(RunEvidenceIdentityError::InventoryMismatch {
                 collection: "external resolution package identities"
             })
@@ -2852,12 +3207,14 @@ mod tests {
             package_root: RepoPathProjection::from(&package_root),
             manifest_path: RepoPathProjection::from(&manifest_path),
             manifest_payload_sha256: manifest_payload_sha256.clone(),
-            lockfile_path: None,
+            lockfile_path: Some(RepoPathProjection::from(
+                &package_root.join_portable("package-lock.json")?,
+            )),
         });
         validate_run_evidence_identities(&evidence)?;
         let observation = &evidence.source_observations[0];
         let payload_sha256 = digest_hex(source_path.canonical_bytes());
-        let inputs = vec![
+        let mut inputs = vec![
             SemanticInputRecord {
                 path: RepoPathProjection::from(&source_path),
                 state: SemanticInputState::Source,
@@ -2875,7 +3232,71 @@ mod tests {
                 physical_redirect_sha256: None,
             },
         ];
+        for name in LOCKFILE_NAMES {
+            let lockfile = package_root.join_portable(name)?;
+            inputs.push(SemanticInputRecord {
+                path: RepoPathProjection::from(&lockfile),
+                state: if name == "package-lock.json" {
+                    SemanticInputState::ConfigPresent
+                } else {
+                    SemanticInputState::Missing
+                },
+                payload_sha256: (name == "package-lock.json").then(|| digest_hex(b"lockfile")),
+                physical_identity: None,
+                absence_parent: None,
+                physical_redirect_sha256: None,
+            });
+        }
         validate_run_evidence_inputs(&evidence, &inputs)?;
+
+        let config_path = package_root.join_portable("tsconfig.json")?;
+        let mut configured_evidence = evidence.clone();
+        configured_evidence.source_contexts[0].configuration_paths =
+            vec![RepoPathProjection::from(&config_path)];
+        configured_evidence.resolution_profiles[0] = SelectedResolutionProfile {
+            source_id: source_id.clone(),
+            profile: ResolutionProfile::Bundler,
+            source: ResolutionProfileSource::Config {
+                path_canonical: config_path.canonical_bytes().to_vec(),
+                path_display: config_path.display_escaped(),
+            },
+        };
+        let mut configured_inputs = inputs.clone();
+        configured_inputs.push(SemanticInputRecord {
+            path: RepoPathProjection::from(&config_path),
+            state: SemanticInputState::ConfigPresent,
+            payload_sha256: Some(digest_hex(b"{}")),
+            physical_identity: None,
+            absence_parent: None,
+            physical_redirect_sha256: None,
+        });
+        validate_run_evidence_identities(&configured_evidence)?;
+        validate_run_evidence_inputs(&configured_evidence, &configured_inputs)?;
+        assert!(matches!(
+            validate_run_evidence_inputs(&configured_evidence, &inputs),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "source-context configuration semantic inputs"
+            })
+        ));
+        assert!(matches!(
+            validate_migration_run_evidence_tier(
+                &configured_evidence,
+                &ScanInvocationTier::default(),
+                &[]
+            ),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "authenticated legacy source configuration paths"
+            })
+        ));
+
+        let mut missing_selected_lockfile = evidence.clone();
+        missing_selected_lockfile.dependency_owners[0].lockfile_path = None;
+        assert!(matches!(
+            validate_run_evidence_inputs(&missing_selected_lockfile, &inputs),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "dependency-owner lockfile semantic inputs"
+            })
+        ));
 
         let missing_inventory = run_evidence_fixture(Vec::new());
         assert!(matches!(
