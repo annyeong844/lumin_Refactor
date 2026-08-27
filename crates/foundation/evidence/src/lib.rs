@@ -1466,16 +1466,20 @@ fn explicit_role_reason(role: ScanRole) -> SourceRoleReason {
 }
 
 fn literal_invocation_pattern(pattern: &str) -> Option<&str> {
-    let pattern = pattern.strip_prefix('/').unwrap_or(pattern);
-    if pattern.is_empty()
-        || pattern.ends_with('/')
-        || pattern
+    let rooted = pattern.starts_with('/');
+    let literal = pattern.strip_prefix('/').unwrap_or(pattern);
+    if literal.is_empty()
+        || literal.ends_with('/')
+        || pattern.trim_end() != pattern
+        || pattern.starts_with('#')
+        || (!rooted && !literal.contains('/'))
+        || literal
             .bytes()
             .any(|byte| matches!(byte, b'*' | b'?' | b'[' | b']' | b'\\'))
     {
         return None;
     }
-    Some(pattern)
+    Some(literal)
 }
 
 fn is_bare_specifier(specifier: &str) -> bool {
@@ -2886,6 +2890,21 @@ mod tests {
                 collection: "authenticated legacy role patterns"
             })
         ));
+        for pattern in ["owned.ts", "# src/owned.ts"] {
+            let ambiguous_invocation = ScanInvocationTier {
+                role_overrides: vec![lumin_model::RoleOverride {
+                    pattern: pattern.to_owned(),
+                    role: ScanRole::Test,
+                }],
+                ..ScanInvocationTier::default()
+            };
+            assert!(matches!(
+                validate_migration_run_evidence_tier(&evidence, &ambiguous_invocation, &[]),
+                Err(RunEvidenceIdentityError::InventoryMismatch {
+                    collection: "authenticated legacy role patterns"
+                })
+            ));
+        }
 
         assert!(matches!(
             validate_run_evidence_tier(&evidence, &ScanInvocationTier::default(), &[]),
