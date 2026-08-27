@@ -1380,10 +1380,9 @@ pub fn validate_run_evidence_tier(
 
 /// Apply migration-only checks that cannot be imposed on native v13 reads.
 ///
-/// v1 evidence does not retain SFC decompositions or the complete consulted
-/// package-manifest inventory. Its mixed-source JavaScript parse-product count
-/// and package ownership facts therefore cannot be reconstructed independently.
-/// Such legacy rows are rejected instead of adopting unauthenticated evidence.
+/// v1 evidence does not retain SFC decompositions, so its embedded JavaScript
+/// parse-product count cannot be reconstructed for a mixed-source run. Such a
+/// legacy row is rejected instead of adopting an unauthenticated public metric.
 pub fn validate_migration_run_evidence(
     evidence: &RunEvidence,
 ) -> Result<(), RunEvidenceIdentityError> {
@@ -1394,15 +1393,6 @@ pub fn validate_migration_run_evidence(
     {
         return Err(RunEvidenceIdentityError::InventoryMismatch {
             collection: "authenticated mixed-source JS parse metrics",
-        });
-    }
-    if evidence
-        .source_contexts
-        .iter()
-        .any(|context| context.package_root.is_some())
-    {
-        return Err(RunEvidenceIdentityError::InventoryMismatch {
-            collection: "authenticated legacy package-manifest inventory",
         });
     }
     Ok(())
@@ -1440,6 +1430,15 @@ pub fn validate_migration_run_evidence_tier(
     {
         return Err(RunEvidenceIdentityError::InventoryMismatch {
             collection: "authenticated legacy source configuration paths",
+        });
+    }
+    if evidence
+        .source_contexts
+        .iter()
+        .any(|context| context.package_root.is_some())
+    {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "authenticated legacy package-manifest inventory",
         });
     }
     if evidence
@@ -3531,7 +3530,8 @@ mod tests {
     }
 
     #[test]
-    fn legacy_package_manifest_inventory_fails_closed() -> Result<(), Box<dyn std::error::Error>> {
+    fn legacy_gate_package_manifest_inventory_fails_closed()
+    -> Result<(), Box<dyn std::error::Error>> {
         let path = RepoPath::from_portable("packages/a/src/main.ts")?;
         let package_root = RepoPath::from_portable("packages/a")?;
         let mut evidence = run_evidence_fixture(Vec::new());
@@ -3544,8 +3544,9 @@ mod tests {
         );
         evidence.source_contexts[0].package_root = Some(RepoPathProjection::from(&package_root));
         validate_run_evidence_identities(&evidence)?;
+        validate_migration_run_evidence(&evidence)?;
         assert!(matches!(
-            validate_migration_run_evidence(&evidence),
+            validate_migration_run_evidence_tier(&evidence, &ScanInvocationTier::default(), &[]),
             Err(RunEvidenceIdentityError::InventoryMismatch {
                 collection: "authenticated legacy package-manifest inventory"
             })
