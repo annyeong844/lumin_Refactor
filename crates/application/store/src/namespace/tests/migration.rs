@@ -2313,7 +2313,11 @@ fn evidence() -> RunEvidence {
             .into_iter()
             .map(|capability_id| CapabilityRecord {
                 capability_id: capability_id.to_owned(),
-                state: CapabilityState::Complete,
+                state: if matches!(capability_id, "sfc/svelte.v1" | "sfc/astro.v1") {
+                    CapabilityState::Unavailable
+                } else {
+                    CapabilityState::Complete
+                },
             })
             .collect(),
         resolution_profiles: Vec::new(),

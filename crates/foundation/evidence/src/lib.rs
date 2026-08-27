@@ -15,21 +15,24 @@ use std::fmt;
 use lumin_model::{
     BuildIdentity, CapabilityState, EvidenceId, FindingDisposition, FindingId, FindingRelationId,
     GateId, Limitation, LogicalSourceId, PayloadSnapshotId, PhysicalFileIdentity, RepoPath,
-    RepositoryId, ResolutionOutcome, ResolutionProfileSource, ResolvedSourceUse, RunId,
-    SelectedResolutionProfile, SourceKind, SourceRoleClassification, SourceSpan, SymbolNamespace,
-    append_length_prefixed, digest_hex,
+    RepositoryId, ResolutionOutcome, ResolutionProfile, ResolutionProfileSource, ResolvedSourceUse,
+    RunId, SelectedResolutionProfile, SourceKind, SourceRoleClassification, SourceSpan,
+    SymbolNamespace, append_length_prefixed, digest_hex,
 };
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
 pub const DEAD_EXPORT_RULE_ID: &str = "dead-code/zero-exact-fan-in.v1";
 pub const DEAD_CODE_CAPABILITY_ID: &str = "dead-code.v1";
 pub const DEPENDENCY_OWNERSHIP_CAPABILITY_ID: &str = "inventory/dependency-ownership.v1";
+const ASTRO_CAPABILITY_ID: &str = "sfc/astro.v1";
+const SVELTE_CAPABILITY_ID: &str = "sfc/svelte.v1";
+const VUE_CAPABILITY_ID: &str = "sfc/vue.v1";
 pub const RUN_EVIDENCE_CAPABILITY_IDS: [&str; 5] = [
     DEAD_CODE_CAPABILITY_ID,
     DEPENDENCY_OWNERSHIP_CAPABILITY_ID,
-    "sfc/astro.v1",
-    "sfc/svelte.v1",
-    "sfc/vue.v1",
+    ASTRO_CAPABILITY_ID,
+    SVELTE_CAPABILITY_ID,
+    VUE_CAPABILITY_ID,
 ];
 pub const FINDINGS_ORDERING_ID: &str = "findings.v1";
 pub const EVIDENCE_ORDERING_ID: &str = "evidence.v1";
@@ -567,6 +570,12 @@ pub fn validate_run_evidence_identities(
             &owner.consumer,
             &owner.consumer_path,
         )?;
+        if !source_ids.contains(owner.consumer.as_str()) {
+            return Err(RunEvidenceIdentityError::MissingReference {
+                collection: "dependency-owner consumers",
+                identity: owner.consumer.as_str().to_owned(),
+            });
+        }
     }
     require_unique(
         "resolution profiles",
@@ -575,12 +584,33 @@ pub fn validate_run_evidence_identities(
             .iter()
             .map(|record| record.source_id.as_str()),
     )?;
+    let mut invocation_profile = None;
+    let mut invocation_sources = BTreeSet::new();
     for profile in &evidence.resolution_profiles {
         if !source_ids.contains(profile.source_id.as_str()) {
             return Err(RunEvidenceIdentityError::MissingReference {
                 collection: "resolution-profile sources",
                 identity: profile.source_id.as_str().to_owned(),
             });
+        }
+        match &profile.source {
+            ResolutionProfileSource::Invocation => {
+                if invocation_profile.is_some_and(|expected| expected != profile.profile) {
+                    return Err(RunEvidenceIdentityError::InventoryMismatch {
+                        collection: "resolution-profile provenance",
+                    });
+                }
+                invocation_profile = Some(profile.profile);
+                invocation_sources.insert(profile.source_id.as_str());
+            }
+            ResolutionProfileSource::ProductDefault => {
+                if profile.profile != ResolutionProfile::Bundler {
+                    return Err(RunEvidenceIdentityError::InventoryMismatch {
+                        collection: "resolution-profile provenance",
+                    });
+                }
+            }
+            ResolutionProfileSource::Config { .. } => {}
         }
         let ResolutionProfileSource::Config {
             path_canonical,
@@ -614,6 +644,14 @@ pub fn validate_run_evidence_identities(
                 collection: "resolution-profile config paths",
             });
         }
+    }
+    if invocation_profile.is_some()
+        && (invocation_sources != source_ids
+            || invocation_sources.len() != evidence.resolution_profiles.len())
+    {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "resolution-profile provenance",
+        });
     }
     for resolution in &evidence.resolutions {
         if !source_ids.contains(resolution.source_use.importer.as_str()) {
@@ -782,6 +820,7 @@ pub fn validate_run_evidence_identities(
             collection: "the compiled capability registry",
         });
     }
+    validate_sfc_capability_states(evidence)?;
     for (capability_id, expected) in [
         (
             DEAD_CODE_CAPABILITY_ID,
@@ -804,6 +843,132 @@ pub fn validate_run_evidence_identities(
         }
     }
     Ok(())
+}
+
+fn validate_sfc_capability_states(evidence: &RunEvidence) -> Result<(), RunEvidenceIdentityError> {
+    let source_kinds = evidence
+        .source_contexts
+        .iter()
+        .map(|context| (context.source_id.as_str(), context.kind))
+        .collect::<BTreeMap<_, _>>();
+    for limitation in &evidence.limitations {
+        match limitation {
+            Limitation::SfcDialectUnavailable { source_id, dialect } => {
+                let expected_kind = match dialect.as_str() {
+                    "svelte" => SourceKind::Svelte,
+                    "astro" => SourceKind::Astro,
+                    _ => {
+                        return Err(RunEvidenceIdentityError::InventoryMismatch {
+                            collection: "the compiled SFC limitation registry",
+                        });
+                    }
+                };
+                if source_kinds.get(source_id.as_str()) != Some(&expected_kind) {
+                    return Err(RunEvidenceIdentityError::MissingReference {
+                        collection: "SFC limitation sources",
+                        identity: source_id.as_str().to_owned(),
+                    });
+                }
+            }
+            Limitation::SfcDecompositionUnknown { source_id, .. }
+            | Limitation::VueTemplateOpaque { source_id, .. } => {
+                require_vue_source(&source_kinds, source_id)?;
+            }
+            Limitation::VueExternalScriptModeConflict {
+                source_id,
+                target_source_id,
+                ..
+            } => {
+                require_vue_source(&source_kinds, source_id)?;
+                if !source_kinds.contains_key(target_source_id.as_str()) {
+                    return Err(RunEvidenceIdentityError::MissingReference {
+                        collection: "SFC external-script targets",
+                        identity: target_source_id.as_str().to_owned(),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    for capability_id in [SVELTE_CAPABILITY_ID, ASTRO_CAPABILITY_ID] {
+        if capability_state(evidence, capability_id) != Some(CapabilityState::Unavailable) {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "compiled SFC capability states",
+            });
+        }
+    }
+
+    let vue_sources = source_kinds
+        .iter()
+        .filter_map(|(source_id, kind)| (*kind == SourceKind::Vue).then_some(*source_id))
+        .collect::<BTreeSet<_>>();
+    let direct_vue_limitation = evidence.limitations.iter().any(|limitation| {
+        limitation_source_id(limitation)
+            .is_some_and(|source_id| vue_sources.contains(source_id.as_str()))
+    });
+    let observed_vue = capability_state(evidence, VUE_CAPABILITY_ID);
+    let vue_state_valid = if vue_sources.is_empty() {
+        observed_vue == Some(CapabilityState::Complete)
+    } else if direct_vue_limitation {
+        observed_vue == Some(CapabilityState::Incomplete)
+    } else if evidence.limitations.is_empty() {
+        observed_vue == Some(CapabilityState::Complete)
+    } else {
+        matches!(
+            observed_vue,
+            Some(CapabilityState::Complete | CapabilityState::Incomplete)
+        )
+    };
+    if !vue_state_valid {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "compiled SFC capability states",
+        });
+    }
+    Ok(())
+}
+
+fn require_vue_source(
+    source_kinds: &BTreeMap<&str, SourceKind>,
+    source_id: &LogicalSourceId,
+) -> Result<(), RunEvidenceIdentityError> {
+    if source_kinds.get(source_id.as_str()) != Some(&SourceKind::Vue) {
+        return Err(RunEvidenceIdentityError::MissingReference {
+            collection: "SFC limitation sources",
+            identity: source_id.as_str().to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn capability_state(evidence: &RunEvidence, capability_id: &str) -> Option<CapabilityState> {
+    evidence
+        .capabilities
+        .iter()
+        .find(|record| record.capability_id == capability_id)
+        .map(|record| record.state)
+}
+
+fn limitation_source_id(limitation: &Limitation) -> Option<&LogicalSourceId> {
+    match limitation {
+        Limitation::JsRecoverableParseLocal { source_id, .. }
+        | Limitation::JsModuleUseUnknown { source_id, .. }
+        | Limitation::DynamicImportNonLiteral { source_id, .. }
+        | Limitation::ImportMetaGlobUnsupported { source_id, .. }
+        | Limitation::CommonJsComputedMember { source_id, .. }
+        | Limitation::AliasShapeUnsupported { source_id, .. }
+        | Limitation::AbsoluteInternalSpecifierUnsupported { source_id, .. }
+        | Limitation::SfcDialectUnavailable { source_id, .. }
+        | Limitation::SfcDecompositionUnknown { source_id, .. }
+        | Limitation::VueExternalScriptModeConflict { source_id, .. }
+        | Limitation::VueTemplateOpaque { source_id, .. } => Some(source_id),
+        Limitation::InternalSpecifierUnresolved { importer, .. } => Some(importer),
+        Limitation::PublicSurfaceUnsupported {
+            importer: Some(importer),
+            ..
+        } => Some(importer),
+        _ => None,
+    }
 }
 
 fn validate_analysis_metrics(evidence: &RunEvidence) -> Result<(), RunEvidenceIdentityError> {
@@ -1005,7 +1170,11 @@ mod tests {
                 .into_iter()
                 .map(|capability_id| CapabilityRecord {
                     capability_id: capability_id.to_owned(),
-                    state: CapabilityState::Complete,
+                    state: if matches!(capability_id, SVELTE_CAPABILITY_ID | ASTRO_CAPABILITY_ID) {
+                        CapabilityState::Unavailable
+                    } else {
+                        CapabilityState::Complete
+                    },
                 })
                 .collect(),
             resolution_profiles: Vec::new(),
@@ -1335,6 +1504,57 @@ mod tests {
     }
 
     #[test]
+    fn persisted_sfc_capability_states_follow_the_compiled_owner()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut compiled_unavailable = run_evidence_fixture(Vec::new());
+        capability_mut(&mut compiled_unavailable, SVELTE_CAPABILITY_ID)?.state =
+            CapabilityState::Complete;
+        assert!(matches!(
+            validate_run_evidence_identities(&compiled_unavailable),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "compiled SFC capability states"
+            })
+        ));
+
+        let vue_path = RepoPath::from_portable("src/App.vue")?;
+        let vue_source_id = LogicalSourceId::from_path(&vue_path);
+        let mut incomplete_vue = run_evidence_fixture(Vec::new());
+        populate_source_inventory(
+            &mut incomplete_vue,
+            [(vue_source_id.clone(), RepoPathProjection::from(&vue_path))],
+        );
+        incomplete_vue.source_contexts[0].kind = SourceKind::Vue;
+        incomplete_vue.limitations = vec![Limitation::VueTemplateOpaque {
+            source_id: vue_source_id,
+            detail: "dynamic component binding".to_owned(),
+        }];
+        capability_mut(&mut incomplete_vue, DEAD_CODE_CAPABILITY_ID)?.state =
+            CapabilityState::Incomplete;
+        capability_mut(&mut incomplete_vue, VUE_CAPABILITY_ID)?.state = CapabilityState::Incomplete;
+        validate_run_evidence_identities(&incomplete_vue)?;
+
+        capability_mut(&mut incomplete_vue, VUE_CAPABILITY_ID)?.state = CapabilityState::Complete;
+        assert!(matches!(
+            validate_run_evidence_identities(&incomplete_vue),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "compiled SFC capability states"
+            })
+        ));
+        Ok(())
+    }
+
+    fn capability_mut<'a>(
+        evidence: &'a mut RunEvidence,
+        capability_id: &str,
+    ) -> Result<&'a mut CapabilityRecord, Box<dyn std::error::Error>> {
+        evidence
+            .capabilities
+            .iter_mut()
+            .find(|record| record.capability_id == capability_id)
+            .ok_or_else(|| format!("fixture omitted capability {capability_id}").into())
+    }
+
+    #[test]
     fn persisted_findings_use_the_compiled_rule_registry() -> Result<(), Box<dyn std::error::Error>>
     {
         let path = RepoPath::from_portable("src/unsupported-rule.ts")?;
@@ -1364,6 +1584,13 @@ mod tests {
         let package_root = RepoPath::from_portable("packages/a")?;
         let manifest_path = RepoPath::from_portable("packages/a/package.json")?;
         let mut evidence = run_evidence_fixture(Vec::new());
+        populate_source_inventory(
+            &mut evidence,
+            [(
+                LogicalSourceId::from_path(&consumer_path),
+                RepoPathProjection::from(&consumer_path),
+            )],
+        );
         evidence.dependency_owners.push(DependencyOwnerRecord {
             consumer: LogicalSourceId::from_path(&consumer_path),
             consumer_path: RepoPathProjection::from(&consumer_path),
@@ -1381,6 +1608,17 @@ mod tests {
             validate_run_evidence_identities(&evidence),
             Err(RunEvidenceIdentityError::SourceIdentityMismatch {
                 collection: "dependency owners",
+                ..
+            })
+        ));
+
+        let absent_path = RepoPath::from_portable("packages/b/src/main.ts")?;
+        evidence.dependency_owners[0].consumer = LogicalSourceId::from_path(&absent_path);
+        evidence.dependency_owners[0].consumer_path = RepoPathProjection::from(&absent_path);
+        assert!(matches!(
+            validate_run_evidence_identities(&evidence),
+            Err(RunEvidenceIdentityError::MissingReference {
+                collection: "dependency-owner consumers",
                 ..
             })
         ));
@@ -1456,6 +1694,73 @@ mod tests {
             validate_run_evidence_identities(&unconsulted),
             Err(RunEvidenceIdentityError::InventoryMismatch {
                 collection: "resolution-profile config paths"
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn persisted_non_config_profiles_use_owner_defined_provenance()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let first_path = RepoPath::from_portable("src/first.ts")?;
+        let second_path = RepoPath::from_portable("src/second.ts")?;
+        let first = LogicalSourceId::from_path(&first_path);
+        let second = LogicalSourceId::from_path(&second_path);
+        let mut evidence = run_evidence_fixture(Vec::new());
+        populate_source_inventory(
+            &mut evidence,
+            [
+                (first.clone(), RepoPathProjection::from(&first_path)),
+                (second.clone(), RepoPathProjection::from(&second_path)),
+            ],
+        );
+        evidence.resolution_profiles = vec![
+            SelectedResolutionProfile {
+                source_id: first.clone(),
+                profile: ResolutionProfile::Node16,
+                source: ResolutionProfileSource::Invocation,
+            },
+            SelectedResolutionProfile {
+                source_id: second,
+                profile: ResolutionProfile::Node16,
+                source: ResolutionProfileSource::Invocation,
+            },
+        ];
+        validate_run_evidence_identities(&evidence)?;
+
+        let mut mixed_provenance = evidence.clone();
+        mixed_provenance.resolution_profiles[1].source = ResolutionProfileSource::ProductDefault;
+        mixed_provenance.resolution_profiles[1].profile = ResolutionProfile::Bundler;
+        assert!(matches!(
+            validate_run_evidence_identities(&mixed_provenance),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "resolution-profile provenance"
+            })
+        ));
+
+        let mut conflicting_override = evidence.clone();
+        conflicting_override.resolution_profiles[1].profile = ResolutionProfile::NodeNext;
+        assert!(matches!(
+            validate_run_evidence_identities(&conflicting_override),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "resolution-profile provenance"
+            })
+        ));
+
+        let mut invalid_default = run_evidence_fixture(Vec::new());
+        populate_source_inventory(
+            &mut invalid_default,
+            [(first.clone(), RepoPathProjection::from(&first_path))],
+        );
+        invalid_default.resolution_profiles = vec![SelectedResolutionProfile {
+            source_id: first,
+            profile: ResolutionProfile::NodeNext,
+            source: ResolutionProfileSource::ProductDefault,
+        }];
+        assert!(matches!(
+            validate_run_evidence_identities(&invalid_default),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "resolution-profile provenance"
             })
         ));
         Ok(())
