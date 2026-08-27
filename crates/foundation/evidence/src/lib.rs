@@ -1380,9 +1380,10 @@ pub fn validate_run_evidence_tier(
 
 /// Apply migration-only checks that cannot be imposed on native v13 reads.
 ///
-/// v1 evidence does not retain SFC decompositions, so its embedded JavaScript
-/// parse-product count cannot be reconstructed for a mixed-source run. Such a
-/// legacy row is rejected instead of adopting an unauthenticated public metric.
+/// v1 evidence does not retain SFC decompositions or the complete consulted
+/// package-manifest inventory. Its mixed-source JavaScript parse-product count
+/// and package ownership facts therefore cannot be reconstructed independently.
+/// Such legacy rows are rejected instead of adopting unauthenticated evidence.
 pub fn validate_migration_run_evidence(
     evidence: &RunEvidence,
 ) -> Result<(), RunEvidenceIdentityError> {
@@ -1393,6 +1394,15 @@ pub fn validate_migration_run_evidence(
     {
         return Err(RunEvidenceIdentityError::InventoryMismatch {
             collection: "authenticated mixed-source JS parse metrics",
+        });
+    }
+    if evidence
+        .source_contexts
+        .iter()
+        .any(|context| context.package_root.is_some())
+    {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "authenticated legacy package-manifest inventory",
         });
     }
     Ok(())
@@ -1475,7 +1485,7 @@ fn literal_invocation_pattern(pattern: &str) -> Option<&str> {
         || (!rooted && !literal.contains('/'))
         || literal
             .bytes()
-            .any(|byte| matches!(byte, b'*' | b'?' | b'[' | b']' | b'\\'))
+            .any(|byte| matches!(byte, b'*' | b'?' | b'[' | b']' | b'{' | b'}' | b'\\'))
     {
         return None;
     }
@@ -2890,7 +2900,7 @@ mod tests {
                 collection: "authenticated legacy role patterns"
             })
         ));
-        for pattern in ["owned.ts", "# src/owned.ts"] {
+        for pattern in ["owned.ts", "# src/owned.ts", "src/{a,b}.ts"] {
             let ambiguous_invocation = ScanInvocationTier {
                 role_overrides: vec![lumin_model::RoleOverride {
                     pattern: pattern.to_owned(),
@@ -3515,6 +3525,29 @@ mod tests {
             validate_migration_run_evidence(&evidence),
             Err(RunEvidenceIdentityError::InventoryMismatch {
                 collection: "authenticated mixed-source JS parse metrics"
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn legacy_package_manifest_inventory_fails_closed() -> Result<(), Box<dyn std::error::Error>> {
+        let path = RepoPath::from_portable("packages/a/src/main.ts")?;
+        let package_root = RepoPath::from_portable("packages/a")?;
+        let mut evidence = run_evidence_fixture(Vec::new());
+        populate_source_inventory(
+            &mut evidence,
+            [(
+                LogicalSourceId::from_path(&path),
+                RepoPathProjection::from(&path),
+            )],
+        );
+        evidence.source_contexts[0].package_root = Some(RepoPathProjection::from(&package_root));
+        validate_run_evidence_identities(&evidence)?;
+        assert!(matches!(
+            validate_migration_run_evidence(&evidence),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "authenticated legacy package-manifest inventory"
             })
         ));
         Ok(())
