@@ -904,7 +904,7 @@ fn validate_sfc_capability_states(evidence: &RunEvidence) -> Result<(), RunEvide
         .filter_map(|(source_id, kind)| (*kind == SourceKind::Vue).then_some(*source_id))
         .collect::<BTreeSet<_>>();
     let direct_vue_limitation = evidence.limitations.iter().any(|limitation| {
-        limitation_source_id(limitation)
+        extraction_limitation_source_id(limitation)
             .is_some_and(|source_id| vue_sources.contains(source_id.as_str()))
     });
     let observed_vue = capability_state(evidence, VUE_CAPABILITY_ID);
@@ -949,24 +949,17 @@ fn capability_state(evidence: &RunEvidence, capability_id: &str) -> Option<Capab
         .map(|record| record.state)
 }
 
-fn limitation_source_id(limitation: &Limitation) -> Option<&LogicalSourceId> {
+fn extraction_limitation_source_id(limitation: &Limitation) -> Option<&LogicalSourceId> {
     match limitation {
         Limitation::JsRecoverableParseLocal { source_id, .. }
         | Limitation::JsModuleUseUnknown { source_id, .. }
         | Limitation::DynamicImportNonLiteral { source_id, .. }
         | Limitation::ImportMetaGlobUnsupported { source_id, .. }
         | Limitation::CommonJsComputedMember { source_id, .. }
-        | Limitation::AliasShapeUnsupported { source_id, .. }
-        | Limitation::AbsoluteInternalSpecifierUnsupported { source_id, .. }
         | Limitation::SfcDialectUnavailable { source_id, .. }
         | Limitation::SfcDecompositionUnknown { source_id, .. }
         | Limitation::VueExternalScriptModeConflict { source_id, .. }
         | Limitation::VueTemplateOpaque { source_id, .. } => Some(source_id),
-        Limitation::InternalSpecifierUnresolved { importer, .. } => Some(importer),
-        Limitation::PublicSurfaceUnsupported {
-            importer: Some(importer),
-            ..
-        } => Some(importer),
         _ => None,
     }
 }
@@ -1524,12 +1517,20 @@ mod tests {
             [(vue_source_id.clone(), RepoPathProjection::from(&vue_path))],
         );
         incomplete_vue.source_contexts[0].kind = SourceKind::Vue;
+        incomplete_vue.limitations = vec![Limitation::InternalSpecifierUnresolved {
+            importer: vue_source_id.clone(),
+            specifier: "./missing".to_owned(),
+            candidates: Vec::new(),
+            target_scope: None,
+        }];
+        capability_mut(&mut incomplete_vue, DEAD_CODE_CAPABILITY_ID)?.state =
+            CapabilityState::Incomplete;
+        validate_run_evidence_identities(&incomplete_vue)?;
+
         incomplete_vue.limitations = vec![Limitation::VueTemplateOpaque {
             source_id: vue_source_id,
             detail: "dynamic component binding".to_owned(),
         }];
-        capability_mut(&mut incomplete_vue, DEAD_CODE_CAPABILITY_ID)?.state =
-            CapabilityState::Incomplete;
         capability_mut(&mut incomplete_vue, VUE_CAPABILITY_ID)?.state = CapabilityState::Incomplete;
         validate_run_evidence_identities(&incomplete_vue)?;
 
