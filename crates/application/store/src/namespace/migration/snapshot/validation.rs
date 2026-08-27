@@ -37,18 +37,52 @@ pub(super) fn validate_external_references(
     snapshot: &LogicalStoreSnapshot,
     guard: &NamespaceGuard,
 ) -> Result<(), StoreError> {
-    external::validate_external_references(snapshot, guard)?;
+    validate_external_references_with_mode(snapshot, guard, false)
+}
+
+pub(super) fn validate_legacy_external_references(
+    snapshot: &LogicalStoreSnapshot,
+    guard: &NamespaceGuard,
+) -> Result<(), StoreError> {
+    validate_external_references_with_mode(snapshot, guard, true)
+}
+
+fn validate_external_references_with_mode(
+    snapshot: &LogicalStoreSnapshot,
+    guard: &NamespaceGuard,
+    authenticate_legacy_evidence: bool,
+) -> Result<(), StoreError> {
+    external::validate_external_references(snapshot, guard, authenticate_legacy_evidence)?;
     crate::publication::validate_attempt_lease_locks(&snapshot.attempt_leases, guard)
 }
 
 pub(super) fn validate_referential_closure(
     snapshot: &LogicalStoreSnapshot,
 ) -> Result<(), StoreError> {
+    validate_referential_closure_with_mode(snapshot, false)
+}
+
+pub(super) fn validate_legacy_referential_closure(
+    snapshot: &LogicalStoreSnapshot,
+) -> Result<(), StoreError> {
+    validate_referential_closure_with_mode(snapshot, true)
+}
+
+fn validate_referential_closure_with_mode(
+    snapshot: &LogicalStoreSnapshot,
+    authenticate_legacy_evidence: bool,
+) -> Result<(), StoreError> {
     validate_sequence_key_set(snapshot)?;
     let (transitions, transition_sequences) = read_transitions(snapshot)?;
     let validation_receipts = read_validation_receipts(snapshot)?;
     let operations = read_operations(snapshot)?;
-    let gates = read_gates(snapshot, &operations, &transitions, &transition_sequences)?;
+    let gates = read_gates(
+        snapshot,
+        &operations,
+        &transitions,
+        &transition_sequences,
+        authenticate_legacy_evidence,
+    )?;
     validate_pre_write_admissions(snapshot, &operations, &gates)?;
     validate_active_gate_conflicts(&gates)?;
     validate_baseline_transition_boundaries(&transitions, &gates)?;
@@ -525,6 +559,7 @@ fn read_gates<'a>(
     operations: &BTreeMap<&str, OperationRecord>,
     transitions: &BTreeMap<u64, WorktreeTransition>,
     transition_sequences: &BTreeSet<u64>,
+    authenticate_legacy_evidence: bool,
 ) -> Result<BTreeMap<&'a str, GateRecord>, StoreError> {
     let mut gates = BTreeMap::new();
     for (key, bytes) in &snapshot.gates {
@@ -534,7 +569,14 @@ fn read_gates<'a>(
                 "gate key {key} disagrees with its record"
             )));
         }
-        validate_gate_history(key, &gate, operations, transitions, transition_sequences)?;
+        validate_gate_history(
+            key,
+            &gate,
+            operations,
+            transitions,
+            transition_sequences,
+            authenticate_legacy_evidence,
+        )?;
         gates.insert(key.as_str(), gate);
     }
     Ok(gates)
@@ -1129,6 +1171,7 @@ fn validate_gate_history(
     operations: &BTreeMap<&str, OperationRecord>,
     transitions: &BTreeMap<u64, WorktreeTransition>,
     transition_sequences: &BTreeSet<u64>,
+    authenticate_legacy_evidence: bool,
 ) -> Result<(), StoreError> {
     if gate.schema_version != GATE_RECORD_SCHEMA_VERSION {
         return Err(StoreError::IncompatibleStateSchema(format!(
@@ -1242,7 +1285,13 @@ fn validate_gate_history(
             )));
         }
     }
-    validate_gate_observations(key, gate, operations, transitions)?;
+    validate_gate_observations(
+        key,
+        gate,
+        operations,
+        transitions,
+        authenticate_legacy_evidence,
+    )?;
     Ok(())
 }
 
@@ -1251,6 +1300,7 @@ fn validate_gate_observations(
     gate: &GateRecord,
     operations: &BTreeMap<&str, OperationRecord>,
     transitions: &BTreeMap<u64, WorktreeTransition>,
+    authenticate_legacy_evidence: bool,
 ) -> Result<(), StoreError> {
     let opening = gate
         .revisions
@@ -1353,8 +1403,12 @@ fn validate_gate_observations(
                         "gate {key} analysis invocation disagrees with its sealed baseline"
                     )));
                 }
-                let evidence_payload_sha256 =
-                    validate_analysis_snapshot(key, "baseline", &baseline.snapshot)?;
+                let evidence_payload_sha256 = validate_analysis_snapshot(
+                    key,
+                    "baseline",
+                    &baseline.snapshot,
+                    authenticate_legacy_evidence,
+                )?;
                 validate_baseline_write_domain(key, gate, baseline)?;
                 if baseline.protected_semantic_inputs
                     != derive_protected_semantic_inputs(
@@ -1630,6 +1684,7 @@ fn validate_gate_observations(
                 key,
                 &format!("close revision {}", revision.revision),
                 snapshot,
+                authenticate_legacy_evidence,
             )?;
             if snapshot.scan_invocation != gate.analysis_options.scan_invocation {
                 return Err(StoreError::Integrity(format!(
@@ -2310,6 +2365,7 @@ fn validate_analysis_snapshot(
     gate_key: &str,
     role: &str,
     snapshot: &AnalysisSnapshot,
+    authenticate_legacy_evidence: bool,
 ) -> Result<String, StoreError> {
     if snapshot.evidence.schema_version != RUN_EVIDENCE_SCHEMA_VERSION {
         return Err(StoreError::IncompatibleStateSchema(format!(
@@ -2322,11 +2378,13 @@ fn validate_analysis_snapshot(
             "gate {gate_key} {role} contains invalid run evidence: {error}"
         ))
     })?;
-    validate_migration_run_evidence(&snapshot.evidence).map_err(|error| {
-        StoreError::Integrity(format!(
-            "gate {gate_key} {role} contains unauthenticated migration evidence: {error}"
-        ))
-    })?;
+    if authenticate_legacy_evidence {
+        validate_migration_run_evidence(&snapshot.evidence).map_err(|error| {
+            StoreError::Integrity(format!(
+                "gate {gate_key} {role} contains unauthenticated migration evidence: {error}"
+            ))
+        })?;
+    }
     validate_run_evidence_inputs(&snapshot.evidence, &snapshot.inputs).map_err(|error| {
         StoreError::Integrity(format!(
             "gate {gate_key} {role} evidence disagrees with its semantic inputs: {error}"

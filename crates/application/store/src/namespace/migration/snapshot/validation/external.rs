@@ -23,6 +23,7 @@ use super::parse_record;
 pub(super) fn validate_external_references(
     snapshot: &LogicalStoreSnapshot,
     guard: &NamespaceGuard,
+    authenticate_legacy_evidence: bool,
 ) -> Result<(), StoreError> {
     guard.validate_bound_entries()?;
     crate::cache::validate_external_snapshot(
@@ -47,6 +48,7 @@ pub(super) fn validate_external_references(
             guard,
             &attempts,
             moved_payloads.runs.get(key).map(|payload| &payload.path),
+            authenticate_legacy_evidence,
         )?;
     }
     validate_latest_pointers(snapshot, guard, &attempts)?;
@@ -869,6 +871,7 @@ fn validate_run(
     guard: &NamespaceGuard,
     attempts: &BTreeMap<String, Option<AttemptEnvelope>>,
     moved_path: Option<&PathBuf>,
+    authenticate_legacy_evidence: bool,
 ) -> Result<(), StoreError> {
     let record = parse_record::<RunCatalogRecord>("run-catalog", key, bytes)?;
     validate_run_record(key, &record, attempts)?;
@@ -880,7 +883,11 @@ fn validate_run(
         .join(record.run_id.as_str());
     let run_dir = moved_path.unwrap_or(&canonical_run_dir);
     let held_dir = open_state_entry(guard, run_dir, EntryKind::Directory, false, "run directory")?;
-    crate::publication::validate_run_directory_for_migration(run_dir, &held_dir, &record)
+    if authenticate_legacy_evidence {
+        crate::publication::validate_run_directory_for_migration(run_dir, &held_dir, &record)
+    } else {
+        crate::publication::validate_run_directory(run_dir, &held_dir, &record)
+    }
 }
 
 fn validate_retention_runs(

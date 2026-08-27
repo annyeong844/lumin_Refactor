@@ -401,7 +401,7 @@ fn begin_migration(
         .ok_or_else(|| StoreError::Integrity("lifecycle store generation overflow".to_owned()))?;
     let source_logical = legacy.snapshot.logical_sha256()?;
     let transformed = legacy.snapshot.clone().transformed_from_v12(guard)?;
-    transformed.validate_external_references(guard)?;
+    transformed.validate_legacy_external_references(guard)?;
 
     let root = UnpublishedFile::create(&guard.state.state_dir, &guard.state_directory)?;
     hook(MigrationCrashPoint::PendingIntentCreated)?;
@@ -647,7 +647,7 @@ fn exchange_store(
     let transformed = open_exchange_source(guard, &journal)?
         .snapshot
         .transformed_from_v12(guard)?;
-    transformed.validate_external_references(guard)?;
+    transformed.validate_legacy_external_references(guard)?;
     let source = journal.source.binding.clone();
     let target = journal.target()?.binding.clone();
     validate_exchange_names(&source, &target)?;
@@ -729,7 +729,7 @@ fn exchange_or_recover(
             "migration target before exchange",
         )?;
         hook(MigrationCrashPoint::ExchangeInputsOpened)?;
-        transformed.validate_external_references(guard)?;
+        transformed.validate_legacy_external_references(guard)?;
         hook(MigrationCrashPoint::ExchangeExternalReferencesValidated)?;
         revalidate_journal(guard, journal)?;
         revalidate_binding_for_move(
@@ -812,7 +812,7 @@ fn exchange_or_recover(
                 "migration target before exchange",
             )?;
             hook(MigrationCrashPoint::ExchangeInputsOpened)?;
-            transformed.validate_external_references(guard)?;
+            transformed.validate_legacy_external_references(guard)?;
             hook(MigrationCrashPoint::ExchangeExternalReferencesValidated)?;
             revalidate_journal(guard, journal)?;
             revalidate_binding_for_move(
@@ -838,7 +838,7 @@ fn exchange_or_recover(
             )?;
             guard.state_directory.sync_directory()?;
             hook(MigrationCrashPoint::SourceRetired)?;
-            transformed.validate_external_references(guard)?;
+            transformed.validate_legacy_external_references(guard)?;
             hook(MigrationCrashPoint::CanonicalMoveExternalReferencesValidated)?;
             revalidate_journal(guard, journal)?;
             revalidate_binding_for_move(
@@ -889,7 +889,7 @@ fn exchange_or_recover(
             "migration target before canonical move",
         )?;
         hook(MigrationCrashPoint::ExchangeInputsOpened)?;
-        transformed.validate_external_references(guard)?;
+        transformed.validate_legacy_external_references(guard)?;
         hook(MigrationCrashPoint::CanonicalMoveExternalReferencesValidated)?;
         revalidate_journal(guard, journal)?;
         revalidate_binding_for_move(
@@ -970,7 +970,7 @@ fn terminalize(
             "canonical migration target changed before terminalization".to_owned(),
         ));
     }
-    snapshot.validate_external_references(guard)?;
+    snapshot.validate_legacy_external_references(guard)?;
     let terminal = append_revision(
         guard,
         &journal,
@@ -1032,12 +1032,16 @@ fn validate_terminal(
             "mutable migrated lifecycle.store lost its terminal provenance".to_owned(),
         ));
     }
-    current.snapshot.validate_external_references(guard)?;
+    current
+        .snapshot
+        .validate_legacy_external_references(guard)?;
     hook(MigrationCrashPoint::TerminalSourceValidated)?;
     revalidate_retained_source(guard, &source, source_binding)?;
     let current = revalidate_current_canonical(guard, &current)?;
     revalidate_journal(guard, journal)?;
-    current.snapshot.validate_external_references(guard)?;
+    current
+        .snapshot
+        .validate_legacy_external_references(guard)?;
     revalidate_retained_source(guard, &source, source_binding)?;
     let current = revalidate_current_canonical(guard, &current)?;
     revalidate_journal(guard, journal)?;
@@ -1314,7 +1318,7 @@ fn validate_typed_target_at(
             "{label} logical identity disagrees with its authorized target"
         )));
     }
-    snapshot.validate_external_references(guard)?;
+    snapshot.validate_legacy_external_references(guard)?;
     entry.validate_path(
         &guard.state.state_dir.join(name),
         EntryKind::RegularFile,

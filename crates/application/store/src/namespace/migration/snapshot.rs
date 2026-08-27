@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::{RunCatalogRecord, StoreError, StoreGeneration, backend_error, io_error};
 
 use self::tables::{read_legacy_snapshot, read_snapshot, write_snapshot};
-use self::validation::validate_referential_closure;
+use self::validation::validate_legacy_referential_closure;
 use super::super::platform::{EntryAccess, EntryKind, HeldEntry, UnpublishedFile};
 use super::super::store_header::{
     MigrationProvenanceAnchor, initialize_store_with_anchor, verify_prior_store_header,
@@ -241,6 +241,13 @@ impl LogicalStoreSnapshot {
         validation::validate_external_references(self, guard)
     }
 
+    pub(super) fn validate_legacy_external_references(
+        &self,
+        guard: &NamespaceGuard,
+    ) -> Result<(), StoreError> {
+        validation::validate_legacy_external_references(self, guard)
+    }
+
     pub(super) fn transformed_from_v12(
         mut self,
         guard: &NamespaceGuard,
@@ -286,7 +293,7 @@ impl LogicalStoreSnapshot {
             let current = transform_legacy_cleanup_operation(key, legacy)?;
             *bytes = serde_json::to_vec(&current).map_err(crate::serialization_error)?;
         }
-        validate_referential_closure(&self)?;
+        validate_legacy_referential_closure(&self)?;
         Ok(self)
     }
 
