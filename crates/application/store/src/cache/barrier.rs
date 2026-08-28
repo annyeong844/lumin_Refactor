@@ -12,12 +12,15 @@ use crate::StoreError;
 
 const INTERRUPTED_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_INTERRUPTED_BARRIER";
 const PENDING_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_PENDING_BARRIER";
+const AUTHORIZED_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_AUTHORIZED_BARRIER";
 const MOVE_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_MOVE_BARRIER";
 const DURABILITY_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_DURABILITY_BARRIER";
+const POST_MOVE_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_POST_MOVE_BARRIER";
 const BARRIER_TIMEOUT: Duration = Duration::from_secs(30);
 const RELEASE_FRAME: &[u8; 8] = b"release\n";
 static MOVE_BARRIER_USED: AtomicBool = AtomicBool::new(false);
 static DURABILITY_BARRIER_USED: AtomicBool = AtomicBool::new(false);
+static POST_MOVE_BARRIER_USED: AtomicBool = AtomicBool::new(false);
 static RECOVERY_BARRIER_CONNECTION: Mutex<Option<RecoveryBarrierConnection>> = Mutex::new(None);
 
 struct RecoveryBarrierConnection {
@@ -71,6 +74,10 @@ pub(super) fn wait_pending(operation_id: &OperationId) -> Result<(), StoreError>
     wait_at(address, "pending", operation_id, None)
 }
 
+pub(super) fn wait_authorized(operation_id: &OperationId) -> Result<(), StoreError> {
+    wait(AUTHORIZED_BARRIER_ENV, "authorized", operation_id, Some(0))
+}
+
 pub(super) fn wait_before_move(operation_id: &OperationId, ordinal: u64) -> Result<(), StoreError> {
     if MOVE_BARRIER_USED.swap(true, Ordering::SeqCst) {
         return Ok(());
@@ -88,6 +95,18 @@ pub(super) fn wait_after_initial_flush(
     wait(
         DURABILITY_BARRIER_ENV,
         "after-initial-flush",
+        operation_id,
+        Some(ordinal),
+    )
+}
+
+pub(super) fn wait_after_move(operation_id: &OperationId, ordinal: u64) -> Result<(), StoreError> {
+    if POST_MOVE_BARRIER_USED.swap(true, Ordering::SeqCst) {
+        return Ok(());
+    }
+    wait(
+        POST_MOVE_BARRIER_ENV,
+        "after-move",
         operation_id,
         Some(ordinal),
     )

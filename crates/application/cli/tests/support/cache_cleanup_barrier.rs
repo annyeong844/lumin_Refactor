@@ -29,12 +29,27 @@ impl CacheCleanupBarrier {
     }
 
     pub fn spawn(&self, root: &Path, operation_id: &str) -> TestResult<PausedCleanup> {
+        self.spawn_with_barrier(root, operation_id, None)
+    }
+
+    pub fn spawn_with_barrier(
+        &self,
+        root: &Path,
+        operation_id: &str,
+        additional: Option<&Self>,
+    ) -> TestResult<PausedCleanup> {
         let mut command = lumin_command(root)?;
         command
             .args(["cache", "clean", "--operation-id", operation_id])
             .env(self.environment, self.listener.local_addr()?.to_string())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if let Some(additional) = additional {
+            command.env(
+                additional.environment,
+                additional.listener.local_addr()?.to_string(),
+            );
+        }
         Ok(PausedCleanup::from_child(command.spawn()?))
     }
 
