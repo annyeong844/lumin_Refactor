@@ -33,12 +33,15 @@ const BARRIER_WAIT_LIMIT: Duration = Duration::from_secs(30);
 #[test]
 fn cache_cleanup_recovers_every_durable_boundary_with_the_same_operation_id()
 -> Result<(), Box<dyn std::error::Error>> {
-    for (index, (point, expected_validated)) in [
-        ("after-authorization", 0),
-        ("after-rename-visible:0", 0),
-        ("after-physical-durability:0", 0),
-        ("after-row-validation:0", 1),
-        ("before-result-commit", 2),
+    for (index, (point, expected_validated, at_destination)) in [
+        ("after-authorization", 0, [false, false]),
+        ("after-rename-visible:0", 0, [true, false]),
+        ("after-physical-durability:0", 0, [true, false]),
+        ("after-row-validation:0", 1, [true, false]),
+        ("after-rename-visible:1", 1, [true, true]),
+        ("after-physical-durability:1", 1, [true, true]),
+        ("after-row-validation:1", 2, [true, true]),
+        ("before-result-commit", 2, [true, true]),
     ]
     .into_iter()
     .enumerate()
@@ -65,14 +68,6 @@ fn cache_cleanup_recovers_every_durable_boundary_with_the_same_operation_id()
             "operation show changed cleanup state"
         );
         let private_after_crash = cleanup_private_state(root.path(), &operation_id)?;
-        let at_destination = match point {
-            "after-authorization" => [false, false],
-            "after-rename-visible:0" | "after-physical-durability:0" | "after-row-validation:0" => {
-                [true, false]
-            }
-            "before-result-commit" => [true, true],
-            _ => unreachable!(),
-        };
         assert_crashed_cleanup_state(
             root.path(),
             &private_after_crash,
@@ -414,40 +409,27 @@ fn exercise_delivery_completion_order(lower_first: bool) -> Result<(), Box<dyn s
         let after_late = run(root.path(), &["operation", "show", operation_id])?;
         assert_status(&after_late, 0);
         assert_eq!(after_late.stdout, before_late.stdout);
-        let mut after_late_private = cleanup_private_state(root.path(), operation_id)?;
+        let after_late_private = cleanup_private_state(root.path(), operation_id)?;
         assert_eq!(
-            after_late_private
-                .pointer("/authorizations")
-                .ok_or_else(|| std::io::Error::other("missing late authorization snapshot"))?,
             before_late_private
-                .pointer("/authorizations")
-                .ok_or_else(|| std::io::Error::other("missing prior authorization snapshot"))?,
+                .pointer("/operation/deliveryCompletions")
+                .ok_or_else(|| std::io::Error::other("missing prior delivery ledger"))?,
+            &json!([
+                {"sequence": 1, "outcome": "succeeded"},
+                {"sequence": greater_sequence, "outcome": "succeeded"},
+            ]),
         );
-        let completions = after_late_private
+        let mut expected_after_late = before_late_private;
+        *expected_after_late
             .pointer_mut("/operation/deliveryCompletions")
-            .and_then(Value::as_array_mut)
-            .ok_or_else(|| std::io::Error::other("missing private delivery completion ledger"))?;
-        let appended_index = completions
-            .iter()
-            .position(|completion| {
-                completion.get("sequence").and_then(Value::as_u64) == Some(lower_sequence)
-            })
-            .ok_or_else(|| {
-                std::io::Error::other("late lower completion was not appended to the ledger")
-            })?;
-        let appended = completions.remove(appended_index);
+            .ok_or_else(|| std::io::Error::other("missing expected delivery ledger"))? = json!([
+            {"sequence": 1, "outcome": "succeeded"},
+            {"sequence": lower_sequence, "outcome": "succeeded"},
+            {"sequence": greater_sequence, "outcome": "succeeded"},
+        ]);
         assert_eq!(
-            appended,
-            json!({"sequence": lower_sequence, "outcome": "succeeded"})
-        );
-        assert_eq!(
-            after_late_private
-                .pointer("/operation")
-                .ok_or_else(|| std::io::Error::other("missing late operation snapshot"))?,
-            before_late_private
-                .pointer("/operation")
-                .ok_or_else(|| std::io::Error::other("missing prior operation snapshot"))?,
-            "late lower completion changed more than its private ledger row"
+            after_late_private, expected_after_late,
+            "late lower completion was not inserted at its exact ordered ledger position"
         );
     }
     assert_anchor_only(root.path())?;
