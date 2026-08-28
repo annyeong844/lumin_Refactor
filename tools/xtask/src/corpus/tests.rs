@@ -216,8 +216,8 @@ fn ci_row_shards_balance_declared_work_deterministically() {
             "unbalanced {mode} invocation loads: {loads:?}",
         );
         let expected = match mode {
-            CorpusMode::Standard => vec![39, 39, 39, 39],
-            CorpusMode::Determinism => vec![64, 23, 22, 22, 22, 22, 22, 22],
+            CorpusMode::Standard => vec![44, 44, 44, 44],
+            CorpusMode::Determinism => vec![64, 25, 25, 25, 25, 25, 25, 25],
             CorpusMode::StoreCrash => unreachable!("CI does not shard store-crash rows"),
         };
         assert_eq!(loads, expected, "{mode} shard assignment changed");
@@ -413,8 +413,57 @@ fn every_mapped_standard_row_has_a_paired_determinism_invocation() {
         .iter()
         .filter(|row| row.is_mapped(CorpusMode::Determinism))
         .count();
-    assert_eq!(standard, 74);
+    assert_eq!(standard, 75);
     assert_eq!(determinism, standard);
+}
+
+#[test]
+fn reserved_state_namespace_mapping_stays_complete() -> Result<(), String> {
+    let invocations = REGISTRY
+        .iter()
+        .find(|row| row.id == "reserved-state-namespace")
+        .and_then(|row| row.mode_invocations(CorpusMode::Standard))
+        .ok_or_else(|| "reserved-state-namespace is not standard-applicable".to_owned())?;
+    assert_eq!(invocations.len(), 20);
+    assert_eq!(
+        invocations
+            .iter()
+            .filter(|invocation| invocation.features == FeatureSet::None)
+            .count(),
+        12,
+    );
+    assert_eq!(
+        invocations
+            .iter()
+            .filter(|invocation| invocation.features == FeatureSet::LifecycleFault)
+            .count(),
+        8,
+    );
+    assert!(invocations.iter().all(|invocation| matches!(
+        invocation.target,
+        "state_namespace" | "cache_cleanup" | "lifecycle_operation_idempotency"
+    )));
+    let filters = invocations
+        .iter()
+        .map(|invocation| invocation.filter)
+        .collect::<BTreeSet<_>>();
+    for required in [
+        "self_hashed_unauthorized_quarantine_is_rejected_without_disposition",
+        "cache_cleanup::dirty_cache_tree_hard_stops_before_plan_authorization",
+        "cache_cleanup::cache_cleanup_recovers_every_durable_boundary_with_the_same_operation_id",
+        "cache_cleanup::concurrent_cleanup_deliveries_obey_allocation_order_in_both_completion_orders",
+    ] {
+        assert!(filters.contains(required), "missing {required}");
+    }
+    assert_eq!(
+        REGISTRY
+            .iter()
+            .find(|row| row.id == "reserved-state-namespace")
+            .and_then(|row| row.mode_invocations(CorpusMode::Determinism))
+            .map(|determinism| determinism.as_ptr()),
+        Some(invocations.as_ptr()),
+    );
+    Ok(())
 }
 
 #[test]
