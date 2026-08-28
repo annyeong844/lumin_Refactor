@@ -1,13 +1,10 @@
-use std::io::Write;
 use std::path::Path;
 
+use crate::{StoreError, serialization_error};
 use lumin_model::{
     PhysicalFileIdentity, RepositoryId, RepositoryRootIdentity, RepositoryRootPhysicalIdentity,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use tempfile::NamedTempFile;
-
-use crate::{StoreError, io_error, serialization_error};
 
 use super::NamespaceState;
 use super::platform::{EntryAccess, EntryKind, HeldEntry};
@@ -151,18 +148,6 @@ pub(super) fn verify_canonical_entry(
         )));
     }
     Ok(())
-}
-
-pub(super) fn write_new_canonical(path: &Path, value: &impl Serialize) -> Result<(), StoreError> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| StoreError::Io("state marker has no parent".to_owned()))?;
-    let mut temp = NamedTempFile::new_in(parent).map_err(io_error)?;
-    temp.write_all(&canonical_json(value)?).map_err(io_error)?;
-    temp.as_file().sync_all().map_err(io_error)?;
-    temp.persist_noclobber(path)
-        .map(|_| ())
-        .map_err(|error| io_error(error.error))
 }
 
 pub(super) fn verify_marker(state: &NamespaceState) -> Result<(), StoreError> {

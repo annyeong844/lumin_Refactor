@@ -9,6 +9,7 @@ publish.workspace = true
 [features]
 cache-cleanup-test-fault = []
 lifecycle-migration-test-fault = []
+namespace-test-crash = []
 publication-test-crash = []
 retention-test-crash = []
 

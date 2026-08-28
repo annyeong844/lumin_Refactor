@@ -76,6 +76,10 @@ const UBUNTU_MAPPED_CORPUS_CASES: &[(&str, &str)] =
     &[("mapped-standard", "foundation --mapped-only --row-jobs 8")];
 const CRASH_CORPUS_CASES: &[(&str, &str)] = &[
     (
+        "state-namespace-initialization",
+        "foundation --store-crash --row state-namespace-initialization",
+    ),
+    (
         "retention-crash-protocol",
         "foundation --store-crash --row retention-crash-protocol",
     ),
@@ -836,9 +840,9 @@ fn validate_corpus_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<Str
         .iter()
         .filter(|line| line.starts_with("- os:"))
         .count()
-        != 23
+        != 25
     {
-        violations.push("corpus job must contain exactly 23 reviewed partitions".to_owned());
+        violations.push("corpus job must contain exactly 25 reviewed partitions".to_owned());
     }
     if lines.iter().any(|line| {
         *line == "exclude:"

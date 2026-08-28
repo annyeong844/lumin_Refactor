@@ -10,6 +10,7 @@ publish.workspace = true
 lifecycle-test-fault = [
     "lumin-engine/cache-cleanup-test-fault",
     "lumin-engine/lifecycle-migration-test-fault",
+    "lumin-engine/namespace-test-crash",
     "lumin-engine/publication-test-crash",
 ]
 publication-test-crash = ["lumin-engine/publication-test-crash"]
@@ -27,6 +28,11 @@ required-features = ["lifecycle-test-fault"]
 [[test]]
 name = "lifecycle_store_migration"
 path = "tests/lifecycle_store_migration.rs"
+required-features = ["lifecycle-test-fault"]
+
+[[test]]
+name = "state_namespace_initialization"
+path = "tests/state_namespace_initialization.rs"
 required-features = ["lifecycle-test-fault"]
 
 [[test]]

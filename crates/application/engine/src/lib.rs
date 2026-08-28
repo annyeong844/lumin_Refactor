@@ -1017,6 +1017,21 @@ pub fn remove_bound_root_authorization_for_test(root: &Path) -> Result<(), Engin
     Ok(())
 }
 
+#[cfg(feature = "namespace-test-crash")]
+pub fn remove_cache_eviction_binding_for_test(root: &Path) -> Result<(), EngineError> {
+    let admission = lumin_inventory::repository_admission(root)?;
+    RepositoryStore::open(&admission.canonical_root, &admission.binding)?
+        .remove_cache_eviction_binding_for_test()?;
+    Ok(())
+}
+
+#[cfg(feature = "namespace-test-crash")]
+pub fn state_entry_physical_identity_for_test(
+    path: &Path,
+) -> Result<lumin_model::PhysicalFileIdentity, EngineError> {
+    lumin_store::state_entry_physical_identity_for_test(path).map_err(Into::into)
+}
+
 pub fn allocate_cache_cleanup_delivery(
     root: &Path,
     operation_id: &OperationId,

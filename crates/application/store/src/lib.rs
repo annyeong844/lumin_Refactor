@@ -122,8 +122,37 @@ pub struct RepositoryStore {
     namespace: namespace::NamespaceState,
 }
 
-#[cfg(any(test, feature = "lifecycle-migration-test-fault"))]
+#[cfg(feature = "namespace-test-crash")]
+pub fn state_entry_physical_identity_for_test(
+    path: &Path,
+) -> Result<PhysicalFileIdentity, StoreError> {
+    let metadata = fs::symlink_metadata(path).map_err(io_error)?;
+    let kind = if metadata.file_type().is_dir() {
+        namespace::EntryKind::Directory
+    } else if metadata.file_type().is_file() {
+        namespace::EntryKind::RegularFile
+    } else {
+        return Err(StoreError::Integrity(
+            "test state entry is not a regular file or directory".to_owned(),
+        ));
+    };
+    namespace::HeldEntry::open(
+        path,
+        kind,
+        namespace::EntryAccess::ReadOnly,
+        false,
+        "test state entry",
+    )
+    .map(|entry| entry.identity().clone())
+}
+
+#[cfg(any(
+    test,
+    feature = "lifecycle-migration-test-fault",
+    feature = "namespace-test-crash"
+))]
 impl RepositoryStore {
+    #[cfg(any(test, feature = "lifecycle-migration-test-fault"))]
     pub fn rewrite_current_store_header_as_prior_for_test(&self) -> Result<(), StoreError> {
         self.namespace
             .rewrite_current_store_header_as_prior_for_test()
@@ -152,6 +181,11 @@ impl RepositoryStore {
         let namespace = namespace::NamespaceState::open_for_migration(root, binding)?
             .ok_or(StoreError::LifecycleStoreNotInitialized)?;
         namespace.remove_bound_root_authorization_for_test()
+    }
+
+    #[cfg(feature = "namespace-test-crash")]
+    pub fn remove_cache_eviction_binding_for_test(&self) -> Result<(), StoreError> {
+        self.namespace.remove_cache_eviction_binding_for_test()
     }
 }
 

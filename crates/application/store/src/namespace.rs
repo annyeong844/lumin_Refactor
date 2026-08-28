@@ -18,7 +18,7 @@ use fs2::FileExt;
 use lumin_model::{RepositoryBinding, RepositoryId};
 
 use crate::{StoreError, io_error};
-use bootstrap::bootstrap_namespace;
+use bootstrap::{BootstrapCrashPoint, bootstrap_namespace, hit as bootstrap_hit};
 pub(crate) use database::StoreDatabase;
 pub use migration::MigrationIntent;
 use platform::repository_root_physical_identity;
@@ -134,6 +134,16 @@ impl NamespaceState {
         self.with_migration_lock(migration::remove_bound_root_authorization_for_test)
     }
 
+    #[cfg(feature = "namespace-test-crash")]
+    pub(crate) fn remove_cache_eviction_binding_for_test(&self) -> Result<(), StoreError> {
+        self.with_migration_lock(|_| {
+            store_header::remove_cache_eviction_binding_for_test(
+                &self.state_dir.join("lifecycle.store"),
+                &self.binding,
+            )
+        })
+    }
+
     pub(super) fn open_if_bound(
         root: &Path,
         binding: &RepositoryBinding,
@@ -168,7 +178,13 @@ impl NamespaceState {
     pub(super) fn open(root: &Path, binding: &RepositoryBinding) -> Result<Self, StoreError> {
         let repository = HeldRepository::open(root, binding.clone())?;
         let state_dir = repository.path.join(".lumin");
+        bootstrap_hit(BootstrapCrashPoint::BeforeStateDirectory);
         let state_directory_created = ensure_state_directory(&state_dir)?;
+        if state_directory_created {
+            bootstrap_hit(BootstrapCrashPoint::AfterStateDirectoryCreated);
+            repository.directory.sync_directory()?;
+            bootstrap_hit(BootstrapCrashPoint::AfterStateDirectoryFlushed);
+        }
         let state_directory = HeldEntry::open(
             &state_dir,
             EntryKind::Directory,

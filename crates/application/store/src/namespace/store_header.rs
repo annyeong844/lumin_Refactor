@@ -8,6 +8,7 @@ use lumin_model::PhysicalFileIdentity;
 
 use crate::{StoreError, StoreGeneration, backend_error, io_error, serialization_error};
 
+use super::bootstrap::{BootstrapCrashPoint, hit};
 use super::platform::{EntryAccess, EntryKind, HeldEntry};
 use super::{
     NamespaceBinding, NamespaceGuard, detached_database, entry_exists, require_state_volume,
@@ -71,15 +72,20 @@ pub(super) fn create_or_verify_store(guard: &NamespaceGuard) -> Result<(), Store
         )?;
         require_state_volume(&entry, &guard.state_directory, "lifecycle.store")?;
         if entry.file().metadata().map_err(io_error)?.len() == 0 {
-            return initialize_store(&entry, &guard.state.binding, StoreGeneration::INITIAL);
+            initialize_store(&entry, &guard.state.binding, StoreGeneration::INITIAL)?;
+            hit(BootstrapCrashPoint::AfterStoreInitialized);
+            return Ok(());
         }
         let database = detached_database(guard, &entry)?;
         verify_store_header(&database, &guard.state.binding)?;
         return Ok(());
     }
     let entry = HeldEntry::create_new(&path, "lifecycle.store")?;
+    hit(BootstrapCrashPoint::AfterStoreCreated);
     require_state_volume(&entry, &guard.state_directory, "lifecycle.store")?;
-    initialize_store(&entry, &guard.state.binding, StoreGeneration::INITIAL)
+    initialize_store(&entry, &guard.state.binding, StoreGeneration::INITIAL)?;
+    hit(BootstrapCrashPoint::AfterStoreInitialized);
+    Ok(())
 }
 
 pub(super) fn initialize_store(
@@ -520,6 +526,49 @@ pub(crate) fn corrupt_migration_anchor_for_test(
         header.generation,
         &header.validation_receipt_set_id,
         header.migration_provenance_anchor.as_ref(),
+    )?;
+    let write = database.begin_write().map_err(backend_error)?;
+    {
+        let mut table = write.open_table(STORE_HEADER).map_err(backend_error)?;
+        table
+            .insert(STORE_HEADER_KEY, bytes.as_slice())
+            .map_err(backend_error)?;
+    }
+    write.commit().map_err(backend_error)?;
+    drop(database);
+    entry.sync()
+}
+
+#[cfg(feature = "namespace-test-crash")]
+pub(crate) fn remove_cache_eviction_binding_for_test(
+    path: &std::path::Path,
+    binding: &NamespaceBinding,
+) -> Result<(), StoreError> {
+    let entry = HeldEntry::open(
+        path,
+        EntryKind::RegularFile,
+        EntryAccess::ReadWrite,
+        true,
+        "test lifecycle.store",
+    )?;
+    let database = Database::builder()
+        .create_file(entry.file().try_clone().map_err(io_error)?)
+        .map_err(backend_error)?;
+    let read = database.begin_read().map_err(backend_error)?;
+    let bytes = read_store_header_bytes_from_read(&read)?;
+    let mut header = decode_store_header_bytes(&bytes)?;
+    if header.binding != *binding || header.migration_provenance_anchor.is_some() {
+        return Err(StoreError::Integrity(
+            "test binding removal requires a native current store".to_owned(),
+        ));
+    }
+    drop(read);
+    header.binding.cache_evictions = None;
+    let bytes = store_header_bytes(
+        &header.binding,
+        header.generation,
+        &header.validation_receipt_set_id,
+        None,
     )?;
     let write = database.begin_write().map_err(backend_error)?;
     {

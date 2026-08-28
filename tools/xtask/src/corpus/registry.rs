@@ -88,6 +88,16 @@ static INV_IDEMP: &[CorpusInvocation] = &[
     inv!("lifecycle_operation_idempotency", "cache_cleanup::concurrent_cleanup_deliveries_obey_allocation_order_in_both_completion_orders", LifecycleFault),
 ];
 #[rustfmt::skip]
+static INV_STATE_NAMESPACE_INITIALIZATION: &[CorpusInvocation] = &[
+    inv!("state_namespace", "fresh_namespace_initialization_publishes_the_exact_complete_binding"),
+    inv!("state_namespace_initialization", "missing_nested_marker_or_store_binding_is_incompatible_without_adoption", LifecycleFault),
+];
+#[rustfmt::skip]
+static INV_STATE_NAMESPACE_INITIALIZATION_CRASH: &[CorpusInvocation] = &[
+    inv!("state_namespace_initialization", "public_namespace_initialization_recovers_or_rejects_every_named_crash_boundary", LifecycleCrash),
+    inv!("state_namespace_initialization", "unknown_namespace_crash_selector_fails_before_state_initialization", LifecycleCrash),
+];
+#[rustfmt::skip]
 static INV_LIFECYCLE_MIGRATION: &[CorpusInvocation] = &[
     inv!("lifecycle_store_migration", "public_migration_refuses_absent_state_and_is_a_native_v13_noop", LifecycleFault),
     inv!("lifecycle_store_migration", "public_v12_route_migrates_once_and_retries_without_mutation", LifecycleFault),
@@ -434,7 +444,7 @@ pub static REGISTRY: &[RegistryRow] = &[
         inv!("repo_path_lossless", "native_repository_paths_round_trip_through_public_queries_and_cursors"),
     ]),
     row_sd!("reserved-state-namespace"),
-    row_sdc!("state-namespace-initialization"),
+    row_sdc!("state-namespace-initialization", INV_STATE_NAMESPACE_INITIALIZATION, INV_STATE_NAMESPACE_INITIALIZATION_CRASH),
     row_sdc!("state-lock-replacement-split-brain"),
     row_sdc!("state-managed-parent-replacement"),
     row_sd!("gate-config-drift", &[inv!("write_gate", "protected_input_drift_is_stale")]),

@@ -45,10 +45,10 @@ These are execution-matrix counts, not a percentage estimate of product code.
 
 | Lane | Applicable | Mapped | Remaining | Verified aggregate |
 | --- | ---: | ---: | ---: | --- |
-| Standard | 86 | 74 | 12 | Focused `corpus::tests::mode_counts`: 74 mapped, 12 unmapped. |
-| Determinism | 86 | 74 | 12 | Focused `corpus::tests::mode_counts`: 74 mapped, 12 unmapped. |
-| Store crash | 11 | 6 | 5 | Focused `corpus::tests::mode_counts`: 6 mapped, 5 unmapped; `cache-cleanup-publication-race`: 1 passed, 0 failed. |
-| **Total execution obligations** | **183** | **154** | **29** | This total deliberately counts each required lane execution. |
+| Standard | 86 | 75 | 11 | Focused `state-namespace-initialization`: 1 passed, 0 failed; `corpus::tests::mode_counts`: 75 mapped, 11 unmapped. |
+| Determinism | 86 | 75 | 11 | Focused `state-namespace-initialization`: 1 passed with 3 semantic captures; `corpus::tests::mode_counts`: 75 mapped, 11 unmapped. |
+| Store crash | 11 | 7 | 4 | Focused `state-namespace-initialization`: 1 passed, 0 failed; `corpus::tests::mode_counts`: 7 mapped, 4 unmapped. |
+| **Total execution obligations** | **183** | **157** | **26** | This total deliberately counts each required lane execution. |
 
 Known non-corpus exit gaps:
 
@@ -143,7 +143,7 @@ unmapped row or silent fallback.
 
 Owner routes: ARCH-002 and SLICE-001 AC 17, 18, 25, 28, 30, 31, 34, and 36.
 
-- [ ] Map and pass the remaining five store-crash rows through real public child
+- [ ] Map and pass the remaining four store-crash rows through real public child
   processes and named fault points.
 - [ ] Prove operation retry, publication, retention, migration, namespace, and
   latest-pointer recovery agree with public lookup state after every death.
