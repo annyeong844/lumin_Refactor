@@ -206,6 +206,8 @@ impl RepositoryStore {
         }
         self.attach_or_create_cleanup(&session, request_digest)?;
         self.authorize_cleanup_plan(&session, request_digest)?;
+        #[cfg(feature = "cache-cleanup-test-fault")]
+        barrier::wait_authorized(session.operation_id())?;
         self.advance_cleanup_plan(&session, request_digest)
     }
 

@@ -303,7 +303,7 @@ fn public_process_rejects_managed_parent_anchor_and_marker_replacement()
     remove_directory_alias(&cache)?;
     fs::rename(&cache_original, &cache)?;
 
-    let quarantine = state.join("trash/cache-evictions");
+    let quarantine = state.join("trash").join("cache-evictions");
     let quarantine_original = root.path().join("cache-evictions.original");
     let quarantine_anchor = quarantine.join("namespace.anchor");
     let quarantine_anchor_bytes = fs::read(&quarantine_anchor)?;
@@ -322,6 +322,29 @@ fn public_process_rejects_managed_parent_anchor_and_marker_replacement()
     )?;
     fs::remove_dir(&quarantine)?;
     fs::rename(&quarantine_original, &quarantine)?;
+
+    let quarantine_redirect_original = root.path().join("cache-evictions.redirect-original");
+    fs::rename(&quarantine, &quarantine_redirect_original)?;
+    create_directory_alias(&quarantine_redirect_original, &quarantine)?;
+    assert_public_integrity_failure(&run(
+        root.path(),
+        &[
+            "cache",
+            "clean",
+            "--operation-id",
+            "cache-nested-parent-redirect",
+        ],
+    )?);
+    assert_eq!(fs::read(&quarantine_anchor)?, quarantine_anchor_bytes);
+    assert_eq!(fs::read_dir(&quarantine)?.count(), 1);
+    remove_directory_alias(&quarantine)?;
+    fs::rename(&quarantine_redirect_original, &quarantine)?;
+    let absent_operation = run(
+        root.path(),
+        &["operation", "show", "cache-nested-parent-redirect"],
+    )?;
+    assert_status(&absent_operation, 2);
+    assert!(absent_operation.stderr.contains("operation does not exist"));
 
     let quarantine_anchor = quarantine.join("namespace.anchor");
     let quarantine_anchor_original = root.path().join("cache-evictions-anchor.original");

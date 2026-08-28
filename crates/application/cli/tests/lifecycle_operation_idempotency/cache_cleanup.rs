@@ -2,12 +2,12 @@ use std::ffi::OsString;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use lumin_model::{OperationId, decode_native_path_component};
+use lumin_model::{OperationId, PhysicalFileIdentity, RepoPath, decode_native_path_component};
 use serde_json::{Value, json};
 
 #[path = "../support/cache_cleanup_barrier.rs"]
@@ -26,6 +26,7 @@ use cache_cleanup_delivery_barrier::CacheCleanupDeliveryBarrier;
 const CRASH_POINT_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_CRASH_POINT";
 const INTERRUPTED_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_INTERRUPTED_BARRIER";
 const PENDING_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_PENDING_BARRIER";
+const AUTHORIZED_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_AUTHORIZED_BARRIER";
 const MOVE_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_MOVE_BARRIER";
 const DURABILITY_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_DURABILITY_BARRIER";
 const POST_MOVE_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_POST_MOVE_BARRIER";
@@ -52,6 +53,11 @@ fn cache_cleanup_recovers_every_durable_boundary_with_the_same_operation_id()
         let initialized = run(root.path(), &["audit", "--jobs", "1"])?;
         assert_status(&initialized, 0);
         seed_cache(root.path())?;
+        let cache = root.path().join(".lumin/cache");
+        let source_payloads = [
+            physical_tree_snapshot(&cache, &cache.join("first.bin"))?,
+            physical_tree_snapshot(&cache, &cache.join("second"))?,
+        ];
         let operation_id = format!("cache-recovery-{index}");
         let crashed = run_with_env(
             root.path(),
@@ -112,6 +118,16 @@ fn cache_cleanup_recovers_every_durable_boundary_with_the_same_operation_id()
         assert_anchor_only(root.path())?;
         assert_eq!(quarantine_payload_count(root.path())?, 2);
         let committed_private = cleanup_private_state(root.path(), &operation_id)?;
+        let quarantine = root.path().join(".lumin/trash/cache-evictions");
+        let destinations = cleanup_authorization_destinations(&committed_private)?;
+        assert_eq!(destinations.len(), source_payloads.len());
+        for (destination, source_payload) in destinations.iter().zip(&source_payloads) {
+            assert_eq!(
+                physical_tree_snapshot(&quarantine, &quarantine.join(destination))?,
+                *source_payload,
+                "cleanup recovery changed a quarantine object's identity or tree manifest"
+            );
+        }
         assert_eq!(
             committed_private,
             expected_recovered_cleanup_state(private_after_crash, &operation_id)?,
@@ -157,14 +173,26 @@ fn cleanup_retry_exposes_one_read_only_interrupted_barrier_before_reattachment()
         &["cache", "clean", "--operation-id", "foreign-interrupted"],
     )?;
     assert_status(&foreign, 4);
+    let interrupted_private_before_writer = cleanup_private_state(root.path(), operation_id)?;
     assert_active_cache_writer_blocked(root.path(), "blocked-while-interrupted.bin")?;
+    assert_eq!(
+        cleanup_private_state(root.path(), operation_id)?,
+        interrupted_private_before_writer,
+        "rejected writer changed the interrupted cleanup snapshot"
+    );
     assert_seed_cache_intact(root.path())?;
 
     let recovery_permit = interrupted_permit.release_for_next()?;
     let pending_permit = recovery_permit.wait_for_stage("pending", operation_id)?;
     let pending = show_operation(root.path(), operation_id)?;
     assert_cleanup_projection(&pending, "pending", 1, 2, 0, true)?;
+    let pending_private_before_writer = cleanup_private_state(root.path(), operation_id)?;
     assert_active_cache_writer_blocked(root.path(), "blocked-after-reattachment.bin")?;
+    assert_eq!(
+        cleanup_private_state(root.path(), operation_id)?,
+        pending_private_before_writer,
+        "rejected writer changed the reattached cleanup snapshot"
+    );
     assert_seed_cache_intact(root.path())?;
 
     pending_permit.release()?;
@@ -467,9 +495,36 @@ fn exercise_delivery_completion_order(lower_first: bool) -> Result<(), Box<dyn s
         lower_permit.release()?;
         assert_status(&lower.finish()?, 0);
         assert_last_delivery(&show_operation(root.path(), operation_id)?, "unknown")?;
+        let before_greater_private = cleanup_private_state(root.path(), operation_id)?;
+        assert_eq!(
+            before_greater_private
+                .pointer("/operation/deliveryCompletions")
+                .ok_or_else(|| std::io::Error::other("missing lower-first delivery ledger"))?,
+            &json!([
+                {"sequence": 1, "outcome": "succeeded"},
+                {"sequence": lower_sequence, "outcome": "succeeded"},
+            ]),
+        );
         greater_permit.release()?;
         assert_status(&greater.finish()?, 0);
         assert_last_delivery(&show_operation(root.path(), operation_id)?, "succeeded")?;
+        let after_greater_private = cleanup_private_state(root.path(), operation_id)?;
+        let mut expected_after_greater = before_greater_private;
+        *expected_after_greater
+            .pointer_mut("/operation/greatestCompletedDeliverySequence")
+            .ok_or_else(|| std::io::Error::other("missing completed delivery sequence"))? =
+            json!(greater_sequence);
+        *expected_after_greater
+            .pointer_mut("/operation/deliveryCompletions")
+            .ok_or_else(|| std::io::Error::other("missing expected delivery ledger"))? = json!([
+            {"sequence": 1, "outcome": "succeeded"},
+            {"sequence": lower_sequence, "outcome": "succeeded"},
+            {"sequence": greater_sequence, "outcome": "succeeded"},
+        ]);
+        assert_eq!(
+            after_greater_private, expected_after_greater,
+            "greater completion changed state outside the ordered private ledger"
+        );
     } else {
         greater_permit.release()?;
         assert_status(&greater.finish()?, 0);
@@ -634,9 +689,14 @@ fn exercise_substitution(nested: bool) -> Result<(), Box<dyn std::error::Error>>
         "cache-top-substitute"
     };
 
-    let barrier = CacheCleanupBarrier::new(MOVE_BARRIER_ENV, "before-move")?;
-    let mut cleanup = barrier.spawn(root.path(), operation_id)?;
-    let permit = barrier.accept(&mut cleanup, operation_id)?;
+    let authorized_barrier = CacheCleanupBarrier::new(AUTHORIZED_BARRIER_ENV, "authorized")?;
+    let move_barrier = CacheCleanupBarrier::new(MOVE_BARRIER_ENV, "before-move")?;
+    let mut cleanup =
+        authorized_barrier.spawn_with_barrier(root.path(), operation_id, Some(&move_barrier))?;
+    let authorized_permit = authorized_barrier.accept(&mut cleanup, operation_id)?;
+    let private_before_substitution = cleanup_private_state(root.path(), operation_id)?;
+    authorized_permit.release()?;
+    let permit = move_barrier.accept(&mut cleanup, operation_id)?;
     let saved = root.path().join(if nested {
         "saved-nested-original.bin"
     } else {
@@ -668,6 +728,10 @@ fn exercise_substitution(nested: bool) -> Result<(), Box<dyn std::error::Error>>
     let operation = show_operation(root.path(), operation_id)?;
     assert_cleanup_projection(&operation, "pending", 0, 2, 0, true)?;
     let private = cleanup_private_state(root.path(), operation_id)?;
+    assert_eq!(
+        private, private_before_substitution,
+        "substitution rejection changed the cleanup operation or authorization records"
+    );
     let destinations = assert_pending_cleanup_authorizations(
         &private,
         operation_id,
@@ -696,6 +760,86 @@ fn cleanup_private_state(
         "operation": operation,
         "authorizations": authorizations,
     }))
+}
+
+fn cleanup_authorization_destinations(
+    state: &Value,
+) -> Result<Vec<OsString>, Box<dyn std::error::Error>> {
+    required_value(state, "/authorizations")?
+        .as_array()
+        .ok_or_else(|| std::io::Error::other("cleanup authorizations are not an array"))?
+        .iter()
+        .map(|authorization| authorization_component(authorization, "destinationComponent"))
+        .collect()
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct PhysicalTreeSnapshotRow {
+    relative_path: PathBuf,
+    kind: PhysicalTreeEntryKind,
+    physical_identity: PhysicalFileIdentity,
+    payload: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum PhysicalTreeEntryKind {
+    Directory,
+    RegularFile,
+}
+
+fn physical_tree_snapshot(
+    namespace_root: &Path,
+    payload_root: &Path,
+) -> Result<Vec<PhysicalTreeSnapshotRow>, Box<dyn std::error::Error>> {
+    let mut rows = Vec::new();
+    snapshot_physical_tree_entry(namespace_root, payload_root, payload_root, &mut rows)?;
+    Ok(rows)
+}
+
+fn snapshot_physical_tree_entry(
+    namespace_root: &Path,
+    payload_root: &Path,
+    path: &Path,
+    rows: &mut Vec<PhysicalTreeSnapshotRow>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let metadata = fs::symlink_metadata(path)?;
+    let file_type = metadata.file_type();
+    let namespace_relative = path.strip_prefix(namespace_root)?;
+    let payload_relative = path.strip_prefix(payload_root)?;
+    let logical = RepoPath::from_native_relative(namespace_relative)?;
+    let physical_identity =
+        lumin_engine::path_physical_identity_for_test(namespace_root, &logical)?;
+    let (kind, payload) = if file_type.is_dir() {
+        (PhysicalTreeEntryKind::Directory, None)
+    } else if file_type.is_file() {
+        (PhysicalTreeEntryKind::RegularFile, Some(fs::read(path)?))
+    } else {
+        return Err(std::io::Error::other(format!(
+            "physical tree snapshot contains unsupported entry: {}",
+            path.display()
+        ))
+        .into());
+    };
+    rows.push(PhysicalTreeSnapshotRow {
+        relative_path: payload_relative.to_path_buf(),
+        kind,
+        physical_identity,
+        payload,
+    });
+
+    if file_type.is_dir() {
+        let mut children = fs::read_dir(path)?
+            .map(|entry| {
+                let entry = entry?;
+                Ok::<_, std::io::Error>((entry.file_name(), entry.path()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        children.sort_by(|left, right| left.0.cmp(&right.0));
+        for (_, child) in children {
+            snapshot_physical_tree_entry(namespace_root, payload_root, &child, rows)?;
+        }
+    }
+    Ok(())
 }
 
 fn assert_pending_cleanup_authorizations(
