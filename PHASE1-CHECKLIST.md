@@ -46,7 +46,7 @@ These are execution-matrix counts, not a percentage estimate of product code.
 | Lane | Applicable | Mapped | Remaining | Verified aggregate |
 | --- | ---: | ---: | ---: | --- |
 | Standard | 86 | 75 | 11 | Focused `corpus::tests::mode_counts`: 75 mapped, 11 unmapped; `reserved-state-namespace`: 20 invocations, 1 row passed, 0 failed. |
-| Determinism | 86 | 75 | 11 | Focused `corpus::tests::mode_counts`: 75 mapped, 11 unmapped; `reserved-state-namespace`: 20 invocations and 87 semantic captures, 1 row passed, 0 failed. |
+| Determinism | 86 | 75 | 11 | Focused `corpus::tests::mode_counts`: 75 mapped, 11 unmapped; `reserved-state-namespace`: 20 invocations and 91 semantic captures, 1 row passed, 0 failed. |
 | Store crash | 11 | 6 | 5 | Focused `corpus::tests::mode_counts`: 6 mapped, 5 unmapped; `cache-cleanup-publication-race`: 1 passed, 0 failed. |
 | **Total execution obligations** | **183** | **156** | **27** | This total deliberately counts each required lane execution. |
 

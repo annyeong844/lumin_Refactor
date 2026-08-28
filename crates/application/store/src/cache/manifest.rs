@@ -88,6 +88,7 @@ pub(super) fn reconcile_authorized_move(
             require_root_identity(&held, &authorization.expected_manifest)?;
             #[cfg(feature = "cache-cleanup-test-fault")]
             super::barrier::wait_before_move(&authorization.operation_id, authorization.ordinal)?;
+            require_manifest(&source, cache_parent, &authorization.expected_manifest)?;
             move_entry_noreplace(
                 cache_parent,
                 &source_name,
@@ -101,6 +102,8 @@ pub(super) fn reconcile_authorized_move(
                     source.display()
                 )));
             }
+            #[cfg(feature = "cache-cleanup-test-fault")]
+            super::barrier::wait_after_move(&authorization.operation_id, authorization.ordinal)?;
             #[cfg(feature = "cache-cleanup-test-fault")]
             super::crash::hit(super::crash::CacheCleanupCrashPoint::AfterRenameVisible(
                 authorization.ordinal,

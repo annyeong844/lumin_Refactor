@@ -928,6 +928,28 @@ pub fn cache_cleanup_state_for_test(
         .map_err(Into::into)
 }
 
+#[cfg(feature = "gate-test-fault")]
+pub fn path_physical_identity_for_test(
+    root: &Path,
+    path: &lumin_model::RepoPath,
+) -> Result<lumin_model::PhysicalFileIdentity, EngineError> {
+    if path.components_len() == 0 {
+        return lumin_inventory::directory_physical_identity(root, path)
+            .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))
+            .map_err(Into::into);
+    }
+    lumin_inventory::inspect_write_target(root, path)
+        .map_err(|error| InventoryError::PhysicalIdentity(error.to_string()))?
+        .physical_identity
+        .ok_or_else(|| {
+            InventoryError::PhysicalIdentity(format!(
+                "test snapshot path omitted its physical identity: {}",
+                path.display_escaped()
+            ))
+            .into()
+        })
+}
+
 pub fn migrate_lifecycle_store(root: &Path) -> Result<(), EngineError> {
     let admission = lumin_inventory::repository_admission(root)?;
     RepositoryStore::migrate_existing_lifecycle_store(

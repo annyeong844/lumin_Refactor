@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
@@ -27,6 +28,7 @@ const INTERRUPTED_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_INTERRUPTED_BARR
 const PENDING_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_PENDING_BARRIER";
 const MOVE_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_MOVE_BARRIER";
 const DURABILITY_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_DURABILITY_BARRIER";
+const POST_MOVE_BARRIER_ENV: &str = "LUMIN_TEST_CACHE_CLEANUP_POST_MOVE_BARRIER";
 const CRASH_EXIT_CODE: i32 = 95;
 const BARRIER_WAIT_LIMIT: Duration = Duration::from_secs(30);
 
@@ -226,7 +228,9 @@ fn cache_cleanup_preserves_top_level_and_nested_substitutes_without_advancing_la
 fn dirty_cache_tree_hard_stops_before_plan_authorization() -> Result<(), Box<dyn std::error::Error>>
 {
     exercise_dirty_payload(false)?;
-    exercise_dirty_payload(true)
+    exercise_dirty_payload(true)?;
+    exercise_post_move_dirty_payload(false)?;
+    exercise_post_move_dirty_payload(true)
 }
 
 fn exercise_dirty_payload(nested: bool) -> Result<(), Box<dyn std::error::Error>> {
@@ -262,6 +266,77 @@ fn exercise_dirty_payload(nested: bool) -> Result<(), Box<dyn std::error::Error>
     assert_eq!(quarantine_payload_count(root.path())?, 0);
     let operation = show_operation(root.path(), operation_id)?;
     assert_cleanup_projection(&operation, "pending", 0, 0, 0, true)?;
+    Ok(())
+}
+
+fn exercise_post_move_dirty_payload(nested: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    assert_status(&run(root.path(), &["audit", "--jobs", "1"])?, 0);
+    let cache = root.path().join(".lumin/cache");
+    let source_name = if nested { "a-tree" } else { "a-file.bin" };
+    let source = cache.join(source_name);
+    let source_payload = if nested {
+        fs::create_dir(&source)?;
+        source.join("child.bin")
+    } else {
+        source.clone()
+    };
+    fs::write(&source_payload, b"initial")?;
+    fs::write(cache.join("z-later.bin"), b"later")?;
+    let operation_id = if nested {
+        "cache-dirty-tree-after-move"
+    } else {
+        "cache-dirty-file-after-move"
+    };
+
+    let barrier = CacheCleanupBarrier::new(POST_MOVE_BARRIER_ENV, "after-move")?;
+    let mut cleanup = barrier.spawn(root.path(), operation_id)?;
+    let permit = barrier.accept(&mut cleanup, operation_id)?;
+    let quarantine = root.path().join(".lumin/trash/cache-evictions");
+    let mut moved = fs::read_dir(&quarantine)?
+        .filter_map(|entry| match entry {
+            Ok(entry) if entry.file_name() != "namespace.anchor" => Some(Ok(entry.path())),
+            Ok(_) => None,
+            Err(error) => Some(Err(error)),
+        })
+        .collect::<Result<Vec<_>, std::io::Error>>()?;
+    assert_eq!(moved.len(), 1);
+    let moved = moved
+        .pop()
+        .ok_or_else(|| std::io::Error::other("moved cache payload disappeared"))?;
+    let moved_payload = if nested {
+        moved.join("child.bin")
+    } else {
+        moved.clone()
+    };
+    fs::write(&moved_payload, b"changed after move")?;
+    permit.release()?;
+
+    let failed = cleanup.finish()?;
+    assert_status(&failed, 1);
+    assert!(failed.stdout.is_empty());
+    assert!(
+        failed
+            .stderr
+            .contains("moved cache payload disagrees with its authorization")
+    );
+    assert!(!source.exists());
+    assert_eq!(fs::read(&moved_payload)?, b"changed after move");
+    assert_eq!(fs::read(cache.join("z-later.bin"))?, b"later");
+
+    let operation = show_operation(root.path(), operation_id)?;
+    assert_cleanup_projection(&operation, "pending", 0, 2, 0, true)?;
+    let private = cleanup_private_state(root.path(), operation_id)?;
+    let destinations = assert_pending_cleanup_authorizations(
+        &private,
+        operation_id,
+        &[source_name, "z-later.bin"],
+        0,
+    )?;
+    assert_eq!(destinations.len(), 2);
+    assert_eq!(quarantine.join(&destinations[0]), moved);
+    assert!(quarantine.join(&destinations[0]).exists());
+    assert!(!quarantine.join(&destinations[1]).exists());
     Ok(())
 }
 
@@ -585,22 +660,28 @@ fn exercise_substitution(nested: bool) -> Result<(), Box<dyn std::error::Error>>
     } else {
         b"top-original"
     };
-    assert!(tree_contains_bytes(root.path(), original)?);
+    assert_eq!(fs::read(&saved)?, original);
+    assert_eq!(fs::read(&target)?, b"substitute");
     assert_eq!(fs::read(cache.join("z-later.bin"))?, b"later");
-    assert!(
-        tree_contains_bytes(
-            &root.path().join(".lumin/trash/cache-evictions"),
-            b"substitute",
-        )? || tree_contains_bytes(&cache, b"substitute")?
-    );
+    let quarantine = root.path().join(".lumin/trash/cache-evictions");
+    assert_eq!(quarantine_payload_count(root.path())?, 0);
     let operation = show_operation(root.path(), operation_id)?;
     assert_cleanup_projection(&operation, "pending", 0, 2, 0, true)?;
-    assert!(cache.join("namespace.anchor").is_file());
+    let private = cleanup_private_state(root.path(), operation_id)?;
+    let destinations = assert_pending_cleanup_authorizations(
+        &private,
+        operation_id,
+        &[if nested { "a-tree" } else { "a-first.bin" }, "z-later.bin"],
+        0,
+    )?;
+    assert_eq!(destinations.len(), 2);
     assert!(
-        root.path()
-            .join(".lumin/trash/cache-evictions/namespace.anchor")
-            .is_file()
+        destinations
+            .iter()
+            .all(|destination| !quarantine.join(destination).exists())
     );
+    assert!(cache.join("namespace.anchor").is_file());
+    assert!(quarantine.join("namespace.anchor").is_file());
     Ok(())
 }
 
@@ -615,6 +696,91 @@ fn cleanup_private_state(
         "operation": operation,
         "authorizations": authorizations,
     }))
+}
+
+fn assert_pending_cleanup_authorizations(
+    state: &Value,
+    operation_id: &str,
+    expected_sources: &[&str],
+    expected_validated: u64,
+) -> Result<Vec<OsString>, Box<dyn std::error::Error>> {
+    assert_eq!(
+        required_string(state, "/operation/schemaVersion")?,
+        "lumin-cache-cleanup-operation.v2"
+    );
+    assert_eq!(
+        required_string(state, "/operation/operationId")?,
+        operation_id
+    );
+    assert_eq!(required_string(state, "/operation/status")?, "pending");
+    assert_eq!(required_u64(state, "/operation/interruptionCount")?, 0);
+    assert_eq!(
+        required_u64(state, "/operation/initialAuthorizationCount")?,
+        0
+    );
+    assert_eq!(
+        required_value(state, "/operation/planInitialized")?.as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        required_u64(state, "/operation/validatedCount")?,
+        expected_validated
+    );
+    assert!(!required_value(state, "/operation/executionLease")?.is_null());
+    assert!(required_value(state, "/operation/recoveryReservation")?.is_null());
+    assert!(required_value(state, "/operation/result")?.is_null());
+    assert_eq!(
+        required_u64(state, "/operation/greatestAllocatedDeliverySequence")?,
+        0
+    );
+    assert!(required_value(state, "/operation/greatestCompletedDeliverySequence")?.is_null());
+    assert_eq!(
+        required_value(state, "/operation/deliveryCompletions")?
+            .as_array()
+            .map(Vec::len),
+        Some(0)
+    );
+
+    let keys = required_value(state, "/operation/authorizationKeys")?
+        .as_array()
+        .ok_or_else(|| std::io::Error::other("cleanup authorization keys are not an array"))?;
+    let authorizations = required_value(state, "/authorizations")?
+        .as_array()
+        .ok_or_else(|| std::io::Error::other("cleanup authorizations are not an array"))?;
+    assert_eq!(keys.len(), expected_sources.len());
+    assert_eq!(authorizations.len(), expected_sources.len());
+    let mut destinations = Vec::with_capacity(authorizations.len());
+    for (index, (authorization, expected_source)) in authorizations
+        .iter()
+        .zip(expected_sources.iter())
+        .enumerate()
+    {
+        assert_eq!(
+            required_string(authorization, "/operationId")?,
+            operation_id
+        );
+        assert_eq!(required_u64(authorization, "/ordinal")?, index as u64);
+        assert_eq!(
+            required_string(authorization, "/state")?,
+            if (index as u64) < expected_validated {
+                "validated"
+            } else {
+                "authorized"
+            }
+        );
+        assert_eq!(
+            authorization_component(authorization, "sourceComponent")?,
+            OsString::from(*expected_source)
+        );
+        let destination = authorization_component(authorization, "destinationComponent")?;
+        assert_eq!(
+            keys[index].as_str(),
+            destination.to_str(),
+            "authorization key and destination component diverged"
+        );
+        destinations.push(destination);
+    }
+    Ok(destinations)
 }
 
 fn assert_crashed_cleanup_state(
@@ -847,21 +1013,6 @@ fn quarantine_payload_count(root: &Path) -> Result<usize, Box<dyn std::error::Er
                 .is_ok_and(|entry| entry.file_name() != "namespace.anchor")
         })
         .count())
-}
-
-fn tree_contains_bytes(root: &Path, expected: &[u8]) -> Result<bool, Box<dyn std::error::Error>> {
-    for entry in fs::read_dir(root)? {
-        let entry = entry?;
-        let kind = entry.file_type()?;
-        if kind.is_dir() {
-            if tree_contains_bytes(&entry.path(), expected)? {
-                return Ok(true);
-            }
-        } else if kind.is_file() && fs::read(entry.path())? == expected {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 struct CleanupBarrier {
