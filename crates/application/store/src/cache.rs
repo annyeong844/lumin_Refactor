@@ -26,6 +26,8 @@ use lumin_model::{
 };
 use redb::{TableDefinition, WriteTransaction};
 
+#[cfg(feature = "cache-cleanup-test-fault")]
+use crate::gate::records::load_record_from_read;
 use crate::gate::records::{load_record, read_record, read_records, write_record};
 use crate::namespace::NamespaceGuard;
 #[cfg(feature = "cache-cleanup-test-fault")]
@@ -133,6 +135,49 @@ impl RepositoryStore {
             )?;
             parent.sync_directory()?;
             guard.commit(write)
+        })
+    }
+
+    #[cfg(feature = "cache-cleanup-test-fault")]
+    pub fn cache_cleanup_state_for_test(
+        &self,
+        operation_id: &OperationId,
+    ) -> Result<(CacheCleanupOperationRecord, Vec<CacheEvictionAuthorization>), StoreError> {
+        self.with_shared_lock(|guard| {
+            let database = guard.open_database()?;
+            let read = database.begin_read()?;
+            let operation = load_record_from_read::<CacheCleanupOperationRecord>(
+                &read,
+                CACHE_CLEANUP_OPERATIONS,
+                operation_id.as_str(),
+            )?
+            .ok_or_else(|| StoreError::OperationNotFound(operation_id.as_str().to_owned()))?;
+            validate_operation_shape(&operation)?;
+
+            let mut authorizations = Vec::with_capacity(operation.authorization_keys.len());
+            for key in &operation.authorization_keys {
+                let authorization = load_record_from_read::<CacheEvictionAuthorization>(
+                    &read,
+                    CACHE_EVICTION_AUTHORIZATIONS,
+                    key,
+                )?
+                .ok_or_else(|| {
+                    StoreError::Integrity(format!(
+                        "cache cleanup test snapshot omitted authorization {key}"
+                    ))
+                })?;
+                validate_authorization_record(&authorization, key, guard.repository_id())?;
+                if authorization.operation_id != operation.operation_id
+                    || authorization.request_digest != operation.request_digest
+                    || authorization.invocation_id != operation.invocation_id
+                {
+                    return Err(StoreError::Integrity(format!(
+                        "cache cleanup test snapshot authorization changed ownership: {key}"
+                    )));
+                }
+                authorizations.push(authorization);
+            }
+            Ok((operation, authorizations))
         })
     }
 

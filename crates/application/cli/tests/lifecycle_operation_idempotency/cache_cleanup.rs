@@ -6,7 +6,8 @@ use std::process::Stdio;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use serde_json::Value;
+use lumin_model::{OperationId, decode_native_path_component};
+use serde_json::{Value, json};
 
 #[path = "../support/cache_cleanup_barrier.rs"]
 mod cache_cleanup_barrier;
@@ -63,6 +64,22 @@ fn cache_cleanup_recovers_every_durable_boundary_with_the_same_operation_id()
             second_show, first_show,
             "operation show changed cleanup state"
         );
+        let private_after_crash = cleanup_private_state(root.path(), &operation_id)?;
+        let at_destination = match point {
+            "after-authorization" => [false, false],
+            "after-rename-visible:0" | "after-physical-durability:0" | "after-row-validation:0" => {
+                [true, false]
+            }
+            "before-result-commit" => [true, true],
+            _ => unreachable!(),
+        };
+        assert_crashed_cleanup_state(
+            root.path(),
+            &private_after_crash,
+            &operation_id,
+            expected_validated,
+            at_destination,
+        )?;
         assert_active_cache_writer_blocked(
             root.path(),
             &format!("blocked-after-crash-{index}.bin"),
@@ -79,6 +96,11 @@ fn cache_cleanup_recovers_every_durable_boundary_with_the_same_operation_id()
         )?;
         assert_status(&foreign, 4);
         assert!(foreign.stdout.is_empty());
+        assert_eq!(
+            cleanup_private_state(root.path(), &operation_id)?,
+            private_after_crash,
+            "read-only and conflicting commands changed the crashed cleanup snapshot"
+        );
 
         let recovered = run(
             root.path(),
@@ -92,6 +114,12 @@ fn cache_cleanup_recovers_every_durable_boundary_with_the_same_operation_id()
         assert_cleanup_projection(&committed, "committed", 1, 2, 2, false)?;
         assert_anchor_only(root.path())?;
         assert_eq!(quarantine_payload_count(root.path())?, 2);
+        let committed_private = cleanup_private_state(root.path(), &operation_id)?;
+        assert_eq!(
+            committed_private,
+            expected_recovered_cleanup_state(private_after_crash, &operation_id)?,
+            "cleanup recovery changed durable state outside the exact owner transition"
+        );
     }
     Ok(())
 }
@@ -202,28 +230,39 @@ fn cache_cleanup_preserves_top_level_and_nested_substitutes_without_advancing_la
 #[test]
 fn dirty_cache_tree_hard_stops_before_plan_authorization() -> Result<(), Box<dyn std::error::Error>>
 {
+    exercise_dirty_payload(false)?;
+    exercise_dirty_payload(true)
+}
+
+fn exercise_dirty_payload(nested: bool) -> Result<(), Box<dyn std::error::Error>> {
     let root = fixture()?;
     assert_status(&run(root.path(), &["audit", "--jobs", "1"])?, 0);
     let cache = root.path().join(".lumin/cache");
-    fs::create_dir(cache.join("a-tree"))?;
-    fs::write(cache.join("a-tree/child.bin"), b"initial")?;
+    let target = if nested {
+        fs::create_dir(cache.join("a-tree"))?;
+        cache.join("a-tree/child.bin")
+    } else {
+        cache.join("a-file.bin")
+    };
+    fs::write(&target, b"initial")?;
     fs::write(cache.join("z-later.bin"), b"later")?;
-    let operation_id = "cache-dirty-tree";
+    let operation_id = if nested {
+        "cache-dirty-tree"
+    } else {
+        "cache-dirty-file"
+    };
 
     let barrier = CacheCleanupBarrier::new(DURABILITY_BARRIER_ENV, "after-initial-flush")?;
     let mut cleanup = barrier.spawn(root.path(), operation_id)?;
     let permit = barrier.accept(&mut cleanup, operation_id)?;
-    fs::write(cache.join("a-tree/child.bin"), b"changed after flush")?;
+    fs::write(&target, b"changed after flush")?;
     permit.release()?;
 
     let failed = cleanup.finish()?;
     assert_status(&failed, 1);
     assert!(failed.stdout.is_empty());
     assert!(failed.stderr.contains("changed while becoming durable"));
-    assert_eq!(
-        fs::read(cache.join("a-tree/child.bin"))?,
-        b"changed after flush"
-    );
+    assert_eq!(fs::read(&target)?, b"changed after flush");
     assert_eq!(fs::read(cache.join("z-later.bin"))?, b"later");
     assert_eq!(quarantine_payload_count(root.path())?, 0);
     let operation = show_operation(root.path(), operation_id)?;
@@ -368,12 +407,48 @@ fn exercise_delivery_completion_order(lower_first: bool) -> Result<(), Box<dyn s
         assert_status(&before_late, 0);
         let before_late_value: Value = serde_json::from_str(&before_late.stdout)?;
         assert_last_delivery(&before_late_value, "succeeded")?;
+        let before_late_private = cleanup_private_state(root.path(), operation_id)?;
 
         lower_permit.release()?;
         assert_status(&lower.finish()?, 0);
         let after_late = run(root.path(), &["operation", "show", operation_id])?;
         assert_status(&after_late, 0);
         assert_eq!(after_late.stdout, before_late.stdout);
+        let mut after_late_private = cleanup_private_state(root.path(), operation_id)?;
+        assert_eq!(
+            after_late_private
+                .pointer("/authorizations")
+                .ok_or_else(|| std::io::Error::other("missing late authorization snapshot"))?,
+            before_late_private
+                .pointer("/authorizations")
+                .ok_or_else(|| std::io::Error::other("missing prior authorization snapshot"))?,
+        );
+        let completions = after_late_private
+            .pointer_mut("/operation/deliveryCompletions")
+            .and_then(Value::as_array_mut)
+            .ok_or_else(|| std::io::Error::other("missing private delivery completion ledger"))?;
+        let appended_index = completions
+            .iter()
+            .position(|completion| {
+                completion.get("sequence").and_then(Value::as_u64) == Some(lower_sequence)
+            })
+            .ok_or_else(|| {
+                std::io::Error::other("late lower completion was not appended to the ledger")
+            })?;
+        let appended = completions.remove(appended_index);
+        assert_eq!(
+            appended,
+            json!({"sequence": lower_sequence, "outcome": "succeeded"})
+        );
+        assert_eq!(
+            after_late_private
+                .pointer("/operation")
+                .ok_or_else(|| std::io::Error::other("missing late operation snapshot"))?,
+            before_late_private
+                .pointer("/operation")
+                .ok_or_else(|| std::io::Error::other("missing prior operation snapshot"))?,
+            "late lower completion changed more than its private ledger row"
+        );
     }
     assert_anchor_only(root.path())?;
     assert_eq!(quarantine_payload_count(root.path())?, 2);
@@ -545,6 +620,170 @@ fn exercise_substitution(nested: bool) -> Result<(), Box<dyn std::error::Error>>
             .is_file()
     );
     Ok(())
+}
+
+fn cleanup_private_state(
+    root: &Path,
+    operation_id: &str,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let operation_id = OperationId::from_string(operation_id.to_owned());
+    let (operation, authorizations) =
+        lumin_engine::cache_cleanup_state_for_test(root, &operation_id)?;
+    Ok(json!({
+        "operation": operation,
+        "authorizations": authorizations,
+    }))
+}
+
+fn assert_crashed_cleanup_state(
+    root: &Path,
+    state: &Value,
+    operation_id: &str,
+    expected_validated: u64,
+    at_destination: [bool; 2],
+) -> Result<(), Box<dyn std::error::Error>> {
+    assert_eq!(
+        required_string(state, "/operation/schemaVersion")?,
+        "lumin-cache-cleanup-operation.v2"
+    );
+    assert_eq!(
+        required_string(state, "/operation/operationId")?,
+        operation_id
+    );
+    assert_eq!(required_string(state, "/operation/status")?, "pending");
+    assert_eq!(required_u64(state, "/operation/interruptionCount")?, 0);
+    assert_eq!(
+        required_u64(state, "/operation/initialAuthorizationCount")?,
+        0
+    );
+    assert_eq!(
+        required_value(state, "/operation/planInitialized")?.as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        required_u64(state, "/operation/validatedCount")?,
+        expected_validated
+    );
+    assert!(!required_value(state, "/operation/executionLease")?.is_null());
+    assert!(required_value(state, "/operation/recoveryReservation")?.is_null());
+    assert!(required_value(state, "/operation/result")?.is_null());
+    assert_eq!(
+        required_u64(state, "/operation/greatestAllocatedDeliverySequence")?,
+        0
+    );
+    assert!(required_value(state, "/operation/greatestCompletedDeliverySequence")?.is_null());
+    assert_eq!(
+        required_value(state, "/operation/deliveryCompletions")?
+            .as_array()
+            .map(Vec::len),
+        Some(0)
+    );
+
+    let keys = required_value(state, "/operation/authorizationKeys")?
+        .as_array()
+        .ok_or_else(|| std::io::Error::other("cleanup authorization keys are not an array"))?;
+    let authorizations = required_value(state, "/authorizations")?
+        .as_array()
+        .ok_or_else(|| std::io::Error::other("cleanup authorizations are not an array"))?;
+    assert_eq!(keys.len(), 2);
+    assert_eq!(authorizations.len(), 2);
+    for (index, authorization) in authorizations.iter().enumerate() {
+        assert_eq!(
+            required_string(authorization, "/operationId")?,
+            operation_id
+        );
+        assert_eq!(required_u64(authorization, "/ordinal")?, index as u64);
+        assert_eq!(
+            required_string(authorization, "/state")?,
+            if (index as u64) < expected_validated {
+                "validated"
+            } else {
+                "authorized"
+            }
+        );
+        let source = authorization_component(authorization, "sourceComponent")?;
+        let destination = authorization_component(authorization, "destinationComponent")?;
+        assert_eq!(
+            source,
+            std::ffi::OsString::from(if index == 0 { "first.bin" } else { "second" })
+        );
+        assert_eq!(
+            keys[index].as_str(),
+            destination.to_str(),
+            "authorization key and destination component diverged"
+        );
+        let source_path = root.join(".lumin/cache").join(&source);
+        let destination_path = root.join(".lumin/trash/cache-evictions").join(&destination);
+        assert_eq!(source_path.exists(), !at_destination[index]);
+        assert_eq!(destination_path.exists(), at_destination[index]);
+        let payload_path = if at_destination[index] {
+            destination_path
+        } else {
+            source_path
+        };
+        if index == 0 {
+            assert_eq!(fs::read(payload_path)?, b"first");
+        } else {
+            assert_eq!(fs::read(payload_path.join("nested.bin"))?, b"second");
+        }
+    }
+    Ok(())
+}
+
+fn authorization_component(
+    authorization: &Value,
+    field: &str,
+) -> Result<std::ffi::OsString, Box<dyn std::error::Error>> {
+    let pointer = format!("/{field}/canonical");
+    let canonical = required_value(authorization, &pointer)?
+        .as_array()
+        .ok_or_else(|| std::io::Error::other("authorization component is not a byte array"))?;
+    let bytes = canonical
+        .iter()
+        .map(|byte| {
+            byte.as_u64()
+                .ok_or_else(|| std::io::Error::other("authorization component byte is invalid"))
+                .and_then(|byte| u8::try_from(byte).map_err(std::io::Error::other))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(decode_native_path_component(&bytes)?)
+}
+
+fn expected_recovered_cleanup_state(
+    mut state: Value,
+    operation_id: &str,
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let request_digest = required_string(&state, "/operation/requestDigest")?.to_owned();
+    let operation = state
+        .get_mut("operation")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| std::io::Error::other("missing private cleanup operation"))?;
+    operation.insert("status".to_owned(), json!("committed"));
+    operation.insert("interruptionCount".to_owned(), json!(1));
+    operation.insert("validatedCount".to_owned(), json!(2));
+    operation.insert("executionLease".to_owned(), Value::Null);
+    operation.insert("recoveryReservation".to_owned(), Value::Null);
+    operation.insert(
+        "result".to_owned(),
+        json!({"operationId": operation_id, "requestDigest": request_digest}),
+    );
+    operation.insert("greatestAllocatedDeliverySequence".to_owned(), json!(1));
+    operation.insert("greatestCompletedDeliverySequence".to_owned(), json!(1));
+    operation.insert(
+        "deliveryCompletions".to_owned(),
+        json!([{"sequence": 1, "outcome": "succeeded"}]),
+    );
+    let authorizations = state
+        .get_mut("authorizations")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| std::io::Error::other("missing private cleanup authorizations"))?;
+    for authorization in authorizations {
+        let authorization = authorization
+            .as_object_mut()
+            .ok_or_else(|| std::io::Error::other("invalid private cleanup authorization"))?;
+        authorization.insert("state".to_owned(), json!("validated"));
+    }
+    Ok(state)
 }
 
 fn seed_cache(root: &Path) -> Result<(), Box<dyn std::error::Error>> {

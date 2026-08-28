@@ -303,6 +303,51 @@ fn public_process_rejects_managed_parent_anchor_and_marker_replacement()
     remove_directory_alias(&cache)?;
     fs::rename(&cache_original, &cache)?;
 
+    let quarantine = state.join("trash/cache-evictions");
+    let quarantine_original = root.path().join("cache-evictions.original");
+    let quarantine_anchor = quarantine.join("namespace.anchor");
+    let quarantine_anchor_bytes = fs::read(&quarantine_anchor)?;
+    fs::rename(&quarantine, &quarantine_original)?;
+    fs::create_dir(&quarantine)?;
+    fs::rename(
+        quarantine_original.join("namespace.anchor"),
+        &quarantine_anchor,
+    )?;
+    assert_public_integrity_failure(&run(root.path(), &["audit", "--jobs", "1"])?);
+    assert_eq!(fs::read(&quarantine_anchor)?, quarantine_anchor_bytes);
+    assert_eq!(fs::read_dir(&quarantine)?.count(), 1);
+    fs::rename(
+        &quarantine_anchor,
+        quarantine_original.join("namespace.anchor"),
+    )?;
+    fs::remove_dir(&quarantine)?;
+    fs::rename(&quarantine_original, &quarantine)?;
+
+    let quarantine_anchor = quarantine.join("namespace.anchor");
+    let quarantine_anchor_original = root.path().join("cache-evictions-anchor.original");
+    let quarantine_anchor_bytes = fs::read(&quarantine_anchor)?;
+    fs::rename(&quarantine_anchor, &quarantine_anchor_original)?;
+    fs::write(&quarantine_anchor, &quarantine_anchor_bytes)?;
+    assert_public_integrity_failure(&run(
+        root.path(),
+        &[
+            "cache",
+            "clean",
+            "--operation-id",
+            "cache-nested-anchor-replacement",
+        ],
+    )?);
+    assert_eq!(fs::read(&quarantine_anchor)?, quarantine_anchor_bytes);
+    assert_eq!(fs::read_dir(&quarantine)?.count(), 1);
+    fs::remove_file(&quarantine_anchor)?;
+    fs::rename(&quarantine_anchor_original, &quarantine_anchor)?;
+    let absent_operation = run(
+        root.path(),
+        &["operation", "show", "cache-nested-anchor-replacement"],
+    )?;
+    assert_status(&absent_operation, 2);
+    assert!(absent_operation.stderr.contains("operation does not exist"));
+
     let anchor = state.join("trash/namespace.anchor");
     let extra_anchor = state.join("trash/namespace.anchor.extra");
     fs::hard_link(&anchor, &extra_anchor)?;

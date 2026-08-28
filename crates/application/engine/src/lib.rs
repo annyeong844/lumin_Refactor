@@ -910,6 +910,24 @@ pub fn write_active_cache_payload_for_test(
         .map_err(Into::into)
 }
 
+#[cfg(feature = "cache-cleanup-test-fault")]
+pub fn cache_cleanup_state_for_test(
+    root: &Path,
+    operation_id: &OperationId,
+) -> Result<
+    (
+        lumin_evidence::CacheCleanupOperationRecord,
+        Vec<lumin_evidence::CacheEvictionAuthorization>,
+    ),
+    EngineError,
+> {
+    let context = open_repository_context(root)?;
+    context
+        .store
+        .cache_cleanup_state_for_test(operation_id)
+        .map_err(Into::into)
+}
+
 pub fn migrate_lifecycle_store(root: &Path) -> Result<(), EngineError> {
     let admission = lumin_inventory::repository_admission(root)?;
     RepositoryStore::migrate_existing_lifecycle_store(

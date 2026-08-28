@@ -195,27 +195,58 @@ fn self_hashed_unauthorized_quarantine_is_rejected_without_disposition()
     );
 
     let quarantine = root.path().join(".lumin/trash/cache-evictions");
-    let mut payloads = fs::read_dir(&quarantine)?
+    let mut authorized_payloads = fs::read_dir(&quarantine)?
         .filter_map(|entry| match entry {
             Ok(entry) if entry.file_name() != OsStr::new("namespace.anchor") => Some(Ok(entry)),
             Ok(_) => None,
             Err(error) => Some(Err(error)),
         })
         .collect::<Result<Vec<_>, std::io::Error>>()?;
-    assert_eq!(payloads.len(), 1);
-    let authorized = payloads
+    assert_eq!(authorized_payloads.len(), 1);
+    let authorized = authorized_payloads
         .pop()
         .ok_or_else(|| std::io::Error::other("authorized quarantine payload disappeared"))?;
-    let authorized_name = authorized
-        .file_name()
-        .into_string()
-        .map_err(|_| std::io::Error::other("quarantine payload name is not UTF-8"))?;
-    let mut foreign_name = authorized_name.into_bytes();
-    assert!(foreign_name.first().is_some_and(u8::is_ascii_hexdigit));
-    foreign_name[0] = if foreign_name[0] == b'0' { b'1' } else { b'0' };
-    let foreign_name = String::from_utf8(foreign_name)?;
-    let foreign_path = quarantine.join(&foreign_name);
-    fs::rename(authorized.path(), &foreign_path)?;
+    let authorized_path = authorized.path();
+    assert_eq!(fs::read(&authorized_path)?, b"payload");
+
+    let foreign_root = tempfile::tempdir()?;
+    fs::create_dir(foreign_root.path().join("src"))?;
+    fs::write(
+        foreign_root.path().join("src/lib.ts"),
+        "export const visible = 1;\n",
+    )?;
+    assert_status(&run(foreign_root.path(), &["audit", "--jobs", "1"])?, 0);
+    fs::write(
+        foreign_root.path().join(".lumin/cache/foreign.bin"),
+        b"foreign",
+    )?;
+    assert_status(
+        &run(
+            foreign_root.path(),
+            &[
+                "cache",
+                "clean",
+                "--operation-id",
+                "cache-clean-foreign-owner",
+            ],
+        )?,
+        0,
+    );
+    let foreign_quarantine = foreign_root.path().join(".lumin/trash/cache-evictions");
+    let mut foreign_payloads = fs::read_dir(&foreign_quarantine)?
+        .filter_map(|entry| match entry {
+            Ok(entry) if entry.file_name() != OsStr::new("namespace.anchor") => Some(Ok(entry)),
+            Ok(_) => None,
+            Err(error) => Some(Err(error)),
+        })
+        .collect::<Result<Vec<_>, std::io::Error>>()?;
+    assert_eq!(foreign_payloads.len(), 1);
+    let foreign_payload = foreign_payloads
+        .pop()
+        .ok_or_else(|| std::io::Error::other("foreign quarantine payload disappeared"))?;
+    let foreign_path = quarantine.join(foreign_payload.file_name());
+    assert!(!foreign_path.exists());
+    fs::rename(foreign_payload.path(), &foreign_path)?;
 
     let rejected = run(
         root.path(),
@@ -229,14 +260,15 @@ fn self_hashed_unauthorized_quarantine_is_rejected_without_disposition()
     assert_status(&rejected, 1);
     assert!(rejected.stdout.is_empty());
     assert!(rejected.stderr.contains("cache quarantine"));
-    assert_eq!(fs::read(&foreign_path)?, b"payload");
+    assert_eq!(fs::read(&authorized_path)?, b"payload");
+    assert_eq!(fs::read(&foreign_path)?, b"foreign");
     assert_eq!(
         fs::read_dir(&quarantine)?
             .filter(|entry| entry
                 .as_ref()
                 .is_ok_and(|entry| { entry.file_name() != OsStr::new("namespace.anchor") }))
             .count(),
-        1,
+        2,
     );
     Ok(())
 }
