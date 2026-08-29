@@ -123,6 +123,26 @@ static INV_STATE_NAMESPACE_INITIALIZATION_CRASH: &[CorpusInvocation] = &[
     inv!("state_namespace_initialization", "unknown_namespace_crash_selector_fails_before_state_initialization", LifecycleCrash),
 ];
 #[rustfmt::skip]
+static INV_STATE_LOCK_REPLACEMENT: &[CorpusInvocation] = &[
+    inv!("state_namespace", "public_process_rejects_lifecycle_lock_replacement"),
+    inv!("state_namespace_replacement", "lock_replacement_never_forms_two_accepted_guard_domains", LifecycleFault),
+];
+#[rustfmt::skip]
+static INV_STATE_LOCK_REPLACEMENT_CRASH: &[CorpusInvocation] = &[
+    inv!("state_namespace_replacement", "lock_replacement_never_forms_two_accepted_guard_domains", LifecycleCrash),
+];
+#[rustfmt::skip]
+static INV_STATE_MANAGED_PARENT_REPLACEMENT: &[CorpusInvocation] = &[
+    inv!("state_namespace", "public_process_rejects_state_mount_crossing"),
+    inv!("state_namespace", "public_process_rejects_managed_parent_anchor_and_marker_replacement"),
+    inv!("state_namespace", "state_payload_aliases_never_enter_source_evidence_or_gate_writes"),
+    inv!("state_namespace_replacement", "managed_parent_replacement_stops_every_guarded_transition", LifecycleFault),
+];
+#[rustfmt::skip]
+static INV_STATE_MANAGED_PARENT_REPLACEMENT_CRASH: &[CorpusInvocation] = &[
+    inv!("state_namespace_replacement", "managed_parent_replacement_stops_every_guarded_transition", LifecycleCrash),
+];
+#[rustfmt::skip]
 static INV_LIFECYCLE_MIGRATION: &[CorpusInvocation] = &[
     inv!("lifecycle_store_migration", "public_migration_refuses_absent_state_and_is_a_native_v13_noop", LifecycleFault),
     inv!("lifecycle_store_migration", "public_v12_route_migrates_once_and_retries_without_mutation", LifecycleFault),
@@ -470,8 +490,8 @@ pub static REGISTRY: &[RegistryRow] = &[
     ]),
     row_sd!("reserved-state-namespace", INV_RESERVED_STATE),
     row_sdc!("state-namespace-initialization", INV_STATE_NAMESPACE_INITIALIZATION, INV_STATE_NAMESPACE_INITIALIZATION_CRASH),
-    row_sdc!("state-lock-replacement-split-brain"),
-    row_sdc!("state-managed-parent-replacement"),
+    row_sdc!("state-lock-replacement-split-brain", INV_STATE_LOCK_REPLACEMENT, INV_STATE_LOCK_REPLACEMENT_CRASH),
+    row_sdc!("state-managed-parent-replacement", INV_STATE_MANAGED_PARENT_REPLACEMENT, INV_STATE_MANAGED_PARENT_REPLACEMENT_CRASH),
     row_sd!("gate-config-drift", &[inv!("write_gate", "protected_input_drift_is_stale")]),
     row_sd!("gate-self-semantic-write", &[inv!("write_gate", "planned_semantic_config_write_is_recaptured_and_attributed")]),
     row_sd!("gate-prewrite-observation", &[

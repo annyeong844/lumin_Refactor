@@ -237,6 +237,8 @@ fn publish_directory(
         .map_err(|error| publication_error("validate staging payload", error))?;
     drop(staging_entry);
 
+    #[cfg(feature = "namespace-test-crash")]
+    crate::namespace::barrier::wait_before_run_rename()?;
     guard
         .mutate_for_generation(generation, || {
             publish_file_atomic(&published, &staging)?;

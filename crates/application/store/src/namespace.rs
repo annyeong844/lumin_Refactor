@@ -1,3 +1,5 @@
+#[cfg(feature = "namespace-test-crash")]
+pub(crate) mod barrier;
 mod bootstrap;
 pub(crate) mod database;
 mod migration;
@@ -356,6 +358,11 @@ impl NamespaceState {
         let result = match purpose {
             LockPurpose::Ordinary => migration::require_idle(&guard)
                 .and_then(|()| guard.validate_complete())
+                .and_then(|()| {
+                    #[cfg(feature = "namespace-test-crash")]
+                    barrier::wait_after_complete_validation()?;
+                    guard.validate_complete()
+                })
                 .and_then(|()| operation(&guard)),
             LockPurpose::Migration => operation(&guard),
         };
@@ -386,7 +393,35 @@ impl NamespaceState {
         // Windows mandatory range locking can reject a header read while another
         // process owns the lock. Prove object identity here; NamespaceGuard performs
         // the complete header and namespace proof after this handle acquires the lock.
-        self.open_bound_lock()
+        let lock = self.open_bound_lock()?;
+        #[cfg(feature = "namespace-test-crash")]
+        barrier::wait_after_pre_acquire_validation()?;
+        self.repository.validate()?;
+        state.validate_path(
+            &self.state_dir,
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            ".lumin",
+        )?;
+        if state.identity() != &self.binding.global.state_directory_identity {
+            return Err(StoreError::Integrity(
+                "state directory physical identity changed".to_owned(),
+            ));
+        }
+        lock.validate_path(
+            &self.state_dir.join("lifecycle.lock"),
+            EntryKind::RegularFile,
+            EntryAccess::ReadOnly,
+            true,
+            "lifecycle.lock",
+        )?;
+        if lock.identity() != &self.binding.global.lifecycle_lock_identity {
+            return Err(StoreError::Integrity(
+                "lifecycle.lock physical identity changed".to_owned(),
+            ));
+        }
+        Ok(lock)
     }
 
     fn open_bound_lock(&self) -> Result<HeldEntry, StoreError> {
@@ -410,7 +445,13 @@ impl NamespaceState {
         FileExt::lock_exclusive(lock.file()).map_err(io_error)?;
         let guard = NamespaceGuard::acquire_without_store(self.clone(), lock)?;
         let result = migration::admit_ordinary(&guard);
-        let final_validation = result.and_then(|()| guard.validate_complete());
+        let final_validation = result
+            .and_then(|()| guard.validate_complete())
+            .and_then(|()| {
+                #[cfg(feature = "namespace-test-crash")]
+                barrier::wait_after_complete_validation()?;
+                guard.validate_complete()
+            });
         let unlock = FileExt::unlock(guard.lock.file()).map_err(io_error);
         combine_lock_results(final_validation, Ok(()), unlock)
     }

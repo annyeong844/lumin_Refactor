@@ -19,6 +19,7 @@ const FEATURE_GATED_TARGETS: &[&str] = &[
     "publication_retention_race",
     "retention_faults",
     "state_namespace_initialization",
+    "state_namespace_replacement",
 ];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

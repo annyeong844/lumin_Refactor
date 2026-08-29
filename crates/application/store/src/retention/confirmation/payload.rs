@@ -107,6 +107,19 @@ pub(super) fn move_payloads(
                     "retention source payload",
                 )?;
                 validate_payload_content(&source, movement, &plan.record.items)?;
+                #[cfg(feature = "namespace-test-crash")]
+                crate::namespace::barrier::wait_before_retention_move()?;
+                guard.validate_bound_entries()?;
+                trash::validate_parent_bindings(guard, progress)?;
+                held_trash.validate(plan, progress)?;
+                held.validate_path(
+                    &source,
+                    EntryKind::Directory,
+                    EntryAccess::ReadOnly,
+                    false,
+                    "retention source payload",
+                )?;
+                validate_payload_content(&source, movement, &plan.record.items)?;
                 fs::rename(&source, &destination).map_err(io_error)?;
                 guard
                     .managed_parent_entry(movement.source_parent)?
