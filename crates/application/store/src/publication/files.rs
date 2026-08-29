@@ -5,7 +5,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::namespace::{
-    EntryAccess, EntryKind, HeldEntry, entry_exists, publish_file_atomic, replace_file_atomic,
+    EntryAccess, EntryKind, HeldEntry, entry_exists, move_entry_noreplace, replace_entry_atomic,
     same_volume_and_mount,
 };
 use crate::{StoreError, io_error, serialization_error};
@@ -49,42 +49,34 @@ pub(super) fn write_json_with_hooks<T: Serialize>(
     let pending = path.with_extension("json.pending");
     remove_pending(&pending, parent, label)?;
 
-    let pending_entry = HeldEntry::create_new(&pending, label)?;
+    let pending_entry = HeldEntry::create_new_movable(&pending, label)?;
     require_parent_volume(&pending_entry, parent, label)?;
     pending_entry.replace_contents(&bytes)?;
     after_pending();
-    drop(pending_entry);
 
     let replace_existing = entry_exists(path)?;
-    if replace_existing {
-        let current = HeldEntry::open(
-            path,
-            EntryKind::RegularFile,
-            EntryAccess::ReadWrite,
-            true,
-            label,
-        )?;
-        require_parent_volume(&current, parent, label)?;
-        drop(current);
+    let current = replace_existing
+        .then(|| HeldEntry::open(path, EntryKind::RegularFile, EntryAccess::Move, true, label))
+        .transpose()?;
+    if let Some(current) = current.as_ref() {
+        require_parent_volume(current, parent, label)?;
     }
     before_replace()?;
+    let pending_name = pending.file_name().ok_or_else(|| {
+        StoreError::Integrity(format!("{label} pending path has no final component"))
+    })?;
+    let published_name = path
+        .file_name()
+        .ok_or_else(|| StoreError::Integrity(format!("{label} path has no final component")))?;
     if replace_existing {
-        replace_file_atomic(path, &pending)?;
+        replace_entry_atomic(parent, pending_name, &pending_entry, published_name)?;
     } else {
-        publish_file_atomic(path, &pending)?;
+        move_entry_noreplace(parent, pending_name, &pending_entry, parent, published_name)?;
     }
     after_replace();
     parent.sync_directory()?;
 
-    let published = HeldEntry::open(
-        path,
-        EntryKind::RegularFile,
-        EntryAccess::ReadOnly,
-        true,
-        label,
-    )?;
-    require_parent_volume(&published, parent, label)?;
-    if published.read_all()? != bytes {
+    if pending_entry.read_all()? != bytes {
         return Err(StoreError::Integrity(format!(
             "{label} changed during durable publication"
         )));

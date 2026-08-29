@@ -25,9 +25,16 @@ pub(crate) use database::StoreDatabase;
 pub use migration::MigrationIntent;
 use platform::repository_root_physical_identity;
 pub(crate) use platform::{
-    EntryAccess, EntryKind, HeldEntry, move_entry_noreplace, publish_file_atomic,
-    replace_file_atomic, same_volume_and_mount, validate_active_unpublished_name,
+    EntryAccess, EntryKind, HeldEntry, move_entry_noreplace, replace_entry_atomic,
+    same_volume_and_mount, validate_active_unpublished_name,
 };
+
+#[cfg(feature = "namespace-test-crash")]
+pub(crate) fn current_logical_snapshot_for_test(
+    guard: &NamespaceGuard,
+) -> Result<Vec<u8>, StoreError> {
+    migration::current_logical_snapshot_for_test(guard)
+}
 use records::*;
 use store_header::*;
 

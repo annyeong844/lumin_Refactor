@@ -46,7 +46,7 @@ These are execution-matrix counts, not a percentage estimate of product code.
 | Lane | Applicable | Mapped | Remaining | Verified aggregate |
 | --- | ---: | ---: | ---: | --- |
 | Standard | 86 | 78 | 8 | Focused `state-lock-replacement-split-brain` and `state-managed-parent-replacement`: 2 passed, 0 failed; `corpus::tests::mode_counts`: 78 mapped, 8 unmapped. |
-| Determinism | 86 | 78 | 8 | The same focused rows passed with 13 and 21 semantic captures; `corpus::tests::mode_counts`: 78 mapped, 8 unmapped. |
+| Determinism | 86 | 78 | 8 | The same focused rows passed with 15 and 22 semantic captures; `corpus::tests::mode_counts`: 78 mapped, 8 unmapped. |
 | Store crash | 11 | 9 | 2 | The same focused rows passed through their public fault targets; `corpus::tests::mode_counts`: 9 mapped, 2 unmapped. |
 | **Total execution obligations** | **183** | **165** | **18** | This total deliberately counts each required lane execution. |
 

@@ -160,6 +160,14 @@ pub(super) fn require_idle(guard: &NamespaceGuard) -> Result<(), StoreError> {
     }
 }
 
+#[cfg(feature = "namespace-test-crash")]
+pub(super) fn current_logical_snapshot_for_test(
+    guard: &NamespaceGuard,
+) -> Result<Vec<u8>, StoreError> {
+    let current = open_current_canonical(guard)?;
+    serde_json::to_vec(&current.snapshot).map_err(crate::serialization_error)
+}
+
 #[cfg(test)]
 pub(super) fn validate_journal_payload_recheck_for_test(
     guard: &NamespaceGuard,

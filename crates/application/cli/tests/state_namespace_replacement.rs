@@ -40,6 +40,10 @@ fn lock_replacement_never_forms_two_accepted_guard_domains()
         latest_pointer_commit_rejects_lock_replacement(),
     )?;
     with_context(
+        "pre-replace latest-pointer state-directory replacement",
+        latest_pointer_replace_uses_held_state_directory(),
+    )?;
+    with_context(
         "pre-commit retention lock replacement",
         retention_commit_rejects_lock_replacement(),
     )?;
@@ -56,6 +60,10 @@ fn managed_parent_replacement_stops_every_guarded_transition()
     with_context(
         "pre-admission copied managed-parent replacements",
         copied_managed_parents_fail_closed_before_admission(),
+    )?;
+    with_context(
+        "pre-admission cross-volume managed-parent replacement",
+        cross_volume_managed_parent_fails_closed(),
     )?;
     with_context(
         "post-validation runs-parent swap",
@@ -127,6 +135,29 @@ fn copied_managed_parents_fail_closed_before_admission() -> Result<(), Box<dyn s
     fs::remove_dir(&cache)?;
     fs::rename(authentic, cache)?;
     assert_latest_run(root.path(), &baseline_run)?;
+    Ok(())
+}
+
+fn cross_volume_managed_parent_fails_closed() -> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    let baseline_run = initialize(root.path())?;
+    let runs = root.path().join(".lumin/runs");
+    let durable_before = durable_namespace_snapshot(root.path())?;
+    let store_before = current_logical_store_snapshot(root.path())?;
+    let mut replacement = CrossVolumeParentReplacement::install(root.path(), &runs)?;
+    let authentic_before = tree_snapshot(&replacement.authentic)?;
+    let foreign_before = tree_snapshot(&replacement.foreign_parent)?;
+
+    let rejected = run(root.path(), &["audit", "--jobs", "1"])?;
+    assert_integrity_failure(&rejected);
+    assert_eq!(tree_snapshot(&replacement.authentic)?, authentic_before);
+    assert_eq!(tree_snapshot(&replacement.foreign_parent)?, foreign_before);
+    replacement.restore()?;
+
+    assert_eq!(durable_namespace_snapshot(root.path())?, durable_before);
+    assert_eq!(current_logical_store_snapshot(root.path())?, store_before);
+    assert_latest_run(root.path(), &baseline_run)?;
+    assert_run_visible(root.path(), &baseline_run)?;
     Ok(())
 }
 
@@ -370,6 +401,61 @@ fn latest_pointer_commit_rejects_lock_replacement() -> Result<(), Box<dyn std::e
     Ok(())
 }
 
+fn latest_pointer_replace_uses_held_state_directory() -> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    let baseline_run = initialize(root.path())?;
+    fs::write(
+        root.path().join("src/lib.ts"),
+        "export const latestStateReplacement = 2;\n",
+    )?;
+
+    let state = root.path().join(".lumin");
+    let mut replacement =
+        DirectoryReplacement::prepare(root.path(), &state, "state-before-latest-replace")?;
+    let pending_path = state.join("latest.json.pending");
+    let barrier = NamespaceBarrier::new(BEFORE_LATEST_REPLACE)?;
+    let mut audit = barrier.spawn(root.path(), &["audit", "--jobs", "1"])?;
+    let permit = barrier.accept(&mut audit)?;
+    let pending_bytes = fs::read(&pending_path)?;
+    let pending: Value = serde_json::from_slice(&pending_bytes)?;
+    let completed_run = required_string(&pending, "/latestCompleted/runId")?.to_owned();
+
+    if !replacement.activate()? {
+        permit.release()?;
+        let completed = audit.finish()?;
+        assert_status(&completed, 0);
+        replacement.restore()?;
+        assert_latest_run(root.path(), &completed_run)?;
+        assert_run_visible(root.path(), &baseline_run)?;
+        return Ok(());
+    }
+
+    let foreign_before = tree_snapshot(&state)?;
+    let authentic_state = replacement.authentic_path().to_path_buf();
+    permit.release()?;
+    assert_integrity_failure(&audit.finish()?);
+    assert_eq!(
+        tree_snapshot(&state)?,
+        foreign_before,
+        "latest publication changed the foreign replacement tree"
+    );
+    assert_eq!(
+        fs::read(authentic_state.join("latest.json"))?,
+        pending_bytes,
+        "latest publication did not replace the pointer in the held state directory"
+    );
+    assert!(
+        !authentic_state.join("latest.json.pending").exists(),
+        "held state directory retained the moved pending pointer"
+    );
+    replacement.restore()?;
+
+    assert_latest_run(root.path(), &completed_run)?;
+    assert_run_visible(root.path(), &completed_run)?;
+    assert_run_visible(root.path(), &baseline_run)?;
+    Ok(())
+}
+
 fn retention_commit_rejects_lock_replacement() -> Result<(), Box<dyn std::error::Error>> {
     let root = fixture()?;
     let first_run = initialize(root.path())?;
@@ -516,6 +602,7 @@ fn retention_commit_rejects_lock_replacement() -> Result<(), Box<dyn std::error:
         Some(false)
     );
     let recovered_snapshot = durable_namespace_snapshot(root.path())?;
+    let recovered_store = current_logical_store_snapshot(root.path())?;
     let repeated = run_success(
         root.path(),
         &[
@@ -531,6 +618,11 @@ fn retention_commit_rejects_lock_replacement() -> Result<(), Box<dyn std::error:
     assert!(
         durable_namespace_snapshot(root.path())? == recovered_snapshot,
         "repeated retention recovery changed the settled durable snapshot"
+    );
+    assert_eq!(
+        current_logical_store_snapshot(root.path())?,
+        recovered_store,
+        "repeated retention recovery changed lifecycle-store rows or revisions"
     );
     assert_latest_run(root.path(), &second_run)?;
     assert_run_visible(root.path(), &second_run)?;
@@ -1008,6 +1100,7 @@ fn assert_committed_pre_write_retry_and_abandon(
     operation_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let committed_snapshot = durable_namespace_snapshot(root)?;
+    let committed_store = current_logical_store_snapshot(root)?;
     let shown = run_success(root, &["operation", "show", operation_id])?;
     let shown = json(&shown.stdout)?;
     assert_eq!(
@@ -1034,6 +1127,11 @@ fn assert_committed_pre_write_retry_and_abandon(
     assert!(
         durable_namespace_snapshot(root)? == committed_snapshot,
         "same-ID retry changed the already committed durable result"
+    );
+    assert_eq!(
+        current_logical_store_snapshot(root)?,
+        committed_store,
+        "same-ID retry changed lifecycle-store rows or revisions"
     );
     let gate_id = field(&retried.stdout, "gateId")?;
     let abandon_operation = format!("{operation_id}-abandon");
@@ -1141,6 +1239,10 @@ fn durable_namespace_snapshot(
     ))
 }
 
+fn current_logical_store_snapshot(root: &Path) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    lumin_engine::current_logical_store_snapshot_for_test(root).map_err(Into::into)
+}
+
 fn tree_without_subtree(entries: &[TreeEntry], subtree: &str) -> Vec<TreeEntry> {
     let child_prefix = format!("{subtree}/");
     entries
@@ -1241,7 +1343,7 @@ impl FileReplacement {
     fn activate(&mut self) -> Result<bool, std::io::Error> {
         match fs::rename(&self.canonical, &self.authentic) {
             Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            Err(error) if replacement_blocked_by_open_handle(&error) => {
                 return Ok(false);
             }
             Err(error) => return Err(error),
@@ -1287,7 +1389,7 @@ impl DirectoryReplacement {
     fn activate(&mut self) -> Result<bool, std::io::Error> {
         match fs::rename(&self.canonical, &self.authentic) {
             Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            Err(error) if replacement_blocked_by_open_handle(&error) => {
                 return Ok(false);
             }
             Err(error) => return Err(error),
@@ -1312,6 +1414,11 @@ impl DirectoryReplacement {
         }
         fs::remove_dir_all(self.prepared)
     }
+}
+
+fn replacement_blocked_by_open_handle(error: &std::io::Error) -> bool {
+    error.kind() == std::io::ErrorKind::PermissionDenied
+        || (cfg!(windows) && matches!(error.raw_os_error(), Some(5 | 32 | 33)))
 }
 
 struct ManagedParentReplacement {
@@ -1414,5 +1521,187 @@ fn copy_directory(source: &Path, target: &Path) -> std::io::Result<()> {
             fs::copy(source_path, target_path)?;
         }
     }
+    Ok(())
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum VolumeIdentity {
+    Unix(u64),
+    Windows(u32),
+}
+
+fn volume_identity(path: &Path) -> Result<VolumeIdentity, Box<dyn std::error::Error>> {
+    match lumin_engine::state_entry_physical_identity_for_test(path)? {
+        lumin_model::PhysicalFileIdentity::Unix { device, .. } => Ok(VolumeIdentity::Unix(device)),
+        lumin_model::PhysicalFileIdentity::Windows { volume_serial, .. } => {
+            Ok(VolumeIdentity::Windows(volume_serial))
+        }
+    }
+}
+
+fn cross_volume_tempdir(reference: &Path) -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+    let reference_volume = volume_identity(reference)?;
+    #[cfg(target_os = "linux")]
+    let candidates = ["/dev/shm", "/run", "/var/tmp", "/tmp"]
+        .into_iter()
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    #[cfg(windows)]
+    let candidates = (b'A'..=b'Z')
+        .map(|letter| PathBuf::from(format!("{}:\\", char::from(letter))))
+        .collect::<Vec<_>>();
+    #[cfg(not(any(target_os = "linux", windows)))]
+    let candidates = Vec::<PathBuf>::new();
+
+    for candidate in candidates {
+        if !candidate.is_dir()
+            || volume_identity(&candidate).ok().as_ref() == Some(&reference_volume)
+        {
+            continue;
+        }
+        if let Ok(directory) = tempfile::Builder::new()
+            .prefix("lumin-cross-volume-")
+            .tempdir_in(candidate)
+        {
+            return Ok(directory);
+        }
+    }
+    Err(std::io::Error::other("no writable second device or volume is available").into())
+}
+
+struct CrossVolumeParentReplacement {
+    canonical: PathBuf,
+    authentic: PathBuf,
+    _foreign_root: tempfile::TempDir,
+    foreign_parent: PathBuf,
+    active: bool,
+}
+
+impl CrossVolumeParentReplacement {
+    fn install(root: &Path, canonical: &Path) -> Result<Self, Box<dyn std::error::Error>> {
+        let foreign_root = cross_volume_tempdir(canonical)?;
+        let foreign_parent = foreign_root.path().join("runs");
+        copy_directory(canonical, &foreign_parent)?;
+        assert_ne!(
+            volume_identity(canonical)?,
+            volume_identity(&foreign_parent)?,
+            "cross-volume fixture remained on the canonical volume"
+        );
+
+        let authentic = root.join(".runs-cross-volume.authentic");
+        fs::rename(canonical, &authentic)?;
+        if let Err(error) = install_cross_volume_alias(&foreign_parent, canonical) {
+            fs::rename(&authentic, canonical)?;
+            return Err(error.into());
+        }
+        Ok(Self {
+            canonical: canonical.to_path_buf(),
+            authentic,
+            _foreign_root: foreign_root,
+            foreign_parent,
+            active: true,
+        })
+    }
+
+    fn restore(&mut self) -> Result<(), std::io::Error> {
+        if self.active {
+            remove_cross_volume_alias(&self.canonical)?;
+            fs::rename(&self.authentic, &self.canonical)?;
+            self.active = false;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for CrossVolumeParentReplacement {
+    fn drop(&mut self) {
+        let _ = self.restore();
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn install_cross_volume_alias(source: &Path, target: &Path) -> std::io::Result<()> {
+    fs::create_dir(target)?;
+    if let Err(error) = run_linux_mount("mount", &["--bind"], source, Some(target)) {
+        fs::remove_dir(target)?;
+        return Err(error);
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn remove_cross_volume_alias(target: &Path) -> std::io::Result<()> {
+    run_linux_mount("umount", &[], target, None)?;
+    fs::remove_dir(target)
+}
+
+#[cfg(target_os = "linux")]
+fn run_linux_mount(
+    program: &str,
+    arguments: &[&str],
+    path: &Path,
+    second_path: Option<&Path>,
+) -> std::io::Result<()> {
+    let mut diagnostics = Vec::new();
+    for privileged in [false, true] {
+        let mut command = if privileged {
+            let mut command = std::process::Command::new("sudo");
+            command.args(["-n", program]);
+            command
+        } else {
+            std::process::Command::new(program)
+        };
+        command.args(arguments).arg(path);
+        if let Some(second_path) = second_path {
+            command.arg(second_path);
+        }
+        match command.output() {
+            Ok(output) if output.status.success() => return Ok(()),
+            Ok(output) => diagnostics.push(format!(
+                "{}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            )),
+            Err(error) => diagnostics.push(error.to_string()),
+        }
+    }
+    Err(std::io::Error::other(format!(
+        "cannot execute Linux {program} fixture: {}",
+        diagnostics.join("; ")
+    )))
+}
+
+#[cfg(windows)]
+fn install_cross_volume_alias(source: &Path, target: &Path) -> std::io::Result<()> {
+    use std::os::windows::process::CommandExt;
+
+    let source = source.display().to_string().replace('/', "\\");
+    let target = target.display().to_string().replace('/', "\\");
+    let command_line = format!("mklink /J \"{target}\" \"{source}\"");
+    let mut command = std::process::Command::new("cmd");
+    command.args(["/d", "/c"]);
+    command.raw_arg(&command_line);
+    let status = command.status()?;
+    status.success().then_some(()).ok_or_else(|| {
+        std::io::Error::other(format!(
+            "cross-volume mklink /J failed with {status}: {command_line}"
+        ))
+    })
+}
+
+#[cfg(windows)]
+fn remove_cross_volume_alias(target: &Path) -> std::io::Result<()> {
+    fs::remove_dir(target)
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+fn install_cross_volume_alias(_source: &Path, _target: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::other(
+        "cross-volume fixture supports Windows and Linux",
+    ))
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+fn remove_cross_volume_alias(_target: &Path) -> std::io::Result<()> {
     Ok(())
 }
