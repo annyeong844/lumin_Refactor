@@ -13,6 +13,7 @@ const RELEASE_FRAME: &[u8; 8] = b"release\n";
 const AFTER_PRE_ACQUIRE_VALIDATION: &str = "after-pre-acquire-validation";
 const AFTER_COMPLETE_VALIDATION: &str = "after-complete-validation";
 const BEFORE_STORE_COMMIT: &str = "before-store-commit";
+const BEFORE_MIGRATION_STORE_COMMIT: &str = "before-migration-store-commit";
 const BEFORE_RUN_RENAME: &str = "before-run-rename";
 const BEFORE_RETENTION_MOVE: &str = "before-retention-move";
 const BEFORE_CACHE_MOVE: &str = "before-cache-move";
@@ -28,6 +29,10 @@ pub(crate) fn wait_after_complete_validation() -> Result<(), StoreError> {
 
 pub(crate) fn wait_before_store_commit() -> Result<(), StoreError> {
     wait(BEFORE_STORE_COMMIT)
+}
+
+pub(crate) fn wait_before_migration_store_commit() -> Result<(), StoreError> {
+    wait(BEFORE_MIGRATION_STORE_COMMIT)
 }
 
 pub(crate) fn wait_before_run_rename() -> Result<(), StoreError> {
@@ -105,6 +110,7 @@ fn is_supported_stage(stage: &str) -> bool {
         AFTER_PRE_ACQUIRE_VALIDATION
             | AFTER_COMPLETE_VALIDATION
             | BEFORE_STORE_COMMIT
+            | BEFORE_MIGRATION_STORE_COMMIT
             | BEFORE_RUN_RENAME
             | BEFORE_RETENTION_MOVE
             | BEFORE_CACHE_MOVE

@@ -436,7 +436,7 @@ fn begin_migration(
         source_user_logical_sha256: source_logical.clone(),
         target_user_logical_sha256: target_logical,
     };
-    append_root_authorization(&legacy.database, &authorization)?;
+    append_root_authorization(guard, &legacy.database, &authorization)?;
     hook(MigrationCrashPoint::RootAuthorizationCommitted)?;
     legacy.entry.sync()?;
     hook(MigrationCrashPoint::IntentPrepared)?;

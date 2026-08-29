@@ -13,6 +13,7 @@ use support::{ProcessResult, assert_status, field, run};
 const AFTER_PRE_ACQUIRE_VALIDATION: &str = "after-pre-acquire-validation";
 const AFTER_COMPLETE_VALIDATION: &str = "after-complete-validation";
 const BEFORE_STORE_COMMIT: &str = "before-store-commit";
+const BEFORE_MIGRATION_STORE_COMMIT: &str = "before-migration-store-commit";
 const BEFORE_RUN_RENAME: &str = "before-run-rename";
 const BEFORE_RETENTION_MOVE: &str = "before-retention-move";
 const BEFORE_CACHE_MOVE: &str = "before-cache-move";
@@ -23,6 +24,10 @@ fn lock_replacement_never_forms_two_accepted_guard_domains()
     with_context(
         "pre-acquire migration lock replacement",
         migration_rejects_lock_replacement_after_pre_acquire_validation(),
+    )?;
+    with_context(
+        "pre-commit migration lock replacement",
+        migration_commit_rejects_lock_replacement(),
     )?;
     with_context(
         "post-validation state-directory swap",
@@ -146,6 +151,56 @@ fn migration_rejects_lock_replacement_after_pre_acquire_validation()
             .get("schemaVersion")
             .and_then(Value::as_str),
         Some("lumin.lifecycle-store-migration.v1")
+    );
+    assert_latest_run(root.path(), &baseline_run)?;
+    assert_run_visible(root.path(), &baseline_run)?;
+    Ok(())
+}
+
+fn migration_commit_rejects_lock_replacement() -> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    let baseline_run = initialize(root.path())?;
+    let downgraded = run(root.path(), &["store", "test-downgrade-v12"])?;
+    assert_status(&downgraded, 0);
+
+    let barrier = NamespaceBarrier::new(BEFORE_MIGRATION_STORE_COMMIT)?;
+    let mut replacement = FileReplacement::prepare(
+        &root.path().join(".lumin/lifecycle.lock"),
+        root.path().join("lifecycle.lock.migration-commit-prepared"),
+        root.path()
+            .join("lifecycle.lock.migration-commit-authentic"),
+    )?;
+    let state = root.path().join(".lumin");
+    let store = state.join("lifecycle.store");
+    let store_identity_before = physical_identity(&store)?;
+    let durable_before = tree_without_subtree(&tree_snapshot(&state)?, "lifecycle.store");
+    let mut migration = barrier.spawn(root.path(), &["store", "migrate", "--format", "json"])?;
+    let permit = barrier.accept(&mut migration)?;
+    assert!(
+        replacement.activate()?,
+        "platform must permit lock replacement"
+    );
+
+    permit.release()?;
+    assert_integrity_failure(&migration.finish()?);
+    replacement.restore()?;
+    assert_eq!(physical_identity(&store)?, store_identity_before);
+    assert_eq!(
+        tree_without_subtree(&tree_snapshot(&state)?, "lifecycle.store"),
+        durable_before,
+        "rejected migration commit changed the durable namespace"
+    );
+
+    let migrated = run(root.path(), &["store", "migrate", "--format", "json"])?;
+    assert_status(&migrated, 0);
+    let root_authorization: Value =
+        serde_json::from_slice(&fs::read(state.join("lifecycle-migration.json"))?)?;
+    assert_eq!(
+        root_authorization
+            .get("authorizationSequence")
+            .and_then(Value::as_u64),
+        Some(1),
+        "rejected migration commit appended a root authorization"
     );
     assert_latest_run(root.path(), &baseline_run)?;
     assert_run_visible(root.path(), &baseline_run)?;
