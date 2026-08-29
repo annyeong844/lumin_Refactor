@@ -3,9 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::{
-    downgrade_store_as_prior, expect_migration_ready, expect_migration_required, expect_string,
-    expect_success, locate_binary, locate_fixture_binary, parse_json, run_binary,
-    scratch_directory_for, validate_help_output,
+    downgrade_store_as_prior, expect_migration_ready, expect_migration_required, expect_status,
+    expect_string, expect_success, locate_binary, locate_fixture_binary, parse_json, run_binary,
+    run_binary_with_broken_stdout, scratch_directory_for, validate_help_output,
 };
 
 pub(super) const CODEX_SKILL: &str = "skills/codex/SKILL.md";
@@ -17,6 +17,16 @@ pub(super) const MIGRATION_WORKFLOW: &str = concat!(
     "  3. Accept only the exact migration DTO printed by `lumin help-agent`.\n",
     "  4. Retry the preserved original public command with the same arguments.\n",
 );
+pub(super) const OPERATION_RECOVERY_WORKFLOW: &str = concat!(
+    "- If any mutation result delivery is uncertain, retain its unique operation ID and never repeat the underlying edit.\n",
+    "- For uncertain cache-cleanup delivery, follow this exact public recovery sequence:\n",
+    "  1. Preserve the exact original `lumin cache clean --operation-id <operation-id> --format json` command and operation ID.\n",
+    "  2. Run `lumin operation show <operation-id> --format json` before any cleanup retry.\n",
+    "  3. If show reports a matching committed cache-clean result, consume it and do not rerun cleanup.\n",
+    "  4. Otherwise, only the exact same-ID cleanup command may resume as instructed by `lumin help-agent`; never mint a replacement ID.\n",
+);
+const CACHE_CLEANUP_COMMAND: &str = "lumin cache clean --operation-id <operation-id> --format json";
+const OPERATION_SHOW_COMMAND: &str = "lumin operation show <operation-id> --format json";
 const MIGRATION_ARGUMENTS: &[&str] = &["store", "migrate", "--format", "json"];
 const PACKAGE_ROOT_ENVIRONMENT: &str = "LUMIN_PACKAGE_ROOT";
 
@@ -43,6 +53,7 @@ pub(super) fn check() -> Result<(), String> {
     let fixture_binary = locate_fixture_binary()?;
     validate_binary_agent_contract(&binary)?;
     validate_packaged_adapter_migration_workflows(&package_root, &binary, &fixture_binary)?;
+    validate_packaged_adapter_operation_workflows(&package_root, &binary, &fixture_binary)?;
     Ok(())
 }
 
@@ -136,6 +147,20 @@ pub(super) fn validate_adapter(relative: &str, source: &str) -> Result<(), Strin
     {
         return Err(format!(
             "{relative} must contain exactly one canonical migration recovery workflow"
+        ));
+    }
+    if source.matches(OPERATION_RECOVERY_WORKFLOW).count() != 1
+        || source
+            .matches(&format!("`{CACHE_CLEANUP_COMMAND}`"))
+            .count()
+            != 1
+        || source
+            .matches(&format!("`{OPERATION_SHOW_COMMAND}`"))
+            .count()
+            != 1
+    {
+        return Err(format!(
+            "{relative} must contain exactly one canonical operation recovery workflow"
         ));
     }
     for forbidden in [
@@ -267,4 +292,171 @@ fn execute_adapter_migration_workflow(
     expect_string(&retried_json, "/schemaVersion", "lumin.overview.v2")?;
     expect_string(&retried_json, "/scope/id", &run_id)?;
     Ok(())
+}
+
+fn validate_packaged_adapter_operation_workflows(
+    package_root: &Path,
+    binary: &Path,
+    fixture_binary: &Path,
+) -> Result<(), String> {
+    let scratch = scratch_directory_for("skill-operation")?;
+    fs::create_dir(&scratch)
+        .map_err(|error| format!("cannot create skill operation scratch directory: {error}"))?;
+    let result = [(CODEX_SKILL, "codex"), (CLAUDE_SKILL, "claude-code")]
+        .into_iter()
+        .try_for_each(|(relative, name)| {
+            let source = read_skill(package_root, relative)?;
+            validate_adapter(relative, &source)?;
+            execute_adapter_operation_workflow(
+                relative,
+                name,
+                &source,
+                binary,
+                fixture_binary,
+                &scratch.join(name),
+            )
+        });
+    let cleanup = fs::remove_dir_all(&scratch)
+        .map_err(|error| format!("cannot remove skill operation scratch directory: {error}"));
+    result?;
+    cleanup
+}
+
+fn execute_adapter_operation_workflow(
+    relative: &str,
+    adapter_name: &str,
+    source: &str,
+    binary: &Path,
+    fixture_binary: &Path,
+    root: &Path,
+) -> Result<(), String> {
+    fs::create_dir_all(root.join("src"))
+        .map_err(|error| format!("cannot create {relative} operation fixture: {error}"))?;
+    fs::write(
+        root.join("src/lib.ts"),
+        b"export const skillOperation = 1;\n",
+    )
+    .map_err(|error| format!("cannot write {relative} operation source: {error}"))?;
+    expect_success(
+        run_binary(binary, root, &["audit", "--jobs", "1", "--format", "json"]),
+        &format!("{relative} operation fixture audit"),
+    )?;
+    let seeded = expect_success(
+        run_binary(
+            fixture_binary,
+            root,
+            &["cache", "test-write", "skill-payload.bin", adapter_name],
+        ),
+        &format!("{relative} cache fixture writer"),
+    )?;
+    if !seeded.stdout.is_empty() {
+        return Err(format!("{relative} cache fixture writer emitted stdout"));
+    }
+
+    let operation_id = format!("skill-{adapter_name}-cache-clean-0001");
+    let cleanup_arguments =
+        adapter_command_arguments(relative, source, CACHE_CLEANUP_COMMAND, &operation_id)?;
+    let cleanup_arguments = cleanup_arguments
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let show_arguments =
+        adapter_command_arguments(relative, source, OPERATION_SHOW_COMMAND, &operation_id)?;
+    let show_arguments = show_arguments
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let failed = run_binary_with_broken_stdout(binary, root, &cleanup_arguments)?;
+    expect_status(
+        &failed,
+        Some(1),
+        &format!("{relative} uncertain cleanup delivery"),
+    )?;
+    if !failed.stdout.is_empty() || !failed.stderr.is_empty() {
+        return Err(format!(
+            "{relative} BrokenPipe cleanup did not use the canonical empty transport"
+        ));
+    }
+
+    let shown = expect_success(
+        run_binary(binary, root, &show_arguments),
+        &format!("{relative} operation-show recovery"),
+    )?;
+    let response = parse_json(
+        &format!("{relative} operation-show recovery"),
+        &shown.stdout,
+    )?;
+    expect_string(
+        &response,
+        "/schemaVersion",
+        "lumin.cache-cleanup-operation.v2",
+    )?;
+    expect_string(&response, "/operationId", &operation_id)?;
+    expect_string(&response, "/kind", "cache-clean")?;
+    expect_string(&response, "/status", "committed")?;
+    expect_string(&response, "/lastDeliveryStatus", "failed")?;
+    expect_string(&response, "/result/operationId", &operation_id)?;
+    expect_string(&response, "/result/status", "clean")?;
+
+    let repeated_show = expect_success(
+        run_binary(binary, root, &show_arguments),
+        &format!("{relative} repeated operation-show recovery"),
+    )?;
+    if repeated_show.stdout != shown.stdout {
+        return Err(format!(
+            "{relative} read-only operation recovery changed the committed DTO"
+        ));
+    }
+    let active_names = fs::read_dir(root.join(".lumin/cache"))
+        .map_err(|error| format!("cannot inspect {relative} active cache: {error}"))?
+        .map(|entry| entry.map(|entry| entry.file_name()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("cannot inspect {relative} active cache: {error}"))?;
+    if active_names != [OsString::from("namespace.anchor")] {
+        return Err(format!(
+            "{relative} operation recovery left unexpected active-cache entries"
+        ));
+    }
+    Ok(())
+}
+
+fn adapter_command_arguments(
+    relative: &str,
+    source: &str,
+    command_template: &str,
+    operation_id: &str,
+) -> Result<Vec<String>, String> {
+    let marker = format!("`{command_template}`");
+    if source.matches(&marker).count() != 1 {
+        return Err(format!(
+            "{relative} must contain exactly one adapter command `{command_template}`"
+        ));
+    }
+    let start = source
+        .find(&marker)
+        .ok_or_else(|| format!("{relative} omitted adapter command `{command_template}`"))?;
+    let authored = &source[start + 1..start + marker.len() - 1];
+    let mut tokens = authored.split_ascii_whitespace();
+    if tokens.next() != Some("lumin") {
+        return Err(format!(
+            "{relative} adapter command does not invoke packaged lumin"
+        ));
+    }
+    let mut placeholder_count = 0_usize;
+    let arguments = tokens
+        .map(|token| {
+            if token == "<operation-id>" {
+                placeholder_count += 1;
+                operation_id.to_owned()
+            } else {
+                token.to_owned()
+            }
+        })
+        .collect::<Vec<_>>();
+    if placeholder_count != 1 {
+        return Err(format!(
+            "{relative} adapter command must contain exactly one operation-ID placeholder"
+        ));
+    }
+    Ok(arguments)
 }

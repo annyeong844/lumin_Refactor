@@ -1,10 +1,12 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 
 use super::{
     downgrade_store_as_prior, expect_migration_ready, expect_migration_required, expect_status,
     expect_string, expect_success, locate_binary, locate_fixture_binary, parse_json, run_binary,
-    scratch_directory_for, validate_help_output,
+    run_binary_with_broken_stdout, run_binary_with_stdout, scratch_directory_for,
+    validate_help_output,
 };
 
 const MAX_EXECUTABLE_BYTES: u64 = 12_582_912;
@@ -242,8 +244,517 @@ fn validate_platform_contract(
     )?;
     validate_corrupt_migration_anchor(binary, fixture_binary, &repository)?;
 
+    validate_packaged_cleanup_contract(binary, fixture_binary, &scratch.join("cleanup-contract"))?;
     validate_absent_store(binary, &scratch.join("absent"))?;
     validate_reserved_path(binary, &scratch.join("reserved"))?;
+    Ok(())
+}
+
+fn validate_packaged_cleanup_contract(
+    binary: &Path,
+    fixture_binary: &Path,
+    root: &Path,
+) -> Result<(), String> {
+    fs::create_dir_all(root.join("src"))
+        .map_err(|error| format!("cannot create cleanup package fixture: {error}"))?;
+    fs::write(
+        root.join("src/lib.ts"),
+        b"export const cleanupPackageProbe = 1;\n",
+    )
+    .map_err(|error| format!("cannot write cleanup package fixture: {error}"))?;
+    expect_success(
+        run_binary(binary, root, &["audit", "--jobs", "1", "--format", "json"]),
+        "cleanup package fixture audit",
+    )?;
+
+    seed_cache_payload(fixture_binary, root, "first.bin", "first")?;
+    seed_cache_payload(fixture_binary, root, "second.bin", "second")?;
+    let active_cache = root.join(".lumin/cache");
+    let quarantine = root.join(".lumin/trash/cache-evictions");
+    let active_before_clean = namespace_tree_snapshot(&active_cache)?;
+    let quarantine_before_clean = namespace_tree_snapshot(&quarantine)?;
+    let operation_id = "package-cache-contract-0001";
+    let cleaned = expect_success(
+        run_binary(
+            binary,
+            root,
+            &[
+                "cache",
+                "clean",
+                "--operation-id",
+                operation_id,
+                "--format",
+                "json",
+            ],
+        ),
+        "packaged cache cleanup",
+    )?;
+    let request_digest =
+        expect_cleanup_response("packaged cache cleanup", &cleaned.stdout, operation_id)?;
+    let shown = expect_success(
+        run_binary(
+            binary,
+            root,
+            &["operation", "show", operation_id, "--format", "json"],
+        ),
+        "packaged cache cleanup show",
+    )?;
+    expect_cleanup_operation(
+        "packaged cache cleanup show",
+        &shown.stdout,
+        operation_id,
+        &request_digest,
+        2,
+        2,
+        "succeeded",
+    )?;
+
+    let active_after_clean = namespace_tree_snapshot(&active_cache)?;
+    let quarantine_after_clean = namespace_tree_snapshot(&quarantine)?;
+    validate_identity_preserving_quarantine_move(
+        &active_before_clean,
+        &active_after_clean,
+        &quarantine_before_clean,
+        &quarantine_after_clean,
+    )?;
+    let replay = expect_success(
+        run_binary(
+            binary,
+            root,
+            &["cache", "clean", "--operation-id", operation_id],
+        ),
+        "packaged cache cleanup replay",
+    )?;
+    if replay.stdout != cleaned.stdout
+        || namespace_tree_snapshot(&quarantine)? != quarantine_after_clean
+    {
+        return Err(
+            "packaged same-operation cleanup replay changed result bytes or quarantine objects"
+                .to_owned(),
+        );
+    }
+
+    let empty_operation_id = "package-cache-contract-empty-0002";
+    let empty = expect_success(
+        run_binary(
+            binary,
+            root,
+            &["cache", "clean", "--operation-id", empty_operation_id],
+        ),
+        "packaged empty cache cleanup",
+    )?;
+    expect_cleanup_response(
+        "packaged empty cache cleanup",
+        &empty.stdout,
+        empty_operation_id,
+    )?;
+    let empty_show = expect_success(
+        run_binary(
+            binary,
+            root,
+            &["operation", "show", empty_operation_id, "--format", "json"],
+        ),
+        "packaged empty cache cleanup show",
+    )?;
+    expect_cleanup_operation(
+        "packaged empty cache cleanup show",
+        &empty_show.stdout,
+        empty_operation_id,
+        &request_digest,
+        0,
+        0,
+        "succeeded",
+    )?;
+    if namespace_tree_snapshot(&quarantine)? != quarantine_after_clean {
+        return Err("packaged empty cleanup changed prior quarantine objects".to_owned());
+    }
+    drop(quarantine_after_clean);
+
+    exercise_packaged_delivery_failure(
+        binary,
+        fixture_binary,
+        root,
+        "package-cache-broken-pipe-0003",
+        "broken-pipe.bin",
+        true,
+    )?;
+    exercise_packaged_delivery_failure(
+        binary,
+        fixture_binary,
+        root,
+        "package-cache-non-pipe-0004",
+        "non-pipe.bin",
+        false,
+    )?;
+    validate_malformed_cleanup(binary, &root.join("malformed"))
+}
+
+fn exercise_packaged_delivery_failure(
+    binary: &Path,
+    fixture_binary: &Path,
+    root: &Path,
+    operation_id: &str,
+    payload_name: &str,
+    broken_pipe: bool,
+) -> Result<(), String> {
+    seed_cache_payload(fixture_binary, root, payload_name, payload_name)?;
+    let arguments = ["cache", "clean", "--operation-id", operation_id];
+    let failed = if broken_pipe {
+        run_binary_with_broken_stdout(binary, root, &arguments)?
+    } else {
+        let failure_stdout = non_pipe_failure_stdout(root)?;
+        run_binary_with_stdout(binary, root, &arguments, Stdio::from(failure_stdout))?
+    };
+    expect_status(&failed, Some(1), "packaged cache cleanup delivery failure")?;
+    let expected_stderr: &[u8] = if broken_pipe {
+        b""
+    } else {
+        b"lumin: cannot write stdout\n"
+    };
+    if !failed.stdout.is_empty() || failed.stderr != expected_stderr {
+        return Err(format!(
+            "packaged delivery failure returned wrong bytes; stdout={} stderr={}",
+            String::from_utf8_lossy(&failed.stdout),
+            String::from_utf8_lossy(&failed.stderr)
+        ));
+    }
+
+    let shown = expect_success(
+        run_binary(
+            binary,
+            root,
+            &["operation", "show", operation_id, "--format", "json"],
+        ),
+        "packaged failed-delivery operation show",
+    )?;
+    let shown_json = parse_json("packaged failed-delivery operation show", &shown.stdout)?;
+    expect_string(
+        &shown_json,
+        "/schemaVersion",
+        "lumin.cache-cleanup-operation.v2",
+    )?;
+    expect_string(&shown_json, "/operationId", operation_id)?;
+    expect_string(&shown_json, "/status", "committed")?;
+    expect_string(&shown_json, "/lastDeliveryStatus", "failed")?;
+    let request_digest = shown_json
+        .pointer("/requestDigest")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "failed-delivery operation omitted requestDigest".to_owned())?
+        .to_owned();
+    expect_cleanup_operation(
+        "packaged failed-delivery operation show",
+        &shown.stdout,
+        operation_id,
+        &request_digest,
+        1,
+        1,
+        "failed",
+    )?;
+
+    let quarantine = root.join(".lumin/trash/cache-evictions");
+    let before_replay = namespace_tree_snapshot(&quarantine)?;
+    let replay = expect_success(
+        run_binary(binary, root, &arguments),
+        "packaged failed-delivery cleanup recovery",
+    )?;
+    expect_cleanup_response(
+        "packaged failed-delivery cleanup recovery",
+        &replay.stdout,
+        operation_id,
+    )?;
+    if namespace_tree_snapshot(&quarantine)? != before_replay {
+        return Err("packaged delivery recovery changed quarantine objects".to_owned());
+    }
+    let recovered = expect_success(
+        run_binary(
+            binary,
+            root,
+            &["operation", "show", operation_id, "--format", "json"],
+        ),
+        "packaged recovered-delivery operation show",
+    )?;
+    expect_cleanup_operation(
+        "packaged recovered-delivery operation show",
+        &recovered.stdout,
+        operation_id,
+        &request_digest,
+        1,
+        1,
+        "succeeded",
+    )
+}
+
+fn seed_cache_payload(
+    fixture_binary: &Path,
+    root: &Path,
+    name: &str,
+    payload: &str,
+) -> Result<(), String> {
+    let output = expect_success(
+        run_binary(
+            fixture_binary,
+            root,
+            &["cache", "test-write", name, payload],
+        ),
+        "seed packaged cache payload",
+    )?;
+    if !output.stdout.is_empty() {
+        return Err("cache fixture writer emitted stdout".to_owned());
+    }
+    Ok(())
+}
+
+fn expect_cleanup_response(
+    label: &str,
+    bytes: &[u8],
+    operation_id: &str,
+) -> Result<String, String> {
+    let value = parse_json(label, bytes)?;
+    expect_string(&value, "/schemaVersion", "lumin.cache-cleanup.v2")?;
+    expect_string(&value, "/operationId", operation_id)?;
+    expect_string(&value, "/status", "clean")?;
+    let request_digest = value
+        .pointer("/requestDigest")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| format!("{label} omitted requestDigest"))?;
+    if request_digest.len() != 64 || !request_digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(format!("{label} returned malformed requestDigest"));
+    }
+    let expected = format!(
+        concat!(
+            "{{\"schemaVersion\":\"lumin.cache-cleanup.v2\",",
+            "\"operationId\":\"{operation_id}\",",
+            "\"requestDigest\":\"{request_digest}\",",
+            "\"status\":\"clean\"}}\n"
+        ),
+        operation_id = operation_id,
+        request_digest = request_digest,
+    );
+    if bytes != expected.as_bytes() {
+        return Err(format!("{label} did not emit canonical response bytes"));
+    }
+    Ok(request_digest.to_owned())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn expect_cleanup_operation(
+    label: &str,
+    bytes: &[u8],
+    operation_id: &str,
+    request_digest: &str,
+    authorized_count: u64,
+    validated_count: u64,
+    last_delivery_status: &str,
+) -> Result<(), String> {
+    let expected = format!(
+        concat!(
+            "{{\"schemaVersion\":\"lumin.cache-cleanup-operation.v2\",",
+            "\"operationId\":\"{operation_id}\",",
+            "\"kind\":\"cache-clean\",",
+            "\"requestDigest\":\"{request_digest}\",",
+            "\"status\":\"committed\",",
+            "\"interruptionCount\":0,",
+            "\"authorizedCount\":{authorized_count},",
+            "\"validatedCount\":{validated_count},",
+            "\"result\":{{\"schemaVersion\":\"lumin.cache-cleanup.v2\",",
+            "\"operationId\":\"{operation_id}\",",
+            "\"requestDigest\":\"{request_digest}\",",
+            "\"status\":\"clean\"}},",
+            "\"lastDeliveryStatus\":\"{last_delivery_status}\"}}\n"
+        ),
+        operation_id = operation_id,
+        request_digest = request_digest,
+        authorized_count = authorized_count,
+        validated_count = validated_count,
+        last_delivery_status = last_delivery_status,
+    );
+    if bytes != expected.as_bytes() {
+        return Err(format!(
+            "{label} did not emit canonical operation bytes: {}",
+            String::from_utf8_lossy(bytes)
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn non_pipe_failure_stdout(_root: &Path) -> Result<fs::File, String> {
+    fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .map_err(|error| format!("cannot open Linux stdout failure device: {error}"))
+}
+
+#[cfg(windows)]
+fn non_pipe_failure_stdout(root: &Path) -> Result<fs::File, String> {
+    let read_only_path = root.join("read-only-stdout.bin");
+    fs::write(&read_only_path, b"sentinel")
+        .map_err(|error| format!("cannot create read-only stdout fixture: {error}"))?;
+    fs::File::open(&read_only_path)
+        .map_err(|error| format!("cannot open read-only stdout fixture: {error}"))
+}
+
+fn validate_malformed_cleanup(binary: &Path, root: &Path) -> Result<(), String> {
+    fs::create_dir(root)
+        .map_err(|error| format!("cannot create malformed cleanup fixture: {error}"))?;
+    let output = run_binary(binary, root, &["cache", "clean", "--operation-id"])?;
+    expect_status(&output, Some(2), "malformed packaged cache cleanup")?;
+    if !output.stdout.is_empty() || root.join(".lumin").exists() {
+        return Err("malformed packaged cache cleanup initialized state".to_owned());
+    }
+    Ok(())
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct NamespaceSnapshotRow {
+    relative_path: PathBuf,
+    kind: NamespaceSnapshotKind,
+    identity: same_file::Handle,
+    payload: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum NamespaceSnapshotKind {
+    Directory,
+    RegularFile,
+}
+
+fn validate_identity_preserving_quarantine_move(
+    active_before: &[NamespaceSnapshotRow],
+    active_after: &[NamespaceSnapshotRow],
+    quarantine_before: &[NamespaceSnapshotRow],
+    quarantine_after: &[NamespaceSnapshotRow],
+) -> Result<(), String> {
+    let source_payloads = active_before
+        .iter()
+        .filter(|row| !is_namespace_control_row(row))
+        .collect::<Vec<_>>();
+    if source_payloads.len() != 2 {
+        return Err(format!(
+            "packaged cleanup fixture expected 2 active payload rows, found {}",
+            source_payloads.len()
+        ));
+    }
+    let expected_active = active_before
+        .iter()
+        .filter(|row| is_namespace_control_row(row))
+        .collect::<Vec<_>>();
+    let observed_active = active_after.iter().collect::<Vec<_>>();
+    if observed_active != expected_active {
+        return Err(
+            "packaged cleanup changed active-cache controls or retained payloads".to_owned(),
+        );
+    }
+    if quarantine_before
+        .iter()
+        .any(|row| !quarantine_after.contains(row))
+    {
+        return Err("packaged cleanup changed a preexisting quarantine object".to_owned());
+    }
+    let added_destinations = quarantine_after
+        .iter()
+        .filter(|row| !quarantine_before.contains(row))
+        .collect::<Vec<_>>();
+    if added_destinations.len() != source_payloads.len() {
+        return Err(format!(
+            "packaged cleanup created {} quarantine rows for {} active payload rows",
+            added_destinations.len(),
+            source_payloads.len()
+        ));
+    }
+    for source in &source_payloads {
+        let matches = added_destinations
+            .iter()
+            .filter(|destination| same_physical_payload(source, destination))
+            .count();
+        if matches != 1 {
+            return Err(format!(
+                "packaged cleanup source {} has {matches} identity-preserving quarantine matches",
+                source.relative_path.display()
+            ));
+        }
+    }
+    for destination in &added_destinations {
+        let matches = source_payloads
+            .iter()
+            .filter(|source| same_physical_payload(source, destination))
+            .count();
+        if matches != 1 {
+            return Err(format!(
+                "packaged cleanup destination {} has {matches} authenticated source matches",
+                destination.relative_path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn is_namespace_control_row(row: &NamespaceSnapshotRow) -> bool {
+    row.relative_path.as_os_str().is_empty()
+        || row.relative_path.as_path() == Path::new("namespace.anchor")
+}
+
+fn same_physical_payload(
+    source: &NamespaceSnapshotRow,
+    destination: &NamespaceSnapshotRow,
+) -> bool {
+    source.kind == destination.kind
+        && source.identity == destination.identity
+        && source.payload == destination.payload
+}
+
+fn namespace_tree_snapshot(root: &Path) -> Result<Vec<NamespaceSnapshotRow>, String> {
+    let mut rows = Vec::new();
+    snapshot_namespace_entry(root, root, &mut rows)?;
+    Ok(rows)
+}
+
+fn snapshot_namespace_entry(
+    root: &Path,
+    path: &Path,
+    rows: &mut Vec<NamespaceSnapshotRow>,
+) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("cannot inspect {}: {error}", path.display()))?;
+    let file_type = metadata.file_type();
+    let (kind, payload) = if file_type.is_dir() {
+        (NamespaceSnapshotKind::Directory, None)
+    } else if file_type.is_file() {
+        (
+            NamespaceSnapshotKind::RegularFile,
+            Some(
+                fs::read(path)
+                    .map_err(|error| format!("cannot read {}: {error}", path.display()))?,
+            ),
+        )
+    } else {
+        return Err(format!(
+            "quarantine snapshot contains unsupported entry {}",
+            path.display()
+        ));
+    };
+    let identity = same_file::Handle::from_path(path)
+        .map_err(|error| format!("cannot identify {}: {error}", path.display()))?;
+    rows.push(NamespaceSnapshotRow {
+        relative_path: path
+            .strip_prefix(root)
+            .map_err(|error| format!("cannot project quarantine path: {error}"))?
+            .to_path_buf(),
+        kind,
+        identity,
+        payload,
+    });
+    if file_type.is_dir() {
+        let mut children = fs::read_dir(path)
+            .map_err(|error| format!("cannot enumerate {}: {error}", path.display()))?
+            .map(|entry| entry.map(|entry| (entry.file_name(), entry.path())))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("cannot enumerate {}: {error}", path.display()))?;
+        children.sort_by(|left, right| left.0.cmp(&right.0));
+        for (_, child) in children {
+            snapshot_namespace_entry(root, &child, rows)?;
+        }
+    }
     Ok(())
 }
 

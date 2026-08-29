@@ -45,10 +45,10 @@ These are execution-matrix counts, not a percentage estimate of product code.
 
 | Lane | Applicable | Mapped | Remaining | Verified aggregate |
 | --- | ---: | ---: | ---: | --- |
-| Standard | 86 | 75 | 11 | Focused `state-namespace-initialization`: 1 passed, 0 failed; `corpus::tests::mode_counts`: 75 mapped, 11 unmapped. |
-| Determinism | 86 | 75 | 11 | Focused `state-namespace-initialization`: 1 passed with 4 semantic captures; `corpus::tests::mode_counts`: 75 mapped, 11 unmapped. |
+| Standard | 86 | 76 | 10 | Focused `reserved-state-namespace`: 1 passed, 0 failed; `corpus::tests::mode_counts`: 76 mapped, 10 unmapped. |
+| Determinism | 86 | 76 | 10 | Focused `reserved-state-namespace`: 1 passed with 99 semantic captures; `corpus::tests::mode_counts`: 76 mapped, 10 unmapped. |
 | Store crash | 11 | 7 | 4 | Focused `state-namespace-initialization`: 1 passed, 0 failed; `corpus::tests::mode_counts`: 7 mapped, 4 unmapped. |
-| **Total execution obligations** | **183** | **157** | **26** | This total deliberately counts each required lane execution. |
+| **Total execution obligations** | **183** | **159** | **24** | This total deliberately counts each required lane execution. |
 
 Known non-corpus exit gaps:
 

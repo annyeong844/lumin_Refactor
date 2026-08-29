@@ -138,6 +138,185 @@ fn cache_cleanup_recovers_every_durable_boundary_with_the_same_operation_id()
 }
 
 #[test]
+fn cache_cleanup_recovers_death_after_result_commit_without_duplicate_move()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    assert_status(&run(root.path(), &["audit", "--jobs", "1"])?, 0);
+    seed_cache(root.path())?;
+    let cache = root.path().join(".lumin/cache");
+    let source_payloads = [
+        physical_tree_snapshot(&cache, &cache.join("first.bin"))?,
+        physical_tree_snapshot(&cache, &cache.join("second"))?,
+    ];
+    let operation_id = "cache-after-result-commit";
+
+    let crashed = run_with_env(
+        root.path(),
+        &["cache", "clean", "--operation-id", operation_id],
+        &[(CRASH_POINT_ENV, "after-result-commit")],
+    )?;
+    assert_status(&crashed, CRASH_EXIT_CODE);
+    assert!(crashed.stdout.is_empty());
+    assert!(crashed.stderr.is_empty());
+
+    let committed = show_operation(root.path(), operation_id)?;
+    assert_cleanup_projection(&committed, "committed", 0, 2, 2, false)?;
+    assert_last_delivery(&committed, "not-attempted")?;
+    let private_before_replay = cleanup_private_state(root.path(), operation_id)?;
+    let quarantine = root.path().join(".lumin/trash/cache-evictions");
+    let destinations = cleanup_authorization_destinations(&private_before_replay)?;
+    assert_eq!(destinations.len(), source_payloads.len());
+    for (destination, source_payload) in destinations.iter().zip(&source_payloads) {
+        assert_eq!(
+            physical_tree_snapshot(&quarantine, &quarantine.join(destination))?,
+            *source_payload,
+            "result commit changed an authorized quarantine payload"
+        );
+    }
+
+    let later = run(root.path(), &["cache", "test-write", "later.bin", "later"])?;
+    assert_status(&later, 0);
+    let replay = run(
+        root.path(),
+        &["cache", "clean", "--operation-id", operation_id],
+    )?;
+    assert_status(&replay, 0);
+    assert!(replay.stderr.is_empty());
+    assert_eq!(field(&replay.stdout, "operationId")?, operation_id);
+    assert_eq!(fs::read(cache.join("later.bin"))?, b"later");
+    for (destination, source_payload) in destinations.iter().zip(&source_payloads) {
+        assert_eq!(
+            physical_tree_snapshot(&quarantine, &quarantine.join(destination))?,
+            *source_payload,
+            "same-ID delivery recovery replaced an authorized quarantine payload"
+        );
+    }
+    assert_eq!(
+        cleanup_private_state(root.path(), operation_id)?,
+        expected_delivery_completion(private_before_replay, &[(1, "succeeded")])?,
+        "same-ID recovery changed state outside the first delivery completion"
+    );
+
+    let later_cleanup = run(
+        root.path(),
+        &[
+            "cache",
+            "clean",
+            "--operation-id",
+            "cache-after-result-later",
+        ],
+    )?;
+    assert_status(&later_cleanup, 0);
+    assert!(!cache.join("later.bin").exists());
+    assert_eq!(quarantine_payload_count(root.path())?, 3);
+    Ok(())
+}
+
+#[test]
+fn cache_cleanup_real_stream_failures_are_durable_and_recoverable()
+-> Result<(), Box<dyn std::error::Error>> {
+    for broken_pipe in [true, false] {
+        let root = fixture()?;
+        assert_status(&run(root.path(), &["audit", "--jobs", "1"])?, 0);
+        seed_cache(root.path())?;
+        let operation_id = if broken_pipe {
+            "cache-real-broken-pipe"
+        } else {
+            "cache-real-non-pipe"
+        };
+        let barrier = CacheCleanupDeliveryBarrier::new("after-allocation")?;
+        let mut cleanup = if broken_pipe {
+            barrier.spawn(root.path(), operation_id)?
+        } else {
+            barrier.spawn_with_stdout(
+                root.path(),
+                operation_id,
+                non_pipe_failure_stdout(root.path())?,
+            )?
+        };
+        let (sequence, permit) = barrier.accept(&mut cleanup, operation_id)?;
+        assert_eq!(sequence, 1);
+        let allocated = show_operation(root.path(), operation_id)?;
+        assert_cleanup_projection(&allocated, "committed", 0, 2, 2, false)?;
+        assert_last_delivery(&allocated, "unknown")?;
+        if broken_pipe {
+            cleanup.close_stdout()?;
+        }
+        permit.release()?;
+
+        let failed = cleanup.finish()?;
+        assert_status(&failed, 1);
+        assert!(failed.stdout.is_empty());
+        assert_eq!(
+            failed.stderr,
+            if broken_pipe {
+                ""
+            } else {
+                "lumin: cannot write stdout\n"
+            }
+        );
+        let failed_show = show_operation(root.path(), operation_id)?;
+        assert_cleanup_projection(&failed_show, "committed", 0, 2, 2, false)?;
+        assert_last_delivery(&failed_show, "failed")?;
+        let private_after_failure = cleanup_private_state(root.path(), operation_id)?;
+        assert_eq!(
+            required_value(&private_after_failure, "/operation/deliveryCompletions")?,
+            &json!([{"sequence": 1, "outcome": "failed"}])
+        );
+
+        let quarantine = root.path().join(".lumin/trash/cache-evictions");
+        let destinations = cleanup_authorization_destinations(&private_after_failure)?;
+        let before_replay = destinations
+            .iter()
+            .map(|destination| physical_tree_snapshot(&quarantine, &quarantine.join(destination)))
+            .collect::<Result<Vec<_>, _>>()?;
+        let later = run(root.path(), &["cache", "test-write", "later.bin", "later"])?;
+        assert_status(&later, 0);
+        let replay = run(
+            root.path(),
+            &["cache", "clean", "--operation-id", operation_id],
+        )?;
+        assert_status(&replay, 0);
+        assert_eq!(field(&replay.stdout, "operationId")?, operation_id);
+        assert_eq!(
+            fs::read(root.path().join(".lumin/cache/later.bin"))?,
+            b"later"
+        );
+        for (destination, before) in destinations.iter().zip(&before_replay) {
+            assert_eq!(
+                physical_tree_snapshot(&quarantine, &quarantine.join(destination))?,
+                *before,
+                "delivery retry changed an authenticated quarantine object"
+            );
+        }
+        assert_eq!(
+            cleanup_private_state(root.path(), operation_id)?,
+            expected_delivery_completion(
+                private_after_failure,
+                &[(1, "failed"), (2, "succeeded")],
+            )?,
+            "delivery retry changed state outside the ordered delivery ledger"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn non_pipe_failure_stdout(_root: &Path) -> std::io::Result<Stdio> {
+    fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .map(Stdio::from)
+}
+
+#[cfg(windows)]
+fn non_pipe_failure_stdout(root: &Path) -> std::io::Result<Stdio> {
+    let read_only_path = root.join("read-only-stdout.bin");
+    fs::write(&read_only_path, b"sentinel")?;
+    fs::File::open(read_only_path).map(Stdio::from)
+}
+
+#[test]
 fn cleanup_retry_exposes_one_read_only_interrupted_barrier_before_reattachment()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = fixture()?;
@@ -1075,6 +1254,38 @@ fn expected_recovered_cleanup_state(
             .ok_or_else(|| std::io::Error::other("invalid private cleanup authorization"))?;
         authorization.insert("state".to_owned(), json!("validated"));
     }
+    Ok(state)
+}
+
+fn expected_delivery_completion(
+    mut state: Value,
+    completions: &[(u64, &str)],
+) -> Result<Value, Box<dyn std::error::Error>> {
+    let greatest = completions
+        .last()
+        .map(|(sequence, _)| *sequence)
+        .ok_or_else(|| std::io::Error::other("expected delivery ledger is empty"))?;
+    let operation = state
+        .get_mut("operation")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| std::io::Error::other("missing private cleanup operation"))?;
+    operation.insert(
+        "greatestAllocatedDeliverySequence".to_owned(),
+        json!(greatest),
+    );
+    operation.insert(
+        "greatestCompletedDeliverySequence".to_owned(),
+        json!(greatest),
+    );
+    operation.insert(
+        "deliveryCompletions".to_owned(),
+        Value::Array(
+            completions
+                .iter()
+                .map(|(sequence, outcome)| json!({"sequence": sequence, "outcome": outcome}))
+                .collect(),
+        ),
+    );
     Ok(state)
 }
 
