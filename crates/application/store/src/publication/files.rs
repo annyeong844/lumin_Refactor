@@ -76,11 +76,26 @@ pub(super) fn write_json_with_hooks<T: Serialize>(
     after_replace();
     parent.sync_directory()?;
 
-    if pending_entry.read_all()? != bytes {
+    let published = HeldEntry::open(
+        path,
+        EntryKind::RegularFile,
+        EntryAccess::ReadOnly,
+        true,
+        label,
+    )?;
+    require_parent_volume(&published, parent, label)?;
+    if published.identity() != pending_entry.identity() || published.read_all()? != bytes {
         return Err(StoreError::Integrity(format!(
             "{label} changed during durable publication"
         )));
     }
+    published.validate_path(
+        path,
+        EntryKind::RegularFile,
+        EntryAccess::ReadOnly,
+        true,
+        label,
+    )?;
     Ok(())
 }
 
@@ -130,4 +145,53 @@ pub(super) fn require_parent_volume(
         )));
     }
     Ok(())
+}
+
+#[cfg(all(test, target_os = "linux", target_arch = "x86_64"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn substituted_pending_name_never_authenticates_the_published_path()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let parent = HeldEntry::open(
+            root.path(),
+            EntryKind::Directory,
+            EntryAccess::ReadOnly,
+            false,
+            "test publication parent",
+        )?;
+        let published = root.path().join("latest.json");
+        let pending = root.path().join("latest.json.pending");
+        let detached = root.path().join("held-pending.detached");
+        fs::write(&published, b"{\"old\":true}\n")?;
+        let value = serde_json::json!({ "expected": true });
+        let substitute = b"{\"substitute\":true}\n";
+
+        let result = write_json_with_hooks(
+            &published,
+            &parent,
+            "test latest pointer",
+            &value,
+            || {},
+            || {
+                fs::rename(&pending, &detached).map_err(io_error)?;
+                fs::write(&pending, substitute).map_err(io_error)?;
+                Ok(())
+            },
+            || {},
+        );
+
+        assert!(matches!(
+            result,
+            Err(StoreError::Integrity(message))
+                if message == "test latest pointer changed during durable publication"
+        ));
+        assert_eq!(fs::read(&published)?, substitute);
+        let mut expected = serde_json::to_vec_pretty(&value)?;
+        expected.push(b'\n');
+        assert_eq!(fs::read(detached)?, expected);
+        Ok(())
+    }
 }
