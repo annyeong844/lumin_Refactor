@@ -171,9 +171,7 @@ fn migration_commit_rejects_lock_replacement() -> Result<(), Box<dyn std::error:
             .join("lifecycle.lock.migration-commit-authentic"),
     )?;
     let state = root.path().join(".lumin");
-    let store = state.join("lifecycle.store");
-    let store_identity_before = physical_identity(&store)?;
-    let durable_before = tree_without_subtree(&tree_snapshot(&state)?, "lifecycle.store");
+    let durable_before = durable_namespace_snapshot(root.path())?;
     let mut migration = barrier.spawn(root.path(), &["store", "migrate", "--format", "json"])?;
     let permit = barrier.accept(&mut migration)?;
     assert!(
@@ -184,9 +182,8 @@ fn migration_commit_rejects_lock_replacement() -> Result<(), Box<dyn std::error:
     permit.release()?;
     assert_integrity_failure(&migration.finish()?);
     replacement.restore()?;
-    assert_eq!(physical_identity(&store)?, store_identity_before);
     assert_eq!(
-        tree_without_subtree(&tree_snapshot(&state)?, "lifecycle.store"),
+        durable_namespace_snapshot(root.path())?,
         durable_before,
         "rejected migration commit changed the durable namespace"
     );
@@ -246,6 +243,7 @@ fn gate_commit_rejects_lock_replacement() -> Result<(), Box<dyn std::error::Erro
         root.path().join("lifecycle.lock.commit-prepared"),
         root.path().join("lifecycle.lock.commit-authentic"),
     )?;
+    let durable_before = durable_namespace_snapshot(root.path())?;
     let mut pre_write = barrier.spawn(
         root.path(),
         &[
@@ -269,9 +267,11 @@ fn gate_commit_rejects_lock_replacement() -> Result<(), Box<dyn std::error::Erro
     assert_integrity_failure(&pre_write.finish()?);
     replacement.restore()?;
 
+    assert_eq!(durable_namespace_snapshot(root.path())?, durable_before);
     assert_operation_absent(root.path(), "lock-swap-before-commit")?;
     assert_latest_run(root.path(), &baseline_run)?;
     assert_run_visible(root.path(), &baseline_run)?;
+    retry_pre_write_and_abandon(root.path(), "lock-swap-before-commit")?;
     Ok(())
 }
 
@@ -313,6 +313,15 @@ fn run_parent_swap_stops_before_publication_rename() -> Result<(), Box<dyn std::
     replacement.activate()?;
 
     let (visible_before, authentic_before) = replacement.snapshots()?;
+    // A Windows move-capable child handle fences its parent rename, so that
+    // platform exercises the fallback anchor substitution instead. Linux must
+    // perform the exact parent swap while the held child remains authoritative.
+    if !cfg!(windows) && authentic_before.is_none() {
+        return Err(std::io::Error::other(
+            "platform did not replace the runs parent at the rename barrier",
+        )
+        .into());
+    }
     let staging_snapshot = authentic_before.as_deref().unwrap_or(&visible_before);
     assert!(
         staging_snapshot.iter().any(|entry| {
@@ -327,6 +336,13 @@ fn run_parent_swap_stops_before_publication_rename() -> Result<(), Box<dyn std::
 
     assert_latest_run(root.path(), &baseline_run)?;
     assert_run_visible(root.path(), &baseline_run)?;
+    let recovered_run = field(
+        &run_success(root.path(), &["audit", "--jobs", "1"])?.stdout,
+        "runId",
+    )?;
+    assert_ne!(recovered_run, baseline_run);
+    assert_latest_run(root.path(), &recovered_run)?;
+    assert_run_visible(root.path(), &recovered_run)?;
     Ok(())
 }
 
@@ -500,6 +516,7 @@ fn attempt_parent_swap_stops_before_gate_commit() -> Result<(), Box<dyn std::err
     let attempts = root.path().join(".lumin/attempts");
     let mut replacement =
         ManagedParentReplacement::prepare(root.path(), &attempts, "attempts-before-commit")?;
+    let durable_before = durable_namespace_snapshot(root.path())?;
     let barrier = NamespaceBarrier::new(BEFORE_STORE_COMMIT)?;
     let mut pre_write = barrier.spawn(
         root.path(),
@@ -516,15 +533,25 @@ fn attempt_parent_swap_stops_before_gate_commit() -> Result<(), Box<dyn std::err
     let permit = barrier.accept(&mut pre_write)?;
     replacement.activate()?;
     let (visible_before, authentic_before) = replacement.snapshots()?;
+    // Windows may fence the parent rename through its held namespace handles;
+    // Linux must reach the exact parent-replacement turn.
+    if !cfg!(windows) && authentic_before.is_none() {
+        return Err(std::io::Error::other(
+            "platform did not replace the attempts parent at the commit barrier",
+        )
+        .into());
+    }
 
     permit.release()?;
     assert_integrity_failure(&pre_write.finish()?);
     replacement.assert_unchanged(&visible_before, authentic_before.as_deref())?;
     replacement.restore()?;
 
+    assert_eq!(durable_namespace_snapshot(root.path())?, durable_before);
     assert_operation_absent(root.path(), "parent-swap-before-commit")?;
     assert_latest_run(root.path(), &baseline_run)?;
     assert_run_visible(root.path(), &baseline_run)?;
+    retry_pre_write_and_abandon(root.path(), "parent-swap-before-commit")?;
     Ok(())
 }
 
@@ -587,6 +614,40 @@ fn assert_operation_absent(
     Ok(())
 }
 
+fn retry_pre_write_and_abandon(
+    root: &Path,
+    operation_id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let retried = run_success(
+        root,
+        &[
+            "pre-write",
+            "--operation-id",
+            operation_id,
+            "--path",
+            "src/lib.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    let gate_id = field(&retried.stdout, "gateId")?;
+    let abandon_operation = format!("{operation_id}-abandon");
+    let abandoned = run(
+        root,
+        &[
+            "gate",
+            "abandon",
+            &gate_id,
+            "--operation-id",
+            &abandon_operation,
+            "--reason",
+            "replacement barrier regression complete",
+        ],
+    )?;
+    assert_status(&abandoned, 3);
+    Ok(())
+}
+
 fn assert_cleanup_not_committed(
     root: &Path,
     operation_id: &str,
@@ -642,6 +703,7 @@ struct TreeEntry {
 }
 
 type ReplacementSnapshots = (Vec<TreeEntry>, Option<Vec<TreeEntry>>);
+type DurableNamespaceSnapshot = (String, Vec<TreeEntry>);
 
 #[derive(Debug, Eq, PartialEq)]
 enum ForeignBindingSnapshot {
@@ -662,6 +724,16 @@ fn tree_snapshot(root: &Path) -> Result<Vec<TreeEntry>, Box<dyn std::error::Erro
     collect_tree(root, root, &mut entries)?;
     entries.sort_by(|left, right| left.relative.cmp(&right.relative));
     Ok(entries)
+}
+
+fn durable_namespace_snapshot(
+    root: &Path,
+) -> Result<DurableNamespaceSnapshot, Box<dyn std::error::Error>> {
+    let state = root.join(".lumin");
+    Ok((
+        physical_identity(&state.join("lifecycle.store"))?,
+        tree_without_subtree(&tree_snapshot(&state)?, "lifecycle.store"),
+    ))
 }
 
 fn tree_without_subtree(entries: &[TreeEntry], subtree: &str) -> Vec<TreeEntry> {

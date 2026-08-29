@@ -73,11 +73,13 @@ impl NamespaceGuard {
                 "lifecycle transaction belongs to a different namespace guard".to_owned(),
             ));
         }
+        self.validate_bound_entries()?;
+        database.validate_current()?;
+        refresh_validation_receipt_set_id(&write)?;
         #[cfg(feature = "namespace-test-crash")]
         super::barrier::wait_before_store_commit()?;
         self.validate_bound_entries()?;
         database.validate_current()?;
-        refresh_validation_receipt_set_id(&write)?;
         write.commit().map_err(backend_error)?;
         self.validate_bound_entries()?;
         database.validate_current()?;
