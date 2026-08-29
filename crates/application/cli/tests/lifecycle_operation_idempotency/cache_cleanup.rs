@@ -228,12 +228,10 @@ fn cache_cleanup_real_stream_failures_are_durable_and_recoverable()
         let mut cleanup = if broken_pipe {
             barrier.spawn(root.path(), operation_id)?
         } else {
-            let read_only_path = root.path().join("read-only-stdout.bin");
-            fs::write(&read_only_path, b"sentinel")?;
             barrier.spawn_with_stdout(
                 root.path(),
                 operation_id,
-                Stdio::from(fs::File::open(read_only_path)?),
+                non_pipe_failure_stdout(root.path())?,
             )?
         };
         let (sequence, permit) = barrier.accept(&mut cleanup, operation_id)?;
@@ -301,6 +299,21 @@ fn cache_cleanup_real_stream_failures_are_durable_and_recoverable()
         );
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn non_pipe_failure_stdout(_root: &Path) -> std::io::Result<Stdio> {
+    fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .map(Stdio::from)
+}
+
+#[cfg(windows)]
+fn non_pipe_failure_stdout(root: &Path) -> std::io::Result<Stdio> {
+    let read_only_path = root.join("read-only-stdout.bin");
+    fs::write(&read_only_path, b"sentinel")?;
+    fs::File::open(read_only_path).map(Stdio::from)
 }
 
 #[test]
