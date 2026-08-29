@@ -269,9 +269,9 @@ pub(super) fn append_root_authorization(
             .insert(key.as_str(), bytes.as_slice())
             .map_err(backend_error)?;
     }
+    guard.validate_bound_entries()?;
     #[cfg(feature = "namespace-test-crash")]
     super::super::barrier::wait_before_migration_store_commit()?;
-    guard.validate_bound_entries()?;
     write.commit().map_err(backend_error)?;
     guard.validate_bound_entries()
 }

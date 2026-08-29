@@ -67,6 +67,21 @@ impl NamespaceGuard {
         &self,
         transaction: StoreWriteTransaction<'_, '_>,
     ) -> Result<(), StoreError> {
+        self.commit_with_test_barrier(transaction, false)
+    }
+
+    pub(crate) fn commit_at_namespace_test_boundary(
+        &self,
+        transaction: StoreWriteTransaction<'_, '_>,
+    ) -> Result<(), StoreError> {
+        self.commit_with_test_barrier(transaction, true)
+    }
+
+    fn commit_with_test_barrier(
+        &self,
+        transaction: StoreWriteTransaction<'_, '_>,
+        wait_at_test_boundary: bool,
+    ) -> Result<(), StoreError> {
         let StoreWriteTransaction { write, database } = transaction;
         if !std::ptr::eq(self, database.guard) {
             return Err(StoreError::Integrity(
@@ -76,10 +91,14 @@ impl NamespaceGuard {
         self.validate_bound_entries()?;
         database.validate_current()?;
         refresh_validation_receipt_set_id(&write)?;
-        #[cfg(feature = "namespace-test-crash")]
-        super::barrier::wait_before_store_commit()?;
         self.validate_bound_entries()?;
         database.validate_current()?;
+        #[cfg(feature = "namespace-test-crash")]
+        if wait_at_test_boundary {
+            super::barrier::wait_before_store_commit()?;
+        }
+        #[cfg(not(feature = "namespace-test-crash"))]
+        let _ = wait_at_test_boundary;
         write.commit().map_err(backend_error)?;
         self.validate_bound_entries()?;
         database.validate_current()?;

@@ -253,8 +253,6 @@ fn publish_directory(
 
     guard
         .mutate_for_generation(generation, || {
-            #[cfg(feature = "namespace-test-crash")]
-            crate::namespace::barrier::wait_before_run_rename()?;
             validate_directory(&staging, &staging_entry, &record)
                 .map_err(|error| publication_error("revalidate staging payload", error))?;
             guard.validate_bound_entries()?;
@@ -265,6 +263,8 @@ fn publish_directory(
                 false,
                 "run staging directory before publication",
             )?;
+            #[cfg(feature = "namespace-test-crash")]
+            crate::namespace::barrier::wait_before_run_rename()?;
             move_entry_noreplace(
                 parent,
                 staging.file_name().ok_or_else(|| {

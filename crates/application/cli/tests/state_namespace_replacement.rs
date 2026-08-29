@@ -60,6 +60,10 @@ fn managed_parent_replacement_stops_every_guarded_transition()
         quarantine_swap_stops_before_cache_move(),
     )?;
     with_context(
+        "multiply-linked managed cache child",
+        managed_child_hard_link_stops_before_mutation(),
+    )?;
+    with_context(
         "post-validation retention trash swap",
         trash_swap_cannot_redirect_retention_move(),
     )?;
@@ -182,23 +186,26 @@ fn migration_commit_rejects_lock_replacement() -> Result<(), Box<dyn std::error:
     permit.release()?;
     assert_integrity_failure(&migration.finish()?);
     replacement.restore()?;
-    assert_eq!(
-        durable_namespace_snapshot(root.path())?,
-        durable_before,
-        "rejected migration commit changed the durable namespace"
+    assert!(
+        durable_namespace_snapshot(root.path())? == durable_before,
+        "failed migration exposed a namespace change before recovery"
     );
 
     let migrated = run(root.path(), &["store", "migrate", "--format", "json"])?;
     assert_status(&migrated, 0);
-    let root_authorization: Value =
-        serde_json::from_slice(&fs::read(state.join("lifecycle-migration.json"))?)?;
+    let journal_path = state.join("lifecycle-migration.json");
+    let journal_bytes = fs::read(&journal_path)?;
+    let root_authorization: Value = serde_json::from_slice(&journal_bytes)?;
     assert_eq!(
         root_authorization
             .get("authorizationSequence")
             .and_then(Value::as_u64),
-        Some(1),
-        "rejected migration commit appended a root authorization"
+        Some(2),
+        "migration retry did not supersede the committed pre-response authorization exactly once"
     );
+    let retried = run_success(root.path(), &["store", "migrate", "--format", "json"])?;
+    assert_eq!(retried.stdout, migrated.stdout);
+    assert_eq!(fs::read(journal_path)?, journal_bytes);
     assert_latest_run(root.path(), &baseline_run)?;
     assert_run_visible(root.path(), &baseline_run)?;
     Ok(())
@@ -267,11 +274,13 @@ fn gate_commit_rejects_lock_replacement() -> Result<(), Box<dyn std::error::Erro
     assert_integrity_failure(&pre_write.finish()?);
     replacement.restore()?;
 
-    assert_eq!(durable_namespace_snapshot(root.path())?, durable_before);
-    assert_operation_absent(root.path(), "lock-swap-before-commit")?;
+    assert!(
+        durable_namespace_snapshot(root.path())? != durable_before,
+        "gate result did not commit through the authenticated store handle"
+    );
     assert_latest_run(root.path(), &baseline_run)?;
     assert_run_visible(root.path(), &baseline_run)?;
-    retry_pre_write_and_abandon(root.path(), "lock-swap-before-commit")?;
+    assert_committed_pre_write_retry_and_abandon(root.path(), "lock-swap-before-commit")?;
     Ok(())
 }
 
@@ -311,27 +320,54 @@ fn run_parent_swap_stops_before_publication_rename() -> Result<(), Box<dyn std::
     let mut audit = barrier.spawn(root.path(), &["audit", "--jobs", "1"])?;
     let permit = barrier.accept(&mut audit)?;
     replacement.activate()?;
-
-    let (visible_before, authentic_before) = replacement.snapshots()?;
-    // A Windows move-capable child handle fences its parent rename, so that
-    // platform exercises the fallback anchor substitution instead. Linux must
-    // perform the exact parent swap while the held child remains authoritative.
-    if !cfg!(windows) && authentic_before.is_none() {
+    let foreign_before = replacement.foreign_binding_snapshot()?;
+    let move_parent = replacement.move_destination_root().to_path_buf();
+    if !cfg!(windows) && move_parent == runs {
         return Err(std::io::Error::other(
             "platform did not replace the runs parent at the rename barrier",
         )
         .into());
     }
-    let staging_snapshot = authentic_before.as_deref().unwrap_or(&visible_before);
-    assert!(
-        staging_snapshot.iter().any(|entry| {
-            entry.relative.contains(".run_") && entry.relative.contains(".staging")
-        }),
-        "audit reached the rename barrier without a durable staging directory"
-    );
+    let before_move = tree_snapshot(&move_parent)?;
+    let staging = before_move
+        .iter()
+        .find(|entry| {
+            entry.kind == "directory"
+                && !entry.relative.contains('/')
+                && entry.relative.starts_with(".run_")
+                && entry.relative.ends_with(".staging")
+        })
+        .cloned()
+        .ok_or_else(|| {
+            std::io::Error::other(
+                "audit reached the rename barrier without a durable staging directory",
+            )
+        })?;
     permit.release()?;
     assert_integrity_failure(&audit.finish()?);
-    replacement.assert_unchanged(&visible_before, authentic_before.as_deref())?;
+    let after_move = tree_snapshot(&move_parent)?;
+    let published = after_move
+        .iter()
+        .find(|entry| {
+            entry.kind == "directory"
+                && !entry.relative.contains('/')
+                && entry.relative.starts_with("run_")
+                && entry.physical_identity == staging.physical_identity
+        })
+        .cloned()
+        .ok_or_else(|| {
+            std::io::Error::other("run did not move within the authentic held parent")
+        })?;
+    assert_eq!(
+        tree_without_subtree(&before_move, &staging.relative),
+        tree_without_subtree(&after_move, &published.relative)
+    );
+    assert_eq!(
+        rebased_subtree(&before_move, &staging.relative),
+        rebased_subtree(&after_move, &published.relative),
+        "run publication changed the staged payload while moving it"
+    );
+    replacement.assert_foreign_binding_unchanged(&foreign_before)?;
     replacement.restore()?;
 
     assert_latest_run(root.path(), &baseline_run)?;
@@ -354,6 +390,8 @@ fn quarantine_swap_stops_before_cache_move() -> Result<(), Box<dyn std::error::E
         &["cache", "test-write", "move.bin", "must-stay-active"],
     )?;
     assert_status(&written, 0);
+    let source = root.path().join(".lumin/cache/move.bin");
+    let source_identity = physical_identity(&source)?;
     let quarantine = root.path().join(".lumin/trash/cache-evictions");
     let mut replacement =
         ManagedParentReplacement::prepare(root.path(), &quarantine, "quarantine-before-move")?;
@@ -369,18 +407,124 @@ fn quarantine_swap_stops_before_cache_move() -> Result<(), Box<dyn std::error::E
     )?;
     let permit = barrier.accept(&mut cleanup)?;
     replacement.activate()?;
-    let (visible_before, authentic_before) = replacement.snapshots()?;
+    let foreign_before = replacement.foreign_binding_snapshot()?;
+    let move_destination = replacement.move_destination_root().to_path_buf();
+    let destination_before = tree_snapshot(&move_destination)?;
 
     permit.release()?;
     assert_integrity_failure(&cleanup.finish()?);
-    assert_eq!(
-        fs::read(root.path().join(".lumin/cache/move.bin"))?,
-        b"must-stay-active"
+    assert!(
+        !source.exists(),
+        "the handle-bound move must remove the authentic source entry"
     );
-    replacement.assert_unchanged(&visible_before, authentic_before.as_deref())?;
+    let destination_after = tree_snapshot(&move_destination)?;
+    let moved = destination_after
+        .iter()
+        .find(|entry| entry.kind == "file" && entry.physical_identity == source_identity)
+        .ok_or_else(|| {
+            std::io::Error::other("cache payload did not move into the authentic quarantine")
+        })?;
+    assert_eq!(moved.bytes, b"must-stay-active");
+    assert_eq!(
+        tree_without_subtree(&destination_after, &moved.relative),
+        destination_before,
+        "the authentic quarantine changed beyond the one authorized move"
+    );
+    replacement.assert_foreign_binding_unchanged(&foreign_before)?;
     replacement.restore()?;
 
     assert_cleanup_not_committed(root.path(), "parent-swap-cache-clean")?;
+    let restored_quarantine = tree_snapshot(&quarantine)?;
+    let recovered = run_success(
+        root.path(),
+        &[
+            "cache",
+            "clean",
+            "--operation-id",
+            "parent-swap-cache-clean",
+        ],
+    )?;
+    assert_eq!(
+        json(&recovered.stdout)?
+            .get("schemaVersion")
+            .and_then(Value::as_str),
+        Some("lumin.cache-cleanup.v2")
+    );
+    assert_eq!(tree_snapshot(&quarantine)?, restored_quarantine);
+    assert_latest_run(root.path(), &baseline_run)?;
+    assert_run_visible(root.path(), &baseline_run)?;
+    Ok(())
+}
+
+fn managed_child_hard_link_stops_before_mutation() -> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    let baseline_run = initialize(root.path())?;
+    let written = run(
+        root.path(),
+        &["cache", "test-write", "linked.bin", "managed-child"],
+    )?;
+    assert_status(&written, 0);
+
+    let cache = root.path().join(".lumin/cache");
+    let quarantine = root.path().join(".lumin/trash/cache-evictions");
+    let source = cache.join("linked.bin");
+    let external_link = root.path().join("linked-cache-payload.bin");
+    fs::hard_link(&source, &external_link)?;
+    let source_identity = physical_identity(&source)?;
+    assert_eq!(physical_identity(&external_link)?, source_identity);
+    let cache_before = tree_snapshot(&cache)?;
+    let quarantine_before = tree_snapshot(&quarantine)?;
+
+    let rejected = run(
+        root.path(),
+        &[
+            "cache",
+            "clean",
+            "--operation-id",
+            "managed-child-hard-link",
+        ],
+    )?;
+    assert_integrity_failure(&rejected);
+    assert_eq!(tree_snapshot(&cache)?, cache_before);
+    assert_eq!(tree_snapshot(&quarantine)?, quarantine_before);
+    assert_eq!(physical_identity(&source)?, source_identity);
+    assert_eq!(physical_identity(&external_link)?, source_identity);
+
+    let operation = run_success(
+        root.path(),
+        &["operation", "show", "managed-child-hard-link"],
+    )?;
+    let operation = json(&operation.stdout)?;
+    assert_eq!(
+        operation.get("status").and_then(Value::as_str),
+        Some("pending")
+    );
+    assert_eq!(
+        operation.get("authorizedCount").and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        operation.get("validatedCount").and_then(Value::as_u64),
+        Some(0)
+    );
+
+    fs::remove_file(&external_link)?;
+    let recovered = run_success(
+        root.path(),
+        &[
+            "cache",
+            "clean",
+            "--operation-id",
+            "managed-child-hard-link",
+        ],
+    )?;
+    assert_eq!(
+        json(&recovered.stdout)?
+            .get("schemaVersion")
+            .and_then(Value::as_str),
+        Some("lumin.cache-cleanup.v2")
+    );
+    assert!(!source.exists());
     assert_latest_run(root.path(), &baseline_run)?;
     assert_run_visible(root.path(), &baseline_run)?;
     Ok(())
@@ -547,11 +691,13 @@ fn attempt_parent_swap_stops_before_gate_commit() -> Result<(), Box<dyn std::err
     replacement.assert_unchanged(&visible_before, authentic_before.as_deref())?;
     replacement.restore()?;
 
-    assert_eq!(durable_namespace_snapshot(root.path())?, durable_before);
-    assert_operation_absent(root.path(), "parent-swap-before-commit")?;
+    assert!(
+        durable_namespace_snapshot(root.path())? != durable_before,
+        "gate result did not commit while the attempts binding was replaced"
+    );
     assert_latest_run(root.path(), &baseline_run)?;
     assert_run_visible(root.path(), &baseline_run)?;
-    retry_pre_write_and_abandon(root.path(), "parent-swap-before-commit")?;
+    assert_committed_pre_write_retry_and_abandon(root.path(), "parent-swap-before-commit")?;
     Ok(())
 }
 
@@ -603,21 +749,21 @@ fn assert_latest_run(root: &Path, run_id: &str) -> Result<(), Box<dyn std::error
     Ok(())
 }
 
-fn assert_operation_absent(
+fn assert_committed_pre_write_retry_and_abandon(
     root: &Path,
     operation_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let operation = run(root, &["operation", "show", operation_id])?;
-    assert_status(&operation, 2);
-    assert!(operation.stdout.is_empty());
-    assert!(operation.stderr.contains("operation does not exist"));
-    Ok(())
-}
-
-fn retry_pre_write_and_abandon(
-    root: &Path,
-    operation_id: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+    let committed_snapshot = durable_namespace_snapshot(root)?;
+    let shown = run_success(root, &["operation", "show", operation_id])?;
+    let shown = json(&shown.stdout)?;
+    assert_eq!(
+        shown.get("status").and_then(Value::as_str),
+        Some("committed")
+    );
+    let committed_result = shown
+        .get("result")
+        .cloned()
+        .ok_or_else(|| std::io::Error::other("committed pre-write result is missing"))?;
     let retried = run_success(
         root,
         &[
@@ -630,6 +776,11 @@ fn retry_pre_write_and_abandon(
             "1",
         ],
     )?;
+    assert_eq!(json(&retried.stdout)?, committed_result);
+    assert!(
+        durable_namespace_snapshot(root)? == committed_snapshot,
+        "same-ID retry changed the already committed durable result"
+    );
     let gate_id = field(&retried.stdout, "gateId")?;
     let abandon_operation = format!("{operation_id}-abandon");
     let abandoned = run(
@@ -742,6 +893,29 @@ fn tree_without_subtree(entries: &[TreeEntry], subtree: &str) -> Vec<TreeEntry> 
         .iter()
         .filter(|entry| entry.relative != subtree && !entry.relative.starts_with(&child_prefix))
         .cloned()
+        .collect()
+}
+
+fn rebased_subtree(entries: &[TreeEntry], subtree: &str) -> Vec<TreeEntry> {
+    let child_prefix = format!("{subtree}/");
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let relative = if entry.relative == subtree {
+                ".".to_owned()
+            } else {
+                entry
+                    .relative
+                    .strip_prefix(&child_prefix)
+                    .map(str::to_owned)?
+            };
+            Some(TreeEntry {
+                relative,
+                kind: entry.kind,
+                physical_identity: entry.physical_identity.clone(),
+                bytes: entry.bytes.clone(),
+            })
+        })
         .collect()
 }
 
