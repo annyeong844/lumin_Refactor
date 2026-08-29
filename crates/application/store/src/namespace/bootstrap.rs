@@ -1,4 +1,4 @@
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -15,7 +15,7 @@ use super::{
     ManagedStateParentKind, NamespaceBinding, NamespaceGuard, NamespaceState, REPOSITORY_SCHEMA,
     RepositoryMarker, create_or_verify_store, entry_exists, read_canonical_path,
     require_state_volume, same_volume_and_mount, validate_global_binding, validate_marker,
-    verify_repository_binding, write_canonical_entry,
+    verify_canonical_entry, verify_repository_binding, write_canonical_entry,
 };
 
 mod crash;
@@ -23,6 +23,7 @@ mod crash;
 pub(super) use crash::{BootstrapCrashPoint, hit};
 
 const CACHE_EVICTIONS_DIRECTORY: &str = "cache-evictions";
+const MARKER_CANDIDATE_PREFIX: &str = ".lumin-unpublished-repository-";
 
 pub(super) fn bootstrap_namespace(
     repository: HeldRepository,
@@ -72,7 +73,6 @@ fn resume_bootstrap(
             "preexisting state directory has no bound bootstrap state".to_owned(),
         ));
     }
-    reject_unbound_bootstrap_entries(&state_dir)?;
     let lock_path = state_dir.join("lifecycle.lock");
     let lock = HeldEntry::open(
         &lock_path,
@@ -84,9 +84,15 @@ fn resume_bootstrap(
     let header: LifecycleLockHeader = read_canonical_path(&lock_path, "lifecycle.lock")?;
     validate_bootstrap_lock(&header, &repository, &state_directory, &lock)?;
     FileExt::lock_exclusive(lock.file()).map_err(io_error)?;
+    verify_canonical_bootstrap_lock(&lock, &header)?;
 
     let marker_path = state_dir.join("repository.json");
-    if entry_exists(&marker_path)? {
+    let marker_exists = entry_exists(&marker_path)?;
+    let marker_candidate = (!marker_exists)
+        .then(|| recoverable_marker_candidate_name(&header.global))
+        .flatten();
+    reject_unbound_bootstrap_entries(&state_dir, marker_candidate.as_deref())?;
+    if marker_exists {
         FileExt::unlock(lock.file()).map_err(io_error)?;
         let marker: RepositoryMarker = read_canonical_path(&marker_path, "repository marker")?;
         validate_marker(&marker)?;
@@ -104,7 +110,6 @@ fn resume_bootstrap(
             "pre-marker state cannot contain lifecycle.store".to_owned(),
         ));
     }
-    verify_canonical_bootstrap_lock(&lock, &header)?;
     finish_bootstrap(repository, state_dir, state_directory, lock, header.global)
 }
 
@@ -177,10 +182,18 @@ fn publish_repository_marker(
     marker: &RepositoryMarker,
 ) -> Result<(), StoreError> {
     hit(BootstrapCrashPoint::BeforeMarkerCandidate);
-    let unpublished = UnpublishedFile::create_with_named_fallback(state_dir, state_directory)?;
+    let candidate_name = marker_candidate_name(&marker.binding.global);
+    let unpublished =
+        UnpublishedFile::create_with_named_fallback(state_dir, state_directory, &candidate_name)?;
     hit(BootstrapCrashPoint::AfterMarkerCandidateCreated);
-    write_canonical_entry(unpublished.entry(), marker)?;
+    if unpublished.entry().read_all()?.is_empty() {
+        write_canonical_entry(unpublished.entry(), marker)?;
+    } else {
+        verify_canonical_entry(unpublished.entry(), marker, "repository marker candidate")?;
+        unpublished.entry().sync()?;
+    }
     hit(BootstrapCrashPoint::AfterMarkerCandidateFlushed);
+    verify_canonical_entry(unpublished.entry(), marker, "repository marker candidate")?;
     let published = unpublished.publish_noreplace(
         state_directory,
         state_dir,
@@ -481,12 +494,16 @@ fn verify_canonical_bootstrap_lock(
     Ok(())
 }
 
-fn reject_unbound_bootstrap_entries(state_dir: &Path) -> Result<(), StoreError> {
+fn reject_unbound_bootstrap_entries(
+    state_dir: &Path,
+    marker_candidate: Option<&OsStr>,
+) -> Result<(), StoreError> {
     for entry in fs::read_dir(state_dir).map_err(io_error)? {
         let name = entry.map_err(io_error)?.file_name();
         let allowed = name == OsStr::new("lifecycle.lock")
             || name == OsStr::new("repository.json")
             || name == OsStr::new("lifecycle.store")
+            || marker_candidate.is_some_and(|candidate| name == candidate)
             || MANAGED_KINDS
                 .iter()
                 .any(|kind| name == OsStr::new(kind.directory_name()));
@@ -497,6 +514,23 @@ fn reject_unbound_bootstrap_entries(state_dir: &Path) -> Result<(), StoreError> 
         }
     }
     Ok(())
+}
+
+fn marker_candidate_name(global: &GlobalNamespaceBinding) -> OsString {
+    OsString::from(format!(
+        "{MARKER_CANDIDATE_PREFIX}{}",
+        global.namespace_nonce
+    ))
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn recoverable_marker_candidate_name(global: &GlobalNamespaceBinding) -> Option<OsString> {
+    Some(marker_candidate_name(global))
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+fn recoverable_marker_candidate_name(_global: &GlobalNamespaceBinding) -> Option<OsString> {
+    None
 }
 
 fn require_anchor_only(path: &Path, name: &str) -> Result<(), StoreError> {

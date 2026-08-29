@@ -12,6 +12,10 @@ const CRASH_POINT_ENV: &str = "LUMIN_TEST_NAMESPACE_BOOTSTRAP_CRASH_POINT";
 const FORCE_NAMED_UNPUBLISHED_ENV: &str = "LUMIN_TEST_NAMESPACE_FORCE_NAMED_UNPUBLISHED";
 const CRASH_EXIT_CODE: i32 = 97;
 const INVALID_SELECTOR_EXIT_CODE: i32 = 98;
+const NAMED_FALLBACK_RECOVERY_POINTS: &[&str] = &[
+    "after-marker-candidate-created",
+    "after-marker-candidate-flushed",
+];
 
 const RECOVERABLE_CRASH_POINTS: &[&str] = &[
     "before-state-directory",
@@ -77,14 +81,19 @@ fn public_namespace_initialization_recovers_or_rejects_every_named_crash_boundar
 
     for point in RECOVERABLE_CRASH_POINTS {
         let root = fixture()?;
-        let crashed = run_with_env(
-            root.path(),
-            &["audit", "--jobs", "1"],
-            &[(CRASH_POINT_ENV, point)],
-        )?;
+        let mut environment = vec![(CRASH_POINT_ENV, *point)];
+        if NAMED_FALLBACK_RECOVERY_POINTS.contains(point) {
+            environment.push((FORCE_NAMED_UNPUBLISHED_ENV, "1"));
+        }
+        let crashed = run_with_env(root.path(), &["audit", "--jobs", "1"], &environment)?;
         assert_status(&crashed, CRASH_EXIT_CODE);
         assert!(crashed.stdout.is_empty(), "stdout at {point}");
         assert!(crashed.stderr.is_empty(), "stderr at {point}");
+
+        #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+        if NAMED_FALLBACK_RECOVERY_POINTS.contains(point) {
+            assert_named_marker_candidate(root.path(), point)?;
+        }
 
         let recovered = run(root.path(), &["audit", "--jobs", "1"])?;
         assert_status(&recovered, 0);
@@ -121,6 +130,32 @@ fn public_namespace_initialization_recovers_or_rejects_every_named_crash_boundar
             before,
             "foreign state changed at {point}"
         );
+    }
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn assert_named_marker_candidate(
+    root: &Path,
+    crash_point: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let state = root.join(".lumin");
+    let lock = read_json(&state.join("lifecycle.lock"))?;
+    let nonce = lock
+        .pointer("/global/namespaceNonce")
+        .and_then(Value::as_str)
+        .ok_or("bootstrap lock omitted its namespace nonce")?;
+    let candidate = state.join(format!(".lumin-unpublished-repository-{nonce}"));
+    let bytes = fs::read(candidate)?;
+    if crash_point == "after-marker-candidate-created" {
+        assert!(bytes.is_empty());
+    } else {
+        let marker: Value = serde_json::from_slice(&bytes)?;
+        assert_eq!(
+            marker.get("schemaVersion").and_then(Value::as_str),
+            Some("lumin-repository.v4")
+        );
+        assert_eq!(marker.pointer("/binding/global"), lock.get("global"));
     }
     Ok(())
 }

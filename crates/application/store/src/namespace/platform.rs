@@ -327,23 +327,25 @@ pub(crate) struct UnpublishedFile {
 
 impl UnpublishedFile {
     pub(crate) fn create(parent_path: &Path, parent: &HeldEntry) -> Result<Self, StoreError> {
-        Self::create_with_policy(parent_path, parent, false)
+        Self::create_with_policy(parent_path, parent, None)
     }
 
     pub(crate) fn create_with_named_fallback(
         parent_path: &Path,
         parent: &HeldEntry,
+        fallback_name: &OsStr,
     ) -> Result<Self, StoreError> {
-        Self::create_with_policy(parent_path, parent, true)
+        require_normal_component(fallback_name, "named unpublished state artifact")?;
+        Self::create_with_policy(parent_path, parent, Some(fallback_name))
     }
 
     fn create_with_policy(
         parent_path: &Path,
         parent: &HeldEntry,
-        allow_named_fallback: bool,
+        named_fallback: Option<&OsStr>,
     ) -> Result<Self, StoreError> {
         let (file, namespace_name, named_path) =
-            create_unpublished_file_platform(parent_path, allow_named_fallback)?;
+            create_unpublished_file_platform(parent_path, named_fallback)?;
         let entry = HeldEntry::from_file(
             file,
             EntryKind::RegularFile,
@@ -510,12 +512,27 @@ pub(crate) fn validate_active_unpublished_name(
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn create_unpublished_file_platform(
     parent_path: &Path,
-    allow_named_fallback: bool,
+    named_fallback: Option<&OsStr>,
 ) -> Result<(File, Option<OsString>, Option<tempfile::TempPath>), StoreError> {
     use std::os::unix::fs::OpenOptionsExt;
 
     const O_TMPFILE: i32 = 4_259_840;
-    let force_named = allow_named_fallback && {
+    if let Some(name) = named_fallback {
+        let path = parent_path.join(name);
+        match open_nofollow(&path, EntryKind::RegularFile, EntryAccess::ReadWrite) {
+            Ok(file) => return durable_named_unpublished(file, path, name),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(classify_expected_entry_error(
+                    error,
+                    EntryKind::RegularFile,
+                    "named unpublished state artifact",
+                ));
+            }
+        }
+    }
+
+    let force_named = named_fallback.is_some() && {
         #[cfg(feature = "namespace-test-crash")]
         {
             std::env::var_os("LUMIN_TEST_NAMESPACE_FORCE_NAMED_UNPUBLISHED").is_some()
@@ -534,29 +551,50 @@ fn create_unpublished_file_platform(
         {
             Ok(file) => return Ok((file, None, None)),
             Err(error)
-                if allow_named_fallback
+                if named_fallback.is_some()
                     && matches!(error.raw_os_error(), Some(2 | 21 | 22 | 95)) => {}
             Err(error) => return Err(io_error(error)),
         }
     }
 
-    let named = tempfile::Builder::new()
-        .prefix(".lumin-unpublished-")
-        .tempfile_in(parent_path)
-        .map_err(io_error)?;
-    let namespace_name = named
-        .path()
-        .file_name()
-        .ok_or_else(|| StoreError::Integrity("named unpublished file has no name".to_owned()))?
-        .to_owned();
-    let (file, named_path) = named.into_parts();
-    Ok((file, Some(namespace_name), Some(named_path)))
+    let name = named_fallback.ok_or_else(|| {
+        StoreError::Integrity("unnamed state publication is unavailable".to_owned())
+    })?;
+    let path = parent_path.join(name);
+    match create_new_nofollow(&path) {
+        Ok(file) => durable_named_unpublished(file, path, name),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let file = open_nofollow(&path, EntryKind::RegularFile, EntryAccess::ReadWrite)
+                .map_err(|error| {
+                    classify_expected_entry_error(
+                        error,
+                        EntryKind::RegularFile,
+                        "named unpublished state artifact",
+                    )
+                })?;
+            durable_named_unpublished(file, path, name)
+        }
+        Err(error) => Err(io_error(error)),
+    }
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn durable_named_unpublished(
+    file: File,
+    path: PathBuf,
+    name: &OsStr,
+) -> Result<(File, Option<OsString>, Option<tempfile::TempPath>), StoreError> {
+    let mut named_path = tempfile::TempPath::try_from_path(path).map_err(io_error)?;
+    // This name is a durable bootstrap recovery artifact. An ordinary error
+    // must preserve it for the next locked admission or for integrity review.
+    named_path.disable_cleanup(true);
+    Ok((file, Some(name.to_owned()), Some(named_path)))
 }
 
 #[cfg(not(any(all(target_os = "linux", target_arch = "x86_64"), windows)))]
 fn create_unpublished_file_platform(
     parent_path: &Path,
-    _allow_named_fallback: bool,
+    _named_fallback: Option<&OsStr>,
 ) -> Result<(File, Option<OsString>, Option<tempfile::TempPath>), StoreError> {
     tempfile::tempfile_in(parent_path)
         .map(|file| (file, None, None))
@@ -566,7 +604,7 @@ fn create_unpublished_file_platform(
 #[cfg(windows)]
 fn create_unpublished_file_platform(
     parent_path: &Path,
-    _allow_named_fallback: bool,
+    _named_fallback: Option<&OsStr>,
 ) -> Result<(File, Option<OsString>, Option<tempfile::TempPath>), StoreError> {
     use std::os::windows::fs::OpenOptionsExt;
     use std::sync::atomic::{AtomicU64, Ordering};
