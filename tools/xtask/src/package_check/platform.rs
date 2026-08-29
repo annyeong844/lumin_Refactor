@@ -402,12 +402,8 @@ fn exercise_packaged_delivery_failure(
     let failed = if broken_pipe {
         run_binary_with_broken_stdout(binary, root, &arguments)?
     } else {
-        let read_only_path = root.join("read-only-stdout.bin");
-        fs::write(&read_only_path, b"sentinel")
-            .map_err(|error| format!("cannot create read-only stdout fixture: {error}"))?;
-        let read_only = fs::File::open(&read_only_path)
-            .map_err(|error| format!("cannot open read-only stdout fixture: {error}"))?;
-        run_binary_with_stdout(binary, root, &arguments, Stdio::from(read_only))?
+        let failure_stdout = non_pipe_failure_stdout(root)?;
+        run_binary_with_stdout(binary, root, &arguments, Stdio::from(failure_stdout))?
     };
     expect_status(&failed, Some(1), "packaged cache cleanup delivery failure")?;
     let expected_stderr: &[u8] = if broken_pipe {
@@ -579,6 +575,23 @@ fn expect_cleanup_operation(
         ));
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn non_pipe_failure_stdout(_root: &Path) -> Result<fs::File, String> {
+    fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .map_err(|error| format!("cannot open Linux stdout failure device: {error}"))
+}
+
+#[cfg(windows)]
+fn non_pipe_failure_stdout(root: &Path) -> Result<fs::File, String> {
+    let read_only_path = root.join("read-only-stdout.bin");
+    fs::write(&read_only_path, b"sentinel")
+        .map_err(|error| format!("cannot create read-only stdout fixture: {error}"))?;
+    fs::File::open(&read_only_path)
+        .map_err(|error| format!("cannot open read-only stdout fixture: {error}"))
 }
 
 fn validate_malformed_cleanup(binary: &Path, root: &Path) -> Result<(), String> {
