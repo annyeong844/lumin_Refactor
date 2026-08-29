@@ -14,6 +14,8 @@ const AFTER_PRE_ACQUIRE_VALIDATION: &str = "after-pre-acquire-validation";
 const AFTER_COMPLETE_VALIDATION: &str = "after-complete-validation";
 const BEFORE_STORE_COMMIT: &str = "before-store-commit";
 const BEFORE_MIGRATION_STORE_COMMIT: &str = "before-migration-store-commit";
+const BEFORE_LATEST_REPLACE: &str = "before-latest-replace";
+const BEFORE_RETENTION_COMMIT: &str = "before-retention-commit";
 const BEFORE_RUN_RENAME: &str = "before-run-rename";
 const BEFORE_RETENTION_MOVE: &str = "before-retention-move";
 const BEFORE_CACHE_MOVE: &str = "before-cache-move";
@@ -32,6 +34,14 @@ fn lock_replacement_never_forms_two_accepted_guard_domains()
     with_context(
         "post-validation state-directory swap",
         state_swap_is_rejected_after_complete_validation(),
+    )?;
+    with_context(
+        "pre-replace latest-pointer lock replacement",
+        latest_pointer_commit_rejects_lock_replacement(),
+    )?;
+    with_context(
+        "pre-commit retention lock replacement",
+        retention_commit_rejects_lock_replacement(),
     )?;
     with_context(
         "pre-commit lock replacement",
@@ -281,6 +291,250 @@ fn gate_commit_rejects_lock_replacement() -> Result<(), Box<dyn std::error::Erro
     assert_latest_run(root.path(), &baseline_run)?;
     assert_run_visible(root.path(), &baseline_run)?;
     assert_committed_pre_write_retry_and_abandon(root.path(), "lock-swap-before-commit")?;
+    Ok(())
+}
+
+fn latest_pointer_commit_rejects_lock_replacement() -> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    let baseline_run = initialize(root.path())?;
+    fs::write(
+        root.path().join("src/lib.ts"),
+        "export const latestReplacement = 2;\n",
+    )?;
+
+    let state = root.path().join(".lumin");
+    let latest_path = state.join("latest.json");
+    let pending_path = state.join("latest.json.pending");
+    let latest_before = fs::read(&latest_path)?;
+    let barrier = NamespaceBarrier::new(BEFORE_LATEST_REPLACE)?;
+    let mut replacement = FileReplacement::prepare(
+        &state.join("lifecycle.lock"),
+        root.path().join("lifecycle.lock.latest-prepared"),
+        root.path().join("lifecycle.lock.latest-authentic"),
+    )?;
+    let mut audit = barrier.spawn(root.path(), &["audit", "--jobs", "1"])?;
+    let permit = barrier.accept(&mut audit)?;
+    let pending_bytes = fs::read(&pending_path)?;
+    assert_ne!(pending_bytes, latest_before);
+    let pending: Value = serde_json::from_slice(&pending_bytes)?;
+    let completed_run = required_string(&pending, "/latestCompleted/runId")?.to_owned();
+    let completed_sequence = pending
+        .pointer("/latestAttempt/sequence")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| std::io::Error::other("pending latest pointer omitted its sequence"))?;
+    assert!(
+        replacement.activate()?,
+        "platform must permit lock replacement"
+    );
+    let foreign_identity = physical_identity(&replacement.canonical)?;
+    let foreign_bytes = fs::read(&replacement.canonical)?;
+
+    permit.release()?;
+    assert_integrity_failure(&audit.finish()?);
+    assert_eq!(physical_identity(&replacement.canonical)?, foreign_identity);
+    assert_eq!(fs::read(&replacement.canonical)?, foreign_bytes);
+    assert_eq!(fs::read(&latest_path)?, pending_bytes);
+    assert!(
+        !pending_path.exists(),
+        "completed latest replacement retained its pending name"
+    );
+    replacement.restore()?;
+
+    let recovered = run_success(root.path(), &["overview"])?;
+    let recovered_body = json(&recovered.stdout)?;
+    assert_eq!(
+        recovered_body.pointer("/scope/id").and_then(Value::as_str),
+        Some(completed_run.as_str())
+    );
+    assert_eq!(
+        recovered_body
+            .pointer("/latestAttempt/sequence")
+            .and_then(Value::as_u64),
+        Some(completed_sequence)
+    );
+    assert_eq!(
+        recovered_body
+            .pointer("/latestAttempt/status")
+            .and_then(Value::as_str),
+        Some("completed")
+    );
+    assert_run_visible(root.path(), &completed_run)?;
+    assert_run_visible(root.path(), &baseline_run)?;
+    let recovered_snapshot = durable_namespace_snapshot(root.path())?;
+    let repeated = run_success(root.path(), &["overview"])?;
+    assert_eq!(json(&repeated.stdout)?, recovered_body);
+    assert!(
+        durable_namespace_snapshot(root.path())? == recovered_snapshot,
+        "repeated pointer recovery changed the settled durable snapshot"
+    );
+    Ok(())
+}
+
+fn retention_commit_rejects_lock_replacement() -> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    let first_run = initialize(root.path())?;
+    fs::write(
+        root.path().join("src/lib.ts"),
+        "export const retentionReplacement = 2;\n",
+    )?;
+    let second_run = field(
+        &run_success(root.path(), &["audit", "--jobs", "1"])?.stdout,
+        "runId",
+    )?;
+    let plan = run_success(
+        root.path(),
+        &[
+            "runs",
+            "prune",
+            "plan",
+            "--before",
+            "9000000000000",
+            "--operation-id",
+            "lock-swap-retention-plan",
+        ],
+    )?;
+    let plan_id = required_string(&json(&plan.stdout)?, "/result/planId")?.to_owned();
+
+    let state = root.path().join(".lumin");
+    let barrier = NamespaceBarrier::new(BEFORE_RETENTION_COMMIT)?;
+    let mut replacement = FileReplacement::prepare(
+        &state.join("lifecycle.lock"),
+        root.path().join("lifecycle.lock.retention-prepared"),
+        root.path().join("lifecycle.lock.retention-authentic"),
+    )?;
+    let mut confirm = barrier.spawn(
+        root.path(),
+        &[
+            "runs",
+            "prune",
+            "confirm",
+            &plan_id,
+            "--operation-id",
+            "lock-swap-retention-confirm",
+        ],
+    )?;
+    let permit = barrier.accept(&mut confirm)?;
+    assert!(
+        !state.join("runs").join(&first_run).exists(),
+        "retention reached its final commit before moving the selected run"
+    );
+    assert!(
+        replacement.activate()?,
+        "platform must permit lock replacement"
+    );
+    let foreign_identity = physical_identity(&replacement.canonical)?;
+    let foreign_bytes = fs::read(&replacement.canonical)?;
+
+    permit.release()?;
+    assert_integrity_failure(&confirm.finish()?);
+    assert_eq!(physical_identity(&replacement.canonical)?, foreign_identity);
+    assert_eq!(fs::read(&replacement.canonical)?, foreign_bytes);
+    replacement.restore()?;
+
+    let committed_plan = run_success(root.path(), &["runs", "prune", "plan", "show", &plan_id])?;
+    let committed_plan = json(&committed_plan.stdout)?;
+    assert_eq!(
+        committed_plan.get("state").and_then(Value::as_str),
+        Some("pruned")
+    );
+    assert_eq!(
+        committed_plan
+            .get("physicalReclamationPending")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    let committed_operation = run_success(
+        root.path(),
+        &["operation", "show", "lock-swap-retention-confirm"],
+    )?;
+    let committed_operation = json(&committed_operation.stdout)?;
+    assert_eq!(
+        committed_operation
+            .pointer("/operation/status")
+            .and_then(Value::as_str),
+        Some("committed")
+    );
+    assert_eq!(
+        committed_operation
+            .pointer("/operation/result/result/planId")
+            .and_then(Value::as_str),
+        Some(plan_id.as_str())
+    );
+    assert_eq!(
+        committed_operation
+            .pointer("/operation/result/result/physicalReclamationPending")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        committed_operation
+            .get("currentPhysicalReclamationPending")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+
+    let recovered = run_success(
+        root.path(),
+        &[
+            "runs",
+            "prune",
+            "confirm",
+            &plan_id,
+            "--operation-id",
+            "lock-swap-retention-confirm",
+        ],
+    )?;
+    let recovered_body = json(&recovered.stdout)?;
+    assert_eq!(
+        recovered_body
+            .pointer("/result/physicalReclamationPending")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    let recovered_plan = run_success(root.path(), &["runs", "prune", "plan", "show", &plan_id])?;
+    assert_eq!(
+        json(&recovered_plan.stdout)?
+            .get("physicalReclamationPending")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    let recovered_operation = run_success(
+        root.path(),
+        &["operation", "show", "lock-swap-retention-confirm"],
+    )?;
+    let recovered_operation = json(&recovered_operation.stdout)?;
+    assert_eq!(
+        recovered_operation
+            .pointer("/operation/result/result/physicalReclamationPending")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        recovered_operation
+            .get("currentPhysicalReclamationPending")
+            .and_then(Value::as_bool),
+        Some(false)
+    );
+    let recovered_snapshot = durable_namespace_snapshot(root.path())?;
+    let repeated = run_success(
+        root.path(),
+        &[
+            "runs",
+            "prune",
+            "confirm",
+            &plan_id,
+            "--operation-id",
+            "lock-swap-retention-confirm",
+        ],
+    )?;
+    assert_eq!(repeated.stdout, recovered.stdout);
+    assert!(
+        durable_namespace_snapshot(root.path())? == recovered_snapshot,
+        "repeated retention recovery changed the settled durable snapshot"
+    );
+    assert_latest_run(root.path(), &second_run)?;
+    assert_run_visible(root.path(), &second_run)?;
+    assert!(!state.join("runs").join(first_run).exists());
     Ok(())
 }
 

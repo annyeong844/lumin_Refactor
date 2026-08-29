@@ -32,7 +32,7 @@ pub(super) fn write_json<T: Serialize>(
     label: &str,
     value: &T,
 ) -> Result<(), StoreError> {
-    write_json_with_hooks(path, parent, label, value, || {}, || {})
+    write_json_with_hooks(path, parent, label, value, || {}, || Ok(()), || {})
 }
 
 pub(super) fn write_json_with_hooks<T: Serialize>(
@@ -41,6 +41,7 @@ pub(super) fn write_json_with_hooks<T: Serialize>(
     label: &str,
     value: &T,
     after_pending: impl FnOnce(),
+    before_replace: impl FnOnce() -> Result<(), StoreError>,
     after_replace: impl FnOnce(),
 ) -> Result<(), StoreError> {
     let mut bytes = serde_json::to_vec_pretty(value).map_err(serialization_error)?;
@@ -54,7 +55,8 @@ pub(super) fn write_json_with_hooks<T: Serialize>(
     after_pending();
     drop(pending_entry);
 
-    if entry_exists(path)? {
+    let replace_existing = entry_exists(path)?;
+    if replace_existing {
         let current = HeldEntry::open(
             path,
             EntryKind::RegularFile,
@@ -64,6 +66,9 @@ pub(super) fn write_json_with_hooks<T: Serialize>(
         )?;
         require_parent_volume(&current, parent, label)?;
         drop(current);
+    }
+    before_replace()?;
+    if replace_existing {
         replace_file_atomic(path, &pending)?;
     } else {
         publish_file_atomic(path, &pending)?;
