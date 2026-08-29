@@ -1366,6 +1366,24 @@
           "origin": "workspace-inherited",
           "kind": "normal",
           "target": null,
+          "alias": "same-file",
+          "package": "same-file",
+          "requirement": "=1.0.6",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "same-file",
+            "version": "1.0.6",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
           "alias": "serde_json",
           "package": "serde_json",
           "requirement": "=1.0.150",
