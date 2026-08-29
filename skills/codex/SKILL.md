@@ -12,8 +12,12 @@ Treat that installed-binary output as the command and recovery contract.
 - Generate and retain a unique operation ID before every gate, retention, or
   cache-cleanup mutation. Retain every returned gate, run, finding, plan, and
   pin ID needed by the next public command.
-- If mutation delivery is uncertain, use the binary-owned `operation show`
-  workflow with the same operation ID. Never repeat the underlying edit.
+- If any mutation result delivery is uncertain, retain its unique operation ID and never repeat the underlying edit.
+- For uncertain cache-cleanup delivery, follow this exact public recovery sequence:
+  1. Preserve the exact original `lumin cache clean --operation-id <operation-id> --format json` command and operation ID.
+  2. Run `lumin operation show <operation-id> --format json` before any cleanup retry.
+  3. If show reports a matching committed cache-clean result, consume it and do not rerun cleanup.
+  4. Otherwise, only the exact same-ID cleanup command may resume as instructed by `lumin help-agent`; never mint a replacement ID.
 - When the binary emits its exact migration-required diagnostic, follow this exact recovery sequence:
   1. Preserve the original public command and all arguments unchanged.
   2. Run `lumin store migrate --format json` and no other migration command.

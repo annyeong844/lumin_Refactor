@@ -17,6 +17,16 @@ pub(super) const MIGRATION_WORKFLOW: &str = concat!(
     "  3. Accept only the exact migration DTO printed by `lumin help-agent`.\n",
     "  4. Retry the preserved original public command with the same arguments.\n",
 );
+pub(super) const OPERATION_RECOVERY_WORKFLOW: &str = concat!(
+    "- If any mutation result delivery is uncertain, retain its unique operation ID and never repeat the underlying edit.\n",
+    "- For uncertain cache-cleanup delivery, follow this exact public recovery sequence:\n",
+    "  1. Preserve the exact original `lumin cache clean --operation-id <operation-id> --format json` command and operation ID.\n",
+    "  2. Run `lumin operation show <operation-id> --format json` before any cleanup retry.\n",
+    "  3. If show reports a matching committed cache-clean result, consume it and do not rerun cleanup.\n",
+    "  4. Otherwise, only the exact same-ID cleanup command may resume as instructed by `lumin help-agent`; never mint a replacement ID.\n",
+);
+const CACHE_CLEANUP_COMMAND: &str = "lumin cache clean --operation-id <operation-id> --format json";
+const OPERATION_SHOW_COMMAND: &str = "lumin operation show <operation-id> --format json";
 const MIGRATION_ARGUMENTS: &[&str] = &["store", "migrate", "--format", "json"];
 const PACKAGE_ROOT_ENVIRONMENT: &str = "LUMIN_PACKAGE_ROOT";
 
@@ -137,6 +147,20 @@ pub(super) fn validate_adapter(relative: &str, source: &str) -> Result<(), Strin
     {
         return Err(format!(
             "{relative} must contain exactly one canonical migration recovery workflow"
+        ));
+    }
+    if source.matches(OPERATION_RECOVERY_WORKFLOW).count() != 1
+        || source
+            .matches(&format!("`{CACHE_CLEANUP_COMMAND}`"))
+            .count()
+            != 1
+        || source
+            .matches(&format!("`{OPERATION_SHOW_COMMAND}`"))
+            .count()
+            != 1
+    {
+        return Err(format!(
+            "{relative} must contain exactly one canonical operation recovery workflow"
         ));
     }
     for forbidden in [
@@ -286,6 +310,7 @@ fn validate_packaged_adapter_operation_workflows(
             execute_adapter_operation_workflow(
                 relative,
                 name,
+                &source,
                 binary,
                 fixture_binary,
                 &scratch.join(name),
@@ -300,6 +325,7 @@ fn validate_packaged_adapter_operation_workflows(
 fn execute_adapter_operation_workflow(
     relative: &str,
     adapter_name: &str,
+    source: &str,
     binary: &Path,
     fixture_binary: &Path,
     root: &Path,
@@ -328,11 +354,19 @@ fn execute_adapter_operation_workflow(
     }
 
     let operation_id = format!("skill-{adapter_name}-cache-clean-0001");
-    let failed = run_binary_with_broken_stdout(
-        binary,
-        root,
-        &["cache", "clean", "--operation-id", &operation_id],
-    )?;
+    let cleanup_arguments =
+        adapter_command_arguments(relative, source, CACHE_CLEANUP_COMMAND, &operation_id)?;
+    let cleanup_arguments = cleanup_arguments
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let show_arguments =
+        adapter_command_arguments(relative, source, OPERATION_SHOW_COMMAND, &operation_id)?;
+    let show_arguments = show_arguments
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let failed = run_binary_with_broken_stdout(binary, root, &cleanup_arguments)?;
     expect_status(
         &failed,
         Some(1),
@@ -345,11 +379,7 @@ fn execute_adapter_operation_workflow(
     }
 
     let shown = expect_success(
-        run_binary(
-            binary,
-            root,
-            &["operation", "show", &operation_id, "--format", "json"],
-        ),
+        run_binary(binary, root, &show_arguments),
         &format!("{relative} operation-show recovery"),
     )?;
     let response = parse_json(
@@ -369,11 +399,7 @@ fn execute_adapter_operation_workflow(
     expect_string(&response, "/result/status", "clean")?;
 
     let repeated_show = expect_success(
-        run_binary(
-            binary,
-            root,
-            &["operation", "show", &operation_id, "--format", "json"],
-        ),
+        run_binary(binary, root, &show_arguments),
         &format!("{relative} repeated operation-show recovery"),
     )?;
     if repeated_show.stdout != shown.stdout {
@@ -392,4 +418,45 @@ fn execute_adapter_operation_workflow(
         ));
     }
     Ok(())
+}
+
+fn adapter_command_arguments(
+    relative: &str,
+    source: &str,
+    command_template: &str,
+    operation_id: &str,
+) -> Result<Vec<String>, String> {
+    let marker = format!("`{command_template}`");
+    if source.matches(&marker).count() != 1 {
+        return Err(format!(
+            "{relative} must contain exactly one adapter command `{command_template}`"
+        ));
+    }
+    let start = source
+        .find(&marker)
+        .ok_or_else(|| format!("{relative} omitted adapter command `{command_template}`"))?;
+    let authored = &source[start + 1..start + marker.len() - 1];
+    let mut tokens = authored.split_ascii_whitespace();
+    if tokens.next() != Some("lumin") {
+        return Err(format!(
+            "{relative} adapter command does not invoke packaged lumin"
+        ));
+    }
+    let mut placeholder_count = 0_usize;
+    let arguments = tokens
+        .map(|token| {
+            if token == "<operation-id>" {
+                placeholder_count += 1;
+                operation_id.to_owned()
+            } else {
+                token.to_owned()
+            }
+        })
+        .collect::<Vec<_>>();
+    if placeholder_count != 1 {
+        return Err(format!(
+            "{relative} adapter command must contain exactly one operation-ID placeholder"
+        ));
+    }
+    Ok(arguments)
 }

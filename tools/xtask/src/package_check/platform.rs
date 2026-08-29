@@ -269,6 +269,10 @@ fn validate_packaged_cleanup_contract(
 
     seed_cache_payload(fixture_binary, root, "first.bin", "first")?;
     seed_cache_payload(fixture_binary, root, "second.bin", "second")?;
+    let active_cache = root.join(".lumin/cache");
+    let quarantine = root.join(".lumin/trash/cache-evictions");
+    let active_before_clean = namespace_tree_snapshot(&active_cache)?;
+    let quarantine_before_clean = namespace_tree_snapshot(&quarantine)?;
     let operation_id = "package-cache-contract-0001";
     let cleaned = expect_success(
         run_binary(
@@ -305,8 +309,14 @@ fn validate_packaged_cleanup_contract(
         "succeeded",
     )?;
 
-    let quarantine = root.join(".lumin/trash/cache-evictions");
+    let active_after_clean = namespace_tree_snapshot(&active_cache)?;
     let quarantine_after_clean = namespace_tree_snapshot(&quarantine)?;
+    validate_identity_preserving_quarantine_move(
+        &active_before_clean,
+        &active_after_clean,
+        &quarantine_before_clean,
+        &quarantine_after_clean,
+    )?;
     let replay = expect_success(
         run_binary(
             binary,
@@ -594,6 +604,90 @@ struct NamespaceSnapshotRow {
 enum NamespaceSnapshotKind {
     Directory,
     RegularFile,
+}
+
+fn validate_identity_preserving_quarantine_move(
+    active_before: &[NamespaceSnapshotRow],
+    active_after: &[NamespaceSnapshotRow],
+    quarantine_before: &[NamespaceSnapshotRow],
+    quarantine_after: &[NamespaceSnapshotRow],
+) -> Result<(), String> {
+    let source_payloads = active_before
+        .iter()
+        .filter(|row| !is_namespace_control_row(row))
+        .collect::<Vec<_>>();
+    if source_payloads.len() != 2 {
+        return Err(format!(
+            "packaged cleanup fixture expected 2 active payload rows, found {}",
+            source_payloads.len()
+        ));
+    }
+    let expected_active = active_before
+        .iter()
+        .filter(|row| is_namespace_control_row(row))
+        .collect::<Vec<_>>();
+    let observed_active = active_after.iter().collect::<Vec<_>>();
+    if observed_active != expected_active {
+        return Err(
+            "packaged cleanup changed active-cache controls or retained payloads".to_owned(),
+        );
+    }
+    if quarantine_before
+        .iter()
+        .any(|row| !quarantine_after.contains(row))
+    {
+        return Err("packaged cleanup changed a preexisting quarantine object".to_owned());
+    }
+    let added_destinations = quarantine_after
+        .iter()
+        .filter(|row| !quarantine_before.contains(row))
+        .collect::<Vec<_>>();
+    if added_destinations.len() != source_payloads.len() {
+        return Err(format!(
+            "packaged cleanup created {} quarantine rows for {} active payload rows",
+            added_destinations.len(),
+            source_payloads.len()
+        ));
+    }
+    for source in &source_payloads {
+        let matches = added_destinations
+            .iter()
+            .filter(|destination| same_physical_payload(source, destination))
+            .count();
+        if matches != 1 {
+            return Err(format!(
+                "packaged cleanup source {} has {matches} identity-preserving quarantine matches",
+                source.relative_path.display()
+            ));
+        }
+    }
+    for destination in &added_destinations {
+        let matches = source_payloads
+            .iter()
+            .filter(|source| same_physical_payload(source, destination))
+            .count();
+        if matches != 1 {
+            return Err(format!(
+                "packaged cleanup destination {} has {matches} authenticated source matches",
+                destination.relative_path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn is_namespace_control_row(row: &NamespaceSnapshotRow) -> bool {
+    row.relative_path.as_os_str().is_empty()
+        || row.relative_path.as_path() == Path::new("namespace.anchor")
+}
+
+fn same_physical_payload(
+    source: &NamespaceSnapshotRow,
+    destination: &NamespaceSnapshotRow,
+) -> bool {
+    source.kind == destination.kind
+        && source.identity == destination.identity
+        && source.payload == destination.payload
 }
 
 fn namespace_tree_snapshot(root: &Path) -> Result<Vec<NamespaceSnapshotRow>, String> {
