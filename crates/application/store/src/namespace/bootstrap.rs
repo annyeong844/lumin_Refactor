@@ -177,7 +177,7 @@ fn publish_repository_marker(
     marker: &RepositoryMarker,
 ) -> Result<(), StoreError> {
     hit(BootstrapCrashPoint::BeforeMarkerCandidate);
-    let unpublished = UnpublishedFile::create(state_dir, state_directory)?;
+    let unpublished = UnpublishedFile::create_with_named_fallback(state_dir, state_directory)?;
     hit(BootstrapCrashPoint::AfterMarkerCandidateCreated);
     write_canonical_entry(unpublished.entry(), marker)?;
     hit(BootstrapCrashPoint::AfterMarkerCandidateFlushed);

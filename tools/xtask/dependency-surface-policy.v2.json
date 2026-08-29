@@ -10,6 +10,7 @@
         "lifecycle-test-fault": [
           "lumin-engine/cache-cleanup-test-fault",
           "lumin-engine/lifecycle-migration-test-fault",
+          "lumin-engine/namespace-test-crash",
           "lumin-engine/publication-test-crash"
         ],
         "publication-test-crash": [
@@ -227,6 +228,9 @@
         "gate-test-fault": [],
         "lifecycle-migration-test-fault": [
           "lumin-store/lifecycle-migration-test-fault"
+        ],
+        "namespace-test-crash": [
+          "lumin-store/namespace-test-crash"
         ],
         "publication-test-crash": [
           "lumin-store/publication-test-crash"
@@ -1085,6 +1089,7 @@
       "features": {
         "cache-cleanup-test-fault": [],
         "lifecycle-migration-test-fault": [],
+        "namespace-test-crash": [],
         "publication-test-crash": [],
         "retention-test-crash": []
       },

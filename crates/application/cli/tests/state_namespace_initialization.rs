@@ -9,6 +9,7 @@ mod support;
 use support::{assert_status, run, run_with_env};
 
 const CRASH_POINT_ENV: &str = "LUMIN_TEST_NAMESPACE_BOOTSTRAP_CRASH_POINT";
+const FORCE_NAMED_UNPUBLISHED_ENV: &str = "LUMIN_TEST_NAMESPACE_FORCE_NAMED_UNPUBLISHED";
 const CRASH_EXIT_CODE: i32 = 97;
 const INVALID_SELECTOR_EXIT_CODE: i32 = 98;
 
@@ -146,6 +147,16 @@ fn unknown_namespace_crash_selector_fails_before_state_initialization()
 #[test]
 fn missing_nested_marker_or_store_binding_is_incompatible_without_adoption()
 -> Result<(), Box<dyn std::error::Error>> {
+    let named_root = fixture()?;
+    let named = run_with_env(
+        named_root.path(),
+        &["audit", "--jobs", "1"],
+        &[(FORCE_NAMED_UNPUBLISHED_ENV, "1")],
+    )?;
+    assert_status(&named, 0);
+    assert!(named.stderr.is_empty());
+    assert_complete_namespace(named_root.path())?;
+
     let marker_root = initialized_fixture()?;
     let marker_path = marker_root.path().join(".lumin/repository.json");
     let original_marker = fs::read(&marker_path)?;
