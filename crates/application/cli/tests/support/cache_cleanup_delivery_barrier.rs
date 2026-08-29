@@ -133,6 +133,7 @@ impl PausedDelivery {
         process_result(output)
     }
 
+    #[allow(dead_code)]
     pub fn close_stdout(&mut self) -> TestResult {
         let stdout = self
             .child
