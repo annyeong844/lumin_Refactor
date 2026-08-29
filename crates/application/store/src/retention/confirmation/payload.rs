@@ -1,6 +1,7 @@
 mod migration;
 mod trash;
 
+use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 
@@ -8,7 +9,9 @@ use lumin_evidence::{RetentionItemKind, RetentionPlanItem, RetentionPlanRecord};
 use lumin_model::digest_hex;
 
 use crate::namespace::records::ManagedStateParentKind;
-use crate::namespace::{EntryAccess, EntryKind, HeldEntry, NamespaceGuard};
+use crate::namespace::{
+    EntryAccess, EntryKind, HeldEntry, NamespaceGuard, move_entry_noreplace, same_volume_and_mount,
+};
 use crate::{StoreError, io_error};
 
 use super::super::records::{
@@ -96,19 +99,28 @@ pub(super) fn move_payloads(
         let destination_exists = trash::entry_exists(&destination)?;
         match (source_exists, destination_exists) {
             (true, false) => {
-                let held = guard.open_managed_child_directory(
-                    movement.source_parent,
-                    &movement.source_child,
+                let held = HeldEntry::open(
+                    &source,
+                    EntryKind::Directory,
+                    EntryAccess::Move,
+                    false,
                     "retention source payload",
                 )?;
+                if !same_volume_and_mount(
+                    &held,
+                    guard.managed_parent_entry(movement.source_parent)?,
+                ) {
+                    return Err(StoreError::Integrity(
+                        "retention source payload left its managed parent volume or mount"
+                            .to_owned(),
+                    ));
+                }
                 trash::require_identity(
                     &held,
                     &movement.physical_identity,
                     "retention source payload",
                 )?;
                 validate_payload_content(&source, movement, &plan.record.items)?;
-                #[cfg(feature = "namespace-test-crash")]
-                crate::namespace::barrier::wait_before_retention_move()?;
                 guard.validate_bound_entries()?;
                 trash::validate_parent_bindings(guard, progress)?;
                 held_trash.validate(plan, progress)?;
@@ -120,7 +132,15 @@ pub(super) fn move_payloads(
                     "retention source payload",
                 )?;
                 validate_payload_content(&source, movement, &plan.record.items)?;
-                fs::rename(&source, &destination).map_err(io_error)?;
+                #[cfg(feature = "namespace-test-crash")]
+                crate::namespace::barrier::wait_before_retention_move()?;
+                move_entry_noreplace(
+                    guard.managed_parent_entry(movement.source_parent)?,
+                    OsStr::new(&movement.source_child),
+                    &held,
+                    &held_trash.directory,
+                    OsStr::new(&movement.trash_child),
+                )?;
                 guard
                     .managed_parent_entry(movement.source_parent)?
                     .sync_directory()?;

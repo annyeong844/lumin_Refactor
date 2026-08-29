@@ -55,8 +55,8 @@ fn managed_parent_replacement_stops_every_guarded_transition()
         quarantine_swap_stops_before_cache_move(),
     )?;
     with_context(
-        "pre-retention-move trash swap",
-        trash_swap_stops_before_retention_move(),
+        "post-validation retention trash swap",
+        trash_swap_cannot_redirect_retention_move(),
     )?;
     with_context(
         "pre-commit attempts-parent swap",
@@ -315,7 +315,7 @@ fn quarantine_swap_stops_before_cache_move() -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
-fn trash_swap_stops_before_retention_move() -> Result<(), Box<dyn std::error::Error>> {
+fn trash_swap_cannot_redirect_retention_move() -> Result<(), Box<dyn std::error::Error>> {
     let root = fixture()?;
     let first_run = initialize(root.path())?;
     fs::write(
@@ -356,21 +356,37 @@ fn trash_swap_stops_before_retention_move() -> Result<(), Box<dyn std::error::Er
     )?;
     let permit = barrier.accept(&mut confirm)?;
     let attempts_before = tree_snapshot(&root.path().join(".lumin/attempts"))?;
-    let runs_before = tree_snapshot(&root.path().join(".lumin/runs"))?;
     replacement.activate()?;
-    let (visible_before, authentic_before) = replacement.snapshots()?;
+    let foreign_before = replacement.foreign_binding_snapshot()?;
+    let move_destination = replacement.move_destination_root().to_path_buf();
 
     permit.release()?;
     assert_integrity_failure(&confirm.finish()?);
+    let attempts_after = tree_snapshot(&root.path().join(".lumin/attempts"))?;
+    let removed_attempts = attempts_before
+        .iter()
+        .filter(|entry| {
+            entry.kind == "directory"
+                && entry.relative != "."
+                && !entry.relative.contains('/')
+                && !attempts_after
+                    .iter()
+                    .any(|current| current.relative == entry.relative)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(removed_attempts.len(), 1);
+    let moved_attempt = removed_attempts[0];
     assert_eq!(
-        tree_snapshot(&root.path().join(".lumin/attempts"))?,
-        attempts_before
+        attempts_after,
+        tree_without_subtree(&attempts_before, &moved_attempt.relative)
     );
-    assert_eq!(
-        tree_snapshot(&root.path().join(".lumin/runs"))?,
-        runs_before
+    assert!(
+        tree_snapshot(&move_destination)?.iter().any(|entry| {
+            entry.kind == "directory" && entry.physical_identity == moved_attempt.physical_identity
+        }),
+        "the moved attempt must remain bound to the authentic held trash parent"
     );
-    replacement.assert_unchanged(&visible_before, authentic_before.as_deref())?;
+    replacement.assert_foreign_binding_unchanged(&foreign_before)?;
     replacement.restore()?;
 
     let shown = run_success(root.path(), &["runs", "prune", "plan", "show", &plan_id])?;
@@ -385,7 +401,39 @@ fn trash_swap_stops_before_retention_move() -> Result<(), Box<dyn std::error::Er
             .and_then(Value::as_str),
         Some("committed")
     );
-    assert!(root.path().join(".lumin/runs").join(&first_run).is_dir());
+    let recovered = run_success(
+        root.path(),
+        &[
+            "runs",
+            "prune",
+            "confirm",
+            &plan_id,
+            "--operation-id",
+            "parent-swap-confirm",
+        ],
+    )?;
+    assert_eq!(
+        json(&recovered.stdout)?
+            .get("schemaVersion")
+            .and_then(Value::as_str),
+        Some("lumin.retention-mutation.v1")
+    );
+    let recovered_plan = run_success(root.path(), &["runs", "prune", "plan", "show", &plan_id])?;
+    assert_eq!(
+        json(&recovered_plan.stdout)?
+            .get("state")
+            .and_then(Value::as_str),
+        Some("pruned")
+    );
+    let recovered_operation =
+        run_success(root.path(), &["operation", "show", "parent-swap-confirm"])?;
+    assert_eq!(
+        json(&recovered_operation.stdout)?
+            .pointer("/operation/status")
+            .and_then(Value::as_str),
+        Some("committed")
+    );
+    assert!(!root.path().join(".lumin/runs").join(&first_run).exists());
     assert_latest_run(root.path(), &second_run)?;
     assert_run_visible(root.path(), &second_run)?;
     Ok(())
@@ -530,7 +578,7 @@ fn with_context<T>(
     result.map_err(|error| std::io::Error::other(format!("{context}: {error}")).into())
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct TreeEntry {
     relative: String,
     kind: &'static str,
@@ -539,6 +587,15 @@ struct TreeEntry {
 }
 
 type ReplacementSnapshots = (Vec<TreeEntry>, Option<Vec<TreeEntry>>);
+
+#[derive(Debug, Eq, PartialEq)]
+enum ForeignBindingSnapshot {
+    Parent(Vec<TreeEntry>),
+    Anchor {
+        physical_identity: String,
+        bytes: Vec<u8>,
+    },
+}
 
 fn tree_snapshot(root: &Path) -> Result<Vec<TreeEntry>, Box<dyn std::error::Error>> {
     let mut entries = vec![TreeEntry {
@@ -550,6 +607,15 @@ fn tree_snapshot(root: &Path) -> Result<Vec<TreeEntry>, Box<dyn std::error::Erro
     collect_tree(root, root, &mut entries)?;
     entries.sort_by(|left, right| left.relative.cmp(&right.relative));
     Ok(entries)
+}
+
+fn tree_without_subtree(entries: &[TreeEntry], subtree: &str) -> Vec<TreeEntry> {
+    let child_prefix = format!("{subtree}/");
+    entries
+        .iter()
+        .filter(|entry| entry.relative != subtree && !entry.relative.starts_with(&child_prefix))
+        .cloned()
+        .collect()
 }
 
 fn collect_tree(
@@ -729,6 +795,38 @@ impl ManagedParentReplacement {
             .then(|| tree_snapshot(self.directory.authentic_path()))
             .transpose()?;
         Ok((visible, authentic))
+    }
+
+    fn move_destination_root(&self) -> &Path {
+        if self.directory_active {
+            self.directory.authentic_path()
+        } else {
+            &self.directory.canonical
+        }
+    }
+
+    fn foreign_binding_snapshot(
+        &self,
+    ) -> Result<ForeignBindingSnapshot, Box<dyn std::error::Error>> {
+        if self.directory_active {
+            Ok(ForeignBindingSnapshot::Parent(tree_snapshot(
+                &self.directory.canonical,
+            )?))
+        } else {
+            Ok(ForeignBindingSnapshot::Anchor {
+                physical_identity: physical_identity(&self.anchor.canonical)?,
+                bytes: fs::read(&self.anchor.canonical)?,
+            })
+        }
+    }
+
+    fn assert_foreign_binding_unchanged(
+        &self,
+        expected: &ForeignBindingSnapshot,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let observed = self.foreign_binding_snapshot()?;
+        assert_eq!(&observed, expected);
+        Ok(())
     }
 
     fn assert_unchanged(
