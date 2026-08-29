@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::{Command, ExitCode, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
@@ -46,6 +46,45 @@ fn run_binary(
     root: &Path,
     arguments: &[&str],
 ) -> Result<std::process::Output, String> {
+    binary_command(binary, root, arguments)?
+        .output()
+        .map_err(|error| {
+            format!(
+                "cannot execute packaged lumin {}: {error}",
+                binary.display()
+            )
+        })
+}
+
+fn run_binary_with_stdout(
+    binary: &Path,
+    root: &Path,
+    arguments: &[&str],
+    stdout: Stdio,
+) -> Result<std::process::Output, String> {
+    binary_command(binary, root, arguments)?
+        .stdout(stdout)
+        .output()
+        .map_err(|error| {
+            format!(
+                "cannot execute packaged lumin {}: {error}",
+                binary.display()
+            )
+        })
+}
+
+fn run_binary_with_broken_stdout(
+    binary: &Path,
+    root: &Path,
+    arguments: &[&str],
+) -> Result<std::process::Output, String> {
+    let (reader, writer) = std::io::pipe()
+        .map_err(|error| format!("cannot create packaged stdout failure pipe: {error}"))?;
+    drop(reader);
+    run_binary_with_stdout(binary, root, arguments, Stdio::from(writer))
+}
+
+fn binary_command(binary: &Path, root: &Path, arguments: &[&str]) -> Result<Command, String> {
     let mut command = Command::new(binary);
     command.env_clear().current_dir(root).args(arguments);
     #[cfg(windows)]
@@ -54,12 +93,7 @@ fn run_binary(
         std::env::var_os("SystemRoot")
             .ok_or_else(|| "SystemRoot is required to launch lumin on Windows".to_owned())?,
     );
-    command.output().map_err(|error| {
-        format!(
-            "cannot execute packaged lumin {}: {error}",
-            binary.display()
-        )
-    })
+    Ok(command)
 }
 
 fn expect_success(

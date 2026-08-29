@@ -416,6 +416,7 @@ dependencies = [
  "base64",
  "lumin-model",
  "lumin-protocol",
+ "same-file",
  "serde_json",
  "sha2",
  "syn",

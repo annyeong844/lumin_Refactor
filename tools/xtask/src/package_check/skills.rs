@@ -3,9 +3,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::{
-    downgrade_store_as_prior, expect_migration_ready, expect_migration_required, expect_string,
-    expect_success, locate_binary, locate_fixture_binary, parse_json, run_binary,
-    scratch_directory_for, validate_help_output,
+    downgrade_store_as_prior, expect_migration_ready, expect_migration_required, expect_status,
+    expect_string, expect_success, locate_binary, locate_fixture_binary, parse_json, run_binary,
+    run_binary_with_broken_stdout, scratch_directory_for, validate_help_output,
 };
 
 pub(super) const CODEX_SKILL: &str = "skills/codex/SKILL.md";
@@ -43,6 +43,7 @@ pub(super) fn check() -> Result<(), String> {
     let fixture_binary = locate_fixture_binary()?;
     validate_binary_agent_contract(&binary)?;
     validate_packaged_adapter_migration_workflows(&package_root, &binary, &fixture_binary)?;
+    validate_packaged_adapter_operation_workflows(&package_root, &binary, &fixture_binary)?;
     Ok(())
 }
 
@@ -266,5 +267,129 @@ fn execute_adapter_migration_workflow(
     )?;
     expect_string(&retried_json, "/schemaVersion", "lumin.overview.v2")?;
     expect_string(&retried_json, "/scope/id", &run_id)?;
+    Ok(())
+}
+
+fn validate_packaged_adapter_operation_workflows(
+    package_root: &Path,
+    binary: &Path,
+    fixture_binary: &Path,
+) -> Result<(), String> {
+    let scratch = scratch_directory_for("skill-operation")?;
+    fs::create_dir(&scratch)
+        .map_err(|error| format!("cannot create skill operation scratch directory: {error}"))?;
+    let result = [(CODEX_SKILL, "codex"), (CLAUDE_SKILL, "claude-code")]
+        .into_iter()
+        .try_for_each(|(relative, name)| {
+            let source = read_skill(package_root, relative)?;
+            validate_adapter(relative, &source)?;
+            execute_adapter_operation_workflow(
+                relative,
+                name,
+                binary,
+                fixture_binary,
+                &scratch.join(name),
+            )
+        });
+    let cleanup = fs::remove_dir_all(&scratch)
+        .map_err(|error| format!("cannot remove skill operation scratch directory: {error}"));
+    result?;
+    cleanup
+}
+
+fn execute_adapter_operation_workflow(
+    relative: &str,
+    adapter_name: &str,
+    binary: &Path,
+    fixture_binary: &Path,
+    root: &Path,
+) -> Result<(), String> {
+    fs::create_dir_all(root.join("src"))
+        .map_err(|error| format!("cannot create {relative} operation fixture: {error}"))?;
+    fs::write(
+        root.join("src/lib.ts"),
+        b"export const skillOperation = 1;\n",
+    )
+    .map_err(|error| format!("cannot write {relative} operation source: {error}"))?;
+    expect_success(
+        run_binary(binary, root, &["audit", "--jobs", "1", "--format", "json"]),
+        &format!("{relative} operation fixture audit"),
+    )?;
+    let seeded = expect_success(
+        run_binary(
+            fixture_binary,
+            root,
+            &["cache", "test-write", "skill-payload.bin", adapter_name],
+        ),
+        &format!("{relative} cache fixture writer"),
+    )?;
+    if !seeded.stdout.is_empty() {
+        return Err(format!("{relative} cache fixture writer emitted stdout"));
+    }
+
+    let operation_id = format!("skill-{adapter_name}-cache-clean-0001");
+    let failed = run_binary_with_broken_stdout(
+        binary,
+        root,
+        &["cache", "clean", "--operation-id", &operation_id],
+    )?;
+    expect_status(
+        &failed,
+        Some(1),
+        &format!("{relative} uncertain cleanup delivery"),
+    )?;
+    if !failed.stdout.is_empty() || !failed.stderr.is_empty() {
+        return Err(format!(
+            "{relative} BrokenPipe cleanup did not use the canonical empty transport"
+        ));
+    }
+
+    let shown = expect_success(
+        run_binary(
+            binary,
+            root,
+            &["operation", "show", &operation_id, "--format", "json"],
+        ),
+        &format!("{relative} operation-show recovery"),
+    )?;
+    let response = parse_json(
+        &format!("{relative} operation-show recovery"),
+        &shown.stdout,
+    )?;
+    expect_string(
+        &response,
+        "/schemaVersion",
+        "lumin.cache-cleanup-operation.v2",
+    )?;
+    expect_string(&response, "/operationId", &operation_id)?;
+    expect_string(&response, "/kind", "cache-clean")?;
+    expect_string(&response, "/status", "committed")?;
+    expect_string(&response, "/lastDeliveryStatus", "failed")?;
+    expect_string(&response, "/result/operationId", &operation_id)?;
+    expect_string(&response, "/result/status", "clean")?;
+
+    let repeated_show = expect_success(
+        run_binary(
+            binary,
+            root,
+            &["operation", "show", &operation_id, "--format", "json"],
+        ),
+        &format!("{relative} repeated operation-show recovery"),
+    )?;
+    if repeated_show.stdout != shown.stdout {
+        return Err(format!(
+            "{relative} read-only operation recovery changed the committed DTO"
+        ));
+    }
+    let active_names = fs::read_dir(root.join(".lumin/cache"))
+        .map_err(|error| format!("cannot inspect {relative} active cache: {error}"))?
+        .map(|entry| entry.map(|entry| entry.file_name()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("cannot inspect {relative} active cache: {error}"))?;
+    if active_names != [OsString::from("namespace.anchor")] {
+        return Err(format!(
+            "{relative} operation recovery left unexpected active-cache entries"
+        ));
+    }
     Ok(())
 }

@@ -26,12 +26,21 @@ impl CacheCleanupDeliveryBarrier {
     }
 
     pub fn spawn(&self, root: &Path, operation_id: &str) -> TestResult<PausedDelivery> {
+        self.spawn_with_stdout(root, operation_id, Stdio::piped())
+    }
+
+    pub fn spawn_with_stdout(
+        &self,
+        root: &Path,
+        operation_id: &str,
+        stdout: Stdio,
+    ) -> TestResult<PausedDelivery> {
         let mut command = lumin_command(root)?;
         command
             .args(["cache", "clean", "--operation-id", operation_id])
             .env(ADDRESS_ENV, self.listener.local_addr()?.to_string())
             .env(STAGE_ENV, self.stage)
-            .stdout(Stdio::piped())
+            .stdout(stdout)
             .stderr(Stdio::piped());
         Ok(PausedDelivery::from_child(command.spawn()?))
     }
@@ -122,6 +131,18 @@ impl PausedDelivery {
     pub fn finish(mut self) -> TestResult<ProcessResult> {
         let output = self.take_output()?;
         process_result(output)
+    }
+
+    pub fn close_stdout(&mut self) -> TestResult {
+        let stdout = self
+            .child
+            .as_mut()
+            .ok_or_else(|| std::io::Error::other("paused delivery child already consumed"))?
+            .stdout
+            .take()
+            .ok_or_else(|| std::io::Error::other("paused delivery stdout is not piped"))?;
+        drop(stdout);
+        Ok(())
     }
 
     #[allow(dead_code)]

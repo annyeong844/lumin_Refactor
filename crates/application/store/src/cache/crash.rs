@@ -9,6 +9,7 @@ pub(super) enum CacheCleanupCrashPoint {
     AfterPhysicalDurability(u64),
     AfterRowValidation(u64),
     BeforeResultCommit,
+    AfterResultCommit,
 }
 
 impl CacheCleanupCrashPoint {
@@ -21,6 +22,7 @@ impl CacheCleanupCrashPoint {
             }
             Self::AfterRowValidation(ordinal) => format!("after-row-validation:{ordinal}"),
             Self::BeforeResultCommit => "before-result-commit".to_owned(),
+            Self::AfterResultCommit => "after-result-commit".to_owned(),
         }
     }
 }
@@ -39,16 +41,18 @@ pub(super) fn hit(point: CacheCleanupCrashPoint) {
 }
 
 fn valid_selector(value: &str) -> bool {
-    matches!(value, "after-authorization" | "before-result-commit")
-        || [
-            "after-rename-visible:",
-            "after-physical-durability:",
-            "after-row-validation:",
-        ]
-        .iter()
-        .any(|prefix| {
-            value.strip_prefix(prefix).is_some_and(|ordinal| {
-                !ordinal.is_empty() && ordinal.bytes().all(|byte| byte.is_ascii_digit())
-            })
+    matches!(
+        value,
+        "after-authorization" | "before-result-commit" | "after-result-commit"
+    ) || [
+        "after-rename-visible:",
+        "after-physical-durability:",
+        "after-row-validation:",
+    ]
+    .iter()
+    .any(|prefix| {
+        value.strip_prefix(prefix).is_some_and(|ordinal| {
+            !ordinal.is_empty() && ordinal.bytes().all(|byte| byte.is_ascii_digit())
         })
+    })
 }

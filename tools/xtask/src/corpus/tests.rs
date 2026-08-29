@@ -216,8 +216,8 @@ fn ci_row_shards_balance_declared_work_deterministically() {
             "unbalanced {mode} invocation loads: {loads:?}",
         );
         let expected = match mode {
-            CorpusMode::Standard => vec![40, 40, 39, 39],
-            CorpusMode::Determinism => vec![64, 23, 23, 23, 22, 22, 22, 22],
+            CorpusMode::Standard => vec![45, 45, 45, 45],
+            CorpusMode::Determinism => vec![64, 26, 26, 26, 26, 25, 25, 25],
             CorpusMode::StoreCrash => unreachable!("CI does not shard store-crash rows"),
         };
         assert_eq!(loads, expected, "{mode} shard assignment changed");
@@ -413,8 +413,138 @@ fn every_mapped_standard_row_has_a_paired_determinism_invocation() {
         .iter()
         .filter(|row| row.is_mapped(CorpusMode::Determinism))
         .count();
-    assert_eq!(standard, 75);
+    assert_eq!(standard, 76);
     assert_eq!(determinism, standard);
+}
+
+#[test]
+fn reserved_state_namespace_uses_the_complete_reviewed_invocation_set() -> Result<(), String> {
+    let row = REGISTRY
+        .iter()
+        .find(|row| row.id == "reserved-state-namespace")
+        .ok_or_else(|| "reserved-state-namespace row is missing".to_owned())?;
+    let expected = vec![
+        (
+            "state_namespace",
+            "caller_state_paths_are_malformed_before_lifecycle_mutation",
+            FeatureSet::None,
+        ),
+        (
+            "state_namespace",
+            "committed_pre_write_retry_precedes_current_path_revalidation",
+            FeatureSet::None,
+        ),
+        (
+            "state_namespace",
+            "public_process_rejects_state_directory_replacement",
+            FeatureSet::None,
+        ),
+        (
+            "state_namespace",
+            "public_process_rejects_state_mount_crossing",
+            FeatureSet::None,
+        ),
+        (
+            "state_namespace",
+            "configured_state_entry_cannot_complete_an_audit",
+            FeatureSet::None,
+        ),
+        (
+            "state_namespace",
+            "public_process_rejects_lifecycle_lock_replacement",
+            FeatureSet::None,
+        ),
+        (
+            "state_namespace",
+            "public_process_rejects_foreign_and_redirected_state_namespaces",
+            FeatureSet::None,
+        ),
+        (
+            "state_namespace",
+            "public_process_rejects_managed_parent_anchor_and_marker_replacement",
+            FeatureSet::None,
+        ),
+        (
+            "state_namespace",
+            "state_payload_aliases_never_enter_source_evidence_or_gate_writes",
+            FeatureSet::None,
+        ),
+        (
+            "cache_cleanup",
+            "public_cache_cleanup_quarantines_payloads_and_replays_one_committed_result",
+            FeatureSet::None,
+        ),
+        (
+            "cache_cleanup",
+            "self_hashed_unauthorized_quarantine_is_rejected_without_disposition",
+            FeatureSet::None,
+        ),
+        (
+            "cache_cleanup",
+            "malformed_cache_cleanup_arguments_do_not_initialize_state",
+            FeatureSet::None,
+        ),
+        (
+            "lifecycle_operation_idempotency",
+            "cache_cleanup::dirty_cache_tree_hard_stops_before_plan_authorization",
+            FeatureSet::LifecycleFault,
+        ),
+        (
+            "lifecycle_operation_idempotency",
+            "cache_cleanup::cache_cleanup_preserves_top_level_and_nested_substitutes_without_advancing_later_rows",
+            FeatureSet::LifecycleFault,
+        ),
+        (
+            "lifecycle_operation_idempotency",
+            "cache_cleanup::cache_cleanup_recovers_every_durable_boundary_with_the_same_operation_id",
+            FeatureSet::LifecycleFault,
+        ),
+        (
+            "lifecycle_operation_idempotency",
+            "cache_cleanup::cache_cleanup_recovers_death_after_result_commit_without_duplicate_move",
+            FeatureSet::LifecycleFault,
+        ),
+        (
+            "lifecycle_operation_idempotency",
+            "cache_cleanup::cleanup_retry_exposes_one_read_only_interrupted_barrier_before_reattachment",
+            FeatureSet::LifecycleFault,
+        ),
+        (
+            "lifecycle_operation_idempotency",
+            "cache_cleanup::repeated_recovery_of_one_interrupted_attempt_does_not_increment_twice",
+            FeatureSet::LifecycleFault,
+        ),
+        (
+            "lifecycle_operation_idempotency",
+            "cache_cleanup::committed_cache_cleanup_recovers_a_failed_delivery_without_another_move",
+            FeatureSet::LifecycleFault,
+        ),
+        (
+            "lifecycle_operation_idempotency",
+            "cache_cleanup::cache_cleanup_real_stream_failures_are_durable_and_recoverable",
+            FeatureSet::LifecycleFault,
+        ),
+        (
+            "lifecycle_operation_idempotency",
+            "cache_cleanup::cleanup_delivery_death_after_allocation_or_stdout_remains_unknown_until_retry",
+            FeatureSet::LifecycleFault,
+        ),
+        (
+            "lifecycle_operation_idempotency",
+            "cache_cleanup::concurrent_cleanup_deliveries_obey_allocation_order_in_both_completion_orders",
+            FeatureSet::LifecycleFault,
+        ),
+    ];
+    for mode in [CorpusMode::Standard, CorpusMode::Determinism] {
+        let actual = row
+            .mode_invocations(mode)
+            .ok_or_else(|| format!("reserved-state-namespace is not {mode}-applicable"))?
+            .iter()
+            .map(|invocation| (invocation.target, invocation.filter, invocation.features))
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected, "{mode} invocation set changed");
+    }
+    Ok(())
 }
 
 #[test]

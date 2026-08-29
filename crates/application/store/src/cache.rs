@@ -791,6 +791,8 @@ impl RepositoryStore {
                     &operation,
                 )?;
                 guard.commit(write)?;
+                #[cfg(feature = "cache-cleanup-test-fault")]
+                crash::hit(crash::CacheCleanupCrashPoint::AfterResultCommit);
                 Ok(AdvanceOutcome::Committed(result))
             })?;
             match outcome {

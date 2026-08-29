@@ -88,6 +88,31 @@ static INV_IDEMP: &[CorpusInvocation] = &[
     inv!("lifecycle_operation_idempotency", "cache_cleanup::concurrent_cleanup_deliveries_obey_allocation_order_in_both_completion_orders", LifecycleFault),
 ];
 #[rustfmt::skip]
+static INV_RESERVED_STATE: &[CorpusInvocation] = &[
+    inv!("state_namespace", "caller_state_paths_are_malformed_before_lifecycle_mutation"),
+    inv!("state_namespace", "committed_pre_write_retry_precedes_current_path_revalidation"),
+    inv!("state_namespace", "public_process_rejects_state_directory_replacement"),
+    inv!("state_namespace", "public_process_rejects_state_mount_crossing"),
+    inv!("state_namespace", "configured_state_entry_cannot_complete_an_audit"),
+    inv!("state_namespace", "public_process_rejects_lifecycle_lock_replacement"),
+    inv!("state_namespace", "public_process_rejects_foreign_and_redirected_state_namespaces"),
+    inv!("state_namespace", "public_process_rejects_managed_parent_anchor_and_marker_replacement"),
+    inv!("state_namespace", "state_payload_aliases_never_enter_source_evidence_or_gate_writes"),
+    inv!("cache_cleanup", "public_cache_cleanup_quarantines_payloads_and_replays_one_committed_result"),
+    inv!("cache_cleanup", "self_hashed_unauthorized_quarantine_is_rejected_without_disposition"),
+    inv!("cache_cleanup", "malformed_cache_cleanup_arguments_do_not_initialize_state"),
+    inv!("lifecycle_operation_idempotency", "cache_cleanup::dirty_cache_tree_hard_stops_before_plan_authorization", LifecycleFault),
+    inv!("lifecycle_operation_idempotency", "cache_cleanup::cache_cleanup_preserves_top_level_and_nested_substitutes_without_advancing_later_rows", LifecycleFault),
+    inv!("lifecycle_operation_idempotency", "cache_cleanup::cache_cleanup_recovers_every_durable_boundary_with_the_same_operation_id", LifecycleFault),
+    inv!("lifecycle_operation_idempotency", "cache_cleanup::cache_cleanup_recovers_death_after_result_commit_without_duplicate_move", LifecycleFault),
+    inv!("lifecycle_operation_idempotency", "cache_cleanup::cleanup_retry_exposes_one_read_only_interrupted_barrier_before_reattachment", LifecycleFault),
+    inv!("lifecycle_operation_idempotency", "cache_cleanup::repeated_recovery_of_one_interrupted_attempt_does_not_increment_twice", LifecycleFault),
+    inv!("lifecycle_operation_idempotency", "cache_cleanup::committed_cache_cleanup_recovers_a_failed_delivery_without_another_move", LifecycleFault),
+    inv!("lifecycle_operation_idempotency", "cache_cleanup::cache_cleanup_real_stream_failures_are_durable_and_recoverable", LifecycleFault),
+    inv!("lifecycle_operation_idempotency", "cache_cleanup::cleanup_delivery_death_after_allocation_or_stdout_remains_unknown_until_retry", LifecycleFault),
+    inv!("lifecycle_operation_idempotency", "cache_cleanup::concurrent_cleanup_deliveries_obey_allocation_order_in_both_completion_orders", LifecycleFault),
+];
+#[rustfmt::skip]
 static INV_STATE_NAMESPACE_INITIALIZATION: &[CorpusInvocation] = &[
     inv!("state_namespace", "fresh_namespace_initialization_publishes_the_exact_complete_binding"),
     inv!("state_namespace_initialization", "missing_nested_marker_or_store_binding_is_incompatible_without_adoption", LifecycleFault),
@@ -443,7 +468,7 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("repo-path-lossless", &[
         inv!("repo_path_lossless", "native_repository_paths_round_trip_through_public_queries_and_cursors"),
     ]),
-    row_sd!("reserved-state-namespace"),
+    row_sd!("reserved-state-namespace", INV_RESERVED_STATE),
     row_sdc!("state-namespace-initialization", INV_STATE_NAMESPACE_INITIALIZATION, INV_STATE_NAMESPACE_INITIALIZATION_CRASH),
     row_sdc!("state-lock-replacement-split-brain"),
     row_sdc!("state-managed-parent-replacement"),
