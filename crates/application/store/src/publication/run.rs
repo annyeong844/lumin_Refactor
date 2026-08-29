@@ -224,23 +224,39 @@ fn publish_directory(
             parent.sync_directory()
         })
         .map_err(|error| publication_error("create staging directory", error))?;
+    let staging_write_entry = HeldEntry::open(
+        &staging,
+        EntryKind::Directory,
+        EntryAccess::ReadOnly,
+        false,
+        "run staging directory",
+    )?;
+    files::require_parent_volume(&staging_write_entry, parent, "run staging directory")?;
+    let record = write_staging(&staging, &staging_write_entry, envelope, &run_id, evidence)
+        .map_err(|error| publication_error("write staging payload", error))?;
+    validate_directory(&staging, &staging_write_entry, &record)
+        .map_err(|error| publication_error("validate staging payload", error))?;
     let staging_entry = HeldEntry::open(
         &staging,
         EntryKind::Directory,
         EntryAccess::Move,
         false,
-        "run staging directory",
+        "run staging directory before publication",
     )?;
+    if staging_entry.identity() != staging_write_entry.identity() {
+        return Err(StoreError::Integrity(
+            "run staging directory changed before publication".to_owned(),
+        ));
+    }
     files::require_parent_volume(&staging_entry, parent, "run staging directory")?;
-    let record = write_staging(&staging, &staging_entry, envelope, &run_id, evidence)
-        .map_err(|error| publication_error("write staging payload", error))?;
-    validate_directory(&staging, &staging_entry, &record)
-        .map_err(|error| publication_error("validate staging payload", error))?;
+    drop(staging_write_entry);
 
     guard
         .mutate_for_generation(generation, || {
             #[cfg(feature = "namespace-test-crash")]
             crate::namespace::barrier::wait_before_run_rename()?;
+            validate_directory(&staging, &staging_entry, &record)
+                .map_err(|error| publication_error("revalidate staging payload", error))?;
             guard.validate_bound_entries()?;
             staging_entry.validate_path(
                 &staging,
