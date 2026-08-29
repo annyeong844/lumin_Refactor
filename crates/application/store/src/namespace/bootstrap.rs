@@ -1,4 +1,4 @@
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -6,6 +6,7 @@ use fs2::FileExt;
 
 use crate::{StoreError, io_error, nonce_hex};
 
+use super::platform::UnpublishedFile;
 use super::platform::{EntryAccess, EntryKind, HeldEntry};
 use super::{
     ANCHOR_SCHEMA, CACHE_EVICTION_ANCHOR_SCHEMA, CacheEvictionParentAnchorHeader,
@@ -14,10 +15,15 @@ use super::{
     ManagedStateParentKind, NamespaceBinding, NamespaceGuard, NamespaceState, REPOSITORY_SCHEMA,
     RepositoryMarker, create_or_verify_store, entry_exists, read_canonical_path,
     require_state_volume, same_volume_and_mount, validate_global_binding, validate_marker,
-    verify_repository_binding, write_canonical_entry, write_new_canonical,
+    verify_canonical_entry, verify_repository_binding, write_canonical_entry,
 };
 
+mod crash;
+
+pub(super) use crash::{BootstrapCrashPoint, hit};
+
 const CACHE_EVICTIONS_DIRECTORY: &str = "cache-evictions";
+const MARKER_CANDIDATE_PREFIX: &str = ".lumin-unpublished-repository-";
 
 pub(super) fn bootstrap_namespace(
     repository: HeldRepository,
@@ -34,7 +40,9 @@ pub(super) fn bootstrap_namespace(
         ));
     }
     let lock = HeldEntry::create_new(&state_dir.join("lifecycle.lock"), "lifecycle.lock")?;
+    hit(BootstrapCrashPoint::AfterLifecycleLockCreated);
     FileExt::lock_exclusive(lock.file()).map_err(io_error)?;
+    hit(BootstrapCrashPoint::AfterLifecycleLockAcquired);
     let global = GlobalNamespaceBinding {
         repository_id: repository.binding.repository_id().clone(),
         repository_root_canonical: repository.binding.root().canonical_bytes().to_vec(),
@@ -43,6 +51,7 @@ pub(super) fn bootstrap_namespace(
         lifecycle_lock_identity: lock.identity().clone(),
         namespace_nonce: nonce_hex()?,
     };
+    hit(BootstrapCrashPoint::AfterGlobalBindingAllocated);
     write_canonical_entry(
         &lock,
         &LifecycleLockHeader {
@@ -50,6 +59,7 @@ pub(super) fn bootstrap_namespace(
             global: global.clone(),
         },
     )?;
+    hit(BootstrapCrashPoint::AfterLifecycleLockHeaderFlushed);
     finish_bootstrap(repository, state_dir, state_directory, lock, global)
 }
 
@@ -63,7 +73,6 @@ fn resume_bootstrap(
             "preexisting state directory has no bound bootstrap state".to_owned(),
         ));
     }
-    reject_unbound_bootstrap_entries(&state_dir)?;
     let lock_path = state_dir.join("lifecycle.lock");
     let lock = HeldEntry::open(
         &lock_path,
@@ -75,9 +84,15 @@ fn resume_bootstrap(
     let header: LifecycleLockHeader = read_canonical_path(&lock_path, "lifecycle.lock")?;
     validate_bootstrap_lock(&header, &repository, &state_directory, &lock)?;
     FileExt::lock_exclusive(lock.file()).map_err(io_error)?;
+    verify_canonical_bootstrap_lock(&lock, &header)?;
 
     let marker_path = state_dir.join("repository.json");
-    if entry_exists(&marker_path)? {
+    let marker_exists = entry_exists(&marker_path)?;
+    let marker_candidate = (!marker_exists)
+        .then(|| recoverable_marker_candidate_name(&header.global))
+        .flatten();
+    reject_unbound_bootstrap_entries(&state_dir, marker_candidate.as_deref())?;
+    if marker_exists {
         FileExt::unlock(lock.file()).map_err(io_error)?;
         let marker: RepositoryMarker = read_canonical_path(&marker_path, "repository marker")?;
         validate_marker(&marker)?;
@@ -95,7 +110,6 @@ fn resume_bootstrap(
             "pre-marker state cannot contain lifecycle.store".to_owned(),
         ));
     }
-    verify_canonical_bootstrap_lock(&lock, &header)?;
     finish_bootstrap(repository, state_dir, state_directory, lock, header.global)
 }
 
@@ -135,14 +149,16 @@ fn finish_bootstrap(
         managed_parents,
         cache_evictions: Some(cache_evictions),
     };
-    write_new_canonical(
-        &state_dir.join("repository.json"),
+    state_directory.sync_directory()?;
+    hit(BootstrapCrashPoint::AfterAllParentsFlushed);
+    publish_repository_marker(
+        &state_dir,
+        &state_directory,
         &RepositoryMarker {
             schema_version: REPOSITORY_SCHEMA.to_owned(),
             binding: binding.clone(),
         },
     )?;
-    state_directory.sync_directory()?;
 
     let state = NamespaceState {
         repository,
@@ -150,10 +166,48 @@ fn finish_bootstrap(
         binding,
     };
     let guard = NamespaceGuard::acquire_without_store(state.clone(), lock)?;
+    hit(BootstrapCrashPoint::BeforeStoreCreation);
     create_or_verify_store(&guard)?;
+    guard.state_directory.sync_directory()?;
+    hit(BootstrapCrashPoint::AfterStoreParentFlushed);
     guard.validate_complete()?;
+    hit(BootstrapCrashPoint::AfterCompleteValidation);
     FileExt::unlock(guard.lock.file()).map_err(io_error)?;
     Ok(state)
+}
+
+fn publish_repository_marker(
+    state_dir: &Path,
+    state_directory: &HeldEntry,
+    marker: &RepositoryMarker,
+) -> Result<(), StoreError> {
+    hit(BootstrapCrashPoint::BeforeMarkerCandidate);
+    let candidate_name = marker_candidate_name(&marker.binding.global);
+    let unpublished =
+        UnpublishedFile::create_with_named_fallback(state_dir, state_directory, &candidate_name)?;
+    hit(BootstrapCrashPoint::AfterMarkerCandidateCreated);
+    if unpublished.entry().read_all()?.is_empty() {
+        write_canonical_entry(unpublished.entry(), marker)?;
+    } else {
+        verify_canonical_entry(unpublished.entry(), marker, "repository marker candidate")?;
+        unpublished.entry().sync()?;
+    }
+    hit(BootstrapCrashPoint::AfterMarkerCandidateFlushed);
+    verify_canonical_entry(unpublished.entry(), marker, "repository marker candidate")?;
+    let published = unpublished.publish_noreplace(
+        state_directory,
+        state_dir,
+        OsStr::new("repository.json"),
+        "repository marker",
+        || {
+            hit(BootstrapCrashPoint::AfterMarkerPublished);
+            Ok(())
+        },
+    )?;
+    drop(published);
+    state_directory.sync_directory()?;
+    hit(BootstrapCrashPoint::AfterMarkerParentFlushed);
+    Ok(())
 }
 
 fn create_managed_parent(
@@ -165,18 +219,30 @@ fn create_managed_parent(
     let name = kind.directory_name();
     let directory_path = state_dir.join(name);
     fs::create_dir(&directory_path).map_err(io_error)?;
+    hit(managed_parent_point(
+        kind,
+        ManagedParentStage::DirectoryCreated,
+    ));
     let directory = open_parent_directory(&directory_path, name)?;
     require_state_volume(&directory, state_directory, name)?;
     let anchor = HeldEntry::create_new(
         &directory_path.join("namespace.anchor"),
         &format!("managed state anchor {name}"),
     )?;
+    hit(managed_parent_point(
+        kind,
+        ManagedParentStage::AnchorCreated,
+    ));
     let binding = ManagedStateParentBinding {
         kind,
         directory_physical_identity: directory.identity().clone(),
         anchor_physical_identity: anchor.identity().clone(),
         parent_nonce: nonce_hex()?,
     };
+    hit(managed_parent_point(
+        kind,
+        ManagedParentStage::BindingAllocated,
+    ));
     write_canonical_entry(
         &anchor,
         &ManagedParentAnchorHeader {
@@ -185,8 +251,93 @@ fn create_managed_parent(
             binding: binding.clone(),
         },
     )?;
+    hit(managed_parent_point(
+        kind,
+        ManagedParentStage::AnchorFlushed,
+    ));
     directory.sync_directory()?;
+    hit(managed_parent_point(
+        kind,
+        ManagedParentStage::ParentFlushed,
+    ));
     Ok(binding)
+}
+
+#[derive(Clone, Copy)]
+enum ManagedParentStage {
+    DirectoryCreated,
+    AnchorCreated,
+    BindingAllocated,
+    AnchorFlushed,
+    ParentFlushed,
+}
+
+fn managed_parent_point(
+    kind: ManagedStateParentKind,
+    stage: ManagedParentStage,
+) -> BootstrapCrashPoint {
+    match (kind, stage) {
+        (ManagedStateParentKind::Attempts, ManagedParentStage::DirectoryCreated) => {
+            BootstrapCrashPoint::AfterAttemptsDirectoryCreated
+        }
+        (ManagedStateParentKind::Attempts, ManagedParentStage::AnchorCreated) => {
+            BootstrapCrashPoint::AfterAttemptsAnchorCreated
+        }
+        (ManagedStateParentKind::Attempts, ManagedParentStage::BindingAllocated) => {
+            BootstrapCrashPoint::AfterAttemptsBindingAllocated
+        }
+        (ManagedStateParentKind::Attempts, ManagedParentStage::AnchorFlushed) => {
+            BootstrapCrashPoint::AfterAttemptsAnchorFlushed
+        }
+        (ManagedStateParentKind::Attempts, ManagedParentStage::ParentFlushed) => {
+            BootstrapCrashPoint::AfterAttemptsParentFlushed
+        }
+        (ManagedStateParentKind::Runs, ManagedParentStage::DirectoryCreated) => {
+            BootstrapCrashPoint::AfterRunsDirectoryCreated
+        }
+        (ManagedStateParentKind::Runs, ManagedParentStage::AnchorCreated) => {
+            BootstrapCrashPoint::AfterRunsAnchorCreated
+        }
+        (ManagedStateParentKind::Runs, ManagedParentStage::BindingAllocated) => {
+            BootstrapCrashPoint::AfterRunsBindingAllocated
+        }
+        (ManagedStateParentKind::Runs, ManagedParentStage::AnchorFlushed) => {
+            BootstrapCrashPoint::AfterRunsAnchorFlushed
+        }
+        (ManagedStateParentKind::Runs, ManagedParentStage::ParentFlushed) => {
+            BootstrapCrashPoint::AfterRunsParentFlushed
+        }
+        (ManagedStateParentKind::Trash, ManagedParentStage::DirectoryCreated) => {
+            BootstrapCrashPoint::AfterTrashDirectoryCreated
+        }
+        (ManagedStateParentKind::Trash, ManagedParentStage::AnchorCreated) => {
+            BootstrapCrashPoint::AfterTrashAnchorCreated
+        }
+        (ManagedStateParentKind::Trash, ManagedParentStage::BindingAllocated) => {
+            BootstrapCrashPoint::AfterTrashBindingAllocated
+        }
+        (ManagedStateParentKind::Trash, ManagedParentStage::AnchorFlushed) => {
+            BootstrapCrashPoint::AfterTrashAnchorFlushed
+        }
+        (ManagedStateParentKind::Trash, ManagedParentStage::ParentFlushed) => {
+            BootstrapCrashPoint::AfterTrashParentFlushed
+        }
+        (ManagedStateParentKind::Cache, ManagedParentStage::DirectoryCreated) => {
+            BootstrapCrashPoint::AfterCacheDirectoryCreated
+        }
+        (ManagedStateParentKind::Cache, ManagedParentStage::AnchorCreated) => {
+            BootstrapCrashPoint::AfterCacheAnchorCreated
+        }
+        (ManagedStateParentKind::Cache, ManagedParentStage::BindingAllocated) => {
+            BootstrapCrashPoint::AfterCacheBindingAllocated
+        }
+        (ManagedStateParentKind::Cache, ManagedParentStage::AnchorFlushed) => {
+            BootstrapCrashPoint::AfterCacheAnchorFlushed
+        }
+        (ManagedStateParentKind::Cache, ManagedParentStage::ParentFlushed) => {
+            BootstrapCrashPoint::AfterCacheParentFlushed
+        }
+    }
 }
 
 fn load_existing_parent(
@@ -233,6 +384,7 @@ fn create_cache_eviction_parent(
     let trash = open_parent_directory(&trash_path, "trash")?;
     let directory_path = trash_path.join(CACHE_EVICTIONS_DIRECTORY);
     fs::create_dir(&directory_path).map_err(io_error)?;
+    hit(BootstrapCrashPoint::AfterCacheEvictionsDirectoryCreated);
     let directory = open_parent_directory(&directory_path, CACHE_EVICTIONS_DIRECTORY)?;
     if !same_volume_and_mount(&directory, &trash) {
         return Err(StoreError::Integrity(
@@ -243,11 +395,13 @@ fn create_cache_eviction_parent(
         &directory_path.join("namespace.anchor"),
         "cache-eviction parent anchor",
     )?;
+    hit(BootstrapCrashPoint::AfterCacheEvictionsAnchorCreated);
     let binding = CacheEvictionParentBinding {
         directory_physical_identity: directory.identity().clone(),
         anchor_physical_identity: anchor.identity().clone(),
         parent_nonce: nonce_hex()?,
     };
+    hit(BootstrapCrashPoint::AfterCacheEvictionsBindingAllocated);
     write_canonical_entry(
         &anchor,
         &CacheEvictionParentAnchorHeader {
@@ -257,8 +411,11 @@ fn create_cache_eviction_parent(
             binding: binding.clone(),
         },
     )?;
+    hit(BootstrapCrashPoint::AfterCacheEvictionsAnchorFlushed);
     directory.sync_directory()?;
+    hit(BootstrapCrashPoint::AfterCacheEvictionsParentFlushed);
     trash.sync_directory()?;
+    hit(BootstrapCrashPoint::AfterTrashParentFlushedForCacheEvictions);
     Ok(binding)
 }
 
@@ -337,12 +494,16 @@ fn verify_canonical_bootstrap_lock(
     Ok(())
 }
 
-fn reject_unbound_bootstrap_entries(state_dir: &Path) -> Result<(), StoreError> {
+fn reject_unbound_bootstrap_entries(
+    state_dir: &Path,
+    marker_candidate: Option<&OsStr>,
+) -> Result<(), StoreError> {
     for entry in fs::read_dir(state_dir).map_err(io_error)? {
         let name = entry.map_err(io_error)?.file_name();
         let allowed = name == OsStr::new("lifecycle.lock")
             || name == OsStr::new("repository.json")
             || name == OsStr::new("lifecycle.store")
+            || marker_candidate.is_some_and(|candidate| name == candidate)
             || MANAGED_KINDS
                 .iter()
                 .any(|kind| name == OsStr::new(kind.directory_name()));
@@ -353,6 +514,23 @@ fn reject_unbound_bootstrap_entries(state_dir: &Path) -> Result<(), StoreError> 
         }
     }
     Ok(())
+}
+
+fn marker_candidate_name(global: &GlobalNamespaceBinding) -> OsString {
+    OsString::from(format!(
+        "{MARKER_CANDIDATE_PREFIX}{}",
+        global.namespace_nonce
+    ))
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn recoverable_marker_candidate_name(global: &GlobalNamespaceBinding) -> Option<OsString> {
+    Some(marker_candidate_name(global))
+}
+
+#[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+fn recoverable_marker_candidate_name(_global: &GlobalNamespaceBinding) -> Option<OsString> {
+    None
 }
 
 fn require_anchor_only(path: &Path, name: &str) -> Result<(), StoreError> {

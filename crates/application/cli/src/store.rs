@@ -110,6 +110,20 @@ pub(super) fn execute(root: &Path, arguments: &mut Arguments) -> Result<CommandO
         }
         .into());
     }
+    #[cfg(feature = "lifecycle-test-fault")]
+    if subcommand == "test-remove-store-cache-eviction-binding" {
+        if let Some(argument) = arguments.next_utf8("store test binding argument")? {
+            return Err(CliError::UnknownArgument(argument));
+        }
+        lumin_engine::remove_cache_eviction_binding_for_test(root)?;
+        return Ok(CommandSuccess {
+            exit_code: 0,
+            stdout: String::new(),
+            result_delivery: CommandResultDelivery::ReadOnly,
+            mutation_delivery: None,
+        }
+        .into());
+    }
     if subcommand != "migrate" {
         return Err(CliError::UnknownArgument(subcommand));
     }

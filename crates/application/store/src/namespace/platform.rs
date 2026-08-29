@@ -322,11 +322,30 @@ pub(crate) struct UnpublishedFile {
     entry: HeldEntry,
     parent_path: PathBuf,
     namespace_name: Option<OsString>,
+    named_path: Option<tempfile::TempPath>,
 }
 
 impl UnpublishedFile {
     pub(crate) fn create(parent_path: &Path, parent: &HeldEntry) -> Result<Self, StoreError> {
-        let (file, namespace_name) = create_unpublished_file_platform(parent_path)?;
+        Self::create_with_policy(parent_path, parent, None)
+    }
+
+    pub(crate) fn create_with_named_fallback(
+        parent_path: &Path,
+        parent: &HeldEntry,
+        fallback_name: &OsStr,
+    ) -> Result<Self, StoreError> {
+        require_normal_component(fallback_name, "named unpublished state artifact")?;
+        Self::create_with_policy(parent_path, parent, Some(fallback_name))
+    }
+
+    fn create_with_policy(
+        parent_path: &Path,
+        parent: &HeldEntry,
+        named_fallback: Option<&OsStr>,
+    ) -> Result<Self, StoreError> {
+        let (file, namespace_name, named_path) =
+            create_unpublished_file_platform(parent_path, named_fallback)?;
         let entry = HeldEntry::from_file(
             file,
             EntryKind::RegularFile,
@@ -345,6 +364,7 @@ impl UnpublishedFile {
             entry,
             parent_path: parent_path.to_owned(),
             namespace_name,
+            named_path,
         })
     }
 
@@ -353,7 +373,7 @@ impl UnpublishedFile {
     }
 
     pub(crate) fn publish_noreplace(
-        self,
+        mut self,
         parent: &HeldEntry,
         parent_path: &Path,
         name: &OsStr,
@@ -366,7 +386,33 @@ impl UnpublishedFile {
                 "{label} crossed its bound volume or mount"
             )));
         }
-        publish_unpublished_file_platform(&self.entry, parent, name)?;
+        if self.parent_path != parent_path {
+            return Err(StoreError::Integrity(format!(
+                "{label} publication changed its bound parent"
+            )));
+        }
+        if let Some(named_path) = self.named_path.take() {
+            let current = HeldEntry::open(
+                named_path.as_ref(),
+                EntryKind::RegularFile,
+                EntryAccess::ReadWrite,
+                true,
+                "named unpublished state artifact",
+            )?;
+            if current.identity() != self.entry.identity()
+                || !same_volume_and_mount(&current, parent)
+            {
+                return Err(StoreError::Integrity(
+                    "named unpublished state artifact changed physical identity".to_owned(),
+                ));
+            }
+            drop(current);
+            named_path
+                .persist_noclobber(parent_path.join(name))
+                .map_err(|error| io_error(error.error))?;
+        } else {
+            publish_unpublished_file_platform(&self.entry, parent, name)?;
+        }
         after_publication()?;
         let expected_identity = self.entry.identity().clone();
         drop(self);
@@ -463,25 +509,110 @@ pub(crate) fn validate_active_unpublished_name(
     Ok(true)
 }
 
-#[cfg(not(windows))]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 fn create_unpublished_file_platform(
     parent_path: &Path,
-) -> Result<(File, Option<OsString>), StoreError> {
+    named_fallback: Option<&OsStr>,
+) -> Result<(File, Option<OsString>, Option<tempfile::TempPath>), StoreError> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    const O_TMPFILE: i32 = 4_259_840;
+    if let Some(name) = named_fallback {
+        let path = parent_path.join(name);
+        match open_nofollow(&path, EntryKind::RegularFile, EntryAccess::ReadWrite) {
+            Ok(file) => return durable_named_unpublished(file, path, name),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(classify_expected_entry_error(
+                    error,
+                    EntryKind::RegularFile,
+                    "named unpublished state artifact",
+                ));
+            }
+        }
+    }
+
+    let force_named = named_fallback.is_some() && {
+        #[cfg(feature = "namespace-test-crash")]
+        {
+            std::env::var_os("LUMIN_TEST_NAMESPACE_FORCE_NAMED_UNPUBLISHED").is_some()
+        }
+        #[cfg(not(feature = "namespace-test-crash"))]
+        {
+            false
+        }
+    };
+    if !force_named {
+        match OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(O_TMPFILE)
+            .open(parent_path)
+        {
+            Ok(file) => return Ok((file, None, None)),
+            Err(error)
+                if named_fallback.is_some()
+                    && matches!(error.raw_os_error(), Some(2 | 21 | 22 | 95)) => {}
+            Err(error) => return Err(io_error(error)),
+        }
+    }
+
+    let name = named_fallback.ok_or_else(|| {
+        StoreError::Integrity("unnamed state publication is unavailable".to_owned())
+    })?;
+    let path = parent_path.join(name);
+    match create_new_nofollow(&path) {
+        Ok(file) => durable_named_unpublished(file, path, name),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let file = open_nofollow(&path, EntryKind::RegularFile, EntryAccess::ReadWrite)
+                .map_err(|error| {
+                    classify_expected_entry_error(
+                        error,
+                        EntryKind::RegularFile,
+                        "named unpublished state artifact",
+                    )
+                })?;
+            durable_named_unpublished(file, path, name)
+        }
+        Err(error) => Err(io_error(error)),
+    }
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn durable_named_unpublished(
+    file: File,
+    path: PathBuf,
+    name: &OsStr,
+) -> Result<(File, Option<OsString>, Option<tempfile::TempPath>), StoreError> {
+    let mut named_path = tempfile::TempPath::try_from_path(path).map_err(io_error)?;
+    // This name is a durable bootstrap recovery artifact. An ordinary error
+    // must preserve it for the next locked admission or for integrity review.
+    named_path.disable_cleanup(true);
+    Ok((file, Some(name.to_owned()), Some(named_path)))
+}
+
+#[cfg(not(any(all(target_os = "linux", target_arch = "x86_64"), windows)))]
+fn create_unpublished_file_platform(
+    parent_path: &Path,
+    _named_fallback: Option<&OsStr>,
+) -> Result<(File, Option<OsString>, Option<tempfile::TempPath>), StoreError> {
     tempfile::tempfile_in(parent_path)
-        .map(|file| (file, None))
+        .map(|file| (file, None, None))
         .map_err(io_error)
 }
 
 #[cfg(windows)]
 fn create_unpublished_file_platform(
     parent_path: &Path,
-) -> Result<(File, Option<OsString>), StoreError> {
+    _named_fallback: Option<&OsStr>,
+) -> Result<(File, Option<OsString>, Option<tempfile::TempPath>), StoreError> {
     use std::os::windows::fs::OpenOptionsExt;
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    use windows_sys::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE};
     use windows_sys::Win32::Storage::FileSystem::{
-        FILE_ATTRIBUTE_TEMPORARY, FILE_FLAG_DELETE_ON_CLOSE, FILE_SHARE_DELETE, FILE_SHARE_READ,
-        FILE_SHARE_WRITE,
+        DELETE, FILE_ATTRIBUTE_TEMPORARY, FILE_FLAG_DELETE_ON_CLOSE, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE,
     };
 
     static NEXT_UNPUBLISHED: AtomicU64 = AtomicU64::new(1);
@@ -495,11 +626,12 @@ fn create_unpublished_file_platform(
             .create_new(true)
             .read(true)
             .write(true)
+            .access_mode(GENERIC_READ | GENERIC_WRITE | DELETE)
             .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
             .custom_flags(FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE)
             .open(parent_path.join(&name))
         {
-            Ok(file) => return Ok((file, Some(OsString::from(name)))),
+            Ok(file) => return Ok((file, Some(OsString::from(name)), None)),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(io_error(error)),
         }
@@ -577,6 +709,8 @@ fn publish_unpublished_file_platform(
     use std::os::fd::AsRawFd;
     use std::os::unix::ffi::OsStrExt;
 
+    const AT_FDCWD: c_int = -100;
+    const AT_SYMLINK_FOLLOW: c_int = 0x400;
     const AT_EMPTY_PATH: c_int = 0x1000;
     unsafe extern "C" {
         fn linkat(
@@ -592,16 +726,41 @@ fn publish_unpublished_file_platform(
         .map_err(|_| StoreError::Integrity("empty publication path contains NUL".to_owned()))?;
     let name = CString::new(name.as_bytes())
         .map_err(|_| StoreError::Integrity("publication name contains NUL".to_owned()))?;
+    let unpublished_fd = unpublished.file().as_raw_fd();
+    let parent_fd = parent.file().as_raw_fd();
     // SAFETY: both descriptors and NUL-terminated strings remain live for the
     // call; AT_EMPTY_PATH names the opened unpublished object and linkat does
     // not replace an existing destination.
     let result = unsafe {
         linkat(
-            unpublished.file().as_raw_fd(),
+            unpublished_fd,
             empty.as_ptr(),
-            parent.file().as_raw_fd(),
+            parent_fd,
             name.as_ptr(),
             AT_EMPTY_PATH,
+        )
+    };
+    if result == 0 {
+        return Ok(());
+    }
+    let direct_error = std::io::Error::last_os_error();
+    if !matches!(direct_error.raw_os_error(), Some(1 | 2)) {
+        return Err(io_error(direct_error));
+    }
+
+    let proc_path = CString::new(format!("/proc/self/fd/{unpublished_fd}")).map_err(|_| {
+        StoreError::Integrity("publication descriptor path contains NUL".to_owned())
+    })?;
+    // SAFETY: the proc descriptor path names the same live O_TMPFILE handle;
+    // AT_SYMLINK_FOLLOW dereferences that handle while the held destination
+    // directory keeps no-replace publication relative to the bound parent.
+    let result = unsafe {
+        linkat(
+            AT_FDCWD,
+            proc_path.as_ptr(),
+            parent_fd,
+            name.as_ptr(),
+            AT_SYMLINK_FOLLOW,
         )
     };
     if result != 0 {

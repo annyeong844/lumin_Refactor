@@ -8,6 +8,116 @@ mod support;
 use support::{assert_status, field, run};
 
 #[test]
+fn fresh_namespace_initialization_publishes_the_exact_complete_binding()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = fixture()?;
+    let audited = run(root.path(), &["audit", "--jobs", "1"])?;
+    assert_status(&audited, 0);
+
+    let state = root.path().join(".lumin");
+    let marker = read_json(&state.join("repository.json"))?;
+    assert_eq!(
+        marker.get("schemaVersion").and_then(Value::as_str),
+        Some("lumin-repository.v4")
+    );
+    assert_exact_object_keys(&marker, &["binding", "schemaVersion"]);
+    let binding = marker
+        .get("binding")
+        .ok_or("repository binding is missing")?;
+    assert_exact_object_keys(binding, &["cacheEvictions", "global", "managedParents"]);
+    let global = binding.get("global").ok_or("global binding is missing")?;
+    assert_exact_object_keys(
+        global,
+        &[
+            "lifecycleLockIdentity",
+            "namespaceNonce",
+            "repositoryId",
+            "repositoryRootCanonical",
+            "repositoryRootPhysicalIdentity",
+            "stateDirectoryIdentity",
+        ],
+    );
+
+    let lock = read_json(&state.join("lifecycle.lock"))?;
+    assert_eq!(
+        lock.get("schemaVersion").and_then(Value::as_str),
+        Some("lumin-lifecycle-lock.v2")
+    );
+    assert_exact_object_keys(&lock, &["global", "schemaVersion"]);
+    assert_eq!(lock.get("global"), Some(global));
+
+    let managed = binding
+        .get("managedParents")
+        .and_then(Value::as_array)
+        .ok_or("managed parent bindings are missing")?;
+    assert_eq!(managed.len(), 4);
+    let mut nonces = vec![required_string(global, "namespaceNonce")?];
+    for ((kind, directory), expected) in [
+        ("attempts", "attempts"),
+        ("runs", "runs"),
+        ("trash", "trash"),
+        ("cache", "cache"),
+    ]
+    .into_iter()
+    .zip(managed)
+    {
+        assert_eq!(expected.get("kind").and_then(Value::as_str), Some(kind));
+        assert_exact_object_keys(
+            expected,
+            &[
+                "anchorPhysicalIdentity",
+                "directoryPhysicalIdentity",
+                "kind",
+                "parentNonce",
+            ],
+        );
+        nonces.push(required_string(expected, "parentNonce")?);
+        let anchor = read_json(&state.join(directory).join("namespace.anchor"))?;
+        assert_eq!(
+            anchor.get("schemaVersion").and_then(Value::as_str),
+            Some("lumin-managed-parent-anchor.v2")
+        );
+        assert_eq!(anchor.get("global"), Some(global));
+        assert_eq!(anchor.get("binding"), Some(expected));
+    }
+
+    let cache_evictions = binding
+        .get("cacheEvictions")
+        .ok_or("cache-eviction binding is missing")?;
+    assert_exact_object_keys(
+        cache_evictions,
+        &[
+            "anchorPhysicalIdentity",
+            "directoryPhysicalIdentity",
+            "parentNonce",
+        ],
+    );
+    nonces.push(required_string(cache_evictions, "parentNonce")?);
+    let nested = read_json(&state.join("trash/cache-evictions/namespace.anchor"))?;
+    assert_eq!(
+        nested.get("schemaVersion").and_then(Value::as_str),
+        Some("lumin-cache-eviction-parent-anchor.v1")
+    );
+    assert_eq!(nested.get("global"), Some(global));
+    assert_eq!(nested.get("trashBinding"), managed.get(2));
+    assert_eq!(nested.get("binding"), Some(cache_evictions));
+
+    assert!(nonces.iter().all(|nonce| canonical_nonce(nonce)));
+    let unique_nonces = nonces.iter().collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(unique_nonces.len(), nonces.len());
+    assert!(state.join("lifecycle.store").is_file());
+    assert!(fs::read_dir(&state)?.all(|entry| entry.is_ok_and(|entry| {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        !name.starts_with(".lumin-unpublished-") && !name.starts_with(".tmp")
+    })));
+
+    let run_id = field(&audited.stdout, "runId")?;
+    assert_status(&run(root.path(), &["overview", "--run", &run_id])?, 0);
+    Ok(())
+}
+
+#[test]
 fn caller_state_paths_are_malformed_before_lifecycle_mutation()
 -> Result<(), Box<dyn std::error::Error>> {
     let cases = [
@@ -565,6 +675,41 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         "export const visible = 1;\n",
     )?;
     Ok(root)
+}
+
+fn read_json(path: &Path) -> Result<Value, Box<dyn std::error::Error>> {
+    Ok(serde_json::from_slice(&fs::read(path)?)?)
+}
+
+fn assert_exact_object_keys(value: &Value, expected: &[&str]) {
+    assert!(value.is_object(), "expected JSON object, got {value}");
+    let mut actual = value
+        .as_object()
+        .into_iter()
+        .flat_map(serde_json::Map::keys)
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    let mut expected = expected.to_vec();
+    expected.sort_unstable();
+    assert_eq!(actual, expected);
+}
+
+fn required_string<'a>(
+    value: &'a Value,
+    field: &str,
+) -> Result<&'a str, Box<dyn std::error::Error>> {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("missing string field {field}").into())
+}
+
+fn canonical_nonce(value: &str) -> bool {
+    value.len() == 32
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn assert_public_integrity_failure(result: &support::ProcessResult) {

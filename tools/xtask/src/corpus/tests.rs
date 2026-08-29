@@ -216,8 +216,8 @@ fn ci_row_shards_balance_declared_work_deterministically() {
             "unbalanced {mode} invocation loads: {loads:?}",
         );
         let expected = match mode {
-            CorpusMode::Standard => vec![39, 39, 39, 39],
-            CorpusMode::Determinism => vec![64, 23, 22, 22, 22, 22, 22, 22],
+            CorpusMode::Standard => vec![40, 40, 39, 39],
+            CorpusMode::Determinism => vec![64, 23, 23, 23, 22, 22, 22, 22],
             CorpusMode::StoreCrash => unreachable!("CI does not shard store-crash rows"),
         };
         assert_eq!(loads, expected, "{mode} shard assignment changed");
@@ -413,8 +413,61 @@ fn every_mapped_standard_row_has_a_paired_determinism_invocation() {
         .iter()
         .filter(|row| row.is_mapped(CorpusMode::Determinism))
         .count();
-    assert_eq!(standard, 74);
+    assert_eq!(standard, 75);
     assert_eq!(determinism, standard);
+}
+
+#[test]
+fn state_namespace_initialization_uses_the_reviewed_public_invocations() -> Result<(), String> {
+    let row = REGISTRY
+        .iter()
+        .find(|row| row.id == "state-namespace-initialization")
+        .ok_or_else(|| "state-namespace-initialization row is missing".to_owned())?;
+    for mode in [CorpusMode::Standard, CorpusMode::Determinism] {
+        let actual = row
+            .mode_invocations(mode)
+            .ok_or_else(|| format!("state initialization {mode} mode is not applicable"))?
+            .iter()
+            .map(|invocation| (invocation.target, invocation.filter, invocation.features))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            actual,
+            vec![
+                (
+                    "state_namespace",
+                    "fresh_namespace_initialization_publishes_the_exact_complete_binding",
+                    FeatureSet::None,
+                ),
+                (
+                    "state_namespace_initialization",
+                    "missing_nested_marker_or_store_binding_is_incompatible_without_adoption",
+                    FeatureSet::LifecycleFault,
+                ),
+            ]
+        );
+    }
+    let crash = row
+        .mode_invocations(CorpusMode::StoreCrash)
+        .ok_or_else(|| "state initialization crash mode is not applicable".to_owned())?
+        .iter()
+        .map(|invocation| (invocation.target, invocation.filter, invocation.features))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        crash,
+        vec![
+            (
+                "state_namespace_initialization",
+                "public_namespace_initialization_recovers_or_rejects_every_named_crash_boundary",
+                FeatureSet::LifecycleCrash,
+            ),
+            (
+                "state_namespace_initialization",
+                "unknown_namespace_crash_selector_fails_before_state_initialization",
+                FeatureSet::LifecycleCrash,
+            ),
+        ]
+    );
+    Ok(())
 }
 
 #[test]
