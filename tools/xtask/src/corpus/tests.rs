@@ -216,8 +216,8 @@ fn ci_row_shards_balance_declared_work_deterministically() {
             "unbalanced {mode} invocation loads: {loads:?}",
         );
         let expected = match mode {
-            CorpusMode::Standard => vec![47, 47, 46, 46],
-            CorpusMode::Determinism => vec![64, 27, 27, 27, 26, 26, 26, 26],
+            CorpusMode::Standard => vec![47, 47, 47, 46],
+            CorpusMode::Determinism => vec![64, 27, 27, 27, 27, 26, 26, 26],
             CorpusMode::StoreCrash => unreachable!("CI does not shard store-crash rows"),
         };
         assert_eq!(loads, expected, "{mode} shard assignment changed");
