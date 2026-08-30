@@ -113,6 +113,15 @@ pub(crate) fn apply_gate_capability_availability(
                 intent.path.display
             ))
         })?;
+        let direct_rust_target = path
+            .file_name_portable()
+            .is_some_and(|name| name.ends_with(".rs"));
+        if intent.capability == CapabilityIntentKind::Rust
+            && !direct_rust_target
+            && !lumin_inventory::directory_contains_rust_path(root, &path, reserved_state_lookup)?
+        {
+            continue;
+        }
         targets
             .entry(intent.capability)
             .or_default()

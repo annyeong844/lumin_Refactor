@@ -822,6 +822,104 @@ pub fn is_supported_source_path(path: &RepoPath) -> bool {
         .is_some_and(|native| SourceKind::from_native_path(&native).is_some())
 }
 
+/// Return whether an existing real directory currently contains a `.rs` path.
+///
+/// Capability inference owns this walk through inventory so directory redirects,
+/// root escapes, hard exclusions, and reserved-state aliases receive the same
+/// fail-closed checks as authored source capture. The walk does not follow
+/// directory links.
+pub fn directory_contains_rust_path(
+    root: &Path,
+    directory: &RepoPath,
+    reserved_state_lookup: &ReservedStateIdentityLookup,
+) -> Result<bool, physical_path::WriteTargetError> {
+    let before = inspect_write_target(root, directory)?;
+    if before.kind != physical_path::WriteTargetKind::ExistingDirectory {
+        return Ok(false);
+    }
+    let directory_identity = before.physical_identity.as_ref().ok_or_else(|| {
+        physical_path::WriteTargetError::PhysicalIdentity(InventoryError::PhysicalIdentity(
+            format!(
+                "directory capability target omitted its physical identity: {}",
+                directory.display_escaped()
+            ),
+        ))
+    })?;
+    validate_captured_semantic_input_topology(
+        root,
+        directory,
+        directory_identity,
+        reserved_state_lookup,
+    )?;
+
+    let native_directory = root.join(native_relative(directory)?);
+    let mut builder = WalkBuilder::new(&native_directory);
+    builder
+        .hidden(false)
+        .parents(false)
+        .git_ignore(false)
+        .git_global(false)
+        .git_exclude(false)
+        .follow_links(false)
+        .filter_entry(|entry| entry.depth() == 0 || !is_hard_excluded(entry.path()));
+
+    let mut found = false;
+    for result in builder.build() {
+        let entry = result.map_err(|error| physical_path::WriteTargetError::Io {
+            path: directory.display_escaped(),
+            detail: error.to_string(),
+        })?;
+        if entry.depth() == 0 {
+            continue;
+        }
+        let file_type = entry
+            .file_type()
+            .ok_or_else(|| physical_path::WriteTargetError::Io {
+                path: entry.path().display().to_string(),
+                detail: "walk entry omitted its file type".to_owned(),
+            })?;
+        if file_type.is_dir() || entry.path().extension() != Some(OsStr::new("rs")) {
+            continue;
+        }
+        let relative = entry.path().strip_prefix(root).map_err(|_| {
+            physical_path::WriteTargetError::PhysicalIdentity(InventoryError::RootIo(format!(
+                "directory capability walk escaped root: {}",
+                entry.path().display()
+            )))
+        })?;
+        let path = RepoPath::from_native_relative(relative).map_err(|source| {
+            InventoryError::InvalidRepoPath {
+                path: relative.display().to_string(),
+                source,
+            }
+        })?;
+        validate_caller_entries(root, std::slice::from_ref(&path))?;
+        validate_caller_entry_identity_lookup(
+            root,
+            std::slice::from_ref(&path),
+            reserved_state_lookup,
+        )?;
+        found = true;
+    }
+
+    let after = inspect_write_target(root, directory)?;
+    if after != before {
+        return Err(physical_path::WriteTargetError::PhysicalIdentity(
+            InventoryError::PhysicalIdentity(format!(
+                "directory capability target changed during traversal: {}",
+                directory.display_escaped()
+            )),
+        ));
+    }
+    validate_captured_semantic_input_topology(
+        root,
+        directory,
+        directory_identity,
+        reserved_state_lookup,
+    )?;
+    Ok(found)
+}
+
 fn collect_repository_files(
     context: &FileObservationContext<'_>,
 ) -> Result<CollectedFiles, InventoryError> {

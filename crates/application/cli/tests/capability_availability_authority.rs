@@ -137,12 +137,44 @@ fn capability_unavailability_has_one_owner() -> Result<(), Box<dyn std::error::E
 #[test]
 fn directory_write_domain_requires_the_unavailable_rust_owner()
 -> Result<(), Box<dyn std::error::Error>> {
-    let root = tempfile::tempdir()?;
+    let existing = tempfile::tempdir()?;
     write(
-        root.path(),
+        existing.path(),
         "src/main.ts",
         "export const supported = true;\n",
     )?;
+    write(
+        existing.path(),
+        "src/native/lib.rs",
+        "pub fn unavailable() {}\n",
+    )?;
+    let existing_arguments = [
+        "pre-write",
+        "--operation-id",
+        "op-directory-existing-rust",
+        "--path",
+        "src",
+        "--jobs",
+        "1",
+    ];
+    let rejected = run(existing.path(), &existing_arguments)?;
+    assert_status(&rejected, 4);
+    assert!(rejected.stderr.is_empty());
+    assert_eq!(field(&rejected.stdout, "decision")?, "incomplete");
+    assert_eq!(field(&rejected.stdout, "lifecycle")?, "rejected");
+    let rejected_json: Value = serde_json::from_str(&rejected.stdout)?;
+    assert_eq!(
+        rejected_json
+            .pointer("/signals/0/kind")
+            .and_then(Value::as_str),
+        Some("required-owner-unavailable")
+    );
+    let replay = run(existing.path(), &existing_arguments)?;
+    assert_status(&replay, 4);
+    assert_eq!(replay.stdout, rejected.stdout);
+
+    let root = tempfile::tempdir()?;
+    write(root.path(), "src/main.ts", "console.log('supported');\n")?;
     let arguments = [
         "pre-write",
         "--operation-id",
@@ -153,37 +185,25 @@ fn directory_write_domain_requires_the_unavailable_rust_owner()
         "1",
     ];
     let opened = run(root.path(), &arguments)?;
-    assert_status(&opened, 4);
+    assert_status(&opened, 0);
     assert!(opened.stderr.is_empty());
     let opened_json: Value = serde_json::from_str(&opened.stdout)?;
     assert_eq!(
         opened_json.get("decision").and_then(Value::as_str),
-        Some("incomplete")
+        Some("allow")
     );
     assert_eq!(
         opened_json.get("lifecycle").and_then(Value::as_str),
-        Some("rejected")
-    );
-    assert_eq!(
-        opened_json
-            .pointer("/signals/0/kind")
-            .and_then(Value::as_str),
-        Some("required-owner-unavailable")
-    );
-    assert_eq!(
-        opened_json
-            .pointer("/signals/0/count")
-            .and_then(Value::as_u64),
-        Some(1)
+        Some("active")
     );
 
-    let replay = run(root.path(), &arguments)?;
-    assert_status(&replay, 4);
-    assert_eq!(replay.stdout, opened.stdout);
+    let open_replay = run(root.path(), &arguments)?;
+    assert_status(&open_replay, 0);
+    assert_eq!(open_replay.stdout, opened.stdout);
 
     let gate_id = GateId::from_string(field(&opened.stdout, "gateId")?);
-    let gate = lumin_engine::load_gate(root.path(), &gate_id)?;
-    let baseline = gate
+    let opened_gate = lumin_engine::load_gate(root.path(), &gate_id)?;
+    let baseline = opened_gate
         .baseline
         .as_ref()
         .ok_or_else(|| std::io::Error::other("directory gate omitted its baseline"))?;
@@ -194,13 +214,65 @@ fn directory_write_domain_requires_the_unavailable_rust_owner()
     let intent = &baseline.snapshot.scan_invocation.capability_intents[0];
     assert_eq!(intent.capability, CapabilityIntentKind::Rust);
     assert_eq!(intent.path.display, "src");
-    assert_eq!(
-        baseline.snapshot.evidence.limitations,
-        vec![Limitation::CapabilityUnavailable {
-            capability: CapabilityIntentKind::Rust,
-            targets: vec![LogicalSourceId::from_path(&RepoPath::from_portable("src")?)],
-        }]
+    assert!(
+        !baseline
+            .snapshot
+            .evidence
+            .limitations
+            .iter()
+            .any(|limitation| {
+                matches!(
+                    limitation,
+                    Limitation::CapabilityUnavailable {
+                        capability: CapabilityIntentKind::Rust,
+                        ..
+                    }
+                )
+            })
     );
+
+    write(
+        root.path(),
+        "src/generated/lib.rs",
+        "pub fn newly_unavailable() {}\n",
+    )?;
+    let close_arguments = [
+        "post-write",
+        gate_id.as_str(),
+        "--operation-id",
+        "op-directory-new-rust-close",
+    ];
+    let closed = run(root.path(), &close_arguments)?;
+    assert_status(&closed, 4);
+    assert!(closed.stderr.is_empty());
+    assert_eq!(field(&closed.stdout, "decision")?, "incomplete");
+    assert_eq!(field(&closed.stdout, "lifecycle")?, "active");
+    let closed_json: Value = serde_json::from_str(&closed.stdout)?;
+    assert!(
+        closed_json
+            .get("signals")
+            .and_then(Value::as_array)
+            .is_some_and(|signals| signals.iter().any(|signal| {
+                signal.get("kind").and_then(Value::as_str) == Some("required-owner-unavailable")
+                    && signal.get("count").and_then(Value::as_u64) == Some(1)
+            }))
+    );
+    let close_replay = run(root.path(), &close_arguments)?;
+    assert_status(&close_replay, 4);
+    assert_eq!(close_replay.stdout, closed.stdout);
+
+    let gate = lumin_engine::load_gate(root.path(), &gate_id)?;
+    let close_revision = gate
+        .revisions
+        .last()
+        .ok_or_else(|| std::io::Error::other("failed directory close omitted its revision"))?;
+    assert!(close_revision.snapshot.is_none());
+    assert!(close_revision.signals.iter().any(|signal| {
+        serde_json::to_value(signal).is_ok_and(|signal| {
+            signal.get("kind").and_then(Value::as_str) == Some("required-owner-unavailable")
+                && signal.get("limitation_count").and_then(Value::as_u64) == Some(1)
+        })
+    }));
     Ok(())
 }
 

@@ -17,6 +17,34 @@ fn generated_marker_must_be_in_leading_comment() {
 }
 
 #[test]
+fn directory_rust_probe_observes_nested_rust_paths_only() -> Result<(), Box<dyn std::error::Error>>
+{
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src/nested"))?;
+    fs::create_dir_all(root.path().join("config/node_modules/dependency"))?;
+    fs::write(root.path().join("src/main.ts"), "export const value = 1;\n")?;
+    fs::write(root.path().join("src/nested/lib.rs"), "pub fn value() {}\n")?;
+    fs::write(root.path().join("outside.rs"), "pub fn outside() {}\n")?;
+    fs::write(root.path().join("config/settings.ts"), "export {};\n")?;
+    fs::write(
+        root.path().join("config/node_modules/dependency/native.rs"),
+        "pub fn excluded() {}\n",
+    )?;
+
+    assert!(directory_contains_rust_path(
+        root.path(),
+        &RepoPath::from_portable("src")?,
+        &ReservedStateIdentityLookup::empty(),
+    )?);
+    assert!(!directory_contains_rust_path(
+        root.path(),
+        &RepoPath::from_portable("config")?,
+        &ReservedStateIdentityLookup::empty(),
+    )?);
+    Ok(())
+}
+
+#[test]
 fn config_identity_observation_preserves_hard_link_alias_identity()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;
