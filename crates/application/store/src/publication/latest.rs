@@ -139,6 +139,14 @@ pub(super) fn publish_attempt(
                 }
             },
             || {
+                guard.validate_bound_entries()?;
+                #[cfg(feature = "namespace-test-crash")]
+                if terminal_crash_hooks {
+                    crate::namespace::barrier::wait_before_latest_replace()?;
+                }
+                Ok(())
+            },
+            || {
                 if terminal_crash_hooks {
                     hit_terminal_replace();
                 }

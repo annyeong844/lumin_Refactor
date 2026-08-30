@@ -47,6 +47,11 @@ impl HeldEntry {
         Self::from_file(file, EntryKind::RegularFile, true, label)
     }
 
+    pub(crate) fn create_new_movable(path: &Path, label: &str) -> Result<Self, StoreError> {
+        let file = create_new_movable_nofollow(path).map_err(io_error)?;
+        Self::from_file(file, EntryKind::RegularFile, true, label)
+    }
+
     pub(crate) fn open_following_file(path: &Path, label: &str) -> Result<Self, StoreError> {
         let file = File::open(path)
             .map_err(|error| classify_expected_entry_error(error, EntryKind::RegularFile, label))?;
@@ -914,6 +919,22 @@ pub(crate) fn move_entry_noreplace(
     )
 }
 
+pub(crate) fn replace_entry_atomic(
+    parent: &HeldEntry,
+    source_name: &OsStr,
+    source: &HeldEntry,
+    destination_name: &OsStr,
+) -> Result<(), StoreError> {
+    require_normal_component(source_name, "state replacement source")?;
+    require_normal_component(destination_name, "state replacement destination")?;
+    if !same_volume_and_mount(parent, source) {
+        return Err(StoreError::Integrity(
+            "state replacement crossed its bound volume or mount".to_owned(),
+        ));
+    }
+    replace_entry_atomic_platform(parent, source_name, source, destination_name)
+}
+
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 pub(crate) fn exchange_entries(
     parent: &HeldEntry,
@@ -1031,6 +1052,50 @@ fn move_entry_noreplace_platform(
     Ok(())
 }
 
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[allow(
+    unsafe_code,
+    reason = "the supported Linux x64 lane requires a directory-handle-relative atomic replacement"
+)]
+fn replace_entry_atomic_platform(
+    parent: &HeldEntry,
+    source_name: &OsStr,
+    _source: &HeldEntry,
+    destination_name: &OsStr,
+) -> Result<(), StoreError> {
+    use std::ffi::{CString, c_char, c_int, c_long, c_uint};
+    use std::os::fd::AsRawFd;
+    use std::os::unix::ffi::OsStrExt;
+
+    const SYS_RENAMEAT2: c_long = 316;
+    const REPLACE_EXISTING: c_uint = 0;
+    unsafe extern "C" {
+        fn syscall(number: c_long, ...) -> c_long;
+    }
+
+    let source_name = CString::new(source_name.as_bytes())
+        .map_err(|_| StoreError::Integrity("state replacement source contains NUL".to_owned()))?;
+    let destination_name = CString::new(destination_name.as_bytes()).map_err(|_| {
+        StoreError::Integrity("state replacement destination contains NUL".to_owned())
+    })?;
+    // SAFETY: the held directory and both component names remain live for the
+    // syscall. Both lookups are relative to the authenticated directory.
+    let result = unsafe {
+        syscall(
+            SYS_RENAMEAT2,
+            parent.file().as_raw_fd() as c_int,
+            source_name.as_ptr().cast::<c_char>(),
+            parent.file().as_raw_fd() as c_int,
+            destination_name.as_ptr().cast::<c_char>(),
+            REPLACE_EXISTING,
+        )
+    };
+    if result != 0 {
+        return Err(io_error(std::io::Error::last_os_error()));
+    }
+    Ok(())
+}
+
 #[cfg(windows)]
 #[allow(
     unsafe_code,
@@ -1042,6 +1107,43 @@ fn move_entry_noreplace_platform(
     source: &HeldEntry,
     destination_parent: &HeldEntry,
     destination_name: &OsStr,
+) -> Result<(), StoreError> {
+    move_entry_windows(
+        source,
+        destination_parent,
+        destination_name,
+        false,
+        "cache handle-bound move",
+    )
+}
+
+#[cfg(windows)]
+fn replace_entry_atomic_platform(
+    parent: &HeldEntry,
+    _source_name: &OsStr,
+    source: &HeldEntry,
+    destination_name: &OsStr,
+) -> Result<(), StoreError> {
+    move_entry_windows(
+        source,
+        parent,
+        destination_name,
+        true,
+        "state handle-bound replacement",
+    )
+}
+
+#[cfg(windows)]
+#[allow(
+    unsafe_code,
+    reason = "Windows requires NtSetInformationFile to bind replacement to the opened source and destination-parent handles"
+)]
+fn move_entry_windows(
+    source: &HeldEntry,
+    destination_parent: &HeldEntry,
+    destination_name: &OsStr,
+    replace_existing: bool,
+    label: &str,
 ) -> Result<(), StoreError> {
     use std::mem::{offset_of, size_of};
     use std::os::windows::ffi::OsStrExt;
@@ -1068,23 +1170,31 @@ fn move_entry_noreplace_platform(
     }
 
     const FILE_RENAME_INFORMATION: i32 = 10;
+    const FILE_RENAME_INFORMATION_EX: i32 = 65;
+    const FILE_RENAME_REPLACE_IF_EXISTS: u32 = 0x0000_0001;
+    const FILE_RENAME_POSIX_SEMANTICS: u32 = 0x0000_0002;
 
     let name = destination_name.encode_wide().collect::<Vec<_>>();
     let name_bytes = name
         .len()
         .checked_mul(size_of::<u16>())
         .and_then(|length| u32::try_from(length).ok())
-        .ok_or_else(|| StoreError::Integrity("cache move destination is too long".to_owned()))?;
+        .ok_or_else(|| StoreError::Integrity(format!("{label} destination is too long")))?;
     let bytes = offset_of!(FILE_RENAME_INFO, FileName)
         .checked_add(name.len() * size_of::<u16>())
-        .ok_or_else(|| StoreError::Integrity("cache move buffer overflow".to_owned()))?;
+        .ok_or_else(|| StoreError::Integrity(format!("{label} buffer overflow")))?;
     let words = bytes.div_ceil(size_of::<u64>());
     let mut buffer = vec![0_u64; words];
     let information = buffer.as_mut_ptr().cast::<FILE_RENAME_INFO>();
     // SAFETY: `buffer` is aligned by u64 and sized for the fixed header plus
     // the exact UTF-16 component payload. Both handles remain live for the call.
     unsafe {
-        (*information).Anonymous.ReplaceIfExists = false;
+        if replace_existing {
+            (*information).Anonymous.Flags =
+                FILE_RENAME_REPLACE_IF_EXISTS | FILE_RENAME_POSIX_SEMANTICS;
+        } else {
+            (*information).Anonymous.ReplaceIfExists = false;
+        }
         (*information).RootDirectory = destination_parent.file().as_raw_handle() as HANDLE;
         (*information).FileNameLength = name_bytes;
         std::ptr::copy_nonoverlapping(
@@ -1101,12 +1211,16 @@ fn move_entry_noreplace_platform(
             &mut io_status,
             information.cast(),
             u32::try_from(bytes)
-                .map_err(|_| StoreError::Integrity("cache move buffer exceeds u32".to_owned()))?,
-            FILE_RENAME_INFORMATION,
+                .map_err(|_| StoreError::Integrity(format!("{label} buffer exceeds u32")))?,
+            if replace_existing {
+                FILE_RENAME_INFORMATION_EX
+            } else {
+                FILE_RENAME_INFORMATION
+            },
         );
         if status < 0 {
             return Err(StoreError::Io(format!(
-                "cache handle-bound move failed with NTSTATUS 0x{:08x}",
+                "{label} failed with NTSTATUS 0x{:08x}",
                 status as u32
             )));
         }
@@ -1127,79 +1241,16 @@ fn move_entry_noreplace_platform(
     ))
 }
 
-#[cfg(target_os = "linux")]
-pub(crate) fn replace_file_atomic(replaced: &Path, replacement: &Path) -> Result<(), StoreError> {
-    std::fs::rename(replacement, replaced).map_err(io_error)
-}
-
-#[cfg(windows)]
-pub(crate) fn replace_file_atomic(replaced: &Path, replacement: &Path) -> Result<(), StoreError> {
-    use windows_sys::Win32::Storage::FileSystem::{
-        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
-    };
-
-    move_file_atomic(
-        replacement,
-        replaced,
-        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-    )
-}
-
-#[cfg(not(any(target_os = "linux", windows)))]
-pub(crate) fn replace_file_atomic(_replaced: &Path, _replacement: &Path) -> Result<(), StoreError> {
+#[cfg(not(any(all(target_os = "linux", target_arch = "x86_64"), windows)))]
+fn replace_entry_atomic_platform(
+    _parent: &HeldEntry,
+    _source_name: &OsStr,
+    _source: &HeldEntry,
+    _destination_name: &OsStr,
+) -> Result<(), StoreError> {
     Err(StoreError::Integrity(
-        "lifecycle store replacement supports Windows and Linux".to_owned(),
+        "state replacement supports Windows and Linux x64".to_owned(),
     ))
-}
-
-#[cfg(target_os = "linux")]
-pub(crate) fn publish_file_atomic(published: &Path, pending: &Path) -> Result<(), StoreError> {
-    std::fs::rename(pending, published).map_err(io_error)
-}
-
-#[cfg(windows)]
-pub(crate) fn publish_file_atomic(published: &Path, pending: &Path) -> Result<(), StoreError> {
-    use windows_sys::Win32::Storage::FileSystem::MOVEFILE_WRITE_THROUGH;
-
-    move_file_atomic(pending, published, MOVEFILE_WRITE_THROUGH)
-}
-
-#[cfg(not(any(target_os = "linux", windows)))]
-pub(crate) fn publish_file_atomic(_published: &Path, _pending: &Path) -> Result<(), StoreError> {
-    Err(StoreError::Integrity(
-        "lifecycle intent publication supports Windows and Linux".to_owned(),
-    ))
-}
-
-#[cfg_attr(
-    windows,
-    allow(
-        unsafe_code,
-        reason = "durable Windows publication and replacement require MoveFileExW"
-    )
-)]
-#[cfg(windows)]
-fn move_file_atomic(source: &Path, destination: &Path, flags: u32) -> Result<(), StoreError> {
-    use std::os::windows::ffi::OsStrExt;
-
-    use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
-
-    let source = source
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    let destination = destination
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    // SAFETY: both vectors are NUL-terminated and remain alive for the call.
-    let moved = unsafe { MoveFileExW(source.as_ptr(), destination.as_ptr(), flags) };
-    if moved == 0 {
-        return Err(io_error(std::io::Error::last_os_error()));
-    }
-    Ok(())
 }
 
 #[cfg_attr(
@@ -1369,6 +1420,39 @@ fn create_new_nofollow(_path: &Path) -> std::io::Result<File> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         "managed state no-follow initialization supports Windows and Linux",
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn create_new_movable_nofollow(path: &Path) -> std::io::Result<File> {
+    create_new_nofollow(path)
+}
+
+#[cfg(windows)]
+fn create_new_movable_nofollow(path: &Path) -> std::io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    use windows_sys::Win32::Foundation::{GENERIC_READ, GENERIC_WRITE};
+    use windows_sys::Win32::Storage::FileSystem::{
+        DELETE, FILE_FLAG_OPEN_REPARSE_POINT, FILE_FLAG_WRITE_THROUGH, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
+
+    OpenOptions::new()
+        .create_new(true)
+        .read(true)
+        .write(true)
+        .access_mode(GENERIC_READ | GENERIC_WRITE | DELETE)
+        .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_WRITE_THROUGH)
+        .open(path)
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+fn create_new_movable_nofollow(_path: &Path) -> std::io::Result<File> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "movable state publication supports Windows and Linux",
     ))
 }
 

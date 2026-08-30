@@ -2,7 +2,7 @@ use std::ffi::OsString;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
-use std::process::Stdio;
+use std::process::{Output, Stdio};
 
 use serde_json::Value;
 
@@ -72,11 +72,19 @@ fn run_os_with_stdin_and_env(
     } else {
         command.output()?
     };
+    finish_process_output(root, &effective_arguments, output)
+}
+
+pub(crate) fn finish_process_output(
+    root: &Path,
+    effective_arguments: &[OsString],
+    output: Output,
+) -> Result<ProcessResult, Box<dyn std::error::Error>> {
     let command_succeeded = output.status.success();
     let stdout = String::from_utf8(output.stdout)?;
     let stderr = String::from_utf8(output.stderr)?;
 
-    determinism::record_semantic_evidence(root, &effective_arguments, command_succeeded, &stdout)?;
+    determinism::record_semantic_evidence(root, effective_arguments, command_succeeded, &stdout)?;
 
     // Corpus child marker: after Command::output returns, if both env vars are
     // set, append the row ID + newline to the marker file.

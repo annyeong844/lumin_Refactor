@@ -1032,6 +1032,15 @@ pub fn state_entry_physical_identity_for_test(
     lumin_store::state_entry_physical_identity_for_test(path).map_err(Into::into)
 }
 
+#[cfg(feature = "namespace-test-crash")]
+pub fn current_logical_store_snapshot_for_test(root: &Path) -> Result<Vec<u8>, EngineError> {
+    let context = open_repository_context(root)?;
+    context
+        .store
+        .current_logical_snapshot_for_test()
+        .map_err(Into::into)
+}
+
 pub fn allocate_cache_cleanup_delivery(
     root: &Path,
     operation_id: &OperationId,

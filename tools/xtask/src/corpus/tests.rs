@@ -216,8 +216,8 @@ fn ci_row_shards_balance_declared_work_deterministically() {
             "unbalanced {mode} invocation loads: {loads:?}",
         );
         let expected = match mode {
-            CorpusMode::Standard => vec![45, 45, 45, 45],
-            CorpusMode::Determinism => vec![64, 26, 26, 26, 26, 25, 25, 25],
+            CorpusMode::Standard => vec![47, 47, 46, 46],
+            CorpusMode::Determinism => vec![64, 27, 27, 27, 26, 26, 26, 26],
             CorpusMode::StoreCrash => unreachable!("CI does not shard store-crash rows"),
         };
         assert_eq!(loads, expected, "{mode} shard assignment changed");
@@ -413,8 +413,103 @@ fn every_mapped_standard_row_has_a_paired_determinism_invocation() {
         .iter()
         .filter(|row| row.is_mapped(CorpusMode::Determinism))
         .count();
-    assert_eq!(standard, 76);
+    assert_eq!(standard, 78);
     assert_eq!(determinism, standard);
+}
+
+#[test]
+fn state_replacement_rows_use_the_reviewed_public_invocations() -> Result<(), String> {
+    let lock = REGISTRY
+        .iter()
+        .find(|row| row.id == "state-lock-replacement-split-brain")
+        .ok_or_else(|| "state-lock-replacement-split-brain row is missing".to_owned())?;
+    let lock_standard = lock.standard.unwrap_or_default();
+    assert_eq!(
+        lock_standard
+            .iter()
+            .map(|invocation| (invocation.target, invocation.filter, invocation.features))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                "state_namespace",
+                "public_process_rejects_lifecycle_lock_replacement",
+                FeatureSet::None,
+            ),
+            (
+                "state_namespace_replacement",
+                "lock_replacement_never_forms_two_accepted_guard_domains",
+                FeatureSet::LifecycleFault,
+            ),
+        ]
+    );
+    assert_eq!(
+        lock.determinism.unwrap_or_default().as_ptr(),
+        lock_standard.as_ptr()
+    );
+    assert_eq!(
+        lock.store_crash
+            .unwrap_or_default()
+            .iter()
+            .map(|invocation| (invocation.target, invocation.filter, invocation.features))
+            .collect::<Vec<_>>(),
+        vec![(
+            "state_namespace_replacement",
+            "lock_replacement_never_forms_two_accepted_guard_domains",
+            FeatureSet::LifecycleCrash,
+        )]
+    );
+
+    let parents = REGISTRY
+        .iter()
+        .find(|row| row.id == "state-managed-parent-replacement")
+        .ok_or_else(|| "state-managed-parent-replacement row is missing".to_owned())?;
+    let parent_standard = parents.standard.unwrap_or_default();
+    assert_eq!(
+        parent_standard
+            .iter()
+            .map(|invocation| (invocation.target, invocation.filter, invocation.features))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                "state_namespace",
+                "public_process_rejects_state_mount_crossing",
+                FeatureSet::None,
+            ),
+            (
+                "state_namespace",
+                "public_process_rejects_managed_parent_anchor_and_marker_replacement",
+                FeatureSet::None,
+            ),
+            (
+                "state_namespace",
+                "state_payload_aliases_never_enter_source_evidence_or_gate_writes",
+                FeatureSet::None,
+            ),
+            (
+                "state_namespace_replacement",
+                "managed_parent_replacement_stops_every_guarded_transition",
+                FeatureSet::LifecycleFault,
+            ),
+        ]
+    );
+    assert_eq!(
+        parents.determinism.unwrap_or_default().as_ptr(),
+        parent_standard.as_ptr()
+    );
+    assert_eq!(
+        parents
+            .store_crash
+            .unwrap_or_default()
+            .iter()
+            .map(|invocation| (invocation.target, invocation.filter, invocation.features))
+            .collect::<Vec<_>>(),
+        vec![(
+            "state_namespace_replacement",
+            "managed_parent_replacement_stops_every_guarded_transition",
+            FeatureSet::LifecycleCrash,
+        )]
+    );
+    Ok(())
 }
 
 #[test]

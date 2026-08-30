@@ -80,6 +80,14 @@ const CRASH_CORPUS_CASES: &[(&str, &str)] = &[
         "foundation --store-crash --row state-namespace-initialization",
     ),
     (
+        "state-lock-replacement-split-brain",
+        "foundation --store-crash --row state-lock-replacement-split-brain",
+    ),
+    (
+        "state-managed-parent-replacement",
+        "foundation --store-crash --row state-managed-parent-replacement",
+    ),
+    (
         "retention-crash-protocol",
         "foundation --store-crash --row retention-crash-protocol",
     ),
@@ -840,9 +848,9 @@ fn validate_corpus_job(jobs: &BTreeMap<String, String>, violations: &mut Vec<Str
         .iter()
         .filter(|line| line.starts_with("- os:"))
         .count()
-        != 25
+        != 29
     {
-        violations.push("corpus job must contain exactly 25 reviewed partitions".to_owned());
+        violations.push("corpus job must contain exactly 29 reviewed partitions".to_owned());
     }
     if lines.iter().any(|line| {
         *line == "exclude:"

@@ -281,7 +281,7 @@ impl OperationSession<'_> {
             if result.lifecycle == GateLifecycle::Active {
                 records::increment_active_gate_catalog(&write)?;
             }
-            guard.commit(write)?;
+            guard.commit_at_namespace_test_boundary(write)?;
             Ok(result)
         })
     }

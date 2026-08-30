@@ -485,6 +485,18 @@ jobs:
             name: state-namespace-initialization
             arguments: foundation --store-crash --row state-namespace-initialization
           - os: ubuntu-24.04
+            name: state-lock-replacement-split-brain
+            arguments: foundation --store-crash --row state-lock-replacement-split-brain
+          - os: windows-2022
+            name: state-lock-replacement-split-brain
+            arguments: foundation --store-crash --row state-lock-replacement-split-brain
+          - os: ubuntu-24.04
+            name: state-managed-parent-replacement
+            arguments: foundation --store-crash --row state-managed-parent-replacement
+          - os: windows-2022
+            name: state-managed-parent-replacement
+            arguments: foundation --store-crash --row state-managed-parent-replacement
+          - os: ubuntu-24.04
             name: crash-publication
             arguments: foundation --store-crash --row crash-publication
           - os: windows-2022

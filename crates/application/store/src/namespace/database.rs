@@ -28,6 +28,13 @@ pub(crate) struct StoreWriteTransaction<'database, 'guard> {
     database: &'database StoreDatabase<'guard>,
 }
 
+#[derive(Clone, Copy)]
+enum CommitTestBoundary {
+    None,
+    Gate,
+    Retention,
+}
+
 impl NamespaceGuard {
     pub(crate) fn open_database(&self) -> Result<StoreDatabase<'_>, StoreError> {
         self.validate_bound_entries()?;
@@ -67,6 +74,28 @@ impl NamespaceGuard {
         &self,
         transaction: StoreWriteTransaction<'_, '_>,
     ) -> Result<(), StoreError> {
+        self.commit_with_test_barrier(transaction, CommitTestBoundary::None)
+    }
+
+    pub(crate) fn commit_at_namespace_test_boundary(
+        &self,
+        transaction: StoreWriteTransaction<'_, '_>,
+    ) -> Result<(), StoreError> {
+        self.commit_with_test_barrier(transaction, CommitTestBoundary::Gate)
+    }
+
+    pub(crate) fn commit_at_retention_namespace_test_boundary(
+        &self,
+        transaction: StoreWriteTransaction<'_, '_>,
+    ) -> Result<(), StoreError> {
+        self.commit_with_test_barrier(transaction, CommitTestBoundary::Retention)
+    }
+
+    fn commit_with_test_barrier(
+        &self,
+        transaction: StoreWriteTransaction<'_, '_>,
+        test_boundary: CommitTestBoundary,
+    ) -> Result<(), StoreError> {
         let StoreWriteTransaction { write, database } = transaction;
         if !std::ptr::eq(self, database.guard) {
             return Err(StoreError::Integrity(
@@ -76,6 +105,16 @@ impl NamespaceGuard {
         self.validate_bound_entries()?;
         database.validate_current()?;
         refresh_validation_receipt_set_id(&write)?;
+        self.validate_bound_entries()?;
+        database.validate_current()?;
+        #[cfg(feature = "namespace-test-crash")]
+        match test_boundary {
+            CommitTestBoundary::None => {}
+            CommitTestBoundary::Gate => super::barrier::wait_before_store_commit()?,
+            CommitTestBoundary::Retention => super::barrier::wait_before_retention_commit()?,
+        }
+        #[cfg(not(feature = "namespace-test-crash"))]
+        let _ = test_boundary;
         write.commit().map_err(backend_error)?;
         self.validate_bound_entries()?;
         database.validate_current()?;

@@ -47,7 +47,7 @@ pub(super) fn commit_pruned(
     }
     write_committed_result(&write, &mut operation, &plan)?;
     next_sequence(&write, "retention-catalog")?;
-    guard.commit(write)?;
+    guard.commit_at_retention_namespace_test_boundary(write)?;
     Ok(plan)
 }
 

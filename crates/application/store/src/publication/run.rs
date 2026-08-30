@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -6,7 +7,7 @@ use lumin_model::{AttemptStatus, RunId, digest_hex};
 
 use super::{AttemptEnvelope, files, latest, liveness, run_id};
 use crate::namespace::{
-    EntryAccess, EntryKind, HeldEntry, NamespaceGuard, entry_exists, publish_file_atomic,
+    EntryAccess, EntryKind, HeldEntry, NamespaceGuard, entry_exists, move_entry_noreplace,
     records::ManagedStateParentKind,
 };
 use crate::{
@@ -223,34 +224,67 @@ fn publish_directory(
             parent.sync_directory()
         })
         .map_err(|error| publication_error("create staging directory", error))?;
-    let staging_entry = HeldEntry::open(
+    let staging_write_entry = HeldEntry::open(
         &staging,
         EntryKind::Directory,
         EntryAccess::ReadOnly,
         false,
         "run staging directory",
     )?;
-    files::require_parent_volume(&staging_entry, parent, "run staging directory")?;
-    let record = write_staging(&staging, &staging_entry, envelope, &run_id, evidence)
+    files::require_parent_volume(&staging_write_entry, parent, "run staging directory")?;
+    let record = write_staging(&staging, &staging_write_entry, envelope, &run_id, evidence)
         .map_err(|error| publication_error("write staging payload", error))?;
-    validate_directory(&staging, &staging_entry, &record)
+    validate_directory(&staging, &staging_write_entry, &record)
         .map_err(|error| publication_error("validate staging payload", error))?;
-    drop(staging_entry);
+    let staging_entry = HeldEntry::open(
+        &staging,
+        EntryKind::Directory,
+        EntryAccess::Move,
+        false,
+        "run staging directory before publication",
+    )?;
+    if staging_entry.identity() != staging_write_entry.identity() {
+        return Err(StoreError::Integrity(
+            "run staging directory changed before publication".to_owned(),
+        ));
+    }
+    files::require_parent_volume(&staging_entry, parent, "run staging directory")?;
+    drop(staging_write_entry);
 
     guard
         .mutate_for_generation(generation, || {
-            publish_file_atomic(&published, &staging)?;
-            parent.sync_directory()
+            validate_directory(&staging, &staging_entry, &record)
+                .map_err(|error| publication_error("revalidate staging payload", error))?;
+            guard.validate_bound_entries()?;
+            staging_entry.validate_path(
+                &staging,
+                EntryKind::Directory,
+                EntryAccess::Move,
+                false,
+                "run staging directory before publication",
+            )?;
+            #[cfg(feature = "namespace-test-crash")]
+            crate::namespace::barrier::wait_before_run_rename()?;
+            move_entry_noreplace(
+                parent,
+                staging.file_name().ok_or_else(|| {
+                    StoreError::Integrity("run staging path has no child name".to_owned())
+                })?,
+                &staging_entry,
+                parent,
+                OsStr::new(run_id.as_str()),
+            )?;
+            parent.sync_directory()?;
+            staging_entry.validate_path(
+                &published,
+                EntryKind::Directory,
+                EntryAccess::Move,
+                false,
+                "published run directory",
+            )
         })
         .map_err(|error| publication_error("rename staging directory", error))?;
-    let published_entry = guard
-        .open_managed_child_directory(
-            ManagedStateParentKind::Runs,
-            run_id.as_str(),
-            "published run directory",
-        )
-        .map_err(|error| publication_error("open published run directory", error))?;
-    validate_directory(&published, &published_entry, &record)
+    validate_directory(&published, &staging_entry, &record)
         .map_err(|error| publication_error("validate published run", error))?;
     Ok(record)
 }

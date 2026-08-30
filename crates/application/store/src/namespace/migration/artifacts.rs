@@ -239,6 +239,7 @@ pub(super) fn next_authorization_sequence(database: &Database) -> Result<u64, St
 }
 
 pub(super) fn append_root_authorization(
+    guard: &NamespaceGuard,
     database: &Database,
     authorization: &MigrationRootAuthorization,
 ) -> Result<(), StoreError> {
@@ -268,7 +269,11 @@ pub(super) fn append_root_authorization(
             .insert(key.as_str(), bytes.as_slice())
             .map_err(backend_error)?;
     }
-    write.commit().map_err(backend_error)
+    guard.validate_bound_entries()?;
+    #[cfg(feature = "namespace-test-crash")]
+    super::super::barrier::wait_before_migration_store_commit()?;
+    write.commit().map_err(backend_error)?;
+    guard.validate_bound_entries()
 }
 
 #[cfg(feature = "lifecycle-migration-test-fault")]

@@ -187,6 +187,11 @@ impl RepositoryStore {
     pub fn remove_cache_eviction_binding_for_test(&self) -> Result<(), StoreError> {
         self.namespace.remove_cache_eviction_binding_for_test()
     }
+
+    #[cfg(feature = "namespace-test-crash")]
+    pub fn current_logical_snapshot_for_test(&self) -> Result<Vec<u8>, StoreError> {
+        self.with_shared_lock(namespace::current_logical_snapshot_for_test)
+    }
 }
 
 #[cfg(any(test, feature = "lifecycle-migration-test-fault"))]

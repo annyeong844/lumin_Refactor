@@ -36,6 +36,11 @@ path = "tests/state_namespace_initialization.rs"
 required-features = ["lifecycle-test-fault"]
 
 [[test]]
+name = "state_namespace_replacement"
+path = "tests/state_namespace_replacement.rs"
+required-features = ["lifecycle-test-fault"]
+
+[[test]]
 name = "retention_faults"
 path = "tests/retention_faults.rs"
 required-features = ["retention-test-crash"]
