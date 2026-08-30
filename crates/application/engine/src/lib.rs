@@ -1,3 +1,4 @@
+mod analysis_cache;
 mod audit_publication;
 mod capability_query;
 mod extraction;
@@ -127,6 +128,8 @@ pub enum EngineError {
     ResolverDemandStalled(String),
     #[error("analysis extraction is unavailable after resolution completed")]
     ExtractionUnavailable,
+    #[error("analysis cache encoding failed: {0}")]
+    CacheEncoding(String),
     #[error("cache cleanup transport omitted its allocated delivery sequence")]
     CacheCleanupDeliverySequenceMissing,
     #[error("read-only transport retained a mutation delivery sequence")]
@@ -418,6 +421,31 @@ fn build_scan_invocation_tier(
 }
 
 impl RepositoryAnalysisSession {
+    fn analysis_cache_context(
+        &self,
+        owner_contract_version: &str,
+    ) -> Result<analysis_cache::AnalysisCacheContext, EngineError> {
+        analysis_cache::context(
+            &self.repository_root,
+            owner_contract_version,
+            &self.scan_invocation,
+            semantic_input_records(&self.inventory),
+            self.entry_selection_records(),
+        )
+    }
+
+    fn entry_selection_records(&self) -> Vec<EntrySelectionRecord> {
+        self.inventory
+            .entry_selections
+            .iter()
+            .map(|entry| EntrySelectionRecord {
+                path: RepoPathProjection::from(&entry.path),
+                source: entry.source,
+                unavailable_reason: entry.unavailable_reason,
+            })
+            .collect()
+    }
+
     fn start(
         root: &Path,
         repository_root: RepositoryRootIdentity,
@@ -704,16 +732,7 @@ impl RepositoryAnalysisSession {
         inferred_write_paths.dedup();
 
         // Build entry selection records from ALL inventory entries (available + unavailable)
-        let entry_selections: Vec<EntrySelectionRecord> = self
-            .inventory
-            .entry_selections
-            .iter()
-            .map(|entry| EntrySelectionRecord {
-                path: RepoPathProjection::from(&entry.path),
-                source: entry.source,
-                unavailable_reason: entry.unavailable_reason,
-            })
-            .collect();
+        let entry_selections = self.entry_selection_records();
 
         Ok(RepositoryCapture {
             snapshot: seal_analysis_snapshot(

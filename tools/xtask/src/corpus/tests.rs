@@ -216,8 +216,8 @@ fn ci_row_shards_balance_declared_work_deterministically() {
             "unbalanced {mode} invocation loads: {loads:?}",
         );
         let expected = match mode {
-            CorpusMode::Standard => vec![47, 47, 46, 46],
-            CorpusMode::Determinism => vec![64, 27, 27, 27, 26, 26, 26, 26],
+            CorpusMode::Standard => vec![47, 47, 47, 46],
+            CorpusMode::Determinism => vec![64, 27, 27, 27, 27, 26, 26, 26],
             CorpusMode::StoreCrash => unreachable!("CI does not shard store-crash rows"),
         };
         assert_eq!(loads, expected, "{mode} shard assignment changed");
@@ -413,8 +413,32 @@ fn every_mapped_standard_row_has_a_paired_determinism_invocation() {
         .iter()
         .filter(|row| row.is_mapped(CorpusMode::Determinism))
         .count();
-    assert_eq!(standard, 78);
+    assert_eq!(standard, 79);
     assert_eq!(determinism, standard);
+}
+
+#[test]
+fn warm_cache_row_uses_the_reviewed_public_invocation() -> Result<(), String> {
+    let row = REGISTRY
+        .iter()
+        .find(|row| row.id == "gate-semantic-read-closure-warm-cache")
+        .ok_or_else(|| "gate-semantic-read-closure-warm-cache row is missing".to_owned())?;
+    let expected = vec![(
+        "write_gate",
+        "semantic_demands::warm_cache_replays_owner_semantics",
+        FeatureSet::None,
+    )];
+    for invocations in [row.standard, row.determinism] {
+        assert_eq!(
+            invocations
+                .unwrap_or_default()
+                .iter()
+                .map(|invocation| (invocation.target, invocation.filter, invocation.features))
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+    Ok(())
 }
 
 #[test]

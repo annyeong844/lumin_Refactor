@@ -39,6 +39,8 @@ pub(super) struct LogicalStoreSnapshot {
     run_pins: BTreeMap<String, Vec<u8>>,
     cache_cleanup_operations: BTreeMap<String, Vec<u8>>,
     cache_eviction_authorizations: BTreeMap<String, Vec<u8>>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    analysis_cache_authorizations: BTreeMap<String, Vec<u8>>,
 }
 
 pub(super) struct LegacyStore {

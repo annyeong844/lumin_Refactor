@@ -5,7 +5,10 @@ use redb::{
     WriteTransaction,
 };
 
-use crate::cache::{CACHE_CLEANUP_OPERATIONS, CACHE_EVICTION_AUTHORIZATIONS};
+use crate::cache::{
+    ANALYSIS_CACHE_AUTHORIZATIONS, ANALYSIS_CACHE_AUTHORIZATIONS_TABLE_NAME,
+    CACHE_CLEANUP_OPERATIONS, CACHE_EVICTION_AUTHORIZATIONS,
+};
 use crate::gate::{GATES, OPERATIONS, TRANSITIONS, VALIDATION_RECEIPTS};
 use crate::retention::{RETENTION_OPERATIONS, RETENTION_PLANS, RETENTION_TOMBSTONES, RUN_PINS};
 use crate::{ATTEMPT_LEASES, POINTERS, RUN_CATALOG, SEQUENCES, StoreError, backend_error};
@@ -16,7 +19,8 @@ use super::super::super::store_header::{
 use super::LogicalStoreSnapshot;
 use super::validation::validate_referential_closure;
 
-const KNOWN_TABLES: [&str; 15] = [
+const KNOWN_TABLES: [&str; 16] = [
+    ANALYSIS_CACHE_AUTHORIZATIONS_TABLE_NAME,
     "attempt-leases",
     "cache-cleanup-operations",
     "cache-eviction-authorizations",
@@ -66,6 +70,7 @@ fn read_raw_snapshot(
         run_pins: read_bytes_table(read, RUN_PINS)?,
         cache_cleanup_operations: read_bytes_table(read, CACHE_CLEANUP_OPERATIONS)?,
         cache_eviction_authorizations: read_bytes_table(read, CACHE_EVICTION_AUTHORIZATIONS)?,
+        analysis_cache_authorizations: read_bytes_table(read, ANALYSIS_CACHE_AUTHORIZATIONS)?,
     };
     Ok(snapshot)
 }
@@ -97,6 +102,11 @@ pub(super) fn write_snapshot(
         CACHE_EVICTION_AUTHORIZATIONS,
         &snapshot.cache_eviction_authorizations,
     )?;
+    write_bytes_table(
+        &write,
+        ANALYSIS_CACHE_AUTHORIZATIONS,
+        &snapshot.analysis_cache_authorizations,
+    )?;
     refresh_validation_receipt_set_id(&write)?;
     write.commit().map_err(backend_error)
 }
@@ -117,7 +127,12 @@ fn validate_table_inventory(
     let mut unknown = observed.difference(&known).cloned().collect::<Vec<_>>();
     if allow_migration_control {
         unknown.retain(|name| name != "migration-root-authorizations");
+        if observed.contains(ANALYSIS_CACHE_AUTHORIZATIONS_TABLE_NAME) {
+            unknown.push(ANALYSIS_CACHE_AUTHORIZATIONS_TABLE_NAME.to_owned());
+        }
     }
+    unknown.sort();
+    unknown.dedup();
     if !unknown.is_empty() {
         return Err(StoreError::Integrity(format!(
             "lifecycle store contains unknown tables: {}",

@@ -1,3 +1,4 @@
+mod entries;
 mod manifest;
 
 #[cfg(feature = "cache-cleanup-test-fault")]
@@ -25,6 +26,7 @@ use lumin_model::{
     portable_path_component,
 };
 use redb::{TableDefinition, WriteTransaction};
+use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "cache-cleanup-test-fault")]
 use crate::gate::records::load_record_from_read;
@@ -46,9 +48,26 @@ pub(crate) const CACHE_CLEANUP_OPERATIONS: TableDefinition<&str, &[u8]> =
     TableDefinition::new("cache-cleanup-operations");
 pub(crate) const CACHE_EVICTION_AUTHORIZATIONS: TableDefinition<&str, &[u8]> =
     TableDefinition::new("cache-eviction-authorizations");
+pub(crate) const ANALYSIS_CACHE_AUTHORIZATIONS_TABLE_NAME: &str = "analysis-cache-authorizations";
+pub(crate) const ANALYSIS_CACHE_AUTHORIZATIONS: TableDefinition<&str, &[u8]> =
+    TableDefinition::new(ANALYSIS_CACHE_AUTHORIZATIONS_TABLE_NAME);
 
 const CACHE_CLEANUP_OPERATION_SCHEMA: &str = "lumin-cache-cleanup-operation.v2";
 const CACHE_EVICTION_AUTHORIZATION_SCHEMA: &str = "lumin-cache-eviction-authorization.v1";
+const ANALYSIS_CACHE_AUTHORIZATION_SCHEMA: &str = "lumin-analysis-cache-authorization.v1";
+const ANALYSIS_CACHE_PREFIX: &str = "analysis-step-";
+const ANALYSIS_CACHE_SUFFIX: &str = ".json";
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct AnalysisCacheAuthorization {
+    pub(crate) schema_version: String,
+    pub(crate) repository_id: RepositoryId,
+    pub(crate) supplied_input_key: String,
+    pub(crate) entry_name: String,
+    pub(crate) payload_sha256: String,
+    pub(crate) byte_length: u64,
+}
 
 impl RepositoryStore {
     #[cfg(any(test, feature = "lifecycle-migration-test-fault"))]
@@ -641,6 +660,7 @@ impl RepositoryStore {
                 write_record(&write, CACHE_EVICTION_AUTHORIZATIONS, &key, &authorization)?;
                 keys.push(key);
             }
+            entries::clear_analysis_cache_authorizations(&write, guard.repository_id())?;
             operation.authorization_keys = keys;
             operation.plan_initialized = true;
             validate_operation_shape(&operation)?;
@@ -1209,6 +1229,40 @@ pub(crate) fn validate_operation_shape(
         )));
     }
     Ok(())
+}
+
+pub(crate) fn analysis_cache_candidate_name(
+    supplied_input_key: &str,
+    payload_sha256: &str,
+) -> String {
+    format!("{ANALYSIS_CACHE_PREFIX}{supplied_input_key}-{payload_sha256}{ANALYSIS_CACHE_SUFFIX}")
+}
+
+pub(crate) fn validate_analysis_cache_authorization(
+    key: &str,
+    authorization: &AnalysisCacheAuthorization,
+    repository_id: Option<&RepositoryId>,
+) -> Result<(), StoreError> {
+    let expected_name = analysis_cache_candidate_name(
+        &authorization.supplied_input_key,
+        &authorization.payload_sha256,
+    );
+    if authorization.schema_version != ANALYSIS_CACHE_AUTHORIZATION_SCHEMA
+        || authorization.entry_name != key
+        || authorization.entry_name != expected_name
+        || !is_canonical_sha256(&authorization.supplied_input_key)
+        || !is_canonical_sha256(&authorization.payload_sha256)
+        || repository_id.is_some_and(|expected| expected != &authorization.repository_id)
+    {
+        return Err(StoreError::Integrity(format!(
+            "analysis cache authorization is incoherent: {key}"
+        )));
+    }
+    Ok(())
+}
+
+fn is_canonical_sha256(value: &str) -> bool {
+    value.len() == 64 && is_lower_hex(value)
 }
 
 fn is_lower_hex(value: &str) -> bool {

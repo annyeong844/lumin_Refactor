@@ -21,7 +21,7 @@ use lumin_store::{
 
 use super::{
     EngineError, RepositoryAnalysisSession, RepositoryAnalysisStep, RepositoryCapture,
-    RepositoryContext, open_repository_context, repository_context_from_admission,
+    RepositoryContext, analysis_cache, open_repository_context, repository_context_from_admission,
     reserved_state_identity_lookup,
 };
 
@@ -313,6 +313,19 @@ fn wait_at_capture_freshness_barrier(
     )
 }
 
+fn wait_at_analysis_cache_replay_barrier(
+    stage: &str,
+    operation_id: &OperationId,
+    gate_id: &GateId,
+) -> Result<(), EngineError> {
+    wait_at_gate_test_barrier(
+        "LUMIN_TEST_GATE_CACHE_REPLAY_BARRIER",
+        stage,
+        operation_id,
+        gate_id,
+    )
+}
+
 fn wait_at_post_write_capture_barrier(
     operation_id: &OperationId,
     gate_id: &GateId,
@@ -486,14 +499,21 @@ fn analyze_pre_write(
         resolution_profile: request.resolution_profile,
         scan_invocation: build_gate_scan_invocation_tier(request),
     };
+    let analysis_contract = analysis_contract_id();
     let inventory_request = inventory_request_from_tier(&options.scan_invocation)?;
     let reserved_state_lookup = reserved_state_identity_lookup(&context.store);
     let capture = match capture_reserved_repository(
-        &context.root,
-        &context.repository_root,
-        &options,
-        &inventory_request,
-        &reserved_state_lookup,
+        ReservedCaptureContext {
+            store: &context.store,
+            operation_id: &request.operation_id,
+            gate_id,
+            root: &context.root,
+            repository_root: &context.repository_root,
+            options: &options,
+            owner_contract_version: &analysis_contract,
+            inventory_request: &inventory_request,
+            reserved_state_lookup: &reserved_state_lookup,
+        },
         |paths| {
             operation
                 .reserve_pre_write_semantic_inputs(request_digest, gate_id, paths)
@@ -566,7 +586,7 @@ fn analyze_pre_write(
         reserved_state_lookup,
     };
     let baseline = GateBaselineDraft {
-        analysis_contract: analysis_contract_id(),
+        analysis_contract,
         snapshot: capture.snapshot,
         protected_semantic_inputs,
         transition_sequence,
@@ -601,7 +621,8 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         .baseline
         .as_ref()
         .ok_or_else(|| EngineError::GateBaselineMissing(request.gate_id.as_str().to_owned()))?;
-    if baseline.analysis_contract != analysis_contract_id() {
+    let analysis_contract = analysis_contract_id();
+    if baseline.analysis_contract != analysis_contract {
         return finish_failed_close(
             &operation,
             request,
@@ -695,11 +716,17 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
     wait_at_post_write_capture_barrier(&request.operation_id, &request.gate_id)?;
     let reserved_state_lookup = reserved_state_identity_lookup(&context.store);
     let (capture, reserved_semantic_bindings) = match capture_reserved_repository(
-        &context.root,
-        &context.repository_root,
-        &gate.analysis_options,
-        &inventory_request,
-        &reserved_state_lookup,
+        ReservedCaptureContext {
+            store: &context.store,
+            operation_id: &request.operation_id,
+            gate_id: &request.gate_id,
+            root: &context.root,
+            repository_root: &context.repository_root,
+            options: &gate.analysis_options,
+            owner_contract_version: &analysis_contract,
+            inventory_request: &inventory_request,
+            reserved_state_lookup: &reserved_state_lookup,
+        },
         |paths| {
             operation
                 .reserve_post_write_semantic_inputs(&request_digest, &request.gate_id, paths)
@@ -1140,17 +1167,36 @@ struct ReservedCaptureFailure {
     attempted_semantic_bindings: Vec<(RepoPath, SemanticReadReservationBinding)>,
 }
 
+struct ReservedCaptureContext<'a> {
+    store: &'a lumin_store::RepositoryStore,
+    operation_id: &'a OperationId,
+    gate_id: &'a GateId,
+    root: &'a Path,
+    repository_root: &'a RepositoryRootIdentity,
+    options: &'a GateAnalysisOptions,
+    owner_contract_version: &'a str,
+    inventory_request: &'a InventoryRequest,
+    reserved_state_lookup: &'a lumin_inventory::ReservedStateIdentityLookup,
+}
+
 fn capture_reserved_repository(
-    root: &Path,
-    repository_root: &RepositoryRootIdentity,
-    options: &GateAnalysisOptions,
-    inventory_request: &InventoryRequest,
-    reserved_state_lookup: &lumin_inventory::ReservedStateIdentityLookup,
+    context: ReservedCaptureContext<'_>,
     mut reserve: impl FnMut(
         &[SemanticReadReservationBinding],
     ) -> Result<SemanticReadReservation, EngineError>,
     mut before_freshness: impl FnMut() -> Result<(), EngineError>,
 ) -> Result<ReservedCapture, ReservedCaptureFailure> {
+    let ReservedCaptureContext {
+        store,
+        operation_id,
+        gate_id,
+        root,
+        repository_root,
+        options,
+        owner_contract_version,
+        inventory_request,
+        reserved_state_lookup,
+    } = context;
     let mut reserved_semantic_bindings = Vec::new();
     let result = (|| -> Result<ReservedCapture, EngineError> {
         let dependency_candidates = lumin_inventory::dependency_owner_candidate_paths(
@@ -1187,9 +1233,55 @@ fn capture_reserved_repository(
             options.scan_invocation.clone(),
             reserved_state_lookup.clone(),
         )?;
-        loop {
+        let mut capture = loop {
+            let cache_context = session.analysis_cache_context(owner_contract_version)?;
+            if let Some(replayed) = analysis_cache::load(
+                store,
+                &cache_context,
+                owner_contract_version,
+                &session.scan_invocation,
+            )? {
+                match replayed {
+                    analysis_cache::ReplayedAnalysisStep::NeedsInputs(demands) => {
+                        wait_at_analysis_cache_replay_barrier(
+                            "cache-demand-hit",
+                            operation_id,
+                            gate_id,
+                        )?;
+                        let demands = session.pending_demands(demands)?;
+                        let paths = demands
+                            .iter()
+                            .map(|demand| demand.path.clone())
+                            .collect::<Vec<_>>();
+                        if let Some(outcome) = reserve_semantic_paths(
+                            root,
+                            &paths,
+                            &mut reserved_semantic_bindings,
+                            &mut reserve,
+                        )? {
+                            return Ok(outcome);
+                        }
+                        session.capture_demands(root, demands)?;
+                        continue;
+                    }
+                    analysis_cache::ReplayedAnalysisStep::Finished(capture) => {
+                        wait_at_analysis_cache_replay_barrier(
+                            "cache-finished-hit",
+                            operation_id,
+                            gate_id,
+                        )?;
+                        break *capture;
+                    }
+                }
+            }
             match session.next_step(options.resolution_profile)? {
                 RepositoryAnalysisStep::NeedsInputs(demands) => {
+                    analysis_cache::store_demands(
+                        store,
+                        &cache_context,
+                        owner_contract_version,
+                        &demands,
+                    )?;
                     let paths = demands
                         .iter()
                         .map(|demand| demand.path.clone())
@@ -1205,33 +1297,38 @@ fn capture_reserved_repository(
                     session.capture_demands(root, demands)?;
                 }
                 RepositoryAnalysisStep::Finished(resolver) => {
-                    let mut capture = session.finish(resolver)?;
-                    include_dependency_candidate_topology_inputs(
-                        &mut capture,
-                        &reserved_semantic_bindings[..dependency_candidate_binding_count],
-                    );
-                    before_freshness()?;
-                    let stale = stale_reserved_semantic_paths(
-                        root,
-                        &reserved_semantic_bindings,
-                        &capture.snapshot.inputs,
-                        reserved_state_lookup,
+                    let capture = session.finish(resolver)?;
+                    analysis_cache::store_finished(
+                        store,
+                        &cache_context,
+                        owner_contract_version,
+                        &capture,
                     )?;
-                    if !stale.is_empty() {
-                        return Ok(ReservedCapture::Blocked {
-                            signal: GateSignal::ProtectedInputChanged { paths: stale },
-                            attempted_semantic_bindings: std::mem::take(
-                                &mut reserved_semantic_bindings,
-                            ),
-                        });
-                    }
-                    return Ok(ReservedCapture::Finished {
-                        capture: Box::new(capture),
-                        reserved_semantic_bindings: std::mem::take(&mut reserved_semantic_bindings),
-                    });
+                    break capture;
                 }
             }
+        };
+        include_dependency_candidate_topology_inputs(
+            &mut capture,
+            &reserved_semantic_bindings[..dependency_candidate_binding_count],
+        );
+        before_freshness()?;
+        let stale = stale_reserved_semantic_paths(
+            root,
+            &reserved_semantic_bindings,
+            &capture.snapshot.inputs,
+            reserved_state_lookup,
+        )?;
+        if !stale.is_empty() {
+            return Ok(ReservedCapture::Blocked {
+                signal: GateSignal::ProtectedInputChanged { paths: stale },
+                attempted_semantic_bindings: std::mem::take(&mut reserved_semantic_bindings),
+            });
         }
+        Ok(ReservedCapture::Finished {
+            capture: Box::new(capture),
+            reserved_semantic_bindings: std::mem::take(&mut reserved_semantic_bindings),
+        })
     })();
     result.map_err(|error| ReservedCaptureFailure {
         error,

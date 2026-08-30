@@ -3346,6 +3346,7 @@ mod tests {
             run_pins: BTreeMap::new(),
             cache_cleanup_operations: BTreeMap::new(),
             cache_eviction_authorizations: BTreeMap::new(),
+            analysis_cache_authorizations: BTreeMap::new(),
         }
     }
 
