@@ -89,7 +89,7 @@ fn validate_referential_closure_with_mode(
     validate_sequence_key_set(snapshot)?;
     let (transitions, transition_sequences) = read_transitions(snapshot)?;
     let validation_receipts = read_validation_receipts(snapshot)?;
-    let operations = read_operations(snapshot)?;
+    let operations = read_operations(snapshot, authenticate_legacy_evidence)?;
     let gates = read_gates(
         snapshot,
         &operations,
@@ -464,6 +464,7 @@ fn read_validation_receipts(
 
 fn read_operations(
     snapshot: &LogicalStoreSnapshot,
+    authenticate_legacy_evidence: bool,
 ) -> Result<BTreeMap<&str, OperationRecord>, StoreError> {
     let mut operations = BTreeMap::new();
     for (key, bytes) in &snapshot.operations {
@@ -479,7 +480,7 @@ fn read_operations(
                 "operation key {key} disagrees with its record"
             )));
         }
-        validate_operation_result(&operation)?;
+        validate_operation_result(&operation, authenticate_legacy_evidence)?;
         operations.insert(key.as_str(), operation);
     }
     Ok(operations)
@@ -2838,7 +2839,10 @@ fn validate_run_catalog(snapshot: &LogicalStoreSnapshot) -> Result<(), StoreErro
     validate_allocator_sequence(snapshot, "run-catalog", minimum)
 }
 
-fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreError> {
+fn validate_operation_result(
+    operation: &OperationRecord,
+    authenticate_legacy_evidence: bool,
+) -> Result<(), StoreError> {
     if operation.kind != GateOperationKind::GateAbandon && operation.reason.is_some() {
         return Err(StoreError::Integrity(format!(
             "non-administrative operation {} retained a reason",
@@ -2874,9 +2878,10 @@ fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreErr
                 operation.operation_id.as_str()
             ))
         })?;
-        validate_pre_write_analysis_options(operation, options)?;
-        let expected =
-            pre_write_request_digest(&operation.declared_write_set, &options.scan_invocation);
+        validate_pre_write_analysis_options(operation, options, authenticate_legacy_evidence)?;
+        let request_invocation =
+            pre_write_request_invocation(operation, options, authenticate_legacy_evidence)?;
+        let expected = pre_write_request_digest(&operation.declared_write_set, &request_invocation);
         if operation.request_digest != expected {
             return Err(StoreError::Integrity(format!(
                 "pre-write operation {} disagrees with its authenticated request",
@@ -3073,6 +3078,7 @@ fn validate_pending_operation_state(operation: &OperationRecord) -> Result<(), S
 fn validate_pre_write_analysis_options(
     operation: &OperationRecord,
     options: &lumin_evidence::GateAnalysisOptions,
+    authenticate_legacy_evidence: bool,
 ) -> Result<(), StoreError> {
     if options.jobs == 0 {
         return Err(StoreError::Integrity(format!(
@@ -3090,19 +3096,23 @@ fn validate_pre_write_analysis_options(
         &format!("pre-write operation {}", operation.operation_id.as_str()),
         &options.scan_invocation,
     )?;
+    validate_declared_path_inspection(operation)?;
     validate_capability_intent_domain(
         &format!("pre-write operation {}", operation.operation_id.as_str()),
         &operation.declared_write_set,
+        &operation.pre_write_declared_path_inspection,
         &options.scan_invocation,
+        !authenticate_legacy_evidence,
     )?;
-    validate_declared_path_inspection(operation)?;
     Ok(())
 }
 
 fn validate_capability_intent_domain(
     owner: &str,
     declared_write_set: &[lumin_evidence::RepoPathProjection],
+    declared_path_inspection: &[lumin_evidence::PreWriteDeclaredPathInspection],
     invocation: &lumin_evidence::ScanInvocationTier,
+    include_directory_domains: bool,
 ) -> Result<(), StoreError> {
     if let Some(intent) = invocation.capability_intents.iter().find(|intent| {
         !declared_write_set
@@ -3115,23 +3125,11 @@ fn validate_capability_intent_domain(
         )));
     }
 
-    let mut expected_rust = declared_write_set
-        .iter()
-        .filter_map(|projection| {
-            RepoPath::from_canonical_bytes(&projection.canonical)
-                .ok()
-                .filter(|path| {
-                    path.file_name_portable()
-                        .is_some_and(|name| name.ends_with(".rs"))
-                })
-                .map(|_| CapabilityIntentRecord {
-                    path: projection.clone(),
-                    capability: CapabilityIntentKind::Rust,
-                })
-        })
-        .collect::<Vec<_>>();
-    expected_rust.sort();
-    expected_rust.dedup();
+    let expected_rust = inferred_rust_capability_intents(
+        declared_write_set,
+        declared_path_inspection,
+        include_directory_domains,
+    )?;
     let observed_rust = invocation
         .capability_intents
         .iter()
@@ -3144,6 +3142,86 @@ fn validate_capability_intent_domain(
         )));
     }
     Ok(())
+}
+
+fn inferred_rust_capability_intents(
+    declared_write_set: &[lumin_evidence::RepoPathProjection],
+    declared_path_inspection: &[lumin_evidence::PreWriteDeclaredPathInspection],
+    include_directory_domains: bool,
+) -> Result<Vec<CapabilityIntentRecord>, StoreError> {
+    let mut intents = Vec::new();
+    for projection in declared_write_set {
+        let path = RepoPath::from_canonical_bytes(&projection.canonical).map_err(|error| {
+            StoreError::Integrity(format!(
+                "declared write path {} is invalid: {error}",
+                projection.display
+            ))
+        })?;
+        if path
+            .file_name_portable()
+            .is_some_and(|name| name.ends_with(".rs"))
+        {
+            intents.push(CapabilityIntentRecord {
+                path: projection.clone(),
+                capability: CapabilityIntentKind::Rust,
+            });
+        }
+    }
+    if include_directory_domains {
+        intents.extend(
+            declared_path_inspection
+                .iter()
+                .filter(|inspection| {
+                    inspection
+                        .lease
+                        .as_ref()
+                        .is_some_and(|lease| lease.kind == WriteLeaseKind::Directory)
+                })
+                .map(|inspection| CapabilityIntentRecord {
+                    path: inspection.path.clone(),
+                    capability: CapabilityIntentKind::Rust,
+                }),
+        );
+    }
+    intents.sort();
+    intents.dedup();
+    Ok(intents)
+}
+
+fn pre_write_request_invocation(
+    operation: &OperationRecord,
+    options: &lumin_evidence::GateAnalysisOptions,
+    authenticate_legacy_evidence: bool,
+) -> Result<lumin_evidence::ScanInvocationTier, StoreError> {
+    let mut invocation = options.scan_invocation.clone();
+    if authenticate_legacy_evidence {
+        return Ok(invocation);
+    }
+    let direct_rust_paths = inferred_rust_capability_intents(
+        &operation.declared_write_set,
+        &operation.pre_write_declared_path_inspection,
+        false,
+    )?
+    .into_iter()
+    .map(|intent| intent.path)
+    .collect::<BTreeSet<_>>();
+    let directory_paths = operation
+        .pre_write_declared_path_inspection
+        .iter()
+        .filter(|inspection| {
+            inspection
+                .lease
+                .as_ref()
+                .is_some_and(|lease| lease.kind == WriteLeaseKind::Directory)
+        })
+        .map(|inspection| inspection.path.clone())
+        .collect::<BTreeSet<_>>();
+    invocation.capability_intents.retain(|intent| {
+        intent.capability != CapabilityIntentKind::Rust
+            || !directory_paths.contains(&intent.path)
+            || direct_rust_paths.contains(&intent.path)
+    });
+    Ok(invocation)
 }
 
 fn validate_declared_path_inspection(
@@ -3463,10 +3541,44 @@ mod tests {
                 &RepoPath::from_portable(value)?,
             ))
         };
+        let directory = projection("src")?;
         let main = projection("src/main.ts")?;
         let rust = projection("src/lib.rs")?;
-        let declared = vec![main.clone(), rust.clone()];
+        let mut declared = vec![directory.clone(), main.clone(), rust.clone()];
+        declared.sort();
+        let inspection = vec![lumin_evidence::PreWriteDeclaredPathInspection {
+            path: directory.clone(),
+            lease: Some(lumin_evidence::WriteLease {
+                path: directory.clone(),
+                kind: WriteLeaseKind::Directory,
+                physical_identity: None,
+                nearest_existing_parent: None,
+                prefix_identities: Vec::new(),
+            }),
+            rejection: None,
+        }];
         let valid = ScanInvocationTier {
+            capability_intents: vec![
+                CapabilityIntentRecord {
+                    path: directory,
+                    capability: CapabilityIntentKind::Rust,
+                },
+                CapabilityIntentRecord {
+                    path: rust.clone(),
+                    capability: CapabilityIntentKind::Rust,
+                },
+                CapabilityIntentRecord {
+                    path: main.clone(),
+                    capability: CapabilityIntentKind::Shape,
+                },
+            ],
+            ..Default::default()
+        };
+        assert!(
+            validate_capability_intent_domain("test", &declared, &inspection, &valid, true).is_ok()
+        );
+
+        let missing_inferred = ScanInvocationTier {
             capability_intents: vec![
                 CapabilityIntentRecord {
                     path: rust.clone(),
@@ -3479,16 +3591,26 @@ mod tests {
             ],
             ..Default::default()
         };
-        assert!(validate_capability_intent_domain("test", &declared, &valid).is_ok());
-
-        let missing_inferred = ScanInvocationTier {
-            capability_intents: vec![CapabilityIntentRecord {
-                path: main.clone(),
-                capability: CapabilityIntentKind::Shape,
-            }],
-            ..Default::default()
-        };
-        assert!(validate_capability_intent_domain("test", &declared, &missing_inferred).is_err());
+        assert!(
+            validate_capability_intent_domain(
+                "test",
+                &declared,
+                &inspection,
+                &missing_inferred,
+                true,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_capability_intent_domain(
+                "test",
+                &declared,
+                &inspection,
+                &missing_inferred,
+                false,
+            )
+            .is_ok()
+        );
 
         let outside = ScanInvocationTier {
             capability_intents: vec![
@@ -3503,7 +3625,10 @@ mod tests {
             ],
             ..Default::default()
         };
-        assert!(validate_capability_intent_domain("test", &declared, &outside).is_err());
+        assert!(
+            validate_capability_intent_domain("test", &declared, &inspection, &outside, true)
+                .is_err()
+        );
         Ok(())
     }
 

@@ -216,8 +216,8 @@ fn ci_row_shards_balance_declared_work_deterministically() {
             "unbalanced {mode} invocation loads: {loads:?}",
         );
         let expected = match mode {
-            CorpusMode::Standard => vec![48, 48, 47, 47],
-            CorpusMode::Determinism => vec![64, 27, 27, 27, 27, 27, 27, 27],
+            CorpusMode::Standard => vec![48, 48, 48, 47],
+            CorpusMode::Determinism => vec![64, 28, 27, 27, 27, 27, 27, 27],
             CorpusMode::StoreCrash => unreachable!("CI does not shard store-crash rows"),
         };
         assert_eq!(loads, expected, "{mode} shard assignment changed");
@@ -475,6 +475,11 @@ fn capability_availability_row_uses_the_reviewed_public_invocations() -> Result<
         (
             "capability_availability_authority",
             "capability_unavailability_has_one_owner",
+            FeatureSet::None,
+        ),
+        (
+            "capability_availability_authority",
+            "directory_write_domain_requires_the_unavailable_rust_owner",
             FeatureSet::None,
         ),
         (

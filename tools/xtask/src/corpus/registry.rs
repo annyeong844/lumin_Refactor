@@ -88,6 +88,7 @@ static INV_CACHE_GATE_CONTEXT: &[CorpusInvocation] = &[
 #[rustfmt::skip]
 static INV_CAPABILITY_AVAILABILITY: &[CorpusInvocation] = &[
     inv!("capability_availability_authority", "capability_unavailability_has_one_owner"),
+    inv!("capability_availability_authority", "directory_write_domain_requires_the_unavailable_rust_owner"),
     inv!("capability_availability_authority", "capability_intent_syntax_is_closed_before_state_initialization"),
 ];
 #[rustfmt::skip]

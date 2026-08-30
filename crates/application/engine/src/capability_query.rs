@@ -5,7 +5,7 @@ use lumin_evidence::{
     AnalysisSnapshot, CapabilityIntentRecord, CapabilityRecord, CollectionOrderingId,
     DEAD_CODE_CAPABILITY_ID, DEPENDENCY_OWNERSHIP_CAPABILITY_ID, EvidencePage, EvidenceQuery,
     EvidenceQueryScope, GateSignal, RepoPathProjection, RunEvidence, SemanticInputRecord,
-    SemanticInputState, seal_analysis_snapshot,
+    SemanticInputState, WriteLease, WriteLeaseKind, seal_analysis_snapshot,
 };
 use lumin_model::{
     BuildIdentity, CapabilityIntent, CapabilityIntentKind, CapabilityState, Limitation,
@@ -22,6 +22,7 @@ const RUN_CAPABILITIES_PATH: &str = "run/capabilities";
 pub(crate) fn normalized_gate_capability_intents(
     declared_paths: &[RepoPath],
     explicit_intents: &[CapabilityIntent],
+    declared_leases: &[WriteLease],
 ) -> Vec<CapabilityIntentRecord> {
     let mut intents = explicit_intents
         .iter()
@@ -39,6 +40,15 @@ pub(crate) fn normalized_gate_capability_intents(
             })
             .map(|path| CapabilityIntentRecord {
                 path: path.into(),
+                capability: CapabilityIntentKind::Rust,
+            }),
+    );
+    intents.extend(
+        declared_leases
+            .iter()
+            .filter(|lease| lease.kind == WriteLeaseKind::Directory)
+            .map(|lease| CapabilityIntentRecord {
+                path: lease.path.clone(),
                 capability: CapabilityIntentKind::Rust,
             }),
     );

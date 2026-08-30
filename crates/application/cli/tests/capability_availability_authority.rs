@@ -135,6 +135,76 @@ fn capability_unavailability_has_one_owner() -> Result<(), Box<dyn std::error::E
 }
 
 #[test]
+fn directory_write_domain_requires_the_unavailable_rust_owner()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "src/main.ts",
+        "export const supported = true;\n",
+    )?;
+    let arguments = [
+        "pre-write",
+        "--operation-id",
+        "op-directory-rust-unavailable",
+        "--path",
+        "src",
+        "--jobs",
+        "1",
+    ];
+    let opened = run(root.path(), &arguments)?;
+    assert_status(&opened, 4);
+    assert!(opened.stderr.is_empty());
+    let opened_json: Value = serde_json::from_str(&opened.stdout)?;
+    assert_eq!(
+        opened_json.get("decision").and_then(Value::as_str),
+        Some("incomplete")
+    );
+    assert_eq!(
+        opened_json.get("lifecycle").and_then(Value::as_str),
+        Some("rejected")
+    );
+    assert_eq!(
+        opened_json
+            .pointer("/signals/0/kind")
+            .and_then(Value::as_str),
+        Some("required-owner-unavailable")
+    );
+    assert_eq!(
+        opened_json
+            .pointer("/signals/0/count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+
+    let replay = run(root.path(), &arguments)?;
+    assert_status(&replay, 4);
+    assert_eq!(replay.stdout, opened.stdout);
+
+    let gate_id = GateId::from_string(field(&opened.stdout, "gateId")?);
+    let gate = lumin_engine::load_gate(root.path(), &gate_id)?;
+    let baseline = gate
+        .baseline
+        .as_ref()
+        .ok_or_else(|| std::io::Error::other("directory gate omitted its baseline"))?;
+    assert_eq!(
+        baseline.snapshot.scan_invocation.capability_intents.len(),
+        1
+    );
+    let intent = &baseline.snapshot.scan_invocation.capability_intents[0];
+    assert_eq!(intent.capability, CapabilityIntentKind::Rust);
+    assert_eq!(intent.path.display, "src");
+    assert_eq!(
+        baseline.snapshot.evidence.limitations,
+        vec![Limitation::CapabilityUnavailable {
+            capability: CapabilityIntentKind::Rust,
+            targets: vec![LogicalSourceId::from_path(&RepoPath::from_portable("src")?)],
+        }]
+    );
+    Ok(())
+}
+
+#[test]
 fn capability_intent_syntax_is_closed_before_state_initialization()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;

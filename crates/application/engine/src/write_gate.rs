@@ -123,12 +123,7 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         .map(RepoPathProjection::from)
         .collect::<Vec<_>>();
     // Build the exact tier from the request
-    let scan_invocation = build_gate_scan_invocation_tier(request);
-    let analysis_options = GateAnalysisOptions {
-        jobs: request.jobs,
-        resolution_profile: request.resolution_profile,
-        scan_invocation: scan_invocation.clone(),
-    };
+    let scan_invocation = build_gate_scan_invocation_tier(request, &[]);
     let request_digest = pre_write_request_digest(&declared_write_set, &scan_invocation);
     let admission = lumin_inventory::repository_admission(&request.root)?;
     let store = match lumin_store::RepositoryStore::open_if_bound(
@@ -176,6 +171,11 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
     )?;
     let unavailable_targets = gate_capability_target_paths(&scan_invocation.capability_intents)?;
     let inspection = inspect_declared_paths(&context.root, &paths, &unavailable_targets);
+    let analysis_options = GateAnalysisOptions {
+        jobs: request.jobs,
+        resolution_profile: request.resolution_profile,
+        scan_invocation: build_gate_scan_invocation_tier(request, &inspection.leases),
+    };
     let admission_observation_seed = BaselineObservationSeed {
         declared_write_set: declared_write_set.clone(),
         leased_write_set: inspection.leases.clone(),
@@ -185,19 +185,21 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         evidence_payload_sha256: None,
     };
     let operation = context.store.begin_operation(&request.operation_id)?;
-    let (gate_id, transition_sequence) = match operation.reserve_pre_write_with_inspection(
-        &request_digest,
-        &declared_write_set,
-        &inspection.leases,
-        &inspection.evidence,
-        &analysis_options,
-        |signals| unsealed_pre_write_observation_binding(&admission_observation_seed, signals),
-    )? {
+    let (gate_id, transition_sequence, analysis_options) = match operation
+        .reserve_pre_write_with_inspection(
+            &request_digest,
+            &declared_write_set,
+            &inspection.leases,
+            &inspection.evidence,
+            &analysis_options,
+            |signals| unsealed_pre_write_observation_binding(&admission_observation_seed, signals),
+        )? {
         PreWriteStart::Committed(result) => return Ok(*result),
         PreWriteStart::Analyze {
             gate_id,
             transition_sequence,
-        } => (gate_id, transition_sequence),
+            analysis_options,
+        } => (gate_id, transition_sequence, analysis_options),
     };
     wait_at_pre_write_admission_barrier(&request.operation_id, &gate_id)?;
 
@@ -205,11 +207,14 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         match analyze_pre_write(
             &operation,
             &context,
-            request,
+            &analysis_options,
             inspection,
-            transition_sequence,
-            &request_digest,
-            &gate_id,
+            PreWriteAnalysisReservation {
+                operation_id: &request.operation_id,
+                request_digest: &request_digest,
+                gate_id: &gate_id,
+                transition_sequence,
+            },
         )? {
             PreWriteAnalysis::Finished(promotion) => *promotion,
             PreWriteAnalysis::Committed(result) => return Ok(*result),
@@ -454,7 +459,10 @@ fn wait_at_gate_test_barrier(
 }
 
 /// Build the exact ScanInvocationTier from a PreWriteRequest with normalized entries.
-fn build_gate_scan_invocation_tier(request: &PreWriteRequest) -> ScanInvocationTier {
+fn build_gate_scan_invocation_tier(
+    request: &PreWriteRequest,
+    declared_leases: &[lumin_evidence::WriteLease],
+) -> ScanInvocationTier {
     let mut entries: Vec<RepoPathProjection> = request
         .entries
         .iter()
@@ -472,8 +480,11 @@ fn build_gate_scan_invocation_tier(request: &PreWriteRequest) -> ScanInvocationT
         .collect::<Vec<_>>();
     dependency_intents.sort();
     dependency_intents.dedup();
-    let capability_intents =
-        normalized_gate_capability_intents(&request.paths, &request.capability_intents);
+    let capability_intents = normalized_gate_capability_intents(
+        &request.paths,
+        &request.capability_intents,
+        declared_leases,
+    );
     ScanInvocationTier {
         includes: request.includes.clone(),
         excludes: request.excludes.clone(),
@@ -514,31 +525,37 @@ struct FinalFreshnessValidation {
     unavailable_capability_targets: BTreeSet<RepoPath>,
 }
 
+struct PreWriteAnalysisReservation<'a> {
+    operation_id: &'a OperationId,
+    request_digest: &'a str,
+    gate_id: &'a GateId,
+    transition_sequence: u64,
+}
+
 fn analyze_pre_write(
     operation: &OperationSession<'_>,
     context: &RepositoryContext,
-    request: &PreWriteRequest,
+    options: &GateAnalysisOptions,
     inspection: DeclaredPathInspection,
-    transition_sequence: u64,
-    request_digest: &str,
-    gate_id: &GateId,
+    reservation: PreWriteAnalysisReservation<'_>,
 ) -> Result<PreWriteAnalysis, EngineError> {
-    let options = GateAnalysisOptions {
-        jobs: request.jobs,
-        resolution_profile: request.resolution_profile,
-        scan_invocation: build_gate_scan_invocation_tier(request),
-    };
+    let PreWriteAnalysisReservation {
+        operation_id,
+        request_digest,
+        gate_id,
+        transition_sequence,
+    } = reservation;
     let analysis_contract = analysis_contract_id();
     let inventory_request = inventory_request_from_tier(&options.scan_invocation)?;
     let reserved_state_lookup = reserved_state_identity_lookup(&context.store);
     let capture = match capture_reserved_repository(
         ReservedCaptureContext {
             store: &context.store,
-            operation_id: &request.operation_id,
+            operation_id,
             gate_id,
             root: &context.root,
             repository_root: &context.repository_root,
-            options: &options,
+            options,
             owner_contract_version: &analysis_contract,
             inventory_request: &inventory_request,
             reserved_state_lookup: &reserved_state_lookup,
@@ -548,7 +565,7 @@ fn analyze_pre_write(
                 .reserve_pre_write_semantic_inputs(request_digest, gate_id, paths)
                 .map_err(Into::into)
         },
-        || wait_at_capture_freshness_barrier(&request.operation_id, gate_id),
+        || wait_at_capture_freshness_barrier(operation_id, gate_id),
     ) {
         Ok(ReservedCapture::Finished {
             capture,
