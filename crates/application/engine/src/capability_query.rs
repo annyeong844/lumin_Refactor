@@ -73,6 +73,33 @@ pub(crate) fn gate_capability_target_paths(
         .collect()
 }
 
+pub(crate) fn active_gate_capability_intents(
+    root: &Path,
+    intents: &[CapabilityIntentRecord],
+    reserved_state_lookup: &lumin_inventory::ReservedStateIdentityLookup,
+) -> Result<BTreeSet<CapabilityIntentRecord>, EngineError> {
+    let mut active = BTreeSet::new();
+    for intent in intents {
+        let path = RepoPath::from_canonical_bytes(&intent.path.canonical).map_err(|error| {
+            EngineError::TierProjectionCorrupt(format!(
+                "capability intent path {} is invalid: {error}",
+                intent.path.display
+            ))
+        })?;
+        let direct_rust_target = path
+            .file_name_portable()
+            .is_some_and(|name| name.ends_with(".rs"));
+        if intent.capability == CapabilityIntentKind::Rust
+            && !direct_rust_target
+            && !lumin_inventory::directory_contains_rust_path(root, &path, reserved_state_lookup)?
+        {
+            continue;
+        }
+        active.insert(intent.clone());
+    }
+    Ok(active)
+}
+
 /// Project gate-specific unavailable lanes after loading repository-neutral analysis.
 ///
 /// This owner step is deliberately outside the analysis cache. The cache retains facts
@@ -83,7 +110,14 @@ pub(crate) fn apply_gate_capability_availability(
     root: &Path,
     snapshot: AnalysisSnapshot,
     reserved_state_lookup: &lumin_inventory::ReservedStateIdentityLookup,
-) -> Result<(AnalysisSnapshot, Vec<GateSignal>), EngineError> {
+) -> Result<
+    (
+        AnalysisSnapshot,
+        Vec<GateSignal>,
+        BTreeSet<CapabilityIntentRecord>,
+    ),
+    EngineError,
+> {
     if snapshot
         .evidence
         .limitations
@@ -105,23 +139,19 @@ pub(crate) fn apply_gate_capability_availability(
         mut evidence,
         ..
     } = snapshot;
+    let active_intents = active_gate_capability_intents(
+        root,
+        &scan_invocation.capability_intents,
+        reserved_state_lookup,
+    )?;
     let mut targets = BTreeMap::<CapabilityIntentKind, Vec<LogicalSourceId>>::new();
-    for intent in &scan_invocation.capability_intents {
+    for intent in &active_intents {
         let path = RepoPath::from_canonical_bytes(&intent.path.canonical).map_err(|error| {
             EngineError::TierProjectionCorrupt(format!(
                 "capability intent path {} is invalid: {error}",
                 intent.path.display
             ))
         })?;
-        let direct_rust_target = path
-            .file_name_portable()
-            .is_some_and(|name| name.ends_with(".rs"));
-        if intent.capability == CapabilityIntentKind::Rust
-            && !direct_rust_target
-            && !lumin_inventory::directory_contains_rust_path(root, &path, reserved_state_lookup)?
-        {
-            continue;
-        }
         targets
             .entry(intent.capability)
             .or_default()
@@ -184,6 +214,7 @@ pub(crate) fn apply_gate_capability_availability(
             .then_some(GateSignal::RequiredOwnerUnavailable { limitation_count })
             .into_iter()
             .collect(),
+        active_intents,
     ))
 }
 

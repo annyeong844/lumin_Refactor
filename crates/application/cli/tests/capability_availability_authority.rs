@@ -1,13 +1,18 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::{BufRead, BufReader, Write};
+use std::net::{Ipv4Addr, TcpListener};
 use std::path::Path;
+use std::process::Stdio;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use lumin_model::{CapabilityIntentKind, GateId, Limitation, LogicalSourceId, RepoPath};
 use serde_json::Value;
 
 mod support;
 
-use support::{assert_status, field, run};
+use support::{assert_status, field, lumin_command, run};
 
 #[test]
 fn capability_unavailability_has_one_owner() -> Result<(), Box<dyn std::error::Error>> {
@@ -273,6 +278,126 @@ fn directory_write_domain_requires_the_unavailable_rust_owner()
                 && signal.get("limitation_count").and_then(Value::as_u64) == Some(1)
         })
     }));
+    rust_descendant_created_after_initial_traversal_cannot_seal()?;
+    Ok(())
+}
+
+fn rust_descendant_created_after_initial_traversal_cannot_seal()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "src/main.ts",
+        "export const supported = true;\n",
+    )?;
+    fs::create_dir_all(root.path().join("src/native"))?;
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+    listener.set_nonblocking(true)?;
+    let arguments = [
+        "pre-write",
+        "--operation-id",
+        "op-directory-late-rust",
+        "--path",
+        "src",
+        "--jobs",
+        "1",
+    ];
+    let os_arguments = arguments
+        .iter()
+        .map(std::ffi::OsString::from)
+        .collect::<Vec<_>>();
+    let effective_arguments = support::determinism::effective_arguments(&os_arguments)?;
+    let mut child = lumin_command(root.path())?
+        .args(effective_arguments)
+        .env(
+            "LUMIN_TEST_GATE_PREWRITE_FINAL_BARRIER",
+            listener.local_addr()?.to_string(),
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    let started = Instant::now();
+    let (mut stream, peer) = loop {
+        match listener.accept() {
+            Ok(accepted) => break accepted,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if let Some(status) = child.try_wait()? {
+                    return Err(std::io::Error::other(format!(
+                        "pre-write exited before the final capability barrier: {status}"
+                    ))
+                    .into());
+                }
+                if started.elapsed() >= Duration::from_secs(30) {
+                    return Err(std::io::Error::other(
+                        "pre-write did not reach the final capability barrier",
+                    )
+                    .into());
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    };
+    assert!(peer.ip().is_loopback());
+    stream.set_nonblocking(false)?;
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(30)))?;
+    let mut frame = String::new();
+    BufReader::new(stream.try_clone()?).read_line(&mut frame)?;
+    let fields = frame.split_whitespace().collect::<Vec<_>>();
+    assert_eq!(fields.len(), 3, "unexpected final barrier frame: {frame:?}");
+    assert_eq!(fields[0], "finalizing");
+    assert_eq!(fields[1], "op-directory-late-rust");
+
+    write(
+        root.path(),
+        "src/native/lib.rs",
+        "pub fn appeared_during_pre_write() {}\n",
+    )?;
+    stream.write_all(b"release\n")?;
+    stream.flush()?;
+    drop(stream);
+
+    let output = child.wait_with_output()?;
+    assert_eq!(
+        output.status.code(),
+        Some(4),
+        "unexpected final capability result: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout)?;
+    let response: Value = serde_json::from_str(&stdout)?;
+    assert_eq!(
+        response.get("decision").and_then(Value::as_str),
+        Some("incomplete")
+    );
+    assert_eq!(
+        response.get("lifecycle").and_then(Value::as_str),
+        Some("rejected")
+    );
+    assert!(
+        response
+            .get("signals")
+            .and_then(Value::as_array)
+            .is_some_and(|signals| signals.iter().any(|signal| {
+                signal.get("kind").and_then(Value::as_str) == Some("analysis-failed")
+                    && signal
+                        .get("detail")
+                        .and_then(Value::as_str)
+                        .is_some_and(|detail| {
+                            detail.contains(
+                                "semantic input link or mount topology changed after capture",
+                            )
+                        })
+            }))
+    );
+
+    let replay = run(root.path(), &arguments)?;
+    assert_status(&replay, 4);
+    assert_eq!(replay.stdout, stdout);
     Ok(())
 }
 

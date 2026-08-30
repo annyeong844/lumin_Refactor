@@ -2,8 +2,8 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use lumin_evidence::{
-    DependencyIntentRecord, GateAnalysisOptions, GateOperationResult, GateRecord, GateSignal,
-    OperationRecord, PathPrefixIdentity, PostWriteFinalValidationEvidence,
+    CapabilityIntentRecord, DependencyIntentRecord, GateAnalysisOptions, GateOperationResult,
+    GateRecord, GateSignal, OperationRecord, PathPrefixIdentity, PostWriteFinalValidationEvidence,
     PreWriteFinalValidationEvidence, RepoPathProjection, ScanInvocationTier, SemanticInputRecord,
     SemanticInputState, SemanticReadReservationBinding, derive_pre_write_final_validation_signals,
     gate_policy, post_write_request_digest, pre_write_request_digest, seal_analysis_snapshot,
@@ -21,8 +21,8 @@ use lumin_store::{
 };
 
 use super::capability_query::{
-    apply_gate_capability_availability, gate_capability_target_paths,
-    normalized_gate_capability_intents,
+    active_gate_capability_intents, apply_gate_capability_availability,
+    gate_capability_target_paths, normalized_gate_capability_intents,
 };
 use super::{
     EngineError, RepositoryAnalysisSession, RepositoryAnalysisStep, RepositoryCapture,
@@ -523,6 +523,8 @@ struct FinalFreshnessValidation {
     inventory_request: InventoryRequest,
     reserved_state_lookup: lumin_inventory::ReservedStateIdentityLookup,
     unavailable_capability_targets: BTreeSet<RepoPath>,
+    capability_intents: Vec<CapabilityIntentRecord>,
+    active_capability_intents: BTreeSet<CapabilityIntentRecord>,
 }
 
 struct PreWriteAnalysisReservation<'a> {
@@ -614,7 +616,7 @@ fn analyze_pre_write(
         }
     };
     let (mut capture, reserved_semantic_bindings) = capture;
-    let (snapshot, mut signals) = apply_gate_capability_availability(
+    let (snapshot, mut signals, active_capability_intents) = apply_gate_capability_availability(
         &context.root,
         capture.snapshot,
         &reserved_state_lookup,
@@ -641,6 +643,8 @@ fn analyze_pre_write(
         inventory_request,
         reserved_state_lookup,
         unavailable_capability_targets: unavailable_targets,
+        capability_intents: options.scan_invocation.capability_intents.clone(),
+        active_capability_intents,
     };
     let baseline = GateBaselineDraft {
         analysis_contract,
@@ -837,11 +841,12 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         }
     };
 
-    let (snapshot, capability_signals) = apply_gate_capability_availability(
-        &context.root,
-        capture.snapshot,
-        &reserved_state_lookup,
-    )?;
+    let (snapshot, capability_signals, active_capability_intents) =
+        apply_gate_capability_availability(
+            &context.root,
+            capture.snapshot,
+            &reserved_state_lookup,
+        )?;
     capture.snapshot = snapshot;
     let (reconciled_baseline, reconciled_sequences, mut signals) =
         reconcile_transitions(&gate, baseline, &transitions);
@@ -897,6 +902,12 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         unavailable_capability_targets: gate_capability_target_paths(
             &gate.analysis_options.scan_invocation.capability_intents,
         )?,
+        capability_intents: gate
+            .analysis_options
+            .scan_invocation
+            .capability_intents
+            .clone(),
+        active_capability_intents,
     };
     let evidence_payload_sha256 = lumin_store::evidence_payload_sha256(&capture.snapshot.evidence)?;
     let observation_seed = CloseObservationSeed {
@@ -1571,6 +1582,26 @@ fn final_freshness_validation_signals(
     }
 }
 
+fn capability_availability_drift_paths(
+    root: &Path,
+    validation: &FinalFreshnessValidation,
+    reserved_state_lookup: &lumin_inventory::ReservedStateIdentityLookup,
+) -> Result<Vec<RepoPathProjection>, EngineError> {
+    let observed = active_gate_capability_intents(
+        root,
+        &validation.capability_intents,
+        reserved_state_lookup,
+    )?;
+    let mut paths = validation
+        .active_capability_intents
+        .symmetric_difference(&observed)
+        .map(|intent| intent.path.clone())
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
 fn pre_write_final_validation(
     root: &Path,
     validation: &FinalFreshnessValidation,
@@ -1599,7 +1630,7 @@ fn pre_write_final_validation(
         paths.dedup();
         Ok(paths)
     });
-    let semantic_validation_drift = match semantic_validation_drift {
+    let mut semantic_validation_drift = match semantic_validation_drift {
         Ok(paths) => paths,
         Err(error) => {
             return (
@@ -1706,6 +1737,22 @@ fn pre_write_final_validation(
                     .map(|detail| GateSignal::AnalysisFailed { detail })
                     .collect();
                 return (signals, None);
+            }
+
+            match capability_availability_drift_paths(root, validation, &final_lookup) {
+                Ok(paths) => {
+                    semantic_validation_drift.extend(paths);
+                    semantic_validation_drift.sort();
+                    semantic_validation_drift.dedup();
+                }
+                Err(error) => {
+                    return (
+                        vec![GateSignal::AnalysisFailed {
+                            detail: error.to_string(),
+                        }],
+                        None,
+                    );
+                }
             }
 
             let evidence = PreWriteFinalValidationEvidence {
@@ -2189,6 +2236,8 @@ mod tests {
             inventory_request: InventoryRequest::default(),
             reserved_state_lookup,
             unavailable_capability_targets: BTreeSet::new(),
+            capability_intents: Vec::new(),
+            active_capability_intents: BTreeSet::new(),
         };
 
         assert!(
@@ -2247,6 +2296,8 @@ mod tests {
             inventory_request: InventoryRequest::default(),
             reserved_state_lookup,
             unavailable_capability_targets: BTreeSet::new(),
+            capability_intents: Vec::new(),
+            active_capability_intents: BTreeSet::new(),
         };
 
         assert!(
@@ -2302,6 +2353,8 @@ mod tests {
             inventory_request: InventoryRequest::default(),
             reserved_state_lookup: lookup,
             unavailable_capability_targets: BTreeSet::new(),
+            capability_intents: Vec::new(),
+            active_capability_intents: BTreeSet::new(),
         };
 
         std::fs::hard_link(&native, root.path().join(".lumin/cache/alias.ts"))?;
@@ -2346,6 +2399,8 @@ mod tests {
             inventory_request: InventoryRequest::default(),
             reserved_state_lookup: lookup,
             unavailable_capability_targets: BTreeSet::new(),
+            capability_intents: Vec::new(),
+            active_capability_intents: BTreeSet::new(),
         };
         let reserved_identities = std::collections::BTreeSet::from([identity]);
 

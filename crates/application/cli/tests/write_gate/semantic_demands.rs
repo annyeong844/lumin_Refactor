@@ -715,6 +715,7 @@ fn failed_close_rechecks_a_semantic_conflict_at_the_final_barrier()
         }
     };
     assert!(peer.ip().is_loopback());
+    stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(30)))?;
     stream.set_write_timeout(Some(Duration::from_secs(30)))?;
     let mut frame = String::new();
