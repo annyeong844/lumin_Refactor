@@ -6,6 +6,7 @@
 
 use std::process::ExitCode;
 
+use crate::capability_availability;
 use crate::cargo_bootstrap;
 use crate::generated_tables;
 use crate::limitation_registry;
@@ -69,6 +70,7 @@ pub fn run() -> ExitCode {
     println!("[CHECK] path/root codec artifact, vectors, DTOs, and generated digest");
     println!("[CHECK] generated configuration tables and owner partitions");
     println!("[CHECK] exhaustive limitation registry and fact owners");
+    println!("[CHECK] unavailable capability owners and fallback absence");
 
     let effective_root = &workspace.workspace_root;
     let source_result =
@@ -78,6 +80,10 @@ pub fn run() -> ExitCode {
     let path_codec_result = path_codec::check_path_codec(effective_root);
     let generated_table_result = generated_tables::check_generated_tables(effective_root);
     let limitation_registry_result = limitation_registry::check_limitation_registry(
+        &workspace.production_members,
+        effective_root,
+    );
+    let capability_availability_result = capability_availability::check_capability_availability(
         &workspace.production_members,
         effective_root,
     );
@@ -92,11 +98,13 @@ pub fn run() -> ExitCode {
     all_violations.extend(path_codec_result.violations);
     all_violations.extend(generated_table_result.violations);
     all_violations.extend(limitation_registry_result.violations);
+    all_violations.extend(capability_availability_result.violations);
     all_tool_errors.extend(source_result.tool_errors);
     all_tool_errors.extend(path_owner_result.tool_errors);
     all_tool_errors.extend(path_codec_result.tool_errors);
     all_tool_errors.extend(generated_table_result.tool_errors);
     all_tool_errors.extend(limitation_registry_result.tool_errors);
+    all_tool_errors.extend(capability_availability_result.tool_errors);
 
     // Print results
     println!();

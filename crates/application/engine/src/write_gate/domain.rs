@@ -18,7 +18,11 @@ pub(super) struct DeclaredPathInspection {
     pub(super) evidence: Vec<PreWriteDeclaredPathInspection>,
 }
 
-pub(super) fn inspect_declared_paths(root: &Path, paths: &[RepoPath]) -> DeclaredPathInspection {
+pub(super) fn inspect_declared_paths(
+    root: &Path,
+    paths: &[RepoPath],
+    unavailable_targets: &BTreeSet<RepoPath>,
+) -> DeclaredPathInspection {
     let mut observations = Vec::new();
     let mut leases = Vec::new();
     let mut signals = Vec::new();
@@ -49,11 +53,15 @@ pub(super) fn inspect_declared_paths(root: &Path, paths: &[RepoPath]) -> Declare
         match lumin_inventory::inspect_write_target(root, path) {
             Ok(observation) => {
                 let supported_source = lumin_inventory::is_supported_source_path(path);
+                let unavailable_source = unavailable_targets.contains(path);
                 let unsupported_native_file = observation.kind == WriteTargetKind::ExistingFile
                     && path.file_name_portable().is_none()
-                    && !supported_source;
+                    && !supported_source
+                    && !unavailable_source;
                 if unsupported_native_file
-                    || (observation.kind == WriteTargetKind::NewFile && !supported_source)
+                    || (observation.kind == WriteTargetKind::NewFile
+                        && !supported_source
+                        && !unavailable_source)
                 {
                     let signal = unsupported_path(
                         projection,
@@ -155,6 +163,7 @@ pub(super) fn expand_write_domain(
     observations: &[WriteTargetObservation],
     mut leases: Vec<WriteLease>,
     capture: &RepositoryCapture,
+    unavailable_targets: &BTreeSet<RepoPath>,
 ) -> (
     Vec<WriteLease>,
     Vec<PhysicalAliasClosureRecord>,
@@ -200,6 +209,9 @@ pub(super) fn expand_write_domain(
             WriteTargetKind::ExistingFile => {
                 if semantic_paths.contains(&observation.path) {
                     seeds.insert(observation.path.clone());
+                } else if unavailable_targets.contains(&observation.path) {
+                    // The engine registry owns the visible unavailable-capability fact.
+                    // No compiled language owner may route this path into semantic analysis.
                 } else {
                     signals.push(unsupported_path(
                         RepoPathProjection::from(&observation.path),
@@ -258,7 +270,12 @@ pub(super) fn revalidate_write_domain(
     expected_alias_closures: &[PhysicalAliasClosureRecord],
     current_source_paths: &[RepoPath],
 ) -> Vec<GateSignal> {
-    let observation = observe_write_domain(root, expected_leases, current_source_paths);
+    let observation = observe_write_domain(
+        root,
+        expected_leases,
+        current_source_paths,
+        &BTreeSet::new(),
+    );
     let mut signals = observation
         .failures
         .iter()
@@ -310,6 +327,7 @@ pub(super) fn observe_write_domain(
     root: &Path,
     lease_paths: &[WriteLease],
     current_source_paths: &[RepoPath],
+    unavailable_targets: &BTreeSet<RepoPath>,
 ) -> WriteDomainObservation {
     let mut semantic_paths = current_source_paths.to_vec();
     semantic_paths.sort();
@@ -354,7 +372,11 @@ pub(super) fn observe_write_domain(
             Ok(observation) => {
                 match observation.kind {
                     WriteTargetKind::ExistingFile => {
-                        seeds.insert(observation.path.clone());
+                        if semantic_paths.binary_search(&observation.path).is_ok()
+                            || !unavailable_targets.contains(&observation.path)
+                        {
+                            seeds.insert(observation.path.clone());
+                        }
                     }
                     WriteTargetKind::ExistingDirectory => {
                         seeds.extend(
@@ -520,7 +542,12 @@ pub(super) fn close_alias_topology(
             return (Vec::new(), Vec::new(), signals);
         }
     };
-    let observation = observe_write_domain(root, &gate.leased_write_set, &semantic_paths);
+    let observation = observe_write_domain(
+        root,
+        &gate.leased_write_set,
+        &semantic_paths,
+        &BTreeSet::new(),
+    );
     if !observation.failures.is_empty() || !observation.drift_paths.is_empty() {
         signals.extend(
             observation
@@ -719,7 +746,8 @@ mod tests {
         native.push("mod.ts");
         let path = RepoPath::from_native_relative(&native)?;
 
-        let inspection = inspect_declared_paths(root.path(), std::slice::from_ref(&path));
+        let inspection =
+            inspect_declared_paths(root.path(), std::slice::from_ref(&path), &BTreeSet::new());
 
         assert!(inspection.observations.is_empty());
         assert!(inspection.leases.is_empty());
@@ -775,7 +803,7 @@ mod tests {
         );
 
         let (leases, alias_closures, signals) =
-            expand_write_domain(root.path(), &[], Vec::new(), &capture);
+            expand_write_domain(root.path(), &[], Vec::new(), &capture, &BTreeSet::new());
         assert!(leases.is_empty());
         assert!(alias_closures.is_empty());
         assert_eq!(
@@ -811,7 +839,7 @@ mod tests {
         );
 
         let (leases, alias_closures, signals) =
-            expand_write_domain(root.path(), &[], Vec::new(), &capture);
+            expand_write_domain(root.path(), &[], Vec::new(), &capture, &BTreeSet::new());
         assert!(leases.is_empty());
         assert!(alias_closures.is_empty());
         assert_eq!(
@@ -855,7 +883,11 @@ mod tests {
         let source = RepoPath::from_portable("src/main.ts")?;
         let planned = RepoPath::from_portable("src/new.ts")?;
         std::fs::write(root.path().join("src/main.ts"), "export const main = 1;\n")?;
-        let inspection = inspect_declared_paths(root.path(), std::slice::from_ref(&planned));
+        let inspection = inspect_declared_paths(
+            root.path(),
+            std::slice::from_ref(&planned),
+            &BTreeSet::new(),
+        );
         assert!(inspection.signals.is_empty());
         assert_eq!(inspection.leases.len(), 1);
         assert_eq!(inspection.leases[0].kind, WriteLeaseKind::NewFile);
@@ -900,6 +932,7 @@ mod tests {
             root.path(),
             std::slice::from_ref(&expected_lease),
             &[source.clone(), config, redirect],
+            &BTreeSet::new(),
         );
 
         assert!(observed.failures.is_empty());

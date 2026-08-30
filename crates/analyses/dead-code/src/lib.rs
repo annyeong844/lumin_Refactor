@@ -330,7 +330,8 @@ fn blocked_absence_scope(
 
 fn absence_effect_blocks_dead_consumers(effect: LimitationAbsenceEffect) -> bool {
     match effect {
-        LimitationAbsenceEffect::LocalDefinitions
+        LimitationAbsenceEffect::CapabilityClaims
+        | LimitationAbsenceEffect::LocalDefinitions
         | LimitationAbsenceEffect::ModuleValueExports
         | LimitationAbsenceEffect::DependencyOwnerAndInferredWrites
         | LimitationAbsenceEffect::PnpmDependencyAndInferredWrites => false,
@@ -375,7 +376,8 @@ fn limitation_path(limitation: &Limitation) -> Option<&str> {
         | Limitation::SfcDialectUnavailable { .. }
         | Limitation::SfcDecompositionUnknown { .. }
         | Limitation::VueExternalScriptModeConflict { .. }
-        | Limitation::VueTemplateOpaque { .. } => None,
+        | Limitation::VueTemplateOpaque { .. }
+        | Limitation::CapabilityUnavailable { .. } => None,
     }
 }
 

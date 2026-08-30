@@ -1,12 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_model::{
-    AnalysisInputId, DeltaDimensionChange, DeltaFactFamily, DynamicImportTargetScope,
-    GateBaselineObservationId, GateCloseObservationId, GateDeltaClassification, GateDeltaRecord,
-    GateId, ImportMetaGlobTargetScope, Limitation, ObservationBinding, OperationId,
-    PhysicalFileIdentity, RepoPath, ResolutionOutcome, ResolutionProfile, ResolutionProfileSource,
-    SelectedResolutionProfile, UnsealedObservationReason, append_length_prefixed,
-    classify_lifecycle_deltas, digest_hex,
+    AnalysisInputId, CapabilityIntentKind, DeltaDimensionChange, DeltaFactFamily,
+    DynamicImportTargetScope, GateBaselineObservationId, GateCloseObservationId,
+    GateDeltaClassification, GateDeltaRecord, GateId, ImportMetaGlobTargetScope, Limitation,
+    ObservationBinding, OperationId, PhysicalFileIdentity, RepoPath, ResolutionOutcome,
+    ResolutionProfile, ResolutionProfileSource, SelectedResolutionProfile,
+    UnsealedObservationReason, append_length_prefixed, classify_lifecycle_deltas, digest_hex,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -20,7 +20,7 @@ pub const GATE_OPERATION_SCHEMA_VERSION: &str = "lumin-operation.v2";
 /// `lumin-engine` remains the value authority; the public frozen-contract
 /// probe verifies its current derivation against this compatibility boundary.
 pub const SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID: &str =
-    "467bd505facef80a6e5aaa03602b7342fe280262e9fa24363428eb832be9b4e5";
+    "d4a370b57b5e8578f69c4621e2e25d120115e6abe693d26bcbb4ba7c85808c53";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -76,6 +76,7 @@ pub enum SemanticInputState {
     NonRegular,
     Unreadable,
     PathRedirect,
+    CapabilityTarget,
 }
 
 impl SemanticInputState {
@@ -87,6 +88,7 @@ impl SemanticInputState {
             Self::NonRegular => 4,
             Self::Unreadable => 5,
             Self::PathRedirect => 6,
+            Self::CapabilityTarget => 7,
         }
     }
 }
@@ -124,6 +126,13 @@ pub struct DependencyIntentRecord {
     pub dependency: String,
 }
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapabilityIntentRecord {
+    pub path: RepoPathProjection,
+    pub capability: CapabilityIntentKind,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanInvocationTier {
@@ -137,6 +146,8 @@ pub struct ScanInvocationTier {
     pub entries: Vec<RepoPathProjection>,
     #[serde(default)]
     pub dependency_intents: Vec<DependencyIntentRecord>,
+    #[serde(default)]
+    pub capability_intents: Vec<CapabilityIntentRecord>,
     #[serde(default)]
     pub resolution_profile: Option<ResolutionProfile>,
 }
@@ -159,6 +170,7 @@ impl ScanInvocationTier {
             .entries
             .iter()
             .chain(self.dependency_intents.iter().map(|intent| &intent.path))
+            .chain(self.capability_intents.iter().map(|intent| &intent.path))
         {
             let path = RepoPath::from_canonical_bytes(&projection.canonical)
                 .map_err(|error| error.to_string())?;
@@ -180,6 +192,12 @@ impl ScanInvocationTier {
         dependency_intents.dedup();
         if dependency_intents != self.dependency_intents {
             return Err("dependency intents are not sorted and unique".to_owned());
+        }
+        let mut capability_intents = self.capability_intents.clone();
+        capability_intents.sort();
+        capability_intents.dedup();
+        if capability_intents != self.capability_intents {
+            return Err("capability intents are not sorted and unique".to_owned());
         }
         Ok(())
     }
@@ -215,6 +233,16 @@ impl ScanInvocationTier {
         for intent in &self.dependency_intents {
             append_length_prefixed(output, &intent.path.canonical);
             append_length_prefixed(output, intent.dependency.as_bytes());
+        }
+        // Capability intents were added after the frozen v4 framing. Preserve the exact
+        // legacy bytes when absent; a nonempty extension carries its own domain marker.
+        if !self.capability_intents.is_empty() {
+            append_length_prefixed(output, b"capability-intents.v1");
+            output.extend_from_slice(&(self.capability_intents.len() as u64).to_be_bytes());
+            for intent in &self.capability_intents {
+                append_length_prefixed(output, &intent.path.canonical);
+                append_length_prefixed(output, intent.capability.as_str().as_bytes());
+            }
         }
         // Resolution profile
         match self.resolution_profile {
@@ -319,7 +347,12 @@ pub fn pre_write_request_digest(
     scan_invocation: &ScanInvocationTier,
 ) -> String {
     let mut framed = Vec::new();
-    append_length_prefixed(&mut framed, b"lumin-pre-write.v4");
+    let domain = if scan_invocation.capability_intents.is_empty() {
+        b"lumin-pre-write.v4".as_slice()
+    } else {
+        b"lumin-pre-write.v5".as_slice()
+    };
+    append_length_prefixed(&mut framed, domain);
     scan_invocation.append_semantic_framing(&mut framed);
     let mut paths = declared_write_set
         .iter()
@@ -2833,6 +2866,11 @@ mod tests {
             ScanInvocationTier::default(),
             Vec::new(),
         );
+        assert_eq!(
+            without_invocation.analysis_input_id.as_str(),
+            "analysis_input_13d0a5a9f9f1c055664668c74cae5e251a2eef92d9336787064db1e53d0e609c",
+            "an empty capability tier changed the frozen analysis-input framing",
+        );
         let with_includes = seal_analysis_snapshot(
             Vec::new(),
             evidence.clone(),
@@ -2849,7 +2887,7 @@ mod tests {
 
         let with_dependency_intent = seal_analysis_snapshot(
             Vec::new(),
-            evidence,
+            evidence.clone(),
             ScanInvocationTier {
                 dependency_intents: vec![DependencyIntentRecord {
                     path: path("packages/app/src/main.ts")?,
@@ -2862,6 +2900,46 @@ mod tests {
         assert_ne!(
             without_invocation.analysis_input_id, with_dependency_intent.analysis_input_id,
             "dependency intent must affect the analysis input ID"
+        );
+
+        let with_capability_intent = seal_analysis_snapshot(
+            Vec::new(),
+            evidence,
+            ScanInvocationTier {
+                capability_intents: vec![CapabilityIntentRecord {
+                    capability: CapabilityIntentKind::Shape,
+                    path: path("src/model.ts")?,
+                }],
+                ..Default::default()
+            },
+            Vec::new(),
+        );
+        assert_ne!(
+            without_invocation.analysis_input_id, with_capability_intent.analysis_input_id,
+            "capability intent must affect the analysis input ID"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn empty_capability_tier_preserves_the_frozen_v4_request_digest()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let legacy = ScanInvocationTier::default();
+        assert_eq!(
+            pre_write_request_digest(&[], &legacy),
+            "862ae0f9da8cb49f5aaec313c2a3ca0975f772b5b0a7fd31402a012573ec645e",
+        );
+
+        let extended = ScanInvocationTier {
+            capability_intents: vec![CapabilityIntentRecord {
+                capability: CapabilityIntentKind::Shape,
+                path: path("src/model.ts")?,
+            }],
+            ..Default::default()
+        };
+        assert_ne!(
+            pre_write_request_digest(&[], &legacy),
+            pre_write_request_digest(&[], &extended),
         );
         Ok(())
     }

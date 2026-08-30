@@ -56,7 +56,8 @@ const LOCKFILE_NAMES: [&str; 6] = [
 pub fn dead_code_capability_state(limitations: &[Limitation]) -> CapabilityState {
     if limitations.iter().any(|limitation| match limitation {
         Limitation::DependencyOwnerAmbiguous { .. }
-        | Limitation::PnpmDependencySemanticsUnsupported { .. } => false,
+        | Limitation::PnpmDependencySemanticsUnsupported { .. }
+        | Limitation::CapabilityUnavailable { .. } => false,
         _ => true,
     }) {
         CapabilityState::Incomplete
@@ -1014,6 +1015,41 @@ pub fn validate_run_evidence_inputs(
             collection: "source semantic-input inventory",
         });
     }
+    let capability_targets = evidence
+        .limitations
+        .iter()
+        .filter_map(|limitation| match limitation {
+            Limitation::CapabilityUnavailable { targets, .. } => Some(targets.as_slice()),
+            _ => None,
+        })
+        .flatten()
+        .map(|target| target.as_str())
+        .collect::<BTreeSet<_>>();
+    for input in inputs
+        .iter()
+        .filter(|input| input.state == SemanticInputState::CapabilityTarget)
+    {
+        let path = RepoPath::from_canonical_bytes(&input.path.canonical).map_err(|_| {
+            RunEvidenceIdentityError::InventoryMismatch {
+                collection: "capability-target semantic inputs",
+            }
+        })?;
+        let source_id = LogicalSourceId::from_path(&path);
+        if !capability_targets.contains(source_id.as_str())
+            || observed_source_paths.contains(input.path.canonical.as_slice())
+            || input
+                .payload_sha256
+                .as_deref()
+                .is_none_or(|value| !is_sha256_hex(value))
+            || input.physical_identity.is_none()
+            || input.absence_parent.is_some()
+            || input.physical_redirect_sha256.is_some()
+        {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "capability-target semantic inputs",
+            });
+        }
+    }
     for observation in &evidence.source_observations {
         let context = contexts
             .get(observation.source_id.as_str())
@@ -1186,6 +1222,7 @@ pub fn validate_run_evidence_tier(
     invocation: &ScanInvocationTier,
     entry_selections: &[EntrySelectionRecord],
 ) -> Result<(), RunEvidenceIdentityError> {
+    validate_capability_unavailability(evidence, invocation)?;
     match invocation.resolution_profile {
         Some(expected) => {
             if evidence.resolution_profiles.iter().any(|profile| {
@@ -1378,14 +1415,71 @@ pub fn validate_run_evidence_tier(
     Ok(())
 }
 
+fn validate_capability_unavailability(
+    evidence: &RunEvidence,
+    invocation: &ScanInvocationTier,
+) -> Result<(), RunEvidenceIdentityError> {
+    let mut expected = BTreeMap::<lumin_model::CapabilityIntentKind, Vec<LogicalSourceId>>::new();
+    for intent in &invocation.capability_intents {
+        let path = RepoPath::from_canonical_bytes(&intent.path.canonical).map_err(|_| {
+            RunEvidenceIdentityError::InventoryMismatch {
+                collection: "capability-unavailable invocation intents",
+            }
+        })?;
+        expected
+            .entry(intent.capability)
+            .or_default()
+            .push(LogicalSourceId::from_path(&path));
+    }
+    for targets in expected.values_mut() {
+        targets.sort();
+        targets.dedup();
+    }
+
+    let mut observed = BTreeMap::new();
+    for limitation in &evidence.limitations {
+        let Limitation::CapabilityUnavailable {
+            capability,
+            targets,
+        } = limitation
+        else {
+            continue;
+        };
+        if observed.insert(*capability, targets.clone()).is_some() {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "capability-unavailable limitation ownership",
+            });
+        }
+    }
+    if observed != expected {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "capability-unavailable invocation intents",
+        });
+    }
+    Ok(())
+}
+
 /// Apply migration-only checks that cannot be imposed on native v13 reads.
 ///
 /// v1 evidence does not retain SFC decompositions, so its embedded JavaScript
 /// parse-product count cannot be reconstructed for a mixed-source run. Such a
 /// legacy row is rejected instead of adopting an unauthenticated public metric.
+#[allow(clippy::match_like_matches_macro)] // limitation ownership rejects variant patterns in macros
 pub fn validate_migration_run_evidence(
     evidence: &RunEvidence,
 ) -> Result<(), RunEvidenceIdentityError> {
+    if evidence
+        .limitations
+        .iter()
+        .any(|limitation| match limitation {
+            Limitation::CapabilityUnavailable { .. } => true,
+            _ => false,
+        })
+    {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "authenticated legacy capability availability",
+        });
+    }
     if evidence
         .source_contexts
         .iter()
@@ -1406,6 +1500,11 @@ pub fn validate_migration_run_evidence_tier(
     invocation: &ScanInvocationTier,
     entry_selections: &[EntrySelectionRecord],
 ) -> Result<(), RunEvidenceIdentityError> {
+    if !invocation.capability_intents.is_empty() {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "authenticated legacy capability intents",
+        });
+    }
     if let Some(expected) = invocation.resolution_profile
         && !evidence.resolution_profiles.iter().any(|profile| {
             profile.profile == expected && profile.source == ResolutionProfileSource::Invocation
@@ -1745,6 +1844,16 @@ fn validate_limitations(
             | Limitation::PnpmDependencySemanticsUnsupported { .. }
             | Limitation::TsconfigPayloadUnavailable { .. }
             | Limitation::ExplicitEntryUnavailable { .. } => {}
+            Limitation::CapabilityUnavailable { targets, .. } => {
+                let mut canonical_targets = targets.clone();
+                canonical_targets.sort();
+                canonical_targets.dedup();
+                if canonical_targets.is_empty() || canonical_targets != *targets {
+                    return Err(RunEvidenceIdentityError::InventoryMismatch {
+                        collection: "capability-unavailable targets",
+                    });
+                }
+            }
         }
     }
     Ok(())

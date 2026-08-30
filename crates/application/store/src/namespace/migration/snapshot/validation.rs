@@ -5,23 +5,24 @@ mod retention;
 use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_evidence::{
-    AnalysisSnapshot, GATE_OPERATION_SCHEMA_VERSION, GATE_RECORD_SCHEMA_VERSION,
-    GATE_VALIDATION_RECEIPT_SCHEMA_VERSION, GateBaseline, GateBaselineObservationInput,
-    GateCloseObservationInput, GateDecision, GateLifecycle, GateOperationKind, GateOperationStatus,
-    GateRecord, GateRevision, GateSignal, GateValidationReceipt, OperationRecord,
-    PhysicalAliasClosureRecord, PreWriteAdmissionConflictOwner, PreWriteAdmissionEvidence,
-    RUN_EVIDENCE_SCHEMA_VERSION, RetentionItemKind, RetentionOperationKind,
-    RetentionOperationRecord, RetentionOperationResult, RetentionOperationStatus,
-    RetentionPlanState, SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, WorktreeTransition,
-    WriteLeaseKind, apply_worktree_transition_for_domain, derive_gate_baseline_observation_id,
-    derive_gate_close_observation_id, derive_post_write_final_validation_signals,
-    derive_pre_write_admission_signals, derive_pre_write_final_validation_signals,
-    derive_protected_semantic_inputs, derive_unsealed_gate_observation_binding,
-    gate_abandon_request_digest, gate_policy, post_write_request_digest, pre_write_request_digest,
-    seal_analysis_snapshot, validate_migration_run_evidence, validate_migration_run_evidence_tier,
+    AnalysisSnapshot, CapabilityIntentRecord, GATE_OPERATION_SCHEMA_VERSION,
+    GATE_RECORD_SCHEMA_VERSION, GATE_VALIDATION_RECEIPT_SCHEMA_VERSION, GateBaseline,
+    GateBaselineObservationInput, GateCloseObservationInput, GateDecision, GateLifecycle,
+    GateOperationKind, GateOperationStatus, GateRecord, GateRevision, GateSignal,
+    GateValidationReceipt, OperationRecord, PhysicalAliasClosureRecord,
+    PreWriteAdmissionConflictOwner, PreWriteAdmissionEvidence, RUN_EVIDENCE_SCHEMA_VERSION,
+    RetentionItemKind, RetentionOperationKind, RetentionOperationRecord, RetentionOperationResult,
+    RetentionOperationStatus, RetentionPlanState, SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID,
+    WorktreeTransition, WriteLeaseKind, apply_worktree_transition_for_domain,
+    derive_gate_baseline_observation_id, derive_gate_close_observation_id,
+    derive_post_write_final_validation_signals, derive_pre_write_admission_signals,
+    derive_pre_write_final_validation_signals, derive_protected_semantic_inputs,
+    derive_unsealed_gate_observation_binding, gate_abandon_request_digest, gate_policy,
+    post_write_request_digest, pre_write_request_digest, seal_analysis_snapshot,
+    validate_migration_run_evidence, validate_migration_run_evidence_tier,
     validate_run_evidence_identities, validate_run_evidence_inputs, validate_run_evidence_tier,
 };
-use lumin_model::{ObservationBinding, RepoPath, SealedGateObservation};
+use lumin_model::{CapabilityIntentKind, ObservationBinding, RepoPath, SealedGateObservation};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::gate::{
@@ -2175,13 +2176,34 @@ fn canonical_alias_set(items: &[PhysicalAliasClosureRecord]) -> bool {
     items.iter().all(|closure| canonical_set(&closure.members)) && canonical_set(items)
 }
 
+#[allow(clippy::match_like_matches_macro)] // limitation ownership rejects variant patterns in macros
+fn engine_capability_availability_signals(snapshot: &AnalysisSnapshot) -> Vec<GateSignal> {
+    let limitation_count = snapshot
+        .evidence
+        .limitations
+        .iter()
+        .filter(|limitation| match limitation {
+            lumin_model::Limitation::CapabilityUnavailable { .. } => true,
+            _ => false,
+        })
+        .count();
+    (limitation_count > 0)
+        .then_some(GateSignal::RequiredOwnerUnavailable { limitation_count })
+        .into_iter()
+        .collect()
+}
+
 fn validate_opening_snapshot_policy(
     key: &str,
     opening: &GateRevision,
     baseline: &GateBaseline,
     final_freshness_signals: &[GateSignal],
 ) -> Result<(), StoreError> {
-    let mut expected = gate_policy::opening_signals(&baseline.snapshot, &baseline.leased_write_set);
+    let mut expected = engine_capability_availability_signals(&baseline.snapshot);
+    expected.extend(gate_policy::opening_signals(
+        &baseline.snapshot,
+        &baseline.leased_write_set,
+    ));
     expected.extend_from_slice(final_freshness_signals);
     if opening.signals != expected {
         return Err(StoreError::Integrity(format!(
@@ -2230,12 +2252,16 @@ fn validate_close_snapshot_policy(
     final_freshness_signals: &[GateSignal],
 ) -> Result<(), StoreError> {
     validate_close_alias_closures(key, revision, snapshot, &baseline.leased_write_set)?;
-    let (expected_signals, expected_changed_paths, expected_deltas) = gate_policy::closing_signals(
-        reconciled_baseline,
-        snapshot,
-        prior_protected_semantic_inputs,
-        &baseline.leased_write_set,
-    );
+    let (mut expected_signals, expected_changed_paths, expected_deltas) =
+        gate_policy::closing_signals(
+            reconciled_baseline,
+            snapshot,
+            prior_protected_semantic_inputs,
+            &baseline.leased_write_set,
+        );
+    let mut owner_signals = engine_capability_availability_signals(snapshot);
+    owner_signals.append(&mut expected_signals);
+    let expected_signals = owner_signals;
     let expected_actual_write_set = gate_policy::closure_expanded_actual_write_set(
         &expected_changed_paths,
         &baseline.alias_closures,
@@ -3064,7 +3090,59 @@ fn validate_pre_write_analysis_options(
         &format!("pre-write operation {}", operation.operation_id.as_str()),
         &options.scan_invocation,
     )?;
+    validate_capability_intent_domain(
+        &format!("pre-write operation {}", operation.operation_id.as_str()),
+        &operation.declared_write_set,
+        &options.scan_invocation,
+    )?;
     validate_declared_path_inspection(operation)?;
+    Ok(())
+}
+
+fn validate_capability_intent_domain(
+    owner: &str,
+    declared_write_set: &[lumin_evidence::RepoPathProjection],
+    invocation: &lumin_evidence::ScanInvocationTier,
+) -> Result<(), StoreError> {
+    if let Some(intent) = invocation.capability_intents.iter().find(|intent| {
+        !declared_write_set
+            .iter()
+            .any(|declared| intent.path.components.starts_with(&declared.components))
+    }) {
+        return Err(StoreError::Integrity(format!(
+            "{owner} has a capability intent outside its declared write set: {}",
+            intent.path.display
+        )));
+    }
+
+    let mut expected_rust = declared_write_set
+        .iter()
+        .filter_map(|projection| {
+            RepoPath::from_canonical_bytes(&projection.canonical)
+                .ok()
+                .filter(|path| {
+                    path.file_name_portable()
+                        .is_some_and(|name| name.ends_with(".rs"))
+                })
+                .map(|_| CapabilityIntentRecord {
+                    path: projection.clone(),
+                    capability: CapabilityIntentKind::Rust,
+                })
+        })
+        .collect::<Vec<_>>();
+    expected_rust.sort();
+    expected_rust.dedup();
+    let observed_rust = invocation
+        .capability_intents
+        .iter()
+        .filter(|intent| intent.capability == CapabilityIntentKind::Rust)
+        .cloned()
+        .collect::<Vec<_>>();
+    if observed_rust != expected_rust {
+        return Err(StoreError::Integrity(format!(
+            "{owner} has capability intents that disagree with its inferred Rust lanes"
+        )));
+    }
     Ok(())
 }
 
@@ -3325,8 +3403,8 @@ fn parse_record<T: DeserializeOwned + Serialize>(
 mod tests {
     use super::*;
     use lumin_evidence::{
-        GateAnalysisOptions, RetentionPlanItem, RetentionTombstoneEnvelope, SemanticInputRecord,
-        SemanticInputState, WriteLease,
+        GateAnalysisOptions, RetentionPlanItem, RetentionTombstoneEnvelope, ScanInvocationTier,
+        SemanticInputRecord, SemanticInputState, WriteLease,
     };
     use lumin_model::{GateId, PhysicalFileIdentity, RetentionPlanId};
 
@@ -3375,6 +3453,58 @@ mod tests {
             trash_nonce: "nonce".to_owned(),
             progress: None,
         }
+    }
+
+    #[test]
+    fn capability_intents_match_declared_and_inferred_domains()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let projection = |value: &str| -> Result<_, Box<dyn std::error::Error>> {
+            Ok(lumin_evidence::RepoPathProjection::from(
+                &RepoPath::from_portable(value)?,
+            ))
+        };
+        let main = projection("src/main.ts")?;
+        let rust = projection("src/lib.rs")?;
+        let declared = vec![main.clone(), rust.clone()];
+        let valid = ScanInvocationTier {
+            capability_intents: vec![
+                CapabilityIntentRecord {
+                    path: rust.clone(),
+                    capability: CapabilityIntentKind::Rust,
+                },
+                CapabilityIntentRecord {
+                    path: main.clone(),
+                    capability: CapabilityIntentKind::Shape,
+                },
+            ],
+            ..Default::default()
+        };
+        assert!(validate_capability_intent_domain("test", &declared, &valid).is_ok());
+
+        let missing_inferred = ScanInvocationTier {
+            capability_intents: vec![CapabilityIntentRecord {
+                path: main.clone(),
+                capability: CapabilityIntentKind::Shape,
+            }],
+            ..Default::default()
+        };
+        assert!(validate_capability_intent_domain("test", &declared, &missing_inferred).is_err());
+
+        let outside = ScanInvocationTier {
+            capability_intents: vec![
+                CapabilityIntentRecord {
+                    path: rust,
+                    capability: CapabilityIntentKind::Rust,
+                },
+                CapabilityIntentRecord {
+                    path: projection("other/model.ts")?,
+                    capability: CapabilityIntentKind::Clone,
+                },
+            ],
+            ..Default::default()
+        };
+        assert!(validate_capability_intent_domain("test", &declared, &outside).is_err());
+        Ok(())
     }
 
     #[test]

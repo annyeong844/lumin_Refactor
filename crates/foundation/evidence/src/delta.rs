@@ -3,9 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use lumin_model::{
     DeltaFact, DeltaFactFamily, DeltaIdentity, DeltaIdentityKind, DeltaKey, DeltaOwnerPayloadValue,
     DeltaValue, DependencyIntentIdentity, DynamicImportTargetScope, FindingDisposition,
-    ImportMetaGlobTargetScope, Limitation, LimitationGateRelevance, LimitationScopePolicy,
-    LogicalSourceId, PackageScopeId, RepoPath, ResolutionOutcome, ReviewOnlyReason,
-    UnresolvedTargetScope, append_length_prefixed,
+    ImportMetaGlobTargetScope, Limitation, LimitationFactOwner, LimitationGateRelevance,
+    LimitationScopePolicy, LogicalSourceId, PackageScopeId, RepoPath, ResolutionOutcome,
+    ReviewOnlyReason, UnresolvedTargetScope, append_length_prefixed,
 };
 
 use crate::{
@@ -105,12 +105,14 @@ pub(crate) fn lifecycle_delta_input_for(
                 }
             }
             LimitationDelta::RequiredOwnerGap => {
-                if limitation_intersects_gate_domain(
-                    limitation,
-                    evidence,
-                    dependency_intents,
-                    leased_write_set,
-                ) {
+                if limitation.registry_entry().fact_owner != LimitationFactOwner::Engine
+                    && limitation_intersects_gate_domain(
+                        limitation,
+                        evidence,
+                        dependency_intents,
+                        leased_write_set,
+                    )
+                {
                     required_owner_gap_count += 1;
                 }
             }
@@ -332,7 +334,8 @@ fn limitation_path(limitation: &Limitation) -> Option<&str> {
         | Limitation::SfcDialectUnavailable { .. }
         | Limitation::SfcDecompositionUnknown { .. }
         | Limitation::VueExternalScriptModeConflict { .. }
-        | Limitation::VueTemplateOpaque { .. } => None,
+        | Limitation::VueTemplateOpaque { .. }
+        | Limitation::CapabilityUnavailable { .. } => None,
     }
 }
 
@@ -951,7 +954,8 @@ fn limitation_delta_at(limitation: &Limitation, construct_ordinal: u64) -> Limit
         | Limitation::SfcDecompositionUnknown { .. }
         | Limitation::VueExternalScriptModeConflict { .. }
         | Limitation::VueTemplateOpaque { .. }
-        | Limitation::ExplicitEntryUnavailable { .. } => {
+        | Limitation::ExplicitEntryUnavailable { .. }
+        | Limitation::CapabilityUnavailable { .. } => {
             match limitation.registry_entry().gate_relevance {
                 LimitationGateRelevance::RequiredOwner => LimitationDelta::RequiredOwnerGap,
                 LimitationGateRelevance::RequiredEvidence

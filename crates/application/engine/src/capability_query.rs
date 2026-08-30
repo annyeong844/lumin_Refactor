@@ -1,11 +1,16 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use lumin_evidence::{
-    CapabilityRecord, CollectionOrderingId, DEAD_CODE_CAPABILITY_ID,
-    DEPENDENCY_OWNERSHIP_CAPABILITY_ID, EvidencePage, EvidenceQuery, EvidenceQueryScope,
-    RunEvidence,
+    AnalysisSnapshot, CapabilityIntentRecord, CapabilityRecord, CollectionOrderingId,
+    DEAD_CODE_CAPABILITY_ID, DEPENDENCY_OWNERSHIP_CAPABILITY_ID, EvidencePage, EvidenceQuery,
+    EvidenceQueryScope, GateSignal, RepoPathProjection, RunEvidence, SemanticInputRecord,
+    SemanticInputState, seal_analysis_snapshot,
 };
-use lumin_model::{BuildIdentity, CapabilityState, RepositoryId, RunId, digest_hex};
+use lumin_model::{
+    BuildIdentity, CapabilityIntent, CapabilityIntentKind, CapabilityState, Limitation,
+    LogicalSourceId, RepoPath, RepositoryId, RunId, digest_hex,
+};
 
 use crate::EngineError;
 use crate::gate_query::{EvidenceQueryError, page, validated_query};
@@ -13,6 +18,155 @@ use crate::gate_query::{EvidenceQueryError, page, validated_query};
 const CAPABILITIES_PAGE_SIZE: usize = 3;
 const BINARY_CAPABILITIES_PATH: &str = "binary/capabilities";
 const RUN_CAPABILITIES_PATH: &str = "run/capabilities";
+
+pub(crate) fn normalized_gate_capability_intents(
+    declared_paths: &[RepoPath],
+    explicit_intents: &[CapabilityIntent],
+) -> Vec<CapabilityIntentRecord> {
+    let mut intents = explicit_intents
+        .iter()
+        .map(|intent| CapabilityIntentRecord {
+            path: (&intent.path).into(),
+            capability: intent.capability,
+        })
+        .collect::<Vec<_>>();
+    intents.extend(
+        declared_paths
+            .iter()
+            .filter(|path| {
+                path.file_name_portable()
+                    .is_some_and(|name| name.ends_with(".rs"))
+            })
+            .map(|path| CapabilityIntentRecord {
+                path: path.into(),
+                capability: CapabilityIntentKind::Rust,
+            }),
+    );
+    intents.sort();
+    intents.dedup();
+    intents
+}
+
+pub(crate) fn gate_capability_target_paths(
+    intents: &[CapabilityIntentRecord],
+) -> Result<BTreeSet<RepoPath>, EngineError> {
+    intents
+        .iter()
+        .map(|intent| {
+            RepoPath::from_canonical_bytes(&intent.path.canonical).map_err(|error| {
+                EngineError::TierProjectionCorrupt(format!(
+                    "capability intent path {} is invalid: {error}",
+                    intent.path.display
+                ))
+            })
+        })
+        .collect()
+}
+
+/// Project gate-specific unavailable lanes after loading repository-neutral analysis.
+///
+/// This owner step is deliberately outside the analysis cache. The cache retains facts
+/// from compiled analyzers; the engine registry recomputes requested absent-owner facts
+/// and signals for each gate invocation.
+#[allow(clippy::match_like_matches_macro)] // limitation ownership rejects variant patterns in macros
+pub(crate) fn apply_gate_capability_availability(
+    root: &Path,
+    snapshot: AnalysisSnapshot,
+    reserved_state_lookup: &lumin_inventory::ReservedStateIdentityLookup,
+) -> Result<(AnalysisSnapshot, Vec<GateSignal>), EngineError> {
+    if snapshot
+        .evidence
+        .limitations
+        .iter()
+        .any(|limitation| match limitation {
+            Limitation::CapabilityUnavailable { .. } => true,
+            _ => false,
+        })
+    {
+        return Err(EngineError::TierProjectionCorrupt(
+            "repository-neutral analysis contained a gate capability limitation".to_owned(),
+        ));
+    }
+
+    let AnalysisSnapshot {
+        mut inputs,
+        scan_invocation,
+        entry_selections,
+        mut evidence,
+        ..
+    } = snapshot;
+    let mut targets = BTreeMap::<CapabilityIntentKind, Vec<LogicalSourceId>>::new();
+    for intent in &scan_invocation.capability_intents {
+        let path = RepoPath::from_canonical_bytes(&intent.path.canonical).map_err(|error| {
+            EngineError::TierProjectionCorrupt(format!(
+                "capability intent path {} is invalid: {error}",
+                intent.path.display
+            ))
+        })?;
+        targets
+            .entry(intent.capability)
+            .or_default()
+            .push(LogicalSourceId::from_path(&path));
+        if inputs.iter().any(|input| input.path == intent.path) {
+            continue;
+        }
+        let observation = lumin_inventory::inspect_write_target(root, &path)?;
+        if observation.kind == lumin_inventory::WriteTargetKind::ExistingFile {
+            let physical_identity = observation.physical_identity.clone().ok_or_else(|| {
+                EngineError::TierProjectionCorrupt(format!(
+                    "capability target {} omitted its physical identity",
+                    intent.path.display
+                ))
+            })?;
+            let payload_sha256 = lumin_inventory::rehash_existing_write_target(root, &observation)?;
+            let input = SemanticInputRecord {
+                path: RepoPathProjection::from(&path),
+                state: SemanticInputState::CapabilityTarget,
+                payload_sha256: Some(payload_sha256.clone()),
+                physical_identity: Some(physical_identity),
+                absence_parent: None,
+                physical_redirect_sha256: None,
+            };
+            lumin_inventory::validate_captured_semantic_input(
+                root,
+                &lumin_inventory::SemanticInputExpectation {
+                    path,
+                    state: lumin_inventory::SemanticInputValidationState::Regular,
+                    payload_sha256: Some(payload_sha256),
+                    physical_identity: input.physical_identity.clone(),
+                    absence_parent: None,
+                },
+                reserved_state_lookup,
+            )?;
+            inputs.push(input);
+        }
+    }
+    for capability_targets in targets.values_mut() {
+        capability_targets.sort();
+        capability_targets.dedup();
+    }
+    let limitation_count = targets.len();
+    evidence
+        .limitations
+        .extend(targets.into_iter().map(|(capability, targets)| {
+            Limitation::CapabilityUnavailable {
+                capability,
+                targets,
+            }
+        }));
+    evidence.limitations.sort_by(Limitation::canonical_cmp);
+    evidence.limitations.dedup();
+
+    let snapshot = seal_analysis_snapshot(inputs, evidence, scan_invocation, entry_selections);
+
+    Ok((
+        snapshot,
+        (limitation_count > 0)
+            .then_some(GateSignal::RequiredOwnerUnavailable { limitation_count })
+            .into_iter()
+            .collect(),
+    ))
+}
 
 /// The compiled capability registry built at binary construction time.
 #[derive(Clone, Debug)]

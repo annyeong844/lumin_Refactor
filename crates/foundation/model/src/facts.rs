@@ -848,6 +848,32 @@ impl PackageScope {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CapabilityIntentKind {
+    Rust,
+    Shape,
+    Clone,
+    Discipline,
+}
+
+impl CapabilityIntentKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Rust => "rust",
+            Self::Shape => "shape",
+            Self::Clone => "clone",
+            Self::Discipline => "discipline",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct CapabilityIntent {
+    pub capability: CapabilityIntentKind,
+    pub path: RepoPath,
+}
+
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "kebab-case")]
 pub enum Limitation {
@@ -997,10 +1023,15 @@ pub enum Limitation {
         source: EntrySource,
         unavailable_reason: EntryUnavailableReason,
     },
+    CapabilityUnavailable {
+        capability: CapabilityIntentKind,
+        targets: Vec<LogicalSourceId>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum LimitationFactOwner {
+    Engine,
     Inventory,
     Js,
     Resolve,
@@ -1028,6 +1059,7 @@ pub enum LimitationScopePolicy {
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum LimitationAbsenceEffect {
+    CapabilityClaims,
     LocalDefinitions,
     WorkspaceConsumers,
     ModuleValueExports,
@@ -1255,6 +1287,12 @@ define_limitation_registry! {
         scope: EntryOwnerPackageOrWorkspace,
         absence: UnreachableModules,
         gate: RequiredEvidence,
+    },
+    CapabilityUnavailable => {
+        owner: Engine,
+        scope: ExplicitTargetsOrWorkspace,
+        absence: CapabilityClaims,
+        gate: RequiredOwner,
     },
 }
 

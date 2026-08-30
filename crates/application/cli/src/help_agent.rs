@@ -19,6 +19,9 @@ Audit and query
 Write gate
   Generate and retain a unique operation ID before every mutation.
   lumin pre-write --operation-id <operation-id> --path <repo-path> --format json
+  Rust is inferred from planned .rs paths. Add
+  --capability-at <declared-repo-path> <shape|clone|type-escape> for those typed intents.
+  An unavailable requested owner returns an incomplete gate; never substitute another lane.
   Apply edits only when the returned decision authorizes them, and retain the
   returned gateId.
   lumin post-write <gate-id> --operation-id <new-operation-id> --format json
