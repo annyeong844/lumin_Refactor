@@ -214,6 +214,153 @@ fn warm_cache_replays_owner_semantics() -> Result<(), Box<dyn std::error::Error>
 }
 
 #[test]
+fn cache_projection_is_gate_contextual() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir(root.path().join("src"))?;
+    fs::write(
+        root.path().join("package.json"),
+        r#"{"name":"gate-context-cache","private":true,"type":"module"}"#,
+    )?;
+    fs::write(
+        root.path().join("src/broken.ts"),
+        concat!(
+            "import { used } from './target.js';\n",
+            "console.log(used);\n",
+            "export const visible = 1;\n",
+            "export const hiddenLocal;\n",
+        ),
+    )?;
+    fs::write(
+        root.path().join("src/consumer.ts"),
+        "import { visible } from './broken.js'; console.log(visible);\n",
+    )?;
+    fs::write(
+        root.path().join("src/target.ts"),
+        "export const used = 1;\n",
+    )?;
+    fs::write(root.path().join("src/safe.ts"), "console.log('safe');\n")?;
+
+    let (intersecting, cold_frames) = run_with_cache_replay_trace(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-cache-context-intersecting",
+            "--path",
+            "src/broken.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&intersecting, 4);
+    assert!(
+        cold_frames.is_empty(),
+        "cold gate unexpectedly replayed cached analysis: {cold_frames:?}"
+    );
+    let intersecting_json: Value = serde_json::from_str(&intersecting.stdout)?;
+    assert_eq!(
+        intersecting_json.get("decision").and_then(Value::as_str),
+        Some("incomplete")
+    );
+    assert_eq!(
+        intersecting_json.get("lifecycle").and_then(Value::as_str),
+        Some("rejected")
+    );
+    let intersecting_signals = intersecting_json
+        .get("signals")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("intersecting gate omitted signals"))?;
+    assert_eq!(intersecting_signals.len(), 1);
+    assert_eq!(
+        intersecting_signals[0].get("kind").and_then(Value::as_str),
+        Some("required-evidence-incomplete")
+    );
+    assert_eq!(
+        intersecting_signals[0].get("count").and_then(Value::as_u64),
+        Some(1)
+    );
+
+    let (disjoint, warm_frames) = run_with_cache_replay_trace(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-cache-context-disjoint",
+            "--path",
+            "src/safe.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&disjoint, 0);
+    let disjoint_json: Value = serde_json::from_str(&disjoint.stdout)?;
+    assert_eq!(
+        disjoint_json.get("decision").and_then(Value::as_str),
+        Some("allow")
+    );
+    assert_eq!(
+        disjoint_json.get("lifecycle").and_then(Value::as_str),
+        Some("active")
+    );
+    assert_eq!(
+        disjoint_json
+            .get("signals")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(0),
+        "warm disjoint gate replayed the prior gate's required effect: {disjoint_json:#?}"
+    );
+    let warm_stages = warm_frames
+        .iter()
+        .filter_map(|frame| frame.split_whitespace().next())
+        .collect::<Vec<_>>();
+    assert_eq!(warm_stages.last().copied(), Some("cache-finished-hit"));
+    assert_eq!(
+        warm_stages
+            .iter()
+            .filter(|stage| **stage == "cache-finished-hit")
+            .count(),
+        1
+    );
+
+    let intersecting_gate_id = field(&intersecting.stdout, "gateId")?;
+    let disjoint_gate_id = field(&disjoint.stdout, "gateId")?;
+    let intersecting_gate = lumin_engine::load_gate(
+        root.path(),
+        &lumin_model::GateId::from_string(intersecting_gate_id),
+    )?;
+    let disjoint_gate = lumin_engine::load_gate(
+        root.path(),
+        &lumin_model::GateId::from_string(disjoint_gate_id),
+    )?;
+    let intersecting_baseline = intersecting_gate
+        .baseline
+        .as_ref()
+        .ok_or_else(|| std::io::Error::other("intersecting gate omitted its baseline"))?;
+    let disjoint_baseline = disjoint_gate
+        .baseline
+        .as_ref()
+        .ok_or_else(|| std::io::Error::other("disjoint gate omitted its baseline"))?;
+    assert_eq!(
+        intersecting_baseline.snapshot, disjoint_baseline.snapshot,
+        "warm replay changed the cached owner output"
+    );
+    assert_ne!(
+        intersecting_gate.revisions[0].signals, disjoint_gate.revisions[0].signals,
+        "gate-context projection was cached with the repository analysis"
+    );
+    assert!(lumin_engine::gate_observation_binding_matches_owner(
+        &intersecting_gate,
+        &intersecting_gate.revisions[0]
+    )?);
+    assert!(lumin_engine::gate_observation_binding_matches_owner(
+        &disjoint_gate,
+        &disjoint_gate.revisions[0]
+    )?);
+    Ok(())
+}
+
+#[test]
 fn pre_write_reserves_semantic_demands_before_capture_and_retries_after_writer_terminal()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = semantic_read_closure_fixture()?;

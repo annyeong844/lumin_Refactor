@@ -45,10 +45,10 @@ These are execution-matrix counts, not a percentage estimate of product code.
 
 | Lane | Applicable | Mapped | Remaining | Verified aggregate |
 | --- | ---: | ---: | ---: | --- |
-| Standard | 86 | 79 | 7 | Focused `gate-semantic-read-closure-warm-cache`: 1 passed, 0 failed; `corpus::tests::mode_counts`: 79 mapped, 7 unmapped. |
-| Determinism | 86 | 79 | 7 | The same focused row passed with 5 semantic captures; `corpus::tests::mode_counts`: 79 mapped, 7 unmapped. |
+| Standard | 86 | 80 | 6 | Focused `cache-gate-context-projection`: 1 passed, 0 failed; `corpus::tests::mode_counts`: 80 mapped, 6 unmapped. |
+| Determinism | 86 | 80 | 6 | The same focused row passed with 2 semantic captures; `corpus::tests::mode_counts`: 80 mapped, 6 unmapped. |
 | Store crash | 11 | 9 | 2 | Focused state-replacement rows passed through their public fault targets; `corpus::tests::mode_counts`: 9 mapped, 2 unmapped. |
-| **Total execution obligations** | **183** | **167** | **16** | This total deliberately counts each required lane execution. |
+| **Total execution obligations** | **183** | **169** | **14** | This total deliberately counts each required lane execution. |
 
 Known non-corpus exit gaps:
 

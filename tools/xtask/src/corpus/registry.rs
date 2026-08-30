@@ -82,6 +82,10 @@ static INV_WARM_CACHE: &[CorpusInvocation] = &[
     inv!("write_gate", "semantic_demands::warm_cache_replays_owner_semantics"),
 ];
 #[rustfmt::skip]
+static INV_CACHE_GATE_CONTEXT: &[CorpusInvocation] = &[
+    inv!("write_gate", "semantic_demands::cache_projection_is_gate_contextual"),
+];
+#[rustfmt::skip]
 static INV_IDEMP: &[CorpusInvocation] = &[
     inv!("lifecycle_operation_idempotency", "gate::gate_mutations_recover_post_commit_delivery_failure_without_duplication", LifecycleFault),
     inv!("lifecycle_operation_idempotency", "gate_retention::gate_retention_mutations_recover_post_commit_delivery_failure_without_duplication", LifecycleFault),
@@ -503,7 +507,7 @@ pub static REGISTRY: &[RegistryRow] = &[
     ]),
     row_sd!("gate-semantic-read-closure", INV_SEM_READ),
     row_sd!("gate-semantic-read-closure-warm-cache", INV_WARM_CACHE),
-    row_sd!("cache-gate-context-projection"),
+    row_sd!("cache-gate-context-projection", INV_CACHE_GATE_CONTEXT),
     row_sd_arch!("capability-availability-authority"),
     row_sd!("gate-unsealed-observation"),
     row_sd!("gate-analysis-input-reconciliation"),
