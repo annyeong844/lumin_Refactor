@@ -404,6 +404,42 @@
         },
         {
           "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "serde",
+          "package": "serde",
+          "requirement": "=1.0.228",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "serde",
+            "version": "1.0.228",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
+          "kind": "normal",
+          "target": null,
+          "alias": "serde_json",
+          "package": "serde_json",
+          "requirement": "=1.0.150",
+          "optional": false,
+          "defaultFeatures": true,
+          "features": null,
+          "sourceKind": "crates-io",
+          "resolution": {
+            "kind": "crates-io",
+            "name": "serde_json",
+            "version": "1.0.150",
+            "source": "registry+https://github.com/rust-lang/crates.io-index"
+          }
+        },
+        {
+          "origin": "workspace-inherited",
           "kind": "development",
           "target": null,
           "alias": "tempfile",

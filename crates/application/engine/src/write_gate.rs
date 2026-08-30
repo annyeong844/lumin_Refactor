@@ -499,6 +499,7 @@ fn analyze_pre_write(
         resolution_profile: request.resolution_profile,
         scan_invocation: build_gate_scan_invocation_tier(request),
     };
+    let analysis_contract = analysis_contract_id();
     let inventory_request = inventory_request_from_tier(&options.scan_invocation)?;
     let reserved_state_lookup = reserved_state_identity_lookup(&context.store);
     let capture = match capture_reserved_repository(
@@ -509,6 +510,7 @@ fn analyze_pre_write(
             root: &context.root,
             repository_root: &context.repository_root,
             options: &options,
+            owner_contract_version: &analysis_contract,
             inventory_request: &inventory_request,
             reserved_state_lookup: &reserved_state_lookup,
         },
@@ -584,7 +586,7 @@ fn analyze_pre_write(
         reserved_state_lookup,
     };
     let baseline = GateBaselineDraft {
-        analysis_contract: analysis_contract_id(),
+        analysis_contract,
         snapshot: capture.snapshot,
         protected_semantic_inputs,
         transition_sequence,
@@ -619,7 +621,8 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         .baseline
         .as_ref()
         .ok_or_else(|| EngineError::GateBaselineMissing(request.gate_id.as_str().to_owned()))?;
-    if baseline.analysis_contract != analysis_contract_id() {
+    let analysis_contract = analysis_contract_id();
+    if baseline.analysis_contract != analysis_contract {
         return finish_failed_close(
             &operation,
             request,
@@ -720,6 +723,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
             root: &context.root,
             repository_root: &context.repository_root,
             options: &gate.analysis_options,
+            owner_contract_version: &analysis_contract,
             inventory_request: &inventory_request,
             reserved_state_lookup: &reserved_state_lookup,
         },
@@ -1170,6 +1174,7 @@ struct ReservedCaptureContext<'a> {
     root: &'a Path,
     repository_root: &'a RepositoryRootIdentity,
     options: &'a GateAnalysisOptions,
+    owner_contract_version: &'a str,
     inventory_request: &'a InventoryRequest,
     reserved_state_lookup: &'a lumin_inventory::ReservedStateIdentityLookup,
 }
@@ -1188,6 +1193,7 @@ fn capture_reserved_repository(
         root,
         repository_root,
         options,
+        owner_contract_version,
         inventory_request,
         reserved_state_lookup,
     } = context;
@@ -1227,13 +1233,12 @@ fn capture_reserved_repository(
             options.scan_invocation.clone(),
             reserved_state_lookup.clone(),
         )?;
-        let owner_contract_version = analysis_contract_id();
         let mut capture = loop {
-            let cache_context = session.analysis_cache_context(&owner_contract_version)?;
+            let cache_context = session.analysis_cache_context(owner_contract_version)?;
             if let Some(replayed) = analysis_cache::load(
                 store,
                 &cache_context,
-                &owner_contract_version,
+                owner_contract_version,
                 &session.scan_invocation,
             )? {
                 match replayed {
@@ -1274,7 +1279,7 @@ fn capture_reserved_repository(
                     analysis_cache::store_demands(
                         store,
                         &cache_context,
-                        &owner_contract_version,
+                        owner_contract_version,
                         &demands,
                     )?;
                     let paths = demands
@@ -1296,7 +1301,7 @@ fn capture_reserved_repository(
                     analysis_cache::store_finished(
                         store,
                         &cache_context,
-                        &owner_contract_version,
+                        owner_contract_version,
                         &capture,
                     )?;
                     break capture;
