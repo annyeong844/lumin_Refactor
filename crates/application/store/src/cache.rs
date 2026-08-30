@@ -1,3 +1,4 @@
+mod entries;
 mod manifest;
 
 #[cfg(feature = "cache-cleanup-test-fault")]

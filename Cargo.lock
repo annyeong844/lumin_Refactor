@@ -306,6 +306,8 @@ dependencies = [
  "lumin-sfc",
  "lumin-store",
  "rayon",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror",
 ]

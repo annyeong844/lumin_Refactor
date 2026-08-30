@@ -1,6 +1,219 @@
 use super::*;
 
 #[test]
+fn warm_cache_replays_owner_semantics() -> Result<(), Box<dyn std::error::Error>> {
+    let root = semantic_read_closure_fixture()?;
+    fs::create_dir(root.path().join("writers"))?;
+    fs::write(
+        root.path().join("shared/new.json"),
+        "export const blocker = 1;\n",
+    )?;
+    fs::hard_link(
+        root.path().join("shared/new.json"),
+        root.path().join("writers/new-config-writer.ts"),
+    )?;
+    fs::write(
+        root.path().join("src/tsconfig.json"),
+        "{\"extends\":\"../config/base.json\"}\n",
+    )?;
+    let seed_gate = open_gate(root.path(), "op-cache-seed", "src/seed.ts")?;
+    abandon_gate(
+        root.path(),
+        &seed_gate,
+        "op-cache-seed-abandon",
+        "old cache seed complete",
+    )?;
+    let writer_gate = open_scoped_gate(
+        root.path(),
+        "op-cache-new-config-writer",
+        "writers/new-config-writer.ts",
+        "writers/new-config-writer.ts",
+    )?;
+    fs::write(
+        root.path().join("config/base.json"),
+        "{\"extends\":\"../shared/new.json\",\"compilerOptions\":{}}\n",
+    )?;
+
+    let (blocked, blocked_frames) = run_with_cache_replay_trace(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-cache-stale-demand",
+            "--path",
+            "src/blocked.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&blocked, 4);
+    assert_eq!(field(&blocked.stdout, "decision")?, "incomplete");
+    let blocked_json: Value = serde_json::from_str(&blocked.stdout)?;
+    let conflict_paths = blocked_json
+        .get("signals")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|signal| {
+            signal.get("kind").and_then(Value::as_str) == Some("semantic-input-conflict")
+        })
+        .filter_map(|signal| signal.get("paths").and_then(Value::as_array))
+        .flatten()
+        .filter_map(|path| path.get("display").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    assert_eq!(conflict_paths, ["shared/new.json"]);
+    let blocked_stages = blocked_frames
+        .iter()
+        .filter_map(|frame| frame.split_whitespace().next())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        blocked_stages,
+        ["cache-demand-hit"],
+        "warm execution replayed a demand beyond the changed intermediate config"
+    );
+    let attempted_domain = blocked_json
+        .pointer("/observationBinding/attemptedDomain")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("blocked warm gate omitted its attempted domain"))?;
+    let attempted_paths = attempted_domain
+        .iter()
+        .filter_map(|path| path.get("display").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+    assert!(attempted_paths.contains(&"config/base.json"));
+    assert!(attempted_paths.contains(&"shared/new.json"));
+    assert!(!attempted_paths.contains(&"shared/root.json"));
+    assert!(
+        !blocked_json
+            .get("signals")
+            .and_then(Value::as_array)
+            .is_some_and(|signals| signals.iter().any(|signal| {
+                signal.get("kind").and_then(Value::as_str) == Some("analysis-failed")
+            }))
+    );
+
+    abandon_gate(
+        root.path(),
+        &writer_gate,
+        "op-cache-new-config-writer-abandon",
+        "release new config writer",
+    )?;
+    fs::remove_file(root.path().join("writers/new-config-writer.ts"))?;
+    let cleanup = run(
+        root.path(),
+        &[
+            "cache",
+            "clean",
+            "--operation-id",
+            "op-cache-reset-before-cold",
+        ],
+    )?;
+    assert_status(&cleanup, 0);
+
+    fs::write(
+        root.path().join("shared/new.json"),
+        "{\"compilerOptions\":{\"strict\":true}}\n",
+    )?;
+    let cold = run(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-cache-cold",
+            "--path",
+            "src/cold.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&cold, 0);
+    let cold_gate_id = field(&cold.stdout, "gateId")?;
+    let cold_gate = lumin_engine::load_gate(
+        root.path(),
+        &lumin_model::GateId::from_string(cold_gate_id.clone()),
+    )?;
+    abandon_gate(
+        root.path(),
+        &cold_gate_id,
+        "op-cache-cold-abandon",
+        "cold capture complete",
+    )?;
+
+    let (warm, warm_frames) = run_with_cache_replay_trace(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-cache-warm",
+            "--path",
+            "src/warm.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&warm, 0);
+    assert_eq!(field(&warm.stdout, "decision")?, "allow");
+    let stages = warm_frames
+        .iter()
+        .filter_map(|frame| frame.split_whitespace().next())
+        .collect::<Vec<_>>();
+    assert!(
+        stages
+            .iter()
+            .filter(|stage| **stage == "cache-demand-hit")
+            .count()
+            >= 2,
+        "warm execution omitted nested cached demand steps: {stages:?}"
+    );
+    assert_eq!(stages.last().copied(), Some("cache-finished-hit"));
+    assert_eq!(
+        stages
+            .iter()
+            .filter(|stage| **stage == "cache-finished-hit")
+            .count(),
+        1
+    );
+
+    let warm_gate_id = field(&warm.stdout, "gateId")?;
+    let warm_gate =
+        lumin_engine::load_gate(root.path(), &lumin_model::GateId::from_string(warm_gate_id))?;
+    let cold_baseline = cold_gate
+        .baseline
+        .as_ref()
+        .ok_or_else(|| std::io::Error::other("cold gate omitted its baseline"))?;
+    let warm_baseline = warm_gate
+        .baseline
+        .as_ref()
+        .ok_or_else(|| std::io::Error::other("warm gate omitted its baseline"))?;
+    assert_eq!(cold_baseline.snapshot, warm_baseline.snapshot);
+    assert_eq!(
+        cold_baseline.protected_semantic_inputs,
+        warm_baseline.protected_semantic_inputs
+    );
+    assert_eq!(
+        cold_baseline.analysis_contract,
+        warm_baseline.analysis_contract
+    );
+    assert_eq!(
+        cold_gate.revisions[0].decision,
+        warm_gate.revisions[0].decision
+    );
+    assert_eq!(
+        cold_gate.revisions[0].signals,
+        warm_gate.revisions[0].signals
+    );
+    assert_eq!(cold_gate.revisions[0].deltas, warm_gate.revisions[0].deltas);
+    assert!(lumin_engine::gate_observation_binding_matches_owner(
+        &cold_gate,
+        &cold_gate.revisions[0]
+    )?);
+    assert!(lumin_engine::gate_observation_binding_matches_owner(
+        &warm_gate,
+        &warm_gate.revisions[0]
+    )?);
+    Ok(())
+}
+
+#[test]
 fn pre_write_reserves_semantic_demands_before_capture_and_retries_after_writer_terminal()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = semantic_read_closure_fixture()?;
@@ -713,6 +926,107 @@ fn release_gate_barrier(
     stream.write_all(b"release\n")?;
     stream.flush()?;
     Ok(())
+}
+
+fn run_with_cache_replay_trace(
+    root: &Path,
+    arguments: &[&str],
+) -> Result<(support::ProcessResult, Vec<String>), Box<dyn std::error::Error>> {
+    let arguments = arguments
+        .iter()
+        .map(std::ffi::OsString::from)
+        .collect::<Vec<_>>();
+    let effective_arguments = support::determinism::effective_arguments(&arguments)?;
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+    listener.set_nonblocking(true)?;
+    let mut child = lumin_command(root)?
+        .args(&effective_arguments)
+        .env(
+            "LUMIN_TEST_GATE_CACHE_REPLAY_BARRIER",
+            listener.local_addr()?.to_string(),
+        )
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let started = Instant::now();
+    let mut frames = Vec::new();
+    loop {
+        match listener.accept() {
+            Ok((mut stream, peer)) => {
+                assert!(peer.ip().is_loopback());
+                stream.set_nonblocking(false)?;
+                stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+                stream.set_write_timeout(Some(Duration::from_secs(30)))?;
+                let mut frame = String::new();
+                BufReader::new(stream.try_clone()?).read_line(&mut frame)?;
+                frames.push(frame.trim_end().to_owned());
+                release_gate_barrier(&mut stream)?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if child.try_wait()?.is_some() {
+                    break;
+                }
+                if started.elapsed() >= Duration::from_secs(30) {
+                    return Err(std::io::Error::other(
+                        "gate command did not finish its cache replay trace",
+                    )
+                    .into());
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    let output = child.wait_with_output()?;
+    let result = support::finish_process_output(root, &effective_arguments, output)?;
+    Ok((result, frames))
+}
+
+fn abandon_gate(
+    root: &Path,
+    gate_id: &str,
+    operation_id: &str,
+    reason: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let abandoned = run(
+        root,
+        &[
+            "gate",
+            "abandon",
+            gate_id,
+            "--operation-id",
+            operation_id,
+            "--reason",
+            reason,
+        ],
+    )?;
+    assert_status(&abandoned, 3);
+    assert_eq!(field(&abandoned.stdout, "lifecycle")?, "abandoned");
+    Ok(())
+}
+
+fn open_scoped_gate(
+    root: &Path,
+    operation_id: &str,
+    path: &str,
+    include: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let opened = run(
+        root,
+        &[
+            "pre-write",
+            "--operation-id",
+            operation_id,
+            "--path",
+            path,
+            "--include",
+            include,
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&opened, 0);
+    field(&opened.stdout, "gateId")
 }
 
 fn assert_stale_capture_binding(response: &Value) -> Result<(), Box<dyn std::error::Error>> {

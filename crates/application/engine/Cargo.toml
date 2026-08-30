@@ -25,6 +25,8 @@ lumin-sfc = { path = "../../languages/sfc" }
 lumin-resolve = { path = "../../graph/resolve" }
 lumin-store = { path = "../store" }
 rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
