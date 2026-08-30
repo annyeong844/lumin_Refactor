@@ -1222,7 +1222,36 @@ pub fn validate_run_evidence_tier(
     invocation: &ScanInvocationTier,
     entry_selections: &[EntrySelectionRecord],
 ) -> Result<(), RunEvidenceIdentityError> {
-    validate_capability_unavailability(evidence, invocation)?;
+    let mut directory_capability_intents = BTreeSet::new();
+    for intent in &invocation.capability_intents {
+        let path = RepoPath::from_canonical_bytes(&intent.path.canonical).map_err(|_| {
+            RunEvidenceIdentityError::InventoryMismatch {
+                collection: "capability-unavailable invocation intents",
+            }
+        })?;
+        if intent.capability == lumin_model::CapabilityIntentKind::Rust
+            && !path
+                .file_name_portable()
+                .is_some_and(|name| name.ends_with(".rs"))
+        {
+            directory_capability_intents.insert(intent.path.clone());
+        }
+    }
+    validate_run_evidence_tier_with_directory_capability_intents(
+        evidence,
+        invocation,
+        entry_selections,
+        &directory_capability_intents,
+    )
+}
+
+pub fn validate_run_evidence_tier_with_directory_capability_intents(
+    evidence: &RunEvidence,
+    invocation: &ScanInvocationTier,
+    entry_selections: &[EntrySelectionRecord],
+    directory_capability_intents: &BTreeSet<RepoPathProjection>,
+) -> Result<(), RunEvidenceIdentityError> {
+    validate_capability_unavailability(evidence, invocation, directory_capability_intents)?;
     match invocation.resolution_profile {
         Some(expected) => {
             if evidence.resolution_profiles.iter().any(|profile| {
@@ -1418,6 +1447,7 @@ pub fn validate_run_evidence_tier(
 fn validate_capability_unavailability(
     evidence: &RunEvidence,
     invocation: &ScanInvocationTier,
+    directory_capability_intents: &BTreeSet<RepoPathProjection>,
 ) -> Result<(), RunEvidenceIdentityError> {
     let mut allowed = BTreeMap::<lumin_model::CapabilityIntentKind, Vec<LogicalSourceId>>::new();
     let mut required = BTreeMap::<lumin_model::CapabilityIntentKind, Vec<LogicalSourceId>>::new();
@@ -1433,9 +1463,7 @@ fn validate_capability_unavailability(
             .or_default()
             .push(target.clone());
         let latent_rust_directory = intent.capability == lumin_model::CapabilityIntentKind::Rust
-            && !path
-                .file_name_portable()
-                .is_some_and(|name| name.ends_with(".rs"));
+            && directory_capability_intents.contains(&intent.path);
         if !latent_rust_directory {
             required.entry(intent.capability).or_default().push(target);
         }

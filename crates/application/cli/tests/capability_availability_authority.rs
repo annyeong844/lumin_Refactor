@@ -142,6 +142,7 @@ fn capability_unavailability_has_one_owner() -> Result<(), Box<dyn std::error::E
 #[test]
 fn directory_write_domain_requires_the_unavailable_rust_owner()
 -> Result<(), Box<dyn std::error::Error>> {
+    rs_suffixed_directory_uses_descendant_detection()?;
     let existing = tempfile::tempdir()?;
     write(
         existing.path(),
@@ -279,6 +280,56 @@ fn directory_write_domain_requires_the_unavailable_rust_owner()
         })
     }));
     rust_descendant_created_after_initial_traversal_cannot_seal()?;
+    Ok(())
+}
+
+fn rs_suffixed_directory_uses_descendant_detection() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "generated.rs/main.ts",
+        "console.log('supported');\n",
+    )?;
+    let arguments = [
+        "pre-write",
+        "--operation-id",
+        "op-rs-suffixed-directory",
+        "--path",
+        "generated.rs",
+        "--jobs",
+        "1",
+    ];
+    let opened = run(root.path(), &arguments)?;
+    assert_status(&opened, 0);
+    assert!(opened.stderr.is_empty());
+    assert_eq!(field(&opened.stdout, "decision")?, "allow");
+    assert_eq!(field(&opened.stdout, "lifecycle")?, "active");
+
+    let replay = run(root.path(), &arguments)?;
+    assert_status(&replay, 0);
+    assert_eq!(replay.stdout, opened.stdout);
+    let gate_id = GateId::from_string(field(&opened.stdout, "gateId")?);
+    let gate = lumin_engine::load_gate(root.path(), &gate_id)?;
+    let baseline = gate
+        .baseline
+        .as_ref()
+        .ok_or_else(|| std::io::Error::other(".rs directory gate omitted its baseline"))?;
+    assert!(
+        baseline
+            .snapshot
+            .evidence
+            .limitations
+            .iter()
+            .all(|limitation| {
+                !matches!(
+                    limitation,
+                    Limitation::CapabilityUnavailable {
+                        capability: CapabilityIntentKind::Rust,
+                        ..
+                    }
+                )
+            })
+    );
     Ok(())
 }
 

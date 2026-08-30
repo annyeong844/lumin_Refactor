@@ -86,9 +86,12 @@ pub(crate) fn active_gate_capability_intents(
                 intent.path.display
             ))
         })?;
-        let direct_rust_target = path
-            .file_name_portable()
-            .is_some_and(|name| name.ends_with(".rs"));
+        let direct_rust_target = intent.capability == CapabilityIntentKind::Rust
+            && path
+                .file_name_portable()
+                .is_some_and(|name| name.ends_with(".rs"))
+            && lumin_inventory::inspect_write_target(root, &path)?.kind
+                != lumin_inventory::WriteTargetKind::ExistingDirectory;
         if intent.capability == CapabilityIntentKind::Rust
             && !direct_rust_target
             && !lumin_inventory::directory_contains_rust_path(root, &path, reserved_state_lookup)?

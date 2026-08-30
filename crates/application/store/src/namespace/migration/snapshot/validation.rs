@@ -13,14 +13,15 @@ use lumin_evidence::{
     PreWriteAdmissionConflictOwner, PreWriteAdmissionEvidence, RUN_EVIDENCE_SCHEMA_VERSION,
     RetentionItemKind, RetentionOperationKind, RetentionOperationRecord, RetentionOperationResult,
     RetentionOperationStatus, RetentionPlanState, SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID,
-    WorktreeTransition, WriteLeaseKind, apply_worktree_transition_for_domain,
+    WorktreeTransition, WriteLease, WriteLeaseKind, apply_worktree_transition_for_domain,
     derive_gate_baseline_observation_id, derive_gate_close_observation_id,
     derive_post_write_final_validation_signals, derive_pre_write_admission_signals,
     derive_pre_write_final_validation_signals, derive_protected_semantic_inputs,
     derive_unsealed_gate_observation_binding, gate_abandon_request_digest, gate_policy,
     post_write_request_digest, pre_write_request_digest, seal_analysis_snapshot,
     validate_migration_run_evidence, validate_migration_run_evidence_tier,
-    validate_run_evidence_identities, validate_run_evidence_inputs, validate_run_evidence_tier,
+    validate_run_evidence_identities, validate_run_evidence_inputs,
+    validate_run_evidence_tier_with_directory_capability_intents,
 };
 use lumin_model::{CapabilityIntentKind, ObservationBinding, RepoPath, SealedGateObservation};
 use serde::{Serialize, de::DeserializeOwned};
@@ -1422,6 +1423,7 @@ fn validate_gate_observations(
                     key,
                     "baseline",
                     &baseline.snapshot,
+                    &baseline.leased_write_set,
                     authenticate_legacy_evidence,
                 )?;
                 validate_baseline_write_domain(key, gate, baseline)?;
@@ -1710,6 +1712,7 @@ fn validate_gate_observations(
                 key,
                 &format!("close revision {}", revision.revision),
                 snapshot,
+                &baseline.leased_write_set,
                 authenticate_legacy_evidence,
             )?;
             if snapshot.scan_invocation != gate.analysis_options.scan_invocation {
@@ -2416,6 +2419,7 @@ fn validate_analysis_snapshot(
     gate_key: &str,
     role: &str,
     snapshot: &AnalysisSnapshot,
+    leased_write_set: &[WriteLease],
     authenticate_legacy_evidence: bool,
 ) -> Result<String, StoreError> {
     if snapshot.evidence.schema_version != RUN_EVIDENCE_SCHEMA_VERSION {
@@ -2441,10 +2445,16 @@ fn validate_analysis_snapshot(
             "gate {gate_key} {role} evidence disagrees with its semantic inputs: {error}"
         ))
     })?;
-    validate_run_evidence_tier(
+    let directory_capability_intents = leased_write_set
+        .iter()
+        .filter(|lease| lease.kind == WriteLeaseKind::Directory)
+        .map(|lease| lease.path.clone())
+        .collect::<BTreeSet<_>>();
+    validate_run_evidence_tier_with_directory_capability_intents(
         &snapshot.evidence,
         &snapshot.scan_invocation,
         &snapshot.entry_selections,
+        &directory_capability_intents,
     )
     .map_err(|error| {
         StoreError::Integrity(format!(
