@@ -15,6 +15,7 @@ use crate::{RepoPathProjection, RunEvidence, delta::lifecycle_delta_input_for};
 pub type GateObservationBinding = ObservationBinding<RepoPathProjection>;
 pub const GATE_RECORD_SCHEMA_VERSION: &str = "lumin-gate.v2";
 pub const GATE_OPERATION_SCHEMA_VERSION: &str = "lumin-operation.v2";
+pub const GATE_CAPABILITY_INTENT_INFERENCE_VERSION: &str = "rust-write-domains.v1";
 /// Analysis contract that this lifecycle schema can resume for an active gate.
 ///
 /// `lumin-engine` remains the value authority; the public frozen-contract
@@ -340,6 +341,8 @@ pub struct GateAnalysisOptions {
     pub resolution_profile: Option<ResolutionProfile>,
     #[serde(default)]
     pub scan_invocation: ScanInvocationTier,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_intent_inference: Option<String>,
 }
 
 pub fn pre_write_request_digest(

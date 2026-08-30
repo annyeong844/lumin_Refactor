@@ -67,7 +67,7 @@ impl OperationSession<'_> {
                     return Ok(PreWriteStart::Analyze {
                         gate_id: operation.gate_id,
                         transition_sequence: operation.transition_sequence,
-                        analysis_options,
+                        analysis_options: Box::new(analysis_options),
                     });
                 }
                 operation.transition_sequence = current_transition_sequence(&write)?;
@@ -164,7 +164,7 @@ impl OperationSession<'_> {
             Ok(PreWriteStart::Analyze {
                 gate_id,
                 transition_sequence,
-                analysis_options: analysis_options.clone(),
+                analysis_options: Box::new(analysis_options.clone()),
             })
         })
     }

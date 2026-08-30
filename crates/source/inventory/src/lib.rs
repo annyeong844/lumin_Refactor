@@ -825,9 +825,10 @@ pub fn is_supported_source_path(path: &RepoPath) -> bool {
 /// Return whether an existing real directory currently contains a `.rs` path.
 ///
 /// Capability inference owns this walk through inventory so directory redirects,
-/// root escapes, hard exclusions, and reserved-state aliases receive the same
-/// fail-closed checks as authored source capture. The walk does not follow
-/// directory links.
+/// root escapes, and reserved-state aliases receive the same fail-closed checks as
+/// authored source capture. Unlike source capture, it scans hard-excluded subtrees
+/// because a directory write lease still covers those descendants. The walk does
+/// not follow directory links and rejects them because they can conceal Rust paths.
 pub fn directory_contains_rust_path(
     root: &Path,
     directory: &RepoPath,
@@ -860,8 +861,7 @@ pub fn directory_contains_rust_path(
         .git_ignore(false)
         .git_global(false)
         .git_exclude(false)
-        .follow_links(false)
-        .filter_entry(|entry| entry.depth() == 0 || !is_hard_excluded(entry.path()));
+        .follow_links(false);
 
     let mut found = false;
     for result in builder.build() {
@@ -878,9 +878,6 @@ pub fn directory_contains_rust_path(
                 path: entry.path().display().to_string(),
                 detail: "walk entry omitted its file type".to_owned(),
             })?;
-        if file_type.is_dir() || entry.path().extension() != Some(OsStr::new("rs")) {
-            continue;
-        }
         let relative = entry.path().strip_prefix(root).map_err(|_| {
             physical_path::WriteTargetError::PhysicalIdentity(InventoryError::RootIo(format!(
                 "directory capability walk escaped root: {}",
@@ -893,6 +890,14 @@ pub fn directory_contains_rust_path(
                 source,
             }
         })?;
+        if is_physical_path_redirect(entry.path(), &file_type) {
+            return Err(physical_path::WriteTargetError::LinkedDirectory(
+                path.display_escaped(),
+            ));
+        }
+        if file_type.is_dir() || entry.path().extension() != Some(OsStr::new("rs")) {
+            continue;
+        }
         validate_caller_entries(root, std::slice::from_ref(&path))?;
         validate_caller_entry_identity_lookup(
             root,

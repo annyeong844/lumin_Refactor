@@ -2,11 +2,12 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use lumin_evidence::{
-    CapabilityIntentRecord, DependencyIntentRecord, GateAnalysisOptions, GateOperationResult,
-    GateRecord, GateSignal, OperationRecord, PathPrefixIdentity, PostWriteFinalValidationEvidence,
-    PreWriteFinalValidationEvidence, RepoPathProjection, ScanInvocationTier, SemanticInputRecord,
-    SemanticInputState, SemanticReadReservationBinding, derive_pre_write_final_validation_signals,
-    gate_policy, post_write_request_digest, pre_write_request_digest, seal_analysis_snapshot,
+    CapabilityIntentRecord, DependencyIntentRecord, GATE_CAPABILITY_INTENT_INFERENCE_VERSION,
+    GateAnalysisOptions, GateOperationResult, GateRecord, GateSignal, OperationRecord,
+    PathPrefixIdentity, PostWriteFinalValidationEvidence, PreWriteFinalValidationEvidence,
+    RepoPathProjection, ScanInvocationTier, SemanticInputRecord, SemanticInputState,
+    SemanticReadReservationBinding, derive_pre_write_final_validation_signals, gate_policy,
+    post_write_request_digest, pre_write_request_digest, seal_analysis_snapshot,
 };
 use lumin_inventory::{
     InventoryError, InventoryRequest, SemanticInputExpectation, SemanticInputValidationState,
@@ -175,6 +176,7 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         jobs: request.jobs,
         resolution_profile: request.resolution_profile,
         scan_invocation: build_gate_scan_invocation_tier(request, &inspection.leases),
+        capability_intent_inference: Some(GATE_CAPABILITY_INTENT_INFERENCE_VERSION.to_owned()),
     };
     let admission_observation_seed = BaselineObservationSeed {
         declared_write_set: declared_write_set.clone(),
@@ -616,12 +618,30 @@ fn analyze_pre_write(
         }
     };
     let (mut capture, reserved_semantic_bindings) = capture;
-    let (snapshot, mut signals, active_capability_intents) = apply_gate_capability_availability(
+    let (snapshot, active_capability_intents) = match apply_gate_capability_availability(
         &context.root,
         capture.snapshot,
         &reserved_state_lookup,
-    )?;
+    ) {
+        Ok(projected) => projected,
+        Err(error) => {
+            return Ok(PreWriteAnalysis::Finished(Box::new(PreWritePromotion {
+                finish: PreWriteFinish {
+                    baseline: None,
+                    leased_write_set: inspection.leases,
+                    alias_closures: Vec::new(),
+                    attempted_semantic_inputs: Vec::new(),
+                    signals: vec![GateSignal::AnalysisFailed {
+                        detail: error.to_string(),
+                    }],
+                },
+                final_validation: None,
+                attempted_semantic_bindings: reserved_semantic_bindings,
+            })));
+        }
+    };
     capture.snapshot = snapshot;
+    let mut signals = Vec::new();
     let unavailable_targets =
         gate_capability_target_paths(&options.scan_invocation.capability_intents)?;
     let (leased_write_set, alias_closures, domain_signals) = expand_write_domain(
@@ -841,16 +861,34 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         }
     };
 
-    let (snapshot, capability_signals, active_capability_intents) =
-        apply_gate_capability_availability(
-            &context.root,
-            capture.snapshot,
-            &reserved_state_lookup,
-        )?;
+    let (snapshot, active_capability_intents) = match apply_gate_capability_availability(
+        &context.root,
+        capture.snapshot,
+        &reserved_state_lookup,
+    ) {
+        Ok(projected) => projected,
+        Err(error) => {
+            let signals = post_write_capture_failure_signals(
+                &context.root,
+                &gate.leased_write_set,
+                &opening_entry_paths,
+                &inventory_request.dependency_intents,
+                &error,
+            );
+            return finish_failed_close(
+                &operation,
+                request,
+                &request_digest,
+                &gate,
+                signals,
+                reserved_semantic_bindings,
+                Some(containment_context),
+            );
+        }
+    };
     capture.snapshot = snapshot;
     let (reconciled_baseline, reconciled_sequences, mut signals) =
         reconcile_transitions(&gate, baseline, &transitions);
-    signals.extend(capability_signals);
     let protected_semantic_inputs = protected_semantic_inputs(&capture, &gate.leased_write_set);
     let preliminary_changed_paths = changed_paths(
         &reconciled_baseline,

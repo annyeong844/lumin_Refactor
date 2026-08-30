@@ -2391,6 +2391,7 @@ fn options() -> GateAnalysisOptions {
         jobs: 1,
         resolution_profile: None,
         scan_invocation: Default::default(),
+        capability_intent_inference: None,
     }
 }
 

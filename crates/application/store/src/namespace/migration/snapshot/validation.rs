@@ -5,21 +5,21 @@ mod retention;
 use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_evidence::{
-    AnalysisSnapshot, CapabilityIntentRecord, GATE_OPERATION_SCHEMA_VERSION,
-    GATE_RECORD_SCHEMA_VERSION, GATE_VALIDATION_RECEIPT_SCHEMA_VERSION, GateBaseline,
-    GateBaselineObservationInput, GateCloseObservationInput, GateDecision, GateLifecycle,
-    GateOperationKind, GateOperationStatus, GateRecord, GateRevision, GateSignal,
-    GateValidationReceipt, OperationRecord, PhysicalAliasClosureRecord,
-    PreWriteAdmissionConflictOwner, PreWriteAdmissionEvidence, RUN_EVIDENCE_SCHEMA_VERSION,
-    RetentionItemKind, RetentionOperationKind, RetentionOperationRecord, RetentionOperationResult,
-    RetentionOperationStatus, RetentionPlanState, SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID,
-    WorktreeTransition, WriteLease, WriteLeaseKind, apply_worktree_transition_for_domain,
-    derive_gate_baseline_observation_id, derive_gate_close_observation_id,
-    derive_post_write_final_validation_signals, derive_pre_write_admission_signals,
-    derive_pre_write_final_validation_signals, derive_protected_semantic_inputs,
-    derive_unsealed_gate_observation_binding, gate_abandon_request_digest, gate_policy,
-    post_write_request_digest, pre_write_request_digest, seal_analysis_snapshot,
-    validate_migration_run_evidence, validate_migration_run_evidence_tier,
+    AnalysisSnapshot, CapabilityIntentRecord, GATE_CAPABILITY_INTENT_INFERENCE_VERSION,
+    GATE_OPERATION_SCHEMA_VERSION, GATE_RECORD_SCHEMA_VERSION,
+    GATE_VALIDATION_RECEIPT_SCHEMA_VERSION, GateBaseline, GateBaselineObservationInput,
+    GateCloseObservationInput, GateDecision, GateLifecycle, GateOperationKind, GateOperationStatus,
+    GateRecord, GateRevision, GateSignal, GateValidationReceipt, OperationRecord,
+    PhysicalAliasClosureRecord, PreWriteAdmissionConflictOwner, PreWriteAdmissionEvidence,
+    RUN_EVIDENCE_SCHEMA_VERSION, RetentionItemKind, RetentionOperationKind,
+    RetentionOperationRecord, RetentionOperationResult, RetentionOperationStatus,
+    RetentionPlanState, SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, WorktreeTransition, WriteLease,
+    WriteLeaseKind, apply_worktree_transition_for_domain, derive_gate_baseline_observation_id,
+    derive_gate_close_observation_id, derive_post_write_final_validation_signals,
+    derive_pre_write_admission_signals, derive_pre_write_final_validation_signals,
+    derive_protected_semantic_inputs, derive_unsealed_gate_observation_binding,
+    gate_abandon_request_digest, gate_policy, post_write_request_digest, pre_write_request_digest,
+    seal_analysis_snapshot, validate_migration_run_evidence, validate_migration_run_evidence_tier,
     validate_run_evidence_identities, validate_run_evidence_inputs,
     validate_run_evidence_tier_with_directory_capability_intents,
 };
@@ -2180,34 +2180,13 @@ fn canonical_alias_set(items: &[PhysicalAliasClosureRecord]) -> bool {
     items.iter().all(|closure| canonical_set(&closure.members)) && canonical_set(items)
 }
 
-#[allow(clippy::match_like_matches_macro)] // limitation ownership rejects variant patterns in macros
-fn engine_capability_availability_signals(snapshot: &AnalysisSnapshot) -> Vec<GateSignal> {
-    let limitation_count = snapshot
-        .evidence
-        .limitations
-        .iter()
-        .filter(|limitation| match limitation {
-            lumin_model::Limitation::CapabilityUnavailable { .. } => true,
-            _ => false,
-        })
-        .count();
-    (limitation_count > 0)
-        .then_some(GateSignal::RequiredOwnerUnavailable { limitation_count })
-        .into_iter()
-        .collect()
-}
-
 fn validate_opening_snapshot_policy(
     key: &str,
     opening: &GateRevision,
     baseline: &GateBaseline,
     final_freshness_signals: &[GateSignal],
 ) -> Result<(), StoreError> {
-    let mut expected = engine_capability_availability_signals(&baseline.snapshot);
-    expected.extend(gate_policy::opening_signals(
-        &baseline.snapshot,
-        &baseline.leased_write_set,
-    ));
+    let mut expected = gate_policy::opening_signals(&baseline.snapshot, &baseline.leased_write_set);
     expected.extend_from_slice(final_freshness_signals);
     if opening.signals != expected {
         return Err(StoreError::Integrity(format!(
@@ -2256,16 +2235,12 @@ fn validate_close_snapshot_policy(
     final_freshness_signals: &[GateSignal],
 ) -> Result<(), StoreError> {
     validate_close_alias_closures(key, revision, snapshot, &baseline.leased_write_set)?;
-    let (mut expected_signals, expected_changed_paths, expected_deltas) =
-        gate_policy::closing_signals(
-            reconciled_baseline,
-            snapshot,
-            prior_protected_semantic_inputs,
-            &baseline.leased_write_set,
-        );
-    let mut owner_signals = engine_capability_availability_signals(snapshot);
-    owner_signals.append(&mut expected_signals);
-    let expected_signals = owner_signals;
+    let (expected_signals, expected_changed_paths, expected_deltas) = gate_policy::closing_signals(
+        reconciled_baseline,
+        snapshot,
+        prior_protected_semantic_inputs,
+        &baseline.leased_write_set,
+    );
     let expected_actual_write_set = gate_policy::closure_expanded_actual_write_set(
         &expected_changed_paths,
         &baseline.alias_closures,
@@ -3107,14 +3082,43 @@ fn validate_pre_write_analysis_options(
         &options.scan_invocation,
     )?;
     validate_declared_path_inspection(operation)?;
+    let inferred_rust_scope = if authenticate_legacy_evidence {
+        if options.capability_intent_inference.is_some() {
+            return Err(StoreError::Integrity(format!(
+                "legacy pre-write operation {} retained a current capability inference marker",
+                operation.operation_id.as_str()
+            )));
+        }
+        InferredRustCapabilityScope::DirectPaths
+    } else {
+        match options.capability_intent_inference.as_deref() {
+            Some(GATE_CAPABILITY_INTENT_INFERENCE_VERSION) => {
+                InferredRustCapabilityScope::DirectPathsAndDirectories
+            }
+            Some(version) => {
+                return Err(StoreError::IncompatibleStateSchema(format!(
+                    "pre-write operation {} uses unsupported capability inference {version}",
+                    operation.operation_id.as_str()
+                )));
+            }
+            None => InferredRustCapabilityScope::None,
+        }
+    };
     validate_capability_intent_domain(
         &format!("pre-write operation {}", operation.operation_id.as_str()),
         &operation.declared_write_set,
         &operation.pre_write_declared_path_inspection,
         &options.scan_invocation,
-        !authenticate_legacy_evidence,
+        inferred_rust_scope,
     )?;
     Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum InferredRustCapabilityScope {
+    None,
+    DirectPaths,
+    DirectPathsAndDirectories,
 }
 
 fn validate_capability_intent_domain(
@@ -3122,7 +3126,7 @@ fn validate_capability_intent_domain(
     declared_write_set: &[lumin_evidence::RepoPathProjection],
     declared_path_inspection: &[lumin_evidence::PreWriteDeclaredPathInspection],
     invocation: &lumin_evidence::ScanInvocationTier,
-    include_directory_domains: bool,
+    inferred_rust_scope: InferredRustCapabilityScope,
 ) -> Result<(), StoreError> {
     if let Some(intent) = invocation.capability_intents.iter().find(|intent| {
         !declared_write_set
@@ -3135,11 +3139,22 @@ fn validate_capability_intent_domain(
         )));
     }
 
-    let expected_rust = inferred_rust_capability_intents(
-        declared_write_set,
-        declared_path_inspection,
-        include_directory_domains,
-    )?;
+    if matches!(inferred_rust_scope, InferredRustCapabilityScope::None)
+        && !invocation.capability_intents.is_empty()
+    {
+        return Err(StoreError::Integrity(format!(
+            "{owner} retained capability intents without their inference marker"
+        )));
+    }
+    let expected_rust = match inferred_rust_scope {
+        InferredRustCapabilityScope::None => Vec::new(),
+        InferredRustCapabilityScope::DirectPaths => {
+            inferred_rust_capability_intents(declared_write_set, declared_path_inspection, false)?
+        }
+        InferredRustCapabilityScope::DirectPathsAndDirectories => {
+            inferred_rust_capability_intents(declared_write_set, declared_path_inspection, true)?
+        }
+    };
     let observed_rust = invocation
         .capability_intents
         .iter()
@@ -3204,7 +3219,7 @@ fn pre_write_request_invocation(
     authenticate_legacy_evidence: bool,
 ) -> Result<lumin_evidence::ScanInvocationTier, StoreError> {
     let mut invocation = options.scan_invocation.clone();
-    if authenticate_legacy_evidence {
+    if authenticate_legacy_evidence || options.capability_intent_inference.is_none() {
         return Ok(invocation);
     }
     let direct_rust_paths = inferred_rust_capability_intents(
@@ -3585,7 +3600,14 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            validate_capability_intent_domain("test", &declared, &inspection, &valid, true).is_ok()
+            validate_capability_intent_domain(
+                "test",
+                &declared,
+                &inspection,
+                &valid,
+                InferredRustCapabilityScope::DirectPathsAndDirectories,
+            )
+            .is_ok()
         );
 
         let missing_inferred = ScanInvocationTier {
@@ -3607,7 +3629,7 @@ mod tests {
                 &declared,
                 &inspection,
                 &missing_inferred,
-                true,
+                InferredRustCapabilityScope::DirectPathsAndDirectories,
             )
             .is_err()
         );
@@ -3617,9 +3639,62 @@ mod tests {
                 &declared,
                 &inspection,
                 &missing_inferred,
-                false,
+                InferredRustCapabilityScope::DirectPaths,
             )
             .is_ok()
+        );
+
+        let legacy_native = ScanInvocationTier::default();
+        assert!(
+            validate_capability_intent_domain(
+                "legacy native v13 operation",
+                &declared,
+                &inspection,
+                &legacy_native,
+                InferredRustCapabilityScope::None,
+            )
+            .is_ok()
+        );
+
+        let legacy_options = GateAnalysisOptions {
+            jobs: 1,
+            resolution_profile: None,
+            scan_invocation: legacy_native,
+            capability_intent_inference: None,
+        };
+        let legacy_operation = OperationRecord {
+            schema_version: GATE_OPERATION_SCHEMA_VERSION.to_owned(),
+            operation_id: lumin_model::OperationId::from_string(
+                "legacy-native-directory".to_owned(),
+            ),
+            kind: GateOperationKind::PreWrite,
+            request_digest: String::new(),
+            status: GateOperationStatus::Committed,
+            gate_id: lumin_model::GateId::from_string("gate_legacy_native".to_owned()),
+            target_revision: 0,
+            reason: None,
+            transition_sequence: 0,
+            declared_write_set: vec![inspection[0].path.clone()],
+            leased_write_set: Vec::new(),
+            semantic_read_reservations: Vec::new(),
+            semantic_read_reservation_bindings: Vec::new(),
+            interruption_count: 0,
+            operation_liveness: None,
+            pre_write_declared_path_inspection: inspection.clone(),
+            pre_write_admission_evidence: None,
+            pre_write_final_validation: None,
+            post_write_final_validation: None,
+            analysis_options: Some(legacy_options.clone()),
+            result: None,
+        };
+        assert!(
+            validate_pre_write_analysis_options(&legacy_operation, &legacy_options, false).is_ok()
+        );
+        let mut marked_options = legacy_options;
+        marked_options.capability_intent_inference =
+            Some(GATE_CAPABILITY_INTENT_INFERENCE_VERSION.to_owned());
+        assert!(
+            validate_pre_write_analysis_options(&legacy_operation, &marked_options, false).is_err()
         );
 
         let outside = ScanInvocationTier {
@@ -3636,8 +3711,14 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            validate_capability_intent_domain("test", &declared, &inspection, &outside, true)
-                .is_err()
+            validate_capability_intent_domain(
+                "test",
+                &declared,
+                &inspection,
+                &outside,
+                InferredRustCapabilityScope::DirectPathsAndDirectories,
+            )
+            .is_err()
         );
         Ok(())
     }
@@ -3766,6 +3847,7 @@ mod tests {
                 jobs: 1,
                 resolution_profile: None,
                 scan_invocation: Default::default(),
+                capability_intent_inference: None,
             },
             baseline: None,
             protected_semantic_inputs,

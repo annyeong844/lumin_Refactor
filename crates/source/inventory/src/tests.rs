@@ -36,7 +36,7 @@ fn directory_rust_probe_observes_nested_rust_paths_only() -> Result<(), Box<dyn 
         &RepoPath::from_portable("src")?,
         &ReservedStateIdentityLookup::empty(),
     )?);
-    assert!(!directory_contains_rust_path(
+    assert!(directory_contains_rust_path(
         root.path(),
         &RepoPath::from_portable("config")?,
         &ReservedStateIdentityLookup::empty(),

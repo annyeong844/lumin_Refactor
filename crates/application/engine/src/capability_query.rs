@@ -4,8 +4,8 @@ use std::path::Path;
 use lumin_evidence::{
     AnalysisSnapshot, CapabilityIntentRecord, CapabilityRecord, CollectionOrderingId,
     DEAD_CODE_CAPABILITY_ID, DEPENDENCY_OWNERSHIP_CAPABILITY_ID, EvidencePage, EvidenceQuery,
-    EvidenceQueryScope, GateSignal, RepoPathProjection, RunEvidence, SemanticInputRecord,
-    SemanticInputState, WriteLease, WriteLeaseKind, seal_analysis_snapshot,
+    EvidenceQueryScope, RepoPathProjection, RunEvidence, SemanticInputRecord, SemanticInputState,
+    WriteLease, WriteLeaseKind, seal_analysis_snapshot,
 };
 use lumin_model::{
     BuildIdentity, CapabilityIntent, CapabilityIntentKind, CapabilityState, Limitation,
@@ -107,20 +107,13 @@ pub(crate) fn active_gate_capability_intents(
 ///
 /// This owner step is deliberately outside the analysis cache. The cache retains facts
 /// from compiled analyzers; the engine registry recomputes requested absent-owner facts
-/// and signals for each gate invocation.
+/// for each gate invocation. Gate policy reduces all required-owner facts to one signal.
 #[allow(clippy::match_like_matches_macro)] // limitation ownership rejects variant patterns in macros
 pub(crate) fn apply_gate_capability_availability(
     root: &Path,
     snapshot: AnalysisSnapshot,
     reserved_state_lookup: &lumin_inventory::ReservedStateIdentityLookup,
-) -> Result<
-    (
-        AnalysisSnapshot,
-        Vec<GateSignal>,
-        BTreeSet<CapabilityIntentRecord>,
-    ),
-    EngineError,
-> {
+) -> Result<(AnalysisSnapshot, BTreeSet<CapabilityIntentRecord>), EngineError> {
     if snapshot
         .evidence
         .limitations
@@ -197,7 +190,6 @@ pub(crate) fn apply_gate_capability_availability(
         capability_targets.sort();
         capability_targets.dedup();
     }
-    let limitation_count = targets.len();
     evidence
         .limitations
         .extend(targets.into_iter().map(|(capability, targets)| {
@@ -211,14 +203,7 @@ pub(crate) fn apply_gate_capability_availability(
 
     let snapshot = seal_analysis_snapshot(inputs, evidence, scan_invocation, entry_selections);
 
-    Ok((
-        snapshot,
-        (limitation_count > 0)
-            .then_some(GateSignal::RequiredOwnerUnavailable { limitation_count })
-            .into_iter()
-            .collect(),
-        active_intents,
-    ))
+    Ok((snapshot, active_intents))
 }
 
 /// The compiled capability registry built at binary construction time.

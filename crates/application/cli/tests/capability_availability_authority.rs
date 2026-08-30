@@ -136,6 +136,7 @@ fn capability_unavailability_has_one_owner() -> Result<(), Box<dyn std::error::E
         public_capability_states(root.path())?,
         expected_public_capabilities()
     );
+    mixed_required_owner_limitations_are_aggregated()?;
     Ok(())
 }
 
@@ -143,6 +144,8 @@ fn capability_unavailability_has_one_owner() -> Result<(), Box<dyn std::error::E
 fn directory_write_domain_requires_the_unavailable_rust_owner()
 -> Result<(), Box<dyn std::error::Error>> {
     rs_suffixed_directory_uses_descendant_detection()?;
+    hard_excluded_rust_descendant_requires_owner()?;
+    capability_probe_failures_commit_durable_gate_results()?;
     let existing = tempfile::tempdir()?;
     write(
         existing.path(),
@@ -280,6 +283,275 @@ fn directory_write_domain_requires_the_unavailable_rust_owner()
         })
     }));
     rust_descendant_created_after_initial_traversal_cannot_seal()?;
+    Ok(())
+}
+
+fn mixed_required_owner_limitations_are_aggregated() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "src/App.svelte",
+        "<script>export const unavailable = true;</script>\n",
+    )?;
+    write(root.path(), "src/lib.rs", "pub fn unavailable() {}\n")?;
+    let arguments = [
+        "pre-write",
+        "--operation-id",
+        "op-mixed-owner-unavailable",
+        "--path",
+        "src",
+        "--jobs",
+        "1",
+    ];
+
+    let rejected = run(root.path(), &arguments)?;
+    assert_status(&rejected, 4);
+    assert!(rejected.stderr.is_empty());
+    let response: Value = serde_json::from_str(&rejected.stdout)?;
+    assert_eq!(
+        response.get("decision").and_then(Value::as_str),
+        Some("incomplete")
+    );
+    assert_eq!(
+        response.get("lifecycle").and_then(Value::as_str),
+        Some("rejected")
+    );
+    let signals = response
+        .get("signals")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("mixed-owner gate omitted signals"))?;
+    assert_eq!(
+        signals.len(),
+        1,
+        "unexpected mixed-owner signals: {signals:?}"
+    );
+    assert_eq!(
+        signals[0].get("kind").and_then(Value::as_str),
+        Some("required-owner-unavailable")
+    );
+    assert_eq!(signals[0].get("count").and_then(Value::as_u64), Some(2));
+
+    let replay = run(root.path(), &arguments)?;
+    assert_status(&replay, 4);
+    assert_eq!(replay.stdout, rejected.stdout);
+
+    let gate_id = GateId::from_string(field(&rejected.stdout, "gateId")?);
+    let gate = lumin_engine::load_gate(root.path(), &gate_id)?;
+    let baseline = gate
+        .baseline
+        .as_ref()
+        .ok_or_else(|| std::io::Error::other("mixed-owner gate omitted its baseline"))?;
+    assert_eq!(
+        baseline
+            .snapshot
+            .evidence
+            .limitations
+            .iter()
+            .filter(|limitation| matches!(limitation, Limitation::SfcDialectUnavailable { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        baseline
+            .snapshot
+            .evidence
+            .limitations
+            .iter()
+            .filter(|limitation| {
+                matches!(
+                    limitation,
+                    Limitation::CapabilityUnavailable {
+                        capability: CapabilityIntentKind::Rust,
+                        ..
+                    }
+                )
+            })
+            .count(),
+        1
+    );
+    assert_eq!(gate.revisions[0].signals.len(), 1);
+    Ok(())
+}
+
+fn hard_excluded_rust_descendant_requires_owner() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    write(root.path(), "src/main.ts", "console.log('supported');\n")?;
+    write(
+        root.path(),
+        "src/node_modules/native/lib.rs",
+        "pub fn unavailable() {}\n",
+    )?;
+    let arguments = [
+        "pre-write",
+        "--operation-id",
+        "op-hard-excluded-rust",
+        "--path",
+        "src",
+        "--jobs",
+        "1",
+    ];
+
+    let rejected = run(root.path(), &arguments)?;
+    assert_status(&rejected, 4);
+    assert!(rejected.stderr.is_empty());
+    let response: Value = serde_json::from_str(&rejected.stdout)?;
+    assert_eq!(
+        response.pointer("/signals/0/kind").and_then(Value::as_str),
+        Some("required-owner-unavailable")
+    );
+    assert_eq!(
+        response.pointer("/signals/0/count").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        response
+            .get("signals")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(1)
+    );
+
+    let replay = run(root.path(), &arguments)?;
+    assert_status(&replay, 4);
+    assert_eq!(replay.stdout, rejected.stdout);
+    Ok(())
+}
+
+fn capability_probe_failures_commit_durable_gate_results() -> Result<(), Box<dyn std::error::Error>>
+{
+    pre_write_capability_probe_failure_is_durable()?;
+    post_write_capability_probe_failure_is_durable()
+}
+
+fn pre_write_capability_probe_failure_is_durable() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let outside = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "src/main.ts",
+        "export const supported = true;\n",
+    )?;
+    write(outside.path(), "hidden.rs", "pub fn hidden() {}\n")?;
+    let redirect = root.path().join("src").join("native-link");
+    create_directory_alias(outside.path(), &redirect)?;
+    let arguments = [
+        "pre-write",
+        "--operation-id",
+        "op-rust-probe-failed-open",
+        "--path",
+        "src",
+        "--jobs",
+        "1",
+    ];
+
+    let rejected = run(root.path(), &arguments)?;
+    assert_status(&rejected, 4);
+    assert!(rejected.stderr.is_empty());
+    assert_analysis_failed_probe_response(&rejected.stdout, "rejected")?;
+    let gate_id = GateId::from_string(field(&rejected.stdout, "gateId")?);
+    let gate = lumin_engine::load_gate(root.path(), &gate_id)?;
+    assert!(gate.baseline.is_none());
+    assert_eq!(gate.revisions.len(), 1);
+    assert!(gate.revisions[0].snapshot.is_none());
+    assert_eq!(gate.revisions[0].signals.len(), 1);
+
+    remove_directory_alias(&redirect)?;
+    let replay = run(root.path(), &arguments)?;
+    assert_status(&replay, 4);
+    assert_eq!(replay.stdout, rejected.stdout);
+    let replayed_gate = lumin_engine::load_gate(root.path(), &gate_id)?;
+    assert_eq!(replayed_gate, gate);
+    Ok(())
+}
+
+fn post_write_capability_probe_failure_is_durable() -> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let outside = tempfile::tempdir()?;
+    write(
+        root.path(),
+        "src/main.ts",
+        "export const supported = true;\n",
+    )?;
+    write(outside.path(), "hidden.rs", "pub fn hidden() {}\n")?;
+    let open_arguments = [
+        "pre-write",
+        "--operation-id",
+        "op-rust-probe-open",
+        "--path",
+        "src",
+        "--jobs",
+        "1",
+    ];
+    let opened = run(root.path(), &open_arguments)?;
+    assert_status(&opened, 0);
+    let gate_id = GateId::from_string(field(&opened.stdout, "gateId")?);
+
+    let redirect = root.path().join("src").join("native-link");
+    create_directory_alias(outside.path(), &redirect)?;
+    let close_arguments = [
+        "post-write",
+        gate_id.as_str(),
+        "--operation-id",
+        "op-rust-probe-failed-close",
+    ];
+    let rejected = run(root.path(), &close_arguments)?;
+    assert_status(&rejected, 4);
+    assert!(rejected.stderr.is_empty());
+    assert_analysis_failed_probe_response(&rejected.stdout, "active")?;
+    let gate = lumin_engine::load_gate(root.path(), &gate_id)?;
+    assert_eq!(gate.revisions.len(), 2);
+    let failed_close = gate
+        .revisions
+        .last()
+        .ok_or_else(|| std::io::Error::other("probe failure omitted close revision"))?;
+    assert!(failed_close.snapshot.is_none());
+    assert_eq!(failed_close.signals.len(), 1);
+
+    remove_directory_alias(&redirect)?;
+    let replay = run(root.path(), &close_arguments)?;
+    assert_status(&replay, 4);
+    assert_eq!(replay.stdout, rejected.stdout);
+    let replayed_gate = lumin_engine::load_gate(root.path(), &gate_id)?;
+    assert_eq!(replayed_gate, gate);
+    Ok(())
+}
+
+fn assert_analysis_failed_probe_response(
+    stdout: &str,
+    lifecycle: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let response: Value = serde_json::from_str(stdout)?;
+    assert_eq!(
+        response.get("decision").and_then(Value::as_str),
+        Some("incomplete")
+    );
+    assert_eq!(
+        response.get("lifecycle").and_then(Value::as_str),
+        Some(lifecycle)
+    );
+    let signals = response
+        .get("signals")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("probe failure omitted signals"))?;
+    assert_eq!(
+        signals.len(),
+        1,
+        "unexpected probe-failure signals: {signals:?}"
+    );
+    assert_eq!(
+        signals[0].get("kind").and_then(Value::as_str),
+        Some("analysis-failed")
+    );
+    assert!(
+        signals[0]
+            .get("detail")
+            .and_then(Value::as_str)
+            .is_some_and(|detail| detail.contains(
+                "planned directory is reached through a symlink or junction: src/native-link"
+            )),
+        "unexpected probe-failure detail: {:?}",
+        signals[0]
+    );
     Ok(())
 }
 
@@ -553,6 +825,39 @@ fn expected_public_capabilities() -> BTreeMap<String, String> {
     .into_iter()
     .map(|(capability, state)| (capability.to_owned(), state.to_owned()))
     .collect()
+}
+
+#[cfg(unix)]
+fn create_directory_alias(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(unix)]
+fn remove_directory_alias(link: &Path) -> std::io::Result<()> {
+    fs::remove_file(link)
+}
+
+#[cfg(windows)]
+fn create_directory_alias(target: &Path, link: &Path) -> std::io::Result<()> {
+    let status = std::process::Command::new("cmd")
+        .args(["/d", "/c", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(format!(
+            "mklink /J failed with {status}: link={} target={}",
+            link.display(),
+            target.display()
+        )))
+    }
+}
+
+#[cfg(windows)]
+fn remove_directory_alias(link: &Path) -> std::io::Result<()> {
+    fs::remove_dir(link)
 }
 
 fn write(root: &Path, path: &str, contents: &str) -> std::io::Result<()> {

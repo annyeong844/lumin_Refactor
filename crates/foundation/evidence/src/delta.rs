@@ -3,9 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use lumin_model::{
     DeltaFact, DeltaFactFamily, DeltaIdentity, DeltaIdentityKind, DeltaKey, DeltaOwnerPayloadValue,
     DeltaValue, DependencyIntentIdentity, DynamicImportTargetScope, FindingDisposition,
-    ImportMetaGlobTargetScope, Limitation, LimitationFactOwner, LimitationGateRelevance,
-    LimitationScopePolicy, LogicalSourceId, PackageScopeId, RepoPath, ResolutionOutcome,
-    ReviewOnlyReason, UnresolvedTargetScope, append_length_prefixed,
+    ImportMetaGlobTargetScope, Limitation, LimitationGateRelevance, LimitationScopePolicy,
+    LogicalSourceId, PackageScopeId, RepoPath, ResolutionOutcome, ReviewOnlyReason,
+    UnresolvedTargetScope, append_length_prefixed,
 };
 
 use crate::{
@@ -105,14 +105,12 @@ pub(crate) fn lifecycle_delta_input_for(
                 }
             }
             LimitationDelta::RequiredOwnerGap => {
-                if limitation.registry_entry().fact_owner != LimitationFactOwner::Engine
-                    && limitation_intersects_gate_domain(
-                        limitation,
-                        evidence,
-                        dependency_intents,
-                        leased_write_set,
-                    )
-                {
+                if limitation_intersects_gate_domain(
+                    limitation,
+                    evidence,
+                    dependency_intents,
+                    leased_write_set,
+                ) {
                     required_owner_gap_count += 1;
                 }
             }
@@ -2033,6 +2031,23 @@ mod tests {
             },
         ]));
         assert_eq!(input.required_owner_gap_count, 1);
+        assert_eq!(input.required_evidence_gap_count, 0);
+        assert_eq!(input.advisory_limitation_count, 0);
+    }
+
+    #[test]
+    fn required_owner_gaps_are_aggregated_across_owners() {
+        let input = lifecycle_delta_input(&evidence_with_limitations(vec![
+            Limitation::SfcDialectUnavailable {
+                source_id: LogicalSourceId::from_string("source-svelte".to_owned()),
+                dialect: "svelte".to_owned(),
+            },
+            Limitation::CapabilityUnavailable {
+                capability: lumin_model::CapabilityIntentKind::Rust,
+                targets: vec![LogicalSourceId::from_string("source-rust".to_owned())],
+            },
+        ]));
+        assert_eq!(input.required_owner_gap_count, 2);
         assert_eq!(input.required_evidence_gap_count, 0);
         assert_eq!(input.advisory_limitation_count, 0);
     }

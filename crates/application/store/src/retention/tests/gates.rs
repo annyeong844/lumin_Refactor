@@ -51,6 +51,7 @@ fn insert_terminal_gate(store: &crate::RepositoryStore) -> Result<GateId, crate:
         jobs: 1,
         resolution_profile: None,
         scan_invocation: Default::default(),
+        capability_intent_inference: None,
     };
     let blocker = store.begin_operation(&operation("terminal-gate-blocker"))?;
     if !matches!(
