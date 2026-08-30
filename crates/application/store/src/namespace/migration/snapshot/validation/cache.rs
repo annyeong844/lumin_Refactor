@@ -14,6 +14,15 @@ pub(super) fn validate_cache(
     snapshot: &LogicalStoreSnapshot,
     gate_operations: &BTreeMap<&str, OperationRecord>,
 ) -> Result<(), StoreError> {
+    for (key, bytes) in &snapshot.analysis_cache_authorizations {
+        let authorization = parse_record::<crate::cache::AnalysisCacheAuthorization>(
+            "analysis-cache-authorizations",
+            key,
+            bytes,
+        )?;
+        crate::cache::validate_analysis_cache_authorization(key, &authorization, None)?;
+    }
+
     let mut operations = BTreeMap::new();
     for (key, bytes) in &snapshot.cache_cleanup_operations {
         if gate_operations.contains_key(key.as_str())

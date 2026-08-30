@@ -1,7 +1,8 @@
 use lumin_evidence::{
     AnalysisSnapshot, EntrySelectionRecord, RUN_EVIDENCE_SCHEMA_VERSION, RepoPathProjection,
-    ScanInvocationTier, SemanticInputRecord, seal_analysis_snapshot,
-    validate_run_evidence_identities, validate_run_evidence_inputs,
+    ScanInvocationTier, SemanticInputRecord, append_entry_selection_semantic_framing,
+    append_semantic_input_framing, seal_analysis_snapshot, validate_run_evidence_identities,
+    validate_run_evidence_inputs,
 };
 use lumin_model::{
     AnalysisInputId, ConfigSyntax, RepoPath, RepositoryRootIdentity, append_length_prefixed,
@@ -69,17 +70,13 @@ pub(crate) fn context(
     entry_selections.sort();
     entry_selections.dedup();
 
-    let encoded_inputs = serde_json::to_vec(&inputs)
-        .map_err(|error| EngineError::CacheEncoding(error.to_string()))?;
-    let encoded_entries = serde_json::to_vec(&entry_selections)
-        .map_err(|error| EngineError::CacheEncoding(error.to_string()))?;
     let mut framed = Vec::new();
     append_length_prefixed(&mut framed, SUPPLIED_INPUT_KEY_SCHEMA);
     append_length_prefixed(&mut framed, owner_contract_version.as_bytes());
     append_length_prefixed(&mut framed, repository_root.canonical_bytes());
     scan_invocation.append_semantic_framing(&mut framed);
-    append_length_prefixed(&mut framed, &encoded_entries);
-    append_length_prefixed(&mut framed, &encoded_inputs);
+    append_entry_selection_semantic_framing(&mut framed, &entry_selections);
+    append_semantic_input_framing(&mut framed, &inputs);
 
     Ok(AnalysisCacheContext {
         supplied_input_key: digest_hex(&framed),

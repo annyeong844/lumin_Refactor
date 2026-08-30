@@ -24,6 +24,52 @@ fn digest(store: &RepositoryStore) -> Result<String, StoreError> {
 }
 
 #[test]
+fn analysis_cache_replay_requires_store_owned_authorization()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let cache = root.path().join(".lumin/cache");
+    let supplied_input_key = "11".repeat(32);
+    let owner_bytes = br#"{"kind":"finished","owner":"compiled-engine"}"#;
+    let owner_digest = crate::digest_hex(owner_bytes);
+    let owner_name = analysis_cache_candidate_name(&supplied_input_key, &owner_digest);
+
+    fs::write(cache.join(&owner_name), owner_bytes)?;
+    assert!(
+        store
+            .read_analysis_cache_candidates(&supplied_input_key)?
+            .is_empty(),
+        "a self-hashed cache file without canonical store authority was replayed"
+    );
+
+    assert!(store.write_analysis_cache_candidate(&supplied_input_key, owner_bytes)?);
+    assert_eq!(
+        store.read_analysis_cache_candidates(&supplied_input_key)?,
+        [owner_bytes.to_vec()]
+    );
+
+    let foreign_bytes = br#"{"kind":"finished","owner":"foreign-process"}"#;
+    let foreign_name =
+        analysis_cache_candidate_name(&supplied_input_key, &crate::digest_hex(foreign_bytes));
+    fs::write(cache.join(foreign_name), foreign_bytes)?;
+    assert_eq!(
+        store.read_analysis_cache_candidates(&supplied_input_key)?,
+        [owner_bytes.to_vec()],
+        "an unregistered self-consistent candidate displaced owner-authored cache evidence"
+    );
+
+    let operation_id = OperationId::from_string("cache-clean-analysis-authority".to_owned());
+    store.clean_cache_payloads(&operation_id, &digest(&store)?)?;
+    assert!(
+        store
+            .read_analysis_cache_candidates(&supplied_input_key)?
+            .is_empty(),
+        "cleanup retained canonical authority for evicted cache payloads"
+    );
+    Ok(())
+}
+
+#[test]
 fn cleanup_quarantines_payloads_and_replays_one_committed_result()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = tempfile::tempdir()?;

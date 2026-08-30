@@ -247,6 +247,64 @@ pub struct EntrySelectionRecord {
     pub unavailable_reason: Option<lumin_model::EntryUnavailableReason>,
 }
 
+pub fn append_entry_selection_semantic_framing(
+    output: &mut Vec<u8>,
+    entry_selections: &[EntrySelectionRecord],
+) {
+    output.extend_from_slice(&(entry_selections.len() as u64).to_be_bytes());
+    for entry in entry_selections {
+        append_length_prefixed(output, &entry.path.canonical);
+        match entry.source {
+            lumin_model::EntrySource::Invocation => output.push(1),
+            lumin_model::EntrySource::Configuration => output.push(2),
+        }
+        match entry.unavailable_reason {
+            None => output.push(0),
+            Some(reason) => {
+                output.push(1);
+                output.push(entry_unavailable_reason_tag(reason));
+            }
+        }
+    }
+}
+
+pub fn append_semantic_input_framing(output: &mut Vec<u8>, inputs: &[SemanticInputRecord]) {
+    output.extend_from_slice(&(inputs.len() as u64).to_be_bytes());
+    for input in inputs {
+        append_length_prefixed(output, &input.path.canonical);
+        output.push(input.state.tag());
+        match &input.payload_sha256 {
+            Some(payload_sha256) => {
+                output.push(1);
+                append_length_prefixed(output, payload_sha256.as_bytes());
+            }
+            None => output.push(0),
+        }
+        match &input.physical_identity {
+            Some(identity) => {
+                output.push(1);
+                append_length_prefixed(output, &identity.canonical_bytes());
+            }
+            None => output.push(0),
+        }
+        match &input.absence_parent {
+            Some(parent) => {
+                output.push(1);
+                append_length_prefixed(output, &parent.path.canonical);
+                append_length_prefixed(output, &parent.physical_identity.canonical_bytes());
+            }
+            None => output.push(0),
+        }
+        match &input.physical_redirect_sha256 {
+            Some(sha256) => {
+                output.push(1);
+                append_length_prefixed(output, sha256.as_bytes());
+            }
+            None => output.push(0),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GateAnalysisOptions {
@@ -1657,57 +1715,9 @@ pub fn seal_analysis_snapshot(
     // Frame scan invocation tier using canonical append_semantic_framing
     scan_invocation.append_semantic_framing(&mut framed);
     append_effective_resolution_profiles(&mut framed, &evidence.resolution_profiles);
-    // Frame entry selections (including unavailable ones)
-    framed.extend_from_slice(&(entry_selections.len() as u64).to_be_bytes());
-    for entry in &entry_selections {
-        append_length_prefixed(&mut framed, &entry.path.canonical);
-        match entry.source {
-            lumin_model::EntrySource::Invocation => framed.push(1),
-            lumin_model::EntrySource::Configuration => framed.push(2),
-        }
-        match entry.unavailable_reason {
-            None => framed.push(0),
-            Some(reason) => {
-                framed.push(1);
-                framed.push(entry_unavailable_reason_tag(reason));
-            }
-        }
-    }
-    // Frame semantic inputs
-    framed.extend_from_slice(&(inputs.len() as u64).to_be_bytes());
-    for input in &inputs {
-        append_length_prefixed(&mut framed, &input.path.canonical);
-        framed.push(input.state.tag());
-        match &input.payload_sha256 {
-            Some(payload_sha256) => {
-                framed.push(1);
-                append_length_prefixed(&mut framed, payload_sha256.as_bytes());
-            }
-            None => framed.push(0),
-        }
-        match &input.physical_identity {
-            Some(identity) => {
-                framed.push(1);
-                append_length_prefixed(&mut framed, &identity.canonical_bytes());
-            }
-            None => framed.push(0),
-        }
-        match &input.absence_parent {
-            Some(parent) => {
-                framed.push(1);
-                append_length_prefixed(&mut framed, &parent.path.canonical);
-                append_length_prefixed(&mut framed, &parent.physical_identity.canonical_bytes());
-            }
-            None => framed.push(0),
-        }
-        match &input.physical_redirect_sha256 {
-            Some(sha256) => {
-                framed.push(1);
-                append_length_prefixed(&mut framed, sha256.as_bytes());
-            }
-            None => framed.push(0),
-        }
-    }
+    // Frame entry selections and semantic inputs without readable path projections.
+    append_entry_selection_semantic_framing(&mut framed, &entry_selections);
+    append_semantic_input_framing(&mut framed, &inputs);
     AnalysisSnapshot {
         analysis_input_id: AnalysisInputId::from_string(format!(
             "analysis_input_{}",
@@ -2307,6 +2317,37 @@ mod tests {
             },
         ];
         assert!(invocation.validate_canonical_shape().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn semantic_prerequisite_framing_excludes_readable_path_projections()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let canonical_input = input("src/main.ts", "payload")?;
+        let mut forged_input = canonical_input.clone();
+        forged_input.path.display = "not-the-canonical-display".to_owned();
+        forged_input.path.components = vec![b"not-the-canonical-component".to_vec()];
+
+        let canonical_entry = EntrySelectionRecord {
+            path: path("src/main.ts")?,
+            source: lumin_model::EntrySource::Invocation,
+            unavailable_reason: None,
+        };
+        let mut forged_entry = canonical_entry.clone();
+        forged_entry.path.display = "also-not-canonical".to_owned();
+        forged_entry.path.components = vec![b"also-not-canonical".to_vec()];
+
+        let mut canonical = Vec::new();
+        append_entry_selection_semantic_framing(
+            &mut canonical,
+            std::slice::from_ref(&canonical_entry),
+        );
+        append_semantic_input_framing(&mut canonical, std::slice::from_ref(&canonical_input));
+
+        let mut forged = Vec::new();
+        append_entry_selection_semantic_framing(&mut forged, std::slice::from_ref(&forged_entry));
+        append_semantic_input_framing(&mut forged, std::slice::from_ref(&forged_input));
+        assert_eq!(canonical, forged);
         Ok(())
     }
 
