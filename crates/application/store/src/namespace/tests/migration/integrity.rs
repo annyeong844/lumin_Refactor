@@ -195,6 +195,7 @@ fn open_rejected_gate_for(
         PreWriteStart::Analyze {
             gate_id,
             transition_sequence,
+            ..
         } => (gate_id, transition_sequence),
         PreWriteStart::Committed(_) => return Err("rejected gate fixture committed early".into()),
     };
@@ -3743,6 +3744,7 @@ fn migration_authenticates_final_freshness_signals_in_the_opening_observation()
         PreWriteStart::Analyze {
             gate_id,
             transition_sequence,
+            ..
         } => (gate_id, transition_sequence),
         PreWriteStart::Committed(_) => {
             return Err("final-freshness opening committed early".into());

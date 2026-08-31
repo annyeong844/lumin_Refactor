@@ -86,6 +86,12 @@ static INV_CACHE_GATE_CONTEXT: &[CorpusInvocation] = &[
     inv!("write_gate", "semantic_demands::cache_projection_is_gate_contextual"),
 ];
 #[rustfmt::skip]
+static INV_CAPABILITY_AVAILABILITY: &[CorpusInvocation] = &[
+    inv!("capability_availability_authority", "capability_unavailability_has_one_owner"),
+    inv!("capability_availability_authority", "directory_write_domain_requires_the_unavailable_rust_owner"),
+    inv!("capability_availability_authority", "capability_intent_syntax_is_closed_before_state_initialization"),
+];
+#[rustfmt::skip]
 static INV_IDEMP: &[CorpusInvocation] = &[
     inv!("lifecycle_operation_idempotency", "gate::gate_mutations_recover_post_commit_delivery_failure_without_duplication", LifecycleFault),
     inv!("lifecycle_operation_idempotency", "gate_retention::gate_retention_mutations_recover_post_commit_delivery_failure_without_duplication", LifecycleFault),
@@ -508,7 +514,7 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("gate-semantic-read-closure", INV_SEM_READ),
     row_sd!("gate-semantic-read-closure-warm-cache", INV_WARM_CACHE),
     row_sd!("cache-gate-context-projection", INV_CACHE_GATE_CONTEXT),
-    row_sd_arch!("capability-availability-authority"),
+    row_sd_arch!("capability-availability-authority", INV_CAPABILITY_AVAILABILITY),
     row_sd!("gate-unsealed-observation"),
     row_sd!("gate-analysis-input-reconciliation"),
     row_sd!("gate-final-observation", &[

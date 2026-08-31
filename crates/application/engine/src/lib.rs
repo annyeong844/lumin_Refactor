@@ -111,6 +111,8 @@ pub enum EngineError {
     #[error(transparent)]
     Inventory(#[from] InventoryError),
     #[error(transparent)]
+    WriteTarget(#[from] lumin_inventory::WriteTargetError),
+    #[error(transparent)]
     Resolver(#[from] ResolverError),
     #[error(transparent)]
     Store(#[from] StoreError),
@@ -142,6 +144,8 @@ pub enum EngineError {
     ExtractionMetricOverflow,
     #[error("pre-write requires at least one declared path")]
     NoDeclaredPaths,
+    #[error("capability intent is outside the declared write set: {0}")]
+    CapabilityIntentOutsideDeclaredWrite(String),
     #[error("tier projection corrupt: {0}")]
     TierProjectionCorrupt(String),
     #[error("tier resolution profile inconsistency: {0}")]
@@ -173,6 +177,7 @@ impl EngineError {
                 InventoryError::ReservedEntryPath(_) | InventoryError::EntryEscapesRoot(_),
             ) => 2,
             Self::NoDeclaredPaths
+            | Self::CapabilityIntentOutsideDeclaredWrite(_)
             | Self::TierProjectionCorrupt(_)
             | Self::TierProfileInconsistency(_)
             | Self::EvidenceQuery(_)
@@ -416,6 +421,7 @@ fn build_scan_invocation_tier(
         role_overrides: request.role_overrides.clone(),
         entries,
         dependency_intents: Vec::new(),
+        capability_intents: Vec::new(),
         resolution_profile,
     }
 }

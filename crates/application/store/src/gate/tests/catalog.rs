@@ -339,6 +339,7 @@ fn pre_write_promotion_revalidates_the_complete_gate_catalog()
         PreWriteStart::Analyze {
             gate_id,
             transition_sequence,
+            ..
         } => (gate_id, transition_sequence),
         PreWriteStart::Committed(_) => return Err("candidate committed before analysis".into()),
     };

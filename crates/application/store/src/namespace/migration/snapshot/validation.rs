@@ -5,23 +5,25 @@ mod retention;
 use std::collections::{BTreeMap, BTreeSet};
 
 use lumin_evidence::{
-    AnalysisSnapshot, GATE_OPERATION_SCHEMA_VERSION, GATE_RECORD_SCHEMA_VERSION,
+    AnalysisSnapshot, CapabilityIntentRecord, GATE_CAPABILITY_INTENT_INFERENCE_VERSION,
+    GATE_OPERATION_SCHEMA_VERSION, GATE_RECORD_SCHEMA_VERSION,
     GATE_VALIDATION_RECEIPT_SCHEMA_VERSION, GateBaseline, GateBaselineObservationInput,
     GateCloseObservationInput, GateDecision, GateLifecycle, GateOperationKind, GateOperationStatus,
     GateRecord, GateRevision, GateSignal, GateValidationReceipt, OperationRecord,
     PhysicalAliasClosureRecord, PreWriteAdmissionConflictOwner, PreWriteAdmissionEvidence,
     RUN_EVIDENCE_SCHEMA_VERSION, RetentionItemKind, RetentionOperationKind,
     RetentionOperationRecord, RetentionOperationResult, RetentionOperationStatus,
-    RetentionPlanState, SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, WorktreeTransition,
+    RetentionPlanState, SUPPORTED_ACTIVE_GATE_ANALYSIS_CONTRACT_ID, WorktreeTransition, WriteLease,
     WriteLeaseKind, apply_worktree_transition_for_domain, derive_gate_baseline_observation_id,
     derive_gate_close_observation_id, derive_post_write_final_validation_signals,
     derive_pre_write_admission_signals, derive_pre_write_final_validation_signals,
     derive_protected_semantic_inputs, derive_unsealed_gate_observation_binding,
     gate_abandon_request_digest, gate_policy, post_write_request_digest, pre_write_request_digest,
     seal_analysis_snapshot, validate_migration_run_evidence, validate_migration_run_evidence_tier,
-    validate_run_evidence_identities, validate_run_evidence_inputs, validate_run_evidence_tier,
+    validate_run_evidence_identities, validate_run_evidence_inputs,
+    validate_run_evidence_tier_with_directory_capability_intents,
 };
-use lumin_model::{ObservationBinding, RepoPath, SealedGateObservation};
+use lumin_model::{CapabilityIntentKind, ObservationBinding, RepoPath, SealedGateObservation};
 use serde::{Serialize, de::DeserializeOwned};
 
 use crate::gate::{
@@ -88,7 +90,7 @@ fn validate_referential_closure_with_mode(
     validate_sequence_key_set(snapshot)?;
     let (transitions, transition_sequences) = read_transitions(snapshot)?;
     let validation_receipts = read_validation_receipts(snapshot)?;
-    let operations = read_operations(snapshot)?;
+    let operations = read_operations(snapshot, authenticate_legacy_evidence)?;
     let gates = read_gates(
         snapshot,
         &operations,
@@ -463,6 +465,7 @@ fn read_validation_receipts(
 
 fn read_operations(
     snapshot: &LogicalStoreSnapshot,
+    authenticate_legacy_evidence: bool,
 ) -> Result<BTreeMap<&str, OperationRecord>, StoreError> {
     let mut operations = BTreeMap::new();
     for (key, bytes) in &snapshot.operations {
@@ -478,7 +481,7 @@ fn read_operations(
                 "operation key {key} disagrees with its record"
             )));
         }
-        validate_operation_result(&operation)?;
+        validate_operation_result(&operation, authenticate_legacy_evidence)?;
         operations.insert(key.as_str(), operation);
     }
     Ok(operations)
@@ -1420,6 +1423,7 @@ fn validate_gate_observations(
                     key,
                     "baseline",
                     &baseline.snapshot,
+                    &baseline.leased_write_set,
                     authenticate_legacy_evidence,
                 )?;
                 validate_baseline_write_domain(key, gate, baseline)?;
@@ -1708,6 +1712,7 @@ fn validate_gate_observations(
                 key,
                 &format!("close revision {}", revision.revision),
                 snapshot,
+                &baseline.leased_write_set,
                 authenticate_legacy_evidence,
             )?;
             if snapshot.scan_invocation != gate.analysis_options.scan_invocation {
@@ -2389,6 +2394,7 @@ fn validate_analysis_snapshot(
     gate_key: &str,
     role: &str,
     snapshot: &AnalysisSnapshot,
+    leased_write_set: &[WriteLease],
     authenticate_legacy_evidence: bool,
 ) -> Result<String, StoreError> {
     if snapshot.evidence.schema_version != RUN_EVIDENCE_SCHEMA_VERSION {
@@ -2414,10 +2420,16 @@ fn validate_analysis_snapshot(
             "gate {gate_key} {role} evidence disagrees with its semantic inputs: {error}"
         ))
     })?;
-    validate_run_evidence_tier(
+    let directory_capability_intents = leased_write_set
+        .iter()
+        .filter(|lease| lease.kind == WriteLeaseKind::Directory)
+        .map(|lease| lease.path.clone())
+        .collect::<BTreeSet<_>>();
+    validate_run_evidence_tier_with_directory_capability_intents(
         &snapshot.evidence,
         &snapshot.scan_invocation,
         &snapshot.entry_selections,
+        &directory_capability_intents,
     )
     .map_err(|error| {
         StoreError::Integrity(format!(
@@ -2812,7 +2824,10 @@ fn validate_run_catalog(snapshot: &LogicalStoreSnapshot) -> Result<(), StoreErro
     validate_allocator_sequence(snapshot, "run-catalog", minimum)
 }
 
-fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreError> {
+fn validate_operation_result(
+    operation: &OperationRecord,
+    authenticate_legacy_evidence: bool,
+) -> Result<(), StoreError> {
     if operation.kind != GateOperationKind::GateAbandon && operation.reason.is_some() {
         return Err(StoreError::Integrity(format!(
             "non-administrative operation {} retained a reason",
@@ -2848,9 +2863,10 @@ fn validate_operation_result(operation: &OperationRecord) -> Result<(), StoreErr
                 operation.operation_id.as_str()
             ))
         })?;
-        validate_pre_write_analysis_options(operation, options)?;
-        let expected =
-            pre_write_request_digest(&operation.declared_write_set, &options.scan_invocation);
+        validate_pre_write_analysis_options(operation, options, authenticate_legacy_evidence)?;
+        let request_invocation =
+            pre_write_request_invocation(operation, options, authenticate_legacy_evidence)?;
+        let expected = pre_write_request_digest(&operation.declared_write_set, &request_invocation);
         if operation.request_digest != expected {
             return Err(StoreError::Integrity(format!(
                 "pre-write operation {} disagrees with its authenticated request",
@@ -3047,6 +3063,7 @@ fn validate_pending_operation_state(operation: &OperationRecord) -> Result<(), S
 fn validate_pre_write_analysis_options(
     operation: &OperationRecord,
     options: &lumin_evidence::GateAnalysisOptions,
+    authenticate_legacy_evidence: bool,
 ) -> Result<(), StoreError> {
     if options.jobs == 0 {
         return Err(StoreError::Integrity(format!(
@@ -3065,7 +3082,171 @@ fn validate_pre_write_analysis_options(
         &options.scan_invocation,
     )?;
     validate_declared_path_inspection(operation)?;
+    let inferred_rust_scope = if authenticate_legacy_evidence {
+        if options.capability_intent_inference.is_some() {
+            return Err(StoreError::Integrity(format!(
+                "legacy pre-write operation {} retained a current capability inference marker",
+                operation.operation_id.as_str()
+            )));
+        }
+        InferredRustCapabilityScope::DirectPaths
+    } else {
+        match options.capability_intent_inference.as_deref() {
+            Some(GATE_CAPABILITY_INTENT_INFERENCE_VERSION) => {
+                InferredRustCapabilityScope::DirectPathsAndDirectories
+            }
+            Some(version) => {
+                return Err(StoreError::IncompatibleStateSchema(format!(
+                    "pre-write operation {} uses unsupported capability inference {version}",
+                    operation.operation_id.as_str()
+                )));
+            }
+            None => InferredRustCapabilityScope::None,
+        }
+    };
+    validate_capability_intent_domain(
+        &format!("pre-write operation {}", operation.operation_id.as_str()),
+        &operation.declared_write_set,
+        &operation.pre_write_declared_path_inspection,
+        &options.scan_invocation,
+        inferred_rust_scope,
+    )?;
     Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum InferredRustCapabilityScope {
+    None,
+    DirectPaths,
+    DirectPathsAndDirectories,
+}
+
+fn validate_capability_intent_domain(
+    owner: &str,
+    declared_write_set: &[lumin_evidence::RepoPathProjection],
+    declared_path_inspection: &[lumin_evidence::PreWriteDeclaredPathInspection],
+    invocation: &lumin_evidence::ScanInvocationTier,
+    inferred_rust_scope: InferredRustCapabilityScope,
+) -> Result<(), StoreError> {
+    if let Some(intent) = invocation.capability_intents.iter().find(|intent| {
+        !declared_write_set
+            .iter()
+            .any(|declared| intent.path.components.starts_with(&declared.components))
+    }) {
+        return Err(StoreError::Integrity(format!(
+            "{owner} has a capability intent outside its declared write set: {}",
+            intent.path.display
+        )));
+    }
+
+    if matches!(inferred_rust_scope, InferredRustCapabilityScope::None)
+        && !invocation.capability_intents.is_empty()
+    {
+        return Err(StoreError::Integrity(format!(
+            "{owner} retained capability intents without their inference marker"
+        )));
+    }
+    let expected_rust = match inferred_rust_scope {
+        InferredRustCapabilityScope::None => Vec::new(),
+        InferredRustCapabilityScope::DirectPaths => {
+            inferred_rust_capability_intents(declared_write_set, declared_path_inspection, false)?
+        }
+        InferredRustCapabilityScope::DirectPathsAndDirectories => {
+            inferred_rust_capability_intents(declared_write_set, declared_path_inspection, true)?
+        }
+    };
+    let observed_rust = invocation
+        .capability_intents
+        .iter()
+        .filter(|intent| intent.capability == CapabilityIntentKind::Rust)
+        .cloned()
+        .collect::<Vec<_>>();
+    if observed_rust != expected_rust {
+        return Err(StoreError::Integrity(format!(
+            "{owner} has capability intents that disagree with its inferred Rust lanes"
+        )));
+    }
+    Ok(())
+}
+
+fn inferred_rust_capability_intents(
+    declared_write_set: &[lumin_evidence::RepoPathProjection],
+    declared_path_inspection: &[lumin_evidence::PreWriteDeclaredPathInspection],
+    include_directory_domains: bool,
+) -> Result<Vec<CapabilityIntentRecord>, StoreError> {
+    let mut intents = Vec::new();
+    for projection in declared_write_set {
+        let path = RepoPath::from_canonical_bytes(&projection.canonical).map_err(|error| {
+            StoreError::Integrity(format!(
+                "declared write path {} is invalid: {error}",
+                projection.display
+            ))
+        })?;
+        if path
+            .file_name_portable()
+            .is_some_and(|name| name.ends_with(".rs"))
+        {
+            intents.push(CapabilityIntentRecord {
+                path: projection.clone(),
+                capability: CapabilityIntentKind::Rust,
+            });
+        }
+    }
+    if include_directory_domains {
+        intents.extend(
+            declared_path_inspection
+                .iter()
+                .filter(|inspection| {
+                    inspection
+                        .lease
+                        .as_ref()
+                        .is_some_and(|lease| lease.kind == WriteLeaseKind::Directory)
+                })
+                .map(|inspection| CapabilityIntentRecord {
+                    path: inspection.path.clone(),
+                    capability: CapabilityIntentKind::Rust,
+                }),
+        );
+    }
+    intents.sort();
+    intents.dedup();
+    Ok(intents)
+}
+
+fn pre_write_request_invocation(
+    operation: &OperationRecord,
+    options: &lumin_evidence::GateAnalysisOptions,
+    authenticate_legacy_evidence: bool,
+) -> Result<lumin_evidence::ScanInvocationTier, StoreError> {
+    let mut invocation = options.scan_invocation.clone();
+    if authenticate_legacy_evidence || options.capability_intent_inference.is_none() {
+        return Ok(invocation);
+    }
+    let direct_rust_paths = inferred_rust_capability_intents(
+        &operation.declared_write_set,
+        &operation.pre_write_declared_path_inspection,
+        false,
+    )?
+    .into_iter()
+    .map(|intent| intent.path)
+    .collect::<BTreeSet<_>>();
+    let directory_paths = operation
+        .pre_write_declared_path_inspection
+        .iter()
+        .filter(|inspection| {
+            inspection
+                .lease
+                .as_ref()
+                .is_some_and(|lease| lease.kind == WriteLeaseKind::Directory)
+        })
+        .map(|inspection| inspection.path.clone())
+        .collect::<BTreeSet<_>>();
+    invocation.capability_intents.retain(|intent| {
+        intent.capability != CapabilityIntentKind::Rust
+            || !directory_paths.contains(&intent.path)
+            || direct_rust_paths.contains(&intent.path)
+    });
+    Ok(invocation)
 }
 
 fn validate_declared_path_inspection(
@@ -3325,8 +3506,8 @@ fn parse_record<T: DeserializeOwned + Serialize>(
 mod tests {
     use super::*;
     use lumin_evidence::{
-        GateAnalysisOptions, RetentionPlanItem, RetentionTombstoneEnvelope, SemanticInputRecord,
-        SemanticInputState, WriteLease,
+        GateAnalysisOptions, RetentionPlanItem, RetentionTombstoneEnvelope, ScanInvocationTier,
+        SemanticInputRecord, SemanticInputState, WriteLease,
     };
     use lumin_model::{GateId, PhysicalFileIdentity, RetentionPlanId};
 
@@ -3375,6 +3556,171 @@ mod tests {
             trash_nonce: "nonce".to_owned(),
             progress: None,
         }
+    }
+
+    #[test]
+    fn capability_intents_match_declared_and_inferred_domains()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let projection = |value: &str| -> Result<_, Box<dyn std::error::Error>> {
+            Ok(lumin_evidence::RepoPathProjection::from(
+                &RepoPath::from_portable(value)?,
+            ))
+        };
+        let directory = projection("src")?;
+        let main = projection("src/main.ts")?;
+        let rust = projection("src/lib.rs")?;
+        let mut declared = vec![directory.clone(), main.clone(), rust.clone()];
+        declared.sort();
+        let inspection = vec![lumin_evidence::PreWriteDeclaredPathInspection {
+            path: directory.clone(),
+            lease: Some(lumin_evidence::WriteLease {
+                path: directory.clone(),
+                kind: WriteLeaseKind::Directory,
+                physical_identity: None,
+                nearest_existing_parent: None,
+                prefix_identities: Vec::new(),
+            }),
+            rejection: None,
+        }];
+        let valid = ScanInvocationTier {
+            capability_intents: vec![
+                CapabilityIntentRecord {
+                    path: directory,
+                    capability: CapabilityIntentKind::Rust,
+                },
+                CapabilityIntentRecord {
+                    path: rust.clone(),
+                    capability: CapabilityIntentKind::Rust,
+                },
+                CapabilityIntentRecord {
+                    path: main.clone(),
+                    capability: CapabilityIntentKind::Shape,
+                },
+            ],
+            ..Default::default()
+        };
+        assert!(
+            validate_capability_intent_domain(
+                "test",
+                &declared,
+                &inspection,
+                &valid,
+                InferredRustCapabilityScope::DirectPathsAndDirectories,
+            )
+            .is_ok()
+        );
+
+        let missing_inferred = ScanInvocationTier {
+            capability_intents: vec![
+                CapabilityIntentRecord {
+                    path: rust.clone(),
+                    capability: CapabilityIntentKind::Rust,
+                },
+                CapabilityIntentRecord {
+                    path: main.clone(),
+                    capability: CapabilityIntentKind::Shape,
+                },
+            ],
+            ..Default::default()
+        };
+        assert!(
+            validate_capability_intent_domain(
+                "test",
+                &declared,
+                &inspection,
+                &missing_inferred,
+                InferredRustCapabilityScope::DirectPathsAndDirectories,
+            )
+            .is_err()
+        );
+        assert!(
+            validate_capability_intent_domain(
+                "test",
+                &declared,
+                &inspection,
+                &missing_inferred,
+                InferredRustCapabilityScope::DirectPaths,
+            )
+            .is_ok()
+        );
+
+        let legacy_native = ScanInvocationTier::default();
+        assert!(
+            validate_capability_intent_domain(
+                "legacy native v13 operation",
+                &declared,
+                &inspection,
+                &legacy_native,
+                InferredRustCapabilityScope::None,
+            )
+            .is_ok()
+        );
+
+        let legacy_options = GateAnalysisOptions {
+            jobs: 1,
+            resolution_profile: None,
+            scan_invocation: legacy_native,
+            capability_intent_inference: None,
+        };
+        let legacy_operation = OperationRecord {
+            schema_version: GATE_OPERATION_SCHEMA_VERSION.to_owned(),
+            operation_id: lumin_model::OperationId::from_string(
+                "legacy-native-directory".to_owned(),
+            ),
+            kind: GateOperationKind::PreWrite,
+            request_digest: String::new(),
+            status: GateOperationStatus::Committed,
+            gate_id: lumin_model::GateId::from_string("gate_legacy_native".to_owned()),
+            target_revision: 0,
+            reason: None,
+            transition_sequence: 0,
+            declared_write_set: vec![inspection[0].path.clone()],
+            leased_write_set: Vec::new(),
+            semantic_read_reservations: Vec::new(),
+            semantic_read_reservation_bindings: Vec::new(),
+            interruption_count: 0,
+            operation_liveness: None,
+            pre_write_declared_path_inspection: inspection.clone(),
+            pre_write_admission_evidence: None,
+            pre_write_final_validation: None,
+            post_write_final_validation: None,
+            analysis_options: Some(legacy_options.clone()),
+            result: None,
+        };
+        assert!(
+            validate_pre_write_analysis_options(&legacy_operation, &legacy_options, false).is_ok()
+        );
+        let mut marked_options = legacy_options;
+        marked_options.capability_intent_inference =
+            Some(GATE_CAPABILITY_INTENT_INFERENCE_VERSION.to_owned());
+        assert!(
+            validate_pre_write_analysis_options(&legacy_operation, &marked_options, false).is_err()
+        );
+
+        let outside = ScanInvocationTier {
+            capability_intents: vec![
+                CapabilityIntentRecord {
+                    path: rust,
+                    capability: CapabilityIntentKind::Rust,
+                },
+                CapabilityIntentRecord {
+                    path: projection("other/model.ts")?,
+                    capability: CapabilityIntentKind::Clone,
+                },
+            ],
+            ..Default::default()
+        };
+        assert!(
+            validate_capability_intent_domain(
+                "test",
+                &declared,
+                &inspection,
+                &outside,
+                InferredRustCapabilityScope::DirectPathsAndDirectories,
+            )
+            .is_err()
+        );
+        Ok(())
     }
 
     #[test]
@@ -3501,6 +3847,7 @@ mod tests {
                 jobs: 1,
                 resolution_profile: None,
                 scan_invocation: Default::default(),
+                capability_intent_inference: None,
             },
             baseline: None,
             protected_semantic_inputs,

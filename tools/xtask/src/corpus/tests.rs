@@ -216,8 +216,8 @@ fn ci_row_shards_balance_declared_work_deterministically() {
             "unbalanced {mode} invocation loads: {loads:?}",
         );
         let expected = match mode {
-            CorpusMode::Standard => vec![47, 47, 47, 47],
-            CorpusMode::Determinism => vec![64, 27, 27, 27, 27, 27, 26, 26],
+            CorpusMode::Standard => vec![48, 48, 48, 47],
+            CorpusMode::Determinism => vec![64, 28, 27, 27, 27, 27, 27, 27],
             CorpusMode::StoreCrash => unreachable!("CI does not shard store-crash rows"),
         };
         assert_eq!(loads, expected, "{mode} shard assignment changed");
@@ -413,7 +413,7 @@ fn every_mapped_standard_row_has_a_paired_determinism_invocation() {
         .iter()
         .filter(|row| row.is_mapped(CorpusMode::Determinism))
         .count();
-    assert_eq!(standard, 80);
+    assert_eq!(standard, 81);
     assert_eq!(determinism, standard);
 }
 
@@ -452,6 +452,42 @@ fn cache_gate_context_row_uses_the_reviewed_public_invocation() -> Result<(), St
         "semantic_demands::cache_projection_is_gate_contextual",
         FeatureSet::None,
     )];
+    for invocations in [row.standard, row.determinism] {
+        assert_eq!(
+            invocations
+                .unwrap_or_default()
+                .iter()
+                .map(|invocation| (invocation.target, invocation.filter, invocation.features))
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn capability_availability_row_uses_the_reviewed_public_invocations() -> Result<(), String> {
+    let row = REGISTRY
+        .iter()
+        .find(|row| row.id == "capability-availability-authority")
+        .ok_or_else(|| "capability-availability-authority row is missing".to_owned())?;
+    let expected = vec![
+        (
+            "capability_availability_authority",
+            "capability_unavailability_has_one_owner",
+            FeatureSet::None,
+        ),
+        (
+            "capability_availability_authority",
+            "directory_write_domain_requires_the_unavailable_rust_owner",
+            FeatureSet::None,
+        ),
+        (
+            "capability_availability_authority",
+            "capability_intent_syntax_is_closed_before_state_initialization",
+            FeatureSet::None,
+        ),
+    ];
     for invocations in [row.standard, row.determinism] {
         assert_eq!(
             invocations

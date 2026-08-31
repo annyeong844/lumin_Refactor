@@ -3,6 +3,7 @@
 //! Exit codes: 0 = pass, 1 = violations/failures found, 2 = tool/parse/metadata/registry error.
 
 mod architecture;
+mod capability_availability;
 mod cargo_bootstrap;
 mod corpus;
 mod generated_tables;

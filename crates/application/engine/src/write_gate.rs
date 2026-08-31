@@ -1,24 +1,30 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use lumin_evidence::{
-    DependencyIntentRecord, GateAnalysisOptions, GateOperationResult, GateRecord, GateSignal,
-    OperationRecord, PathPrefixIdentity, PostWriteFinalValidationEvidence,
-    PreWriteFinalValidationEvidence, RepoPathProjection, ScanInvocationTier, SemanticInputRecord,
-    SemanticInputState, SemanticReadReservationBinding, derive_pre_write_final_validation_signals,
-    gate_policy, post_write_request_digest, pre_write_request_digest, seal_analysis_snapshot,
+    CapabilityIntentRecord, DependencyIntentRecord, GATE_CAPABILITY_INTENT_INFERENCE_VERSION,
+    GateAnalysisOptions, GateOperationResult, GateRecord, GateSignal, OperationRecord,
+    PathPrefixIdentity, PostWriteFinalValidationEvidence, PreWriteFinalValidationEvidence,
+    RepoPathProjection, ScanInvocationTier, SemanticInputRecord, SemanticInputState,
+    SemanticReadReservationBinding, derive_pre_write_final_validation_signals, gate_policy,
+    post_write_request_digest, pre_write_request_digest, seal_analysis_snapshot,
 };
 use lumin_inventory::{
     InventoryError, InventoryRequest, SemanticInputExpectation, SemanticInputValidationState,
 };
 use lumin_model::{
-    ConfigAbsenceParent, DependencyIntent, GateDeltaRecord, GateId, OperationId, RepoPath,
-    RepositoryRootIdentity, ResolutionProfile, append_length_prefixed, digest_hex,
+    CapabilityIntent, ConfigAbsenceParent, DependencyIntent, GateDeltaRecord, GateId, OperationId,
+    RepoPath, RepositoryRootIdentity, ResolutionProfile, append_length_prefixed, digest_hex,
 };
 use lumin_store::{
     GateBaselineDraft, ObservationFinalization, OperationSession, PostWriteFinish, PostWriteStart,
     PreWriteFinish, PreWriteStart, SemanticReadReservation,
 };
 
+use super::capability_query::{
+    active_gate_capability_intents, apply_gate_capability_availability,
+    gate_capability_target_paths, normalized_gate_capability_intents,
+};
 use super::{
     EngineError, RepositoryAnalysisSession, RepositoryAnalysisStep, RepositoryCapture,
     RepositoryContext, analysis_cache, open_repository_context, repository_context_from_admission,
@@ -44,7 +50,7 @@ use observation::{
 };
 use transitions::{active_transition_signals, changed_paths, reconcile_transitions};
 
-const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v34";
+const ANALYSIS_CONTRACT_VERSION: &[u8] = b"lumin-analysis-contract.phase1-foundation.v35";
 const DEPENDENCY_CANDIDATE_TOPOLOGY_ONLY: &[u8] = b"dependency-candidate-topology-only.v1";
 
 fn analysis_contract_id() -> String {
@@ -78,6 +84,7 @@ pub struct PreWriteRequest {
     pub role_overrides: Vec<lumin_model::RoleOverride>,
     pub entries: Vec<RepoPath>,
     pub dependency_intents: Vec<DependencyIntent>,
+    pub capability_intents: Vec<CapabilityIntent>,
     pub jobs: usize,
     pub resolution_profile: Option<ResolutionProfile>,
 }
@@ -94,24 +101,30 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         return Err(EngineError::InvalidWorkerCount(0));
     }
     lumin_inventory::validate_caller_paths_lexically(&request.paths)?;
-    validate_analysis_path_names(&request.entries, &request.dependency_intents)?;
+    validate_analysis_path_names(
+        &request.entries,
+        &request.dependency_intents,
+        &request.capability_intents,
+    )?;
     let mut paths = request.paths.clone();
     paths.sort();
     paths.dedup();
     if paths.is_empty() {
         return Err(EngineError::NoDeclaredPaths);
     }
+    for intent in &request.capability_intents {
+        if !paths.iter().any(|declared| intent.path.is_within(declared)) {
+            return Err(EngineError::CapabilityIntentOutsideDeclaredWrite(
+                intent.path.display_escaped(),
+            ));
+        }
+    }
     let declared_write_set = paths
         .iter()
         .map(RepoPathProjection::from)
         .collect::<Vec<_>>();
     // Build the exact tier from the request
-    let scan_invocation = build_gate_scan_invocation_tier(request);
-    let analysis_options = GateAnalysisOptions {
-        jobs: request.jobs,
-        resolution_profile: request.resolution_profile,
-        scan_invocation: scan_invocation.clone(),
-    };
+    let scan_invocation = build_gate_scan_invocation_tier(request, &[]);
     let request_digest = pre_write_request_digest(&declared_write_set, &scan_invocation);
     let admission = lumin_inventory::repository_admission(&request.root)?;
     let store = match lumin_store::RepositoryStore::open_if_bound(
@@ -125,6 +138,7 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
                 &admission.canonical_root,
                 &request.entries,
                 &request.dependency_intents,
+                &request.capability_intents,
             )?;
             lumin_store::RepositoryStore::open(&admission.canonical_root, &admission.binding)?
         }
@@ -137,7 +151,12 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         return Ok(result);
     }
     lumin_inventory::validate_caller_entries(&context.root, &paths)?;
-    validate_analysis_paths(&context.root, &request.entries, &request.dependency_intents)?;
+    validate_analysis_paths(
+        &context.root,
+        &request.entries,
+        &request.dependency_intents,
+        &request.capability_intents,
+    )?;
     let reserved_state_lookup = reserved_state_identity_lookup(&context.store);
     lumin_inventory::validate_caller_entry_identity_lookup(
         &context.root,
@@ -148,9 +167,17 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         &context.root,
         &request.entries,
         &request.dependency_intents,
+        &request.capability_intents,
         &reserved_state_lookup,
     )?;
-    let inspection = inspect_declared_paths(&context.root, &paths);
+    let unavailable_targets = gate_capability_target_paths(&scan_invocation.capability_intents)?;
+    let inspection = inspect_declared_paths(&context.root, &paths, &unavailable_targets);
+    let analysis_options = GateAnalysisOptions {
+        jobs: request.jobs,
+        resolution_profile: request.resolution_profile,
+        scan_invocation: build_gate_scan_invocation_tier(request, &inspection.leases),
+        capability_intent_inference: Some(GATE_CAPABILITY_INTENT_INFERENCE_VERSION.to_owned()),
+    };
     let admission_observation_seed = BaselineObservationSeed {
         declared_write_set: declared_write_set.clone(),
         leased_write_set: inspection.leases.clone(),
@@ -160,19 +187,21 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         evidence_payload_sha256: None,
     };
     let operation = context.store.begin_operation(&request.operation_id)?;
-    let (gate_id, transition_sequence) = match operation.reserve_pre_write_with_inspection(
-        &request_digest,
-        &declared_write_set,
-        &inspection.leases,
-        &inspection.evidence,
-        &analysis_options,
-        |signals| unsealed_pre_write_observation_binding(&admission_observation_seed, signals),
-    )? {
+    let (gate_id, transition_sequence, analysis_options) = match operation
+        .reserve_pre_write_with_inspection(
+            &request_digest,
+            &declared_write_set,
+            &inspection.leases,
+            &inspection.evidence,
+            &analysis_options,
+            |signals| unsealed_pre_write_observation_binding(&admission_observation_seed, signals),
+        )? {
         PreWriteStart::Committed(result) => return Ok(*result),
         PreWriteStart::Analyze {
             gate_id,
             transition_sequence,
-        } => (gate_id, transition_sequence),
+            analysis_options,
+        } => (gate_id, transition_sequence, analysis_options),
     };
     wait_at_pre_write_admission_barrier(&request.operation_id, &gate_id)?;
 
@@ -180,11 +209,14 @@ pub fn open_write_gate(request: &PreWriteRequest) -> Result<GateOperationResult,
         match analyze_pre_write(
             &operation,
             &context,
-            request,
+            &analysis_options,
             inspection,
-            transition_sequence,
-            &request_digest,
-            &gate_id,
+            PreWriteAnalysisReservation {
+                operation_id: &request.operation_id,
+                request_digest: &request_digest,
+                gate_id: &gate_id,
+                transition_sequence,
+            },
         )? {
             PreWriteAnalysis::Finished(promotion) => *promotion,
             PreWriteAnalysis::Committed(result) => return Ok(*result),
@@ -429,7 +461,10 @@ fn wait_at_gate_test_barrier(
 }
 
 /// Build the exact ScanInvocationTier from a PreWriteRequest with normalized entries.
-fn build_gate_scan_invocation_tier(request: &PreWriteRequest) -> ScanInvocationTier {
+fn build_gate_scan_invocation_tier(
+    request: &PreWriteRequest,
+    declared_leases: &[lumin_evidence::WriteLease],
+) -> ScanInvocationTier {
     let mut entries: Vec<RepoPathProjection> = request
         .entries
         .iter()
@@ -447,12 +482,18 @@ fn build_gate_scan_invocation_tier(request: &PreWriteRequest) -> ScanInvocationT
         .collect::<Vec<_>>();
     dependency_intents.sort();
     dependency_intents.dedup();
+    let capability_intents = normalized_gate_capability_intents(
+        &request.paths,
+        &request.capability_intents,
+        declared_leases,
+    );
     ScanInvocationTier {
         includes: request.includes.clone(),
         excludes: request.excludes.clone(),
         role_overrides: request.role_overrides.clone(),
         entries,
         dependency_intents,
+        capability_intents,
         resolution_profile: request.resolution_profile,
     }
 }
@@ -483,33 +524,42 @@ struct FinalFreshnessValidation {
     captured_inputs: Vec<SemanticInputRecord>,
     inventory_request: InventoryRequest,
     reserved_state_lookup: lumin_inventory::ReservedStateIdentityLookup,
+    unavailable_capability_targets: BTreeSet<RepoPath>,
+    capability_intents: Vec<CapabilityIntentRecord>,
+    active_capability_intents: BTreeSet<CapabilityIntentRecord>,
+}
+
+struct PreWriteAnalysisReservation<'a> {
+    operation_id: &'a OperationId,
+    request_digest: &'a str,
+    gate_id: &'a GateId,
+    transition_sequence: u64,
 }
 
 fn analyze_pre_write(
     operation: &OperationSession<'_>,
     context: &RepositoryContext,
-    request: &PreWriteRequest,
+    options: &GateAnalysisOptions,
     inspection: DeclaredPathInspection,
-    transition_sequence: u64,
-    request_digest: &str,
-    gate_id: &GateId,
+    reservation: PreWriteAnalysisReservation<'_>,
 ) -> Result<PreWriteAnalysis, EngineError> {
-    let options = GateAnalysisOptions {
-        jobs: request.jobs,
-        resolution_profile: request.resolution_profile,
-        scan_invocation: build_gate_scan_invocation_tier(request),
-    };
+    let PreWriteAnalysisReservation {
+        operation_id,
+        request_digest,
+        gate_id,
+        transition_sequence,
+    } = reservation;
     let analysis_contract = analysis_contract_id();
     let inventory_request = inventory_request_from_tier(&options.scan_invocation)?;
     let reserved_state_lookup = reserved_state_identity_lookup(&context.store);
     let capture = match capture_reserved_repository(
         ReservedCaptureContext {
             store: &context.store,
-            operation_id: &request.operation_id,
+            operation_id,
             gate_id,
             root: &context.root,
             repository_root: &context.repository_root,
-            options: &options,
+            options,
             owner_contract_version: &analysis_contract,
             inventory_request: &inventory_request,
             reserved_state_lookup: &reserved_state_lookup,
@@ -519,7 +569,7 @@ fn analyze_pre_write(
                 .reserve_pre_write_semantic_inputs(request_digest, gate_id, paths)
                 .map_err(Into::into)
         },
-        || wait_at_capture_freshness_barrier(&request.operation_id, gate_id),
+        || wait_at_capture_freshness_barrier(operation_id, gate_id),
     ) {
         Ok(ReservedCapture::Finished {
             capture,
@@ -567,13 +617,41 @@ fn analyze_pre_write(
             })));
         }
     };
-    let (capture, reserved_semantic_bindings) = capture;
-    let (leased_write_set, alias_closures, mut signals) = expand_write_domain(
+    let (mut capture, reserved_semantic_bindings) = capture;
+    let (snapshot, active_capability_intents) = match apply_gate_capability_availability(
+        &context.root,
+        capture.snapshot,
+        &reserved_state_lookup,
+    ) {
+        Ok(projected) => projected,
+        Err(error) => {
+            return Ok(PreWriteAnalysis::Finished(Box::new(PreWritePromotion {
+                finish: PreWriteFinish {
+                    baseline: None,
+                    leased_write_set: inspection.leases,
+                    alias_closures: Vec::new(),
+                    attempted_semantic_inputs: Vec::new(),
+                    signals: vec![GateSignal::AnalysisFailed {
+                        detail: error.to_string(),
+                    }],
+                },
+                final_validation: None,
+                attempted_semantic_bindings: reserved_semantic_bindings,
+            })));
+        }
+    };
+    capture.snapshot = snapshot;
+    let mut signals = Vec::new();
+    let unavailable_targets =
+        gate_capability_target_paths(&options.scan_invocation.capability_intents)?;
+    let (leased_write_set, alias_closures, domain_signals) = expand_write_domain(
         &context.root,
         &inspection.observations,
         inspection.leases,
         &capture,
+        &unavailable_targets,
     );
+    signals.extend(domain_signals);
     let protected_semantic_inputs = protected_semantic_inputs(&capture, &leased_write_set);
     signals.extend(gate_policy::opening_signals(
         &capture.snapshot,
@@ -584,6 +662,9 @@ fn analyze_pre_write(
         captured_inputs: capture.snapshot.inputs.clone(),
         inventory_request,
         reserved_state_lookup,
+        unavailable_capability_targets: unavailable_targets,
+        capability_intents: options.scan_invocation.capability_intents.clone(),
+        active_capability_intents,
     };
     let baseline = GateBaselineDraft {
         analysis_contract,
@@ -715,7 +796,7 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
 
     wait_at_post_write_capture_barrier(&request.operation_id, &request.gate_id)?;
     let reserved_state_lookup = reserved_state_identity_lookup(&context.store);
-    let (capture, reserved_semantic_bindings) = match capture_reserved_repository(
+    let (mut capture, reserved_semantic_bindings) = match capture_reserved_repository(
         ReservedCaptureContext {
             store: &context.store,
             operation_id: &request.operation_id,
@@ -780,6 +861,32 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         }
     };
 
+    let (snapshot, active_capability_intents) = match apply_gate_capability_availability(
+        &context.root,
+        capture.snapshot,
+        &reserved_state_lookup,
+    ) {
+        Ok(projected) => projected,
+        Err(error) => {
+            let signals = post_write_capture_failure_signals(
+                &context.root,
+                &gate.leased_write_set,
+                &opening_entry_paths,
+                &inventory_request.dependency_intents,
+                &error,
+            );
+            return finish_failed_close(
+                &operation,
+                request,
+                &request_digest,
+                &gate,
+                signals,
+                reserved_semantic_bindings,
+                Some(containment_context),
+            );
+        }
+    };
+    capture.snapshot = snapshot;
     let (reconciled_baseline, reconciled_sequences, mut signals) =
         reconcile_transitions(&gate, baseline, &transitions);
     let protected_semantic_inputs = protected_semantic_inputs(&capture, &gate.leased_write_set);
@@ -830,6 +937,15 @@ pub fn close_write_gate(request: &PostWriteRequest) -> Result<GateOperationResul
         captured_inputs: capture.snapshot.inputs.clone(),
         inventory_request,
         reserved_state_lookup,
+        unavailable_capability_targets: gate_capability_target_paths(
+            &gate.analysis_options.scan_invocation.capability_intents,
+        )?,
+        capability_intents: gate
+            .analysis_options
+            .scan_invocation
+            .capability_intents
+            .clone(),
+        active_capability_intents,
     };
     let evidence_payload_sha256 = lumin_store::evidence_payload_sha256(&capture.snapshot.evidence)?;
     let observation_seed = CloseObservationSeed {
@@ -908,13 +1024,15 @@ fn validate_analysis_paths(
     root: &Path,
     entries: &[RepoPath],
     dependency_intents: &[DependencyIntent],
+    capability_intents: &[CapabilityIntent],
 ) -> Result<(), EngineError> {
     lumin_inventory::validate_caller_entries(root, entries)?;
-    let dependency_paths = dependency_intents
+    let intent_paths = dependency_intents
         .iter()
         .map(|intent| intent.path.clone())
+        .chain(capability_intents.iter().map(|intent| intent.path.clone()))
         .collect::<Vec<_>>();
-    lumin_inventory::validate_caller_entries(root, &dependency_paths)?;
+    lumin_inventory::validate_caller_entries(root, &intent_paths)?;
     Ok(())
 }
 
@@ -1034,13 +1152,15 @@ struct CloseContainmentContext<'a> {
 fn validate_analysis_path_names(
     entries: &[RepoPath],
     dependency_intents: &[DependencyIntent],
+    capability_intents: &[CapabilityIntent],
 ) -> Result<(), EngineError> {
     lumin_inventory::validate_caller_paths_lexically(entries)?;
-    let dependency_paths = dependency_intents
+    let intent_paths = dependency_intents
         .iter()
         .map(|intent| intent.path.clone())
+        .chain(capability_intents.iter().map(|intent| intent.path.clone()))
         .collect::<Vec<_>>();
-    lumin_inventory::validate_caller_paths_lexically(&dependency_paths)?;
+    lumin_inventory::validate_caller_paths_lexically(&intent_paths)?;
     Ok(())
 }
 
@@ -1048,16 +1168,18 @@ fn validate_analysis_path_identities(
     root: &Path,
     entries: &[RepoPath],
     dependency_intents: &[DependencyIntent],
+    capability_intents: &[CapabilityIntent],
     reserved_state_lookup: &lumin_inventory::ReservedStateIdentityLookup,
 ) -> Result<(), EngineError> {
     lumin_inventory::validate_caller_entry_identity_lookup(root, entries, reserved_state_lookup)?;
-    let dependency_paths = dependency_intents
+    let intent_paths = dependency_intents
         .iter()
         .map(|intent| intent.path.clone())
+        .chain(capability_intents.iter().map(|intent| intent.path.clone()))
         .collect::<Vec<_>>();
     lumin_inventory::validate_caller_entry_identity_lookup(
         root,
-        &dependency_paths,
+        &intent_paths,
         reserved_state_lookup,
     )?;
     Ok(())
@@ -1437,7 +1559,9 @@ fn stale_captured_input_topology_paths(
     for input in captured_inputs {
         if !matches!(
             input.state,
-            SemanticInputState::Source | SemanticInputState::ConfigPresent
+            SemanticInputState::Source
+                | SemanticInputState::ConfigPresent
+                | SemanticInputState::CapabilityTarget
         ) {
             continue;
         }
@@ -1496,6 +1620,26 @@ fn final_freshness_validation_signals(
     }
 }
 
+fn capability_availability_drift_paths(
+    root: &Path,
+    validation: &FinalFreshnessValidation,
+    reserved_state_lookup: &lumin_inventory::ReservedStateIdentityLookup,
+) -> Result<Vec<RepoPathProjection>, EngineError> {
+    let observed = active_gate_capability_intents(
+        root,
+        &validation.capability_intents,
+        reserved_state_lookup,
+    )?;
+    let mut paths = validation
+        .active_capability_intents
+        .symmetric_difference(&observed)
+        .map(|intent| intent.path.clone())
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
+}
+
 fn pre_write_final_validation(
     root: &Path,
     validation: &FinalFreshnessValidation,
@@ -1524,7 +1668,7 @@ fn pre_write_final_validation(
         paths.dedup();
         Ok(paths)
     });
-    let semantic_validation_drift = match semantic_validation_drift {
+    let mut semantic_validation_drift = match semantic_validation_drift {
         Ok(paths) => paths,
         Err(error) => {
             return (
@@ -1593,6 +1737,19 @@ fn pre_write_final_validation(
             observed_semantic_inputs.sort();
             observed_semantic_inputs.dedup();
 
+            for input in &validation.captured_inputs {
+                if input.state == SemanticInputState::CapabilityTarget
+                    && !semantic_validation_drift.contains(&input.path)
+                    && !observed_semantic_inputs
+                        .iter()
+                        .any(|observed| observed.path == input.path)
+                {
+                    observed_semantic_inputs.push(input.clone());
+                }
+            }
+            observed_semantic_inputs.sort();
+            observed_semantic_inputs.dedup();
+
             let mut source_paths = inventory
                 .sources
                 .into_iter()
@@ -1605,7 +1762,12 @@ fn pre_write_final_validation(
             source_paths.extend(captured_paths);
             source_paths.sort();
             source_paths.dedup();
-            let write_domain = observe_write_domain(root, expected_leases, &source_paths);
+            let write_domain = observe_write_domain(
+                root,
+                expected_leases,
+                &source_paths,
+                &validation.unavailable_capability_targets,
+            );
             if !write_domain.failures.is_empty() {
                 let signals = write_domain
                     .failures
@@ -1613,6 +1775,22 @@ fn pre_write_final_validation(
                     .map(|detail| GateSignal::AnalysisFailed { detail })
                     .collect();
                 return (signals, None);
+            }
+
+            match capability_availability_drift_paths(root, validation, &final_lookup) {
+                Ok(paths) => {
+                    semantic_validation_drift.extend(paths);
+                    semantic_validation_drift.sort();
+                    semantic_validation_drift.dedup();
+                }
+                Err(error) => {
+                    return (
+                        vec![GateSignal::AnalysisFailed {
+                            detail: error.to_string(),
+                        }],
+                        None,
+                    );
+                }
             }
 
             let evidence = PreWriteFinalValidationEvidence {
@@ -1776,9 +1954,9 @@ fn semantic_input_expectation(
     path: RepoPath,
 ) -> Result<SemanticInputExpectation, EngineError> {
     let state = match input.state {
-        SemanticInputState::Source | SemanticInputState::ConfigPresent => {
-            SemanticInputValidationState::Regular
-        }
+        SemanticInputState::Source
+        | SemanticInputState::ConfigPresent
+        | SemanticInputState::CapabilityTarget => SemanticInputValidationState::Regular,
         SemanticInputState::Missing => SemanticInputValidationState::Missing,
         SemanticInputState::NonRegular => SemanticInputValidationState::NonRegular,
         SemanticInputState::Unreadable => SemanticInputValidationState::Unreadable,
@@ -2095,6 +2273,9 @@ mod tests {
             captured_inputs: vec![captured.clone()],
             inventory_request: InventoryRequest::default(),
             reserved_state_lookup,
+            unavailable_capability_targets: BTreeSet::new(),
+            capability_intents: Vec::new(),
+            active_capability_intents: BTreeSet::new(),
         };
 
         assert!(
@@ -2152,6 +2333,9 @@ mod tests {
             }],
             inventory_request: InventoryRequest::default(),
             reserved_state_lookup,
+            unavailable_capability_targets: BTreeSet::new(),
+            capability_intents: Vec::new(),
+            active_capability_intents: BTreeSet::new(),
         };
 
         assert!(
@@ -2206,6 +2390,9 @@ mod tests {
             }],
             inventory_request: InventoryRequest::default(),
             reserved_state_lookup: lookup,
+            unavailable_capability_targets: BTreeSet::new(),
+            capability_intents: Vec::new(),
+            active_capability_intents: BTreeSet::new(),
         };
 
         std::fs::hard_link(&native, root.path().join(".lumin/cache/alias.ts"))?;
@@ -2249,6 +2436,9 @@ mod tests {
             }],
             inventory_request: InventoryRequest::default(),
             reserved_state_lookup: lookup,
+            unavailable_capability_targets: BTreeSet::new(),
+            capability_intents: Vec::new(),
+            active_capability_intents: BTreeSet::new(),
         };
         let reserved_identities = std::collections::BTreeSet::from([identity]);
 

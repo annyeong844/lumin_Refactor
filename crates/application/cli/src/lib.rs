@@ -14,8 +14,8 @@ use lumin_engine::{
     PostWriteRequest, PreWriteRequest,
 };
 use lumin_model::{
-    BuildIdentity, DependencyIntent, FindingId, GateId, OperationId, ResolutionProfile,
-    RoleOverride, RunId, ScanRole,
+    BuildIdentity, CapabilityIntent, CapabilityIntentKind, DependencyIntent, FindingId, GateId,
+    OperationId, ResolutionProfile, RoleOverride, RunId, ScanRole,
 };
 use lumin_protocol::ProtocolError;
 use thiserror::Error;
@@ -73,6 +73,8 @@ enum CliError {
     UnknownRole(String),
     #[error("unknown resolution profile: {0}")]
     UnknownResolutionProfile(String),
+    #[error("unknown capability intent: {0}")]
+    UnknownCapabilityIntent(String),
     #[error("--run is required")]
     RunRequired,
     #[error("--revision is required")]
@@ -537,6 +539,7 @@ fn pre_write(
     let mut operation_id = None;
     let mut paths = Vec::new();
     let mut dependency_intents = Vec::new();
+    let mut capability_intents = Vec::new();
     let mut includes = Vec::new();
     let mut excludes = Vec::new();
     let mut role_overrides = Vec::new();
@@ -593,6 +596,15 @@ fn pre_write(
                 }
                 dependency_intents.push(DependencyIntent { path, dependency });
             }
+            "--capability-at" => {
+                let value = arguments.required_os("--capability-at path")?;
+                let path = lumin_engine::lower_native_repo_path(&value)
+                    .map_err(|error| CliError::InvalidRepoPath(error.to_string()))?;
+                let capability = parse_capability_intent(
+                    &arguments.required_utf8("--capability-at capability")?,
+                )?;
+                capability_intents.push(CapabilityIntent { capability, path });
+            }
             "--include" => includes.push(arguments.required_utf8("--include")?),
             "--exclude" => excludes.push(arguments.required_utf8("--exclude")?),
             "--role-at" => {
@@ -629,6 +641,7 @@ fn pre_write(
         role_overrides,
         entries,
         dependency_intents,
+        capability_intents,
         jobs,
         resolution_profile,
     })?;
@@ -940,6 +953,15 @@ fn parse_resolution_profile(value: &str) -> Result<ResolutionProfile, CliError> 
     }
 }
 
+fn parse_capability_intent(value: &str) -> Result<CapabilityIntentKind, CliError> {
+    match value {
+        "shape" => Ok(CapabilityIntentKind::Shape),
+        "clone" => Ok(CapabilityIntentKind::Clone),
+        "type-escape" => Ok(CapabilityIntentKind::Discipline),
+        _ => Err(CliError::UnknownCapabilityIntent(value.to_owned())),
+    }
+}
+
 fn require_json(value: &str) -> Result<(), CliError> {
     if value == "json" {
         Ok(())
@@ -959,6 +981,7 @@ fn error_exit_code(error: &CliError) -> i32 {
         | CliError::UnsupportedFormat(_)
         | CliError::UnknownRole(_)
         | CliError::UnknownResolutionProfile(_)
+        | CliError::UnknownCapabilityIntent(_)
         | CliError::RunRequired
         | CliError::RevisionRequired
         | CliError::InvalidRevision(_)

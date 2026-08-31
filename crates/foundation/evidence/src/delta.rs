@@ -332,7 +332,8 @@ fn limitation_path(limitation: &Limitation) -> Option<&str> {
         | Limitation::SfcDialectUnavailable { .. }
         | Limitation::SfcDecompositionUnknown { .. }
         | Limitation::VueExternalScriptModeConflict { .. }
-        | Limitation::VueTemplateOpaque { .. } => None,
+        | Limitation::VueTemplateOpaque { .. }
+        | Limitation::CapabilityUnavailable { .. } => None,
     }
 }
 
@@ -951,7 +952,8 @@ fn limitation_delta_at(limitation: &Limitation, construct_ordinal: u64) -> Limit
         | Limitation::SfcDecompositionUnknown { .. }
         | Limitation::VueExternalScriptModeConflict { .. }
         | Limitation::VueTemplateOpaque { .. }
-        | Limitation::ExplicitEntryUnavailable { .. } => {
+        | Limitation::ExplicitEntryUnavailable { .. }
+        | Limitation::CapabilityUnavailable { .. } => {
             match limitation.registry_entry().gate_relevance {
                 LimitationGateRelevance::RequiredOwner => LimitationDelta::RequiredOwnerGap,
                 LimitationGateRelevance::RequiredEvidence
@@ -2029,6 +2031,23 @@ mod tests {
             },
         ]));
         assert_eq!(input.required_owner_gap_count, 1);
+        assert_eq!(input.required_evidence_gap_count, 0);
+        assert_eq!(input.advisory_limitation_count, 0);
+    }
+
+    #[test]
+    fn required_owner_gaps_are_aggregated_across_owners() {
+        let input = lifecycle_delta_input(&evidence_with_limitations(vec![
+            Limitation::SfcDialectUnavailable {
+                source_id: LogicalSourceId::from_string("source-svelte".to_owned()),
+                dialect: "svelte".to_owned(),
+            },
+            Limitation::CapabilityUnavailable {
+                capability: lumin_model::CapabilityIntentKind::Rust,
+                targets: vec![LogicalSourceId::from_string("source-rust".to_owned())],
+            },
+        ]));
+        assert_eq!(input.required_owner_gap_count, 2);
         assert_eq!(input.required_evidence_gap_count, 0);
         assert_eq!(input.advisory_limitation_count, 0);
     }

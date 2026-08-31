@@ -2391,6 +2391,7 @@ fn options() -> GateAnalysisOptions {
         jobs: 1,
         resolution_profile: None,
         scan_invocation: Default::default(),
+        capability_intent_inference: None,
     }
 }
 
@@ -2475,6 +2476,7 @@ fn open_active_gate_for_with_protected_inputs(
         PreWriteStart::Analyze {
             gate_id,
             transition_sequence,
+            ..
         } => (gate_id, transition_sequence),
         PreWriteStart::Committed(_) => return Err("active gate fixture was rejected".into()),
     };

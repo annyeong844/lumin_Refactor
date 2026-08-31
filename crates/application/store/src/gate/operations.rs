@@ -58,9 +58,16 @@ impl OperationSession<'_> {
                 }
                 if operation.status == GateOperationStatus::Pending {
                     self.validate_pending_operation(&operation)?;
+                    let analysis_options = operation.analysis_options.clone().ok_or_else(|| {
+                        StoreError::Integrity(format!(
+                            "pending pre-write operation omitted its analysis options: {}",
+                            operation.operation_id.as_str()
+                        ))
+                    })?;
                     return Ok(PreWriteStart::Analyze {
                         gate_id: operation.gate_id,
                         transition_sequence: operation.transition_sequence,
+                        analysis_options: Box::new(analysis_options),
                     });
                 }
                 operation.transition_sequence = current_transition_sequence(&write)?;
@@ -157,6 +164,7 @@ impl OperationSession<'_> {
             Ok(PreWriteStart::Analyze {
                 gate_id,
                 transition_sequence,
+                analysis_options: Box::new(analysis_options.clone()),
             })
         })
     }

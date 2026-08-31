@@ -9,6 +9,7 @@ use syn::{Ident, Token, braced};
 
 const MODEL_SOURCE: &str = "crates/foundation/model/src/facts.rs";
 const SLICE_SPEC: &str = "specs/001-foundation-slice.md";
+const CAPABILITY_AVAILABILITY_OWNER: &str = "crates/application/engine/src/capability_query.rs";
 
 #[derive(Debug, Default)]
 pub(crate) struct LimitationRegistryResult {
@@ -412,6 +413,13 @@ fn validate_constructors(
                     constructor.owner, constructor.file
                 ));
             }
+        }
+        if variant == "CapabilityUnavailable"
+            && (found.len() != 1 || found[0].file != CAPABILITY_AVAILABILITY_OWNER)
+        {
+            violations.push(format!(
+                "CAPABILITY AVAILABILITY OWNER: Limitation::CapabilityUnavailable must have exactly one constructor in {CAPABILITY_AVAILABILITY_OWNER}"
+            ));
         }
     }
 }

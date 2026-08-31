@@ -72,9 +72,9 @@ fn validate_input(
     let expectation = SemanticInputExpectation {
         path: decode_input_path(&input.path)?,
         state: match input.state {
-            SemanticInputState::Source | SemanticInputState::ConfigPresent => {
-                SemanticInputValidationState::Regular
-            }
+            SemanticInputState::Source
+            | SemanticInputState::ConfigPresent
+            | SemanticInputState::CapabilityTarget => SemanticInputValidationState::Regular,
             SemanticInputState::Missing => SemanticInputValidationState::Missing,
             SemanticInputState::NonRegular => SemanticInputValidationState::NonRegular,
             SemanticInputState::Unreadable => SemanticInputValidationState::Unreadable,

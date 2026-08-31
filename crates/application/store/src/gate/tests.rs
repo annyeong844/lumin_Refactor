@@ -168,6 +168,7 @@ fn persisted_v2_optional_gate_additions_default_when_absent()
             jobs: 1,
             resolution_profile: None,
             scan_invocation: Default::default(),
+            capability_intent_inference: None,
         },
         baseline: Some(baseline),
         protected_semantic_inputs: vec![protected],
@@ -403,6 +404,7 @@ fn pre_write_semantic_read_reservation_blocks_later_write_admission()
         jobs: 1,
         resolution_profile: None,
         scan_invocation: Default::default(),
+        capability_intent_inference: None,
     };
     let reader = store.begin_operation(&reader_operation)?;
     let reader_gate = match reader.reserve_pre_write(
@@ -553,6 +555,7 @@ fn pre_write_finish_rejects_a_baseline_that_omits_a_reserved_input()
         jobs: 1,
         resolution_profile: None,
         scan_invocation: Default::default(),
+        capability_intent_inference: None,
     };
     let operation = store.begin_operation(&operation_id)?;
     let (gate_id, transition_sequence) = match operation.reserve_pre_write(
@@ -565,6 +568,7 @@ fn pre_write_finish_rejects_a_baseline_that_omits_a_reserved_input()
         PreWriteStart::Analyze {
             gate_id,
             transition_sequence,
+            ..
         } => (gate_id, transition_sequence),
         PreWriteStart::Committed(_) => {
             return Err("the opening operation was unexpectedly committed".into());
@@ -627,6 +631,7 @@ fn final_validation_can_stop_pre_write_promotion() -> Result<(), Box<dyn std::er
         PreWriteStart::Analyze {
             gate_id,
             transition_sequence,
+            ..
         } => (gate_id, transition_sequence),
         PreWriteStart::Committed(_) => return Err("the opening operation committed early".into()),
     };
@@ -727,6 +732,7 @@ fn unsealed_pre_write_releases_leases_but_retains_its_attempted_domain()
         PreWriteStart::Analyze {
             gate_id,
             transition_sequence,
+            ..
         } => (gate_id, transition_sequence),
         PreWriteStart::Committed(_) => return Err("the opening operation committed early".into()),
     };
@@ -970,6 +976,7 @@ fn semantic_read_reservation_blocks_later_write_admission() -> Result<(), Box<dy
         jobs: 1,
         resolution_profile: None,
         scan_invocation: Default::default(),
+        capability_intent_inference: None,
     };
     let opening = store.begin_operation(&opening_operation)?;
     let (gate_id, transition_sequence) = match opening.reserve_pre_write(
@@ -982,6 +989,7 @@ fn semantic_read_reservation_blocks_later_write_admission() -> Result<(), Box<dy
         PreWriteStart::Analyze {
             gate_id,
             transition_sequence,
+            ..
         } => (gate_id, transition_sequence),
         PreWriteStart::Committed(_) => {
             return Err("the first gate was unexpectedly committed".into());
@@ -1058,6 +1066,7 @@ fn physical_alias_writer_cannot_cross_a_pending_semantic_read_reservation()
         jobs: 1,
         resolution_profile: None,
         scan_invocation: Default::default(),
+        capability_intent_inference: None,
     };
     let reader_operation = OperationId::from_string("op-alias-reader".to_owned());
     let reader_source = path("src/new.ts")?;
@@ -1118,11 +1127,86 @@ fn physical_alias_writer_cannot_cross_a_pending_semantic_read_reservation()
     Ok(())
 }
 
+#[test]
+fn pending_pre_write_retry_reuses_its_persisted_analysis_options()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    let store = open_store(root.path())?;
+    let operation_id = OperationId::from_string("op-persisted-analysis-options".to_owned());
+    let operation = store.begin_operation(&operation_id)?;
+    let directory = path("src")?;
+    let mut directory_lease = lease(directory.clone())?;
+    directory_lease.kind = WriteLeaseKind::Directory;
+    let raw_options = options();
+    let request_digest = lumin_evidence::pre_write_request_digest(
+        std::slice::from_ref(&directory),
+        &raw_options.scan_invocation,
+    );
+    let persisted_options = GateAnalysisOptions {
+        scan_invocation: lumin_evidence::ScanInvocationTier {
+            capability_intents: vec![lumin_evidence::CapabilityIntentRecord {
+                path: directory.clone(),
+                capability: lumin_model::CapabilityIntentKind::Rust,
+            }],
+            ..Default::default()
+        },
+        capability_intent_inference: Some(
+            lumin_evidence::GATE_CAPABILITY_INTENT_INFERENCE_VERSION.to_owned(),
+        ),
+        ..raw_options.clone()
+    };
+
+    let first = operation.reserve_pre_write(
+        &request_digest,
+        std::slice::from_ref(&directory),
+        std::slice::from_ref(&directory_lease),
+        &persisted_options,
+        rejected_test_observation,
+    )?;
+    let (gate_id, transition_sequence) = match first {
+        PreWriteStart::Analyze {
+            gate_id,
+            transition_sequence,
+            analysis_options,
+        } => {
+            assert_eq!(*analysis_options, persisted_options);
+            (gate_id, transition_sequence)
+        }
+        PreWriteStart::Committed(_) => return Err("pre-write committed before analysis".into()),
+    };
+
+    let retry = operation.reserve_pre_write(
+        &request_digest,
+        std::slice::from_ref(&directory),
+        std::slice::from_ref(&directory_lease),
+        &raw_options,
+        rejected_test_observation,
+    )?;
+    match retry {
+        PreWriteStart::Analyze {
+            gate_id: retried_gate_id,
+            transition_sequence: retried_transition_sequence,
+            analysis_options,
+        } => {
+            assert_eq!(retried_gate_id, gate_id);
+            assert_eq!(retried_transition_sequence, transition_sequence);
+            assert_eq!(*analysis_options, persisted_options);
+        }
+        PreWriteStart::Committed(_) => return Err("pending pre-write committed on retry".into()),
+    }
+    assert_eq!(
+        store.load_operation(&operation_id)?.analysis_options,
+        Some(persisted_options)
+    );
+    Ok(())
+}
+
 fn options() -> GateAnalysisOptions {
     GateAnalysisOptions {
         jobs: 1,
         resolution_profile: None,
         scan_invocation: Default::default(),
+        capability_intent_inference: None,
     }
 }
 
@@ -1379,6 +1463,7 @@ fn open_active_gate_with_protected_inputs(
         PreWriteStart::Analyze {
             gate_id,
             transition_sequence,
+            ..
         } => (gate_id, transition_sequence),
         PreWriteStart::Committed(_) => return Err("active gate fixture was rejected".into()),
     };

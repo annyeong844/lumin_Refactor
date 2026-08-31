@@ -56,7 +56,8 @@ const LOCKFILE_NAMES: [&str; 6] = [
 pub fn dead_code_capability_state(limitations: &[Limitation]) -> CapabilityState {
     if limitations.iter().any(|limitation| match limitation {
         Limitation::DependencyOwnerAmbiguous { .. }
-        | Limitation::PnpmDependencySemanticsUnsupported { .. } => false,
+        | Limitation::PnpmDependencySemanticsUnsupported { .. }
+        | Limitation::CapabilityUnavailable { .. } => false,
         _ => true,
     }) {
         CapabilityState::Incomplete
@@ -1014,6 +1015,41 @@ pub fn validate_run_evidence_inputs(
             collection: "source semantic-input inventory",
         });
     }
+    let capability_targets = evidence
+        .limitations
+        .iter()
+        .filter_map(|limitation| match limitation {
+            Limitation::CapabilityUnavailable { targets, .. } => Some(targets.as_slice()),
+            _ => None,
+        })
+        .flatten()
+        .map(|target| target.as_str())
+        .collect::<BTreeSet<_>>();
+    for input in inputs
+        .iter()
+        .filter(|input| input.state == SemanticInputState::CapabilityTarget)
+    {
+        let path = RepoPath::from_canonical_bytes(&input.path.canonical).map_err(|_| {
+            RunEvidenceIdentityError::InventoryMismatch {
+                collection: "capability-target semantic inputs",
+            }
+        })?;
+        let source_id = LogicalSourceId::from_path(&path);
+        if !capability_targets.contains(source_id.as_str())
+            || observed_source_paths.contains(input.path.canonical.as_slice())
+            || input
+                .payload_sha256
+                .as_deref()
+                .is_none_or(|value| !is_sha256_hex(value))
+            || input.physical_identity.is_none()
+            || input.absence_parent.is_some()
+            || input.physical_redirect_sha256.is_some()
+        {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "capability-target semantic inputs",
+            });
+        }
+    }
     for observation in &evidence.source_observations {
         let context = contexts
             .get(observation.source_id.as_str())
@@ -1186,6 +1222,36 @@ pub fn validate_run_evidence_tier(
     invocation: &ScanInvocationTier,
     entry_selections: &[EntrySelectionRecord],
 ) -> Result<(), RunEvidenceIdentityError> {
+    let mut directory_capability_intents = BTreeSet::new();
+    for intent in &invocation.capability_intents {
+        let path = RepoPath::from_canonical_bytes(&intent.path.canonical).map_err(|_| {
+            RunEvidenceIdentityError::InventoryMismatch {
+                collection: "capability-unavailable invocation intents",
+            }
+        })?;
+        if intent.capability == lumin_model::CapabilityIntentKind::Rust
+            && !path
+                .file_name_portable()
+                .is_some_and(|name| name.ends_with(".rs"))
+        {
+            directory_capability_intents.insert(intent.path.clone());
+        }
+    }
+    validate_run_evidence_tier_with_directory_capability_intents(
+        evidence,
+        invocation,
+        entry_selections,
+        &directory_capability_intents,
+    )
+}
+
+pub fn validate_run_evidence_tier_with_directory_capability_intents(
+    evidence: &RunEvidence,
+    invocation: &ScanInvocationTier,
+    entry_selections: &[EntrySelectionRecord],
+    directory_capability_intents: &BTreeSet<RepoPathProjection>,
+) -> Result<(), RunEvidenceIdentityError> {
+    validate_capability_unavailability(evidence, invocation, directory_capability_intents)?;
     match invocation.resolution_profile {
         Some(expected) => {
             if evidence.resolution_profiles.iter().any(|profile| {
@@ -1378,14 +1444,103 @@ pub fn validate_run_evidence_tier(
     Ok(())
 }
 
+fn validate_capability_unavailability(
+    evidence: &RunEvidence,
+    invocation: &ScanInvocationTier,
+    directory_capability_intents: &BTreeSet<RepoPathProjection>,
+) -> Result<(), RunEvidenceIdentityError> {
+    let mut allowed = BTreeMap::<lumin_model::CapabilityIntentKind, Vec<LogicalSourceId>>::new();
+    let mut required = BTreeMap::<lumin_model::CapabilityIntentKind, Vec<LogicalSourceId>>::new();
+    for intent in &invocation.capability_intents {
+        let path = RepoPath::from_canonical_bytes(&intent.path.canonical).map_err(|_| {
+            RunEvidenceIdentityError::InventoryMismatch {
+                collection: "capability-unavailable invocation intents",
+            }
+        })?;
+        let target = LogicalSourceId::from_path(&path);
+        allowed
+            .entry(intent.capability)
+            .or_default()
+            .push(target.clone());
+        let latent_rust_directory = intent.capability == lumin_model::CapabilityIntentKind::Rust
+            && directory_capability_intents.contains(&intent.path);
+        if !latent_rust_directory {
+            required.entry(intent.capability).or_default().push(target);
+        }
+    }
+    for targets in allowed.values_mut().chain(required.values_mut()) {
+        targets.sort();
+        targets.dedup();
+    }
+
+    let mut observed = BTreeMap::new();
+    for limitation in &evidence.limitations {
+        let Limitation::CapabilityUnavailable {
+            capability,
+            targets,
+        } = limitation
+        else {
+            continue;
+        };
+        if observed.insert(*capability, targets.clone()).is_some() {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "capability-unavailable limitation ownership",
+            });
+        }
+    }
+    for (capability, targets) in &observed {
+        let Some(allowed_targets) = allowed.get(capability) else {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "capability-unavailable invocation intents",
+            });
+        };
+        if targets
+            .iter()
+            .any(|target| allowed_targets.binary_search(target).is_err())
+        {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "capability-unavailable invocation intents",
+            });
+        }
+    }
+    for (capability, targets) in &required {
+        let observed_targets = observed
+            .get(capability)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        if targets
+            .iter()
+            .any(|target| observed_targets.binary_search(target).is_err())
+        {
+            return Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "capability-unavailable invocation intents",
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Apply migration-only checks that cannot be imposed on native v13 reads.
 ///
 /// v1 evidence does not retain SFC decompositions, so its embedded JavaScript
 /// parse-product count cannot be reconstructed for a mixed-source run. Such a
 /// legacy row is rejected instead of adopting an unauthenticated public metric.
+#[allow(clippy::match_like_matches_macro)] // limitation ownership rejects variant patterns in macros
 pub fn validate_migration_run_evidence(
     evidence: &RunEvidence,
 ) -> Result<(), RunEvidenceIdentityError> {
+    if evidence
+        .limitations
+        .iter()
+        .any(|limitation| match limitation {
+            Limitation::CapabilityUnavailable { .. } => true,
+            _ => false,
+        })
+    {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "authenticated legacy capability availability",
+        });
+    }
     if evidence
         .source_contexts
         .iter()
@@ -1406,6 +1561,11 @@ pub fn validate_migration_run_evidence_tier(
     invocation: &ScanInvocationTier,
     entry_selections: &[EntrySelectionRecord],
 ) -> Result<(), RunEvidenceIdentityError> {
+    if !invocation.capability_intents.is_empty() {
+        return Err(RunEvidenceIdentityError::InventoryMismatch {
+            collection: "authenticated legacy capability intents",
+        });
+    }
     if let Some(expected) = invocation.resolution_profile
         && !evidence.resolution_profiles.iter().any(|profile| {
             profile.profile == expected && profile.source == ResolutionProfileSource::Invocation
@@ -1745,6 +1905,16 @@ fn validate_limitations(
             | Limitation::PnpmDependencySemanticsUnsupported { .. }
             | Limitation::TsconfigPayloadUnavailable { .. }
             | Limitation::ExplicitEntryUnavailable { .. } => {}
+            Limitation::CapabilityUnavailable { targets, .. } => {
+                let mut canonical_targets = targets.clone();
+                canonical_targets.sort();
+                canonical_targets.dedup();
+                if canonical_targets.is_empty() || canonical_targets != *targets {
+                    return Err(RunEvidenceIdentityError::InventoryMismatch {
+                        collection: "capability-unavailable targets",
+                    });
+                }
+            }
         }
     }
     Ok(())
@@ -2676,6 +2846,46 @@ mod tests {
             validate_run_evidence_tier(&evidence, &ScanInvocationTier::default(), &[]),
             Err(RunEvidenceIdentityError::InventoryMismatch {
                 collection: "limitation dependency invocation intents"
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn directory_rust_intents_may_remain_latent_until_a_descendant_exists()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = RepoPath::from_portable("src")?;
+        let invocation = ScanInvocationTier {
+            capability_intents: vec![CapabilityIntentRecord {
+                path: RepoPathProjection::from(&directory),
+                capability: lumin_model::CapabilityIntentKind::Rust,
+            }],
+            ..ScanInvocationTier::default()
+        };
+        let mut evidence = run_evidence_fixture(Vec::new());
+
+        validate_run_evidence_tier(&evidence, &invocation, &[])?;
+        evidence
+            .limitations
+            .push(Limitation::CapabilityUnavailable {
+                capability: lumin_model::CapabilityIntentKind::Rust,
+                targets: vec![LogicalSourceId::from_path(&directory)],
+            });
+        validate_run_evidence_tier(&evidence, &invocation, &[])?;
+
+        let direct_rust = RepoPath::from_portable("src/lib.rs")?;
+        let direct_invocation = ScanInvocationTier {
+            capability_intents: vec![CapabilityIntentRecord {
+                path: RepoPathProjection::from(&direct_rust),
+                capability: lumin_model::CapabilityIntentKind::Rust,
+            }],
+            ..ScanInvocationTier::default()
+        };
+        evidence.limitations.clear();
+        assert!(matches!(
+            validate_run_evidence_tier(&evidence, &direct_invocation, &[]),
+            Err(RunEvidenceIdentityError::InventoryMismatch {
+                collection: "capability-unavailable invocation intents"
             })
         ));
         Ok(())

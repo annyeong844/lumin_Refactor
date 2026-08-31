@@ -171,6 +171,7 @@ pub enum PreWriteStart {
     Analyze {
         gate_id: GateId,
         transition_sequence: u64,
+        analysis_options: Box<GateAnalysisOptions>,
     },
     Committed(Box<GateOperationResult>),
 }
