@@ -4,7 +4,7 @@ Status: active
 
 Owner: PLAN-001
 
-Revision: 2026-08-30
+Revision: 2026-08-31
 
 ## Purpose and Ownership
 
@@ -45,10 +45,10 @@ These are execution-matrix counts, not a percentage estimate of product code.
 
 | Lane | Applicable | Mapped | Remaining | Verified aggregate |
 | --- | ---: | ---: | ---: | --- |
-| Standard | 86 | 81 | 5 | Focused `capability-availability-authority`: 1 passed, 0 failed; `corpus::tests::mode_counts`: 81 mapped, 5 unmapped. |
-| Determinism | 86 | 81 | 5 | The same focused row passed with 4 semantic captures; `corpus::tests::mode_counts`: 81 mapped, 5 unmapped. |
+| Standard | 86 | 82 | 4 | Focused `gate-unsealed-observation`: 1 passed, 0 failed; `corpus::tests::mode_counts`: 82 mapped, 4 unmapped. |
+| Determinism | 86 | 82 | 4 | The same focused row passed with 15 semantic captures; `corpus::tests::mode_counts`: 82 mapped, 4 unmapped. |
 | Store crash | 11 | 9 | 2 | Focused state-replacement rows passed through their public fault targets; `corpus::tests::mode_counts`: 9 mapped, 2 unmapped. |
-| **Total execution obligations** | **183** | **171** | **12** | This total deliberately counts each required lane execution. |
+| **Total execution obligations** | **183** | **173** | **10** | This total deliberately counts each required lane execution. |
 
 Known non-corpus exit gaps:
 

@@ -86,6 +86,10 @@ static INV_CACHE_GATE_CONTEXT: &[CorpusInvocation] = &[
     inv!("write_gate", "semantic_demands::cache_projection_is_gate_contextual"),
 ];
 #[rustfmt::skip]
+static INV_GATE_UNSEALED: &[CorpusInvocation] = &[
+    inv!("write_gate", "semantic_demands::gate_unsealed_observation_public_contract"),
+];
+#[rustfmt::skip]
 static INV_CAPABILITY_AVAILABILITY: &[CorpusInvocation] = &[
     inv!("capability_availability_authority", "capability_unavailability_has_one_owner"),
     inv!("capability_availability_authority", "directory_write_domain_requires_the_unavailable_rust_owner"),
@@ -515,7 +519,7 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("gate-semantic-read-closure-warm-cache", INV_WARM_CACHE),
     row_sd!("cache-gate-context-projection", INV_CACHE_GATE_CONTEXT),
     row_sd_arch!("capability-availability-authority", INV_CAPABILITY_AVAILABILITY),
-    row_sd!("gate-unsealed-observation"),
+    row_sd!("gate-unsealed-observation", INV_GATE_UNSEALED),
     row_sd!("gate-analysis-input-reconciliation"),
     row_sd!("gate-final-observation", &[
         inv!("write_gate", "final_observation_rechecks_current_domain_before_sealing"),
