@@ -166,6 +166,21 @@ fn disjoint_gates_reconcile_transitions_across_different_scan_scopes()
     )?;
     assert_status(&close_b, 0);
     assert_eq!(field(&close_b.stdout, "decision")?, "allow");
+    let close_b: Value = serde_json::from_str(&close_b.stdout)?;
+    let close_b_operation = run(root.path(), &["operation", "show", "op-scope-b-close"])?;
+    assert_status(&close_b_operation, 0);
+    let close_b_operation: Value = serde_json::from_str(&close_b_operation.stdout)?;
+    assert_eq!(
+        close_b_operation.get("gateId").and_then(Value::as_str),
+        Some(gate_b.as_str())
+    );
+    assert_eq!(
+        close_b_operation
+            .pointer("/result/gateId")
+            .and_then(Value::as_str),
+        Some(gate_b.as_str())
+    );
+    assert_eq!(close_b_operation.get("result"), Some(&close_b));
 
     let pending_a = run(root.path(), &["gate", "show", &gate_a])?;
     assert_status(&pending_a, 0);
@@ -178,6 +193,29 @@ fn disjoint_gates_reconcile_transitions_across_different_scan_scopes()
     let terminal_transition_sequence = transition_refs[0]
         .as_u64()
         .ok_or_else(|| std::io::Error::other("transition reference was not a sequence"))?;
+
+    let protected_plan =
+        prepare_and_show_gate_plan(root.path(), "op-scope-transition-plan-protected")?;
+    let exclusions = protected_plan
+        .get("exclusions")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("protected plan omitted exclusions"))?;
+    let referenced_b = exclusions
+        .iter()
+        .filter(|exclusion| {
+            exclusion.get("kind").and_then(Value::as_str) == Some("gate")
+                && exclusion.get("recordId").and_then(Value::as_str) == Some(gate_b.as_str())
+                && exclusion.pointer("/reason/reason").and_then(Value::as_str)
+                    == Some("active-transition-reference")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(referenced_b.len(), 1);
+    let protecting_gate_ids = referenced_b[0]
+        .pointer("/reason/gateIds")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("B exclusion omitted protecting gate IDs"))?;
+    assert_eq!(protecting_gate_ids.len(), 1);
+    assert_eq!(protecting_gate_ids[0].as_str(), Some(gate_a.as_str()));
 
     fs::write(root.path().join("src/a.ts"), "console.log('a scoped');\n")?;
     let close_a = run(

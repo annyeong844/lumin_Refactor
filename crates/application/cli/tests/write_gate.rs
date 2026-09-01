@@ -1458,10 +1458,10 @@ fn planned_semantic_config_write_is_recaptured_and_attributed()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = fixture()?;
     fs::write(
-        root.path().join("package.json"),
-        "{\"name\":\"app\",\"type\":\"commonjs\"}\n",
+        root.path().join("tsconfig.json"),
+        r#"{"compilerOptions":{"moduleResolution":"node16","module":"node16"}}"#,
     )?;
-    let gate_id = open_gate(root.path(), "op-config-open", "package.json")?;
+    let gate_id = open_gate(root.path(), "op-config-open", "tsconfig.json")?;
     let opening = run(root.path(), &["gate", "show", &gate_id])?;
     assert_status(&opening, 0);
     let opening_json: Value = serde_json::from_str(&opening.stdout)?;
@@ -1478,17 +1478,31 @@ fn planned_semantic_config_write_is_recaptured_and_attributed()
         .ok_or_else(|| std::io::Error::other("opening gate omitted its baseline"))?;
     let opening_tier = persisted_baseline.snapshot.scan_invocation.clone();
     let opening_entry_selections = persisted_baseline.snapshot.entry_selections.clone();
-    let opening_manifest_input = persisted_baseline
+    let opening_config_input = persisted_baseline
         .snapshot
         .inputs
         .iter()
-        .find(|input| input.path.display == "package.json")
+        .find(|input| input.path.display == "tsconfig.json")
         .cloned()
-        .ok_or_else(|| std::io::Error::other("baseline omitted package.json input"))?;
+        .ok_or_else(|| std::io::Error::other("baseline omitted tsconfig.json input"))?;
+    let opening_profiles = &persisted_baseline.snapshot.evidence.resolution_profiles;
+    assert_eq!(opening_profiles.len(), 2);
+    assert!(opening_profiles.iter().all(|selected| {
+        selected.profile == lumin_model::ResolutionProfile::Node16
+            && matches!(
+                &selected.source,
+                lumin_model::ResolutionProfileSource::Config { path_display, .. }
+                    if path_display == "tsconfig.json"
+            )
+    }));
+    let opening_profile_sources = opening_profiles
+        .iter()
+        .map(|selected| selected.source_id.clone())
+        .collect::<Vec<_>>();
 
     fs::write(
-        root.path().join("package.json"),
-        "{\"name\":\"app\",\"type\":\"module\"}\n",
+        root.path().join("tsconfig.json"),
+        r#"{"compilerOptions":{"moduleResolution":"bundler","module":"esnext"}}"#,
     )?;
     let post = run(
         root.path(),
@@ -1499,17 +1513,17 @@ fn planned_semantic_config_write_is_recaptured_and_attributed()
     let post_json: Value = serde_json::from_str(&post.stdout)?;
     assert_eq!(
         display_paths(&post_json, "/actualWriteSet/paths")?,
-        vec!["package.json"]
+        vec!["tsconfig.json"]
     );
     assert_alias_group_members(
         &post_json,
         "/actualWriteSet/baselineAliasClosures",
-        &["package.json"],
+        &["tsconfig.json"],
     )?;
     assert_alias_group_members(
         &post_json,
         "/actualWriteSet/currentAliasClosures",
-        &["package.json"],
+        &["tsconfig.json"],
     )?;
 
     let shown = run(root.path(), &["gate", "show", &gate_id])?;
@@ -1517,7 +1531,7 @@ fn planned_semantic_config_write_is_recaptured_and_attributed()
     let shown_json: Value = serde_json::from_str(&shown.stdout)?;
     assert_eq!(
         display_paths(&shown_json, "/revisions/1/actualWriteSet/paths")?,
-        vec!["package.json"]
+        vec!["tsconfig.json"]
     );
     let close_analysis_input_id = shown_json
         .pointer("/revisions/1/analysisInputId")
@@ -1565,16 +1579,33 @@ fn planned_semantic_config_write_is_recaptured_and_attributed()
         close_snapshot.analysis_input_id.as_str(),
         close_analysis_input_id
     );
-    let close_manifest_input = close_snapshot
+    let close_config_input = close_snapshot
         .inputs
         .iter()
-        .find(|input| input.path.display == "package.json")
-        .ok_or_else(|| std::io::Error::other("sealed close omitted package.json input"))?;
-    assert_ne!(close_manifest_input, &opening_manifest_input);
+        .find(|input| input.path.display == "tsconfig.json")
+        .ok_or_else(|| std::io::Error::other("sealed close omitted tsconfig.json input"))?;
+    assert_ne!(close_config_input, &opening_config_input);
     assert_ne!(
-        close_manifest_input.payload_sha256,
-        opening_manifest_input.payload_sha256
+        close_config_input.payload_sha256,
+        opening_config_input.payload_sha256
     );
+    let close_profiles = &close_snapshot.evidence.resolution_profiles;
+    assert_eq!(close_profiles.len(), 2);
+    assert_eq!(
+        close_profiles
+            .iter()
+            .map(|selected| selected.source_id.clone())
+            .collect::<Vec<_>>(),
+        opening_profile_sources
+    );
+    assert!(close_profiles.iter().all(|selected| {
+        selected.profile == lumin_model::ResolutionProfile::Bundler
+            && matches!(
+                &selected.source,
+                lumin_model::ResolutionProfileSource::Config { path_display, .. }
+                    if path_display == "tsconfig.json"
+            )
+    }));
     assert!(lumin_engine::gate_observation_binding_matches_owner(
         &persisted_closed,
         persisted_close
