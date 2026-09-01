@@ -463,12 +463,17 @@ fn pre_write_reserves_semantic_demands_before_capture_and_retries_after_writer_t
         Some("semantic-read-conflict")
     );
     assert!(pending_binding.get("observation").is_none());
-    assert_eq!(
-        pending_binding
-            .pointer("/conflictingOrUnboundedInputs/0/display")
-            .and_then(Value::as_str),
-        Some("config/base.json")
-    );
+    let pending_inputs = pending_binding
+        .get("conflictingOrUnboundedInputs")
+        .and_then(Value::as_array)
+        .and_then(|paths| {
+            paths
+                .iter()
+                .map(|path| path.get("display").and_then(Value::as_str))
+                .collect::<Option<Vec<_>>>()
+        })
+        .ok_or_else(|| std::io::Error::other("pre-write conflict inputs are missing"))?;
+    assert_eq!(pending_inputs, ["config/base.json"]);
     let rejected_gate_id = pending_json
         .get("gateId")
         .and_then(Value::as_str)
@@ -483,14 +488,28 @@ fn pre_write_reserves_semantic_demands_before_capture_and_retries_after_writer_t
             signal.get("kind").and_then(Value::as_str) == Some("semantic-input-conflict")
         })
         .ok_or_else(|| std::io::Error::other("semantic input conflict is missing"))?;
-    assert_eq!(
-        conflict.pointer("/paths/0/display").and_then(Value::as_str),
-        Some("config/base.json")
-    );
-    assert_eq!(
-        conflict.pointer("/gateIds/0").and_then(Value::as_str),
-        Some(gate_b.as_str())
-    );
+    let conflict_paths = conflict
+        .get("paths")
+        .and_then(Value::as_array)
+        .and_then(|paths| {
+            paths
+                .iter()
+                .map(|path| path.get("display").and_then(Value::as_str))
+                .collect::<Option<Vec<_>>>()
+        })
+        .ok_or_else(|| std::io::Error::other("pre-write conflict signal paths are missing"))?;
+    assert_eq!(conflict_paths, ["config/base.json"]);
+    let conflict_gate_ids = conflict
+        .get("gateIds")
+        .and_then(Value::as_array)
+        .and_then(|gate_ids| {
+            gate_ids
+                .iter()
+                .map(Value::as_str)
+                .collect::<Option<Vec<_>>>()
+        })
+        .ok_or_else(|| std::io::Error::other("pre-write conflict gate IDs are missing"))?;
+    assert_eq!(conflict_gate_ids, [gate_b.as_str()]);
     assert!(
         !signals.iter().any(|signal| {
             signal.get("kind").and_then(Value::as_str) == Some("analysis-failed")
@@ -549,6 +568,10 @@ fn pre_write_reserves_semantic_demands_before_capture_and_retries_after_writer_t
     assert_status(&close_b, 0);
     assert_eq!(field(&close_b.stdout, "decision")?, "allow");
 
+    let rejected_gate_before_retry = run(root.path(), &["gate", "show", rejected_gate_id])?;
+    assert_status(&rejected_gate_before_retry, 0);
+    assert_eq!(rejected_gate_before_retry.stdout, rejected_gate.stdout);
+
     let pending_retry = run(
         root.path(),
         &[
@@ -563,6 +586,12 @@ fn pre_write_reserves_semantic_demands_before_capture_and_retries_after_writer_t
     )?;
     assert_status(&pending_retry, 4);
     assert_eq!(pending_retry.stdout, pending_a.stdout);
+    let rejected_gate_after_retry = run(root.path(), &["gate", "show", rejected_gate_id])?;
+    assert_status(&rejected_gate_after_retry, 0);
+    assert_eq!(
+        rejected_gate_after_retry.stdout,
+        rejected_gate_before_retry.stdout
+    );
 
     let opened_a = run(
         root.path(),
@@ -684,12 +713,49 @@ fn close_time_new_semantic_demand_outside_lease_stays_unplanned_on_retry()
         Some("semantic-read-conflict")
     );
     assert!(blocked_binding.get("observation").is_none());
-    assert_eq!(
-        blocked_binding
-            .pointer("/conflictingOrUnboundedInputs/0/display")
-            .and_then(Value::as_str),
-        Some("config/base.json")
-    );
+    let blocked_inputs = blocked_binding
+        .get("conflictingOrUnboundedInputs")
+        .and_then(Value::as_array)
+        .and_then(|paths| {
+            paths
+                .iter()
+                .map(|path| path.get("display").and_then(Value::as_str))
+                .collect::<Option<Vec<_>>>()
+        })
+        .ok_or_else(|| std::io::Error::other("post-write conflict inputs are missing"))?;
+    assert_eq!(blocked_inputs, ["config/base.json"]);
+    let blocked_signals = blocked_json
+        .get("signals")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("post-write signals are missing"))?;
+    let blocked_conflict = blocked_signals
+        .iter()
+        .find(|signal| {
+            signal.get("kind").and_then(Value::as_str) == Some("semantic-input-conflict")
+        })
+        .ok_or_else(|| std::io::Error::other("post-write semantic input conflict is missing"))?;
+    let blocked_conflict_paths = blocked_conflict
+        .get("paths")
+        .and_then(Value::as_array)
+        .and_then(|paths| {
+            paths
+                .iter()
+                .map(|path| path.get("display").and_then(Value::as_str))
+                .collect::<Option<Vec<_>>>()
+        })
+        .ok_or_else(|| std::io::Error::other("post-write conflict signal paths are missing"))?;
+    assert_eq!(blocked_conflict_paths, ["config/base.json"]);
+    let blocked_conflict_gate_ids = blocked_conflict
+        .get("gateIds")
+        .and_then(Value::as_array)
+        .and_then(|gate_ids| {
+            gate_ids
+                .iter()
+                .map(Value::as_str)
+                .collect::<Option<Vec<_>>>()
+        })
+        .ok_or_else(|| std::io::Error::other("post-write conflict gate IDs are missing"))?;
+    assert_eq!(blocked_conflict_gate_ids, [writer_gate.as_str()]);
 
     let blocked_operation = run(
         root.path(),
