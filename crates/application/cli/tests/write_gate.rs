@@ -1271,6 +1271,10 @@ fn unexpected_new_source_denies_and_keeps_the_gate_active() -> Result<(), Box<dy
 #[test]
 fn protected_input_drift_is_stale() -> Result<(), Box<dyn std::error::Error>> {
     let root = fixture()?;
+    fs::write(
+        root.path().join("tsconfig.json"),
+        r#"{"compilerOptions":{"moduleResolution":"bundler","module":"esnext"}}"#,
+    )?;
     let pre = run(
         root.path(),
         &[
@@ -1286,8 +1290,8 @@ fn protected_input_drift_is_stale() -> Result<(), Box<dyn std::error::Error>> {
     assert_status(&pre, 0);
     let gate_id = field(&pre.stdout, "gateId")?;
     fs::write(
-        root.path().join("src/main.ts"),
-        "import { used } from './lib';\nconsole.log(used);\n",
+        root.path().join("tsconfig.json"),
+        r#"{"compilerOptions":{"moduleResolution":"bundler","module":"esnext","baseUrl":"src"}}"#,
     )?;
 
     let post = run(
