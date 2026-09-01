@@ -1227,15 +1227,6 @@ fn failed_close_rechecks_a_semantic_conflict_at_the_final_barrier()
 }
 
 #[test]
-fn gate_unsealed_observation_public_contract() -> Result<(), Box<dyn std::error::Error>> {
-    pre_write_reserves_semantic_demands_before_capture_and_retries_after_writer_terminal()?;
-    failed_pre_write_rechecks_a_semantic_conflict_and_retains_prior_reservations()?;
-    close_time_new_semantic_demand_outside_lease_stays_unplanned_on_retry()?;
-    failed_close_rechecks_a_semantic_conflict_at_the_final_barrier()?;
-    Ok(())
-}
-
-#[test]
 fn failed_pre_write_rechecks_a_semantic_conflict_and_retains_prior_reservations()
 -> Result<(), Box<dyn std::error::Error>> {
     let root = semantic_read_closure_fixture()?;

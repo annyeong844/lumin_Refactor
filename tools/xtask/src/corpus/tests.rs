@@ -216,7 +216,7 @@ fn ci_row_shards_balance_declared_work_deterministically() {
             "unbalanced {mode} invocation loads: {loads:?}",
         );
         let expected = match mode {
-            CorpusMode::Standard => vec![48, 48, 48, 48],
+            CorpusMode::Standard => vec![49, 49, 49, 48],
             CorpusMode::Determinism => vec![64, 30, 30, 30, 30, 30, 30, 29],
             CorpusMode::StoreCrash => unreachable!("CI does not shard store-crash rows"),
         };
@@ -471,11 +471,28 @@ fn gate_unsealed_row_uses_the_reviewed_public_invocation() -> Result<(), String>
         .iter()
         .find(|row| row.id == "gate-unsealed-observation")
         .ok_or_else(|| "gate-unsealed-observation row is missing".to_owned())?;
-    let expected = vec![(
-        "write_gate",
-        "semantic_demands::gate_unsealed_observation_public_contract",
-        FeatureSet::None,
-    )];
+    let expected = vec![
+        (
+            "write_gate",
+            "semantic_demands::pre_write_reserves_semantic_demands_before_capture_and_retries_after_writer_terminal",
+            FeatureSet::None,
+        ),
+        (
+            "write_gate",
+            "semantic_demands::close_time_new_semantic_demand_outside_lease_stays_unplanned_on_retry",
+            FeatureSet::None,
+        ),
+        (
+            "write_gate",
+            "semantic_demands::failed_pre_write_rechecks_a_semantic_conflict_and_retains_prior_reservations",
+            FeatureSet::None,
+        ),
+        (
+            "write_gate",
+            "semantic_demands::failed_close_rechecks_a_semantic_conflict_at_the_final_barrier",
+            FeatureSet::None,
+        ),
+    ];
     for invocations in [row.standard, row.determinism] {
         assert_eq!(
             invocations
