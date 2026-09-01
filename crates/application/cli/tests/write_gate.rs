@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, TcpListener};
@@ -1456,12 +1457,13 @@ fn unsupported_non_source_path_is_queryable_incomplete() -> Result<(), Box<dyn s
 #[test]
 fn planned_semantic_config_write_is_recaptured_and_attributed()
 -> Result<(), Box<dyn std::error::Error>> {
-    let root = fixture()?;
+    let root = profile_reconciliation_fixture()?;
     fs::write(
         root.path().join("tsconfig.json"),
         r#"{"compilerOptions":{"moduleResolution":"node16","module":"node16"}}"#,
     )?;
     let gate_id = open_gate(root.path(), "op-config-open", "tsconfig.json")?;
+    assert_public_used_findings(root.path(), &gate_id, "0", &["packages/lib/default.ts"])?;
     let opening = run(root.path(), &["gate", "show", &gate_id])?;
     assert_status(&opening, 0);
     let opening_json: Value = serde_json::from_str(&opening.stdout)?;
@@ -1486,7 +1488,7 @@ fn planned_semantic_config_write_is_recaptured_and_attributed()
         .cloned()
         .ok_or_else(|| std::io::Error::other("baseline omitted tsconfig.json input"))?;
     let opening_profiles = &persisted_baseline.snapshot.evidence.resolution_profiles;
-    assert_eq!(opening_profiles.len(), 2);
+    assert_eq!(opening_profiles.len(), 3);
     assert!(opening_profiles.iter().all(|selected| {
         selected.profile == lumin_model::ResolutionProfile::Node16
             && matches!(
@@ -1510,6 +1512,7 @@ fn planned_semantic_config_write_is_recaptured_and_attributed()
     )?;
     assert_status(&post, 0);
     assert_eq!(field(&post.stdout, "decision")?, "allow");
+    assert_public_used_findings(root.path(), &gate_id, "1", &[])?;
     let post_json: Value = serde_json::from_str(&post.stdout)?;
     assert_eq!(
         display_paths(&post_json, "/actualWriteSet/paths")?,
@@ -1590,7 +1593,7 @@ fn planned_semantic_config_write_is_recaptured_and_attributed()
         opening_config_input.payload_sha256
     );
     let close_profiles = &close_snapshot.evidence.resolution_profiles;
-    assert_eq!(close_profiles.len(), 2);
+    assert_eq!(close_profiles.len(), 3);
     assert_eq!(
         close_profiles
             .iter()
@@ -2103,6 +2106,63 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         "export const used = 1;\n",
         "import { used } from './lib'; console.log(used);\n",
     )
+}
+
+fn profile_reconciliation_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::create_dir_all(root.path().join("packages/lib"))?;
+    fs::write(
+        root.path().join("package.json"),
+        r#"{"name":"app","private":true,"type":"module","workspaces":["packages/*"]}"#,
+    )?;
+    fs::write(
+        root.path().join("packages/lib/package.json"),
+        r#"{"name":"@acme/lib","private":true,"exports":{"node":"./node.js","default":"./default.js"}}"#,
+    )?;
+    fs::write(
+        root.path().join("packages/lib/node.ts"),
+        "console.log('node branch');\n",
+    )?;
+    fs::write(
+        root.path().join("packages/lib/default.ts"),
+        "export const used = 1;\n",
+    )?;
+    fs::write(
+        root.path().join("src/main.ts"),
+        "import { used } from '@acme/lib'; console.log(used);\n",
+    )?;
+    Ok(root)
+}
+
+fn assert_public_used_findings(
+    root: &Path,
+    gate_id: &str,
+    revision: &str,
+    expected_paths: &[&str],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let response = run(root, &["gate", "findings", gate_id, "--revision", revision])?;
+    assert_status(&response, 0);
+    let response: Value = serde_json::from_str(&response.stdout)?;
+    let used_paths = response
+        .get("items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("gate findings items are missing"))?
+        .iter()
+        .filter(|finding| finding.get("exportedName").and_then(Value::as_str) == Some("used"))
+        .filter_map(|finding| {
+            finding
+                .pointer("/path/display")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .collect::<BTreeSet<_>>();
+    let expected_paths = expected_paths
+        .iter()
+        .map(|path| (*path).to_owned())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(used_paths, expected_paths, "stdout={}", response);
+    Ok(())
 }
 
 fn dead_finding_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
