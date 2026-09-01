@@ -1,5 +1,20 @@
 use super::*;
 
+fn path_display_array<'a>(
+    value: &'a Value,
+    pointer: &str,
+    label: &str,
+) -> Result<Vec<&'a str>, std::io::Error> {
+    value
+        .pointer(pointer)
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other(format!("{label} are missing")))?
+        .iter()
+        .map(|path| path.get("display").and_then(Value::as_str))
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| std::io::Error::other(format!("{label} contain an invalid path")))
+}
+
 #[test]
 fn warm_cache_replays_owner_semantics() -> Result<(), Box<dyn std::error::Error>> {
     let root = semantic_read_closure_fixture()?;
@@ -451,6 +466,40 @@ fn pre_write_reserves_semantic_demands_before_capture_and_retries_after_writer_t
     assert_eq!(field(&pending_a.stdout, "decision")?, "incomplete");
     assert_eq!(field(&pending_a.stdout, "lifecycle")?, "rejected");
     let pending_json: Value = serde_json::from_str(&pending_a.stdout)?;
+    let pending_binding = pending_json
+        .get("observationBinding")
+        .ok_or_else(|| std::io::Error::other("pre-write unsealed binding is missing"))?;
+    assert_eq!(
+        pending_binding.get("state").and_then(Value::as_str),
+        Some("unsealed")
+    );
+    assert_eq!(
+        pending_binding.get("reason").and_then(Value::as_str),
+        Some("semantic-read-conflict")
+    );
+    assert!(pending_binding.get("observation").is_none());
+    let pending_domain = path_display_array(
+        pending_binding,
+        "/attemptedDomain",
+        "pre-write attempted-domain paths",
+    )?;
+    assert_eq!(pending_domain, ["src/new.ts", "config/base.json"]);
+    let pending_complete_reads = path_display_array(
+        pending_binding,
+        "/lastCompleteReadSet",
+        "pre-write last-complete-read paths",
+    )?;
+    assert!(pending_complete_reads.is_empty());
+    let pending_inputs = path_display_array(
+        pending_binding,
+        "/conflictingOrUnboundedInputs",
+        "pre-write conflict inputs",
+    )?;
+    assert_eq!(pending_inputs, ["config/base.json"]);
+    let rejected_gate_id = pending_json
+        .get("gateId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| std::io::Error::other("rejected pre-write gate ID is missing"))?;
     let signals = pending_json
         .get("signals")
         .and_then(Value::as_array)
@@ -461,14 +510,19 @@ fn pre_write_reserves_semantic_demands_before_capture_and_retries_after_writer_t
             signal.get("kind").and_then(Value::as_str) == Some("semantic-input-conflict")
         })
         .ok_or_else(|| std::io::Error::other("semantic input conflict is missing"))?;
-    assert_eq!(
-        conflict.pointer("/paths/0/display").and_then(Value::as_str),
-        Some("config/base.json")
-    );
-    assert_eq!(
-        conflict.pointer("/gateIds/0").and_then(Value::as_str),
-        Some(gate_b.as_str())
-    );
+    let conflict_paths = path_display_array(conflict, "/paths", "pre-write conflict signal paths")?;
+    assert_eq!(conflict_paths, ["config/base.json"]);
+    let conflict_gate_ids = conflict
+        .get("gateIds")
+        .and_then(Value::as_array)
+        .and_then(|gate_ids| {
+            gate_ids
+                .iter()
+                .map(Value::as_str)
+                .collect::<Option<Vec<_>>>()
+        })
+        .ok_or_else(|| std::io::Error::other("pre-write conflict gate IDs are missing"))?;
+    assert_eq!(conflict_gate_ids, [gate_b.as_str()]);
     assert!(
         !signals.iter().any(|signal| {
             signal.get("kind").and_then(Value::as_str) == Some("analysis-failed")
@@ -477,12 +531,43 @@ fn pre_write_reserves_semantic_demands_before_capture_and_retries_after_writer_t
 
     let blocked_operation = run(root.path(), &["operation", "show", "op-a-demand-pending"])?;
     assert_status(&blocked_operation, 0);
+    let blocked_operation_json: Value = serde_json::from_str(&blocked_operation.stdout)?;
     assert_eq!(
-        serde_json::from_str::<Value>(&blocked_operation.stdout)?
+        blocked_operation_json
             .get("semanticReadReservations")
             .and_then(Value::as_array)
             .map(Vec::len),
         Some(0)
+    );
+    assert_eq!(
+        blocked_operation_json.get("status").and_then(Value::as_str),
+        Some("committed")
+    );
+    assert_eq!(
+        blocked_operation_json.pointer("/result/observationBinding"),
+        Some(pending_binding)
+    );
+
+    let rejected_gate = run(root.path(), &["gate", "show", rejected_gate_id])?;
+    assert_status(&rejected_gate, 0);
+    let rejected_gate_json: Value = serde_json::from_str(&rejected_gate.stdout)?;
+    assert_eq!(
+        rejected_gate_json.get("lifecycle").and_then(Value::as_str),
+        Some("rejected")
+    );
+    assert!(
+        rejected_gate_json
+            .get("baseline")
+            .is_some_and(Value::is_null)
+    );
+    assert_eq!(
+        rejected_gate_json.pointer("/revisions/0/observationBinding"),
+        Some(pending_binding)
+    );
+    assert!(
+        rejected_gate_json
+            .pointer("/revisions/0/analysisInputId")
+            .is_some_and(Value::is_null)
     );
 
     fs::write(
@@ -495,6 +580,31 @@ fn pre_write_reserves_semantic_demands_before_capture_and_retries_after_writer_t
     )?;
     assert_status(&close_b, 0);
     assert_eq!(field(&close_b.stdout, "decision")?, "allow");
+
+    let rejected_gate_before_retry = run(root.path(), &["gate", "show", rejected_gate_id])?;
+    assert_status(&rejected_gate_before_retry, 0);
+    assert_eq!(rejected_gate_before_retry.stdout, rejected_gate.stdout);
+
+    let pending_retry = run(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-a-demand-pending",
+            "--path",
+            "src/new.ts",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&pending_retry, 4);
+    assert_eq!(pending_retry.stdout, pending_a.stdout);
+    let rejected_gate_after_retry = run(root.path(), &["gate", "show", rejected_gate_id])?;
+    assert_status(&rejected_gate_after_retry, 0);
+    assert_eq!(
+        rejected_gate_after_retry.stdout,
+        rejected_gate_before_retry.stdout
+    );
 
     let opened_a = run(
         root.path(),
@@ -510,10 +620,37 @@ fn pre_write_reserves_semantic_demands_before_capture_and_retries_after_writer_t
     )?;
     assert_status(&opened_a, 0);
     assert_eq!(field(&opened_a.stdout, "decision")?, "allow");
+    let opened_json: Value = serde_json::from_str(&opened_a.stdout)?;
+    let opened_binding = opened_json
+        .get("observationBinding")
+        .ok_or_else(|| std::io::Error::other("authorizing binding is missing"))?;
+    assert_eq!(
+        opened_binding.get("state").and_then(Value::as_str),
+        Some("sealed")
+    );
+    assert_eq!(
+        opened_binding
+            .pointer("/observation/kind")
+            .and_then(Value::as_str),
+        Some("baseline")
+    );
+    let baseline_observation_id = opened_binding
+        .pointer("/observation/observationId")
+        .and_then(Value::as_str)
+        .filter(|id| id.starts_with("gate_baseline_observation_"))
+        .ok_or_else(|| std::io::Error::other("sealed baseline observation ID is missing"))?;
+    let opened_gate_id = opened_json
+        .get("gateId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| std::io::Error::other("authorizing gate ID is missing"))?;
 
     let operation = run(root.path(), &["operation", "show", "op-a-open"])?;
     assert_status(&operation, 0);
     let operation_json: Value = serde_json::from_str(&operation.stdout)?;
+    assert_eq!(
+        operation_json.pointer("/result/observationBinding"),
+        Some(opened_binding)
+    );
     let reservation_paths = operation_json
         .get("semanticReadReservations")
         .and_then(Value::as_array)
@@ -525,6 +662,26 @@ fn pre_write_reserves_semantic_demands_before_capture_and_retries_after_writer_t
         })
         .ok_or_else(|| std::io::Error::other("semantic read reservations are missing"))?;
     assert!(reservation_paths.is_empty());
+
+    let opened_gate = run(root.path(), &["gate", "show", opened_gate_id])?;
+    assert_status(&opened_gate, 0);
+    let opened_gate_json: Value = serde_json::from_str(&opened_gate.stdout)?;
+    assert_eq!(
+        opened_gate_json.pointer("/revisions/0/observationBinding"),
+        Some(opened_binding)
+    );
+    assert_eq!(
+        opened_gate_json
+            .pointer("/baseline/observationId")
+            .and_then(Value::as_str),
+        Some(baseline_observation_id)
+    );
+    assert!(
+        opened_gate_json
+            .pointer("/baseline/analysisInputId")
+            .and_then(Value::as_str)
+            .is_some()
+    );
     Ok(())
 }
 
@@ -556,6 +713,88 @@ fn close_time_new_semantic_demand_outside_lease_stays_unplanned_on_retry()
     assert_status(&blocked, 4);
     assert_eq!(field(&blocked.stdout, "decision")?, "incomplete");
     assert_has_signal(&blocked.stdout, "semantic-input-conflict")?;
+    let blocked_json: Value = serde_json::from_str(&blocked.stdout)?;
+    let blocked_binding = blocked_json
+        .get("observationBinding")
+        .ok_or_else(|| std::io::Error::other("post-write conflict binding is missing"))?;
+    assert_eq!(
+        blocked_binding.get("state").and_then(Value::as_str),
+        Some("unsealed")
+    );
+    assert_eq!(
+        blocked_binding.get("reason").and_then(Value::as_str),
+        Some("semantic-read-conflict")
+    );
+    assert!(blocked_binding.get("observation").is_none());
+    let blocked_domain = path_display_array(
+        blocked_binding,
+        "/attemptedDomain",
+        "post-write attempted-domain paths",
+    )?;
+    assert_eq!(blocked_domain, ["src/a.ts", "config/base.json"]);
+    let blocked_complete_reads = path_display_array(
+        blocked_binding,
+        "/lastCompleteReadSet",
+        "post-write last-complete-read paths",
+    )?;
+    assert_eq!(blocked_complete_reads, ["lumin.json", "src/a.ts"]);
+    let blocked_inputs = path_display_array(
+        blocked_binding,
+        "/conflictingOrUnboundedInputs",
+        "post-write conflict inputs",
+    )?;
+    assert_eq!(blocked_inputs, ["config/base.json"]);
+    let blocked_signals = blocked_json
+        .get("signals")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("post-write signals are missing"))?;
+    let blocked_conflict = blocked_signals
+        .iter()
+        .find(|signal| {
+            signal.get("kind").and_then(Value::as_str) == Some("semantic-input-conflict")
+        })
+        .ok_or_else(|| std::io::Error::other("post-write semantic input conflict is missing"))?;
+    let blocked_conflict_paths = path_display_array(
+        blocked_conflict,
+        "/paths",
+        "post-write conflict signal paths",
+    )?;
+    assert_eq!(blocked_conflict_paths, ["config/base.json"]);
+    let blocked_conflict_gate_ids = blocked_conflict
+        .get("gateIds")
+        .and_then(Value::as_array)
+        .and_then(|gate_ids| {
+            gate_ids
+                .iter()
+                .map(Value::as_str)
+                .collect::<Option<Vec<_>>>()
+        })
+        .ok_or_else(|| std::io::Error::other("post-write conflict gate IDs are missing"))?;
+    assert_eq!(blocked_conflict_gate_ids, [writer_gate.as_str()]);
+
+    let blocked_operation = run(
+        root.path(),
+        &["operation", "show", "op-demand-blocked-close"],
+    )?;
+    assert_status(&blocked_operation, 0);
+    let blocked_operation_json: Value = serde_json::from_str(&blocked_operation.stdout)?;
+    assert_eq!(
+        blocked_operation_json.pointer("/result/observationBinding"),
+        Some(blocked_binding)
+    );
+
+    let blocked_gate = run(root.path(), &["gate", "show", &gate_id])?;
+    assert_status(&blocked_gate, 0);
+    let blocked_gate_json: Value = serde_json::from_str(&blocked_gate.stdout)?;
+    assert_eq!(
+        blocked_gate_json.pointer("/revisions/1/observationBinding"),
+        Some(blocked_binding)
+    );
+    assert!(
+        blocked_gate_json
+            .pointer("/revisions/1/analysisInputId")
+            .is_some_and(Value::is_null)
+    );
 
     fs::remove_file(root.path().join("src/tsconfig.json"))?;
     let writer_close = run(
@@ -569,6 +808,24 @@ fn close_time_new_semantic_demand_outside_lease_stays_unplanned_on_retry()
     )?;
     assert_status(&writer_close, 0);
     assert_eq!(field(&writer_close.stdout, "decision")?, "allow");
+
+    let before_blocked_retry = run(root.path(), &["gate", "show", &gate_id])?;
+    assert_status(&before_blocked_retry, 0);
+
+    let blocked_retry = run(
+        root.path(),
+        &[
+            "post-write",
+            &gate_id,
+            "--operation-id",
+            "op-demand-blocked-close",
+        ],
+    )?;
+    assert_status(&blocked_retry, 4);
+    assert_eq!(blocked_retry.stdout, blocked.stdout);
+    let after_blocked_retry = run(root.path(), &["gate", "show", &gate_id])?;
+    assert_status(&after_blocked_retry, 0);
+    assert_eq!(after_blocked_retry.stdout, before_blocked_retry.stdout);
 
     fs::write(
         root.path().join("src/tsconfig.json"),
@@ -586,18 +843,56 @@ fn close_time_new_semantic_demand_outside_lease_stays_unplanned_on_retry()
     assert_status(&first, 3);
     assert_eq!(field(&first.stdout, "decision")?, "deny");
     assert_has_signal(&first.stdout, "unplanned-write")?;
+    let first_json: Value = serde_json::from_str(&first.stdout)?;
+    let first_binding = first_json
+        .get("observationBinding")
+        .ok_or_else(|| std::io::Error::other("sealed deny binding is missing"))?;
     assert_eq!(
-        serde_json::from_str::<Value>(&first.stdout)?
-            .pointer("/observationBinding/state")
-            .and_then(Value::as_str),
+        first_binding.get("state").and_then(Value::as_str),
         Some("sealed")
+    );
+    assert_eq!(
+        first_binding
+            .pointer("/observation/kind")
+            .and_then(Value::as_str),
+        Some("close")
+    );
+    assert!(
+        first_binding
+            .pointer("/observation/observationId")
+            .and_then(Value::as_str)
+            .is_some_and(|id| id.starts_with("gate_close_observation_"))
+    );
+    let first_operation = run(root.path(), &["operation", "show", "op-demand-first-close"])?;
+    assert_status(&first_operation, 0);
+    assert_eq!(
+        serde_json::from_str::<Value>(&first_operation.stdout)?
+            .pointer("/result/observationBinding")
+            .cloned(),
+        Some(first_binding.clone())
     );
     let after_first = run(root.path(), &["gate", "show", &gate_id])?;
     assert_status(&after_first, 0);
-    let protected_after_first = serde_json::from_str::<Value>(&after_first.stdout)?
+    let after_first_json: Value = serde_json::from_str(&after_first.stdout)?;
+    let protected_after_first = after_first_json
         .get("protectedSemanticInputCount")
         .and_then(Value::as_u64)
         .ok_or_else(|| std::io::Error::other("first close protected input count is missing"))?;
+    let first_revision = after_first_json
+        .get("revisions")
+        .and_then(Value::as_array)
+        .and_then(|revisions| revisions.last())
+        .ok_or_else(|| std::io::Error::other("sealed deny revision is missing"))?;
+    assert_eq!(
+        first_revision.get("observationBinding"),
+        Some(first_binding)
+    );
+    assert!(
+        first_revision
+            .get("analysisInputId")
+            .and_then(Value::as_str)
+            .is_some()
+    );
 
     fs::write(
         root.path().join("config/base.json"),
@@ -616,16 +911,65 @@ fn close_time_new_semantic_demand_outside_lease_stays_unplanned_on_retry()
     assert_eq!(field(&retry.stdout, "decision")?, "stale");
     assert_has_signal(&retry.stdout, "unplanned-write")?;
     assert_has_signal(&retry.stdout, "protected-input-changed")?;
+    let retry_json: Value = serde_json::from_str(&retry.stdout)?;
+    let retry_binding = retry_json
+        .get("observationBinding")
+        .ok_or_else(|| std::io::Error::other("unsealed retry binding is missing"))?;
     assert_eq!(
-        serde_json::from_str::<Value>(&retry.stdout)?
-            .pointer("/observationBinding/state")
-            .and_then(Value::as_str),
+        retry_binding.get("state").and_then(Value::as_str),
         Some("unsealed")
+    );
+    assert!(retry_binding.get("observation").is_none());
+    let retry_domain = path_display_array(
+        retry_binding,
+        "/attemptedDomain",
+        "stale close attempted-domain paths",
+    )?;
+    assert_eq!(
+        retry_domain,
+        [
+            "src/a.ts",
+            "config/base.json",
+            "shared/root",
+            "shared/root.json"
+        ]
+    );
+    let retry_complete_reads = path_display_array(
+        retry_binding,
+        "/lastCompleteReadSet",
+        "stale close last-complete-read paths",
+    )?;
+    assert_eq!(
+        retry_complete_reads,
+        [
+            "lumin.json",
+            "src/a.ts",
+            "src/tsconfig.json",
+            "config/base.json"
+        ]
+    );
+    let retry_unbounded_inputs = path_display_array(
+        retry_binding,
+        "/conflictingOrUnboundedInputs",
+        "stale close unbounded inputs",
+    )?;
+    assert_eq!(
+        retry_unbounded_inputs,
+        [
+            "src/config-writer.ts",
+            "config/base.json",
+            "shared/root",
+            "shared/root.json"
+        ]
     );
 
     let operation = run(root.path(), &["operation", "show", "op-demand-retry-close"])?;
     assert_status(&operation, 0);
     let operation_json: Value = serde_json::from_str(&operation.stdout)?;
+    assert_eq!(
+        operation_json.pointer("/result/observationBinding"),
+        Some(retry_binding)
+    );
     let reservation_paths = operation_json
         .get("semanticReadReservations")
         .and_then(Value::as_array)
@@ -641,6 +985,20 @@ fn close_time_new_semantic_demand_outside_lease_stays_unplanned_on_retry()
     let shown = run(root.path(), &["gate", "show", &gate_id])?;
     assert_status(&shown, 0);
     let shown_json: Value = serde_json::from_str(&shown.stdout)?;
+    let retry_revision = shown_json
+        .get("revisions")
+        .and_then(Value::as_array)
+        .and_then(|revisions| revisions.last())
+        .ok_or_else(|| std::io::Error::other("unsealed retry revision is missing"))?;
+    assert_eq!(
+        retry_revision.get("observationBinding"),
+        Some(retry_binding)
+    );
+    assert!(
+        retry_revision
+            .get("analysisInputId")
+            .is_some_and(Value::is_null)
+    );
     let baseline_count = shown_json
         .pointer("/baseline/protectedSemanticInputCount")
         .and_then(Value::as_u64)
@@ -674,16 +1032,28 @@ fn failed_close_rechecks_a_semantic_conflict_at_the_final_barrier()
         root.path().join("src/tsconfig.json"),
         "{\"extends\":\"../config/base.json\"}\n",
     )?;
+    let model_gate_id = lumin_model::GateId::from_string(gate_id.clone());
+    let opening_gate = lumin_engine::load_gate(root.path(), &model_gate_id)?;
+    let baseline_protected_semantic_inputs = opening_gate
+        .baseline
+        .as_ref()
+        .ok_or_else(|| std::io::Error::other("active gate baseline is missing"))?
+        .protected_semantic_inputs
+        .clone();
+    assert_eq!(
+        opening_gate.protected_semantic_inputs,
+        baseline_protected_semantic_inputs
+    );
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
     listener.set_nonblocking(true)?;
-    let mut child = lumin_command(root.path())?
-        .args([
-            "post-write",
-            &gate_id,
-            "--operation-id",
-            "op-conflict-recheck-close",
-        ])
+    let arguments = [
+        "post-write",
+        gate_id.as_str(),
+        "--operation-id",
+        "op-conflict-recheck-close",
+    ];
+    let mut child = lumin_command_with_args(root.path(), &arguments)?
         .env(
             "LUMIN_TEST_GATE_POSTWRITE_FINAL_BARRIER",
             listener.local_addr()?.to_string(),
@@ -744,14 +1114,15 @@ fn failed_close_rechecks_a_semantic_conflict_at_the_final_barrier()
     stream.flush()?;
     drop(stream);
     let output = child.wait_with_output()?;
-    assert_eq!(
-        output.status.code(),
-        Some(4),
-        "unexpected conflict-recheck result: stdout={} stderr={}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    );
-    let response: Value = serde_json::from_slice(&output.stdout)?;
+    let effective_arguments = support::determinism::effective_arguments(
+        &arguments
+            .iter()
+            .map(std::ffi::OsString::from)
+            .collect::<Vec<_>>(),
+    )?;
+    let output = support::finish_process_output(root.path(), &effective_arguments, output)?;
+    assert_status(&output, 4);
+    let response: Value = serde_json::from_str(&output.stdout)?;
     assert_eq!(
         response.get("decision").and_then(Value::as_str),
         Some("incomplete")
@@ -785,14 +1156,73 @@ fn failed_close_rechecks_a_semantic_conflict_at_the_final_barrier()
             .and_then(Value::as_str)
             == Some("semantic-read-closure-incomplete")
     );
+    let attempted_domain = path_display_array(
+        &response,
+        "/observationBinding/attemptedDomain",
+        "final-barrier post-write attempted-domain paths",
+    )?;
+    assert_eq!(attempted_domain, ["src/a.ts", "config/base.json"]);
+    let last_complete_reads = path_display_array(
+        &response,
+        "/observationBinding/lastCompleteReadSet",
+        "final-barrier post-write last-complete-read paths",
+    )?;
+    assert_eq!(last_complete_reads, ["lumin.json", "src/a.ts"]);
     assert!(
         response
-            .pointer("/observationBinding/attemptedDomain")
-            .and_then(Value::as_array)
-            .is_some_and(|paths| paths.iter().any(|path| {
-                path.get("display").and_then(Value::as_str) == Some("config/base.json")
-            }))
+            .pointer("/observationBinding/observation")
+            .is_none()
     );
+    let unbounded_paths = path_display_array(
+        &response,
+        "/observationBinding/conflictingOrUnboundedInputs",
+        "post-write unbounded inputs",
+    )?;
+    assert_eq!(unbounded_paths, ["config/base.json"]);
+
+    let operation = run(
+        root.path(),
+        &["operation", "show", "op-conflict-recheck-close"],
+    )?;
+    assert_status(&operation, 0);
+    let operation_json: Value = serde_json::from_str(&operation.stdout)?;
+    assert_eq!(
+        operation_json.pointer("/result/observationBinding"),
+        response.get("observationBinding")
+    );
+
+    let shown = run(root.path(), &["gate", "show", &gate_id])?;
+    assert_status(&shown, 0);
+    let shown_json: Value = serde_json::from_str(&shown.stdout)?;
+    assert_eq!(
+        shown_json.pointer("/revisions/1/observationBinding"),
+        response.get("observationBinding")
+    );
+    assert!(
+        shown_json
+            .pointer("/revisions/1/analysisInputId")
+            .is_some_and(Value::is_null)
+    );
+    assert_eq!(
+        shown_json
+            .pointer("/baseline/protectedSemanticInputCount")
+            .and_then(Value::as_u64),
+        shown_json
+            .get("protectedSemanticInputCount")
+            .and_then(Value::as_u64)
+    );
+    let persisted_gate = lumin_engine::load_gate(root.path(), &model_gate_id)?;
+    assert_eq!(
+        persisted_gate.protected_semantic_inputs,
+        baseline_protected_semantic_inputs
+    );
+
+    let retry = run(root.path(), &arguments)?;
+    assert_status(&retry, 4);
+    assert_eq!(retry.stdout, output.stdout);
+    let shown_after_retry = run(root.path(), &["gate", "show", &gate_id])?;
+    assert_status(&shown_after_retry, 0);
+    assert_eq!(shown_after_retry.stdout, shown.stdout);
     Ok(())
 }
 
@@ -808,16 +1238,16 @@ fn failed_pre_write_rechecks_a_semantic_conflict_and_retains_prior_reservations(
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
     listener.set_nonblocking(true)?;
-    let mut child = lumin_command(root.path())?
-        .args([
-            "pre-write",
-            "--operation-id",
-            "op-pre-conflict-recheck-open",
-            "--path",
-            "src/new.ts",
-            "--jobs",
-            "1",
-        ])
+    let arguments = [
+        "pre-write",
+        "--operation-id",
+        "op-pre-conflict-recheck-open",
+        "--path",
+        "src/new.ts",
+        "--jobs",
+        "1",
+    ];
+    let mut child = lumin_command_with_args(root.path(), &arguments)?
         .env(
             "LUMIN_TEST_GATE_PREWRITE_FINAL_BARRIER",
             listener.local_addr()?.to_string(),
@@ -851,14 +1281,15 @@ fn failed_pre_write_rechecks_a_semantic_conflict_and_retains_prior_reservations(
     release_gate_barrier(&mut stream)?;
     drop(stream);
     let output = child.wait_with_output()?;
-    assert_eq!(
-        output.status.code(),
-        Some(4),
-        "unexpected pre-write conflict-recheck result: stdout={} stderr={}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    );
-    let response: Value = serde_json::from_slice(&output.stdout)?;
+    let effective_arguments = support::determinism::effective_arguments(
+        &arguments
+            .iter()
+            .map(std::ffi::OsString::from)
+            .collect::<Vec<_>>(),
+    )?;
+    let output = support::finish_process_output(root.path(), &effective_arguments, output)?;
+    assert_status(&output, 4);
+    let response: Value = serde_json::from_str(&output.stdout)?;
     assert_eq!(
         response.get("decision").and_then(Value::as_str),
         Some("incomplete")
@@ -873,24 +1304,80 @@ fn failed_pre_write_rechecks_a_semantic_conflict_and_retains_prior_reservations(
     assert!(!signals.iter().any(|signal| {
         signal.get("kind").and_then(Value::as_str) == Some("semantic-input-conflict")
     }));
+    let binding = response
+        .get("observationBinding")
+        .ok_or_else(|| std::io::Error::other("pre-write closure binding is missing"))?;
     assert_eq!(
-        response
-            .pointer("/observationBinding/reason")
-            .and_then(Value::as_str),
+        binding.get("state").and_then(Value::as_str),
+        Some("unsealed")
+    );
+    assert_eq!(
+        binding.get("reason").and_then(Value::as_str),
         Some("semantic-read-closure-incomplete")
     );
-    let attempted = response
-        .pointer("/observationBinding/attemptedDomain")
-        .and_then(Value::as_array)
-        .ok_or_else(|| std::io::Error::other("pre-write attempted domain is missing"))?;
-    for expected in ["config/base.json", "shared/root"] {
-        assert!(
-            attempted
-                .iter()
-                .any(|path| { path.get("display").and_then(Value::as_str) == Some(expected) }),
-            "pre-write attempted domain omitted {expected}: {attempted:?}"
-        );
-    }
+    assert!(binding.get("observation").is_none());
+    let unbounded_paths = path_display_array(
+        binding,
+        "/conflictingOrUnboundedInputs",
+        "pre-write unbounded inputs",
+    )?;
+    assert_eq!(unbounded_paths, ["shared/root"]);
+    let attempted = path_display_array(
+        binding,
+        "/attemptedDomain",
+        "final-barrier pre-write attempted-domain paths",
+    )?;
+    assert_eq!(attempted, ["src/new.ts", "config/base.json", "shared/root"]);
+    let last_complete_reads = path_display_array(
+        binding,
+        "/lastCompleteReadSet",
+        "final-barrier pre-write last-complete-read paths",
+    )?;
+    assert!(last_complete_reads.is_empty());
+
+    let operation = run(
+        root.path(),
+        &["operation", "show", "op-pre-conflict-recheck-open"],
+    )?;
+    assert_status(&operation, 0);
+    let operation_json: Value = serde_json::from_str(&operation.stdout)?;
+    assert_eq!(
+        operation_json.pointer("/result/observationBinding"),
+        Some(binding)
+    );
+
+    let gate_id = response
+        .get("gateId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| std::io::Error::other("rejected pre-write gate ID is missing"))?;
+    let rejected_gate = run(root.path(), &["gate", "show", gate_id])?;
+    assert_status(&rejected_gate, 0);
+    let rejected_gate_json: Value = serde_json::from_str(&rejected_gate.stdout)?;
+    assert_eq!(
+        rejected_gate_json.get("lifecycle").and_then(Value::as_str),
+        Some("rejected")
+    );
+    assert!(
+        rejected_gate_json
+            .get("baseline")
+            .is_some_and(Value::is_null)
+    );
+    assert_eq!(
+        rejected_gate_json.pointer("/revisions/0/observationBinding"),
+        Some(binding)
+    );
+    assert!(
+        rejected_gate_json
+            .pointer("/revisions/0/analysisInputId")
+            .is_some_and(Value::is_null)
+    );
+
+    let retry = run(root.path(), &arguments)?;
+    assert_status(&retry, 4);
+    assert_eq!(retry.stdout, output.stdout);
+    let gate_after_retry = run(root.path(), &["gate", "show", gate_id])?;
+    assert_status(&gate_after_retry, 0);
+    assert_eq!(gate_after_retry.stdout, rejected_gate.stdout);
     Ok(())
 }
 

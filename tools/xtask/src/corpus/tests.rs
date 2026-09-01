@@ -216,8 +216,8 @@ fn ci_row_shards_balance_declared_work_deterministically() {
             "unbalanced {mode} invocation loads: {loads:?}",
         );
         let expected = match mode {
-            CorpusMode::Standard => vec![48, 48, 48, 47],
-            CorpusMode::Determinism => vec![64, 28, 27, 27, 27, 27, 27, 27],
+            CorpusMode::Standard => vec![49, 49, 49, 48],
+            CorpusMode::Determinism => vec![64, 30, 30, 30, 30, 30, 30, 29],
             CorpusMode::StoreCrash => unreachable!("CI does not shard store-crash rows"),
         };
         assert_eq!(loads, expected, "{mode} shard assignment changed");
@@ -413,7 +413,7 @@ fn every_mapped_standard_row_has_a_paired_determinism_invocation() {
         .iter()
         .filter(|row| row.is_mapped(CorpusMode::Determinism))
         .count();
-    assert_eq!(standard, 81);
+    assert_eq!(standard, 82);
     assert_eq!(determinism, standard);
 }
 
@@ -462,6 +462,48 @@ fn cache_gate_context_row_uses_the_reviewed_public_invocation() -> Result<(), St
             expected
         );
     }
+    Ok(())
+}
+
+#[test]
+fn gate_unsealed_row_uses_the_reviewed_public_invocation() -> Result<(), String> {
+    let row = REGISTRY
+        .iter()
+        .find(|row| row.id == "gate-unsealed-observation")
+        .ok_or_else(|| "gate-unsealed-observation row is missing".to_owned())?;
+    let expected = vec![
+        (
+            "write_gate",
+            "semantic_demands::pre_write_reserves_semantic_demands_before_capture_and_retries_after_writer_terminal",
+            FeatureSet::None,
+        ),
+        (
+            "write_gate",
+            "semantic_demands::close_time_new_semantic_demand_outside_lease_stays_unplanned_on_retry",
+            FeatureSet::None,
+        ),
+        (
+            "write_gate",
+            "semantic_demands::failed_pre_write_rechecks_a_semantic_conflict_and_retains_prior_reservations",
+            FeatureSet::None,
+        ),
+        (
+            "write_gate",
+            "semantic_demands::failed_close_rechecks_a_semantic_conflict_at_the_final_barrier",
+            FeatureSet::None,
+        ),
+    ];
+    for invocations in [row.standard, row.determinism] {
+        assert_eq!(
+            invocations
+                .unwrap_or_default()
+                .iter()
+                .map(|invocation| (invocation.target, invocation.filter, invocation.features))
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+    assert_eq!(row.determinism_shard_weight, 19);
     Ok(())
 }
 
