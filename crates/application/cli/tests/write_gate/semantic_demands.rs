@@ -578,10 +578,37 @@ fn pre_write_reserves_semantic_demands_before_capture_and_retries_after_writer_t
     )?;
     assert_status(&opened_a, 0);
     assert_eq!(field(&opened_a.stdout, "decision")?, "allow");
+    let opened_json: Value = serde_json::from_str(&opened_a.stdout)?;
+    let opened_binding = opened_json
+        .get("observationBinding")
+        .ok_or_else(|| std::io::Error::other("authorizing binding is missing"))?;
+    assert_eq!(
+        opened_binding.get("state").and_then(Value::as_str),
+        Some("sealed")
+    );
+    assert_eq!(
+        opened_binding
+            .pointer("/observation/kind")
+            .and_then(Value::as_str),
+        Some("baseline")
+    );
+    let baseline_observation_id = opened_binding
+        .pointer("/observation/observationId")
+        .and_then(Value::as_str)
+        .filter(|id| id.starts_with("gate_baseline_observation_"))
+        .ok_or_else(|| std::io::Error::other("sealed baseline observation ID is missing"))?;
+    let opened_gate_id = opened_json
+        .get("gateId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| std::io::Error::other("authorizing gate ID is missing"))?;
 
     let operation = run(root.path(), &["operation", "show", "op-a-open"])?;
     assert_status(&operation, 0);
     let operation_json: Value = serde_json::from_str(&operation.stdout)?;
+    assert_eq!(
+        operation_json.pointer("/result/observationBinding"),
+        Some(opened_binding)
+    );
     let reservation_paths = operation_json
         .get("semanticReadReservations")
         .and_then(Value::as_array)
@@ -593,6 +620,26 @@ fn pre_write_reserves_semantic_demands_before_capture_and_retries_after_writer_t
         })
         .ok_or_else(|| std::io::Error::other("semantic read reservations are missing"))?;
     assert!(reservation_paths.is_empty());
+
+    let opened_gate = run(root.path(), &["gate", "show", opened_gate_id])?;
+    assert_status(&opened_gate, 0);
+    let opened_gate_json: Value = serde_json::from_str(&opened_gate.stdout)?;
+    assert_eq!(
+        opened_gate_json.pointer("/revisions/0/observationBinding"),
+        Some(opened_binding)
+    );
+    assert_eq!(
+        opened_gate_json
+            .pointer("/baseline/observationId")
+            .and_then(Value::as_str),
+        Some(baseline_observation_id)
+    );
+    assert!(
+        opened_gate_json
+            .pointer("/baseline/analysisInputId")
+            .and_then(Value::as_str)
+            .is_some()
+    );
     Ok(())
 }
 
@@ -862,6 +909,18 @@ fn failed_close_rechecks_a_semantic_conflict_at_the_final_barrier()
         root.path().join("src/tsconfig.json"),
         "{\"extends\":\"../config/base.json\"}\n",
     )?;
+    let model_gate_id = lumin_model::GateId::from_string(gate_id.clone());
+    let opening_gate = lumin_engine::load_gate(root.path(), &model_gate_id)?;
+    let baseline_protected_semantic_inputs = opening_gate
+        .baseline
+        .as_ref()
+        .ok_or_else(|| std::io::Error::other("active gate baseline is missing"))?
+        .protected_semantic_inputs
+        .clone();
+    assert_eq!(
+        opening_gate.protected_semantic_inputs,
+        baseline_protected_semantic_inputs
+    );
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
     listener.set_nonblocking(true)?;
@@ -987,6 +1046,17 @@ fn failed_close_rechecks_a_semantic_conflict_at_the_final_barrier()
             .pointer("/observationBinding/observation")
             .is_none()
     );
+    let unbounded_paths = response
+        .pointer("/observationBinding/conflictingOrUnboundedInputs")
+        .and_then(Value::as_array)
+        .and_then(|paths| {
+            paths
+                .iter()
+                .map(|path| path.get("display").and_then(Value::as_str))
+                .collect::<Option<Vec<_>>>()
+        })
+        .ok_or_else(|| std::io::Error::other("post-write unbounded inputs are missing"))?;
+    assert_eq!(unbounded_paths, ["config/base.json"]);
 
     let operation = run(
         root.path(),
@@ -1019,6 +1089,18 @@ fn failed_close_rechecks_a_semantic_conflict_at_the_final_barrier()
             .get("protectedSemanticInputCount")
             .and_then(Value::as_u64)
     );
+    let persisted_gate = lumin_engine::load_gate(root.path(), &model_gate_id)?;
+    assert_eq!(
+        persisted_gate.protected_semantic_inputs,
+        baseline_protected_semantic_inputs
+    );
+
+    let retry = run(root.path(), &arguments)?;
+    assert_status(&retry, 4);
+    assert_eq!(retry.stdout, output.stdout);
+    let shown_after_retry = run(root.path(), &["gate", "show", &gate_id])?;
+    assert_status(&shown_after_retry, 0);
+    assert_eq!(shown_after_retry.stdout, shown.stdout);
     Ok(())
 }
 
@@ -1121,6 +1203,17 @@ fn failed_pre_write_rechecks_a_semantic_conflict_and_retains_prior_reservations(
         Some("semantic-read-closure-incomplete")
     );
     assert!(binding.get("observation").is_none());
+    let unbounded_paths = binding
+        .get("conflictingOrUnboundedInputs")
+        .and_then(Value::as_array)
+        .and_then(|paths| {
+            paths
+                .iter()
+                .map(|path| path.get("display").and_then(Value::as_str))
+                .collect::<Option<Vec<_>>>()
+        })
+        .ok_or_else(|| std::io::Error::other("pre-write unbounded inputs are missing"))?;
+    assert_eq!(unbounded_paths, ["shared/root"]);
     let attempted = response
         .pointer("/observationBinding/attemptedDomain")
         .and_then(Value::as_array)
