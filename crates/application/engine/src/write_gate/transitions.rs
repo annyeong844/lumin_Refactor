@@ -397,6 +397,73 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn different_scan_scope_replays_a_proven_disjoint_config_transition()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path_a = path("packages/a/src/main.ts")?;
+        let config_b = path("packages/b/tsconfig.json")?;
+        let adjusted = snapshot_with_include(
+            vec![input("packages/a/src/main.ts", "a")?],
+            owner("packages/a/src/main.ts", "left-pad", "packages/a")?,
+            intent("packages/a/src/main.ts", "left-pad")?,
+            "packages/a/**",
+        );
+        let transition_before = snapshot_with_include(
+            vec![input("packages/b/src/main.ts", "b")?],
+            owner("packages/b/src/main.ts", "is-odd", "packages/b")?,
+            intent("packages/b/src/main.ts", "is-odd")?,
+            "packages/b/**",
+        );
+        let mut after_inputs = transition_before.inputs.clone();
+        after_inputs.push(config_input("packages/b/tsconfig.json", "config-after")?);
+        let transition_after = seal_analysis_snapshot(
+            after_inputs,
+            transition_before.evidence.clone(),
+            transition_before.scan_invocation.clone(),
+            transition_before.entry_selections.clone(),
+        );
+        let transition = WorktreeTransition {
+            sequence: 4,
+            capsule: TransitionCapsule {
+                gate_id: GateId::from_string("gate-b-config".to_owned()),
+                revision: 1,
+                baseline_observation_id: baseline_observation_id(),
+                close_observation_id: close_observation_id(),
+                before_snapshot: transition_before,
+                after_snapshot: transition_after,
+                changed_paths: vec![config_b.clone()],
+                leased_write_set: Vec::new(),
+            },
+        };
+        let lease_a = WriteLease {
+            path: path_a,
+            kind: WriteLeaseKind::ExistingFile,
+            physical_identity: None,
+            nearest_existing_parent: None,
+            prefix_identities: Vec::new(),
+        };
+        let original_evidence = adjusted.evidence.clone();
+        let original_invocation = adjusted.scan_invocation.clone();
+
+        let mut reconciled = adjusted.clone();
+        assert!(apply_worktree_transition_for_domain(
+            &mut reconciled,
+            &transition,
+            &[lease_a],
+            &adjusted.inputs,
+        ));
+        assert_eq!(reconciled.evidence, original_evidence);
+        assert_eq!(reconciled.scan_invocation, original_invocation);
+        let replayed = reconciled
+            .inputs
+            .iter()
+            .find(|input| input.path == config_b)
+            .ok_or_else(|| std::io::Error::other("reconciled snapshot omitted config input"))?;
+        assert_eq!(replayed.state, SemanticInputState::ConfigPresent);
+        assert_eq!(replayed.payload_sha256.as_deref(), Some("config-after"));
+        Ok(())
+    }
+
     fn baseline_observation_id() -> GateBaselineObservationId {
         GateBaselineObservationId::from_string("gate_baseline_observation_test".to_owned())
     }
@@ -487,6 +554,20 @@ mod tests {
         Ok(SemanticInputRecord {
             path: path(value)?,
             state: SemanticInputState::Source,
+            payload_sha256: Some(payload_sha256.to_owned()),
+            physical_identity: None,
+            absence_parent: None,
+            physical_redirect_sha256: None,
+        })
+    }
+
+    fn config_input(
+        value: &str,
+        payload_sha256: &str,
+    ) -> Result<SemanticInputRecord, Box<dyn std::error::Error>> {
+        Ok(SemanticInputRecord {
+            path: path(value)?,
+            state: SemanticInputState::ConfigPresent,
             payload_sha256: Some(payload_sha256.to_owned()),
             physical_identity: None,
             absence_parent: None,
