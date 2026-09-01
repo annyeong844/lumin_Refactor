@@ -181,6 +181,12 @@ fn disjoint_gates_reconcile_transitions_across_different_scan_scopes()
         Some(gate_b.as_str())
     );
     assert_eq!(close_b_operation.get("result"), Some(&close_b));
+    let expected_terminal_transition_sequence = close_b_operation
+        .get("transitionSequence")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| std::io::Error::other("B close omitted its transition ceiling"))?
+        .checked_add(1)
+        .ok_or_else(|| std::io::Error::other("B transition sequence overflowed"))?;
 
     let pending_a = run(root.path(), &["gate", "show", &gate_a])?;
     assert_status(&pending_a, 0);
@@ -193,6 +199,10 @@ fn disjoint_gates_reconcile_transitions_across_different_scan_scopes()
     let terminal_transition_sequence = transition_refs[0]
         .as_u64()
         .ok_or_else(|| std::io::Error::other("transition reference was not a sequence"))?;
+    assert_eq!(
+        terminal_transition_sequence,
+        expected_terminal_transition_sequence
+    );
 
     let protected_plan =
         prepare_and_show_gate_plan(root.path(), "op-scope-transition-plan-protected")?;
