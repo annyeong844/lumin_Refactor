@@ -519,7 +519,9 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("gate-semantic-read-closure-warm-cache", INV_WARM_CACHE),
     row_sd!("cache-gate-context-projection", INV_CACHE_GATE_CONTEXT),
     row_sd_arch!("capability-availability-authority", INV_CAPABILITY_AVAILABILITY),
-    row_sd!("gate-unsealed-observation", INV_GATE_UNSEALED),
+    // This aggregate emits 19 semantic captures per determinism variant across
+    // four lifecycle scenarios, so shard it at that reviewed process cost.
+    row_sd_determinism_weight!("gate-unsealed-observation", INV_GATE_UNSEALED, 19),
     row_sd!("gate-analysis-input-reconciliation"),
     row_sd!("gate-final-observation", &[
         inv!("write_gate", "final_observation_rechecks_current_domain_before_sealing"),

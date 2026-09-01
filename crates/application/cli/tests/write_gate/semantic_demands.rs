@@ -1,5 +1,20 @@
 use super::*;
 
+fn path_display_array<'a>(
+    value: &'a Value,
+    pointer: &str,
+    label: &str,
+) -> Result<Vec<&'a str>, std::io::Error> {
+    value
+        .pointer(pointer)
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other(format!("{label} are missing")))?
+        .iter()
+        .map(|path| path.get("display").and_then(Value::as_str))
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| std::io::Error::other(format!("{label} contain an invalid path")))
+}
+
 #[test]
 fn warm_cache_replays_owner_semantics() -> Result<(), Box<dyn std::error::Error>> {
     let root = semantic_read_closure_fixture()?;
@@ -463,16 +478,23 @@ fn pre_write_reserves_semantic_demands_before_capture_and_retries_after_writer_t
         Some("semantic-read-conflict")
     );
     assert!(pending_binding.get("observation").is_none());
-    let pending_inputs = pending_binding
-        .get("conflictingOrUnboundedInputs")
-        .and_then(Value::as_array)
-        .and_then(|paths| {
-            paths
-                .iter()
-                .map(|path| path.get("display").and_then(Value::as_str))
-                .collect::<Option<Vec<_>>>()
-        })
-        .ok_or_else(|| std::io::Error::other("pre-write conflict inputs are missing"))?;
+    let pending_domain = path_display_array(
+        pending_binding,
+        "/attemptedDomain",
+        "pre-write attempted-domain paths",
+    )?;
+    assert_eq!(pending_domain, ["src/new.ts", "config/base.json"]);
+    let pending_complete_reads = path_display_array(
+        pending_binding,
+        "/lastCompleteReadSet",
+        "pre-write last-complete-read paths",
+    )?;
+    assert!(pending_complete_reads.is_empty());
+    let pending_inputs = path_display_array(
+        pending_binding,
+        "/conflictingOrUnboundedInputs",
+        "pre-write conflict inputs",
+    )?;
     assert_eq!(pending_inputs, ["config/base.json"]);
     let rejected_gate_id = pending_json
         .get("gateId")
@@ -488,16 +510,7 @@ fn pre_write_reserves_semantic_demands_before_capture_and_retries_after_writer_t
             signal.get("kind").and_then(Value::as_str) == Some("semantic-input-conflict")
         })
         .ok_or_else(|| std::io::Error::other("semantic input conflict is missing"))?;
-    let conflict_paths = conflict
-        .get("paths")
-        .and_then(Value::as_array)
-        .and_then(|paths| {
-            paths
-                .iter()
-                .map(|path| path.get("display").and_then(Value::as_str))
-                .collect::<Option<Vec<_>>>()
-        })
-        .ok_or_else(|| std::io::Error::other("pre-write conflict signal paths are missing"))?;
+    let conflict_paths = path_display_array(conflict, "/paths", "pre-write conflict signal paths")?;
     assert_eq!(conflict_paths, ["config/base.json"]);
     let conflict_gate_ids = conflict
         .get("gateIds")
@@ -713,16 +726,23 @@ fn close_time_new_semantic_demand_outside_lease_stays_unplanned_on_retry()
         Some("semantic-read-conflict")
     );
     assert!(blocked_binding.get("observation").is_none());
-    let blocked_inputs = blocked_binding
-        .get("conflictingOrUnboundedInputs")
-        .and_then(Value::as_array)
-        .and_then(|paths| {
-            paths
-                .iter()
-                .map(|path| path.get("display").and_then(Value::as_str))
-                .collect::<Option<Vec<_>>>()
-        })
-        .ok_or_else(|| std::io::Error::other("post-write conflict inputs are missing"))?;
+    let blocked_domain = path_display_array(
+        blocked_binding,
+        "/attemptedDomain",
+        "post-write attempted-domain paths",
+    )?;
+    assert_eq!(blocked_domain, ["src/a.ts", "config/base.json"]);
+    let blocked_complete_reads = path_display_array(
+        blocked_binding,
+        "/lastCompleteReadSet",
+        "post-write last-complete-read paths",
+    )?;
+    assert_eq!(blocked_complete_reads, ["lumin.json", "src/a.ts"]);
+    let blocked_inputs = path_display_array(
+        blocked_binding,
+        "/conflictingOrUnboundedInputs",
+        "post-write conflict inputs",
+    )?;
     assert_eq!(blocked_inputs, ["config/base.json"]);
     let blocked_signals = blocked_json
         .get("signals")
@@ -734,16 +754,11 @@ fn close_time_new_semantic_demand_outside_lease_stays_unplanned_on_retry()
             signal.get("kind").and_then(Value::as_str) == Some("semantic-input-conflict")
         })
         .ok_or_else(|| std::io::Error::other("post-write semantic input conflict is missing"))?;
-    let blocked_conflict_paths = blocked_conflict
-        .get("paths")
-        .and_then(Value::as_array)
-        .and_then(|paths| {
-            paths
-                .iter()
-                .map(|path| path.get("display").and_then(Value::as_str))
-                .collect::<Option<Vec<_>>>()
-        })
-        .ok_or_else(|| std::io::Error::other("post-write conflict signal paths are missing"))?;
+    let blocked_conflict_paths = path_display_array(
+        blocked_conflict,
+        "/paths",
+        "post-write conflict signal paths",
+    )?;
     assert_eq!(blocked_conflict_paths, ["config/base.json"]);
     let blocked_conflict_gate_ids = blocked_conflict
         .get("gateIds")
@@ -905,6 +920,48 @@ fn close_time_new_semantic_demand_outside_lease_stays_unplanned_on_retry()
         Some("unsealed")
     );
     assert!(retry_binding.get("observation").is_none());
+    let retry_domain = path_display_array(
+        retry_binding,
+        "/attemptedDomain",
+        "stale close attempted-domain paths",
+    )?;
+    assert_eq!(
+        retry_domain,
+        [
+            "src/a.ts",
+            "config/base.json",
+            "shared/root",
+            "shared/root.json"
+        ]
+    );
+    let retry_complete_reads = path_display_array(
+        retry_binding,
+        "/lastCompleteReadSet",
+        "stale close last-complete-read paths",
+    )?;
+    assert_eq!(
+        retry_complete_reads,
+        [
+            "lumin.json",
+            "src/a.ts",
+            "src/tsconfig.json",
+            "config/base.json"
+        ]
+    );
+    let retry_unbounded_inputs = path_display_array(
+        retry_binding,
+        "/conflictingOrUnboundedInputs",
+        "stale close unbounded inputs",
+    )?;
+    assert_eq!(
+        retry_unbounded_inputs,
+        [
+            "src/config-writer.ts",
+            "config/base.json",
+            "shared/root",
+            "shared/root.json"
+        ]
+    );
 
     let operation = run(root.path(), &["operation", "show", "op-demand-retry-close"])?;
     assert_status(&operation, 0);
@@ -1099,29 +1156,28 @@ fn failed_close_rechecks_a_semantic_conflict_at_the_final_barrier()
             .and_then(Value::as_str)
             == Some("semantic-read-closure-incomplete")
     );
-    assert!(
-        response
-            .pointer("/observationBinding/attemptedDomain")
-            .and_then(Value::as_array)
-            .is_some_and(|paths| paths.iter().any(|path| {
-                path.get("display").and_then(Value::as_str) == Some("config/base.json")
-            }))
-    );
+    let attempted_domain = path_display_array(
+        &response,
+        "/observationBinding/attemptedDomain",
+        "final-barrier post-write attempted-domain paths",
+    )?;
+    assert_eq!(attempted_domain, ["src/a.ts", "config/base.json"]);
+    let last_complete_reads = path_display_array(
+        &response,
+        "/observationBinding/lastCompleteReadSet",
+        "final-barrier post-write last-complete-read paths",
+    )?;
+    assert_eq!(last_complete_reads, ["lumin.json", "src/a.ts"]);
     assert!(
         response
             .pointer("/observationBinding/observation")
             .is_none()
     );
-    let unbounded_paths = response
-        .pointer("/observationBinding/conflictingOrUnboundedInputs")
-        .and_then(Value::as_array)
-        .and_then(|paths| {
-            paths
-                .iter()
-                .map(|path| path.get("display").and_then(Value::as_str))
-                .collect::<Option<Vec<_>>>()
-        })
-        .ok_or_else(|| std::io::Error::other("post-write unbounded inputs are missing"))?;
+    let unbounded_paths = path_display_array(
+        &response,
+        "/observationBinding/conflictingOrUnboundedInputs",
+        "post-write unbounded inputs",
+    )?;
     assert_eq!(unbounded_paths, ["config/base.json"]);
 
     let operation = run(
@@ -1269,29 +1325,24 @@ fn failed_pre_write_rechecks_a_semantic_conflict_and_retains_prior_reservations(
         Some("semantic-read-closure-incomplete")
     );
     assert!(binding.get("observation").is_none());
-    let unbounded_paths = binding
-        .get("conflictingOrUnboundedInputs")
-        .and_then(Value::as_array)
-        .and_then(|paths| {
-            paths
-                .iter()
-                .map(|path| path.get("display").and_then(Value::as_str))
-                .collect::<Option<Vec<_>>>()
-        })
-        .ok_or_else(|| std::io::Error::other("pre-write unbounded inputs are missing"))?;
+    let unbounded_paths = path_display_array(
+        binding,
+        "/conflictingOrUnboundedInputs",
+        "pre-write unbounded inputs",
+    )?;
     assert_eq!(unbounded_paths, ["shared/root"]);
-    let attempted = response
-        .pointer("/observationBinding/attemptedDomain")
-        .and_then(Value::as_array)
-        .ok_or_else(|| std::io::Error::other("pre-write attempted domain is missing"))?;
-    for expected in ["config/base.json", "shared/root"] {
-        assert!(
-            attempted
-                .iter()
-                .any(|path| { path.get("display").and_then(Value::as_str) == Some(expected) }),
-            "pre-write attempted domain omitted {expected}: {attempted:?}"
-        );
-    }
+    let attempted = path_display_array(
+        binding,
+        "/attemptedDomain",
+        "final-barrier pre-write attempted-domain paths",
+    )?;
+    assert_eq!(attempted, ["src/new.ts", "config/base.json", "shared/root"]);
+    let last_complete_reads = path_display_array(
+        binding,
+        "/lastCompleteReadSet",
+        "final-barrier pre-write last-complete-read paths",
+    )?;
+    assert!(last_complete_reads.is_empty());
 
     let operation = run(
         root.path(),

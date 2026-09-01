@@ -217,7 +217,7 @@ fn ci_row_shards_balance_declared_work_deterministically() {
         );
         let expected = match mode {
             CorpusMode::Standard => vec![48, 48, 48, 48],
-            CorpusMode::Determinism => vec![64, 28, 28, 27, 27, 27, 27, 27],
+            CorpusMode::Determinism => vec![64, 30, 30, 30, 30, 30, 30, 29],
             CorpusMode::StoreCrash => unreachable!("CI does not shard store-crash rows"),
         };
         assert_eq!(loads, expected, "{mode} shard assignment changed");
@@ -486,6 +486,7 @@ fn gate_unsealed_row_uses_the_reviewed_public_invocation() -> Result<(), String>
             expected
         );
     }
+    assert_eq!(row.determinism_shard_weight, 19);
     Ok(())
 }
 
