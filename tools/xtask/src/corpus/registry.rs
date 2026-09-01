@@ -58,6 +58,10 @@ static INV_GATE_EFFECTS: &[CorpusInvocation] = &[
     inv!("write_gate", "unsupported_config_remains_a_required_evidence_gap"),
 ];
 #[rustfmt::skip]
+static INV_GATE_IMMUTABLE_OPENING_DELTA: &[CorpusInvocation] = &[
+    inv!("write_gate", "immutable_opening_delta::immutable_opening_delta_survives_repeated_failed_and_sealed_stale_closes"),
+];
+#[rustfmt::skip]
 static INV_UNPLANNED: &[CorpusInvocation] = &[
     inv!("write_gate", "unexpected_new_source_denies_and_keeps_the_gate_active"),
     inv!("write_gate", "new_source_path_is_admitted_before_it_exists"),
@@ -533,7 +537,12 @@ pub static REGISTRY: &[RegistryRow] = &[
         inv!("write_gate", "planned_semantic_config_write_is_recaptured_and_attributed"),
     ]),
     row_sd_arch!("gate-lifecycle-effects", INV_GATE_EFFECTS),
-    row_sd!("gate-immutable-opening-delta"),
+    // This scenario emits seven semantic captures per determinism variant.
+    row_sd_determinism_weight!(
+        "gate-immutable-opening-delta",
+        INV_GATE_IMMUTABLE_OPENING_DELTA,
+        7
+    ),
     row_sd!("lifecycle-operation-idempotency", INV_IDEMP),
     row_sd!("gate-reopen-after-process-exit", &[inv!("write_gate", "pre_and_post_survive_process_reopen")]),
     row_sd!("unplanned-edit", INV_UNPLANNED),

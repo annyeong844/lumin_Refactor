@@ -11,6 +11,8 @@ use serde_json::Value;
 
 mod support;
 
+#[path = "write_gate/immutable_opening_delta.rs"]
+mod immutable_opening_delta;
 #[path = "write_gate/mixed_vue.rs"]
 mod mixed_vue;
 #[path = "write_gate/reopen_queries.rs"]
