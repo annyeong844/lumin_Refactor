@@ -167,6 +167,18 @@ fn disjoint_gates_reconcile_transitions_across_different_scan_scopes()
     assert_status(&close_b, 0);
     assert_eq!(field(&close_b.stdout, "decision")?, "allow");
 
+    let pending_a = run(root.path(), &["gate", "show", &gate_a])?;
+    assert_status(&pending_a, 0);
+    let pending_a: Value = serde_json::from_str(&pending_a.stdout)?;
+    let transition_refs = pending_a
+        .get("transitionRefs")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("active gate omitted transitionRefs"))?;
+    assert_eq!(transition_refs.len(), 1);
+    let terminal_transition_sequence = transition_refs[0]
+        .as_u64()
+        .ok_or_else(|| std::io::Error::other("transition reference was not a sequence"))?;
+
     fs::write(root.path().join("src/a.ts"), "console.log('a scoped');\n")?;
     let close_a = run(
         root.path(),
@@ -175,6 +187,10 @@ fn disjoint_gates_reconcile_transitions_across_different_scan_scopes()
     assert_status(&close_a, 0);
     assert_eq!(field(&close_a.stdout, "decision")?, "allow");
     let close_a: Value = serde_json::from_str(&close_a.stdout)?;
+    assert_eq!(
+        display_paths(&close_a, "/actualWriteSet/paths")?,
+        ["src/a.ts"]
+    );
     assert_eq!(
         close_a
             .get("signals")
@@ -186,12 +202,46 @@ fn disjoint_gates_reconcile_transitions_across_different_scan_scopes()
     let shown = run(root.path(), &["gate", "show", &gate_a])?;
     assert_status(&shown, 0);
     let shown: Value = serde_json::from_str(&shown.stdout)?;
+    let reconciled_transitions = shown
+        .pointer("/revisions/1/reconciledTransitionSequences")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("close omitted reconciled transitions"))?;
+    assert_eq!(
+        reconciled_transitions.as_slice(),
+        [Value::from(terminal_transition_sequence)]
+    );
     assert_eq!(
         shown
-            .pointer("/revisions/1/reconciledTransitionSequences")
+            .get("transitionRefs")
             .and_then(Value::as_array)
             .map(Vec::len),
-        Some(1)
+        Some(0)
+    );
+    assert_eq!(
+        display_paths(&shown, "/revisions/1/changedPaths")?,
+        ["src/a.ts"]
+    );
+    assert_eq!(
+        display_paths(&shown, "/revisions/1/actualWriteSet/paths")?,
+        ["src/a.ts"]
+    );
+    assert!(
+        shown
+            .pointer("/revisions/1/analysisInputId")
+            .and_then(Value::as_str)
+            .is_some()
+    );
+    assert_eq!(
+        shown
+            .pointer("/revisions/1/observationBinding/state")
+            .and_then(Value::as_str),
+        Some("sealed")
+    );
+    assert_eq!(
+        shown
+            .pointer("/revisions/1/observationBinding/observation/kind")
+            .and_then(Value::as_str),
+        Some("close")
     );
     Ok(())
 }

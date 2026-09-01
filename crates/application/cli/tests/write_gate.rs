@@ -1304,6 +1304,43 @@ fn protected_input_drift_is_stale() -> Result<(), Box<dyn std::error::Error>> {
         Some("active")
     );
     assert!(post_json.get("actualWriteSet").is_none());
+    assert_eq!(
+        post_json
+            .pointer("/observationBinding/state")
+            .and_then(Value::as_str),
+        Some("unsealed")
+    );
+    assert_eq!(
+        post_json
+            .pointer("/observationBinding/reason")
+            .and_then(Value::as_str),
+        Some("protected-input-changed")
+    );
+    assert!(
+        post_json
+            .pointer("/observationBinding/observation")
+            .is_none()
+    );
+
+    let shown = run(root.path(), &["gate", "show", &gate_id])?;
+    assert_status(&shown, 0);
+    let shown_json: Value = serde_json::from_str(&shown.stdout)?;
+    assert_eq!(
+        shown_json.pointer("/revisions/1/observationBinding"),
+        post_json.get("observationBinding")
+    );
+    assert!(
+        shown_json
+            .pointer("/revisions/1/analysisInputId")
+            .is_some_and(Value::is_null)
+    );
+    let operation = run(root.path(), &["operation", "show", "op-close"])?;
+    assert_status(&operation, 0);
+    let operation_json: Value = serde_json::from_str(&operation.stdout)?;
+    assert_eq!(
+        operation_json.pointer("/result/observationBinding"),
+        post_json.get("observationBinding")
+    );
     Ok(())
 }
 
@@ -1433,6 +1470,21 @@ fn planned_semantic_config_write_is_recaptured_and_attributed()
         .and_then(Value::as_str)
         .ok_or("opening gate omitted its analysis input ID")?
         .to_owned();
+    let model_gate_id = lumin_model::GateId::from_string(gate_id.clone());
+    let persisted_opening = lumin_engine::load_gate(root.path(), &model_gate_id)?;
+    let persisted_baseline = persisted_opening
+        .baseline
+        .as_ref()
+        .ok_or_else(|| std::io::Error::other("opening gate omitted its baseline"))?;
+    let opening_tier = persisted_baseline.snapshot.scan_invocation.clone();
+    let opening_entry_selections = persisted_baseline.snapshot.entry_selections.clone();
+    let opening_manifest_input = persisted_baseline
+        .snapshot
+        .inputs
+        .iter()
+        .find(|input| input.path.display == "package.json")
+        .cloned()
+        .ok_or_else(|| std::io::Error::other("baseline omitted package.json input"))?;
 
     fs::write(
         root.path().join("package.json"),
@@ -1478,6 +1530,55 @@ fn planned_semantic_config_write_is_recaptured_and_attributed()
             .and_then(Value::as_str),
         Some("close")
     );
+    assert_eq!(
+        shown_json
+            .pointer("/revisions/1/observationBinding/state")
+            .and_then(Value::as_str),
+        Some("sealed")
+    );
+
+    let operation = run(root.path(), &["operation", "show", "op-config-close"])?;
+    assert_status(&operation, 0);
+    let operation_json: Value = serde_json::from_str(&operation.stdout)?;
+    assert_eq!(
+        operation_json.pointer("/result/observationBinding"),
+        shown_json.pointer("/revisions/1/observationBinding")
+    );
+
+    let persisted_closed = lumin_engine::load_gate(root.path(), &model_gate_id)?;
+    assert_eq!(
+        persisted_closed.analysis_options.scan_invocation,
+        opening_tier
+    );
+    let persisted_close = persisted_closed
+        .revisions
+        .iter()
+        .find(|revision| revision.revision == 1)
+        .ok_or_else(|| std::io::Error::other("closed gate omitted revision 1"))?;
+    let close_snapshot = persisted_close
+        .snapshot
+        .as_ref()
+        .ok_or_else(|| std::io::Error::other("sealed close omitted its snapshot"))?;
+    assert_eq!(close_snapshot.scan_invocation, opening_tier);
+    assert_eq!(close_snapshot.entry_selections, opening_entry_selections);
+    assert_eq!(
+        close_snapshot.analysis_input_id.as_str(),
+        close_analysis_input_id
+    );
+    let close_manifest_input = close_snapshot
+        .inputs
+        .iter()
+        .find(|input| input.path.display == "package.json")
+        .ok_or_else(|| std::io::Error::other("sealed close omitted package.json input"))?;
+    assert_ne!(close_manifest_input, &opening_manifest_input);
+    assert_ne!(
+        close_manifest_input.payload_sha256,
+        opening_manifest_input.payload_sha256
+    );
+    assert!(lumin_engine::gate_observation_binding_matches_owner(
+        &persisted_closed,
+        persisted_close
+    )?);
     Ok(())
 }
 

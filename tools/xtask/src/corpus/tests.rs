@@ -216,8 +216,8 @@ fn ci_row_shards_balance_declared_work_deterministically() {
             "unbalanced {mode} invocation loads: {loads:?}",
         );
         let expected = match mode {
-            CorpusMode::Standard => vec![49, 49, 49, 48],
-            CorpusMode::Determinism => vec![64, 30, 30, 30, 30, 30, 30, 29],
+            CorpusMode::Standard => vec![50, 50, 50, 49],
+            CorpusMode::Determinism => vec![64, 32, 32, 32, 32, 32, 32, 32],
             CorpusMode::StoreCrash => unreachable!("CI does not shard store-crash rows"),
         };
         assert_eq!(loads, expected, "{mode} shard assignment changed");
@@ -413,7 +413,7 @@ fn every_mapped_standard_row_has_a_paired_determinism_invocation() {
         .iter()
         .filter(|row| row.is_mapped(CorpusMode::Determinism))
         .count();
-    assert_eq!(standard, 82);
+    assert_eq!(standard, 83);
     assert_eq!(determinism, standard);
 }
 
@@ -504,6 +504,48 @@ fn gate_unsealed_row_uses_the_reviewed_public_invocation() -> Result<(), String>
         );
     }
     assert_eq!(row.determinism_shard_weight, 19);
+    Ok(())
+}
+
+#[test]
+fn gate_analysis_input_row_uses_the_reviewed_public_invocations() -> Result<(), String> {
+    let row = REGISTRY
+        .iter()
+        .find(|row| row.id == "gate-analysis-input-reconciliation")
+        .ok_or_else(|| "gate-analysis-input-reconciliation row is missing".to_owned())?;
+    let expected = vec![
+        (
+            "scan_invocation_containment",
+            "scan_flags_and_containment_round_trip_through_public_gate",
+            FeatureSet::None,
+        ),
+        (
+            "write_gate",
+            "planned_semantic_config_write_is_recaptured_and_attributed",
+            FeatureSet::None,
+        ),
+        (
+            "write_gate",
+            "protected_input_drift_is_stale",
+            FeatureSet::None,
+        ),
+        (
+            "write_gate",
+            "transition_retention::disjoint_gates_reconcile_transitions_across_different_scan_scopes",
+            FeatureSet::None,
+        ),
+    ];
+    for invocations in [row.standard, row.determinism] {
+        assert_eq!(
+            invocations
+                .unwrap_or_default()
+                .iter()
+                .map(|invocation| (invocation.target, invocation.filter, invocation.features))
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+    assert_eq!(row.determinism_shard_weight, 15);
     Ok(())
 }
 
