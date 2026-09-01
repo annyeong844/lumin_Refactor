@@ -4,8 +4,9 @@ use lumin_model::Limitation;
 
 use crate::{
     AnalysisSnapshot, DEAD_CODE_CAPABILITY_ID, DEPENDENCY_OWNERSHIP_CAPABILITY_ID,
-    RepoPathProjection, RunEvidence, SemanticInputRecord, WorktreeTransition, WriteLease,
-    dead_code_capability_state, dependency_ownership_capability_state, seal_analysis_snapshot,
+    RepoPathProjection, RunEvidence, SemanticInputRecord, SemanticInputState, WorktreeTransition,
+    WriteLease, dead_code_capability_state, dependency_ownership_capability_state,
+    seal_analysis_snapshot,
 };
 
 pub fn apply_worktree_transition(
@@ -70,13 +71,17 @@ fn apply_worktree_transition_inner(
     }
 
     if !request_scopes_are_compatible(adjusted, &transition.capsule.before_snapshot) {
-        return domain.is_some_and(|(leased_write_set, protected_semantic_inputs)| {
-            transition_is_outside_domain(
-                &complete_replay_paths,
-                leased_write_set,
-                protected_semantic_inputs,
-            )
-        });
+        let Some((leased_write_set, protected_semantic_inputs)) = domain else {
+            return false;
+        };
+        if !transition_is_outside_domain(
+            &complete_replay_paths,
+            leased_write_set,
+            protected_semantic_inputs,
+        ) {
+            return false;
+        }
+        return replay_disjoint_config_inputs(adjusted, transition, &complete_replay_paths);
     }
 
     let Some(inputs) = apply_rebased_input_delta(
@@ -100,6 +105,56 @@ fn apply_worktree_transition_inner(
         evidence,
         adjusted.scan_invocation.clone(),
         transition.capsule.after_snapshot.entry_selections.clone(),
+    );
+    true
+}
+
+fn replay_disjoint_config_inputs(
+    adjusted: &mut AnalysisSnapshot,
+    transition: &WorktreeTransition,
+    replay_paths: &[RepoPathProjection],
+) -> bool {
+    let before = transition
+        .capsule
+        .before_snapshot
+        .inputs
+        .iter()
+        .map(|input| (input.path.canonical.as_slice(), input))
+        .collect::<BTreeMap<_, _>>();
+    let after = transition
+        .capsule
+        .after_snapshot
+        .inputs
+        .iter()
+        .map(|input| (input.path.canonical.as_slice(), input))
+        .collect::<BTreeMap<_, _>>();
+    let config_paths = replay_paths
+        .iter()
+        .filter(|path| {
+            before
+                .get(path.canonical.as_slice())
+                .into_iter()
+                .chain(after.get(path.canonical.as_slice()))
+                .any(|input| input.state == SemanticInputState::ConfigPresent)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if config_paths.is_empty() {
+        return true;
+    }
+    let Some(inputs) = apply_input_delta(
+        &adjusted.inputs,
+        &transition.capsule.before_snapshot.inputs,
+        &transition.capsule.after_snapshot.inputs,
+        &config_paths,
+    ) else {
+        return false;
+    };
+    *adjusted = seal_analysis_snapshot(
+        inputs,
+        adjusted.evidence.clone(),
+        adjusted.scan_invocation.clone(),
+        adjusted.entry_selections.clone(),
     );
     true
 }

@@ -155,19 +155,113 @@ fn disjoint_gates_reconcile_a_terminal_transition_on_retry()
 #[test]
 fn disjoint_gates_reconcile_transitions_across_different_scan_scopes()
 -> Result<(), Box<dyn std::error::Error>> {
-    let root = disjoint_fixture()?;
-    let gate_a = open_scoped_gate(root.path(), "op-scope-a-open", "src/a.ts", "src/a.ts")?;
-    let gate_b = open_scoped_gate(root.path(), "op-scope-b-open", "src/b.ts", "src/b.ts")?;
+    let root = disjoint_config_fixture()?;
+    let gate_a = open_scoped_gate(
+        root.path(),
+        "op-scope-a-open",
+        "packages/a/src/a.ts",
+        "packages/a/**",
+    )?;
+    fs::write(
+        root.path().join("packages/b/src/b.ts"),
+        "console.log('b scoped');\n",
+    )?;
+    let opened_b = run(
+        root.path(),
+        &[
+            "pre-write",
+            "--operation-id",
+            "op-scope-b-open",
+            "--path",
+            "packages/b",
+            "--include",
+            "packages/b/**",
+            "--jobs",
+            "1",
+        ],
+    )?;
+    assert_status(&opened_b, 0);
+    let gate_b = field(&opened_b.stdout, "gateId")?;
 
-    fs::write(root.path().join("src/b.ts"), "console.log('b scoped');\n")?;
+    fs::write(
+        root.path().join("packages/b/tsconfig.json"),
+        r#"{"compilerOptions":{"moduleResolution":"bundler","module":"esnext"}}"#,
+    )?;
     let close_b = run(
         root.path(),
         &["post-write", &gate_b, "--operation-id", "op-scope-b-close"],
     )?;
     assert_status(&close_b, 0);
     assert_eq!(field(&close_b.stdout, "decision")?, "allow");
+    let close_b: Value = serde_json::from_str(&close_b.stdout)?;
+    assert_eq!(
+        display_paths(&close_b, "/actualWriteSet/paths")?,
+        ["packages/b/tsconfig.json"]
+    );
+    let close_b_operation = run(root.path(), &["operation", "show", "op-scope-b-close"])?;
+    assert_status(&close_b_operation, 0);
+    let close_b_operation: Value = serde_json::from_str(&close_b_operation.stdout)?;
+    assert_eq!(
+        close_b_operation.get("gateId").and_then(Value::as_str),
+        Some(gate_b.as_str())
+    );
+    assert_eq!(
+        close_b_operation
+            .pointer("/result/gateId")
+            .and_then(Value::as_str),
+        Some(gate_b.as_str())
+    );
+    assert_eq!(close_b_operation.get("result"), Some(&close_b));
+    let expected_terminal_transition_sequence = close_b_operation
+        .get("transitionSequence")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| std::io::Error::other("B close omitted its transition ceiling"))?
+        .checked_add(1)
+        .ok_or_else(|| std::io::Error::other("B transition sequence overflowed"))?;
 
-    fs::write(root.path().join("src/a.ts"), "console.log('a scoped');\n")?;
+    let pending_a = run(root.path(), &["gate", "show", &gate_a])?;
+    assert_status(&pending_a, 0);
+    let pending_a: Value = serde_json::from_str(&pending_a.stdout)?;
+    let transition_refs = pending_a
+        .get("transitionRefs")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("active gate omitted transitionRefs"))?;
+    assert_eq!(transition_refs.len(), 1);
+    let terminal_transition_sequence = transition_refs[0]
+        .as_u64()
+        .ok_or_else(|| std::io::Error::other("transition reference was not a sequence"))?;
+    assert_eq!(
+        terminal_transition_sequence,
+        expected_terminal_transition_sequence
+    );
+
+    let protected_plan =
+        prepare_and_show_gate_plan(root.path(), "op-scope-transition-plan-protected")?;
+    let exclusions = protected_plan
+        .get("exclusions")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("protected plan omitted exclusions"))?;
+    let referenced_b = exclusions
+        .iter()
+        .filter(|exclusion| {
+            exclusion.get("kind").and_then(Value::as_str) == Some("gate")
+                && exclusion.get("recordId").and_then(Value::as_str) == Some(gate_b.as_str())
+                && exclusion.pointer("/reason/reason").and_then(Value::as_str)
+                    == Some("active-transition-reference")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(referenced_b.len(), 1);
+    let protecting_gate_ids = referenced_b[0]
+        .pointer("/reason/gateIds")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("B exclusion omitted protecting gate IDs"))?;
+    assert_eq!(protecting_gate_ids.len(), 1);
+    assert_eq!(protecting_gate_ids[0].as_str(), Some(gate_a.as_str()));
+
+    fs::write(
+        root.path().join("packages/a/src/a.ts"),
+        "console.log('a scoped');\n",
+    )?;
     let close_a = run(
         root.path(),
         &["post-write", &gate_a, "--operation-id", "op-scope-a-close"],
@@ -175,6 +269,10 @@ fn disjoint_gates_reconcile_transitions_across_different_scan_scopes()
     assert_status(&close_a, 0);
     assert_eq!(field(&close_a.stdout, "decision")?, "allow");
     let close_a: Value = serde_json::from_str(&close_a.stdout)?;
+    assert_eq!(
+        display_paths(&close_a, "/actualWriteSet/paths")?,
+        ["packages/a/src/a.ts"]
+    );
     assert_eq!(
         close_a
             .get("signals")
@@ -186,14 +284,59 @@ fn disjoint_gates_reconcile_transitions_across_different_scan_scopes()
     let shown = run(root.path(), &["gate", "show", &gate_a])?;
     assert_status(&shown, 0);
     let shown: Value = serde_json::from_str(&shown.stdout)?;
+    let reconciled_transitions = shown
+        .pointer("/revisions/1/reconciledTransitionSequences")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("close omitted reconciled transitions"))?;
+    assert_eq!(
+        reconciled_transitions.as_slice(),
+        [Value::from(terminal_transition_sequence)]
+    );
     assert_eq!(
         shown
-            .pointer("/revisions/1/reconciledTransitionSequences")
+            .get("transitionRefs")
             .and_then(Value::as_array)
             .map(Vec::len),
-        Some(1)
+        Some(0)
+    );
+    assert_eq!(
+        display_paths(&shown, "/revisions/1/changedPaths")?,
+        ["packages/a/src/a.ts"]
+    );
+    assert_eq!(
+        display_paths(&shown, "/revisions/1/actualWriteSet/paths")?,
+        ["packages/a/src/a.ts"]
+    );
+    assert!(
+        shown
+            .pointer("/revisions/1/analysisInputId")
+            .and_then(Value::as_str)
+            .is_some()
+    );
+    assert_eq!(
+        shown
+            .pointer("/revisions/1/observationBinding/state")
+            .and_then(Value::as_str),
+        Some("sealed")
+    );
+    assert_eq!(
+        shown
+            .pointer("/revisions/1/observationBinding/observation/kind")
+            .and_then(Value::as_str),
+        Some("close")
     );
     Ok(())
+}
+
+fn disjoint_config_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("packages/a/src"))?;
+    fs::create_dir_all(root.path().join("packages/b/src"))?;
+    fs::write(
+        root.path().join("packages/a/src/a.ts"),
+        "console.log('a');\n",
+    )?;
+    Ok(root)
 }
 
 fn open_scoped_gate(

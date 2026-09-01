@@ -92,6 +92,13 @@ static INV_CAPABILITY_AVAILABILITY: &[CorpusInvocation] = &[
     inv!("capability_availability_authority", "capability_intent_syntax_is_closed_before_state_initialization"),
 ];
 #[rustfmt::skip]
+static INV_GATE_ANALYSIS_INPUT: &[CorpusInvocation] = &[
+    inv!("scan_invocation_containment", "scan_flags_and_containment_round_trip_through_public_gate"),
+    inv!("write_gate", "planned_semantic_config_write_is_recaptured_and_attributed"),
+    inv!("write_gate", "protected_input_drift_is_stale"),
+    inv!("write_gate", "transition_retention::disjoint_gates_reconcile_transitions_across_different_scan_scopes"),
+];
+#[rustfmt::skip]
 static INV_IDEMP: &[CorpusInvocation] = &[
     inv!("lifecycle_operation_idempotency", "gate::gate_mutations_recover_post_commit_delivery_failure_without_duplication", LifecycleFault),
     inv!("lifecycle_operation_idempotency", "gate_retention::gate_retention_mutations_recover_post_commit_delivery_failure_without_duplication", LifecycleFault),
@@ -518,7 +525,8 @@ pub static REGISTRY: &[RegistryRow] = &[
     // These four scenarios emit 19 semantic captures per determinism variant,
     // so shard them at that reviewed process cost.
     row_sd_determinism_weight!("gate-unsealed-observation", INV_SEM_READ, 19),
-    row_sd!("gate-analysis-input-reconciliation"),
+    // These four scenarios emit 15 semantic captures per determinism variant.
+    row_sd_determinism_weight!("gate-analysis-input-reconciliation", INV_GATE_ANALYSIS_INPUT, 15),
     row_sd!("gate-final-observation", &[
         inv!("write_gate", "final_observation_rechecks_current_domain_before_sealing"),
         inv!("write_gate", "protected_input_drift_is_stale"),

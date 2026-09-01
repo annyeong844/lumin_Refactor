@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, TcpListener};
@@ -1270,6 +1271,10 @@ fn unexpected_new_source_denies_and_keeps_the_gate_active() -> Result<(), Box<dy
 #[test]
 fn protected_input_drift_is_stale() -> Result<(), Box<dyn std::error::Error>> {
     let root = fixture()?;
+    fs::write(
+        root.path().join("tsconfig.json"),
+        r#"{"compilerOptions":{"moduleResolution":"bundler","module":"esnext"}}"#,
+    )?;
     let pre = run(
         root.path(),
         &[
@@ -1285,8 +1290,8 @@ fn protected_input_drift_is_stale() -> Result<(), Box<dyn std::error::Error>> {
     assert_status(&pre, 0);
     let gate_id = field(&pre.stdout, "gateId")?;
     fs::write(
-        root.path().join("src/main.ts"),
-        "import { used } from './lib';\nconsole.log(used);\n",
+        root.path().join("tsconfig.json"),
+        r#"{"compilerOptions":{"moduleResolution":"bundler","module":"esnext","baseUrl":"src"}}"#,
     )?;
 
     let post = run(
@@ -1304,6 +1309,43 @@ fn protected_input_drift_is_stale() -> Result<(), Box<dyn std::error::Error>> {
         Some("active")
     );
     assert!(post_json.get("actualWriteSet").is_none());
+    assert_eq!(
+        post_json
+            .pointer("/observationBinding/state")
+            .and_then(Value::as_str),
+        Some("unsealed")
+    );
+    assert_eq!(
+        post_json
+            .pointer("/observationBinding/reason")
+            .and_then(Value::as_str),
+        Some("protected-input-changed")
+    );
+    assert!(
+        post_json
+            .pointer("/observationBinding/observation")
+            .is_none()
+    );
+
+    let shown = run(root.path(), &["gate", "show", &gate_id])?;
+    assert_status(&shown, 0);
+    let shown_json: Value = serde_json::from_str(&shown.stdout)?;
+    assert_eq!(
+        shown_json.pointer("/revisions/1/observationBinding"),
+        post_json.get("observationBinding")
+    );
+    assert!(
+        shown_json
+            .pointer("/revisions/1/analysisInputId")
+            .is_some_and(Value::is_null)
+    );
+    let operation = run(root.path(), &["operation", "show", "op-close"])?;
+    assert_status(&operation, 0);
+    let operation_json: Value = serde_json::from_str(&operation.stdout)?;
+    assert_eq!(
+        operation_json.pointer("/result/observationBinding"),
+        post_json.get("observationBinding")
+    );
     Ok(())
 }
 
@@ -1419,12 +1461,13 @@ fn unsupported_non_source_path_is_queryable_incomplete() -> Result<(), Box<dyn s
 #[test]
 fn planned_semantic_config_write_is_recaptured_and_attributed()
 -> Result<(), Box<dyn std::error::Error>> {
-    let root = fixture()?;
+    let root = profile_reconciliation_fixture()?;
     fs::write(
-        root.path().join("package.json"),
-        "{\"name\":\"app\",\"type\":\"commonjs\"}\n",
+        root.path().join("tsconfig.json"),
+        r#"{"compilerOptions":{"moduleResolution":"node16","module":"node16"}}"#,
     )?;
-    let gate_id = open_gate(root.path(), "op-config-open", "package.json")?;
+    let gate_id = open_gate(root.path(), "op-config-open", "tsconfig.json")?;
+    assert_public_used_findings(root.path(), &gate_id, "0", &["packages/lib/default.ts"])?;
     let opening = run(root.path(), &["gate", "show", &gate_id])?;
     assert_status(&opening, 0);
     let opening_json: Value = serde_json::from_str(&opening.stdout)?;
@@ -1433,10 +1476,39 @@ fn planned_semantic_config_write_is_recaptured_and_attributed()
         .and_then(Value::as_str)
         .ok_or("opening gate omitted its analysis input ID")?
         .to_owned();
+    let model_gate_id = lumin_model::GateId::from_string(gate_id.clone());
+    let persisted_opening = lumin_engine::load_gate(root.path(), &model_gate_id)?;
+    let persisted_baseline = persisted_opening
+        .baseline
+        .as_ref()
+        .ok_or_else(|| std::io::Error::other("opening gate omitted its baseline"))?;
+    let opening_tier = persisted_baseline.snapshot.scan_invocation.clone();
+    let opening_entry_selections = persisted_baseline.snapshot.entry_selections.clone();
+    let opening_config_input = persisted_baseline
+        .snapshot
+        .inputs
+        .iter()
+        .find(|input| input.path.display == "tsconfig.json")
+        .cloned()
+        .ok_or_else(|| std::io::Error::other("baseline omitted tsconfig.json input"))?;
+    let opening_profiles = &persisted_baseline.snapshot.evidence.resolution_profiles;
+    assert_eq!(opening_profiles.len(), 3);
+    assert!(opening_profiles.iter().all(|selected| {
+        selected.profile == lumin_model::ResolutionProfile::Node16
+            && matches!(
+                &selected.source,
+                lumin_model::ResolutionProfileSource::Config { path_display, .. }
+                    if path_display == "tsconfig.json"
+            )
+    }));
+    let opening_profile_sources = opening_profiles
+        .iter()
+        .map(|selected| selected.source_id.clone())
+        .collect::<Vec<_>>();
 
     fs::write(
-        root.path().join("package.json"),
-        "{\"name\":\"app\",\"type\":\"module\"}\n",
+        root.path().join("tsconfig.json"),
+        r#"{"compilerOptions":{"moduleResolution":"bundler","module":"esnext"}}"#,
     )?;
     let post = run(
         root.path(),
@@ -1444,20 +1516,21 @@ fn planned_semantic_config_write_is_recaptured_and_attributed()
     )?;
     assert_status(&post, 0);
     assert_eq!(field(&post.stdout, "decision")?, "allow");
+    assert_public_used_findings(root.path(), &gate_id, "1", &[])?;
     let post_json: Value = serde_json::from_str(&post.stdout)?;
     assert_eq!(
         display_paths(&post_json, "/actualWriteSet/paths")?,
-        vec!["package.json"]
+        vec!["tsconfig.json"]
     );
     assert_alias_group_members(
         &post_json,
         "/actualWriteSet/baselineAliasClosures",
-        &["package.json"],
+        &["tsconfig.json"],
     )?;
     assert_alias_group_members(
         &post_json,
         "/actualWriteSet/currentAliasClosures",
-        &["package.json"],
+        &["tsconfig.json"],
     )?;
 
     let shown = run(root.path(), &["gate", "show", &gate_id])?;
@@ -1465,7 +1538,7 @@ fn planned_semantic_config_write_is_recaptured_and_attributed()
     let shown_json: Value = serde_json::from_str(&shown.stdout)?;
     assert_eq!(
         display_paths(&shown_json, "/revisions/1/actualWriteSet/paths")?,
-        vec!["package.json"]
+        vec!["tsconfig.json"]
     );
     let close_analysis_input_id = shown_json
         .pointer("/revisions/1/analysisInputId")
@@ -1478,6 +1551,72 @@ fn planned_semantic_config_write_is_recaptured_and_attributed()
             .and_then(Value::as_str),
         Some("close")
     );
+    assert_eq!(
+        shown_json
+            .pointer("/revisions/1/observationBinding/state")
+            .and_then(Value::as_str),
+        Some("sealed")
+    );
+
+    let operation = run(root.path(), &["operation", "show", "op-config-close"])?;
+    assert_status(&operation, 0);
+    let operation_json: Value = serde_json::from_str(&operation.stdout)?;
+    assert_eq!(
+        operation_json.pointer("/result/observationBinding"),
+        shown_json.pointer("/revisions/1/observationBinding")
+    );
+
+    let persisted_closed = lumin_engine::load_gate(root.path(), &model_gate_id)?;
+    assert_eq!(
+        persisted_closed.analysis_options.scan_invocation,
+        opening_tier
+    );
+    let persisted_close = persisted_closed
+        .revisions
+        .iter()
+        .find(|revision| revision.revision == 1)
+        .ok_or_else(|| std::io::Error::other("closed gate omitted revision 1"))?;
+    let close_snapshot = persisted_close
+        .snapshot
+        .as_ref()
+        .ok_or_else(|| std::io::Error::other("sealed close omitted its snapshot"))?;
+    assert_eq!(close_snapshot.scan_invocation, opening_tier);
+    assert_eq!(close_snapshot.entry_selections, opening_entry_selections);
+    assert_eq!(
+        close_snapshot.analysis_input_id.as_str(),
+        close_analysis_input_id
+    );
+    let close_config_input = close_snapshot
+        .inputs
+        .iter()
+        .find(|input| input.path.display == "tsconfig.json")
+        .ok_or_else(|| std::io::Error::other("sealed close omitted tsconfig.json input"))?;
+    assert_ne!(close_config_input, &opening_config_input);
+    assert_ne!(
+        close_config_input.payload_sha256,
+        opening_config_input.payload_sha256
+    );
+    let close_profiles = &close_snapshot.evidence.resolution_profiles;
+    assert_eq!(close_profiles.len(), 3);
+    assert_eq!(
+        close_profiles
+            .iter()
+            .map(|selected| selected.source_id.clone())
+            .collect::<Vec<_>>(),
+        opening_profile_sources
+    );
+    assert!(close_profiles.iter().all(|selected| {
+        selected.profile == lumin_model::ResolutionProfile::Bundler
+            && matches!(
+                &selected.source,
+                lumin_model::ResolutionProfileSource::Config { path_display, .. }
+                    if path_display == "tsconfig.json"
+            )
+    }));
+    assert!(lumin_engine::gate_observation_binding_matches_owner(
+        &persisted_closed,
+        persisted_close
+    )?);
     Ok(())
 }
 
@@ -1971,6 +2110,63 @@ fn fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
         "export const used = 1;\n",
         "import { used } from './lib'; console.log(used);\n",
     )
+}
+
+fn profile_reconciliation_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+    let root = tempfile::tempdir()?;
+    fs::create_dir_all(root.path().join("src"))?;
+    fs::create_dir_all(root.path().join("packages/lib"))?;
+    fs::write(
+        root.path().join("package.json"),
+        r#"{"name":"app","private":true,"type":"module","workspaces":["packages/*"]}"#,
+    )?;
+    fs::write(
+        root.path().join("packages/lib/package.json"),
+        r#"{"name":"@acme/lib","private":true,"exports":{"node":"./node.js","default":"./default.js"}}"#,
+    )?;
+    fs::write(
+        root.path().join("packages/lib/node.ts"),
+        "console.log('node branch');\n",
+    )?;
+    fs::write(
+        root.path().join("packages/lib/default.ts"),
+        "export const used = 1;\n",
+    )?;
+    fs::write(
+        root.path().join("src/main.ts"),
+        "import { used } from '@acme/lib'; console.log(used);\n",
+    )?;
+    Ok(root)
+}
+
+fn assert_public_used_findings(
+    root: &Path,
+    gate_id: &str,
+    revision: &str,
+    expected_paths: &[&str],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let response = run(root, &["gate", "findings", gate_id, "--revision", revision])?;
+    assert_status(&response, 0);
+    let response: Value = serde_json::from_str(&response.stdout)?;
+    let used_paths = response
+        .get("items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| std::io::Error::other("gate findings items are missing"))?
+        .iter()
+        .filter(|finding| finding.get("exportedName").and_then(Value::as_str) == Some("used"))
+        .filter_map(|finding| {
+            finding
+                .pointer("/path/display")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .collect::<BTreeSet<_>>();
+    let expected_paths = expected_paths
+        .iter()
+        .map(|path| (*path).to_owned())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(used_paths, expected_paths, "stdout={}", response);
+    Ok(())
 }
 
 fn dead_finding_fixture() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
