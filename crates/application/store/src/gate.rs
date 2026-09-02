@@ -400,6 +400,8 @@ impl RepositoryStore {
                     opening_transition_sequence: baseline.transition_sequence,
                 });
             }
+            #[cfg(feature = "collection-ordering-test-perturb")]
+            crate::perturb_collection_order(&mut active_items, "active-gates");
             // Sort: baseline.transition_sequence ASC then gate_id ASC
             active_items.sort_by(|a, b| {
                 a.opening_transition_sequence

@@ -349,6 +349,14 @@ pub fn run_file_findings_response(
 pub const ACTIVE_GATES_PAGE_SIZE: usize = 100;
 const ACTIVE_GATES_CURSOR_SCHEMA: &str = "lumin-active-gates-cursor.v1";
 
+pub fn active_gates_page_size() -> usize {
+    #[cfg(feature = "collection-ordering-test-perturb")]
+    if std::env::var("LUMIN_TEST_COLLECTION_ORDERING_PAGE_SIZE").is_ok_and(|value| value == "2") {
+        return 2;
+    }
+    ACTIVE_GATES_PAGE_SIZE
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ActiveGatesCursorDto {
@@ -402,7 +410,7 @@ pub fn decode_active_gates_cursor(value: &str) -> Result<DecodedActiveGatesCurso
     if cursor.ordering != lumin_evidence::ACTIVE_GATES_ORDERING_ID {
         return Err(ProtocolError::CursorScopeMismatch);
     }
-    if cursor.page_size != ACTIVE_GATES_PAGE_SIZE {
+    if cursor.page_size != active_gates_page_size() {
         return Err(ProtocolError::CursorScopeMismatch);
     }
     Ok(DecodedActiveGatesCursor {
@@ -431,7 +439,7 @@ pub fn active_gates_response(
             repository_id: repository_id.clone(),
             revision,
             ordering: lumin_evidence::ACTIVE_GATES_ORDERING_ID.to_owned(),
-            page_size: ACTIVE_GATES_PAGE_SIZE,
+            page_size: active_gates_page_size(),
             opening_sequence: last.opening_transition_sequence,
             gate_id: last.gate_id.clone(),
         })?)

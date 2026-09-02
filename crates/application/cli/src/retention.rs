@@ -45,7 +45,11 @@ fn list(root: &Path, arguments: &mut Arguments) -> Result<CommandOutput, CliErro
             run_id: cursor.last_run.run_id,
             sequence: cursor.last_run.sequence,
         });
-    let catalog = lumin_engine::list_runs(root, cursor.as_ref(), lumin_protocol::RUNS_PAGE_SIZE)?;
+    let catalog = lumin_engine::list_runs(
+        root,
+        cursor.as_ref(),
+        lumin_protocol::run_catalog_page_size(),
+    )?;
     let runs = catalog
         .runs
         .into_iter()

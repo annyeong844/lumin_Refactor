@@ -39,6 +39,10 @@ static INV_BNQ: &[CorpusInvocation] = &[
     inv!("bounded_nested_query", "run_findings_pages_102_as_100_plus_2"),
 ];
 #[rustfmt::skip]
+static INV_COLLECTION_ORDERING: &[CorpusInvocation] = &[
+    inv!("collection_ordering", "perturbed_public_collections_traverse_once_in_canonical_order", CollectionOrderingPerturb),
+];
+#[rustfmt::skip]
 static INV_CAP: &[CorpusInvocation] = &[
     inv!("capabilities_pagination", "binary_capabilities_pagination_without_state_directory"),
     inv!("capabilities_pagination", "binary_cursor_works_across_directories"),
@@ -554,7 +558,8 @@ pub static REGISTRY: &[RegistryRow] = &[
     ]),
     row_sd!("snapshot-and-latest", &[inv!("publication", "first_failed_attempt_remains_visible_without_a_completed_run")]),
     row_sd!("bounded-nested-query", INV_BNQ),
-    row_sd!("collection-ordering"),
+    // This fixture emits eight semantic captures per determinism variant.
+    row_sd_determinism_weight!("collection-ordering", INV_COLLECTION_ORDERING, 8),
     row_sd!("capabilities-pagination", INV_CAP),
     row_sd!("request-path-escape", &[
         inv!("request_path_escape", "request_path_escape_distinguishes_malformed_stale_and_blocked_containment"),

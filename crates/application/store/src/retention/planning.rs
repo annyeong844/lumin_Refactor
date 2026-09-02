@@ -66,6 +66,11 @@ pub(super) fn prepare(
             tombstone_identity: None,
             physical_reclamation_pending: false,
         };
+        #[cfg(feature = "collection-ordering-test-perturb")]
+        {
+            crate::perturb_collection_order(&mut record.items, "retention-plan-items");
+            crate::perturb_collection_order(&mut record.exclusions, "retention-plan-items");
+        }
         record.items.sort();
         record.exclusions.sort();
         record.content_identity = canonical_content_identity(&record)?;

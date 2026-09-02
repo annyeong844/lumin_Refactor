@@ -8,6 +8,10 @@ publish.workspace = true
 
 [features]
 cache-cleanup-test-fault = ["lumin-store/cache-cleanup-test-fault"]
+collection-ordering-test-perturb = [
+    "lumin-dead/collection-ordering-test-perturb",
+    "lumin-store/collection-ordering-test-perturb",
+]
 gate-test-fault = []
 lifecycle-migration-test-fault = ["lumin-store/lifecycle-migration-test-fault"]
 namespace-test-crash = ["lumin-store/namespace-test-crash"]

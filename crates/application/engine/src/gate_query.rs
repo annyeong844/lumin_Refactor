@@ -16,6 +16,14 @@ const QUERY_PAGE_SIZE: usize = 100;
 const GATE_FINDINGS_PATH: &str = "gate/findings";
 const RUN_FINDINGS_PATH: &str = "run/findings";
 
+fn query_page_size() -> usize {
+    #[cfg(feature = "collection-ordering-test-perturb")]
+    if std::env::var("LUMIN_TEST_COLLECTION_ORDERING_PAGE_SIZE").is_ok_and(|value| value == "2") {
+        return 2;
+    }
+    QUERY_PAGE_SIZE
+}
+
 #[derive(Debug, Error)]
 pub enum EvidenceQueryError {
     #[error("cursor scope, filters, ordering, or page policy do not match this query")]
@@ -70,7 +78,7 @@ pub fn query_run_findings(
         finding_id: None,
         collection_path: RUN_FINDINGS_PATH.to_owned(),
         ordering: CollectionOrderingId::findings(),
-        page_size: QUERY_PAGE_SIZE,
+        page_size: query_page_size(),
         filters: BTreeMap::new(),
         anchor: None,
     };
@@ -113,7 +121,7 @@ pub fn query_run_explain(
             finding_id: Some(finding.finding_id.clone()),
             collection_path: evidence_path,
             ordering: CollectionOrderingId::evidence(),
-            page_size: QUERY_PAGE_SIZE,
+            page_size: query_page_size(),
             filters: BTreeMap::new(),
             anchor: None,
         },
@@ -133,7 +141,7 @@ pub fn query_run_explain(
             finding_id: Some(finding.finding_id.clone()),
             collection_path: relations_path,
             ordering: CollectionOrderingId::relations(),
-            page_size: QUERY_PAGE_SIZE,
+            page_size: query_page_size(),
             filters: BTreeMap::new(),
             anchor: None,
         },
@@ -175,7 +183,7 @@ pub fn query_run_file_findings(
         finding_id: None,
         collection_path,
         ordering: CollectionOrderingId::file_findings(),
-        page_size: QUERY_PAGE_SIZE,
+        page_size: query_page_size(),
         filters: filters.clone(),
         anchor: None,
     };
@@ -300,7 +308,7 @@ pub fn query_run_relations(
         finding_id: Some(finding.finding_id.clone()),
         collection_path: relations_path,
         ordering: CollectionOrderingId::relations(),
-        page_size: QUERY_PAGE_SIZE,
+        page_size: query_page_size(),
         filters: BTreeMap::new(),
         anchor: None,
     };
@@ -432,7 +440,7 @@ fn expected_query(
         finding_id,
         collection_path,
         ordering,
-        page_size: QUERY_PAGE_SIZE,
+        page_size: query_page_size(),
         filters: BTreeMap::new(),
         anchor: None,
     }
