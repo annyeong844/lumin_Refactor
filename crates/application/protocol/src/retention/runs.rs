@@ -7,6 +7,14 @@ use crate::cursor::{decode_cursor_payload, encode_cursor_payload};
 pub const RUNS_ORDERING: &str = "runs.v1";
 pub const RUNS_PAGE_SIZE: usize = 100;
 
+pub fn run_catalog_page_size() -> usize {
+    #[cfg(feature = "collection-ordering-test-perturb")]
+    if std::env::var("LUMIN_TEST_COLLECTION_ORDERING_PAGE_SIZE").is_ok_and(|value| value == "2") {
+        return 2;
+    }
+    RUNS_PAGE_SIZE
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunCatalogItemDto {
@@ -107,7 +115,7 @@ fn encode_cursor(
         repository_id,
         revision,
         ordering: RUNS_ORDERING.to_owned(),
-        page_size: RUNS_PAGE_SIZE,
+        page_size: run_catalog_page_size(),
         last_run: last_run.clone(),
     };
     encode_cursor_payload(&cursor)
@@ -117,7 +125,7 @@ fn decode_cursor(value: &str) -> Result<RunCatalogCursorDto, ProtocolError> {
     let cursor: RunCatalogCursorDto = decode_cursor_payload(value)?;
     if cursor.schema_version != "lumin-runs-cursor.v3"
         || cursor.ordering != RUNS_ORDERING
-        || cursor.page_size != RUNS_PAGE_SIZE
+        || cursor.page_size != run_catalog_page_size()
     {
         return Err(ProtocolError::CursorScopeMismatch);
     }

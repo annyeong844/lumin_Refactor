@@ -18,9 +18,18 @@ use crate::{
 pub const RETENTION_PLAN_ITEMS_ORDERING: &str = "retention-plan-items.v1";
 pub const RETENTION_PLAN_PAGE_SIZE: usize = 100;
 
+fn retention_plan_page_size() -> usize {
+    #[cfg(feature = "collection-ordering-test-perturb")]
+    if std::env::var("LUMIN_TEST_COLLECTION_ORDERING_PAGE_SIZE").is_ok_and(|value| value == "2") {
+        return 2;
+    }
+    RETENTION_PLAN_PAGE_SIZE
+}
+
 pub use runs::{
     DecodedRunCatalogCursor, RUNS_ORDERING, RUNS_PAGE_SIZE, RunCatalogCollectionDto,
-    RunCatalogItemDto, decode_run_catalog_cursor, run_catalog_item, run_catalog_response,
+    RunCatalogItemDto, decode_run_catalog_cursor, run_catalog_item, run_catalog_page_size,
+    run_catalog_response,
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -182,7 +191,7 @@ pub fn retention_plan_response(
         }
         None => 0,
     };
-    let end = start.saturating_add(RETENTION_PLAN_PAGE_SIZE).min(total);
+    let end = start.saturating_add(retention_plan_page_size()).min(total);
     let item_start = start.min(item_count);
     let item_end = end.min(item_count);
     let items = plan.items[item_start..item_end].to_vec();
@@ -287,7 +296,7 @@ fn encode_cursor(
         plan_id: plan.plan_id.clone(),
         content_identity: plan.content_identity.clone(),
         ordering: RETENTION_PLAN_ITEMS_ORDERING.to_owned(),
-        page_size: RETENTION_PLAN_PAGE_SIZE,
+        page_size: retention_plan_page_size(),
         anchor,
     };
     encode_cursor_payload(&cursor)
@@ -296,7 +305,7 @@ fn encode_cursor(
 fn decode_cursor(value: &str) -> Result<RetentionCursorDto, ProtocolError> {
     let cursor: RetentionCursorDto = decode_cursor_payload(value)?;
     if cursor.schema_version != "lumin-retention-cursor.v3"
-        || cursor.page_size != RETENTION_PLAN_PAGE_SIZE
+        || cursor.page_size != retention_plan_page_size()
     {
         return Err(ProtocolError::CursorScopeMismatch);
     }

@@ -40,6 +40,29 @@ pub(crate) const POINTERS: TableDefinition<&str, &[u8]> = TableDefinition::new("
 pub(crate) const EVIDENCE: TableDefinition<&str, &[u8]> = TableDefinition::new("evidence");
 const MAX_RUN_CATALOG_PAGE_SIZE: usize = 100;
 
+#[cfg(feature = "collection-ordering-test-perturb")]
+const COLLECTION_ORDERING_PERTURB_ENV: &str = "LUMIN_TEST_COLLECTION_ORDERING_PERTURB";
+#[cfg(feature = "collection-ordering-test-perturb")]
+const COLLECTION_ORDERING_TRACE_ENV: &str = "LUMIN_TEST_COLLECTION_ORDERING_TRACE";
+
+#[cfg(feature = "collection-ordering-test-perturb")]
+pub(crate) fn perturb_collection_order<T>(items: &mut [T], collection: &str) {
+    if items.len() < 2
+        || !std::env::var(COLLECTION_ORDERING_PERTURB_ENV).is_ok_and(|value| value == "reverse")
+    {
+        return;
+    }
+    items.reverse();
+    if let Some(trace_root) = std::env::var_os(COLLECTION_ORDERING_TRACE_ENV) {
+        // The public fixture requires the exact marker set, so a failed write
+        // still fails the test without adding a panic path to store code.
+        let _ = std::fs::write(
+            std::path::PathBuf::from(trace_root).join(collection),
+            b"reversed\n",
+        );
+    }
+}
+
 pub fn evidence_payload_sha256(evidence: &RunEvidence) -> Result<String, StoreError> {
     let encoded = serde_json::to_vec(evidence).map_err(serialization_error)?;
     let mut framed = Vec::new();
@@ -571,6 +594,8 @@ fn read_run_catalog_page(
         }
         visible.push(record);
     }
+    #[cfg(feature = "collection-ordering-test-perturb")]
+    perturb_collection_order(&mut visible, "runs");
     // Sort explicitly: sequence DESC then run_id ASC
     visible.sort_by(|a, b| {
         b.sequence

@@ -30,7 +30,7 @@ pub(super) fn gate_list(root: &Path, arguments: &mut Arguments) -> Result<Comman
     let snapshot = lumin_engine::list_active_gates(
         root,
         store_cursor.as_ref(),
-        lumin_protocol::ACTIVE_GATES_PAGE_SIZE,
+        lumin_protocol::active_gates_page_size(),
     )?;
     let items: Vec<lumin_protocol::ActiveGateItemDto> = snapshot
         .items

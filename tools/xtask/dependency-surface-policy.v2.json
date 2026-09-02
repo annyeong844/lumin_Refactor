@@ -7,6 +7,10 @@
       "class": "production",
       "path": "crates/application/cli",
       "features": {
+        "collection-ordering-test-perturb": [
+          "lumin-engine/collection-ordering-test-perturb",
+          "lumin-protocol/collection-ordering-test-perturb"
+        ],
         "lifecycle-test-fault": [
           "lumin-engine/cache-cleanup-test-fault",
           "lumin-engine/lifecycle-migration-test-fault",
@@ -165,7 +169,9 @@
       "name": "lumin-dead",
       "class": "production",
       "path": "crates/analyses/dead-code",
-      "features": {},
+      "features": {
+        "collection-ordering-test-perturb": []
+      },
       "dependencies": [
         {
           "origin": "member-authored",
@@ -224,6 +230,10 @@
       "features": {
         "cache-cleanup-test-fault": [
           "lumin-store/cache-cleanup-test-fault"
+        ],
+        "collection-ordering-test-perturb": [
+          "lumin-dead/collection-ordering-test-perturb",
+          "lumin-store/collection-ordering-test-perturb"
         ],
         "gate-test-fault": [],
         "lifecycle-migration-test-fault": [
@@ -908,7 +918,9 @@
       "name": "lumin-protocol",
       "class": "production",
       "path": "crates/application/protocol",
-      "features": {},
+      "features": {
+        "collection-ordering-test-perturb": []
+      },
       "dependencies": [
         {
           "origin": "workspace-inherited",
@@ -1124,6 +1136,7 @@
       "path": "crates/application/store",
       "features": {
         "cache-cleanup-test-fault": [],
+        "collection-ordering-test-perturb": [],
         "lifecycle-migration-test-fault": [],
         "namespace-test-crash": [],
         "publication-test-crash": [],

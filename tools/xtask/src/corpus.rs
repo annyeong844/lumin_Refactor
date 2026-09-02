@@ -28,6 +28,7 @@ const MAX_ROW_SHARDS: usize = 16;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FeatureSet {
     None,
+    CollectionOrderingPerturb,
     LifecycleFault,
     LifecycleCrash,
     PublicationCrash,
@@ -39,6 +40,7 @@ impl FeatureSet {
     pub fn cargo_features(self) -> &'static [&'static str] {
         match self {
             Self::None => &[],
+            Self::CollectionOrderingPerturb => &["collection-ordering-test-perturb"],
             Self::LifecycleFault | Self::LifecycleCrash => &["lifecycle-test-fault"],
             Self::PublicationCrash => &["publication-test-crash"],
             Self::RetentionCrash => &["retention-test-crash"],
@@ -53,6 +55,7 @@ impl FeatureSet {
     pub fn dir_key(self) -> &'static str {
         match self {
             Self::None => "none",
+            Self::CollectionOrderingPerturb => "cop",
             Self::LifecycleFault => "lf",
             Self::LifecycleCrash => "lc",
             Self::PublicationCrash => "pc",
@@ -335,8 +338,8 @@ pub fn validate_registry() -> Result<(), String> {
                             inv.target, inv.filter, row.id, mode
                         ));
                     }
-                    // Feature consistency: standard allows None and LifecycleFault only.
-                    // StoreCrash requires crash features only.
+                    // Standard accepts non-crash test seams; StoreCrash accepts only
+                    // crash features (or None for a public no-hook fixture).
                     match mode {
                         CorpusMode::Standard => {
                             if inv.features.is_crash() {

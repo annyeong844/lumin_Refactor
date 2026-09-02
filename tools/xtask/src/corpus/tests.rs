@@ -216,8 +216,8 @@ fn ci_row_shards_balance_declared_work_deterministically() {
             "unbalanced {mode} invocation loads: {loads:?}",
         );
         let expected = match mode {
-            CorpusMode::Standard => vec![50, 50, 50, 50],
-            CorpusMode::Determinism => vec![64, 33, 33, 33, 33, 33, 33, 33],
+            CorpusMode::Standard => vec![51, 50, 50, 50],
+            CorpusMode::Determinism => vec![64, 35, 34, 34, 34, 34, 34, 34],
             CorpusMode::StoreCrash => unreachable!("CI does not shard store-crash rows"),
         };
         assert_eq!(loads, expected, "{mode} shard assignment changed");
@@ -413,7 +413,7 @@ fn every_mapped_standard_row_has_a_paired_determinism_invocation() {
         .iter()
         .filter(|row| row.is_mapped(CorpusMode::Determinism))
         .count();
-    assert_eq!(standard, 84);
+    assert_eq!(standard, 85);
     assert_eq!(determinism, standard);
 }
 
@@ -889,17 +889,28 @@ fn state_namespace_initialization_uses_the_reviewed_public_invocations() -> Resu
 }
 
 #[test]
-fn collection_ordering_remains_unmapped_without_perturbed_traversal_fixture() {
-    let mapped_modes = REGISTRY
+fn collection_ordering_uses_the_reviewed_perturbed_public_fixture() -> Result<(), String> {
+    let row = REGISTRY
         .iter()
         .find(|row| row.id == "collection-ordering")
-        .map(|row| {
-            (
-                row.is_mapped(CorpusMode::Standard),
-                row.is_mapped(CorpusMode::Determinism),
-            )
-        });
-    assert_eq!(mapped_modes, Some((false, false)));
+        .ok_or_else(|| "collection-ordering row is missing".to_owned())?;
+    let expected = vec![(
+        "collection_ordering",
+        "perturbed_public_collections_traverse_once_in_canonical_order",
+        FeatureSet::CollectionOrderingPerturb,
+    )];
+    for mode in [CorpusMode::Standard, CorpusMode::Determinism] {
+        let actual = row
+            .mode_invocations(mode)
+            .ok_or_else(|| format!("collection-ordering is not {mode}-applicable"))?
+            .iter()
+            .map(|invocation| (invocation.target, invocation.filter, invocation.features))
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected, "{mode} invocation changed");
+    }
+    assert!(row.store_crash.is_none());
+    assert_eq!(row.determinism_shard_weight, 8);
+    Ok(())
 }
 
 #[test]
@@ -1018,6 +1029,10 @@ fn marker_empty_line() -> Result<(), String> {
 #[test]
 fn feat_flags() {
     assert!(FeatureSet::None.cargo_features().is_empty());
+    assert_eq!(
+        FeatureSet::CollectionOrderingPerturb.cargo_features(),
+        &["collection-ordering-test-perturb"]
+    );
     assert_eq!(
         FeatureSet::LifecycleAndPublicationCrash.cargo_features(),
         &["lifecycle-test-fault", "publication-test-crash"]

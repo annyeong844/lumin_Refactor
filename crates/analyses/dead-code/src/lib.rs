@@ -11,6 +11,29 @@ use lumin_model::{
     ReviewOnlyReason, SemanticConfigSnapshot, SourceSnapshot, UnresolvedTargetScope,
 };
 
+#[cfg(feature = "collection-ordering-test-perturb")]
+const COLLECTION_ORDERING_PERTURB_ENV: &str = "LUMIN_TEST_COLLECTION_ORDERING_PERTURB";
+#[cfg(feature = "collection-ordering-test-perturb")]
+const COLLECTION_ORDERING_TRACE_ENV: &str = "LUMIN_TEST_COLLECTION_ORDERING_TRACE";
+
+#[cfg(feature = "collection-ordering-test-perturb")]
+fn perturb_collection_order<T>(items: &mut [T], collection: &str) {
+    if items.len() < 2
+        || !std::env::var(COLLECTION_ORDERING_PERTURB_ENV).is_ok_and(|value| value == "reverse")
+    {
+        return;
+    }
+    items.reverse();
+    if let Some(trace_root) = std::env::var_os(COLLECTION_ORDERING_TRACE_ENV) {
+        // The public fixture requires the exact marker set, so a failed write
+        // still fails the test without adding a panic path to this owner API.
+        let _ = std::fs::write(
+            std::path::PathBuf::from(trace_root).join(collection),
+            b"reversed\n",
+        );
+    }
+}
+
 pub fn analyze(
     sources: &[SourceSnapshot],
     graph: &SymbolGraph,
@@ -169,6 +192,14 @@ pub fn analyze(
         }
     }
 
+    #[cfg(feature = "collection-ordering-test-perturb")]
+    {
+        for finding in &mut findings {
+            perturb_collection_order(&mut finding.evidence, "evidence");
+            perturb_collection_order(&mut finding.relations, "relations");
+        }
+        perturb_collection_order(&mut findings, "findings");
+    }
     sort_findings(&mut findings);
     findings
 }
