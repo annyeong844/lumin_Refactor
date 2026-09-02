@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
+use lumin_model::{PhysicalFileIdentity, RepoPath};
 use serde_json::Value;
 
 mod support;
@@ -10,7 +11,7 @@ use support::{ProcessResult, assert_status, field, run};
 
 #[derive(Debug, Eq, PartialEq)]
 struct NamespaceSnapshot {
-    lifecycle_store_identity: String,
+    lifecycle_store_identity: PhysicalFileIdentity,
     lifecycle_store_size: u64,
     other_entries: BTreeMap<String, Option<Vec<u8>>>,
 }
@@ -146,10 +147,14 @@ fn assert_integrity_hard_stop(result: &ProcessResult, expected_diagnostic: &str)
 fn namespace_snapshot(root: &Path) -> Result<NamespaceSnapshot, Box<dyn std::error::Error>> {
     let state = root.join(".lumin");
     let lifecycle_store = state.join("lifecycle.store");
+    let lifecycle_store_path = RepoPath::from_portable(".lumin/lifecycle.store")?;
     let mut other_entries = BTreeMap::new();
     snapshot_directory(&state, &state, &mut other_entries)?;
     Ok(NamespaceSnapshot {
-        lifecycle_store_identity: physical_identity(&lifecycle_store)?,
+        lifecycle_store_identity: lumin_engine::path_physical_identity_for_test(
+            root,
+            &lifecycle_store_path,
+        )?,
         lifecycle_store_size: fs::metadata(lifecycle_store)?.len(),
         other_entries,
     })
@@ -236,20 +241,4 @@ fn snapshot_directory(
         }
     }
     Ok(())
-}
-
-#[cfg(unix)]
-fn physical_identity(path: &Path) -> Result<String, std::io::Error> {
-    use std::os::unix::fs::MetadataExt;
-
-    let metadata = fs::metadata(path)?;
-    Ok(format!("{}:{}", metadata.dev(), metadata.ino()))
-}
-
-#[cfg(windows)]
-fn physical_identity(path: &Path) -> Result<String, std::io::Error> {
-    use std::os::windows::fs::MetadataExt;
-
-    let metadata = fs::metadata(path)?;
-    Ok(format!("creation-time:{}", metadata.creation_time()))
 }
