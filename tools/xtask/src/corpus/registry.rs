@@ -43,6 +43,10 @@ static INV_COLLECTION_ORDERING: &[CorpusInvocation] = &[
     inv!("collection_ordering", "perturbed_public_collections_traverse_once_in_canonical_order", CollectionOrderingPerturb),
 ];
 #[rustfmt::skip]
+static INV_CORRUPT_STORE: &[CorpusInvocation] = &[
+    inv!("corrupt_store", "corrupt_canonical_evidence_hard_stops_without_fallback_or_empty_evidence"),
+];
+#[rustfmt::skip]
 static INV_CAP: &[CorpusInvocation] = &[
     inv!("capabilities_pagination", "binary_capabilities_pagination_without_state_directory"),
     inv!("capabilities_pagination", "binary_cursor_works_across_directories"),
@@ -564,7 +568,7 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_sd!("request-path-escape", &[
         inv!("request_path_escape", "request_path_escape_distinguishes_malformed_stale_and_blocked_containment"),
     ]),
-    row_sd!("corrupt-store"),
+    row_sd!("corrupt-store", INV_CORRUPT_STORE),
     row_c!("crash-publication", INV_CRASH_PUB),
     row_c!("concurrent-latest-publication", INV_CONC_PUB),
     row_c!("publication-retention-race", INV_PUB_RET_RACE),

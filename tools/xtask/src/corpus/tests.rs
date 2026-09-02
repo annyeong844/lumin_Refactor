@@ -130,8 +130,12 @@ fn mapped_only_selects_every_and_only_mapped_row() {
 }
 
 #[test]
-fn all_applicable_selection_retains_unmapped_rows() {
-    for mode in [CorpusMode::Standard, CorpusMode::Determinism] {
+fn all_applicable_selection_retains_every_applicable_row() {
+    for mode in [
+        CorpusMode::Standard,
+        CorpusMode::Determinism,
+        CorpusMode::StoreCrash,
+    ] {
         let args = CorpusArgs {
             mode,
             format: OutputFormat::Human,
@@ -147,7 +151,11 @@ fn all_applicable_selection_retains_unmapped_rows() {
             .filter(|row| row.is_applicable(mode))
             .count();
         assert_eq!(selected.len(), expected);
-        assert!(selected.iter().any(|row| !row.is_mapped(mode)));
+        if mode == CorpusMode::StoreCrash {
+            assert!(selected.iter().any(|row| !row.is_mapped(mode)));
+        } else {
+            assert!(selected.iter().all(|row| row.is_mapped(mode)));
+        }
     }
 }
 
@@ -216,8 +224,8 @@ fn ci_row_shards_balance_declared_work_deterministically() {
             "unbalanced {mode} invocation loads: {loads:?}",
         );
         let expected = match mode {
-            CorpusMode::Standard => vec![51, 50, 50, 50],
-            CorpusMode::Determinism => vec![64, 35, 34, 34, 34, 34, 34, 34],
+            CorpusMode::Standard => vec![51, 51, 50, 50],
+            CorpusMode::Determinism => vec![64, 35, 35, 34, 34, 34, 34, 34],
             CorpusMode::StoreCrash => unreachable!("CI does not shard store-crash rows"),
         };
         assert_eq!(loads, expected, "{mode} shard assignment changed");
@@ -393,14 +401,14 @@ fn determinism_has_applicable_rows() {
 }
 
 #[test]
-fn determinism_has_unmapped_rows() {
-    let unmapped = REGISTRY
-        .iter()
-        .filter(|r| {
-            r.is_applicable(CorpusMode::Determinism) && !r.is_mapped(CorpusMode::Determinism)
-        })
-        .count();
-    assert!(unmapped > 0, "determinism should have unmapped rows, got 0");
+fn standard_and_determinism_have_no_unmapped_rows() {
+    for mode in [CorpusMode::Standard, CorpusMode::Determinism] {
+        let unmapped = REGISTRY
+            .iter()
+            .filter(|row| row.is_applicable(mode) && !row.is_mapped(mode))
+            .count();
+        assert_eq!(unmapped, 0, "{mode} still has unmapped rows");
+    }
 }
 
 #[test]
@@ -413,7 +421,7 @@ fn every_mapped_standard_row_has_a_paired_determinism_invocation() {
         .iter()
         .filter(|row| row.is_mapped(CorpusMode::Determinism))
         .count();
-    assert_eq!(standard, 85);
+    assert_eq!(standard, 86);
     assert_eq!(determinism, standard);
 }
 
@@ -910,6 +918,30 @@ fn collection_ordering_uses_the_reviewed_perturbed_public_fixture() -> Result<()
     }
     assert!(row.store_crash.is_none());
     assert_eq!(row.determinism_shard_weight, 8);
+    Ok(())
+}
+
+#[test]
+fn corrupt_store_uses_the_reviewed_public_hard_stop_fixture() -> Result<(), String> {
+    let row = REGISTRY
+        .iter()
+        .find(|row| row.id == "corrupt-store")
+        .ok_or_else(|| "corrupt-store row is missing".to_owned())?;
+    let expected = vec![(
+        "corrupt_store",
+        "corrupt_canonical_evidence_hard_stops_without_fallback_or_empty_evidence",
+        FeatureSet::None,
+    )];
+    for mode in [CorpusMode::Standard, CorpusMode::Determinism] {
+        let actual = row
+            .mode_invocations(mode)
+            .ok_or_else(|| format!("corrupt-store is not {mode}-applicable"))?
+            .iter()
+            .map(|invocation| (invocation.target, invocation.filter, invocation.features))
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected, "{mode} invocation changed");
+    }
+    assert!(row.store_crash.is_none());
     Ok(())
 }
 

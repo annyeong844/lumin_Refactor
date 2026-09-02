@@ -45,10 +45,10 @@ These are execution-matrix counts, not a percentage estimate of product code.
 
 | Lane | Applicable | Mapped | Remaining | Verified aggregate |
 | --- | ---: | ---: | ---: | --- |
-| Standard | 86 | 85 | 1 | Focused `collection-ordering`: 1 passed, 0 failed; `corpus::tests::mode_counts`: 85 mapped, 1 unmapped. |
-| Determinism | 86 | 85 | 1 | The same focused row passed with 8 semantic captures; `corpus::tests::mode_counts`: 85 mapped, 1 unmapped. |
+| Standard | 86 | 86 | 0 | Focused `corrupt-store`: 1 passed, 0 failed; `corpus::tests::mode_counts`: 86 mapped, 0 unmapped. |
+| Determinism | 86 | 86 | 0 | The same focused row passed with 2 semantic captures; `corpus::tests::mode_counts`: 86 mapped, 0 unmapped. |
 | Store crash | 11 | 9 | 2 | Focused state-replacement rows passed through their public fault targets; `corpus::tests::mode_counts`: 9 mapped, 2 unmapped. |
-| **Total execution obligations** | **183** | **179** | **4** | This total deliberately counts each required lane execution. |
+| **Total execution obligations** | **183** | **181** | **2** | This total deliberately counts each required lane execution. |
 
 Known non-corpus exit gaps:
 
@@ -127,14 +127,14 @@ cannot trail the standard count.
 
 Owner route: SLICE-001 Section 9 and AC 1-15, 17, 19-23, 26-29, 32, and 37.
 
-- [ ] Close the remaining inventory, native-path, configuration, and resolution
+- [x] Close the remaining inventory, native-path, configuration, and resolution
   rows first.
-- [ ] Close parsing, SFC, graph, finding, and uncertainty rows on that foundation.
-- [ ] Close cache, query, gate, concurrency, lifecycle, publication, retention,
+- [x] Close parsing, SFC, graph, finding, and uncertainty rows on that foundation.
+- [x] Close cache, query, gate, concurrency, lifecycle, publication, retention,
   and migration rows only after their input identities are final.
-- [ ] For every row, prove authored truth through the packaged public binary and
+- [x] For every row, prove authored truth through the packaged public binary and
   its exact marker; do not count private tests as corpus completion.
-- [ ] Reach standard `86/86` and determinism `86/86`.
+- [x] Reach standard `86/86` and determinism `86/86`.
 
 Exit: every applicable standard and determinism row passes exhaustively with no
 unmapped row or silent fallback.
