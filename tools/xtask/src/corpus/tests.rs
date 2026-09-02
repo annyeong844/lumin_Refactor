@@ -216,8 +216,8 @@ fn ci_row_shards_balance_declared_work_deterministically() {
             "unbalanced {mode} invocation loads: {loads:?}",
         );
         let expected = match mode {
-            CorpusMode::Standard => vec![50, 50, 50, 49],
-            CorpusMode::Determinism => vec![64, 32, 32, 32, 32, 32, 32, 32],
+            CorpusMode::Standard => vec![50, 50, 50, 50],
+            CorpusMode::Determinism => vec![64, 33, 33, 33, 33, 33, 33, 33],
             CorpusMode::StoreCrash => unreachable!("CI does not shard store-crash rows"),
         };
         assert_eq!(loads, expected, "{mode} shard assignment changed");
@@ -413,7 +413,7 @@ fn every_mapped_standard_row_has_a_paired_determinism_invocation() {
         .iter()
         .filter(|row| row.is_mapped(CorpusMode::Determinism))
         .count();
-    assert_eq!(standard, 83);
+    assert_eq!(standard, 84);
     assert_eq!(determinism, standard);
 }
 
@@ -546,6 +546,31 @@ fn gate_analysis_input_row_uses_the_reviewed_public_invocations() -> Result<(), 
         );
     }
     assert_eq!(row.determinism_shard_weight, 15);
+    Ok(())
+}
+
+#[test]
+fn gate_immutable_opening_delta_uses_the_reviewed_public_invocation() -> Result<(), String> {
+    let row = REGISTRY
+        .iter()
+        .find(|row| row.id == "gate-immutable-opening-delta")
+        .ok_or_else(|| "gate-immutable-opening-delta row is missing".to_owned())?;
+    let expected = vec![(
+        "write_gate",
+        "immutable_opening_delta::immutable_opening_delta_survives_repeated_failed_and_sealed_stale_closes",
+        FeatureSet::None,
+    )];
+    for invocations in [row.standard, row.determinism] {
+        assert_eq!(
+            invocations
+                .unwrap_or_default()
+                .iter()
+                .map(|invocation| (invocation.target, invocation.filter, invocation.features))
+                .collect::<Vec<_>>(),
+            expected
+        );
+    }
+    assert_eq!(row.determinism_shard_weight, 7);
     Ok(())
 }
 
