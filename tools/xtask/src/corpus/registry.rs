@@ -202,6 +202,10 @@ static INV_RET_LATEST: &[CorpusInvocation] = &[
     inv!("retention", "lifecycle::latest_attempt_and_completed_closures_survive_stale_confirmation"),
 ];
 #[rustfmt::skip]
+static INV_RET_LATEST_CRASH: &[CorpusInvocation] = &[
+    inv!("retention_faults", "latest_protection_recovers_stale_confirmation_commit_death", RetentionCrash),
+];
+#[rustfmt::skip]
 static INV_RET_PAGINATION: &[CorpusInvocation] = &[
     inv!("retention", "pagination::retention_plan_pages_survive_unrelated_repository_mutation_and_reject_cross_plan_cursor"),
 ];
@@ -573,7 +577,7 @@ pub static REGISTRY: &[RegistryRow] = &[
     row_c!("concurrent-latest-publication", INV_CONC_PUB),
     row_c!("publication-retention-race", INV_PUB_RET_RACE),
     row_c!("cache-cleanup-publication-race", INV_CACHE_CLEANUP_PUB_RACE),
-    row_sdc!("retention-latest-protection", INV_RET_LATEST),
+    row_sdc!("retention-latest-protection", INV_RET_LATEST, INV_RET_LATEST_CRASH),
     // This fixture emits 52 semantic captures per determinism variant. Keep its
     // three child processes off the same two-core runner as unrelated rows.
     row_sd_determinism_weight!("retention-plan-pagination", INV_RET_PAGINATION, 64),

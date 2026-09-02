@@ -29,7 +29,7 @@ pub(crate) use platform::{
     same_volume_and_mount, validate_active_unpublished_name,
 };
 
-#[cfg(feature = "namespace-test-crash")]
+#[cfg(any(feature = "namespace-test-crash", feature = "retention-test-crash"))]
 pub(crate) fn current_logical_snapshot_for_test(
     guard: &NamespaceGuard,
 ) -> Result<Vec<u8>, StoreError> {

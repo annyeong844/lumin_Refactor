@@ -714,6 +714,43 @@ fn state_replacement_rows_use_the_reviewed_public_invocations() -> Result<(), St
 }
 
 #[test]
+fn retention_latest_protection_uses_the_reviewed_public_crash_fixture() -> Result<(), String> {
+    let row = REGISTRY
+        .iter()
+        .find(|row| row.id == "retention-latest-protection")
+        .ok_or_else(|| "retention-latest-protection row is missing".to_owned())?;
+    let standard = row.standard.unwrap_or_default();
+    assert_eq!(
+        standard
+            .iter()
+            .map(|invocation| (invocation.target, invocation.filter, invocation.features))
+            .collect::<Vec<_>>(),
+        vec![(
+            "retention",
+            "lifecycle::latest_attempt_and_completed_closures_survive_stale_confirmation",
+            FeatureSet::None,
+        )]
+    );
+    assert_eq!(
+        row.determinism.unwrap_or_default().as_ptr(),
+        standard.as_ptr()
+    );
+    assert_eq!(
+        row.store_crash
+            .unwrap_or_default()
+            .iter()
+            .map(|invocation| (invocation.target, invocation.filter, invocation.features))
+            .collect::<Vec<_>>(),
+        vec![(
+            "retention_faults",
+            "latest_protection_recovers_stale_confirmation_commit_death",
+            FeatureSet::RetentionCrash,
+        )]
+    );
+    Ok(())
+}
+
+#[test]
 fn reserved_state_namespace_uses_the_complete_reviewed_invocation_set() -> Result<(), String> {
     let row = REGISTRY
         .iter()

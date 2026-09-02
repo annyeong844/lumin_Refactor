@@ -1050,14 +1050,14 @@ pub fn remove_cache_eviction_binding_for_test(root: &Path) -> Result<(), EngineE
     Ok(())
 }
 
-#[cfg(feature = "namespace-test-crash")]
+#[cfg(any(feature = "namespace-test-crash", feature = "retention-test-crash"))]
 pub fn state_entry_physical_identity_for_test(
     path: &Path,
 ) -> Result<lumin_model::PhysicalFileIdentity, EngineError> {
     lumin_store::state_entry_physical_identity_for_test(path).map_err(Into::into)
 }
 
-#[cfg(feature = "namespace-test-crash")]
+#[cfg(any(feature = "namespace-test-crash", feature = "retention-test-crash"))]
 pub fn current_logical_store_snapshot_for_test(root: &Path) -> Result<Vec<u8>, EngineError> {
     let context = open_repository_context(root)?;
     context
